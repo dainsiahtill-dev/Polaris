@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, PlusCircle, UploadCloud, XCircle } from 'lucide-react';
+import { GitBranch, Loader2, PlusCircle, UploadCloud, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIDialoguePanel, type AIDialoguePanelProps } from '@/app/components/ai-dialogue';
 import { devLogger } from '@/app/utils/devLogger';
@@ -11,32 +11,27 @@ import {
 } from '@/services/roleSessionService';
 import { cancelDirectorRun, getDirectorRun, type DirectorOrchestrationRunResponse } from '@/services/pmService';
 
-interface DirectorWorkbenchPanelProps {
+interface ChiefEngineerWorkbenchPanelProps {
   workspace?: string;
-  /** 初始 Session ID */
+  taskCount?: number;
+  blueprintCount?: number;
+  missingBlueprintCount?: number;
+  directorRunning?: boolean;
   initialSessionId?: string;
-  /** 宿主类型，默认 electron_workbench */
   hostKind?: 'workflow' | 'electron_workbench' | 'tui' | 'cli' | 'api_server' | 'headless';
-  /** 附着模式 */
   attachmentMode?: 'isolated' | 'attached_readonly' | 'attached_collaborative';
-  /** 附着的工作流 Run ID */
   attachedRunId?: string;
-  /** 附着的任务 ID */
   attachedTaskId?: string;
-  /** 任务数量 */
-  tasksCount?: number;
-  /** 正在运行的任务 */
-  runningTasks?: number;
 }
 
-interface DirectorWorkflowRunEvidence {
+interface DirectorRunEvidence {
   runId: string | null;
   loading: boolean;
   data: DirectorOrchestrationRunResponse | null;
   error: string | null;
 }
 
-interface DirectorWorkflowRunCancelEvidence {
+interface DirectorRunCancelEvidence {
   runId: string | null;
   loading: boolean;
   message: string | null;
@@ -49,36 +44,27 @@ function isTerminalDirectorRunStatus(status?: string | null): boolean {
   return TERMINAL_DIRECTOR_RUN_STATUSES.has(String(status || '').trim().toLowerCase());
 }
 
-/**
- * Director Workbench Panel - Director 角色工作台
- *
- * 基于 AIDialoguePanel，预配置为 Director 角色。
- * 支持 RoleSession 多宿主架构，可创建独立的编码工作台会话。
- *
- * 特性：
- * - 完整的代码读写能力
- * - 命令执行能力
- * - 可导出补丁到工作流
- */
-export function DirectorWorkbenchPanel({
+export function ChiefEngineerWorkbenchPanel({
   workspace,
+  taskCount = 0,
+  blueprintCount = 0,
+  missingBlueprintCount = 0,
+  directorRunning = false,
   initialSessionId,
   hostKind = 'electron_workbench',
   attachmentMode = 'isolated',
   attachedRunId,
   attachedTaskId,
-  tasksCount = 0,
-  runningTasks = 0,
-}: DirectorWorkbenchPanelProps) {
+}: ChiefEngineerWorkbenchPanelProps) {
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId ?? null);
   const [sessions, setSessions] = useState<RoleSessionListItem[]>([]);
-  const [workflowRunEvidence, setWorkflowRunEvidence] = useState<DirectorWorkflowRunEvidence>({
+  const [directorRunEvidence, setDirectorRunEvidence] = useState<DirectorRunEvidence>({
     runId: null,
     loading: false,
     data: null,
     error: null,
   });
-  const [workflowRunCancelEvidence, setWorkflowRunCancelEvidence] = useState<DirectorWorkflowRunCancelEvidence>({
+  const [directorRunCancelEvidence, setDirectorRunCancelEvidence] = useState<DirectorRunCancelEvidence>({
     runId: null,
     loading: false,
     message: null,
@@ -89,7 +75,7 @@ export function DirectorWorkbenchPanel({
     if (!workspace) return;
 
     const result = await listRoleSessions({
-      role: 'director',
+      role: 'chief_engineer',
       hostKind,
       workspace,
       limit: 20,
@@ -98,7 +84,7 @@ export function DirectorWorkbenchPanel({
     if (result.ok) {
       setSessions(result.data ?? []);
     } else {
-      devLogger.error('[DirectorWorkbenchPanel] Failed to load sessions:', result.error);
+      devLogger.error('[ChiefEngineerWorkbenchPanel] Failed to load sessions:', result.error);
     }
   }, [hostKind, workspace]);
 
@@ -122,16 +108,50 @@ export function DirectorWorkbenchPanel({
     setSessionId(newSessionId);
   };
 
+  const loadDirectorRunEvidence = useCallback(async (runId: string) => {
+    setDirectorRunEvidence({
+      runId,
+      loading: true,
+      data: null,
+      error: null,
+    });
+    setDirectorRunCancelEvidence({
+      runId,
+      loading: false,
+      message: null,
+      error: null,
+    });
+
+    const result = await getDirectorRun(runId);
+    if (result.ok && result.data) {
+      setDirectorRunEvidence({
+        runId,
+        loading: false,
+        data: result.data,
+        error: null,
+      });
+      return;
+    }
+    setDirectorRunEvidence({
+      runId,
+      loading: false,
+      data: null,
+      error: result.error || 'Director run detail unavailable',
+    });
+  }, []);
+
   const handleNewSession = async () => {
     try {
       const result = await createRoleSession({
-        role: 'director',
+        role: 'chief_engineer',
         host_kind: hostKind,
         workspace,
         attachment_mode: attachmentMode,
         context_config: {
-          tasks_count: tasksCount,
-          running_tasks: runningTasks,
+          task_count: taskCount,
+          blueprint_count: blueprintCount,
+          missing_blueprint_count: missingBlueprintCount,
+          director_running: directorRunning,
         },
       });
 
@@ -140,20 +160,20 @@ export function DirectorWorkbenchPanel({
         await loadSessions();
       } else {
         const error = result.ok ? 'RoleSession create response missing session' : result.error;
-        devLogger.error('[DirectorWorkbenchPanel] Failed to create session:', error);
+        devLogger.error('[ChiefEngineerWorkbenchPanel] Failed to create session:', error);
         toast.error('新建会话失败', {
           description: error,
         });
       }
     } catch (err) {
-      devLogger.error('[DirectorWorkbenchPanel] Failed to create session:', err);
+      devLogger.error('[ChiefEngineerWorkbenchPanel] Failed to create session:', err);
       toast.error('新建会话失败', {
         description: err instanceof Error ? err.message : '未知错误',
       });
     }
   };
 
-  const handleExportPatch = async () => {
+  const handleExportToDirector = async () => {
     if (!sessionId) return;
 
     try {
@@ -165,47 +185,20 @@ export function DirectorWorkbenchPanel({
 
       if (result.ok && result.data?.run_id) {
         const runId = result.data.run_id;
-        devLogger.debug('[DirectorWorkbenchPanel] Exported to workflow:', result.data);
+        devLogger.debug('[ChiefEngineerWorkbenchPanel] Exported to Director workflow:', result.data);
         toast.success('已导出到 Director 工作流', {
           description: `Run ID: ${runId}\nArtifacts: ${result.data.artifact_count || 0}`,
         });
-        setWorkflowRunEvidence({
-          runId,
-          loading: true,
-          data: null,
-          error: null,
-        });
-        setWorkflowRunCancelEvidence({
-          runId,
-          loading: false,
-          message: null,
-          error: null,
-        });
-        const runResult = await getDirectorRun(runId);
-        if (runResult.ok && runResult.data) {
-          setWorkflowRunEvidence({
-            runId,
-            loading: false,
-            data: runResult.data,
-            error: null,
-          });
-        } else {
-          setWorkflowRunEvidence({
-            runId,
-            loading: false,
-            data: null,
-            error: runResult.error || 'Director run detail unavailable',
-          });
-        }
+        await loadDirectorRunEvidence(runId);
       } else {
         const error = result.ok ? result.data?.error || '后端未返回 Run ID' : result.error;
-        devLogger.error('[DirectorWorkbenchPanel] Export failed:', error);
+        devLogger.error('[ChiefEngineerWorkbenchPanel] Export failed:', error);
         toast.error('导出失败', {
           description: error || '未知错误',
         });
       }
     } catch (err) {
-      devLogger.error('[DirectorWorkbenchPanel] Failed to export patch:', err);
+      devLogger.error('[ChiefEngineerWorkbenchPanel] Failed to export:', err);
       toast.error('导出失败', {
         description: err instanceof Error ? err.message : '未知错误',
       });
@@ -213,10 +206,10 @@ export function DirectorWorkbenchPanel({
   };
 
   const handleCancelDirectorRun = useCallback(async () => {
-    const runId = String(workflowRunEvidence.runId || '').trim();
+    const runId = String(directorRunEvidence.runId || '').trim();
     if (!runId) return;
 
-    setWorkflowRunCancelEvidence({
+    setDirectorRunCancelEvidence({
       runId,
       loading: true,
       message: null,
@@ -227,13 +220,13 @@ export function DirectorWorkbenchPanel({
       const result = await cancelDirectorRun(runId);
       if (result.ok && result.data) {
         const status = String(result.data.status || 'unknown').trim() || 'unknown';
-        setWorkflowRunEvidence({
+        setDirectorRunEvidence({
           runId,
           loading: false,
           data: result.data,
           error: null,
         });
-        setWorkflowRunCancelEvidence({
+        setDirectorRunCancelEvidence({
           runId,
           loading: false,
           message: `取消运行已提交: ${status}`,
@@ -244,7 +237,7 @@ export function DirectorWorkbenchPanel({
         });
       } else {
         const error = result.ok ? '后端未返回取消结果' : result.error;
-        setWorkflowRunCancelEvidence({
+        setDirectorRunCancelEvidence({
           runId,
           loading: false,
           message: null,
@@ -256,7 +249,7 @@ export function DirectorWorkbenchPanel({
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : '未知错误';
-      setWorkflowRunCancelEvidence({
+      setDirectorRunCancelEvidence({
         runId,
         loading: false,
         message: null,
@@ -266,21 +259,23 @@ export function DirectorWorkbenchPanel({
         description: error,
       });
     }
-  }, [workflowRunEvidence.runId]);
+  }, [directorRunEvidence.runId]);
 
   const dialoguePanelProps: AIDialoguePanelProps = {
-    dialogueRole: 'director',
-    roleDisplayName: 'Director',
+    dialogueRole: 'chief_engineer',
+    roleDisplayName: 'Chief Engineer',
     roleTheme: {
-      primary: 'emerald',
-      secondary: 'emerald-400',
-      gradient: 'from-emerald-500 to-emerald-700',
+      primary: 'cyan',
+      secondary: 'cyan-400',
+      gradient: 'from-cyan-500 to-cyan-700',
     },
-    welcomeMessage: 'Director 执行系统已就绪。您可以查看代码、编写文件、运行命令，或导出执行建议到正式流程。',
+    welcomeMessage: 'Chief Engineer 工作台已就绪。您可以审查 PM 合同、生成施工蓝图，或把施工建议导出为 Director 执行流。',
     context: {
       workspace,
-      tasks_count: tasksCount,
-      running_tasks: runningTasks,
+      task_count: taskCount,
+      blueprint_count: blueprintCount,
+      missing_blueprint_count: missingBlueprintCount,
+      director_running: directorRunning,
     },
     workspace,
     sessionId: sessionId ?? undefined,
@@ -289,31 +284,33 @@ export function DirectorWorkbenchPanel({
     attachedRunId,
     attachedTaskId,
     onSessionChange: handleSessionChange,
+    workflowExportTarget: 'director',
+    workflowExportLabel: '导出 Director',
   };
+
   const cancelDirectorRunDisabled =
-    !workflowRunEvidence.runId ||
-    workflowRunEvidence.loading ||
-    workflowRunCancelEvidence.loading ||
-    isTerminalDirectorRunStatus(workflowRunEvidence.data?.status);
+    !directorRunEvidence.runId ||
+    directorRunEvidence.loading ||
+    directorRunCancelEvidence.loading ||
+    isTerminalDirectorRunStatus(directorRunEvidence.data?.status);
 
   return (
-    <div className="flex flex-col h-full">
-      {/* 工具栏 */}
-      <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-emerald-500/20 bg-emerald-500/5">
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between gap-3 border-b border-cyan-500/20 bg-cyan-500/5 px-4 py-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm font-medium text-emerald-100">Director 工作台</span>
+          <span className="text-sm font-medium text-cyan-100">Chief Engineer 工作台</span>
           {sessionId && (
-            <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 font-mono text-xs text-emerald-200">
+            <span className="rounded border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 font-mono text-xs text-cyan-200">
               {sessionId.slice(0, 8)}...
             </span>
           )}
           {selectableSessions.length > 0 && (
             <select
-              aria-label="选择 Director RoleSession"
-              data-testid="director-role-session-select"
+              aria-label="选择 Chief Engineer RoleSession"
+              data-testid="chief-engineer-role-session-select"
               value={sessionId ?? ''}
               onChange={(event) => handleSessionChange(event.target.value || null)}
-              className="h-7 max-w-48 rounded border border-emerald-500/20 bg-slate-950/80 px-2 text-xs text-emerald-100 outline-none transition-colors hover:border-emerald-500/40 focus:border-emerald-400"
+              className="h-7 max-w-48 rounded border border-cyan-500/20 bg-slate-950/80 px-2 text-xs text-cyan-100 outline-none transition-colors hover:border-cyan-500/40 focus:border-cyan-400"
               title={selectedSessionLabel || '选择会话'}
             >
               <option value="">选择会话</option>
@@ -329,7 +326,7 @@ export function DirectorWorkbenchPanel({
           <button
             type="button"
             onClick={handleNewSession}
-            className="inline-flex h-7 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
+            className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/15 px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25"
           >
             <PlusCircle className="h-3.5 w-3.5" />
             新建会话
@@ -337,29 +334,36 @@ export function DirectorWorkbenchPanel({
           {sessionId && (
             <button
               type="button"
-              onClick={handleExportPatch}
-              className="inline-flex h-7 items-center gap-1.5 rounded border border-blue-500/25 bg-blue-500/15 px-2 text-xs text-blue-100 transition-colors hover:bg-blue-500/25"
+              onClick={handleExportToDirector}
+              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
             >
               <UploadCloud className="h-3.5 w-3.5" />
-              导出补丁
+              导出 Director
             </button>
           )}
         </div>
       </div>
 
-      {workflowRunEvidence.runId && (
+      <div className="flex flex-wrap items-center gap-2 border-b border-cyan-500/15 bg-slate-950/60 px-4 py-2 text-[11px]">
+        <MetricPill label="PM tasks" value={taskCount} />
+        <MetricPill label="blueprints" value={blueprintCount} />
+        <MetricPill label="missing" value={missingBlueprintCount} tone={missingBlueprintCount > 0 ? 'amber' : 'cyan'} />
+        <MetricPill label="Director" value={directorRunning ? 'running' : 'idle'} tone={directorRunning ? 'emerald' : 'slate'} />
+      </div>
+
+      {directorRunEvidence.runId && (
         <div
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-500/15 bg-slate-950/70 px-4 py-2 text-[11px]"
-          data-testid="director-workbench-run-evidence"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-cyan-500/15 bg-slate-950/70 px-4 py-2 text-[11px]"
+          data-testid="chief-engineer-workbench-run-evidence"
         >
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-mono text-emerald-200/80">/v2/director/runs/{workflowRunEvidence.runId}</span>
+            <span className="font-mono text-cyan-200/80">/v2/director/runs/{directorRunEvidence.runId}</span>
             <span className="text-slate-300">
-              {workflowRunEvidence.loading
+              {directorRunEvidence.loading
                 ? '正在读取运行快照...'
-                : workflowRunEvidence.error
-                  ? workflowRunEvidence.error
-                  : `${workflowRunEvidence.data?.status || 'unknown'} · queued=${workflowRunEvidence.data?.tasks_queued ?? 0}`}
+                : directorRunEvidence.error
+                  ? directorRunEvidence.error
+                  : `${directorRunEvidence.data?.status || 'unknown'} · queued=${directorRunEvidence.data?.tasks_queued ?? 0}`}
             </span>
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -368,37 +372,62 @@ export function DirectorWorkbenchPanel({
               onClick={() => {
                 void handleCancelDirectorRun();
               }}
-              data-testid="director-workbench-run-cancel"
+              data-testid="chief-engineer-workbench-run-cancel"
               disabled={cancelDirectorRunDisabled}
               className="inline-flex h-6 cursor-pointer items-center gap-1 rounded border border-rose-500/20 bg-rose-500/10 px-2 text-[11px] text-rose-200 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:border-slate-600/20 disabled:bg-slate-700/20 disabled:text-slate-500"
             >
-              {workflowRunCancelEvidence.loading ? (
+              {directorRunCancelEvidence.loading ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <XCircle className="h-3 w-3" />
               )}
               取消
             </button>
-            {workflowRunCancelEvidence.runId === workflowRunEvidence.runId &&
-            (workflowRunCancelEvidence.loading || workflowRunCancelEvidence.message || workflowRunCancelEvidence.error) ? (
+            {directorRunCancelEvidence.runId === directorRunEvidence.runId &&
+            (directorRunCancelEvidence.loading || directorRunCancelEvidence.message || directorRunCancelEvidence.error) ? (
               <span
-                className={workflowRunCancelEvidence.error ? 'font-mono text-rose-300' : 'font-mono text-emerald-200/80'}
-                data-testid="director-workbench-run-cancel-result"
+                className={directorRunCancelEvidence.error ? 'font-mono text-rose-300' : 'font-mono text-cyan-200/80'}
+                data-testid="chief-engineer-workbench-run-cancel-result"
               >
-                /v2/director/runs/{workflowRunEvidence.runId}/cancel ·{' '}
-                {workflowRunCancelEvidence.loading
+                /v2/director/runs/{directorRunEvidence.runId}/cancel ·{' '}
+                {directorRunCancelEvidence.loading
                   ? 'cancelling'
-                  : workflowRunCancelEvidence.error || workflowRunCancelEvidence.message}
+                  : directorRunCancelEvidence.error || directorRunCancelEvidence.message}
               </span>
             ) : null}
           </div>
         </div>
       )}
 
-      {/* 对话面板 */}
-      <div className="flex-1 min-h-0">
+      <div className="min-h-0 flex-1">
         <AIDialoguePanel {...dialoguePanelProps} />
       </div>
     </div>
+  );
+}
+
+function MetricPill({
+  label,
+  value,
+  tone = 'cyan',
+}: {
+  label: string;
+  value: string | number;
+  tone?: 'cyan' | 'emerald' | 'amber' | 'slate';
+}) {
+  const toneClass = tone === 'emerald'
+    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
+    : tone === 'amber'
+      ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+      : tone === 'slate'
+        ? 'border-white/10 bg-white/5 text-slate-300'
+        : 'border-cyan-500/25 bg-cyan-500/10 text-cyan-200';
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 ${toneClass}`}>
+      <GitBranch className="h-3 w-3" />
+      <span className="text-slate-500">{label}</span>
+      <span className="font-mono">{value}</span>
+    </span>
   );
 }

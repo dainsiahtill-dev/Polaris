@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
 
@@ -11,6 +13,7 @@ from polaris.cells.llm.provider_runtime.public.service import is_role_runtime_su
 from polaris.cells.runtime.projection.internal.io_helpers import build_cache_root
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.model_identity import model_identity_equal
+from polaris.kernelone.storage import resolve_runtime_path
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +22,70 @@ if TYPE_CHECKING:
 
 
 def load_interview_history_summary(settings: Settings) -> dict[str, Any]:
-    """加载面试历史摘要（简化实现）"""
-    return {
+    """加载交互面试历史摘要。"""
+
+    summary: dict[str, Any] = {
         "lastUpdated": None,
         "latest_by_provider": {},
         "latest_by_role_provider_model": {},
     }
+    workspace = _active_workspace(settings)
+    if not workspace:
+        return summary
+
+    interviews_dir = Path(resolve_runtime_path(workspace, "runtime/llm_tests/interviews"))
+    try:
+        files = sorted(
+            (path for path in interviews_dir.glob("*.json") if path.is_file()),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return summary
+
+    latest_updated = 0.0
+    for path in files[:50]:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+
+        target_raw = payload.get("target")
+        target: dict[str, Any] = target_raw if isinstance(target_raw, dict) else {}
+        final_raw = payload.get("final")
+        final: dict[str, Any] = final_raw if isinstance(final_raw, dict) else {}
+        role = _role_key(target.get("role") or payload.get("role"))
+        provider_id = str(target.get("provider_id") or payload.get("provider_id") or "").strip()
+        model = str(target.get("model") or payload.get("model") or "").strip()
+        if not provider_id:
+            continue
+
+        ready = bool(final.get("ready"))
+        item = {
+            "status": "passed" if ready else "failed",
+            "timestamp": str(payload.get("timestamp") or ""),
+            "role": role,
+            "model": model,
+            "report_path": str(path),
+        }
+
+        if provider_id not in summary["latest_by_provider"]:
+            summary["latest_by_provider"][provider_id] = item
+        role_model_key = f"{role}:{provider_id}:{model}".lower()
+        if role and model and role_model_key not in summary["latest_by_role_provider_model"]:
+            summary["latest_by_role_provider_model"][role_model_key] = item
+
+        try:
+            latest_updated = max(latest_updated, path.stat().st_mtime)
+        except OSError:
+            continue
+
+    if latest_updated:
+        summary["lastUpdated"] = datetime.fromtimestamp(latest_updated, tz=timezone.utc).isoformat()
+    return summary
 
 
 def _workspace_text(value: Any) -> str:

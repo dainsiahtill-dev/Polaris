@@ -21,6 +21,7 @@ import {
   Clock,
   AlertCircle,
   RefreshCw,
+  GitBranch,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
@@ -29,6 +30,7 @@ import { PMDocumentPanel } from './PMDocumentPanel';
 import { PMAIDialoguePanel } from './PMAIDialoguePanel';
 import { PMStatusBar } from './PMStatusBar';
 import { PMDiagnosticsPanel } from './PMDiagnosticsPanel';
+import { PMWorkbenchPanel } from './PMWorkbenchPanel';
 import { QualityGateCard, type QualityGateData } from './QualityGateCard';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
 import { TaskStatus, type PmTask } from '@/types/task';
@@ -307,7 +309,7 @@ function resolvePMRuntimeBanner({
   };
 }
 
-type PMActiveView = 'tasks' | 'activity' | 'documents' | 'requirements' | 'history' | 'analytics';
+type PMActiveView = 'tasks' | 'activity' | 'documents' | 'requirements' | 'history' | 'analytics' | 'workbench';
 
 export function PMWorkspace({
   tasks,
@@ -422,6 +424,13 @@ export function PMWorkspace({
     setActiveView('tasks');
   }, []);
 
+  const handleBackendPmTaskCreated = useCallback((task: PmTask) => {
+    setBackendPmTasks((current) => {
+      if (!task.id) return current;
+      return mergePmTaskEvidenceRows([], [task, ...current.filter((item) => item.id !== task.id)]);
+    });
+  }, []);
+
   const handleRunPmOnce = useCallback(async () => {
     setRunOnceStatusEvidence({
       triggered: true,
@@ -522,6 +531,7 @@ export function PMWorkspace({
     runtimeIssue,
     pmTerminalStatus,
   });
+  const shouldShowSideAIDialogue = showAIDialogue && activeView !== 'workbench';
 
   return (
     <div data-testid="pm-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
@@ -885,11 +895,17 @@ export function PMWorkspace({
             active={activeView === 'analytics'}
             onClick={() => handleViewChange('analytics')}
           />
+          <NavButton
+            icon={<GitBranch className="w-4 h-4" />}
+            label="编排"
+            active={activeView === 'workbench'}
+            onClick={() => handleViewChange('workbench')}
+          />
         </nav>
 
         {/* Main Panel */}
         <PanelGroup direction="horizontal" className="flex-1">
-          <Panel defaultSize={showAIDialogue ? 65 : 85} minSize={40}>
+          <Panel defaultSize={shouldShowSideAIDialogue ? 65 : 85} minSize={40}>
             <div className="h-full overflow-hidden">
               {activeView === 'tasks' && (
                 <div className="flex h-full min-h-0 flex-col">
@@ -903,6 +919,7 @@ export function PMWorkspace({
                       tasks={pmTaskEvidenceRows}
                       selectedTaskId={selectedTaskId}
                       onTaskSelect={handleTaskSelect}
+                      onTaskCreated={handleBackendPmTaskCreated}
                       pmRunning={pmRunning}
                       taskTraceMap={taskTraceMap}
                     />
@@ -935,10 +952,19 @@ export function PMWorkspace({
               {activeView === 'analytics' && (
                 <PMAnalyticsPanel tasks={pmTaskEvidenceRows} />
               )}
+              {activeView === 'workbench' && (
+                <PMWorkbenchPanel
+                  pmRunning={pmRunning}
+                  workspace={workspace}
+                  taskCount={totalTasks}
+                  hostKind="electron_workbench"
+                  attachmentMode="isolated"
+                />
+              )}
             </div>
           </Panel>
 
-          {showAIDialogue && (
+          {shouldShowSideAIDialogue && (
             <>
               <PanelResizeHandle className="w-1 bg-white/5 hover:bg-amber-500/30 transition-colors" />
               <Panel defaultSize={35} minSize={25} maxSize={50}>

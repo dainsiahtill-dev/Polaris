@@ -38,6 +38,7 @@ interface PMTaskPanelProps {
   tasks: PmTask[];
   selectedTaskId: string | null;
   onTaskSelect: (taskId: string | null) => void;
+  onTaskCreated?: (task: PmTask) => void;
   pmRunning: boolean;
   taskTraceMap?: TaskTraceMap;
 }
@@ -302,6 +303,7 @@ export function PMTaskPanel({
   tasks,
   selectedTaskId,
   onTaskSelect,
+  onTaskCreated,
   pmRunning,
   taskTraceMap,
 }: PMTaskPanelProps) {
@@ -637,6 +639,7 @@ export function PMTaskPanel({
       return;
     }
 
+    onTaskCreated?.(createdTask);
     setBackendSelectedTask(createdTask);
     onTaskSelect(createdTask.id);
     setCreateEvidence({

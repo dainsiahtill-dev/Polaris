@@ -44,13 +44,20 @@ function makeTask(overrides: Partial<PmTask> = {}): PmTask {
   };
 }
 
-function PMTaskPanelHarness({ tasks = [] }: { tasks?: PmTask[] }) {
+function PMTaskPanelHarness({
+  tasks = [],
+  onTaskCreated,
+}: {
+  tasks?: PmTask[];
+  onTaskCreated?: (task: PmTask) => void;
+}) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   return (
     <PMTaskPanel
       tasks={tasks}
       selectedTaskId={selectedTaskId}
       onTaskSelect={setSelectedTaskId}
+      onTaskCreated={onTaskCreated}
       pmRunning={false}
     />
   );
@@ -233,6 +240,7 @@ describe('PMTaskPanel', () => {
   });
 
   it('creates PM tasks through the backend task create route', async () => {
+    const onTaskCreated = vi.fn();
     createPmTaskMock.mockResolvedValueOnce({
       ok: true,
       data: {
@@ -247,7 +255,7 @@ describe('PMTaskPanel', () => {
       },
     });
 
-    render(<PMTaskPanelHarness />);
+    render(<PMTaskPanelHarness onTaskCreated={onTaskCreated} />);
 
     fireEvent.click(screen.getByTestId('pm-task-create-toggle'));
     fireEvent.change(screen.getByTestId('pm-task-create-subject'), {
@@ -276,5 +284,9 @@ describe('PMTaskPanel', () => {
     expect(evidence).toHaveTextContent('created · PM-created-1');
     expect(screen.getByText('返回任务详情')).toBeInTheDocument();
     expect(screen.getByTestId('pm-task-detail-provenance')).toHaveTextContent('pm_task_create');
+    expect(onTaskCreated).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'PM-created-1',
+      title: '补齐 PM 桌面任务创建',
+    }));
   });
 });

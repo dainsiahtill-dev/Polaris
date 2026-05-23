@@ -43,6 +43,38 @@ vi.mock('../RealTimeFileDiff', () => ({
   RealTimeFileDiff: () => <div data-testid="real-time-file-diff" />,
 }));
 
+vi.mock('../DirectorWorkbenchPanel', () => ({
+  DirectorWorkbenchPanel: ({
+    workspace,
+    tasksCount,
+    runningTasks,
+  }: {
+    workspace?: string;
+    tasksCount?: number;
+    runningTasks?: number;
+  }) => (
+    <div data-testid="director-workbench-panel-mock">
+      workspace={workspace}; tasksCount={tasksCount}; runningTasks={runningTasks}
+    </div>
+  ),
+}));
+
+vi.mock('../DirectorStrategyPanel', () => ({
+  DirectorStrategyPanel: ({
+    workspace,
+    tasksCount,
+    runningTasks,
+  }: {
+    workspace?: string;
+    tasksCount?: number;
+    runningTasks?: number;
+  }) => (
+    <div data-testid="director-strategy-panel-mock">
+      workspace={workspace}; tasksCount={tasksCount}; runningTasks={runningTasks}
+    </div>
+  ),
+}));
+
 vi.mock('react-resizable-panels', () => ({
   Panel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   PanelGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -705,18 +737,6 @@ describe.sequential('Director capability desktop integration', () => {
     });
     serviceMocks.listDirectorTaskFallbackRows.mockResolvedValue({
       ok: true,
-      data: [
-        {
-          id: 'director-created-1',
-          subject: 'Create backend task',
-          title: 'Create backend task',
-          status: 'PENDING',
-          metadata: { director_task_source: 'local' },
-        },
-      ],
-    });
-    serviceMocks.listDirectorTaskFallbackRows.mockResolvedValueOnce({
-      ok: true,
       data: [],
     });
 
@@ -765,6 +785,9 @@ describe.sequential('Director capability desktop integration', () => {
       }),
     })));
     expect(await screen.findByTestId('director-task-create-evidence')).toHaveTextContent('已创建 Director 任务: director-created-1');
+    await waitFor(() => {
+      expect(within(screen.getByTestId('director-task-board')).getByText('Create backend task')).toBeInTheDocument();
+    });
   });
 
   it('loads fallback Director task rows through the shared Director fallback service', async () => {
@@ -939,6 +962,68 @@ describe.sequential('Director capability desktop integration', () => {
     expect(statusEvidence).toHaveTextContent('source=status_file');
   });
 
+  it('exposes the Director RoleSession workbench from the desktop navigation', async () => {
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[
+          {
+            id: 'director-workbench-source',
+            title: 'Workbench source task',
+            status: 'running',
+            done: false,
+            priority: 1,
+            acceptance: [],
+          } as PmTask,
+        ]}
+        directorRunning={true}
+        onToggleDirector={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId('director-ai-dialogue')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle('工作台'));
+
+    const workbench = await screen.findByTestId('director-workbench-panel-mock');
+    expect(workbench).toHaveTextContent('workspace=C:/Temp/Product');
+    expect(workbench).toHaveTextContent('tasksCount=1');
+    expect(workbench).toHaveTextContent('runningTasks=1');
+    expect(screen.queryByTestId('director-ai-dialogue')).not.toBeInTheDocument();
+  });
+
+  it('exposes Director execution strategy controls from the desktop navigation', async () => {
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[
+          {
+            id: 'director-strategy-source',
+            title: 'Strategy source task',
+            status: 'running',
+            done: false,
+            priority: 1,
+            acceptance: [],
+          } as PmTask,
+        ]}
+        directorRunning={true}
+        onToggleDirector={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId('director-ai-dialogue')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle('策略'));
+
+    const strategyPanel = await screen.findByTestId('director-strategy-panel-mock');
+    expect(strategyPanel).toHaveTextContent('workspace=C:/Temp/Product');
+    expect(strategyPanel).toHaveTextContent('tasksCount=1');
+    expect(strategyPanel).toHaveTextContent('runningTasks=1');
+    expect(screen.queryByTestId('director-ai-dialogue')).not.toBeInTheDocument();
+  });
+
   it('hides the standalone Director header when embedded in Factory mode', async () => {
     render(
       <DirectorWorkspace
@@ -957,6 +1042,51 @@ describe.sequential('Director capability desktop integration', () => {
     expect(await screen.findByTestId('director-readiness-diagnostics')).toBeInTheDocument();
     expect(serviceMocks.getDirectorCapabilities).not.toHaveBeenCalled();
     expect(serviceMocks.getRoleKernelCacheStats).not.toHaveBeenCalled();
+  });
+
+  it('blocks standalone Director execution when a start gate reason is present', async () => {
+    const onToggleDirector = vi.fn();
+    const directorTask = {
+      id: 'director-gated-task',
+      title: 'Implement gated task',
+      description: 'Should not execute before readiness gates pass',
+      status: 'pending',
+    } as PmTask;
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[directorTask]}
+        directorRunning={false}
+        startBlockedReason="LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。"
+        onToggleDirector={onToggleDirector}
+      />,
+    );
+
+    const headerExecute = screen.getByTestId('director-workspace-execute');
+    expect(headerExecute).toBeDisabled();
+    expect(headerExecute).toHaveAttribute(
+      'title',
+      'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
+    );
+
+    const guard = await screen.findByTestId('director-execution-guard');
+    expect(guard).toHaveTextContent('LLM 就绪检查未通过');
+
+    const bulkExecute = screen.getByTestId('director-workspace-bulk-execute');
+    expect(bulkExecute).toBeDisabled();
+    fireEvent.click(bulkExecute);
+    expect(serviceMocks.runDirector).not.toHaveBeenCalled();
+    expect(onToggleDirector).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('director-task-item'));
+    const selectedExecute = await screen.findByTestId('director-task-execute-selected');
+    expect(selectedExecute).toBeDisabled();
+    expect(selectedExecute).toHaveAttribute(
+      'title',
+      'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
+    );
   });
 
   it('disables Director task execution controls when embedded in Factory mode', async () => {

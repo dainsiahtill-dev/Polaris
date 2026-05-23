@@ -8,7 +8,6 @@ import { useState, useMemo } from 'react';
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import {
   GitCompare,
-  ChevronDown,
   ChevronRight,
   Clock,
   User,
@@ -17,7 +16,7 @@ import {
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 
-interface StrategyVersion {
+export interface StrategyVersion {
   id: string;
   version: string;
   content: string;
@@ -43,7 +42,6 @@ export function StrategyDiffViewer({
 }: StrategyDiffViewerProps) {
   const [selectedLeft, setSelectedLeft] = useState<string>(leftVersion || (versions[0]?.id ?? ''));
   const [selectedRight, setSelectedRight] = useState<string>(rightVersion || (versions[1]?.id ?? versions[0]?.id ?? ''));
-  const [showSettings, setShowSettings] = useState(true);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
   const [splitViewEnabled, setSplitViewEnabled] = useState(splitView);
 
@@ -72,39 +70,15 @@ export function StrategyDiffViewer({
     }
   };
 
-  // 主题样式
-  const customTheme = {
-    variables: {
-      dark: {
-        diffViewerBackground: 'rgba(28, 18, 48, 0.65)',
-        diffViewerColor: '#e2e8f0',
-        addedBackground: 'rgba(16, 185, 129, 0.15)',
-        addedColor: '#34d399',
-        removedBackground: 'rgba(239, 68, 68, 0.15)',
-        removedColor: '#f87171',
-        wordAddedBackground: 'rgba(16, 185, 129, 0.4)',
-        wordRemovedBackground: 'rgba(239, 68, 68, 0.4)',
-        addedGutterBackground: 'rgba(16, 185, 129, 0.2)',
-        removedGutterBackground: 'rgba(239, 68, 68, 0.2)',
-        gutterBackground: 'rgba(50, 35, 18, 0.3)',
-        gutterBackgroundDark: 'rgba(28, 18, 48, 0.5)',
-        highlightBackground: 'rgba(251, 191, 36, 0.1)',
-        highlightGutterBackground: 'rgba(251, 191, 36, 0.2)',
-        codeFoldGutterBackground: 'rgba(245, 158, 11, 0.1)',
-        emptyLineBackground: 'transparent',
-        gutterColor: '#94a3b8',
-        addedGutterColor: '#34d399',
-        removedGutterColor: '#f87171',
-      },
-    },
-  };
-
   return (
-    <div className="h-full flex flex-col bg-[linear-gradient(165deg,rgba(50,35,18,0.40),rgba(28,18,48,0.65),rgba(14,20,40,0.80))]">
+    <div
+      className="h-full flex flex-col bg-[linear-gradient(165deg,rgba(15,23,42,0.96),rgba(30,27,75,0.74),rgba(8,15,31,0.98))]"
+      data-testid="strategy-diff-viewer"
+    >
       {/* Header */}
-      <div className="h-14 flex items-center justify-between px-4 border-b border-amber-400/20">
+      <div className="h-14 flex items-center justify-between px-4 border-b border-indigo-400/20">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-cyan-700 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <div className="w-8 h-8 rounded-lg bg-cyan-500/15 border border-cyan-400/25 flex items-center justify-center shadow-lg shadow-cyan-500/10">
             <GitCompare className="w-4 h-4 text-cyan-100" />
           </div>
           <div>
@@ -141,13 +115,13 @@ export function StrategyDiffViewer({
 
       {/* Version Selectors */}
       {versions.length >= 2 && (
-        <div className="h-12 flex items-center gap-4 px-4 border-b border-amber-400/10 bg-cyan-500/5">
+        <div className="h-12 flex items-center gap-4 px-4 border-b border-indigo-400/10 bg-cyan-500/5">
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-cyan-200/60">对比:</span>
             <select
               value={selectedLeft}
               onChange={(e) => handleVersionSelect('left', e.target.value)}
-              className="h-7 px-2 rounded bg-[rgba(35,25,14,0.55)] border border-cyan-400/20 text-xs text-cyan-200"
+              className="h-7 px-2 rounded bg-slate-950/80 border border-cyan-400/20 text-xs text-cyan-200"
             >
               {versions.map((v) => (
                 <option key={v.id} value={v.id}>
@@ -164,7 +138,7 @@ export function StrategyDiffViewer({
             <select
               value={selectedRight}
               onChange={(e) => handleVersionSelect('right', e.target.value)}
-              className="h-7 px-2 rounded bg-[rgba(35,25,14,0.55)] border border-cyan-400/20 text-xs text-cyan-200"
+              className="h-7 px-2 rounded bg-slate-950/80 border border-cyan-400/20 text-xs text-cyan-200"
             >
               {versions.map((v) => (
                 <option key={v.id} value={v.id}>
@@ -185,7 +159,11 @@ export function StrategyDiffViewer({
             splitView={splitViewEnabled}
             hideLineNumbers={false}
             compareMethod={DiffMethod.WORDS}
+            useDarkTheme
             styles={{
+              diffContainer: {
+                background: 'rgba(15, 23, 42, 0.82)',
+              },
               line: {
                 padding: '2px 8px',
               },

@@ -93,6 +93,47 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByText('docs/blueprints/bp-1.md')).toBeInTheDocument();
   });
 
+  it('uses a compact PM contract layer inside Factory instead of embedding the full PM console', () => {
+    const task = {
+      id: 'task-contract-1',
+      title: 'Define checkout contract',
+      goal: 'Clarify checkout implementation scope',
+      status: 'pending',
+      scope_paths: ['src/checkout'],
+      steps: ['Create API route'],
+      acceptance_criteria: ['Checkout route is tested'],
+    } as PmTask;
+
+    render(<FactoryWorkspace {...baseProps} tasks={[task]} pmTasks={[task]} currentRun={null} events={[]} />);
+
+    expect(screen.getByTestId('factory-pm-layer')).toBeInTheDocument();
+    expect(screen.getByTestId('factory-pm-task-item')).toHaveTextContent('Define checkout contract');
+    expect(screen.getByText('合同字段覆盖')).toBeInTheDocument();
+    expect(screen.queryByTestId('pm-workspace-mock')).not.toBeInTheDocument();
+  });
+
+  it('uses a compact Director delivery layer with Factory-owned execution controls', () => {
+    const task = {
+      id: 'director-task-1',
+      title: 'Implement checkout route',
+      goal: 'Deliver the route from the approved blueprint',
+      status: 'pending',
+      steps: ['Edit route handler'],
+      acceptance_criteria: ['Route test passes'],
+      target_files: ['src/checkout/route.ts'],
+    } as PmTask;
+
+    render(<FactoryWorkspace {...baseProps} tasks={[task]} directorTasks={[task]} currentRun={null} events={[]} />);
+
+    fireEvent.click(screen.getByTestId('factory-role-layer-director'));
+
+    expect(screen.getByTestId('director-workspace')).toBeInTheDocument();
+    expect(screen.getByTestId('director-execution-guard')).toHaveTextContent('Factory 编排 Director');
+    expect(screen.getByTestId('director-workspace-bulk-execute')).toBeDisabled();
+    expect(screen.getByTestId('director-task-detail')).toHaveTextContent('Implement checkout route');
+    expect(screen.queryByTestId('director-workspace-mock')).not.toBeInTheDocument();
+  });
+
   it('renders Chief Engineer runtime blueprint artifacts as handoff evidence', () => {
     render(
       <FactoryWorkspace

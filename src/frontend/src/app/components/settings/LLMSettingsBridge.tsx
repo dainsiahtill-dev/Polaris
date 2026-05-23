@@ -393,13 +393,17 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
           throw new Error('保存面试报告失败');
         }
 
-        return (await res.json()) as { saved: boolean; report_path?: string };
+        const data = (await res.json()) as { saved: boolean; report_path?: string; readiness_updated?: boolean };
+        if (data.saved) {
+          await loadLLMStatus();
+        }
+        return data;
       } catch (err) {
         devLogger.error('Save interview failed:', err);
         return null;
       }
     },
-    []
+    [loadLLMStatus]
   );
 
   // Resolve provider env overrides

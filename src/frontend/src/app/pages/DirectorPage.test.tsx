@@ -69,5 +69,64 @@ describe('DirectorPage', () => {
       fileEditEvents,
     }));
   });
-});
 
+  it('passes AGENTS and LLM start blockers into the Director workspace', () => {
+    const { rerender } = render(
+      <DirectorPage
+        workspace="C:/Temp/Product"
+        tasks={[]}
+        workers={[]}
+        directorRunning={false}
+        isStarting={false}
+        isStopping={false}
+        onToggleDirector={vi.fn()}
+        onBackToMain={vi.fn()}
+        websocketLive={true}
+        websocketReconnecting={false}
+        websocketAttemptCount={0}
+        agentsRequired
+        agentsDraftReady={false}
+        llmRuntimeState={{
+          state: 'READY',
+          blockedRoles: [],
+          requiredRoles: ['director'],
+          lastUpdated: '2026-05-23T00:00:00Z',
+        }}
+        notifyError={vi.fn()}
+      />,
+    );
+
+    expect(directorWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      startBlockedReason: 'AGENTS.md 审核未完成，等待草稿生成或人工确认后才能启动 Director。',
+    }));
+
+    rerender(
+      <DirectorPage
+        workspace="C:/Temp/Product"
+        tasks={[]}
+        workers={[]}
+        directorRunning={false}
+        isStarting={false}
+        isStopping={false}
+        onToggleDirector={vi.fn()}
+        onBackToMain={vi.fn()}
+        websocketLive={true}
+        websocketReconnecting={false}
+        websocketAttemptCount={0}
+        agentsRequired={false}
+        agentsDraftReady={false}
+        llmRuntimeState={{
+          state: 'BLOCKED',
+          blockedRoles: ['director'],
+          requiredRoles: ['director'],
+          lastUpdated: '2026-05-23T00:00:00Z',
+        }}
+        notifyError={vi.fn()}
+      />,
+    );
+
+    expect(directorWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      startBlockedReason: 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
+    }));
+  });
+});

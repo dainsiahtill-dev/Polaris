@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class LlmTestPayload(BaseModel):
@@ -31,18 +31,26 @@ class ProviderActionPayload(BaseModel):
 
 
 class InterviewAskPayload(BaseModel):
-    role: str
-    provider_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    role: str = Field(validation_alias=AliasChoices("role", "roleId"))
+    provider_id: str = Field(validation_alias=AliasChoices("provider_id", "providerId"))
     model: str
     question: str
     context: list[dict[str, Any]] | None = None
-    expects_thinking: bool | None = None
-    criteria: list[str] | None = None
-    session_id: str | None = None
+    expects_thinking: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("expects_thinking", "expectsThinking"),
+    )
+    criteria: list[str] | None = Field(default=None, validation_alias=AliasChoices("criteria", "expectedCriteria"))
+    session_id: str | None = Field(default=None, validation_alias=AliasChoices("session_id", "sessionId"))
     api_key: str | None = None
     # 使用空字典作为默认值，避免 None vs {} 的兼容性问题
     headers: dict[str, str] | None = Field(default_factory=dict)
-    env_overrides: dict[str, str] | None = Field(default_factory=dict)
+    env_overrides: dict[str, str] | None = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("env_overrides", "envOverrides"),
+    )
     debug: bool | None = None
 
     @field_validator("session_id", mode="before")
@@ -78,8 +86,10 @@ class InterviewCancelPayload(BaseModel):
 
 
 class InterviewSavePayload(BaseModel):
-    role: str
-    provider_id: str
-    model: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    role: str = Field(validation_alias=AliasChoices("role", "roleId"))
+    provider_id: str = Field(validation_alias=AliasChoices("provider_id", "providerId"))
+    model: str | None = None
     report: dict[str, Any]
-    session_id: str | None = None
+    session_id: str | None = Field(default=None, validation_alias=AliasChoices("session_id", "sessionId"))

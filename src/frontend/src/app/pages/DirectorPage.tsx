@@ -76,6 +76,35 @@ export interface DirectorPageProps {
   notifyError: (message: string) => void;
 }
 
+function resolveDirectorStartBlockedReason({
+  directorRunning,
+  agentsRequired,
+  agentsDraftReady,
+  llmRuntimeState,
+}: {
+  directorRunning: boolean;
+  agentsRequired: boolean;
+  agentsDraftReady: boolean;
+  llmRuntimeState: DirectorPageProps['llmRuntimeState'];
+}): string {
+  if (directorRunning) {
+    return '';
+  }
+  if (agentsRequired) {
+    return agentsDraftReady
+      ? '需要先确认 AGENTS.md 后才能启动 Director。'
+      : 'AGENTS.md 审核未完成，等待草稿生成或人工确认后才能启动 Director。';
+  }
+  if (
+    llmRuntimeState.state === 'BLOCKED'
+    && llmRuntimeState.requiredRoles.includes('director')
+    && llmRuntimeState.blockedRoles.includes('director')
+  ) {
+    return 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。';
+  }
+  return '';
+}
+
 /**
  * Director 工作区页面
  */
@@ -109,6 +138,13 @@ export function DirectorPage({
   qualityGate,
   notifyError,
 }: DirectorPageProps) {
+  const startBlockedReason = resolveDirectorStartBlockedReason({
+    directorRunning,
+    agentsRequired,
+    agentsDraftReady,
+    llmRuntimeState,
+  });
+
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
       <DirectorWorkspace
@@ -118,6 +154,7 @@ export function DirectorPage({
         workers={workers}
         directorRunning={directorRunning}
         isStarting={isStarting}
+        startBlockedReason={startBlockedReason}
         onToggleDirector={() => onToggleDirector()}
         onOpenSettings={onOpenSettings}
         currentTaskId={currentTaskId ?? null}

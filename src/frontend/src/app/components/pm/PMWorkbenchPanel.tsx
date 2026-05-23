@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { GitBranch, Loader2, Play, XCircle } from 'lucide-react';
+import { GitBranch, Loader2, Play, PlusCircle, UploadCloud, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIDialoguePanel, type AIDialoguePanelProps } from '@/app/components/ai-dialogue';
 import { devLogger } from '@/app/utils/devLogger';
@@ -359,9 +359,9 @@ export function PMWorkbenchPanel({
       {/* 工具栏 */}
       <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-amber-500/20 bg-amber-500/5">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm text-amber-600 font-medium">PM 工作台</span>
+          <span className="text-sm font-medium text-amber-100">PM 工作台</span>
           {sessionId && (
-            <span className="text-xs text-muted-foreground px-2 py-0.5 rounded bg-amber-500/10">
+            <span className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 font-mono text-xs text-amber-200">
               {sessionId.slice(0, 8)}...
             </span>
           )}
@@ -385,16 +385,20 @@ export function PMWorkbenchPanel({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
+            type="button"
             onClick={handleNewSession}
-            className="text-xs px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-700 transition-colors"
+            className="inline-flex h-7 items-center gap-1.5 rounded border border-amber-500/25 bg-amber-500/15 px-2 text-xs text-amber-100 transition-colors hover:bg-amber-500/25"
           >
+            <PlusCircle className="h-3.5 w-3.5" />
             新建会话
           </button>
           {sessionId && (
             <button
+              type="button"
               onClick={handleExportToWorkflow}
-              className="text-xs px-2 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-700 transition-colors"
+              className="inline-flex h-7 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
             >
+              <UploadCloud className="h-3.5 w-3.5" />
               导出到流程
             </button>
           )}

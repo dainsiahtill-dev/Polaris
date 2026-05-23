@@ -28,6 +28,7 @@ from polaris.cells.llm.evaluation.public.service import (
     run_readiness_tests,
     run_readiness_tests_streaming,
     run_tool_calling_matrix_suite,
+    save_interview_report,
     update_index_with_report,
 )
 
@@ -57,5 +58,6 @@ __all__ = [
     "run_readiness_tests",
     "run_readiness_tests_streaming",
     "run_tool_calling_matrix_suite",
+    "save_interview_report",
     "update_index_with_report",
 ]

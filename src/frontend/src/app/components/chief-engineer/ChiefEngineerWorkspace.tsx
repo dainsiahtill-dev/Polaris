@@ -9,6 +9,7 @@ import {
   FileCode,
   FilePlus,
   FileText,
+  GitBranch,
   Hammer,
   Loader2,
   MessageSquare,
@@ -46,6 +47,7 @@ import {
   type RoleKernelLLMEventsResponse,
   type RoleKernelTokenBudgetStats,
 } from '@/services';
+import { ChiefEngineerWorkbenchPanel } from './ChiefEngineerWorkbenchPanel';
 import type {
   ChiefEngineerDiagnosticsResponse,
   ChiefEngineerTaskBlueprintResultResponse,
@@ -86,6 +88,7 @@ type RuntimeBlueprintSummary = ChiefEngineerBlueprintSummaryV1;
 type RuntimeBlueprintDetailResponse = ChiefEngineerBlueprintDetailV1;
 type DiagnosticsResponse = ChiefEngineerDiagnosticsResponse;
 type DiagnosticTone = 'ready' | 'degraded' | 'error' | 'checking';
+type ChiefEngineerActiveView = 'control' | 'workbench';
 type TaskEvidenceRow = PmTask | DirectorFallbackTaskRow;
 
 interface BlueprintStatusCheckState {
@@ -447,6 +450,7 @@ export function ChiefEngineerWorkspace({
     data: null,
     error: null,
   });
+  const [activeView, setActiveView] = useState<ChiefEngineerActiveView>('control');
   const [showAIDialogue, setShowAIDialogue] = useState(true);
 
   useEffect(() => {
@@ -716,7 +720,6 @@ export function ChiefEngineerWorkspace({
     },
     [blueprintEvidence, directorTaskEvidenceRows],
   );
-  const startDirectorBlocked = !directorRunning && missingBlueprintHandoffTasks.length > 0;
   const blueprintCandidateTasks = useMemo(
     () => missingBlueprintHandoffTasks.slice(0, 4),
     [missingBlueprintHandoffTasks],
@@ -738,6 +741,18 @@ export function ChiefEngineerWorkspace({
   const blueprintCoveragePlanned = diagnostics?.blueprints.planned_tasks ?? 0;
   const blueprintCoverageCovered = diagnostics?.blueprints.covered_tasks ?? 0;
   const missingBlueprintTaskIds = diagnostics?.blueprints.missing_task_ids ?? [];
+  const diagnosticsHandoffBlocked =
+    !directorRunning
+    && Boolean(diagnostics)
+    && !diagnostics?.blueprints.director_handoff_ready
+    && blueprintCoveragePlanned > 0;
+  const startDirectorBlocked =
+    !directorRunning && (missingBlueprintHandoffTasks.length > 0 || diagnosticsHandoffBlocked);
+  const startDirectorBlockedTitle = missingBlueprintHandoffTasks.length > 0
+    ? '缺少 Chief Engineer 蓝图证据，不能从 CE 页直接启动 Director'
+    : diagnosticsHandoffBlocked
+      ? `诊断显示 ${missingBlueprintTaskIds.length || blueprintCoveragePlanned - blueprintCoverageCovered} 个 PM 任务缺少蓝图证据，不能启动 Director`
+      : undefined;
   const blueprintCoverageValue = !diagnostics
     ? 'checking'
     : blueprintCoveragePlanned > 0
@@ -979,8 +994,23 @@ export function ChiefEngineerWorkspace({
           <Button
             variant="ghost"
             size="sm"
+            onClick={() => setActiveView((current) => current === 'workbench' ? 'control' : 'workbench')}
+            data-testid="chief-engineer-toggle-workbench"
+            className={cn(
+              'text-slate-300 hover:bg-white/5 hover:text-white',
+              activeView === 'workbench' && 'bg-cyan-500/10 text-cyan-100',
+            )}
+          >
+            <GitBranch className="mr-1.5 h-3.5 w-3.5" />
+            {activeView === 'workbench' ? '控制室' : '工作台'}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setShowAIDialogue((current) => !current)}
             data-testid="chief-engineer-toggle-dialogue"
+            disabled={activeView === 'workbench'}
+            title={activeView === 'workbench' ? '工作台内置对话面板' : '切换对话面板'}
             className={cn(
               'text-slate-300 hover:bg-white/5 hover:text-white',
               showAIDialogue && 'bg-cyan-500/10 text-cyan-100',
@@ -1005,7 +1035,7 @@ export function ChiefEngineerWorkspace({
             size="sm"
             onClick={() => { void handleToggleDirector(); }}
             disabled={directorToggleBusy || startDirectorBlocked}
-            title={startDirectorBlocked ? '缺少 Chief Engineer 蓝图证据，不能从 CE 页直接启动 Director' : undefined}
+            title={startDirectorBlockedTitle}
             data-testid="chief-engineer-start-director"
             className="border-cyan-500/30 text-cyan-200 hover:bg-cyan-500/10"
           >
@@ -1138,6 +1168,21 @@ export function ChiefEngineerWorkspace({
         </section>
       ) : null}
 
+      {activeView === 'workbench' ? (
+        <main className="min-h-0 flex-1 overflow-hidden p-4">
+          <div className="h-full overflow-hidden rounded-lg border border-cyan-500/20 bg-slate-950/45">
+            <ChiefEngineerWorkbenchPanel
+              workspace={workspace}
+              taskCount={tasks.length}
+              blueprintCount={blueprintEvidence.length}
+              missingBlueprintCount={missingBlueprintHandoffTasks.length || missingBlueprintTaskIds.length}
+              directorRunning={directorRunning}
+              hostKind="electron_workbench"
+              attachmentMode="isolated"
+            />
+          </div>
+        </main>
+      ) : (
       <main
         className={cn(
           'grid min-h-0 flex-1 gap-4 overflow-hidden p-4',
@@ -1540,6 +1585,7 @@ export function ChiefEngineerWorkspace({
           </section>
         ) : null}
       </main>
+      )}
     </div>
   );
 }

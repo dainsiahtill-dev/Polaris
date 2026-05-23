@@ -49,6 +49,7 @@ import {
   Database,
   Trash2,
   XCircle,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
@@ -64,6 +65,8 @@ import {
   type DirectorTaskLLMEventsState,
   type DirectorWorkerDetailState,
 } from './DirectorTaskPanel';
+import { DirectorWorkbenchPanel } from './DirectorWorkbenchPanel';
+import { DirectorStrategyPanel } from './DirectorStrategyPanel';
 import {
   cancelDirectorRun,
   cancelDirectorTask,
@@ -94,7 +97,7 @@ import {
   type RoleKernelLLMEventsResponse,
   type RoleKernelTokenBudgetStats,
 } from '@/services';
-import type { PmTask } from '@/types/task';
+import { TaskStatus, type PmTask } from '@/types/task';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 import type { LogEntry } from '@/types/log';
 import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
@@ -107,6 +110,7 @@ interface DirectorWorkspaceProps {
   workers?: RuntimeWorkerState[];
   directorRunning: boolean;
   isStarting?: boolean;
+  startBlockedReason?: string;
   onToggleDirector: () => void | boolean | Promise<void | boolean>;
   onOpenSettings?: () => void;
   currentTaskId?: string | null;
@@ -232,7 +236,7 @@ interface ExecutionSession {
   logs: string[];
 }
 
-type DirectorActiveView = 'tasks' | 'code' | 'activity' | 'terminal' | 'debug';
+type DirectorActiveView = 'tasks' | 'code' | 'activity' | 'terminal' | 'debug' | 'strategy' | 'workbench';
 
 type TaskExecutionStatus = ExecutionTask['status'];
 
@@ -414,6 +418,82 @@ function mergeTaskRows(detailRow: PmTask, liveRow: PmTask): PmTask {
   }
 
   return merged as unknown as PmTask;
+}
+
+function normalizeDirectorCreatedTaskRow(
+  value: unknown,
+  payload: CreateDirectorTaskPayload,
+  fallbackTaskId: string,
+): PmTask | null {
+  const taskId = String(fallbackTaskId || '').trim();
+  if (!taskId) {
+    return null;
+  }
+
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const metadata = record.metadata && typeof record.metadata === 'object'
+    ? record.metadata as Record<string, unknown>
+    : {};
+  const subject = String(record.subject || record.title || payload.subject || taskId).trim();
+  const description = String(record.description || payload.description || subject).trim();
+  const status = String(record.status || 'PENDING').trim().toLowerCase();
+  const priority = String(record.priority || payload.priority || 'MEDIUM').trim().toUpperCase();
+  const acceptance = readStringList(record.acceptance).length > 0
+    ? readStringList(record.acceptance)
+    : payload.metadata.acceptance;
+
+  return {
+    id: taskId,
+    title: subject,
+    subject,
+    goal: String(record.goal || payload.metadata.pm_task_title || subject).trim(),
+    description,
+    status: status === 'completed'
+      ? TaskStatus.COMPLETED
+      : status === 'failed'
+        ? TaskStatus.FAILED
+        : status === 'blocked'
+          ? TaskStatus.BLOCKED
+          : status === 'running' || status === 'claimed' || status === 'in_progress'
+            ? TaskStatus.IN_PROGRESS
+            : TaskStatus.PENDING,
+    state: String(record.state || record.status || 'PENDING'),
+    done: false,
+    completed: false,
+    priority: priority === 'CRITICAL' ? 4 : priority === 'HIGH' ? 3 : priority === 'LOW' ? 1 : 2,
+    acceptance: acceptance.map((descriptionText) => ({ description: descriptionText })),
+    acceptance_criteria: acceptance,
+    command: typeof record.command === 'string' ? record.command : undefined,
+    execution_checklist: readStringList(record.execution_steps || record.execution_checklist || record.steps),
+    target_files: readStringList(record.target_files || record.files),
+    dependencies: readStringList(record.dependencies),
+    blueprint_id: String(record.blueprint_id || payload.metadata.blueprint_id || '').trim() || null,
+    blueprint_path: String(record.blueprint_path || payload.metadata.blueprint_path || '').trim() || null,
+    runtime_blueprint_path: String(record.runtime_blueprint_path || payload.metadata.runtime_blueprint_path || '').trim() || null,
+    pm_task_id: String(record.pm_task_id || metadata.pm_task_id || payload.metadata.pm_task_id || '').trim(),
+    metadata: {
+      ...payload.metadata,
+      ...metadata,
+      director_task_source: metadata.director_task_source || 'local',
+      priority,
+      subject,
+    },
+    created_at: typeof record.created_at === 'string' ? record.created_at : new Date().toISOString(),
+  } as PmTask;
+}
+
+function upsertDirectorFallbackTaskRow(current: PmTask[], task: PmTask): PmTask[] {
+  const taskId = String(task.id || '').trim();
+  if (!taskId) {
+    return current;
+  }
+
+  const existing = current.find((item) => String(item.id || '').trim() === taskId);
+  const nextTask = existing ? mergeTaskRows(existing, task) : task;
+  return [
+    nextTask,
+    ...current.filter((item) => String(item.id || '').trim() !== taskId),
+  ];
 }
 
 function toTaskToken(value: unknown): string {
@@ -1226,6 +1306,7 @@ export function DirectorWorkspace({
   workers = [],
   directorRunning,
   isStarting,
+  startBlockedReason = '',
   onToggleDirector,
   onOpenSettings,
   currentTaskId,
@@ -2006,6 +2087,10 @@ export function DirectorWorkspace({
       }
 
       const createdTaskId = String(result.data.id || result.data.task_id || subject).trim();
+      const createdTask = normalizeDirectorCreatedTaskRow(result.data, payload, createdTaskId);
+      if (createdTask) {
+        setFallbackTasks((current) => upsertDirectorFallbackTaskRow(current, createdTask));
+      }
       setTaskCreateState({
         loading: false,
         message: `已创建 Director 任务: ${createdTaskId}`,
@@ -2020,7 +2105,8 @@ export function DirectorWorkspace({
       try {
         const refreshed = await listDirectorTaskFallbackRows(directorRunning);
         if (refreshed.ok && Array.isArray(refreshed.data)) {
-          setFallbackTasks(refreshed.data as unknown as PmTask[]);
+          const refreshedTasks = refreshed.data as unknown as PmTask[];
+          setFallbackTasks(createdTask ? upsertDirectorFallbackTaskRow(refreshedTasks, createdTask) : refreshedTasks);
         }
       } catch {
         // The create evidence is still valid if the best-effort list refresh fails.
@@ -2238,6 +2324,11 @@ export function DirectorWorkspace({
   }, [onToggleDirector]);
 
   const handleExecute = useCallback(async () => {
+    if (!directorRunning && startBlockedReason) {
+      setTerminalOutput(prev => `${prev}[${new Date().toLocaleTimeString()}] Director 启动被阻断: ${startBlockedReason}\n`);
+      return;
+    }
+
     const nextAction = directorRunning ? '停止' : '启动';
     const targetName = selectedTaskId
       ? executionTasks.find((task) => task.id === selectedTaskId)?.name || selectedTaskId
@@ -2269,7 +2360,16 @@ export function DirectorWorkspace({
     if (data.run_id) {
       void loadDirectorRunEvidence(data.run_id);
     }
-  }, [currentTaskTitle, directorRunning, executionTasks, loadDirectorRunEvidence, selectedTaskId, toggleDirectorWithStatusEvidence, workspace]);
+  }, [
+    currentTaskTitle,
+    directorRunning,
+    executionTasks,
+    loadDirectorRunEvidence,
+    selectedTaskId,
+    startBlockedReason,
+    toggleDirectorWithStatusEvidence,
+    workspace,
+  ]);
 
   const handlePause = useCallback(async () => {
     if (!directorRunning) {
@@ -2321,12 +2421,15 @@ export function DirectorWorkspace({
   const directorToggleBusy = directorToggleStatusEvidence.loading;
   const executionDisabledReason = factoryMode
     ? '工厂模式下由 Factory 编排 Director，不能在嵌入层直接启动。'
-    : '';
+    : !directorRunning
+      ? startBlockedReason
+      : '';
   const directorRunCancelDisabled =
     !directorRunEvidence.runId ||
     directorRunEvidence.loading ||
     directorRunCancelState.loading ||
     isDirectorRunTerminal(directorRunEvidence.data?.status);
+  const shouldShowSideAIDialogue = showAIDialogue && activeView !== 'workbench' && activeView !== 'strategy';
 
   return (
     <div data-testid="director-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
@@ -2433,7 +2536,7 @@ export function DirectorWorkspace({
             size="sm"
             onClick={handleExecute}
             data-testid="director-workspace-execute"
-            disabled={factoryMode || directorToggleBusy}
+            disabled={Boolean(executionDisabledReason) || directorToggleBusy}
             title={executionDisabledReason || undefined}
             className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
           >
@@ -2641,11 +2744,23 @@ export function DirectorWorkspace({
             active={activeView === 'debug'}
             onClick={() => handleViewChange('debug')}
           />
+          <NavButton
+            icon={<SlidersHorizontal className="w-4 h-4" />}
+            label="策略"
+            active={activeView === 'strategy'}
+            onClick={() => handleViewChange('strategy')}
+          />
+          <NavButton
+            icon={<Wrench className="w-4 h-4" />}
+            label="工作台"
+            active={activeView === 'workbench'}
+            onClick={() => handleViewChange('workbench')}
+          />
         </nav>
 
         {/* Main Panel */}
         <PanelGroup direction="horizontal" className="flex-1">
-          <Panel defaultSize={showAIDialogue ? 60 : 85} minSize={40}>
+          <Panel defaultSize={shouldShowSideAIDialogue ? 60 : 85} minSize={40}>
             <div className="h-full overflow-hidden">
               {activeView === 'tasks' && (
                 <DirectorTaskPanelView
@@ -2700,10 +2815,27 @@ export function DirectorWorkspace({
                   onCancelTask={(taskId) => { void handleTaskCancel(taskId); }}
                 />
               )}
+              {activeView === 'strategy' && (
+                <DirectorStrategyPanel
+                  workspace={workspace}
+                  tasksCount={totalTasks}
+                  runningTasks={runningTasks}
+                />
+              )}
+              {activeView === 'workbench' && (
+                <DirectorWorkbenchPanel
+                  workspace={workspace}
+                  hostKind="electron_workbench"
+                  attachmentMode={(selectedTaskId || currentTaskId) ? 'attached_readonly' : 'isolated'}
+                  attachedTaskId={selectedTaskId || currentTaskId || undefined}
+                  tasksCount={totalTasks}
+                  runningTasks={runningTasks}
+                />
+              )}
             </div>
           </Panel>
 
-          {showAIDialogue && (
+          {shouldShowSideAIDialogue && (
             <>
               <PanelResizeHandle className="w-1 bg-white/5 hover:bg-indigo-500/30 transition-colors" />
               <Panel defaultSize={40} minSize={25} maxSize={50}>

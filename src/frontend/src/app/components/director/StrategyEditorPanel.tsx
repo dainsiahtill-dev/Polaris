@@ -1,12 +1,5 @@
-/** StrategyEditorPanel - 策略编辑器面板
- *
- * 功能：
- * - Monaco Editor 代码编辑
- * - JSON Schema 验证
- * - 策略模板选择
- * - 实时语法检查
- */
-import { useState, useCallback, useMemo } from 'react';
+/** StrategyEditorPanel - Director 执行策略编辑器 */
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import Editor from '@monaco-editor/react';
 import {
   FileJson,
@@ -16,81 +9,55 @@ import {
   RefreshCw,
   Copy,
   Code2,
-  Sparkles,
-  History,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 
-// 策略 JSON Schema 定义
-const STRATEGY_SCHEMA = {
-  type: 'object',
-  properties: {
-    name: { type: 'string', minLength: 1 },
-    version: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+$' },
-    config: {
-      type: 'object',
-      properties: {
-        maxIterations: { type: 'number', minimum: 1, maximum: 100 },
-        timeout: { type: 'number', minimum: 1000 },
-        retryOnFailure: { type: 'boolean' },
-        parallelExecution: { type: 'boolean' },
-        autoRollback: { type: 'boolean' },
-      },
-    },
-    rules: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          name: { type: 'string' },
-          enabled: { type: 'boolean' },
-          priority: { type: 'number' },
-          action: { type: 'string', enum: ['approve', 'reject', 'warn', 'skip'] },
-          conditions: { type: 'array' },
-        },
-        required: ['id', 'name', 'action'],
-      },
-    },
-    notifications: {
-      type: 'array',
-      items: { type: 'string', enum: ['email', 'slack', 'webhook', 'desktop'] },
-    },
-  },
-  required: ['name', 'version', 'config'],
-};
+export interface DirectorExecutionStrategy {
+  name: string;
+  version: string;
+  mode: 'serial' | 'parallel';
+  limits: {
+    iterations: number;
+    maxParallelTasks: number;
+    readyTimeoutSeconds: number;
+    claimTimeoutSeconds: number;
+    phaseTimeoutSeconds: number;
+    completeTimeoutSeconds: number;
+    taskTimeoutSeconds: number;
+  };
+  observability: {
+    forever: boolean;
+    showOutput: boolean;
+  };
+  metadata?: {
+    source?: string;
+    workspace?: string;
+    updatedAt?: string;
+  };
+}
 
-// 默认策略模板
-const DEFAULT_STRATEGY = {
-  name: 'default-strategy',
+const DEFAULT_STRATEGY: DirectorExecutionStrategy = {
+  name: 'director-default',
   version: '1.0.0',
-  config: {
-    maxIterations: 10,
-    timeout: 300000,
-    retryOnFailure: true,
-    parallelExecution: false,
-    autoRollback: false,
+  mode: 'parallel',
+  limits: {
+    iterations: 1,
+    maxParallelTasks: 3,
+    readyTimeoutSeconds: 30,
+    claimTimeoutSeconds: 30,
+    phaseTimeoutSeconds: 900,
+    completeTimeoutSeconds: 30,
+    taskTimeoutSeconds: 3600,
   },
-  rules: [
-    {
-      id: 'rule-1',
-      name: '安全检查',
-      enabled: true,
-      priority: 1,
-      action: 'reject',
-      conditions: ['security_scan'],
-    },
-    {
-      id: 'rule-2',
-      name: '测试通过',
-      enabled: true,
-      priority: 2,
-      action: 'approve',
-      conditions: ['test_coverage > 80'],
-    },
-  ],
-  notifications: ['desktop'],
+  observability: {
+    forever: false,
+    showOutput: true,
+  },
+  metadata: {
+    source: 'polaris-settings',
+  },
 };
 
 interface ValidationError {
@@ -101,9 +68,12 @@ interface ValidationError {
 
 interface StrategyEditorPanelProps {
   initialStrategy?: string;
-  onSave?: (strategy: object) => void;
+  onSave?: (strategy: DirectorExecutionStrategy) => void | Promise<void>;
   onValidate?: (isValid: boolean, errors: ValidationError[]) => void;
   readOnly?: boolean;
+  saveState?: 'idle' | 'saving' | 'saved' | 'error';
+  saveMessage?: string | null;
+  saveButtonLabel?: string;
 }
 
 export function StrategyEditorPanel({
@@ -111,6 +81,9 @@ export function StrategyEditorPanel({
   onSave,
   onValidate,
   readOnly = false,
+  saveState = 'idle',
+  saveMessage,
+  saveButtonLabel = '保存',
 }: StrategyEditorPanelProps) {
   const [content, setContent] = useState<string>(
     initialStrategy || JSON.stringify(DEFAULT_STRATEGY, null, 2)
@@ -121,51 +94,44 @@ export function StrategyEditorPanel({
   const [selectedTemplate, setSelectedTemplate] = useState('default');
 
   const templates = useMemo(() => [
-    { id: 'default', name: '默认策略', content: DEFAULT_STRATEGY },
+    { id: 'default', name: '标准并行', content: DEFAULT_STRATEGY },
     {
-      id: 'strict',
-      name: '严格模式',
+      id: 'serial',
+      name: '串行稳态',
       content: {
         ...DEFAULT_STRATEGY,
-        name: 'strict-strategy',
-        config: { ...DEFAULT_STRATEGY.config, maxIterations: 5, autoRollback: true },
+        name: 'director-serial-safe',
+        mode: 'serial',
+        limits: { ...DEFAULT_STRATEGY.limits, maxParallelTasks: 1, phaseTimeoutSeconds: 1200 },
       },
     },
     {
       id: 'fast',
-      name: '快速执行',
+      name: '快速并发',
       content: {
         ...DEFAULT_STRATEGY,
-        name: 'fast-strategy',
-        config: { ...DEFAULT_STRATEGY.config, maxIterations: 20, parallelExecution: true, timeout: 60000 },
+        name: 'director-fast-parallel',
+        mode: 'parallel',
+        limits: { ...DEFAULT_STRATEGY.limits, iterations: 2, maxParallelTasks: 5, phaseTimeoutSeconds: 420, taskTimeoutSeconds: 1800 },
       },
     },
     {
-      id: 'safe',
-      name: '安全优先',
+      id: 'quiet',
+      name: '安静后台',
       content: {
         ...DEFAULT_STRATEGY,
-        name: 'safe-strategy',
-        rules: [
-          ...DEFAULT_STRATEGY.rules,
-          { id: 'rule-3', name: '代码审查', enabled: true, priority: 0, action: 'approve', conditions: ['code_review_approved'] },
-        ],
-        notifications: ['desktop', 'email', 'slack'],
+        name: 'director-background',
+        observability: { forever: false, showOutput: false },
       },
     },
   ], []);
 
-  // JSON Schema 验证
   const validateJson = useCallback((jsonString: string): ValidationError[] => {
     const validationErrors: ValidationError[] = [];
 
-    // 1. 语法检查
     try {
       const parsed = JSON.parse(jsonString);
-
-      // 2. Schema 验证
-      const schemaErrors = validateSchema(parsed, STRATEGY_SCHEMA);
-      validationErrors.push(...schemaErrors);
+      validationErrors.push(...validateDirectorStrategy(parsed));
     } catch (e) {
       const error = e as Error;
       const lineMatch = error.message.match(/position (\d+)/);
@@ -182,62 +148,117 @@ export function StrategyEditorPanel({
     return validationErrors;
   }, []);
 
-  // Schema 验证辅助函数
-  function validateSchema(obj: unknown, schema: object, path = ''): ValidationError[] {
+  function validateDirectorStrategy(obj: unknown): ValidationError[] {
     const errors: ValidationError[] = [];
-    const s = schema as Record<string, unknown>;
 
     if (!obj || typeof obj !== 'object') {
-      errors.push({ path, message: 'Invalid type' });
+      errors.push({ path: 'strategy', message: 'Expected object' });
       return errors;
     }
 
-    const objRecord = obj as Record<string, unknown>;
+    const record = obj as Record<string, unknown>;
+    requireString(record, 'name', errors);
+    requireString(record, 'version', errors, /^\d+\.\d+\.\d+$/);
+    requireEnum(record, 'mode', ['serial', 'parallel'], errors);
 
-    // Check required fields
-    if (Array.isArray(s.required)) {
-      for (const field of s.required) {
-        if (!(field in objRecord)) {
-          errors.push({ path: `${path}.${field}`, message: `Missing required field: ${field}` });
-        }
-      }
+    const limits = readObject(record, 'limits', errors);
+    if (limits) {
+      requireNumber(limits, 'limits.iterations', 'iterations', 1, 100, errors);
+      requireNumber(limits, 'limits.maxParallelTasks', 'maxParallelTasks', 1, 50, errors);
+      requireNumber(limits, 'limits.readyTimeoutSeconds', 'readyTimeoutSeconds', 1, 3600, errors);
+      requireNumber(limits, 'limits.claimTimeoutSeconds', 'claimTimeoutSeconds', 1, 3600, errors);
+      requireNumber(limits, 'limits.phaseTimeoutSeconds', 'phaseTimeoutSeconds', 1, 86400, errors);
+      requireNumber(limits, 'limits.completeTimeoutSeconds', 'completeTimeoutSeconds', 1, 3600, errors);
+      requireNumber(limits, 'limits.taskTimeoutSeconds', 'taskTimeoutSeconds', 1, 86400, errors);
     }
 
-    // Check properties
-    if (s.properties && typeof s.properties === 'object') {
-      for (const [key, propSchema] of Object.entries(s.properties as object)) {
-        if (key in objRecord) {
-          const value = objRecord[key];
-          const prop = propSchema as Record<string, unknown>;
-
-          // Type check
-          if (prop.type) {
-            const actualType = Array.isArray(value) ? 'array' : typeof value;
-            if (actualType !== prop.type && !(prop.type === 'number' && typeof value === 'number')) {
-              errors.push({ path: `${path}.${key}`, message: `Expected ${prop.type}, got ${actualType}` });
-            }
-          }
-
-          // Enum check
-          if (prop.enum && Array.isArray(prop.enum) && !prop.enum.includes(value)) {
-            errors.push({ path: `${path}.${key}`, message: `Value must be one of: ${(prop.enum as string[]).join(', ')}` });
-          }
-
-          // Range check
-          if (prop.minimum !== undefined && typeof value === 'number' && value < (prop.minimum as number)) {
-            errors.push({ path: `${path}.${key}`, message: `Value must be >= ${prop.minimum}` });
-          }
-          if (prop.maximum !== undefined && typeof value === 'number' && value > (prop.maximum as number)) {
-            errors.push({ path: `${path}.${key}`, message: `Value must be <= ${prop.maximum}` });
-          }
-        }
-      }
+    const observability = readObject(record, 'observability', errors);
+    if (observability) {
+      requireBoolean(observability, 'observability.forever', 'forever', errors);
+      requireBoolean(observability, 'observability.showOutput', 'showOutput', errors);
     }
 
     return errors;
   }
 
-  // 处理内容变更
+  useEffect(() => {
+    if (!initialStrategy || isDirty || initialStrategy === content) return;
+    setContent(initialStrategy);
+    const validationErrors = validateJson(initialStrategy);
+    setErrors(validationErrors);
+    setIsValid(validationErrors.length === 0);
+  }, [content, initialStrategy, isDirty, validateJson]);
+
+  function readObject(
+    record: Record<string, unknown>,
+    key: string,
+    errors: ValidationError[],
+  ): Record<string, unknown> | null {
+    const value = record[key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      errors.push({ path: key, message: 'Expected object' });
+      return null;
+    }
+    return value as Record<string, unknown>;
+  }
+
+  function requireString(
+    record: Record<string, unknown>,
+    key: string,
+    errors: ValidationError[],
+    pattern?: RegExp,
+  ): void {
+    const value = record[key];
+    if (typeof value !== 'string' || !value.trim()) {
+      errors.push({ path: key, message: 'Expected non-empty string' });
+      return;
+    }
+    if (pattern && !pattern.test(value)) {
+      errors.push({ path: key, message: 'Expected semantic version, for example 1.0.0' });
+    }
+  }
+
+  function requireEnum(
+    record: Record<string, unknown>,
+    key: string,
+    allowed: string[],
+    errors: ValidationError[],
+  ): void {
+    const value = record[key];
+    if (typeof value !== 'string' || !allowed.includes(value)) {
+      errors.push({ path: key, message: `Expected one of: ${allowed.join(', ')}` });
+    }
+  }
+
+  function requireNumber(
+    record: Record<string, unknown>,
+    path: string,
+    key: string,
+    min: number,
+    max: number,
+    errors: ValidationError[],
+  ): void {
+    const value = record[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      errors.push({ path, message: 'Expected finite number' });
+      return;
+    }
+    if (value < min || value > max) {
+      errors.push({ path, message: `Expected value between ${min} and ${max}` });
+    }
+  }
+
+  function requireBoolean(
+    record: Record<string, unknown>,
+    path: string,
+    key: string,
+    errors: ValidationError[],
+  ): void {
+    if (typeof record[key] !== 'boolean') {
+      errors.push({ path, message: 'Expected boolean' });
+    }
+  }
+
   const handleEditorChange = useCallback((value: string | undefined) => {
     if (!value) return;
 
@@ -253,7 +274,6 @@ export function StrategyEditorPanel({
     }
   }, [validateJson, onValidate]);
 
-  // 处理模板选择
   const handleTemplateSelect = useCallback((templateId: string) => {
     const template = templates.find(t => t.id === templateId);
     if (template) {
@@ -268,22 +288,21 @@ export function StrategyEditorPanel({
     }
   }, [templates, validateJson]);
 
-  // 保存策略
-  const handleSave = useCallback(() => {
-    if (!isValid) return;
+  const handleSave = useCallback(async () => {
+    if (!isValid || saveState === 'saving') return;
 
     try {
-      const parsed = JSON.parse(content);
+      const parsed = JSON.parse(content) as DirectorExecutionStrategy;
       if (onSave) {
-        onSave(parsed);
+        await onSave(parsed);
       }
       setIsDirty(false);
     } catch {
-      // Ignore - already validated
+      // JSON parse errors are already surfaced by validation. Async save errors
+      // are shown by the parent panel through saveMessage.
     }
-  }, [content, isValid, onSave]);
+  }, [content, isValid, onSave, saveState]);
 
-  // 重置为默认
   const handleReset = useCallback(() => {
     setContent(JSON.stringify(DEFAULT_STRATEGY, null, 2));
     setSelectedTemplate('default');
@@ -292,12 +311,10 @@ export function StrategyEditorPanel({
     setErrors([]);
   }, []);
 
-  // 复制到剪贴板
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(content);
+    void navigator.clipboard?.writeText(content);
   }, [content]);
 
-  // Monaco Editor 配置
   const editorOptions = useMemo(() => ({
     minimap: { enabled: false },
     fontSize: 13,
@@ -317,21 +334,38 @@ export function StrategyEditorPanel({
   }), [readOnly]);
 
   return (
-    <div className="h-full flex flex-col bg-[linear-gradient(165deg,rgba(50,35,18,0.40),rgba(28,18,48,0.65),rgba(14,20,40,0.80))]">
-      {/* Header */}
-      <div className="h-14 flex items-center justify-between px-4 border-b border-amber-400/20">
+    <div
+      data-testid="strategy-editor-panel"
+      className="h-full flex flex-col bg-[linear-gradient(165deg,rgba(15,23,42,0.96),rgba(30,27,75,0.78),rgba(8,15,31,0.98))]"
+    >
+      <div className="flex min-h-14 items-center justify-between gap-3 border-b border-indigo-400/20 px-4 py-2">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
-            <Code2 className="w-4 h-4 text-amber-100" />
+          <div className="w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-400/25 flex items-center justify-center shadow-lg shadow-indigo-500/10">
+            <Code2 className="w-4 h-4 text-indigo-200" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-amber-100">策略编辑</h2>
-            <p className="text-[10px] text-amber-400/60 uppercase tracking-wider">Strategy Editor</p>
+            <h2 className="text-sm font-semibold text-indigo-100">执行策略</h2>
+            <p className="text-[10px] text-indigo-300/70 uppercase tracking-wider">Director Settings JSON</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* 验证状态 */}
+        <div className="flex min-w-0 items-center gap-2">
+          {saveMessage ? (
+            <div
+              className={cn(
+                'hidden max-w-[260px] truncate rounded border px-2 py-1 text-[11px] md:block',
+                saveState === 'error'
+                  ? 'border-red-500/25 bg-red-500/10 text-red-200'
+                  : saveState === 'saved'
+                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
+                    : 'border-white/10 bg-white/5 text-slate-300',
+              )}
+              data-testid="strategy-editor-save-message"
+              title={saveMessage}
+            >
+              {saveMessage}
+            </div>
+          ) : null}
           {isValid ? (
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -344,13 +378,13 @@ export function StrategyEditorPanel({
             </div>
           )}
 
-          <div className="w-px h-6 bg-amber-400/20 mx-2" />
+          <div className="w-px h-6 bg-white/10 mx-1" />
 
           <Button
             variant="outline"
             size="sm"
             onClick={handleCopy}
-            className="border-amber-400/30 text-amber-400 hover:bg-amber-500/10"
+            className="border-slate-500/40 text-slate-300 hover:bg-white/5"
           >
             <Copy className="w-3.5 h-3.5 mr-1.5" />
             复制
@@ -360,7 +394,7 @@ export function StrategyEditorPanel({
             variant="outline"
             size="sm"
             onClick={handleReset}
-            className="border-amber-400/30 text-amber-400 hover:bg-amber-500/10"
+            className="border-slate-500/40 text-slate-300 hover:bg-white/5"
           >
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
             重置
@@ -368,34 +402,35 @@ export function StrategyEditorPanel({
 
           <Button
             size="sm"
-            onClick={handleSave}
-            disabled={!isValid || !isDirty}
+            onClick={() => { void handleSave(); }}
+            disabled={!isValid || !isDirty || saveState === 'saving'}
+            data-testid="strategy-editor-save"
             className={cn(
-              'bg-gradient-to-r from-amber-500/20 to-amber-600/20 border border-amber-400/30 text-amber-100 hover:from-amber-500/30 hover:to-amber-600/30',
-              (!isValid || !isDirty) && 'opacity-50 cursor-not-allowed'
+              'bg-emerald-500/15 border border-emerald-400/30 text-emerald-100 hover:bg-emerald-500/25',
+              (!isValid || !isDirty || saveState === 'saving') && 'opacity-50 cursor-not-allowed'
             )}
           >
             <Save className="w-3.5 h-3.5 mr-1.5" />
-            保存
+            {saveState === 'saving' ? '保存中' : saveButtonLabel}
           </Button>
         </div>
       </div>
 
-      {/* Toolbar */}
-      <div className="h-10 flex items-center justify-between px-4 border-b border-amber-400/10 bg-amber-500/5">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-3.5 h-3.5 text-amber-400/70" />
-          <span className="text-xs text-amber-200/60">模板:</span>
+      <div className="flex min-h-10 items-center justify-between gap-3 border-b border-indigo-400/10 bg-indigo-500/5 px-4 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-300/80" />
+          <span className="text-xs text-slate-300/70">模板</span>
           <div className="flex gap-1">
             {templates.map(template => (
               <button
                 key={template.id}
                 onClick={() => handleTemplateSelect(template.id)}
+                data-testid={`strategy-template-${template.id}`}
                 className={cn(
                   'px-2 py-1 rounded text-[10px] transition-all',
                   selectedTemplate === template.id
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-400/30'
-                    : 'text-amber-200/50 hover:text-amber-200/80 hover:bg-white/5'
+                    ? 'bg-indigo-500/20 text-indigo-100 border border-indigo-400/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
                 )}
               >
                 {template.name}
@@ -404,14 +439,13 @@ export function StrategyEditorPanel({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-[10px] text-amber-200/50">
+        <div className="flex shrink-0 items-center gap-2 text-[10px] text-slate-400">
           <FileJson className="w-3 h-3" />
-          <span>JSON Schema</span>
-          {isDirty && <span className="text-amber-400">•</span>}
+          <span>Backend settings mapper</span>
+          {isDirty && <span className="text-cyan-300">•</span>}
         </div>
       </div>
 
-      {/* Editor */}
       <div className="flex-1 overflow-hidden">
         <Editor
           height="100%"
@@ -423,9 +457,8 @@ export function StrategyEditorPanel({
         />
       </div>
 
-      {/* Error Panel */}
       {errors.length > 0 && (
-        <div className="h-32 border-t border-amber-400/20 bg-red-950/20 overflow-auto">
+        <div className="h-32 border-t border-red-400/20 bg-red-950/20 overflow-auto">
           <div className="p-3 space-y-1">
             <div className="text-[10px] uppercase tracking-wider text-red-400/70 mb-2">
               验证错误 ({errors.length})

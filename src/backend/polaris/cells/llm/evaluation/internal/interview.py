@@ -8,20 +8,31 @@
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.llm.evaluation.internal.constants import INTERVIEW_SEMANTIC_ENABLED
-from polaris.cells.llm.evaluation.internal.utils import semantic_criteria_hits, split_thinking_output
+from polaris.cells.llm.evaluation.internal.index import update_index_with_report
+from polaris.cells.llm.evaluation.internal.utils import (
+    new_test_run_id,
+    semantic_criteria_hits,
+    split_thinking_output,
+    utc_now,
+    write_json_atomic,
+)
 from polaris.cells.llm.provider_runtime.public.service import (
     CellAIExecutor,
     CellAIRequest,
     TaskType,
 )
+from polaris.kernelone.storage import resolve_runtime_path
 
 if TYPE_CHECKING:
     from polaris.bootstrap.config import Settings
 
 logger = logging.getLogger(__name__)
+_SAFE_TOKEN_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def build_interview_prompt(
@@ -109,6 +120,139 @@ def evaluate_interview_answer(
         "semantic_score": semantic_score,
         "thinking": thinking,
         "answer": clean_answer,
+    }
+
+
+def _safe_slug(value: str | None, fallback: str) -> str:
+    token = _SAFE_TOKEN_RE.sub("_", str(value or "").strip()).strip("._")
+    return (token or fallback)[:80]
+
+
+def _report_provider_model(report: dict[str, Any], model: str | None) -> str:
+    if model and str(model).strip():
+        return str(model).strip()
+    provider = report.get("provider") if isinstance(report.get("provider"), dict) else {}
+    provider_model = provider.get("model") if isinstance(provider, dict) else None
+    if provider_model and str(provider_model).strip():
+        return str(provider_model).strip()
+    report_model = report.get("model")
+    return str(report_model or "").strip()
+
+
+def _ready_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"passed", "pass", "ready", "success", "ok"}:
+            return True
+        if token in {"failed", "fail", "not_ready", "blocked", "error"}:
+            return False
+    return None
+
+
+def _interview_verdict(report: dict[str, Any]) -> tuple[bool, str, bool]:
+    status = report.get("overallStatus") or report.get("overall_status") or report.get("status") or report.get("result")
+    status_ready = _ready_bool(status)
+    if status_ready is not None:
+        return status_ready, "PASS" if status_ready else "FAIL", True
+
+    final_raw = report.get("final")
+    final: dict[str, Any] = final_raw if isinstance(final_raw, dict) else {}
+    final_ready = _ready_bool(final.get("ready"))
+    if final_ready is not None:
+        grade = str(final.get("grade") or ("PASS" if final_ready else "FAIL")).strip().upper()
+        return final_ready, grade or ("PASS" if final_ready else "FAIL"), True
+
+    summary_raw = report.get("summary")
+    summary: dict[str, Any] = summary_raw if isinstance(summary_raw, dict) else {}
+    summary_ready = _ready_bool(summary.get("ready"))
+    if summary_ready is not None:
+        return summary_ready, "PASS" if summary_ready else "FAIL", True
+
+    evaluation_raw = report.get("evaluation")
+    evaluation: dict[str, Any] = evaluation_raw if isinstance(evaluation_raw, dict) else {}
+    evaluation_ready = _ready_bool(evaluation.get("passed"))
+    if evaluation_ready is not None:
+        return evaluation_ready, "PASS" if evaluation_ready else "FAIL", True
+
+    return False, "UNKNOWN", False
+
+
+def save_interview_report(
+    *,
+    workspace: str,
+    role: str,
+    provider_id: str,
+    model: str | None,
+    report: dict[str, Any],
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Persist an interactive interview report and mirror its verdict to readiness."""
+
+    workspace_path = str(workspace or "").strip()
+    role_id = str(role or "").strip().lower()
+    provider = str(provider_id or "").strip()
+    tested_model = _report_provider_model(report, model)
+    run_id = str(session_id or report.get("id") or new_test_run_id()).strip() or new_test_run_id()
+    timestamp = utc_now()
+    ready, grade, has_verdict = _interview_verdict(report)
+
+    artifact = {
+        "schema_version": 1,
+        "suite": "interactive_interview",
+        "test_run_id": run_id,
+        "timestamp": timestamp,
+        "target": {
+            "role": role_id,
+            "provider_id": provider,
+            "model": tested_model,
+        },
+        "role": role_id,
+        "provider_id": provider,
+        "model": tested_model,
+        "summary": {
+            "ready": ready,
+            "grade": grade,
+            "verdict_known": has_verdict,
+            "source": "interactive_interview",
+        },
+        "final": {
+            "ready": ready,
+            "grade": grade,
+            "next_action": "proceed" if ready else "retry_interview",
+        },
+        "suites": {
+            "interview": {
+                "ok": ready,
+                "grade": grade,
+            },
+        },
+        "report": report,
+    }
+
+    safe_time = timestamp.replace(":", "").replace("+", "Z")
+    filename = "_".join(
+        [
+            _safe_slug(safe_time, "interview"),
+            _safe_slug(role_id, "role"),
+            _safe_slug(provider, "provider"),
+            _safe_slug(run_id, "run"),
+        ]
+    )
+    report_path = Path(resolve_runtime_path(workspace_path, f"runtime/llm_tests/interviews/{filename}.json"))
+    write_json_atomic(str(report_path), artifact)
+
+    readiness_updated = False
+    if has_verdict and role_id and provider and tested_model:
+        update_index_with_report(workspace_path, artifact)
+        readiness_updated = True
+
+    return {
+        "ok": True,
+        "saved": True,
+        "report_path": str(report_path),
+        "readiness_updated": readiness_updated,
     }
 
 

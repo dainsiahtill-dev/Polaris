@@ -9,6 +9,27 @@ vi.mock('@/api', () => ({
   apiFetch: apiFetchMock,
 }));
 
+vi.mock('./ChiefEngineerWorkbenchPanel', () => ({
+  ChiefEngineerWorkbenchPanel: ({
+    workspace,
+    taskCount,
+    blueprintCount,
+    missingBlueprintCount,
+    directorRunning,
+  }: {
+    workspace?: string;
+    taskCount?: number;
+    blueprintCount?: number;
+    missingBlueprintCount?: number;
+    directorRunning?: boolean;
+  }) => (
+    <div data-testid="chief-engineer-workbench-panel-mock">
+      workspace={workspace}; taskCount={taskCount}; blueprintCount={blueprintCount};
+      missingBlueprintCount={missingBlueprintCount}; directorRunning={String(Boolean(directorRunning))}
+    </div>
+  ),
+}));
+
 const baseProps = {
   workspace: 'C:/Temp/Product',
   tasks: [] as PmTask[],
@@ -313,6 +334,33 @@ describe('ChiefEngineerWorkspace', () => {
     fireEvent.click(screen.getByTestId('chief-engineer-open-settings'));
 
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the Chief Engineer RoleSession workbench from the desktop header', async () => {
+    render(
+      <ChiefEngineerWorkspace
+        {...baseProps}
+        tasks={[
+          {
+            id: 'pm-workbench-source',
+            title: 'Workbench blueprint source',
+            status: TaskStatus.PENDING,
+            acceptance: [],
+          } as PmTask,
+        ]}
+      />,
+    );
+
+    expect(await screen.findByTestId('chief-engineer-dialogue')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('chief-engineer-toggle-workbench'));
+
+    const workbench = await screen.findByTestId('chief-engineer-workbench-panel-mock');
+    expect(workbench).toHaveTextContent('workspace=C:/Temp/Product');
+    expect(workbench).toHaveTextContent('taskCount=1');
+    expect(workbench).toHaveTextContent('directorRunning=false');
+    expect(screen.queryByTestId('chief-engineer-dialogue')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-toggle-dialogue')).toBeDisabled();
   });
 
   it('does not treat task summary as blueprint evidence', async () => {
@@ -922,6 +970,97 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByTitle('missing 1')).toBeInTheDocument();
     expect(screen.getByTitle('PM-missing')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
+  });
+
+  it('blocks Director start from diagnostics even when Director task rows are temporarily empty', async () => {
+    const onToggleDirector = vi.fn();
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === '/v2/director/tasks?source=auto' || path === '/v2/director/tasks?source=local') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/director/workers') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/chief-engineer/diagnostics') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: false,
+            role: 'chief_engineer',
+            generated_at: '2026-05-23T08:00:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            blueprints: {
+              ok: false,
+              status: 'empty',
+              source: 'runtime/blueprints',
+              total: 0,
+              loadable: 0,
+              invalid_payloads: 0,
+              planned_tasks: 2,
+              covered_tasks: 0,
+              missing_task_ids: ['PM-plan-1', 'PM-plan-2'],
+              director_handoff_ready: false,
+              latest_updated_at: null,
+              error: null,
+            },
+            issues: ['blueprint_coverage_incomplete'],
+          }),
+        });
+      }
+      if (path === '/v2/chief-engineer/blueprints') {
+        return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
+      }
+      if (path === '/v2/roles/sessions') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, session: { id: 'ce-session-1' } }),
+        });
+      }
+      if (path === '/v2/roles/sessions/ce-session-1') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            session: {
+              id: 'ce-session-1',
+              role: 'chief_engineer',
+              host_kind: 'electron_workbench',
+              attachment_mode: 'isolated',
+              state: 'active',
+              message_count: 0,
+            },
+          }),
+        });
+      }
+      if (path === '/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'chief_engineer',
+            capabilities: { electron_workbench: ['read_files', 'write_blueprint'] },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ok: true, ready: true, configured: true, role: 'chief_engineer' }),
+      });
+    });
+
+    render(<ChiefEngineerWorkspace {...baseProps} onToggleDirector={onToggleDirector} tasks={[]} />);
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/diagnostics'));
+    await waitFor(() => expect(screen.getByTitle('0/2')).toBeInTheDocument());
+    expect(screen.getByTitle('PM-plan-1, PM-plan-2')).toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-diagnostics-issues')).toHaveTextContent('blueprint_coverage_incomplete');
+    const startDirector = screen.getByTestId('chief-engineer-start-director');
+
+    expect(startDirector).toBeDisabled();
+    expect(startDirector).toHaveAttribute('title', '诊断显示 2 个 PM 任务缺少蓝图证据，不能启动 Director');
+
+    fireEvent.click(startDirector);
+    expect(onToggleDirector).not.toHaveBeenCalled();
   });
 
   it('loads Director task pool metrics through the backend route when runtime tasks are absent', async () => {

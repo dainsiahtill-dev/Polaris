@@ -25,8 +25,37 @@ vi.mock('./PMAIDialoguePanel', () => ({
 }));
 
 vi.mock('./PMTaskPanel', () => ({
-  PMTaskPanel: ({ tasks }: { tasks: Array<{ id: string }> }) => (
-    <div data-testid="pm-task-panel-mock">tasks={tasks.length}</div>
+  PMTaskPanel: ({
+    tasks,
+    onTaskCreated,
+  }: {
+    tasks: Array<{ id: string }>;
+    onTaskCreated?: (task: {
+      id: string;
+      title: string;
+      status: string;
+      done: boolean;
+      priority: number;
+      acceptance: Array<{ description: string }>;
+    }) => void;
+  }) => (
+    <div data-testid="pm-task-panel-mock">
+      tasks={tasks.length}; ids={tasks.map((task) => task.id).join(',')}
+      <button
+        type="button"
+        data-testid="pm-task-panel-mock-create"
+        onClick={() => onTaskCreated?.({
+          id: 'PM-created-sync',
+          title: 'Created PM task sync',
+          status: 'pending',
+          done: false,
+          priority: 1,
+          acceptance: [{ description: 'synced' }],
+        })}
+      >
+        create
+      </button>
+    </div>
   ),
 }));
 
@@ -36,6 +65,22 @@ vi.mock('./PMDocumentPanel', () => ({
 
 vi.mock('./PMDiagnosticsPanel', () => ({
   PMDiagnosticsPanel: () => null,
+}));
+
+vi.mock('./PMWorkbenchPanel', () => ({
+  PMWorkbenchPanel: ({
+    pmRunning,
+    workspace,
+    taskCount,
+  }: {
+    pmRunning?: boolean;
+    workspace?: string;
+    taskCount?: number;
+  }) => (
+    <div data-testid="pm-workbench-panel-mock">
+      workspace={workspace}; taskCount={taskCount}; pmRunning={String(pmRunning)}
+    </div>
+  ),
 }));
 
 vi.mock('./QualityGateCard', () => ({
@@ -152,6 +197,32 @@ describe('PMWorkspace history panel', () => {
     expect(evidence).toHaveTextContent('merged=2');
     expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('tasks=2');
     expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveTextContent('taskCount=2');
+  });
+
+  it('keeps the PM task evidence list in sync when the task panel creates a task', async () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('tasks=0'));
+
+    fireEvent.click(screen.getByTestId('pm-task-panel-mock-create'));
+
+    await waitFor(() => expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('tasks=1'));
+    expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('PM-created-sync');
+    const evidence = screen.getByTestId('pm-task-backend-evidence');
+    expect(evidence).toHaveTextContent('/v2/pm/tasks');
+    expect(evidence).toHaveTextContent('backend=1');
+    expect(evidence).toHaveTextContent('merged=1');
+    expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveTextContent('taskCount=1');
   });
 
   it('loads backend task history and Director dispatch history when opened', async () => {
@@ -356,6 +427,39 @@ describe('PMWorkspace history panel', () => {
     expect(evidence).toHaveTextContent('pid=5150');
     expect(evidence).toHaveTextContent('mode=loop');
     expect(evidence).toHaveTextContent('source=status_file');
+  });
+
+  it('exposes the PM RoleSession orchestration workbench from the desktop navigation', async () => {
+    render(
+      <PMWorkspace
+        tasks={[
+          {
+            id: 'PM-workbench-source',
+            title: 'Workbench source task',
+            status: 'pending',
+            done: false,
+            priority: 1,
+            acceptance: [],
+          },
+        ]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveTextContent('taskCount=1'));
+
+    fireEvent.click(screen.getByTitle('编排'));
+
+    const workbench = await screen.findByTestId('pm-workbench-panel-mock');
+    expect(workbench).toHaveTextContent('workspace=C:/Temp/Product');
+    expect(workbench).toHaveTextContent('taskCount=1');
+    expect(workbench).toHaveTextContent('pmRunning=false');
+    expect(screen.queryByTestId('pm-ai-dialogue-mock')).not.toBeInTheDocument();
   });
 
   it('hides the standalone PM header when embedded in Factory mode', () => {

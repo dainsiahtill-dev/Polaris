@@ -30,6 +30,7 @@ from polaris.cells.llm.evaluation.internal.interview import (
     evaluate_interview_answer,
     generate_interview_answer,
     generate_interview_answer_streaming,
+    save_interview_report,
 )
 from polaris.cells.llm.evaluation.internal.readiness_tests import (
     run_readiness_tests,
@@ -85,6 +86,7 @@ __all__ = [
     "run_readiness_tests_streaming",
     "run_strategy_benchmark_suite",
     "run_tool_calling_matrix_suite",
+    "save_interview_report",
     "update_index_with_report",
     "validate_director_safe_scope",
     "validate_no_hallucinated_paths",

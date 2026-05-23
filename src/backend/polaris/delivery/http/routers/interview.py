@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import (
     generate_interview_answer,
     generate_interview_answer_streaming,
+    save_interview_report,
 )
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas import (
@@ -55,8 +56,16 @@ async def run_interactive_interview_question(settings, role, provider_id, model,
 
 
 def save_interactive_interview_report(settings, role, provider_id, model, report, **kwargs):
-    """兼容旧接口的保存报告函数（简化实现）"""
-    return {"ok": True, "saved": True}
+    """兼容旧接口的保存报告函数"""
+    workspace = str(getattr(settings, "workspace", "") or getattr(settings, "workspace_path", "") or "").strip()
+    return save_interview_report(
+        workspace=workspace,
+        role=role,
+        provider_id=provider_id,
+        model=model,
+        report=report,
+        session_id=kwargs.get("session_id"),
+    )
 
 
 async def run_interactive_interview_streaming(
