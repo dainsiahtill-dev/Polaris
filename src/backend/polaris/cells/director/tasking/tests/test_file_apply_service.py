@@ -176,23 +176,44 @@ class TestFileApplyService:
 
         service = FileApplyService(workspace=str(tmp_path))
         applied, errors = service.apply_response_operations(
-            "```file: src/health.ts\n"
-            "export function health(): string {\n"
-            "  return 'ok';\n"
-            "}\n"
-            "```"
+            "```file: src/health.ts\nexport function health(): string {\n  return 'ok';\n}\n```"
         )
 
         assert errors == []
         assert applied == [
             {
                 "path": "src/health.ts",
-                "content": "export function health(): string {\n  return 'ok';\n}\n",
+                "content": "export function health(): string {\n  return 'ok';\n}",
             }
         ]
         assert (tmp_path / "src" / "health.ts").read_text(encoding="utf-8").strip() == (
             "export function health(): string {\n  return 'ok';\n}"
         )
+
+    def test_apply_response_operations_accepts_nested_markdown_fences(self, tmp_path: Path) -> None:
+        """Regression: nested README fences must not become bogus file paths."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        service = FileApplyService(workspace=str(tmp_path))
+        applied, errors = service.apply_response_operations(
+            "```file: README.md\n"
+            "# Demo\n\n"
+            "```bash\n"
+            "python -c \"import tomllib; tomllib.load(open('pyproject.toml', 'rb'))\"\n"
+            "```\n\n"
+            "Done.\n"
+            "```\n"
+            "```file: pyproject.toml\n"
+            "[project]\n"
+            'name = "demo"\n'
+            'version = "0.1.0"\n'
+            "```"
+        )
+
+        assert errors == []
+        assert [item["path"] for item in applied] == ["README.md", "pyproject.toml"]
+        assert "python -c" in (tmp_path / "README.md").read_text(encoding="utf-8")
+        assert (tmp_path / "pyproject.toml").read_text(encoding="utf-8").startswith("[project]\n")
 
 
 if __name__ == "__main__":

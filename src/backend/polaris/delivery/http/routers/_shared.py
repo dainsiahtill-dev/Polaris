@@ -27,48 +27,110 @@ def _workspace_value(settings: Any) -> str:
     return active_workspace_value(settings)
 
 
+def _role_key(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _lookup_role_status(index: dict[str, Any], role: str) -> dict[str, Any] | None:
+    roles = index.get("roles") if isinstance(index.get("roles"), dict) else {}
+    if not isinstance(roles, dict):
+        return None
+
+    direct = roles.get(role)
+    if isinstance(direct, dict):
+        return direct
+
+    target = _role_key(role)
+    for key, value in roles.items():
+        if _role_key(key) == target and isinstance(value, dict):
+            return value
+    return None
+
+
+def _provider_role_compatible(role: str, provider_status: dict[str, Any] | None) -> bool:
+    if not isinstance(provider_status, dict):
+        return False
+    tested_role = _role_key(provider_status.get("role"))
+    return not tested_role or tested_role == _role_key(role)
+
+
+def _readiness_candidate_issue(
+    *,
+    provider_id: str,
+    model: str,
+    tested_provider_id: str,
+    tested_model: str,
+) -> str:
+    if not provider_id or not model:
+        return "LLM binding is incomplete"
+    if tested_provider_id and tested_provider_id != provider_id:
+        return f"LLM readiness was tested for provider {tested_provider_id}, not {provider_id}"
+    if not tested_model:
+        return "LLM readiness was not tested for the current model"
+    if not model_identity_equal(tested_model, model):
+        return f"LLM readiness was tested for model {tested_model}, not {model}"
+    return ""
+
+
 def _ensure_llm_ready(state: AppState, role: str) -> None:
+    role_key = _role_key(role)
     workspace = _workspace_value(state.settings)
     cache_root = build_cache_root(str(state.settings.ramdisk_root or ""), workspace)
     config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
     index = load_llm_test_index(workspace)
-    role_status = (index.get("roles") or {}).get(role) if isinstance(index, dict) else None
-    if not isinstance(role_status, dict) or not role_status.get("ready"):
-        raise HTTPException(status_code=409, detail=f"{role} LLM not ready; run tests first")
-    role_cfg = (config.get("roles") or {}).get(role, {}) if isinstance(config.get("roles"), dict) else {}
+    role_status = _lookup_role_status(index, role_key) if isinstance(index, dict) else None
+    roles_cfg = config.get("roles") if isinstance(config.get("roles"), dict) else {}
+    role_cfg = roles_cfg.get(role_key, {}) if isinstance(roles_cfg, dict) else {}
+    if not isinstance(role_cfg, dict) or not role_cfg:
+        for key, value in roles_cfg.items():
+            if _role_key(key) == role_key and isinstance(value, dict):
+                role_cfg = value
+                break
     providers = config.get("providers") if isinstance(config.get("providers"), dict) else {}
     provider_id = str(role_cfg.get("provider_id") or "").strip() if isinstance(role_cfg, dict) else ""
     model = str(role_cfg.get("model") or "").strip() if isinstance(role_cfg, dict) else ""
-    if not provider_id or not model:
-        raise HTTPException(status_code=409, detail=f"{role} LLM binding is incomplete")
 
     provider_index = index.get("providers") if isinstance(index.get("providers"), dict) else {}
     provider_status = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
-    tested_provider_id = str(role_status.get("provider_id") or "").strip()
-    if not tested_provider_id and isinstance(provider_status, dict) and provider_status.get("model"):
-        tested_provider_id = provider_id
-    tested_model = str(role_status.get("model") or "").strip()
-    if not tested_model and isinstance(provider_status, dict):
-        tested_model = str(provider_status.get("model") or "").strip()
+    candidates: list[tuple[str, str]] = []
+    if isinstance(role_status, dict) and bool(role_status.get("ready")):
+        candidates.append(
+            (
+                str(role_status.get("provider_id") or "").strip(),
+                str(role_status.get("model") or "").strip(),
+            )
+        )
+    if (
+        isinstance(provider_status, dict)
+        and bool(provider_status.get("ready"))
+        and _provider_role_compatible(role_key, provider_status)
+    ):
+        candidates.append(
+            (
+                provider_id,
+                str(provider_status.get("model") or "").strip(),
+            )
+        )
 
-    if tested_provider_id and tested_provider_id != provider_id:
-        raise HTTPException(
-            status_code=409,
-            detail=f"{role} LLM readiness was tested for provider {tested_provider_id}, not {provider_id}",
+    first_issue = f"{role_key} LLM not ready; run tests first"
+    for tested_provider_id, tested_model in candidates:
+        issue = _readiness_candidate_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=tested_provider_id,
+            tested_model=tested_model,
         )
-    if not tested_model:
-        raise HTTPException(status_code=409, detail=f"{role} LLM readiness was not tested for the current model")
-    if not model_identity_equal(tested_model, model):
-        raise HTTPException(
-            status_code=409,
-            detail=f"{role} LLM readiness was tested for model {tested_model}, not {model}",
-        )
+        if not issue:
+            break
+        first_issue = f"{role_key} {issue}"
+    else:
+        raise HTTPException(status_code=409, detail=first_issue)
 
     provider_cfg = providers.get(provider_id, {}) if isinstance(providers, dict) else {}
-    if not is_role_runtime_supported(role, provider_id, provider_cfg):
+    if not is_role_runtime_supported(role_key, provider_id, provider_cfg):
         raise HTTPException(
             status_code=409,
-            detail=f"{role} provider not supported for runtime",
+            detail=f"{role_key} provider not supported for runtime",
         )
 
 

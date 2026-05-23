@@ -14,6 +14,7 @@ const serviceMocks = vi.hoisted(() => ({
   cancelDirectorTask: vi.fn(),
   createDirectorTask: vi.fn(),
   getDirectorCapabilities: vi.fn(),
+  getDirectorDiagnostics: vi.fn(),
   getDirectorRun: vi.fn(),
   getDirectorStatus: vi.fn(),
   getDirectorTask: vi.fn(),
@@ -63,6 +64,48 @@ describe.sequential('Director capability desktop integration', () => {
     serviceMocks.getDirectorCapabilities.mockResolvedValue({
       ok: true,
       data: { ok: true, role: 'director', capabilities: { electron_workbench: ['read_files'] } },
+    });
+    serviceMocks.getDirectorDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        role: 'director',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: 'C:/Temp/Product',
+        status: {
+          ok: true,
+          state: 'IDLE',
+          running: false,
+          source: 'workflow',
+          projection_source: 'director_merged',
+        },
+        tasks: {
+          ok: true,
+          source: 'workflow',
+          total: 1,
+          pending: 1,
+          claimed: 0,
+          running: 0,
+          blocked: 0,
+          failed: 0,
+          completed: 0,
+          cancelled: 0,
+          ready_to_execute: 1,
+          ready_task_ids: ['director-task-1'],
+          blocked_task_ids: [],
+          running_task_ids: [],
+        },
+        workers: {
+          ok: true,
+          total: 1,
+          idle: 1,
+          busy: 0,
+          healthy: 1,
+          unhealthy: 0,
+          active_task_ids: [],
+        },
+        issues: [],
+      },
     });
     serviceMocks.getRoleKernelCacheStats.mockResolvedValue({
       ok: true,
@@ -222,6 +265,70 @@ describe.sequential('Director capability desktop integration', () => {
     expect(strip).toHaveTextContent('execute commands');
     expect(strip).toHaveTextContent('apply patches');
     expect(screen.getByTestId('director-delete-capability')).toHaveTextContent('delete_files blocked');
+  });
+
+  it('renders Director readiness diagnostics from the backend route', async () => {
+    serviceMocks.getDirectorDiagnostics.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: false,
+        role: 'director',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: 'C:/Temp/Product',
+        status: {
+          ok: true,
+          state: 'IDLE',
+          running: false,
+          source: 'workflow',
+          projection_source: 'director_merged',
+        },
+        tasks: {
+          ok: false,
+          source: 'workflow',
+          total: 2,
+          pending: 1,
+          claimed: 0,
+          running: 0,
+          blocked: 1,
+          failed: 0,
+          completed: 0,
+          cancelled: 0,
+          ready_to_execute: 1,
+          ready_task_ids: ['director-ready'],
+          blocked_task_ids: ['director-blocked'],
+          running_task_ids: [],
+        },
+        workers: {
+          ok: true,
+          total: 1,
+          idle: 1,
+          busy: 0,
+          healthy: 1,
+          unhealthy: 0,
+          active_task_ids: [],
+        },
+        issues: ['director_tasks_blocked'],
+      },
+    });
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(serviceMocks.getDirectorDiagnostics).toHaveBeenCalledTimes(1));
+
+    const strip = await screen.findByTestId('director-readiness-diagnostics');
+    expect(strip).toHaveTextContent('/v2/director/diagnostics');
+    expect(strip).toHaveTextContent('blocked');
+    expect(strip).toHaveTextContent('ready 1/2');
+    expect(strip).toHaveTextContent('idle 1/1');
+    expect(strip).toHaveTextContent('tasks blocked');
   });
 
   it('opens the shared settings surface from the Director header control', () => {
@@ -833,11 +940,6 @@ describe.sequential('Director capability desktop integration', () => {
   });
 
   it('hides the standalone Director header when embedded in Factory mode', async () => {
-    serviceMocks.getDirectorCapabilities.mockResolvedValueOnce({
-      ok: true,
-      data: { ok: true, role: 'director', capabilities: { electron_workbench: ['read_files'] } },
-    });
-
     render(
       <DirectorWorkspace
         workspace="C:/Temp/Product"
@@ -850,7 +952,11 @@ describe.sequential('Director capability desktop integration', () => {
     );
 
     expect(screen.queryByTestId('director-workspace-back')).not.toBeInTheDocument();
-    expect(await screen.findByTestId('director-capability-strip')).toBeInTheDocument();
+    expect(screen.queryByTestId('director-capability-strip')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('director-kernel-diagnostics-strip')).not.toBeInTheDocument();
+    expect(await screen.findByTestId('director-readiness-diagnostics')).toBeInTheDocument();
+    expect(serviceMocks.getDirectorCapabilities).not.toHaveBeenCalled();
+    expect(serviceMocks.getRoleKernelCacheStats).not.toHaveBeenCalled();
   });
 
   it('disables Director task execution controls when embedded in Factory mode', async () => {

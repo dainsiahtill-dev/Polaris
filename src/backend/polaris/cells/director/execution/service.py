@@ -16,7 +16,7 @@ from enum import Enum, auto
 from typing import Any
 
 from polaris.cells.director.tasking.public import TaskQueueConfig, TaskService, WorkerPoolConfig, WorkerService
-from polaris.domain.entities import Task, TaskPriority, TaskStatus, Worker, WorkerStatus
+from polaris.domain.entities import Task, TaskPriority, TaskResult, TaskStatus, Worker, WorkerStatus
 from polaris.domain.entities.capability import Role, RoleConfig, get_role_config
 from polaris.domain.entities.policy import Policy
 from polaris.domain.services import (
@@ -635,7 +635,7 @@ class DirectorService(DirectorCodeIntelMixin):
         try:
             from polaris.domain.entities import TaskResult
 
-            result = await self._run_command(task.command, timeout=task.timeout_seconds)
+            result = await self._execute_task_work(task)
             await self._task_service.on_task_completed(task_id_str, result)
             self._metrics["tasks_completed"] += 1
             changed_files = [e.path for e in (result.evidence or []) if e.type == "file" and e.path]
@@ -783,7 +783,21 @@ class DirectorService(DirectorCodeIntelMixin):
                 exc_info=True,
             )
 
-    async def _run_command(self, command: str | None, timeout: int) -> Any:
+    async def _execute_task_work(self, task: Task) -> TaskResult:
+        """Execute either a command task or a PM-authored file/code task."""
+        if str(task.command or "").strip():
+            return await self._run_command(task.command, timeout=task.timeout_seconds)
+
+        from polaris.cells.director.tasking.public import WorkerExecutor
+
+        executor = WorkerExecutor(
+            workspace=self.config.workspace,
+            message_bus=self._bus,
+            worker_id="director-inline-worker",
+        )
+        return await executor.execute(task)
+
+    async def _run_command(self, command: str | None, timeout: int) -> TaskResult:
         """Execute a command using the secure CommandExecutionService.
 
         Args:

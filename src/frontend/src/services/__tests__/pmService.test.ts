@@ -703,6 +703,56 @@ describe('pmService', () => {
     });
   });
 
+  describe('getDirectorDiagnostics', () => {
+    it('should call Director diagnostics endpoint', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          ok: true,
+          role: 'director',
+          generated_at: '2026-05-23T00:00:00Z',
+          workspace: 'C:/Temp/Product',
+          status: { ok: true, state: 'IDLE', running: false, source: 'workflow', projection_source: 'director_merged' },
+          tasks: {
+            ok: true,
+            source: 'workflow',
+            total: 1,
+            pending: 1,
+            claimed: 0,
+            running: 0,
+            blocked: 0,
+            failed: 0,
+            completed: 0,
+            cancelled: 0,
+            ready_to_execute: 1,
+            ready_task_ids: ['director-task-1'],
+            blocked_task_ids: [],
+            running_task_ids: [],
+          },
+          workers: {
+            ok: true,
+            total: 1,
+            idle: 1,
+            busy: 0,
+            healthy: 1,
+            unhealthy: 0,
+            active_task_ids: [],
+          },
+          issues: [],
+        },
+      });
+
+      const result = await pmService.getDirectorDiagnostics();
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/director/diagnostics',
+        'Failed to load Director diagnostics',
+      );
+      expect(result.ok).toBe(true);
+      expect(result.data?.tasks.ready_to_execute).toBe(1);
+    });
+  });
+
   describe('listDirectorTasks', () => {
     it('should call apiGet with correct path', async () => {
       mockApiGet.mockResolvedValueOnce({
@@ -832,6 +882,39 @@ describe('pmService', () => {
         {
           id: 'director-task-1',
           subject: 'Local task',
+          metadata: { director_task_source: 'local' },
+        },
+      ]);
+    });
+
+    it('should deduplicate local rows already returned by idle auto fallback', async () => {
+      mockApiGet
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [{ id: 'director-task-1', subject: 'Auto local fallback' }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [{ id: 'director-task-1', subject: 'Local task canonical' }],
+        });
+
+      const result = await pmService.listDirectorTaskFallbackRows(false);
+
+      expect(mockApiGet).toHaveBeenNthCalledWith(
+        1,
+        '/v2/director/tasks?source=auto',
+        'Failed to list Director tasks',
+      );
+      expect(mockApiGet).toHaveBeenNthCalledWith(
+        2,
+        '/v2/director/tasks?source=local',
+        'Failed to list Director tasks',
+      );
+      expect(result.ok).toBe(true);
+      expect(result.data).toEqual([
+        {
+          id: 'director-task-1',
+          subject: 'Local task canonical',
           metadata: { director_task_source: 'local' },
         },
       ]);

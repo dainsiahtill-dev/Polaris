@@ -7,10 +7,13 @@ Designed to be testable as pure functions with minimal side effects.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def _get_fs_adapter() -> Any:
@@ -70,6 +73,16 @@ def write_json_atomic(path: str, data: Any) -> None:
     fs.write_json(logical_path, data, indent=2, ensure_ascii=False)
 
 
+def _write_text_utf8(path: str, content: str) -> None:
+    if not path:
+        return
+    fs = _build_kernel_fs_for_path(path)
+    if fs is None:
+        raise ValueError(f"Path is outside KernelFileSystem managed roots: {path}")
+    logical_path = fs.to_logical_path(path)
+    fs.write_text(logical_path, content, encoding="utf-8")
+
+
 def read_json_safe(path: str) -> dict[str, Any] | None:
     """Read JSON file safely, returning None on failure.
 
@@ -115,6 +128,102 @@ def persist_pm_payload(
         write_json_atomic(path, normalized)
 
 
+def _clean_plan_text(value: Any, max_len: int = 240) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    elif isinstance(value, (list, tuple, set)):
+        text = ", ".join(_clean_plan_text(item, max_len=80) for item in value)
+    else:
+        text = str(value)
+    text = text.replace("#", "").replace("\r", " ").replace("\n", " ")
+    text = _WHITESPACE_RE.sub(" ", text).strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3].rstrip() + "..."
+
+
+def _list_plan_values(value: Any, limit: int = 5) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_values: list[Any] = [item.strip() for item in value.splitlines() if item.strip()]
+        if not raw_values:
+            raw_values = [value]
+    elif isinstance(value, list):
+        raw_values = value
+    elif isinstance(value, (tuple, set)):
+        raw_values = list(value)
+    else:
+        raw_values = [value]
+
+    cleaned = [_clean_plan_text(item) for item in raw_values]
+    return [item for item in cleaned if item][:limit]
+
+
+def _build_plan_from_pm_payload(normalized: dict[str, Any]) -> str:
+    goal = _clean_plan_text(
+        normalized.get("overall_goal")
+        or normalized.get("goal")
+        or normalized.get("focus")
+        or "Execute PM task contract",
+    )
+    lines = [
+        "# Plan",
+        "",
+        "Generated from the PM task contract because runtime/contracts/plan.md was missing.",
+        "",
+        "## Goal",
+        goal or "Execute PM task contract",
+        "",
+        "## Dispatch Tasks",
+        "",
+    ]
+
+    tasks = normalized.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        lines.extend(["1. Execute PM task contract", "   - ID: pm-task-contract"])
+        return "\n".join(lines).rstrip() + "\n"
+
+    for index, task in enumerate(tasks, start=1):
+        if not isinstance(task, dict):
+            continue
+        title = _clean_plan_text(task.get("title") or task.get("name") or task.get("id") or f"Task {index}")
+        task_id = _clean_plan_text(task.get("id") or f"task-{index}", max_len=120)
+        task_goal = _clean_plan_text(task.get("goal") or task.get("description") or task.get("summary"))
+        lines.append(f"{index}. {title or f'Task {index}'}")
+        lines.append(f"   - ID: {task_id or f'task-{index}'}")
+        if task_goal:
+            lines.append(f"   - Goal: {task_goal}")
+
+        target_files = _list_plan_values(task.get("target_files") or task.get("files") or task.get("paths"))
+        if target_files:
+            lines.append(f"   - Target files: {', '.join(target_files)}")
+
+        acceptance = _list_plan_values(task.get("acceptance") or task.get("acceptance_criteria"))
+        if acceptance:
+            lines.append("   - Acceptance:")
+            lines.extend(f"     - {item}" for item in acceptance)
+
+        checklist = _list_plan_values(task.get("execution_checklist") or task.get("checklist") or task.get("steps"))
+        if checklist:
+            lines.append("   - Checklist:")
+            lines.extend(f"     - {item}" for item in checklist)
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _ensure_runtime_plan_file(normalized: dict[str, Any], runtime_plan_full: str) -> None:
+    from polaris.cells.docs.court_workflow.public.service import ensure_plan_file
+
+    try:
+        ensure_plan_file(runtime_plan_full, auto_continue=True)
+    except FileNotFoundError:
+        _write_text_utf8(runtime_plan_full, _build_plan_from_pm_payload(normalized))
+        ensure_plan_file(runtime_plan_full, auto_continue=True)
+
+
 def ensure_engine_dispatch_contracts(
     *,
     normalized: dict[str, Any],
@@ -130,15 +239,13 @@ def ensure_engine_dispatch_contracts(
         runtime_pm_tasks_full: Runtime contract path
         runtime_plan_full: Runtime plan path
     """
-    from polaris.cells.docs.court_workflow.public.service import ensure_plan_file
-
     for path in (runtime_pm_tasks_full, run_pm_tasks):
         if not path:
             continue
         write_json_atomic(path, normalized)
 
     if runtime_plan_full:
-        ensure_plan_file(runtime_plan_full, auto_continue=True)
+        _ensure_runtime_plan_file(normalized, runtime_plan_full)
 
 
 def persist_director_result(

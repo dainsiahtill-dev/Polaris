@@ -211,6 +211,27 @@ describe('PMTaskPanel', () => {
     expect(screen.getByText('runtime/contracts/pm-42.json')).toBeInTheDocument();
   });
 
+  it('renders PM idle task-search projections without error banners', async () => {
+    searchPmTasksMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        query: 'audit',
+        results: [],
+        count: 0,
+        initialized: false,
+        reason: 'PM_NOT_INITIALIZED',
+      },
+    });
+
+    render(<PMTaskPanelHarness />);
+
+    fireEvent.change(screen.getByPlaceholderText('搜索任务...'), { target: { value: 'audit' } });
+
+    await waitFor(() => expect(searchPmTasksMock).toHaveBeenCalledWith('audit', 20));
+    expect(await screen.findByTestId('pm-task-search-empty')).toHaveTextContent('后端未返回匹配任务');
+    expect(screen.queryByTestId('pm-task-search-error')).not.toBeInTheDocument();
+  });
+
   it('creates PM tasks through the backend task create route', async () => {
     createPmTaskMock.mockResolvedValueOnce({
       ok: true,

@@ -493,6 +493,55 @@ export interface DirectorWorker {
   [key: string]: unknown;
 }
 
+export interface DirectorDiagnosticsStatusSection {
+  ok: boolean;
+  state: string;
+  running: boolean;
+  source: string;
+  projection_source: string;
+  error?: string | null;
+}
+
+export interface DirectorDiagnosticsTaskSection {
+  ok: boolean;
+  source: string;
+  total: number;
+  pending: number;
+  claimed: number;
+  running: number;
+  blocked: number;
+  failed: number;
+  completed: number;
+  cancelled: number;
+  ready_to_execute: number;
+  ready_task_ids: string[];
+  blocked_task_ids: string[];
+  running_task_ids: string[];
+  error?: string | null;
+}
+
+export interface DirectorDiagnosticsWorkerSection {
+  ok: boolean;
+  total: number;
+  idle: number;
+  busy: number;
+  healthy: number;
+  unhealthy: number;
+  active_task_ids: string[];
+  error?: string | null;
+}
+
+export interface DirectorDiagnosticsResponse {
+  ok: boolean;
+  role: 'director';
+  generated_at: string;
+  workspace: string;
+  status: DirectorDiagnosticsStatusSection;
+  tasks: DirectorDiagnosticsTaskSection;
+  workers: DirectorDiagnosticsWorkerSection;
+  issues: string[];
+}
+
 export interface PmTaskHistoryEntry {
   id?: string;
   task_id?: string;
@@ -887,6 +936,16 @@ export async function getDirectorCapabilities(): Promise<ApiResult<DirectorCapab
   return apiGet<DirectorCapabilitiesResponse>(
     '/v2/director/capabilities',
     'Failed to load Director capabilities',
+  );
+}
+
+/**
+ * 获取 Director 桌面运行前诊断。
+ */
+export async function getDirectorDiagnostics(): Promise<ApiResult<DirectorDiagnosticsResponse>> {
+  return apiGet<DirectorDiagnosticsResponse>(
+    '/v2/director/diagnostics',
+    'Failed to load Director diagnostics',
   );
 }
 

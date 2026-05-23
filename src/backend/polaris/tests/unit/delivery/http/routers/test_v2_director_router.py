@@ -216,6 +216,186 @@ async def test_director_capabilities(client: AsyncClient) -> None:
     get_capabilities.assert_called_once_with("director")
 
 
+@pytest.mark.asyncio
+async def test_director_diagnostics_reports_ready_queue_and_workers(client: AsyncClient) -> None:
+    """Director diagnostics should expose queue and worker readiness evidence."""
+    mock_idle_worker = MagicMock()
+    mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
+    mock_busy_worker = MagicMock()
+    mock_busy_worker.to_dict.return_value = {
+        "id": "worker-busy",
+        "status": "busy",
+        "current_task_id": "director-running",
+        "healthy": True,
+    }
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.list_workers = AsyncMock(return_value=[mock_idle_worker, mock_busy_worker])
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[
+                {
+                    "id": "director-ready",
+                    "subject": "Ready task",
+                    "status": "PENDING",
+                    "metadata": {"pm_task_id": "PM-1"},
+                },
+                {
+                    "id": "director-blocked",
+                    "subject": "Blocked task",
+                    "status": "BLOCKED",
+                    "metadata": {"pm_task_id": "PM-2"},
+                },
+            ],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "IDLE"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role"] == "director"
+    assert data["status"]["projection_source"] == "director_merged"
+    assert data["tasks"]["source"] == "workflow"
+    assert data["tasks"]["total"] == 2
+    assert data["tasks"]["ready_to_execute"] == 1
+    assert data["tasks"]["ready_task_ids"] == ["director-ready"]
+    assert data["tasks"]["blocked"] == 1
+    assert data["workers"]["total"] == 2
+    assert data["workers"]["idle"] == 1
+    assert data["workers"]["busy"] == 1
+    assert data["workers"]["active_task_ids"] == ["director-running"]
+    assert "director_tasks_blocked" in data["issues"]
+    assert "director_no_ready_tasks" not in data["issues"]
+    mock_director.list_tasks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_director_diagnostics_falls_back_to_local_tasks_when_projection_empty(
+    client: AsyncClient,
+) -> None:
+    """Director diagnostics should reuse local queue evidence when workflow projection is empty."""
+    mock_idle_worker = MagicMock()
+    mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(
+        return_value=[
+            {
+                "id": "local-ready",
+                "subject": "Local ready task",
+                "status": "PENDING",
+                "metadata": {"pm_task_id": "PM-local"},
+            }
+        ]
+    )
+    mock_director.list_workers = AsyncMock(return_value=[mock_idle_worker])
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tasks"]["source"] == "local"
+    assert data["tasks"]["total"] == 1
+    assert data["tasks"]["ready_to_execute"] == 1
+    assert data["tasks"]["ready_task_ids"] == ["local-ready"]
+    assert data["workers"]["idle"] == 1
+    assert data["issues"] == []
+    mock_director.list_tasks.assert_awaited_once_with(status=None)
+
+
+@pytest.mark.asyncio
+async def test_director_diagnostics_reports_no_ready_tasks_without_workers(client: AsyncClient) -> None:
+    """Blocked dependencies and an empty worker pool should be visible before a run is attempted."""
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(
+        return_value=[
+            {
+                "id": "local-waiting",
+                "subject": "Waiting on Chief Engineer",
+                "status": "PENDING",
+                "metadata": {"dependencies": ["blueprint-1"]},
+            }
+        ]
+    )
+    mock_director.list_workers = AsyncMock(return_value=[])
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tasks"]["ready_to_execute"] == 0
+    assert data["workers"]["total"] == 0
+    assert "director_no_ready_tasks" in data["issues"]
+    assert "director_no_workers" in data["issues"]
+
+
 # ---------------------------------------------------------------------------
 # Task Management
 # ---------------------------------------------------------------------------
@@ -316,9 +496,93 @@ async def test_director_create_task_with_command(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_director_list_tasks(client: AsyncClient) -> None:
-    """Director list tasks should return task list via projection."""
+async def test_director_create_task_accepts_lowercase_priority(client: AsyncClient) -> None:
+    """Director create task should accept TaskPriority enum values."""
+    from polaris.domain.entities import TaskPriority, TaskResult, TaskStatus
+
+    mock_task = MagicMock()
+    mock_task.id = "task-789"
+    mock_task.subject = "Run focused tests"
+    mock_task.description = ""
+    mock_task.status = TaskStatus.PENDING
+    mock_task.priority = TaskPriority.HIGH
+    mock_task.claimed_by = None
+    mock_task.result = TaskResult(success=True)
+    mock_task.metadata = {}
+
     mock_director = MagicMock()
+    mock_director.submit_task = AsyncMock(return_value=mock_task)
+    mock_director.config.workspace = "."
+
+    with patch(
+        "polaris.delivery.http.dependencies.get_container",
+        new_callable=AsyncMock,
+    ) as mock_container:
+
+        async def _resolve(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve)
+
+        response = await client.post(
+            "/v2/director/tasks",
+            json={
+                "subject": "Run focused tests",
+                "priority": "high",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "task-789"
+    assert data["priority"] == "HIGH"
+    submit_call = mock_director.submit_task.await_args
+    assert submit_call is not None
+    assert submit_call.kwargs["priority"] is TaskPriority.HIGH
+
+
+@pytest.mark.asyncio
+async def test_director_create_task_rejects_invalid_priority(client: AsyncClient) -> None:
+    """Invalid task priority should return a structured 400 instead of a 500."""
+    mock_director = MagicMock()
+    mock_director.submit_task = AsyncMock()
+    mock_director.config.workspace = "."
+
+    with patch(
+        "polaris.delivery.http.dependencies.get_container",
+        new_callable=AsyncMock,
+    ) as mock_container:
+
+        async def _resolve(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve)
+
+        response = await client.post(
+            "/v2/director/tasks",
+            json={
+                "subject": "Bad task",
+                "priority": "urgent",
+            },
+        )
+
+    assert response.status_code == 400
+    data = response.json()
+    assert data["error"]["code"] == "INVALID_TASK_PRIORITY"
+    assert data["error"]["details"]["priority"] == "urgent"
+    assert "HIGH" in data["error"]["details"]["allowed"]
+    mock_director.submit_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_director_list_tasks(client: AsyncClient) -> None:
+    """Director list tasks should return an empty list when projection and local queue are empty."""
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
     mock_director.config.workspace = "."
 
     with (
@@ -344,6 +608,58 @@ async def test_director_list_tasks(client: AsyncClient) -> None:
         assert response.status_code == 200
         data = response.json()
         assert data == []
+        mock_director.list_tasks.assert_awaited_once_with(status=None)
+
+
+@pytest.mark.asyncio
+async def test_director_list_tasks_auto_falls_back_to_local_queue(client: AsyncClient) -> None:
+    """source=auto should expose local Director tasks when workflow projection is empty."""
+    from polaris.domain.entities import TaskPriority, TaskStatus
+
+    mock_task = MagicMock()
+    mock_task.id = "local-task-1"
+    mock_task.subject = "Local Director task"
+    mock_task.description = "Queued outside workflow projection"
+    mock_task.status = TaskStatus.PENDING
+    mock_task.priority = TaskPriority.HIGH
+    mock_task.claimed_by = None
+    mock_task.result = None
+    mock_task.metadata = {"pm_task_id": "PM-local", "blueprint_id": "BP-local"}
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[mock_task])
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.workflow_archive = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/tasks?source=auto")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["id"] == "local-task-1"
+    assert data[0]["subject"] == "Local Director task"
+    assert data[0]["status"] == "PENDING"
+    assert data[0]["pm_task_id"] == "PM-local"
+    assert data[0]["blueprint_id"] == "BP-local"
+    mock_director.list_tasks.assert_awaited_once_with(status=None)
 
 
 @pytest.mark.asyncio
@@ -355,6 +671,7 @@ async def test_director_list_tasks_prefers_active_workspace_path(
     mock_settings.workspace = "C:/Repo/Polaris"
     mock_settings.workspace_path = "C:/Temp/Product"
     mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
     mock_director.config.workspace = "C:/Temp/Product"
 
     with (

@@ -127,6 +127,96 @@ async def test_get_chief_engineer_diagnostics_reports_store_error(client: AsyncC
 
 
 @pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_reports_complete_plan_coverage(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Chief Engineer handoff should be ready only when the PM task plan is fully covered."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    plan_path = tmp_path / "runtime" / "tasks" / "plan.json"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text(
+        '{"tasks": [{"id": "PM-1"}, {"id": "PM-2"}]}',
+        encoding="utf-8",
+    )
+    persistence = MagicMock()
+    persistence.list_all.return_value = ["bp-1", "bp-2"]
+    persistence.load.side_effect = lambda blueprint_id: {
+        "bp-1": {"blueprint_id": "bp-1", "task_id": "PM-1"},
+        "bp-2": {"blueprint_id": "bp-2", "task_id": "PM-2"},
+    }[blueprint_id]
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.resolve_logical_path",
+            return_value=str(plan_path),
+        ),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["blueprints"]["ok"] is True
+    assert data["blueprints"]["planned_tasks"] == 2
+    assert data["blueprints"]["covered_tasks"] == 2
+    assert data["blueprints"]["missing_task_ids"] == []
+    assert data["blueprints"]["director_handoff_ready"] is True
+    assert data["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_blocks_partial_plan_coverage(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Partial blueprint coverage must not be reported as Director handoff-ready."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    plan_path = tmp_path / "runtime" / "tasks" / "plan.json"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text(
+        '{"tasks": [{"id": "PM-covered"}, {"id": "PM-missing"}]}',
+        encoding="utf-8",
+    )
+    persistence = MagicMock()
+    persistence.list_all.return_value = ["bp-covered"]
+    persistence.load.return_value = {
+        "blueprint_id": "bp-covered",
+        "task_id": "PM-covered",
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.resolve_logical_path",
+            return_value=str(plan_path),
+        ),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is False
+    assert data["blueprints"]["ok"] is False
+    assert data["blueprints"]["planned_tasks"] == 2
+    assert data["blueprints"]["covered_tasks"] == 1
+    assert data["blueprints"]["missing_task_ids"] == ["PM-missing"]
+    assert data["blueprints"]["director_handoff_ready"] is False
+    assert data["issues"] == ["blueprint_coverage_incomplete"]
+
+
+@pytest.mark.asyncio
 async def test_get_chief_engineer_llm_events_filters_role_and_task(client: AsyncClient) -> None:
     """Chief Engineer LLM events should be available through the role route."""
     mock_event = MagicMock()
@@ -238,16 +328,35 @@ async def test_list_chief_engineer_blueprints(client: AsyncClient) -> None:
     with patch(
         "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
         return_value=persistence,
-    ):
+    ) as persistence_cls:
         response = await client.get("/v2/chief-engineer/blueprints")
 
     assert response.status_code == 200
+    persistence_cls.assert_called_once_with(".", ensure_directory=False)
     data = response.json()
     assert data["total"] == 1
     assert data["blueprints"][0]["blueprint_id"] == "bp-1"
     assert data["blueprints"][0]["title"] == "Director TaskBoard"
     assert data["blueprints"][0]["target_files"] == ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"]
     assert data["blueprints"][0]["source"] == "runtime/blueprints"
+
+
+@pytest.mark.asyncio
+async def test_list_chief_engineer_blueprints_is_read_only_for_empty_store(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Blueprint list should not create runtime blueprint directories for an idle workspace."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    blueprint_dir = tmp_path / "runtime" / "blueprints"
+
+    response = await client.get("/v2/chief-engineer/blueprints")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
+    assert not blueprint_dir.exists()
 
 
 @pytest.mark.asyncio
@@ -268,7 +377,7 @@ async def test_list_chief_engineer_blueprints_uses_workspace_path_fallback(
         response = await client.get("/v2/chief-engineer/blueprints")
 
     assert response.status_code == 200
-    persistence_cls.assert_called_once_with("C:/Temp/Product")
+    persistence_cls.assert_called_once_with("C:/Temp/Product", ensure_directory=False)
     assert response.json()["total"] == 0
 
 
@@ -290,7 +399,7 @@ async def test_list_chief_engineer_blueprints_prefers_active_workspace_path(
         response = await client.get("/v2/chief-engineer/blueprints")
 
     assert response.status_code == 200
-    persistence_cls.assert_called_once_with("C:/Temp/Product")
+    persistence_cls.assert_called_once_with("C:/Temp/Product", ensure_directory=False)
     assert response.json()["total"] == 0
 
 
@@ -443,3 +552,20 @@ async def test_get_chief_engineer_blueprint_rejects_invalid_id(client: AsyncClie
 
     assert response.status_code == 400
     persistence_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_blueprint_missing_is_read_only(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Missing blueprint details should not initialize the blueprint store on reads."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    blueprint_dir = tmp_path / "runtime" / "blueprints"
+
+    response = await client.get("/v2/chief-engineer/blueprints/missing-blueprint")
+
+    assert response.status_code == 404
+    assert not blueprint_dir.exists()

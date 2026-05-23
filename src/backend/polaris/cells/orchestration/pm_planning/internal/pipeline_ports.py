@@ -589,7 +589,9 @@ class CellPmInvokePort:
                 )
                 if not provider_result.attempted or not provider_result.ok:
                     error_message = str(provider_result.error or "").strip() or "runtime_provider_unavailable"
-                    raise RuntimeError(f"PM backend requires an explicit runtime provider binding: {error_message}")
+                    if not provider_result.attempted:
+                        raise RuntimeError(f"PM runtime provider binding is not configured: {error_message}")
+                    raise RuntimeError(f"PM runtime provider invocation failed: {error_message}")
                 output = str(provider_result.output or "")
                 resolved_backend = "runtime_provider"
                 if state_output_full:

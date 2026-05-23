@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 from polaris.bootstrap.config import Settings, find_workspace_root, get_settings
 from polaris.cells.runtime.execution_broker.public.contracts import (
@@ -97,6 +98,20 @@ class ProcessHandle:
     def terminate(self) -> None:
         """Terminate the process."""
         _terminate_process_impl(self)
+
+
+@dataclass(frozen=True)
+class RoleModelSelection:
+    """Resolved role model binding used for subprocess launch defaults."""
+
+    provider_id: str = ""
+    model: str = ""
+
+
+def _text_value(value: Any) -> str:
+    if isinstance(value, Mock):
+        return ""
+    return str(value or "").strip()
 
 
 class PMService:
@@ -494,6 +509,7 @@ class PMService:
         workspace = self._resolve_effective_workspace()
         backend = "auto"
         planning_timeout_seconds = self._resolve_planning_timeout_seconds()
+        pm_model = self._resolve_pm_model_arg()
 
         raw_json_log = str(settings.json_log_path or "runtime/events/pm.events.jsonl").strip()
         if not raw_json_log:
@@ -514,7 +530,7 @@ class PMService:
             "--pm-backend",
             backend,
             "--model",
-            settings.pm.model or settings.llm.model,
+            pm_model,
             "--timeout",
             str(planning_timeout_seconds),
             "--json-log",
@@ -596,10 +612,48 @@ class PMService:
             )
             if settings.pm.director_match_mode:
                 cmd.extend(["--director-match-mode", settings.pm.director_match_mode])
-            if settings.director.model:
-                cmd.extend(["--director-model", settings.director.model])
+            director_model = self._resolve_role_model_arg("director", fallback=_text_value(settings.director.model))
+            if director_model:
+                cmd.extend(["--director-model", director_model])
 
         return cmd
+
+    def _resolve_role_selection(self, role_id: str) -> RoleModelSelection:
+        try:
+            from polaris.kernelone.llm.runtime_config import load_role_config
+
+            role_config = load_role_config(role_id)
+        except (RuntimeError, ValueError) as exc:
+            logger.debug("Failed to resolve %s role model binding: %s", role_id, exc)
+            return RoleModelSelection()
+        if role_config is None:
+            return RoleModelSelection()
+        return RoleModelSelection(
+            provider_id=_text_value(getattr(role_config, "provider_id", "")),
+            model=_text_value(getattr(role_config, "model", "")),
+        )
+
+    def _resolve_role_model_arg(self, role_id: str, *, fallback: str = "") -> str:
+        fallback_model = _text_value(fallback)
+        if fallback_model:
+            return fallback_model
+        selection = self._resolve_role_selection(role_id)
+        return selection.model
+
+    def _resolve_pm_model_arg(self) -> str:
+        explicit_pm_model = _text_value(getattr(self._settings.pm, "model", ""))
+        if explicit_pm_model:
+            return explicit_pm_model
+
+        role_model = self._resolve_role_model_arg("pm")
+        if role_model:
+            return role_model
+
+        global_model = _text_value(getattr(self._settings.llm, "model", ""))
+        if global_model:
+            return global_model
+
+        return "gpt-4"
 
     def _resolve_planning_timeout_seconds(self) -> int:
         env_timeout = _parse_positive_int(os.environ.get(_PM_PLANNING_TIMEOUT_ENV))
@@ -629,6 +683,10 @@ class PMService:
         else:
             env.pop("KERNELONE_RUNTIME_ROOT", None)
         env["KERNELONE_WORKSPACE"] = str(workspace)
+        pm_selection = self._resolve_role_selection("pm")
+        if pm_selection.provider_id:
+            env["KERNELONE_PM_PROVIDER"] = pm_selection.provider_id
+        env["KERNELONE_PM_MODEL"] = self._resolve_pm_model_arg()
 
         broker = get_execution_broker_service()
         timeout_seconds = float(

@@ -191,8 +191,8 @@ def _empty_v2_document_list_response(*, limit: int, offset: int, reason: str) ->
     return _empty_v2_collection_response("documents", limit=limit, offset=offset, reason=reason)
 
 
-def _empty_v2_document_search_response(*, query: str, reason: str) -> dict[str, Any]:
-    """Return an idle desktop document-search projection when PM has not started."""
+def _empty_v2_search_response(*, query: str, reason: str) -> dict[str, Any]:
+    """Return an idle desktop search projection when PM has not started."""
     return {
         "ok": True,
         "query": query,
@@ -204,6 +204,49 @@ def _empty_v2_document_search_response(*, query: str, reason: str) -> dict[str, 
         "state": "idle",
         "reason": reason,
     }
+
+
+def _empty_v2_document_search_response(*, query: str, reason: str) -> dict[str, Any]:
+    """Return an idle desktop document-search projection when PM has not started."""
+    return _empty_v2_search_response(query=query, reason=reason)
+
+
+def _empty_v2_task_search_response(*, query: str, reason: str) -> dict[str, Any]:
+    """Return an idle desktop task-search projection when PM has not started."""
+    return _empty_v2_search_response(query=query, reason=reason)
+
+
+async def _get_pm_process_status() -> dict[str, Any]:
+    """Return execution-broker backed PM process status when available."""
+
+    try:
+        from polaris.cells.orchestration.pm_planning.public.service import PMService
+        from polaris.infrastructure.di.container import get_container
+
+        container = await get_container()
+        pm_service = await container.resolve_async(PMService)
+        status = pm_service.get_status()
+        return dict(status) if isinstance(status, dict) else {}
+    except (KeyError, RuntimeError, ValueError):
+        # Keep PM document/status compatibility available in lightweight tests
+        # where the process service is not bootstrapped.
+        return {}
+
+
+def _merge_pm_adapter_and_process_status(
+    adapter_status: dict[str, Any],
+    process_status: dict[str, Any],
+    *,
+    workspace: str,
+) -> dict[str, Any]:
+    result = dict(adapter_status)
+    if process_status:
+        initialized = result.get("initialized")
+        result.update(process_status)
+        if initialized is not None:
+            result["initialized"] = initialized
+    result.setdefault("workspace", workspace)
+    return result
 
 
 # ===== Request/Response Models =====
@@ -685,16 +728,28 @@ def get_requirement(
 
 
 @router.get("/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
-def get_pm_status(request: Request) -> dict[str, Any]:
+async def get_pm_status(request: Request) -> dict[str, Any]:
     """Get PM system status."""
     workspace = _workspace_from_request(request)
 
     pm = _get_pm_instance(workspace)
+    process_status = await _get_pm_process_status()
 
     if not pm.is_initialized():
-        return {"initialized": False, "workspace": workspace}
+        return _merge_pm_adapter_and_process_status(
+            {"initialized": False, "workspace": workspace},
+            process_status,
+            workspace=workspace,
+        )
 
-    return pm.get_status()
+    status = pm.get_status()
+    adapter_status = dict(status) if isinstance(status, dict) else {"initialized": True}
+    adapter_status.setdefault("initialized", True)
+    return _merge_pm_adapter_and_process_status(
+        adapter_status,
+        process_status,
+        workspace=workspace,
+    )
 
 
 @router.get("/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)
@@ -949,7 +1004,12 @@ def v2_search_tasks(
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     """Search tasks by title or description."""
-    return search_tasks(request, q, limit)
+    try:
+        return search_tasks(request, q, limit)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_task_search_response(query=q, reason=exc.code)
 
 
 @v2_router.get("/v2/pm/requirements", dependencies=[Depends(require_auth)], response_model=RequirementListResponse)
@@ -986,9 +1046,9 @@ def v2_get_requirement(
 
 
 @router.get("/v2/pm/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
-def v2_get_pm_status(request: Request) -> dict[str, Any]:
+async def v2_get_pm_status(request: Request) -> dict[str, Any]:
     """Get PM system status for the workspace."""
-    return get_pm_status(request)
+    return await get_pm_status(request)
 
 
 @router.get("/v2/pm/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)

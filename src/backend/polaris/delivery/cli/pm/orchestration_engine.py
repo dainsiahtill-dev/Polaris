@@ -1376,7 +1376,8 @@ def _run_dispatch_pipeline_with_workflow(
             counts["pending"] = total
 
         workflow_status_token = str((workflow_status or {}).get("workflow_status") or "").strip().lower()
-        if workflow_status_token in {"failed", "terminated", "timed_out", "canceled", "cancelled"}:
+        workflow_failed = workflow_status_token in {"failed", "terminated", "timed_out", "canceled", "cancelled"}
+        if workflow_failed:
             unresolved_count = max(0, total - counts["completed"])
             if unresolved_count > 0 and counts["failed"] == 0 and counts["blocked"] == 0:
                 counts["failed"] = unresolved_count
@@ -1393,7 +1394,7 @@ def _run_dispatch_pipeline_with_workflow(
                     item["error"] = "Workflow execution failed before Director task completion"
 
         state = str(summary.get("state") or "").strip().lower()
-        if workflow_status_token in {"failed", "terminated", "timed_out", "canceled", "cancelled"}:
+        if workflow_failed and counts["completed"] < total:
             state = "failed"
         if not state:
             if counts["failed"] > 0 or counts["blocked"] > 0:
@@ -1797,6 +1798,13 @@ def _run_dispatch_pipeline_with_workflow(
     if workflow_domain_director_status in {"failed", "blocked", "success", "running", "queued"}:
         director_status = workflow_domain_director_status
     elif (
+        workflow_summary.get("total", 0) > 0
+        and workflow_summary.get("completed", 0) >= workflow_summary.get("total", 0)
+        and workflow_summary.get("failed", 0) == 0
+        and workflow_summary.get("blocked", 0) == 0
+    ):
+        director_status = "success"
+    elif (
         wait_status in {"failed", "terminated", "timed_out", "canceled", "cancelled"}
         or workflow_status_token
         in {
@@ -1811,10 +1819,6 @@ def _run_dispatch_pipeline_with_workflow(
         director_status = "failed"
     elif workflow_summary.get("blocked", 0) > 0:
         director_status = "blocked"
-    elif workflow_summary.get("total", 0) > 0 and workflow_summary.get("completed", 0) >= workflow_summary.get(
-        "total", 0
-    ):
-        director_status = "success"
     elif workflow_summary.get("active", 0) > 0:
         director_status = "running"
     elif workflow_summary.get("pending", 0) > 0:

@@ -230,11 +230,12 @@ def _build_failure(run: FactoryRun, phase: RunPhase) -> FailureInfo | None:
     recoverable = bool(raw_failure.get("recoverable"))
     failure_type = FailureType.TRANSIENT if recoverable else FailureType.DETERMINISTIC
     timestamp = raw_failure.get("timestamp")
+    detail = str(raw_failure.get("detail") or "").strip() or "Factory run failed"
 
     return FailureInfo(
         failure_type=failure_type,
         code=str(raw_failure.get("code") or "FACTORY_FAILED"),
-        detail="Factory run failed",
+        detail=detail,
         phase=phase,
         timestamp=_parse_datetime(str(timestamp)) or datetime.now(timezone.utc),
         recoverable=recoverable,

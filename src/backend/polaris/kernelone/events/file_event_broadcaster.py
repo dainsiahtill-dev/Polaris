@@ -274,8 +274,8 @@ def write_file_with_broadcast(
         message_bus=message_bus,
         worker_id=worker_id,
     )
-    if not broadcast_ok:
-        return {"ok": False, "error": "Broadcast failed, write skipped", "path": rel_path}
+    if message_bus is not None and not broadcast_ok:
+        logger.warning("FILE_WRITTEN broadcast failed; continuing file write: %s", rel_path)
 
     # 写入文件 (broadcast成功后才写入)
     fs.workspace_write_text(rel_path, content, encoding="utf-8")
@@ -285,6 +285,7 @@ def write_file_with_broadcast(
         "path": rel_path,
         "bytes": len(content.encode("utf-8")),
         "operation": operation,
+        "broadcast_ok": bool(broadcast_ok),
     }
 
 

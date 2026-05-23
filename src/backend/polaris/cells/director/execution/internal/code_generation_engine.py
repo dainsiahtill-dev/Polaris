@@ -228,6 +228,8 @@ class CodeGenerationEngine:
             "director_runtime_codegen_mode": "proposal_then_apply",
             "delivery_mode": "propose_patch",
             "disable_internal_tool_rounds": True,
+            "_transaction_kernel_forced_tool_definitions": [],
+            "_transaction_kernel_forced_tool_choice": "none",
         }
         target_hint = ", ".join(path for path in (round_files or []) if str(path or "").strip())
         if not target_hint:

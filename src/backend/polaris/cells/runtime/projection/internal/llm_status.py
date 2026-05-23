@@ -38,6 +38,33 @@ def _workspace_text(value: Any) -> str:
     return ""
 
 
+def _role_key(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _lookup_role_status(index: dict[str, Any], role: str) -> dict[str, Any] | None:
+    roles = index.get("roles") if isinstance(index.get("roles"), dict) else {}
+    if not isinstance(roles, dict):
+        return None
+
+    direct = roles.get(role)
+    if isinstance(direct, dict):
+        return direct
+
+    target = _role_key(role)
+    for key, value in roles.items():
+        if _role_key(key) == target and isinstance(value, dict):
+            return value
+    return None
+
+
+def _provider_role_compatible(role: str, provider_test_info: dict[str, Any] | None) -> bool:
+    if not isinstance(provider_test_info, dict):
+        return False
+    tested_role = _role_key(provider_test_info.get("role"))
+    return not tested_role or tested_role == _role_key(role)
+
+
 def _active_workspace(settings: Settings) -> str:
     for attr in ("workspace_path", "workspace"):
         text = _workspace_text(getattr(settings, attr, ""))
@@ -65,16 +92,18 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         provider_id = str(role_cfg.get("provider_id") or "").strip()
         model = str(role_cfg.get("model") or "").strip()
         provider_cfg = providers_cfg.get(provider_id, {}) if isinstance(providers_cfg, dict) else {}
-        test_info = (index.get("roles") or {}).get(role) if isinstance(index, dict) else None
+        role_key = _role_key(role)
+        test_info = _lookup_role_status(index, role_key) if isinstance(index, dict) else None
         provider_test_info = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
         runtime_supported = _runtime_supported(role, provider_id, provider_cfg)
         binding_readiness = _binding_readiness(
+            role=role_key,
             provider_id=provider_id,
             model=model,
             test_info=test_info if isinstance(test_info, dict) else None,
             provider_test_info=provider_test_info if isinstance(provider_test_info, dict) else None,
         )
-        roles_status[role] = {
+        roles_status[role_key] = {
             "provider_id": provider_id,
             "model": model,
             "profile": role_cfg.get("profile"),
@@ -85,6 +114,7 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
             "suites": test_info.get("suites") if isinstance(test_info, dict) else None,
             "runtime_supported": runtime_supported,
             "readiness_issue": binding_readiness["issue"],
+            "readiness_source": binding_readiness["source"],
             "tested_provider_id": binding_readiness["tested_provider_id"],
             "tested_model": binding_readiness["tested_model"],
         }
@@ -144,35 +174,85 @@ def _runtime_supported(role: str, provider_id: str | None, provider_cfg: dict[st
 
 def _binding_readiness(
     *,
+    role: str,
     provider_id: str,
     model: str,
     test_info: dict[str, Any] | None,
     provider_test_info: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    role_ready = bool(test_info.get("ready")) if isinstance(test_info, dict) else False
-    tested_provider_id = str((test_info or {}).get("provider_id") or "").strip()
-    tested_model = str((test_info or {}).get("model") or "").strip()
+    candidates: list[tuple[str, str, str]] = []
+    if isinstance(test_info, dict) and bool(test_info.get("ready")):
+        candidates.append(
+            (
+                "role_index",
+                str(test_info.get("provider_id") or "").strip(),
+                str(test_info.get("model") or "").strip(),
+            )
+        )
 
-    if not tested_provider_id and isinstance(provider_test_info, dict):
-        tested_provider_id = provider_id if provider_test_info else ""
-    if not tested_model and isinstance(provider_test_info, dict):
-        tested_model = str(provider_test_info.get("model") or "").strip()
+    provider_ready = bool(provider_test_info.get("ready")) if isinstance(provider_test_info, dict) else False
+    if provider_ready and _provider_role_compatible(role, provider_test_info):
+        candidates.append(
+            (
+                "provider_index",
+                provider_id,
+                str((provider_test_info or {}).get("model") or "").strip(),
+            )
+        )
 
-    issue = ""
-    if not role_ready:
-        issue = "role_readiness_missing"
-    elif not provider_id or not model:
-        issue = "role_binding_missing"
-    elif tested_provider_id and tested_provider_id != provider_id:
-        issue = "provider_mismatch"
-    elif not tested_model:
-        issue = "tested_model_missing"
-    elif not model_identity_equal(tested_model, model):
-        issue = "model_mismatch"
+    fallback_issue = "role_readiness_missing"
+    fallback_provider_id = ""
+    fallback_model = ""
+    fallback_source = ""
+    for source, tested_provider_id, tested_model in candidates:
+        issue = _readiness_candidate_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=tested_provider_id,
+            tested_model=tested_model,
+        )
+        if issue == "":
+            return {
+                "ready": True,
+                "issue": "",
+                "source": source,
+                "tested_provider_id": tested_provider_id,
+                "tested_model": tested_model,
+            }
+        if not fallback_source:
+            fallback_issue = issue
+            fallback_provider_id = tested_provider_id
+            fallback_model = tested_model
+            fallback_source = source
+
+    if provider_ready and not _provider_role_compatible(role, provider_test_info):
+        fallback_issue = "provider_role_mismatch"
+        fallback_source = "provider_index"
+        fallback_provider_id = provider_id
+        fallback_model = str((provider_test_info or {}).get("model") or "").strip()
 
     return {
-        "ready": role_ready and issue == "",
-        "issue": issue,
-        "tested_provider_id": tested_provider_id,
-        "tested_model": tested_model,
+        "ready": False,
+        "issue": fallback_issue,
+        "source": fallback_source,
+        "tested_provider_id": fallback_provider_id,
+        "tested_model": fallback_model,
     }
+
+
+def _readiness_candidate_issue(
+    *,
+    provider_id: str,
+    model: str,
+    tested_provider_id: str,
+    tested_model: str,
+) -> str:
+    if not provider_id or not model:
+        return "role_binding_missing"
+    if tested_provider_id and tested_provider_id != provider_id:
+        return "provider_mismatch"
+    if not tested_model:
+        return "tested_model_missing"
+    if not model_identity_equal(tested_model, model):
+        return "model_mismatch"
+    return ""

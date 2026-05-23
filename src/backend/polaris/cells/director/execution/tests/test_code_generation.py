@@ -293,6 +293,8 @@ class TestBlockedEntryPoints:
         assert isinstance(context, dict)
         assert context["delivery_mode"] == "propose_patch"
         assert context["disable_internal_tool_rounds"] is True
+        assert context["_transaction_kernel_forced_tool_definitions"] == []
+        assert context["_transaction_kernel_forced_tool_choice"] == "none"
 
 
 class TestBlockedModuleFunctions:

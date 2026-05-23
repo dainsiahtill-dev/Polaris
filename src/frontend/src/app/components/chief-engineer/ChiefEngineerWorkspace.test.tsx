@@ -75,6 +75,9 @@ describe('ChiefEngineerWorkspace', () => {
               total: hasBlueprint ? 1 : 0,
               loadable: hasBlueprint ? 1 : 0,
               invalid_payloads: 0,
+              planned_tasks: hasBlueprint ? 1 : 0,
+              covered_tasks: hasBlueprint ? 1 : 0,
+              missing_task_ids: [],
               director_handoff_ready: hasBlueprint,
               latest_updated_at: hasBlueprint ? '2026-05-23T08:10:00Z' : null,
               error: null,
@@ -375,6 +378,9 @@ describe('ChiefEngineerWorkspace', () => {
               total: 1,
               loadable: 1,
               invalid_payloads: 0,
+              planned_tasks: 1,
+              covered_tasks: 1,
+              missing_task_ids: [],
               director_handoff_ready: true,
               latest_updated_at: '2026-05-23T08:20:00Z',
               error: null,
@@ -635,6 +641,9 @@ describe('ChiefEngineerWorkspace', () => {
               total: 1,
               loadable: 1,
               invalid_payloads: 0,
+              planned_tasks: 1,
+              covered_tasks: 1,
+              missing_task_ids: [],
               director_handoff_ready: true,
               latest_updated_at: '2026-05-23T08:00:00Z',
               error: null,
@@ -740,6 +749,9 @@ describe('ChiefEngineerWorkspace', () => {
               total: 0,
               loadable: 0,
               invalid_payloads: 0,
+              planned_tasks: 0,
+              covered_tasks: 0,
+              missing_task_ids: [],
               director_handoff_ready: false,
               latest_updated_at: null,
               error: null,
@@ -836,22 +848,25 @@ describe('ChiefEngineerWorkspace', () => {
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            ok: true,
+            ok: false,
             role: 'chief_engineer',
             generated_at: '2026-05-23T08:00:00Z',
             workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
             blueprints: {
-              ok: true,
+              ok: false,
               status: 'ready',
               source: 'runtime/blueprints',
               total: 1,
               loadable: 1,
               invalid_payloads: 0,
-              director_handoff_ready: true,
+              planned_tasks: 2,
+              covered_tasks: 1,
+              missing_task_ids: ['PM-missing'],
+              director_handoff_ready: false,
               latest_updated_at: '2026-05-23T08:00:00Z',
               error: null,
             },
-            issues: [],
+            issues: ['blueprint_coverage_incomplete'],
           }),
         });
       }
@@ -903,6 +918,9 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByText('bp-covered')).toBeInTheDocument();
     expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-covered')).not.toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-blueprint-generate-PM-missing')).toBeInTheDocument();
+    expect(screen.getByTitle('1/2')).toBeInTheDocument();
+    expect(screen.getByTitle('missing 1')).toBeInTheDocument();
+    expect(screen.getByTitle('PM-missing')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
   });
 
@@ -962,6 +980,9 @@ describe('ChiefEngineerWorkspace', () => {
               total: 0,
               loadable: 0,
               invalid_payloads: 0,
+              planned_tasks: 0,
+              covered_tasks: 0,
+              missing_task_ids: [],
               director_handoff_ready: false,
               latest_updated_at: null,
               error: null,

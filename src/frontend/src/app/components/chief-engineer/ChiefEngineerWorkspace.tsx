@@ -735,6 +735,33 @@ export function ChiefEngineerWorkspace({
     : diagnostics.blueprints.director_handoff_ready
       ? 'ready'
       : 'degraded';
+  const blueprintCoveragePlanned = diagnostics?.blueprints.planned_tasks ?? 0;
+  const blueprintCoverageCovered = diagnostics?.blueprints.covered_tasks ?? 0;
+  const missingBlueprintTaskIds = diagnostics?.blueprints.missing_task_ids ?? [];
+  const blueprintCoverageValue = !diagnostics
+    ? 'checking'
+    : blueprintCoveragePlanned > 0
+      ? `${blueprintCoverageCovered}/${blueprintCoveragePlanned}`
+      : 'no PM plan';
+  const blueprintCoverageTone: DiagnosticTone = !diagnostics
+    ? 'checking'
+    : blueprintCoveragePlanned > 0 && blueprintCoverageCovered === blueprintCoveragePlanned
+      ? 'ready'
+      : 'degraded';
+  const handoffDiagnosticValue = !diagnostics
+    ? 'checking'
+    : diagnostics.blueprints.director_handoff_ready
+      ? 'ready'
+      : missingBlueprintTaskIds.length > 0
+        ? `missing ${missingBlueprintTaskIds.length}`
+        : diagnostics.blueprints.loadable > 0
+          ? 'partial'
+          : 'no blueprint';
+  const missingBlueprintValue = !diagnostics
+    ? 'checking'
+    : missingBlueprintTaskIds.length > 0
+      ? `${missingBlueprintTaskIds.slice(0, 3).join(', ')}${missingBlueprintTaskIds.length > 3 ? '...' : ''}`
+      : 'none';
 
   const refreshChiefEngineerDiagnostics = async () => {
     if (!workspace) {
@@ -1318,9 +1345,19 @@ export function ChiefEngineerWorkspace({
                 tone={blueprintDiagnosticTone}
               />
               <DiagnosticRow
+                label="Task coverage"
+                value={blueprintCoverageValue}
+                tone={blueprintCoverageTone}
+              />
+              <DiagnosticRow
                 label="Director handoff"
-                value={diagnostics?.blueprints.director_handoff_ready ? 'ready' : diagnostics ? 'no blueprint' : 'checking'}
+                value={handoffDiagnosticValue}
                 tone={handoffDiagnosticTone}
+              />
+              <DiagnosticRow
+                label="Missing PM tasks"
+                value={missingBlueprintValue}
+                tone={missingBlueprintTaskIds.length > 0 ? 'degraded' : handoffDiagnosticTone}
               />
             </div>
             {diagnosticsError ? (

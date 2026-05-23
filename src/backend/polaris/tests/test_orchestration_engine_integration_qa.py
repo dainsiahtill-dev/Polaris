@@ -432,6 +432,143 @@ def test_workflow_dispatch_marks_parent_failure_as_director_failure(tmp_path, mo
     assert qa_result["reason"] == "director_failures_present"
 
 
+def test_workflow_dispatch_keeps_completed_tasks_success_when_parent_status_failed(tmp_path, monkeypatch):
+    mod = _load_orchestration_engine()
+    workflow_config_mod = importlib.import_module("polaris.cells.orchestration.workflow_runtime.public.service")
+
+    monkeypatch.setattr(
+        workflow_config_mod.WorkflowConfig,
+        "from_env",
+        classmethod(
+            lambda cls, force_enable=False: SimpleNamespace(
+                task_queue="unit-queue",
+                namespace="unit-namespace",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        mod,
+        "resolve_director_dispatch_tasks",
+        lambda workspace_full, tasks: (list(tasks), {"source": "unit"}),
+    )
+    monkeypatch.setattr(
+        mod,
+        "submit_pm_workflow_sync",
+        lambda workflow_input, config, **kwargs: SimpleNamespace(
+            submitted=True,
+            status="submitted",
+            workflow_id="wf-failed-empty",
+            workflow_run_id="wf-failed-empty",
+            error="",
+            details={},
+        ),
+    )
+    monkeypatch.setattr(
+        mod,
+        "wait_for_workflow_completion_sync",
+        lambda workflow_id, timeout_seconds, config: {
+            "ok": True,
+            "workflow_id": workflow_id,
+            "status": "failed",
+            "result": {"error": ""},
+        },
+    )
+    monkeypatch.setattr(
+        mod,
+        "get_workflow_runtime_status",
+        lambda workspace_full, cache_root_full: {"workflow_status": "failed"},
+    )
+    monkeypatch.setattr(
+        mod,
+        "summarize_workflow_tasks",
+        lambda workflow_status, base_tasks, workspace, cache_root: {
+            "tasks": [{"id": "TASK-001", "assigned_to": "Director", "status": "completed"}],
+            "total": 1,
+            "completed": 1,
+            "failed": 0,
+            "blocked": 0,
+            "active": 0,
+            "pending": 0,
+            "state": "completed",
+        },
+    )
+    monkeypatch.setattr(mod, "persist_pm_payload", lambda **kwargs: None)
+    monkeypatch.setattr(mod, "emit_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        mod,
+        "run_post_dispatch_integration_qa",
+        lambda **kwargs: {
+            "ran": True,
+            "passed": True,
+            "reason": "integration_qa_passed",
+            "result_path": "",
+            "runtime_result_path": "",
+        },
+    )
+
+    class _Engine:
+        def update_role_status(self, *args, **kwargs):
+            return None
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "cache"
+    workspace.mkdir(parents=True, exist_ok=True)
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    args = SimpleNamespace(
+        director_result_timeout=1,
+        director_type="auto",
+        director_path="src/backend/scripts/loop-director.py",
+        director_timeout=1,
+        director_model="",
+        prompt_profile="",
+        director_workflow_execution_mode="parallel",
+        director_max_parallel_tasks=1,
+        director_ready_timeout_seconds=1,
+        director_claim_timeout_seconds=1,
+        director_phase_timeout_seconds=1,
+        director_complete_timeout_seconds=1,
+        director_task_timeout_seconds=1,
+        integration_qa=True,
+    )
+
+    outcome = mod._run_dispatch_pipeline_with_workflow(
+        args=args,
+        engine=_Engine(),
+        workspace_full=str(workspace),
+        cache_root_full=str(cache_root),
+        run_dir=str(run_dir),
+        run_id="pm-run-failed-empty",
+        iteration=1,
+        normalized={
+            "tasks": [
+                {
+                    "id": "TASK-001",
+                    "title": "demo",
+                    "assigned_to": "Director",
+                    "status": "todo",
+                }
+            ]
+        },
+        run_events=str(tmp_path / "events.jsonl"),
+        dialogue_full=str(tmp_path / "dialogue.jsonl"),
+        runtime_pm_tasks_full=str(tmp_path / "runtime_pm_tasks.json"),
+        pm_out_full=str(tmp_path / "pm_out.json"),
+        run_pm_tasks=str(tmp_path / "run_pm_tasks.json"),
+        run_director_result=str(tmp_path / "director.result.json"),
+        docs_stage={"enabled": False},
+    )
+
+    assert outcome["used"] is True
+    assert outcome["exit_code"] == 0
+    director_result = json.loads((tmp_path / "director.result.json").read_text(encoding="utf-8"))
+    assert director_result["status"] == "success"
+    assert director_result["successes"] == 1
+    assert director_result["failures"] == 0
+
+
 def test_workflow_dispatch_projects_nested_director_failure_result(tmp_path, monkeypatch):
     mod = _load_orchestration_engine()
     workflow_config_mod = importlib.import_module("polaris.cells.orchestration.workflow_runtime.public.service")

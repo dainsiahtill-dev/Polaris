@@ -242,6 +242,18 @@ describe('PMDiagnosticsPanel', () => {
             blocked_roles: ['pm'],
             unsupported_roles: [],
             required_ready_roles: ['pm'],
+            details: {
+              roles: {
+                pm: {
+                  ready: false,
+                  provider_id: 'openai_compat',
+                  model: 'Qwen3-Max',
+                  readiness_issue: 'model_mismatch',
+                  readiness_source: 'role_index',
+                  tested_model: 'MiniMax-M2.5',
+                },
+              },
+            },
           },
           workspace: {
             ok: true,
@@ -263,5 +275,7 @@ describe('PMDiagnosticsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /LLM 配置/ }));
     expect(screen.getByText('状态: blocked')).toBeInTheDocument();
     expect(screen.getByText('阻塞的角色: pm')).toBeInTheDocument();
+    expect(screen.getByTestId('pm-llm-role-evidence')).toHaveTextContent('pm: model_mismatch');
+    expect(screen.getByTestId('pm-llm-role-evidence')).toHaveTextContent('MiniMax-M2.5');
   });
 });

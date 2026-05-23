@@ -173,6 +173,46 @@ class TestTransactionKernelPrebuiltContextPassThrough:
         assert isinstance(response, dict)
         assert captured_models == ["override-model"]
 
+    @pytest.mark.asyncio
+    async def test_provider_preserves_explicit_empty_forced_tools_override(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="director", model="base-model")
+        request = _MockRequest(
+            message="[mode:propose] Do not call tools.",
+            run_id="run_123",
+            context_override={
+                "_transaction_kernel_forced_tool_definitions": [],
+                "_transaction_kernel_forced_tool_choice": "none",
+            },
+        )
+
+        captured_contexts: list[Any] = []
+
+        async def _fake_call_decision(*, context: Any, **_kwargs: Any) -> dict[str, Any]:
+            captured_contexts.append(context)
+            return {"content": "```file: README.md\nok\n```", "tool_calls": []}
+
+        kernel.inject_llm_caller(SimpleNamespace(call_decision=_fake_call_decision))
+        tk = kernel._create_transaction_kernel("director", profile, request)
+
+        response = await tk.llm_provider(
+            {
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": request.message},
+                ],
+                "tools": [{"type": "function", "function": {"name": "read_file"}}],
+                "tool_choice": "auto",
+            }
+        )
+
+        assert response["content"].startswith("```file:")
+        assert len(captured_contexts) == 1
+        context_override = getattr(captured_contexts[0], "context_override", None)
+        assert isinstance(context_override, dict)
+        assert context_override["_transaction_kernel_forced_tool_definitions"] == []
+        assert context_override["_transaction_kernel_forced_tool_choice"] == "none"
+
 
 class TestExecuteTransactionKernelTurn:
     @pytest.mark.asyncio

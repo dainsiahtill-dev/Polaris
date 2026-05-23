@@ -268,7 +268,8 @@ class TurnEngine(TurnEngineCompatMixin):
             )
 
         async def llm_provider(request_payload: dict[str, Any]) -> dict[str, Any]:
-            messages = list(request_payload.get("messages", []))
+            raw_messages = list(request_payload.get("messages", []))
+            messages = list(raw_messages)
             system_prompt = ""
             if messages and messages[0].get("role") == "system":
                 system_prompt = str(messages[0].get("content", ""))
@@ -281,10 +282,29 @@ class TurnEngine(TurnEngineCompatMixin):
                 if role_label in ("user", "assistant", "tool"):
                     history.append((role_label, content))
 
+            context_override = (
+                dict(request.context_override or {}) if isinstance(request.context_override, dict) else {}
+            )
+            explicit_tool_disable = (
+                isinstance(context_override.get("_transaction_kernel_forced_tool_definitions"), list)
+                and not context_override.get("_transaction_kernel_forced_tool_definitions")
+                and str(context_override.get("_transaction_kernel_forced_tool_choice") or "").strip().lower() == "none"
+            )
+            context_override["_transaction_kernel_prebuilt_messages"] = [
+                dict(item) for item in raw_messages if isinstance(item, dict)
+            ]
+            if isinstance(request_payload.get("tools"), list) and not explicit_tool_disable:
+                context_override["_transaction_kernel_forced_tool_definitions"] = [
+                    dict(item) for item in request_payload["tools"] if isinstance(item, dict)
+                ]
+            if request_payload.get("tool_choice") is not None and not explicit_tool_disable:
+                context_override["_transaction_kernel_forced_tool_choice"] = request_payload.get("tool_choice")
+
             context = ContextRequest(
                 message=getattr(request, "message", "") or "",
                 history=tuple(history),
                 task_id=request.task_id,
+                context_override=context_override,
             )
 
             tool_choice = request_payload.get("tool_choice")
@@ -373,7 +393,8 @@ class TurnEngine(TurnEngineCompatMixin):
         async def llm_provider_stream(request_payload: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
             if not hasattr(llm_invoker, "call_stream"):
                 return
-            messages = list(request_payload.get("messages", []))
+            raw_messages = list(request_payload.get("messages", []))
+            messages = list(raw_messages)
             system_prompt = ""
             if messages and messages[0].get("role") == "system":
                 system_prompt = str(messages[0].get("content", ""))
@@ -386,10 +407,29 @@ class TurnEngine(TurnEngineCompatMixin):
                 if role_label in ("user", "assistant", "tool"):
                     history.append((role_label, content))
 
+            context_override = (
+                dict(request.context_override or {}) if isinstance(request.context_override, dict) else {}
+            )
+            explicit_tool_disable = (
+                isinstance(context_override.get("_transaction_kernel_forced_tool_definitions"), list)
+                and not context_override.get("_transaction_kernel_forced_tool_definitions")
+                and str(context_override.get("_transaction_kernel_forced_tool_choice") or "").strip().lower() == "none"
+            )
+            context_override["_transaction_kernel_prebuilt_messages"] = [
+                dict(item) for item in raw_messages if isinstance(item, dict)
+            ]
+            if isinstance(request_payload.get("tools"), list) and not explicit_tool_disable:
+                context_override["_transaction_kernel_forced_tool_definitions"] = [
+                    dict(item) for item in request_payload["tools"] if isinstance(item, dict)
+                ]
+            if request_payload.get("tool_choice") is not None and not explicit_tool_disable:
+                context_override["_transaction_kernel_forced_tool_choice"] = request_payload.get("tool_choice")
+
             context = ContextRequest(
                 message=getattr(request, "message", "") or "",
                 history=tuple(history),
                 task_id=request.task_id,
+                context_override=context_override,
             )
 
             run_id = str(request.run_id or "").strip() or None

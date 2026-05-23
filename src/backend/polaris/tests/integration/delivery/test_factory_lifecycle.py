@@ -188,6 +188,35 @@ class TestFactoryRunLifecycle:
         assert data["run_id"] == "factory_abc123"
         assert data["status"] == "running"
 
+    async def test_get_run_failed_status_preserves_failure_detail(self, client: AsyncClient) -> None:
+        """Factory desktop status should expose the real failure detail for role-layer debugging."""
+        mock_service = _make_mock_factory_service()
+        failed_run = _mock_factory_run("factory_abc123", ServiceRunStatus.FAILED)
+        failed_run.metadata["current_stage"] = "pm_planning"
+        failed_run.metadata["last_failed_stage"] = "pm_planning"
+        failed_run.metadata["failure"] = {
+            "code": "FACTORY_RUN_EXCEPTION",
+            "detail": "PM runtime provider invocation failed: quota exhausted",
+            "recoverable": True,
+            "suggested_action": "Switch provider or refill quota",
+            "timestamp": "2026-05-24T03:20:00+00:00",
+        }
+        mock_service.get_run.return_value = failed_run
+
+        with patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+            return_value=mock_service,
+        ):
+            response = await client.get("/v2/factory/runs/factory_abc123")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "failed"
+        assert data["failure"]["detail"] == "PM runtime provider invocation failed: quota exhausted"
+        assert data["failure"]["recoverable"] is True
+        assert data["failure"]["suggested_action"] == "Switch provider or refill quota"
+        assert data["roles"]["pm"]["detail"] == "PM runtime provider invocation failed: quota exhausted"
+
     async def test_cancel_run(self, client: AsyncClient) -> None:
         """POST /v2/factory/runs/{id}/control with cancel returns CANCELLED status."""
         mock_service = _make_mock_factory_service()

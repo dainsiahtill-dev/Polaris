@@ -363,14 +363,19 @@ class RoleExecutionKernel:
                 override = dict(provider_request.context_override or {})
             else:
                 override = {}
+            explicit_tool_disable = (
+                isinstance(override.get("_transaction_kernel_forced_tool_definitions"), list)
+                and not override.get("_transaction_kernel_forced_tool_definitions")
+                and str(override.get("_transaction_kernel_forced_tool_choice") or "").strip().lower() == "none"
+            )
             override["_transaction_kernel_prebuilt_messages"] = [
                 dict(item) for item in prebuilt_messages if isinstance(item, dict)
             ]
-            if isinstance(tool_definitions, list):
+            if isinstance(tool_definitions, list) and not explicit_tool_disable:
                 override["_transaction_kernel_forced_tool_definitions"] = [
                     dict(item) for item in tool_definitions if isinstance(item, dict)
                 ]
-            if tool_choice is not None:
+            if tool_choice is not None and not explicit_tool_disable:
                 override["_transaction_kernel_forced_tool_choice"] = tool_choice
             return override
 

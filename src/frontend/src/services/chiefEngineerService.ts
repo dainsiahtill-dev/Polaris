@@ -23,6 +23,9 @@ export interface ChiefEngineerDiagnosticsBlueprintStatus {
   total: number;
   loadable: number;
   invalid_payloads: number;
+  planned_tasks: number;
+  covered_tasks: number;
+  missing_task_ids: string[];
   director_handoff_ready: boolean;
   latest_updated_at: string | null;
   error: string | null;

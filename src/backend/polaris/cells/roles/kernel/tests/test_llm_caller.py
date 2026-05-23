@@ -579,6 +579,53 @@ class TestPreparedRequestArchitecture:
         assert prepared.request_options["tool_choice"] == "required"
 
     @pytest.mark.asyncio
+    async def test_prepare_llm_request_honors_explicit_empty_forced_tools(self, monkeypatch) -> None:
+        caller = LLMCaller(workspace="C:/workspace")
+        profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file", "edit_file"])
+
+        class _FakeGateway:
+            def __init__(self, _profile, _workspace) -> None:
+                pass
+
+            async def build_context(self, _context):
+                return SimpleNamespace(
+                    messages=[{"role": "user", "content": "return fenced file blocks"}],
+                    token_estimate=12,
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
+            _FakeGateway,
+        )
+        monkeypatch.setattr(
+            LLMCaller,
+            "_build_native_tool_schemas",
+            staticmethod(lambda _profile: [{"type": "function", "function": {"name": "read_file"}}]),
+        )
+
+        context = SimpleNamespace(
+            task_id=None,
+            context_override={
+                "_transaction_kernel_forced_tool_definitions": [],
+                "_transaction_kernel_forced_tool_choice": "none",
+            },
+        )
+        prepared = await caller._prepare_llm_request(
+            profile=cast("RoleProfile", profile),
+            system_prompt="system",
+            context=cast("ContextRequest", context),
+            temperature=0.2,
+            max_tokens=256,
+            stream=False,
+        )
+
+        assert prepared.native_tool_mode == "disabled"
+        assert "tools" not in prepared.request_options
+        assert "tool_choice" not in prepared.request_options
+        assert prepared.ai_request.context["native_tool_mode"] == "disabled"
+
+    @pytest.mark.asyncio
     async def test_prepare_llm_request_non_stream_unknown_provider_model_uses_native_tools(
         self,
         monkeypatch,

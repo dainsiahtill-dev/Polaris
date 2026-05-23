@@ -42,6 +42,9 @@ describe('chiefEngineerService', () => {
           total: 1,
           loadable: 1,
           invalid_payloads: 0,
+          planned_tasks: 2,
+          covered_tasks: 2,
+          missing_task_ids: [],
           director_handoff_ready: true,
           latest_updated_at: '2026-05-23T08:00:00Z',
           error: null,
@@ -58,6 +61,7 @@ describe('chiefEngineerService', () => {
     );
     expect(result.ok).toBe(true);
     expect(result.data?.blueprints.director_handoff_ready).toBe(true);
+    expect(result.data?.blueprints.covered_tasks).toBe(2);
   });
 
   it('generates a Chief Engineer blueprint through the v2 command route', async () => {

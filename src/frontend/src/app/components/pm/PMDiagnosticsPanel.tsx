@@ -58,6 +58,54 @@ interface PMDiagnosticsPanelProps {
   onClose: () => void;
 }
 
+interface LlmRoleEvidenceRow {
+  role: string;
+  ready: boolean;
+  source: string;
+  issue: string;
+  testedModel: string;
+  providerId: string;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function readText(record: Record<string, unknown>, key: string): string {
+  return String(record[key] || '').trim();
+}
+
+function llmRoleEvidenceRows(llm: PmStartupDiagnosticsResponse['llm'] | null): LlmRoleEvidenceRow[] {
+  const details = readRecord(llm?.details);
+  const roles = readRecord(details?.roles);
+  if (!roles) return [];
+
+  const roleOrder = [
+    ...(llm?.required_ready_roles || []),
+    ...(llm?.blocked_roles || []),
+    ...Object.keys(roles),
+  ];
+  const seen = new Set<string>();
+  return roleOrder
+    .map((rawRole) => String(rawRole || '').trim().toLowerCase())
+    .filter((role) => {
+      if (!role || seen.has(role)) return false;
+      seen.add(role);
+      return true;
+    })
+    .map((role) => {
+      const row = readRecord(roles[role]) || {};
+      return {
+        role,
+        ready: Boolean(row.ready),
+        source: readText(row, 'readiness_source') || 'unknown',
+        issue: readText(row, 'readiness_issue') || 'ok',
+        testedModel: readText(row, 'tested_model') || readText(row, 'model') || 'unknown',
+        providerId: readText(row, 'provider_id') || readText(row, 'tested_provider_id') || 'unknown',
+      };
+    });
+}
+
 export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps) {
   const [status, setStatus] = useState<DiagnosticsStatus>({
     lancedb: null,
@@ -247,6 +295,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
     status.lancedb?.ok &&
     status.llm?.state === 'ready' &&
     status.workspace?.status === 'ok';
+  const roleEvidenceRows = llmRoleEvidenceRows(status.llm);
   const kernelDiagnosticStatus: 'success' | 'warning' | 'error' = kernelError
     ? 'error'
     : kernelStatus.cache || kernelStatus.tokenBudget
@@ -365,7 +414,18 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
                 onToggle={() => toggleExpanded('llm', expanded, setExpanded)}
               >
                 {status.llm?.state === 'ready' ? (
-                  <p className="text-sm text-slate-300">LLM 配置正常</p>
+                  <div className="space-y-2">
+                    <p className="text-sm text-slate-300">LLM 配置正常</p>
+                    {roleEvidenceRows.length > 0 && (
+                      <div className="space-y-1" data-testid="pm-llm-role-evidence">
+                        {roleEvidenceRows.map((row) => (
+                          <div key={row.role} className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-100">
+                            {row.role}: ready · {row.source} · {row.providerId} · {row.testedModel}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     <p className="text-sm text-red-400">
@@ -375,6 +435,15 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
                       <p className="text-sm text-slate-400">
                         阻塞的角色: {status.llm.blocked_roles.join(', ')}
                       </p>
+                    )}
+                    {roleEvidenceRows.length > 0 && (
+                      <div className="space-y-1" data-testid="pm-llm-role-evidence">
+                        {roleEvidenceRows.map((row) => (
+                          <div key={row.role} className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs text-red-100">
+                            {row.role}: {row.issue} · {row.source} · {row.providerId} · {row.testedModel}
+                          </div>
+                        ))}
+                      </div>
                     )}
                     <div className="text-sm text-slate-400 space-y-1">
                       <p>解决方案:</p>

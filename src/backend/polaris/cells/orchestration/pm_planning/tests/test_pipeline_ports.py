@@ -548,3 +548,47 @@ def test_cell_pm_invoke_port_generic_allows_explicit_ollama_provider_binding(
     blocked_provider_types = captured["blocked_provider_types"]
     assert isinstance(blocked_provider_types, tuple)
     assert "ollama" not in blocked_provider_types
+
+
+def test_cell_pm_invoke_port_reports_missing_runtime_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_invoke_role_runtime_provider(**kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            attempted=False,
+            ok=False,
+            output="",
+            error="provider/model missing",
+        )
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
+        fake_invoke_role_runtime_provider,
+    )
+
+    port = CellPmInvokePort()
+
+    with pytest.raises(RuntimeError, match="PM runtime provider binding is not configured: provider/model missing"):
+        port.invoke(NoopPmStatePort(), "prompt", "generic", SimpleNamespace(), None)
+
+
+def test_cell_pm_invoke_port_reports_runtime_provider_invocation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_invoke_role_runtime_provider(**kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            attempted=True,
+            ok=False,
+            output="",
+            error="429 insufficient_quota",
+        )
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
+        fake_invoke_role_runtime_provider,
+    )
+
+    port = CellPmInvokePort()
+
+    with pytest.raises(RuntimeError, match="PM runtime provider invocation failed: 429 insufficient_quota"):
+        port.invoke(NoopPmStatePort(), "prompt", "generic", SimpleNamespace(), None)

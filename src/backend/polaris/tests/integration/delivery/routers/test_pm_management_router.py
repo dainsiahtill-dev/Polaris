@@ -376,6 +376,18 @@ class TestPMManagementRouter:
                 assert payload["initialized"] is False
                 assert payload["reason"] == "PM_NOT_INITIALIZED"
 
+            response = await client.get("/v2/pm/search/tasks?q=plan")
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["ok"] is True
+            assert payload["query"] == "plan"
+            assert payload["results"] == []
+            assert payload["items"] == []
+            assert payload["count"] == 0
+            assert payload["total"] == 0
+            assert payload["initialized"] is False
+            assert payload["reason"] == "PM_NOT_INITIALIZED"
+
             response = await client.get("/v2/pm/search/documents?q=plan")
             assert response.status_code == 200
             payload = response.json()

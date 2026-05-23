@@ -69,6 +69,7 @@ import {
   cancelDirectorTask,
   createDirectorTask,
   getDirectorCapabilities,
+  getDirectorDiagnostics,
   getDirectorRun,
   getDirectorStatus,
   getDirectorTask,
@@ -86,6 +87,7 @@ import {
   type DirectorStatus,
   type DirectorWorker,
   type CreateDirectorTaskPayload,
+  type DirectorDiagnosticsResponse,
   type RunDirectorPayload,
   type RoleKernelCacheStats,
   type RoleKernelLLMEvent,
@@ -159,6 +161,12 @@ interface DirectorToggleStatusEvidenceState {
   triggered: boolean;
   loading: boolean;
   data: DirectorStatus | null;
+  error: string | null;
+}
+
+interface DirectorDiagnosticsState {
+  loading: boolean;
+  data: DirectorDiagnosticsResponse | null;
   error: string | null;
 }
 
@@ -1047,6 +1055,138 @@ function DirectorKernelDiagnosticsStrip({
   );
 }
 
+function formatDirectorDiagnosticIssue(issue: string): string {
+  return String(issue || '')
+    .replace(/^director_/, '')
+    .replace(/_/g, ' ')
+    .trim() || 'unknown';
+}
+
+function DirectorReadinessDiagnosticsStrip({
+  diagnostics,
+  isLoading,
+  error,
+  onRefresh,
+  compact = false,
+}: {
+  diagnostics: DirectorDiagnosticsResponse | null;
+  isLoading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  compact?: boolean;
+}) {
+  const issues = diagnostics?.issues || [];
+  const visibleIssues = compact ? [] : issues.slice(0, 3);
+  const blocked = issues.length > 0 || diagnostics?.ok === false;
+
+  return (
+    <section
+      className="border-b border-white/10 bg-slate-950/50 px-4 py-2"
+      data-testid="director-readiness-diagnostics"
+      aria-label="Director readiness diagnostics"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
+          {blocked ? (
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
+          ) : (
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+          )}
+          交接诊断
+        </div>
+        <span className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-400">
+          /v2/director/diagnostics
+        </span>
+
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+            正在读取任务队列与 worker 状态
+          </div>
+        ) : error ? (
+          <div
+            className="flex min-w-0 items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
+            data-testid="director-readiness-error"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{error}</span>
+          </div>
+        ) : diagnostics ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+            <div
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 rounded border px-2 py-1 text-[10px]',
+                blocked
+                  ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+                  : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
+              )}
+              data-testid="director-readiness-state"
+            >
+              {blocked ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+              {blocked ? 'blocked' : 'ready'}
+            </div>
+            <KernelStripMetric
+              icon={<ListTodo className="h-3.5 w-3.5 text-cyan-300" />}
+              label="任务"
+              endpoint={diagnostics.tasks.source}
+              values={[
+                `ready ${diagnostics.tasks.ready_to_execute}/${diagnostics.tasks.total}`,
+                `blocked ${diagnostics.tasks.blocked}`,
+                `running ${diagnostics.tasks.running}`,
+              ]}
+            />
+            <KernelStripMetric
+              icon={<Layers className="h-3.5 w-3.5 text-emerald-300" />}
+              label="Worker"
+              endpoint="pool"
+              values={[
+                `idle ${diagnostics.workers.idle}/${diagnostics.workers.total}`,
+                `busy ${diagnostics.workers.busy}`,
+                `bad ${diagnostics.workers.unhealthy}`,
+              ]}
+            />
+            <KernelStripMetric
+              icon={<Activity className="h-3.5 w-3.5 text-indigo-300" />}
+              label="状态"
+              endpoint={diagnostics.status.projection_source || 'projection'}
+              values={[
+                diagnostics.status.running ? 'running' : diagnostics.status.state.toLowerCase(),
+                `src ${diagnostics.status.source || 'none'}`,
+              ]}
+            />
+            {visibleIssues.length > 0 ? (
+              <div className="flex shrink-0 items-center gap-1" data-testid="director-readiness-issues">
+                {visibleIssues.map((issue) => (
+                  <span
+                    key={issue}
+                    className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-200"
+                    title={issue}
+                  >
+                    {formatDirectorDiagnosticIssue(issue)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="text-[11px] text-slate-500">等待 Director 诊断快照</div>
+        )}
+
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onRefresh}
+          disabled={isLoading}
+          title="刷新 Director 交接诊断"
+          className="ml-auto h-7 w-7 shrink-0 text-slate-400 hover:bg-indigo-500/10 hover:text-indigo-300"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function KernelStripMetric({
   icon,
   label,
@@ -1155,6 +1295,11 @@ export function DirectorWorkspace({
     data: null,
     error: null,
   });
+  const [directorDiagnostics, setDirectorDiagnostics] = useState<DirectorDiagnosticsState>({
+    loading: false,
+    data: null,
+    error: null,
+  });
   const [taskBackendDetail, setTaskBackendDetail] = useState<DirectorTaskBackendDetailState>({
     taskId: null,
     data: null,
@@ -1210,7 +1355,7 @@ export function DirectorWorkspace({
   }, []);
 
   useEffect(() => {
-    if (!workspace) {
+    if (!workspace || factoryMode) {
       setCapabilityHosts([]);
       setCapabilityError(null);
       return;
@@ -1240,10 +1385,10 @@ export function DirectorWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [workspace]);
+  }, [factoryMode, workspace]);
 
   const loadKernelDiagnostics = useCallback(async () => {
-    if (!workspace) {
+    if (!workspace || factoryMode) {
       setKernelCacheStats(null);
       setKernelLLMEvents(null);
       setKernelTokenBudgetStats(null);
@@ -1292,11 +1437,77 @@ export function DirectorWorkspace({
     } finally {
       setIsKernelDiagnosticsLoading(false);
     }
-  }, [workspace]);
+  }, [factoryMode, workspace]);
 
   useEffect(() => {
     void loadKernelDiagnostics();
   }, [loadKernelDiagnostics]);
+
+  const loadDirectorDiagnostics = useCallback(async () => {
+    if (!workspace) {
+      setDirectorDiagnostics({
+        loading: false,
+        data: null,
+        error: null,
+      });
+      return;
+    }
+
+    setDirectorDiagnostics((prev) => ({
+      ...prev,
+      loading: true,
+      error: null,
+    }));
+
+    try {
+      const result = await getDirectorDiagnostics();
+      if (result.ok && result.data) {
+        setDirectorDiagnostics({
+          loading: false,
+          data: result.data,
+          error: null,
+        });
+      } else {
+        setDirectorDiagnostics({
+          loading: false,
+          data: null,
+          error: result.error || 'Director diagnostics unavailable',
+        });
+      }
+    } catch (err) {
+      setDirectorDiagnostics({
+        loading: false,
+        data: null,
+        error: err instanceof Error ? err.message : 'Director diagnostics unavailable',
+      });
+    }
+  }, [workspace]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const syncDiagnostics = async () => {
+      if (cancelled) {
+        return;
+      }
+      await loadDirectorDiagnostics();
+    };
+
+    void syncDiagnostics();
+    if (workspace) {
+      timer = setInterval(() => {
+        void syncDiagnostics();
+      }, directorRunning ? 2500 : 7000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        clearInterval(timer);
+      }
+    };
+  }, [directorRunning, loadDirectorDiagnostics, workspace]);
 
   const handleClearKernelCache = useCallback(async () => {
     setIsKernelCacheClearing(true);
@@ -2284,20 +2495,31 @@ export function DirectorWorkspace({
       </header>
       )}
 
-      <DirectorCapabilityStrip
-        hosts={capabilityHosts}
-        isLoading={isCapabilityLoading}
-        error={capabilityError}
-      />
-      <DirectorKernelDiagnosticsStrip
-        cacheStats={kernelCacheStats}
-        llmEvents={kernelLLMEvents}
-        tokenBudgetStats={kernelTokenBudgetStats}
-        isLoading={isKernelDiagnosticsLoading}
-        isClearing={isKernelCacheClearing}
-        error={kernelDiagnosticsError}
-        onRefresh={() => void loadKernelDiagnostics()}
-        onClearCache={() => void handleClearKernelCache()}
+      {!factoryMode && (
+        <DirectorCapabilityStrip
+          hosts={capabilityHosts}
+          isLoading={isCapabilityLoading}
+          error={capabilityError}
+        />
+      )}
+      {!factoryMode && (
+        <DirectorKernelDiagnosticsStrip
+          cacheStats={kernelCacheStats}
+          llmEvents={kernelLLMEvents}
+          tokenBudgetStats={kernelTokenBudgetStats}
+          isLoading={isKernelDiagnosticsLoading}
+          isClearing={isKernelCacheClearing}
+          error={kernelDiagnosticsError}
+          onRefresh={() => void loadKernelDiagnostics()}
+          onClearCache={() => void handleClearKernelCache()}
+        />
+      )}
+      <DirectorReadinessDiagnosticsStrip
+        diagnostics={directorDiagnostics.data}
+        isLoading={directorDiagnostics.loading}
+        error={directorDiagnostics.error}
+        onRefresh={() => void loadDirectorDiagnostics()}
+        compact={factoryMode}
       />
       {directorRunEvidence.runId && (
         <div

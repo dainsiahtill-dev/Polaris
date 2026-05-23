@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -12,6 +13,7 @@ from polaris.cells.director.execution.service import (
     DirectorService,
     DirectorState,
 )
+from polaris.domain.entities import Task, TaskPriority
 
 
 class TestDirectorService:
@@ -26,6 +28,29 @@ class TestDirectorService:
         mock_security = Mock()
         service = DirectorService(config=config, security=mock_security)
         assert service.security is mock_security
+
+    @pytest.mark.asyncio
+    async def test_execute_task_work_without_command_uses_worker_executor(self, tmp_path: Path) -> None:
+        config = DirectorConfig(workspace=str(tmp_path))
+        service = DirectorService(config=config)
+        task = Task(
+            id="task-1",
+            subject="Initialize project scaffold and configuration",
+            description="Create a Python project scaffold with README and src package.",
+            priority=TaskPriority.HIGH,
+            metadata={
+                "target_files": ["pyproject.toml", "README.md", "src/__init__.py"],
+                "tech_stack": {"language": "python"},
+            },
+        )
+
+        result = await service._execute_task_work(task)
+
+        assert result.success is True
+        evidence_paths = {str(item.path or "") for item in result.evidence}
+        assert "pyproject.toml" in evidence_paths
+        assert (tmp_path / "pyproject.toml").is_file()
+        assert (tmp_path / "README.md").is_file()
 
 
 # =============================================================================

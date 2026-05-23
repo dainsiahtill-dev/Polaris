@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,7 @@ from polaris.cells.runtime.projection.public.role_contracts import (
 )
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.workspace import active_workspace_value
+from polaris.kernelone.storage import resolve_logical_path
 from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["chief-engineer"])
@@ -91,6 +93,9 @@ class ChiefEngineerDiagnosticsBlueprintStatus(BaseModel):
     total: int = 0
     loadable: int = 0
     invalid_payloads: int = 0
+    planned_tasks: int = 0
+    covered_tasks: int = 0
+    missing_task_ids: list[str] = Field(default_factory=list)
     director_handoff_ready: bool = False
     latest_updated_at: str | None = None
     error: str | None = None
@@ -138,6 +143,74 @@ def _string_list(value: Any) -> list[str]:
     return rows
 
 
+def _read_json_file(path: Path) -> dict[str, Any] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _task_id_from_plan_task(task: dict[str, Any], index: int) -> str:
+    for key in ("id", "task_id", "uid", "pm_task_id"):
+        value = task.get(key)
+        token = str(value or "").strip()
+        if token:
+            return token
+    return f"task-{index}"
+
+
+def _load_pm_plan_task_ids(workspace: str, *, ramdisk_root: str = "") -> list[str] | None:
+    try:
+        plan_path = Path(
+            resolve_logical_path(
+                workspace,
+                "runtime/tasks/plan.json",
+                ramdisk_root=ramdisk_root or None,
+            )
+        )
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    payload = _read_json_file(plan_path)
+    if payload is None:
+        return None
+
+    raw_tasks = payload.get("tasks")
+    if not isinstance(raw_tasks, list):
+        return []
+
+    task_ids: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw_tasks, start=1):
+        if not isinstance(item, dict):
+            continue
+        task_id = _task_id_from_plan_task(item, index)
+        if task_id and task_id not in seen:
+            seen.add(task_id)
+            task_ids.append(task_id)
+    return task_ids
+
+
+def _blueprint_task_id(payload: dict[str, Any]) -> str:
+    sources = [
+        payload,
+        payload.get("raw") if isinstance(payload.get("raw"), dict) else None,
+        payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+        payload.get("context") if isinstance(payload.get("context"), dict) else None,
+    ]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in ("task_id", "pm_task_id", "taskId", "id"):
+            token = str(source.get(key) or "").strip()
+            if token:
+                return token
+    return ""
+
+
 def _blueprint_id_from_payload(payload: dict[str, Any], fallback: str) -> str:
     return (
         str(payload.get("blueprint_id") or payload.get("id") or payload.get("task_id") or fallback).strip() or fallback
@@ -162,7 +235,7 @@ def _blueprint_summary(payload: dict[str, Any], fallback_id: str) -> ChiefEngine
     )
 
 
-def _persistence_for_request(request: Request) -> BlueprintPersistence:
+def _persistence_for_request(request: Request, *, ensure_directory: bool = True) -> BlueprintPersistence:
     state = get_state(request)
     workspace = _workspace_value(state.settings)
     if not workspace:
@@ -171,7 +244,7 @@ def _persistence_for_request(request: Request) -> BlueprintPersistence:
             code="WORKSPACE_NOT_CONFIGURED",
             message="workspace is not configured",
         )
-    return BlueprintPersistence(workspace)
+    return BlueprintPersistence(workspace, ensure_directory=ensure_directory)
 
 
 def _blueprint_payload_for_result(result: TaskBlueprintResultV1) -> dict[str, Any]:
@@ -233,9 +306,14 @@ def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBluep
     try:
         persistence = BlueprintPersistence(workspace, ensure_directory=False)
         blueprint_ids = persistence.list_all()
+        planned_task_ids = _load_pm_plan_task_ids(
+            workspace,
+            ramdisk_root=str(getattr(settings, "ramdisk_root", "") or "").strip(),
+        )
         loadable = 0
         invalid_payloads = 0
         updated_tokens: list[str] = []
+        covered_task_ids: set[str] = set()
         for blueprint_id in blueprint_ids:
             payload = persistence.load(blueprint_id)
             if isinstance(payload, dict):
@@ -243,6 +321,9 @@ def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBluep
                 updated_at = str(payload.get("updated_at") or payload.get("created_at") or "").strip()
                 if updated_at:
                     updated_tokens.append(updated_at)
+                task_id = _blueprint_task_id(payload)
+                if task_id:
+                    covered_task_ids.add(task_id)
             else:
                 invalid_payloads += 1
     except (OSError, RuntimeError, ValueError) as exc:
@@ -259,13 +340,25 @@ def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBluep
     else:
         status = "empty"
 
+    if planned_task_ids is None:
+        missing_task_ids: list[str] = []
+        covered_tasks = 0
+        director_handoff_ready = loadable > 0
+    else:
+        missing_task_ids = [task_id for task_id in planned_task_ids if task_id not in covered_task_ids]
+        covered_tasks = len(planned_task_ids) - len(missing_task_ids)
+        director_handoff_ready = bool(planned_task_ids) and not missing_task_ids and invalid_payloads == 0
+
     return ChiefEngineerDiagnosticsBlueprintStatus(
-        ok=invalid_payloads == 0,
+        ok=invalid_payloads == 0 and not missing_task_ids,
         status=status,
         total=len(blueprint_ids),
         loadable=loadable,
         invalid_payloads=invalid_payloads,
-        director_handoff_ready=loadable > 0,
+        planned_tasks=len(planned_task_ids or []),
+        covered_tasks=covered_tasks,
+        missing_task_ids=missing_task_ids,
+        director_handoff_ready=director_handoff_ready,
         latest_updated_at=max(updated_tokens) if updated_tokens else None,
     )
 
@@ -281,6 +374,8 @@ def _diagnostic_issues(
         issues.append("blueprint_store_unreadable")
     if blueprints.invalid_payloads:
         issues.append("blueprint_payload_invalid")
+    if blueprints.missing_task_ids:
+        issues.append("blueprint_coverage_incomplete")
     return issues
 
 
@@ -379,7 +474,7 @@ async def get_chief_engineer_token_budget_stats() -> dict[str, Any]:
 def list_chief_engineer_blueprints(request: Request) -> ChiefEngineerBlueprintListResponse:
     """List persisted Chief Engineer blueprints for the active workspace."""
 
-    persistence = _persistence_for_request(request)
+    persistence = _persistence_for_request(request, ensure_directory=False)
     rows: list[ChiefEngineerBlueprintSummaryV1] = []
     for blueprint_id in persistence.list_all():
         payload = persistence.load(blueprint_id)
@@ -462,7 +557,7 @@ def get_chief_engineer_blueprint(
     """Load one persisted Chief Engineer blueprint by id."""
 
     safe_blueprint_id = _validate_blueprint_id(blueprint_id)
-    payload = _persistence_for_request(request).load(safe_blueprint_id)
+    payload = _persistence_for_request(request, ensure_directory=False).load(safe_blueprint_id)
     if not isinstance(payload, dict):
         raise StructuredHTTPException(
             status_code=404,

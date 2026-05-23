@@ -20,6 +20,39 @@ _FENCED_FILE_BLOCK_RE = re.compile(
     r"```file:\s*([^\r\n`]+)\r?\n(.*?)```",
     re.DOTALL | re.IGNORECASE,
 )
+_FENCED_FILE_HEADER_RE = re.compile(r"^```file:\s*([^`\r\n]+?)\s*$", re.IGNORECASE)
+_FENCE_CLOSE_RE = re.compile(r"^```\s*$")
+
+
+def _next_nonempty_line_index(lines: list[str], start_index: int) -> int | None:
+    for index in range(start_index, len(lines)):
+        if lines[index].strip():
+            return index
+    return None
+
+
+def _is_nested_markdown_fence_open(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("```"):
+        return False
+    if _FENCE_CLOSE_RE.match(stripped):
+        return False
+    return not stripped.lower().startswith("```file:")
+
+
+def _escape_nested_markdown_fences_for_protocol(path: str, content: str) -> str:
+    lower_path = path.lower()
+    if not lower_path.endswith((".md", ".mdx")):
+        return content
+    escaped_lines: list[str] = []
+    for line in content.split("\n"):
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if stripped.startswith("```") and not stripped.lower().startswith("```file:"):
+            escaped_lines.append(f"{indent}~~~{stripped[3:]}")
+        else:
+            escaped_lines.append(line)
+    return "\n".join(escaped_lines)
 
 
 def _normalize_fenced_file_blocks(response: str) -> str:
@@ -34,6 +67,52 @@ def _normalize_fenced_file_blocks(response: str) -> str:
     text = str(response or "")
     if "```file:" not in text.lower():
         return text
+
+    lines = text.splitlines()
+    output: list[str] = []
+    index = 0
+    changed = False
+    while index < len(lines):
+        header = _FENCED_FILE_HEADER_RE.match(lines[index].strip())
+        if header is None:
+            output.append(lines[index])
+            index += 1
+            continue
+
+        changed = True
+        path = header.group(1).strip()
+        index += 1
+        nested_fence_depth = 0
+        content_lines: list[str] = []
+        while index < len(lines):
+            current_line = lines[index]
+            current_header = _FENCED_FILE_HEADER_RE.match(current_line.strip())
+            if current_header is not None:
+                break
+            if _is_nested_markdown_fence_open(current_line):
+                nested_fence_depth += 1
+                content_lines.append(current_line)
+                index += 1
+                continue
+            if _FENCE_CLOSE_RE.match(current_line.strip()):
+                if nested_fence_depth > 0:
+                    nested_fence_depth -= 1
+                    content_lines.append(current_line)
+                    index += 1
+                    continue
+                next_index = _next_nonempty_line_index(lines, index + 1)
+                if next_index is None or _FENCED_FILE_HEADER_RE.match(lines[next_index].strip()) is not None:
+                    index += 1
+                    break
+            content_lines.append(current_line)
+            index += 1
+
+        content = "\n".join(content_lines).strip("\r\n")
+        content = _escape_nested_markdown_fences_for_protocol(path, content)
+        output.append(f"FILE: {path}\n{content}\nEND FILE")
+
+    if changed:
+        return "\n".join(output)
 
     def _replace(match: re.Match[str]) -> str:
         path = match.group(1).strip()

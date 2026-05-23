@@ -11,6 +11,7 @@ import logging
 import os
 import time
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -316,6 +317,9 @@ def _normalize_task_status_token(value: Any) -> str:
 
 
 def _task_row_from_object(task: Any) -> dict[str, Any]:
+    if isinstance(task, dict):
+        return task
+
     result = getattr(task, "result", None)
     result_payload = result.to_dict() if result and hasattr(result, "to_dict") else result
     metadata = getattr(task, "metadata", None)
@@ -331,6 +335,15 @@ def _task_row_from_object(task: Any) -> dict[str, Any]:
         "result": result_payload if isinstance(result_payload, dict) else None,
         "metadata": metadata if isinstance(metadata, dict) else {},
     }
+
+
+def _task_rows_from_local_tasks(tasks: list[Any]) -> list[dict[str, Any]]:
+    return [_task_row_from_object(task) for task in tasks]
+
+
+def _task_id_from_row(row: dict[str, Any]) -> str:
+    metadata = _as_dict(row.get("metadata"))
+    return str(row.get("id") or row.get("task_id") or row.get("pm_task_id") or metadata.get("pm_task_id") or "").strip()
 
 
 def _task_details(row: dict[str, Any]) -> dict[str, Any]:
@@ -503,6 +516,10 @@ async def _get_workflow_snapshot(
     )
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 # Request/Response models
 # ============================================================================
 # Phase 6: 统一编排请求模型
@@ -555,6 +572,234 @@ class DirectorStatusResponse(BaseModel):
     tasks: dict[str, Any]
     workers: dict[str, Any]
     token_budget: dict[str, Any]
+
+
+class DirectorDiagnosticsStatusSection(BaseModel):
+    """Runtime status evidence for Director desktop readiness."""
+
+    ok: bool
+    state: str
+    running: bool
+    source: str = "none"
+    projection_source: str = "none"
+    error: str | None = None
+
+
+class DirectorDiagnosticsTaskSection(BaseModel):
+    """Task queue evidence for Director handoff readiness."""
+
+    ok: bool
+    source: str
+    total: int = 0
+    pending: int = 0
+    claimed: int = 0
+    running: int = 0
+    blocked: int = 0
+    failed: int = 0
+    completed: int = 0
+    cancelled: int = 0
+    ready_to_execute: int = 0
+    ready_task_ids: list[str] = Field(default_factory=list)
+    blocked_task_ids: list[str] = Field(default_factory=list)
+    running_task_ids: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class DirectorDiagnosticsWorkerSection(BaseModel):
+    """Worker pool evidence for Director handoff readiness."""
+
+    ok: bool
+    total: int = 0
+    idle: int = 0
+    busy: int = 0
+    healthy: int = 0
+    unhealthy: int = 0
+    active_task_ids: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class DirectorDiagnosticsResponse(BaseModel):
+    """Side-effect-free Director desktop readiness snapshot."""
+
+    ok: bool
+    role: str = "director"
+    generated_at: str
+    workspace: str
+    status: DirectorDiagnosticsStatusSection
+    tasks: DirectorDiagnosticsTaskSection
+    workers: DirectorDiagnosticsWorkerSection
+    issues: list[str] = Field(default_factory=list)
+
+
+def _task_diagnostics_from_rows(rows: list[dict[str, Any]], source: str) -> DirectorDiagnosticsTaskSection:
+    pending = 0
+    claimed = 0
+    running = 0
+    blocked = 0
+    failed = 0
+    completed = 0
+    cancelled = 0
+    ready_task_ids: list[str] = []
+    blocked_task_ids: list[str] = []
+    running_task_ids: list[str] = []
+
+    for row in rows:
+        task_id = _task_id_from_row(row)
+        details = _task_details(row)
+        status_token = str(details["status"])
+        dependencies = details["dependencies"]
+
+        if status_token == "PENDING":
+            pending += 1
+            if not dependencies and task_id:
+                ready_task_ids.append(task_id)
+        elif status_token == "CLAIMED":
+            claimed += 1
+            running += 1
+            if task_id:
+                running_task_ids.append(task_id)
+        elif status_token == "RUNNING":
+            running += 1
+            if task_id:
+                running_task_ids.append(task_id)
+        elif status_token == "BLOCKED":
+            blocked += 1
+            if task_id:
+                blocked_task_ids.append(task_id)
+        elif status_token == "FAILED":
+            failed += 1
+        elif status_token == "COMPLETED":
+            completed += 1
+        elif status_token == "CANCELLED":
+            cancelled += 1
+        else:
+            pending += 1
+
+    total = len(rows)
+    return DirectorDiagnosticsTaskSection(
+        ok=total > 0 and bool(ready_task_ids or running_task_ids) and blocked == 0 and failed == 0,
+        source=source,
+        total=total,
+        pending=pending,
+        claimed=claimed,
+        running=running,
+        blocked=blocked,
+        failed=failed,
+        completed=completed,
+        cancelled=cancelled,
+        ready_to_execute=len(ready_task_ids),
+        ready_task_ids=ready_task_ids,
+        blocked_task_ids=blocked_task_ids,
+        running_task_ids=running_task_ids,
+    )
+
+
+def _worker_payload_from_object(worker: Any) -> dict[str, Any]:
+    if isinstance(worker, dict):
+        return worker
+    to_dict = getattr(worker, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return payload
+    return {
+        "id": getattr(worker, "id", ""),
+        "name": getattr(worker, "name", ""),
+        "status": getattr(worker, "status", ""),
+        "current_task_id": getattr(worker, "current_task_id", None) or getattr(worker, "task_id", None),
+        "healthy": getattr(worker, "healthy", None),
+    }
+
+
+def _worker_diagnostics_from_workers(workers: list[Any]) -> DirectorDiagnosticsWorkerSection:
+    idle = 0
+    busy = 0
+    unhealthy = 0
+    active_task_ids: list[str] = []
+    idle_statuses = {"idle", "ready", "available", "waiting"}
+    busy_statuses = {"busy", "running", "active", "claimed", "working", "executing"}
+    unhealthy_statuses = {"failed", "error", "unhealthy", "offline"}
+
+    for worker in workers:
+        payload = _worker_payload_from_object(worker)
+        status_token = str(payload.get("status") or "").strip().lower()
+        if status_token in idle_statuses:
+            idle += 1
+        elif status_token in busy_statuses:
+            busy += 1
+
+        if payload.get("healthy") is False or status_token in unhealthy_statuses:
+            unhealthy += 1
+
+        task_id = str(
+            payload.get("current_task_id") or payload.get("currentTaskId") or payload.get("task_id") or ""
+        ).strip()
+        if task_id and task_id not in active_task_ids:
+            active_task_ids.append(task_id)
+
+    total = len(workers)
+    return DirectorDiagnosticsWorkerSection(
+        ok=total > 0 and unhealthy == 0,
+        total=total,
+        idle=idle,
+        busy=busy,
+        healthy=max(0, total - unhealthy),
+        unhealthy=unhealthy,
+        active_task_ids=active_task_ids,
+    )
+
+
+def _director_diagnostic_issues(
+    status_section: DirectorDiagnosticsStatusSection,
+    task_section: DirectorDiagnosticsTaskSection,
+    worker_section: DirectorDiagnosticsWorkerSection,
+) -> list[str]:
+    issues: list[str] = []
+    if not status_section.ok:
+        issues.append("director_status_unavailable")
+    if task_section.error:
+        issues.append("director_tasks_unavailable")
+    if task_section.total == 0:
+        issues.append("director_no_tasks")
+    elif task_section.ready_to_execute == 0 and task_section.running == 0 and not status_section.running:
+        issues.append("director_no_ready_tasks")
+    if task_section.blocked > 0:
+        issues.append("director_tasks_blocked")
+    if task_section.failed > 0:
+        issues.append("director_tasks_failed")
+    if worker_section.error:
+        issues.append("director_workers_unavailable")
+    if worker_section.total == 0:
+        issues.append("director_no_workers")
+    elif task_section.ready_to_execute > 0 and worker_section.idle == 0 and not status_section.running:
+        issues.append("director_no_idle_workers")
+    if worker_section.unhealthy > 0:
+        issues.append("director_workers_unhealthy")
+    return issues
+
+
+def _parse_task_priority(value: str) -> TaskPriority:
+    token = str(value or "").strip()
+    if not token:
+        return TaskPriority.MEDIUM
+
+    name_token = token.upper().replace("-", "_")
+    by_name = TaskPriority.__members__.get(name_token)
+    if by_name is not None:
+        return by_name
+
+    value_token = token.lower()
+    for priority in TaskPriority:
+        if priority.value == value_token:
+            return priority
+
+    allowed = sorted({item.name for item in TaskPriority} | {item.value for item in TaskPriority})
+    raise StructuredHTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code="INVALID_TASK_PRIORITY",
+        message="invalid task priority",
+        details={"priority": token, "allowed": allowed},
+    )
 
 
 @router.post("/start", dependencies=[Depends(require_auth)])
@@ -628,13 +873,90 @@ def get_director_capabilities() -> dict[str, Any]:
         ) from exc
 
 
+@router.get("/diagnostics", dependencies=[Depends(require_auth)], response_model=DirectorDiagnosticsResponse)
+async def get_director_diagnostics(
+    request: Request,
+    service: DirectorService = Depends(get_director_service_dep),
+) -> DirectorDiagnosticsResponse:
+    """Return side-effect-free Director desktop readiness diagnostics."""
+    state = getattr(request.app.state, "app_state", None) or request.app.state
+    settings = state.settings
+    workspace = active_workspace_value(settings)
+
+    status_section = DirectorDiagnosticsStatusSection(
+        ok=False,
+        state="UNKNOWN",
+        running=False,
+        error="projection unavailable",
+    )
+    task_rows: list[dict[str, Any]] = []
+    task_source = "empty"
+
+    try:
+        projection = await RuntimeProjectionService.build_async(workspace, state=state)
+        selected_status = (
+            getattr(projection, "director_merged", None)
+            if getattr(projection, "director_merged", None)
+            else projection.director_local
+        )
+        projection_source = "director_merged" if getattr(projection, "director_merged", None) else "director_local"
+        local_status = _flatten_director_status(selected_status or {"running": False, "status": {"state": "IDLE"}})
+        status_section = DirectorDiagnosticsStatusSection(
+            ok=True,
+            state=str(local_status.get("state") or "IDLE"),
+            running=bool(local_status.get("running")),
+            source=str(local_status.get("source") or "none"),
+            projection_source=projection_source,
+        )
+        task_rows = _projection_task_rows(projection)
+        task_source = "workflow" if task_rows else "empty"
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("Director diagnostics projection unavailable for workspace=%s", workspace, exc_info=True)
+        status_section.error = str(exc)
+
+    if not task_rows:
+        try:
+            task_rows = _task_rows_from_local_tasks(await service.list_tasks(status=None))
+            task_source = "local" if task_rows else "empty"
+        except (RuntimeError, ValueError, AttributeError) as exc:
+            logger.debug("Director diagnostics local task queue unavailable", exc_info=True)
+            task_section = DirectorDiagnosticsTaskSection(
+                ok=False,
+                source="error",
+                error=str(exc),
+            )
+        else:
+            task_section = _task_diagnostics_from_rows(task_rows, task_source)
+    else:
+        task_section = _task_diagnostics_from_rows(task_rows, task_source)
+
+    try:
+        workers = await service.list_workers()
+    except (RuntimeError, ValueError, AttributeError) as exc:
+        logger.debug("Director diagnostics worker pool unavailable", exc_info=True)
+        worker_section = DirectorDiagnosticsWorkerSection(ok=False, error=str(exc))
+    else:
+        worker_section = _worker_diagnostics_from_workers(list(workers))
+
+    issues = _director_diagnostic_issues(status_section, task_section, worker_section)
+    return DirectorDiagnosticsResponse(
+        ok=not issues,
+        generated_at=_utc_now(),
+        workspace=workspace,
+        status=status_section,
+        tasks=task_section,
+        workers=worker_section,
+        issues=issues,
+    )
+
+
 @router.post("/tasks", response_model=TaskResponse, dependencies=[Depends(require_auth)])
 async def create_task(
     request: TaskCreateRequest,
     service: DirectorService = Depends(get_director_service_dep),
 ) -> TaskResponse:
     """Create and submit a new task."""
-    priority = TaskPriority[request.priority]
+    priority = _parse_task_priority(request.priority)
     blocked_by: list[int | str] = list(request.blocked_by)
 
     task = await service.submit_task(
@@ -668,10 +990,11 @@ async def list_tasks(
     start = time.perf_counter()
     tasks: list[dict[str, Any]] = []
     used_projection = False
+    used_local_fallback = False
 
     try:
         if source == "local":
-            tasks = await service.list_tasks(status=None)
+            tasks = _task_rows_from_local_tasks(await service.list_tasks(status=None))
         else:
             # Use RuntimeProjectionService for workflow/auto selection only.
             # Keep local-only path fast for high-frequency observers and stress tracer.
@@ -682,6 +1005,9 @@ async def list_tasks(
             used_projection = True
 
             tasks = _projection_task_rows(projection)
+            if source == "auto" and not tasks:
+                tasks = _task_rows_from_local_tasks(await service.list_tasks(status=None))
+                used_local_fallback = True
 
         responses = [_task_response_from_row(t) for t in tasks]
         if requested_status is not None:
@@ -697,6 +1023,7 @@ async def list_tasks(
                 "status_filter": requested_status or "",
                 "task_count": len(tasks),
                 "used_projection": used_projection,
+                "used_local_fallback": used_local_fallback,
             },
         )
 

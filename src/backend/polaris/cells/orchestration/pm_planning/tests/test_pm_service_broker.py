@@ -16,6 +16,7 @@ from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionProcessHandleV1,
     ExecutionProcessLaunchResultV1,
 )
+from polaris.kernelone.llm.runtime_config import RoleModelConfig
 from polaris.kernelone.storage import StorageLayout
 
 
@@ -279,6 +280,93 @@ class TestPMServiceExecutionBroker:
         timeout_index = cmd.index("--timeout") + 1
 
         assert cmd[timeout_index] == "60"
+
+    def test_build_command_prefers_explicit_pm_model(
+        self,
+        mock_settings: MagicMock,
+    ) -> None:
+        """Explicit PM model remains the highest-priority launch override."""
+        with patch(
+            "polaris.kernelone.llm.runtime_config.load_role_config",
+            return_value=RoleModelConfig(role_id="pm", provider_id="role-provider", model="role-model"),
+        ):
+            mock_settings.pm.model = "explicit-pm-model"
+            service = PMService(settings=mock_settings)
+
+            cmd = service._build_command(loop_mode=False)
+
+        model_index = cmd.index("--model") + 1
+        assert cmd[model_index] == "explicit-pm-model"
+
+    def test_build_command_uses_pm_role_binding_when_pm_model_empty(
+        self,
+        mock_settings: MagicMock,
+    ) -> None:
+        """PM role binding should beat the global legacy LLM model fallback."""
+        with patch(
+            "polaris.kernelone.llm.runtime_config.load_role_config",
+            return_value=RoleModelConfig(role_id="pm", provider_id="role-provider", model="role-model"),
+        ):
+            mock_settings.pm.model = None
+            mock_settings.llm.model = "global-legacy-model"
+            service = PMService(settings=mock_settings)
+
+            cmd = service._build_command(loop_mode=False)
+
+        model_index = cmd.index("--model") + 1
+        assert cmd[model_index] == "role-model"
+
+    @pytest.mark.asyncio
+    async def test_spawn_process_exports_pm_role_binding_env(
+        self,
+        mock_broker: MagicMock,
+        mock_settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """The PM subprocess should inherit role binding env for CLI fallback paths."""
+        mock_settings.pm.model = None
+        mock_settings.llm.model = "global-legacy-model"
+
+        pm_script = tmp_path / "pm_script.py"
+        pm_script.write_text("import sys; sys.exit(0)", encoding="utf-8")
+
+        mock_process = MagicMock()
+        mock_process.pid = 22222
+        mock_process.poll = MagicMock(return_value=None)
+
+        mock_handle = ExecutionProcessHandleV1(
+            execution_id="test-exec-id-role-binding",
+            pid=22222,
+            name="pm-service",
+            workspace=str(tmp_path),
+        )
+        mock_broker.launch_process.return_value = ExecutionProcessLaunchResultV1(
+            success=True,
+            handle=mock_handle,
+        )
+        mock_broker.resolve_runtime_process.return_value = mock_process
+
+        with (
+            patch(
+                "polaris.cells.orchestration.pm_planning.service.get_execution_broker_service",
+                return_value=mock_broker,
+            ),
+            patch(
+                "polaris.kernelone.llm.runtime_config.load_role_config",
+                return_value=RoleModelConfig(role_id="pm", provider_id="role-provider", model="role-model"),
+            ),
+        ):
+            service = PMService(settings=mock_settings)
+            service._storage = StorageLayout(
+                Path(mock_settings.workspace),
+                Path(mock_settings.runtime_base),
+            )
+
+            await service._spawn_process([sys.executable, str(pm_script)], str(tmp_path / "pm.log"))
+
+        command = mock_broker.launch_process.call_args[0][0]
+        assert command.env["KERNELONE_PM_PROVIDER"] == "role-provider"
+        assert command.env["KERNELONE_PM_MODEL"] == "role-model"
 
     def test_build_command_respects_explicit_pm_planning_timeout_env(
         self,

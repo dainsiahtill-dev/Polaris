@@ -278,6 +278,140 @@ def load_workflow_base_tasks(workspace: str, cache_root: str) -> list[dict[str, 
     return [dict(item) for item in tasks if isinstance(item, dict)]
 
 
+def _workflow_result_run_tokens(workflow_status: dict[str, Any] | None) -> list[str]:
+    payload = workflow_status if isinstance(workflow_status, dict) else {}
+    record = payload.get("record")
+    record_payload = record if isinstance(record, dict) else {}
+    candidates = (
+        payload.get("workflow_chain_run_id"),
+        record_payload.get("workflow_chain_run_id"),
+        payload.get("workflow_input_run_id"),
+        record_payload.get("workflow_input_run_id"),
+        payload.get("run_id"),
+        record_payload.get("run_id"),
+    )
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        token = str(candidate or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tokens
+
+
+def _workflow_task_id(item: dict[str, Any]) -> str:
+    return str(item.get("id") or item.get("task_id") or "").strip()
+
+
+def _workflow_task_result_path(cache_root: str, run_token: str, task_id: str) -> str:
+    cache_root_value = str(cache_root or "").strip()
+    if not cache_root_value or not run_token or not task_id:
+        return ""
+    workflow_root = os.path.abspath(os.path.join(cache_root_value, "workflow"))
+    path = os.path.abspath(os.path.join(workflow_root, run_token, task_id, "director.result.json"))
+    workflow_root_norm = os.path.normcase(workflow_root)
+    path_norm = os.path.normcase(path)
+    if path_norm != workflow_root_norm and not path_norm.startswith(workflow_root_norm + os.sep):
+        return ""
+    return path
+
+
+def _load_workflow_task_result(cache_root: str, run_tokens: list[str], task_id: str) -> tuple[dict[str, Any], str]:
+    for run_token in run_tokens:
+        result_path = _workflow_task_result_path(cache_root, run_token, task_id)
+        payload = read_json(result_path) if result_path else None
+        if isinstance(payload, dict):
+            return payload, result_path
+    return {}, ""
+
+
+def _director_result_task_state(result_payload: dict[str, Any]) -> str:
+    status_token = str(result_payload.get("status") or "").strip().lower()
+    qa_verdict = str(result_payload.get("qa_verdict") or result_payload.get("qa_status") or "").strip().upper()
+    exit_code_raw = result_payload.get("exit_code")
+    exit_code: int | None = None
+    try:
+        exit_code = int(exit_code_raw) if exit_code_raw is not None else None
+    except (TypeError, ValueError):
+        exit_code = None
+
+    if status_token in {"success", "completed", "passed", "succeeded"} or qa_verdict == "PASS":
+        return "completed"
+    if status_token in {"blocked", "dependency_blocked"}:
+        return "blocked"
+    if status_token in {"failed", "fail", "error", "errored"}:
+        return "failed"
+    if exit_code == 0 and status_token not in {"failed", "fail", "error", "blocked"}:
+        return "completed"
+    if exit_code is not None and exit_code != 0:
+        return "failed"
+    return ""
+
+
+def _apply_workflow_task_result(item: dict[str, Any], result_payload: dict[str, Any], result_path: str) -> None:
+    state = _director_result_task_state(result_payload)
+    if not state:
+        return
+
+    current_state = canonicalize_workflow_task_state(item.get("status") or item.get("state"))
+    if current_state == "completed" and state != "completed":
+        return
+
+    item["status"] = state
+    item["state"] = state
+    item["done"] = state == "completed"
+    item["completed"] = state == "completed"
+
+    summary = str(
+        result_payload.get("result_summary")
+        or result_payload.get("summary")
+        or result_payload.get("qa_diagnostics")
+        or ""
+    ).strip()
+    if summary:
+        item["summary"] = summary
+    if state in {"failed", "blocked"}:
+        error = str(result_payload.get("error") or summary or "").strip()
+        if error:
+            item["error"] = error
+    else:
+        item.pop("error", None)
+
+    changed_files = result_payload.get("changed_files")
+    if isinstance(changed_files, list):
+        item["changed_files"] = [str(value) for value in changed_files if str(value or "").strip()]
+
+    metadata_raw = item.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    metadata["director_result_path"] = result_path
+    for key in ("qa_verdict", "qa_diagnostics", "exit_code"):
+        if key in result_payload:
+            metadata[key] = result_payload[key]
+    item["metadata"] = metadata
+
+
+def _apply_workflow_task_results(
+    tasks: list[dict[str, Any]],
+    workflow_status: dict[str, Any] | None,
+    *,
+    cache_root: str,
+) -> None:
+    run_tokens = _workflow_result_run_tokens(workflow_status)
+    if not tasks or not run_tokens:
+        return
+    for item in tasks:
+        if not isinstance(item, dict):
+            continue
+        task_id = _workflow_task_id(item)
+        if not task_id:
+            continue
+        result_payload, result_path = _load_workflow_task_result(cache_root, run_tokens, task_id)
+        if result_payload:
+            _apply_workflow_task_result(item, result_payload, result_path)
+
+
 def merge_workflow_tasks(
     workflow_status: dict[str, Any] | None,
     *,
@@ -394,7 +528,9 @@ def merge_workflow_tasks(
 
     if not merged_by_id:
         return []
-    return [merged_by_id[task_id] for task_id in order if task_id in merged_by_id]
+    merged_tasks = [merged_by_id[task_id] for task_id in order if task_id in merged_by_id]
+    _apply_workflow_task_results(merged_tasks, workflow_status, cache_root=cache_root)
+    return merged_tasks
 
 
 def summarize_workflow_tasks(

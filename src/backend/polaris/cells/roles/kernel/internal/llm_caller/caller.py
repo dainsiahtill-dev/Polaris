@@ -237,6 +237,7 @@ class LLMCaller:
         prebuilt_messages = self._extract_prebuilt_projection_messages(context)
         forced_tool_definitions: list[dict[str, Any]] | None = None
         forced_tool_choice: Any | None = None
+        forced_tools_disabled = False
         if isinstance(override, dict):
             raw_forced_tool_definitions = override.get(_TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY)
             if isinstance(raw_forced_tool_definitions, list):
@@ -248,6 +249,11 @@ class LLMCaller:
                     forced_tool_choice = normalized_tool_choice or None
                 else:
                     forced_tool_choice = raw_forced_tool_choice
+            forced_tools_disabled = (
+                isinstance(raw_forced_tool_definitions, list)
+                and not forced_tool_definitions
+                and str(forced_tool_choice or "").strip().lower() == "none"
+            )
 
         if prebuilt_messages is not None:
             messages = list(prebuilt_messages)
@@ -345,7 +351,7 @@ class LLMCaller:
                     request_options["tools"] = raw_tool_schemas
                 request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
                 native_tool_mode = "native_tools_streaming"
-            elif contract.tool_whitelist:
+            elif contract.tool_whitelist and not forced_tools_disabled:
                 native_tool_mode = "native_tools_unavailable"
         else:
             effective_platform_retry_max = resolve_platform_retry_max(profile, platform_retry_max)
@@ -363,7 +369,7 @@ class LLMCaller:
                     request_options["tools"] = raw_tool_schemas
                 request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
                 native_tool_mode = "native_tools"
-            elif contract.tool_whitelist:
+            elif contract.tool_whitelist and not forced_tools_disabled:
                 native_tool_mode = "native_tools_unavailable"
             if contract.structured_output_enabled and response_model is not None:
                 native_response_format = build_native_response_format(response_model)

@@ -861,6 +861,28 @@ async def test_v2_search_tasks(client: AsyncClient) -> None:
         mock_pm.search_tasks.assert_called_once_with(query="find", limit=10)
 
 
+@pytest.mark.asyncio
+async def test_v2_search_tasks_not_initialized(client: AsyncClient) -> None:
+    """GET /pm/v2/pm/search/tasks should return an idle empty projection before PM starts."""
+    mock_pm = _mock_pm_adapter(initialized=False)
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ):
+        response = await client.get("/pm/v2/pm/search/tasks?q=find")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["query"] == "find"
+        assert data["results"] == []
+        assert data["items"] == []
+        assert data["count"] == 0
+        assert data["total"] == 0
+        assert data["initialized"] is False
+        assert data["reason"] == "PM_NOT_INITIALIZED"
+
+
 # ---------------------------------------------------------------------------
 # Requirements
 # ---------------------------------------------------------------------------
@@ -963,9 +985,16 @@ async def test_v2_get_pm_status_initialized(client: AsyncClient) -> None:
         },
     )
 
-    with patch(
-        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
-        return_value=mock_pm,
+    with (
+        patch(
+            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+            return_value=mock_pm,
+        ),
+        patch(
+            "polaris.delivery.http.routers.pm_management._get_pm_process_status",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
     ):
         response = await client.get("/pm/v2/pm/status")
         assert response.status_code == 200
@@ -975,13 +1004,56 @@ async def test_v2_get_pm_status_initialized(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_v2_get_pm_status_merges_execution_broker_status(client: AsyncClient) -> None:
+    """GET /pm/v2/pm/status should expose live PM process state."""
+    mock_pm = _mock_pm_adapter(
+        get_status_result={
+            "initialized": True,
+            "workspace": ".",
+            "project": "Test",
+        },
+    )
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+            return_value=mock_pm,
+        ),
+        patch(
+            "polaris.delivery.http.routers.pm_management._get_pm_process_status",
+            new_callable=AsyncMock,
+            return_value={
+                "running": True,
+                "execution_id": "exec-live",
+                "status": "running",
+                "source": "execution_broker",
+            },
+        ),
+    ):
+        response = await client.get("/pm/v2/pm/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["initialized"] is True
+        assert data["running"] is True
+        assert data["execution_id"] == "exec-live"
+        assert data["source"] == "execution_broker"
+
+
+@pytest.mark.asyncio
 async def test_v2_get_pm_status_not_initialized(client: AsyncClient) -> None:
     """GET /pm/v2/pm/status should return minimal status when not initialized."""
     mock_pm = _mock_pm_adapter(initialized=False)
 
-    with patch(
-        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
-        return_value=mock_pm,
+    with (
+        patch(
+            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+            return_value=mock_pm,
+        ),
+        patch(
+            "polaris.delivery.http.routers.pm_management._get_pm_process_status",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
     ):
         response = await client.get("/pm/v2/pm/status")
         assert response.status_code == 200
