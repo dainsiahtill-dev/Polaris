@@ -81,6 +81,8 @@ describe('ChiefEngineerWorkspace', () => {
           json: async () => ({
             ok: true,
             role: 'chief_engineer',
+            can_handoff: hasBlueprint,
+            can_generate: true,
             generated_at: '2026-05-23T08:00:00Z',
             workspace: {
               ok: true,
@@ -88,6 +90,18 @@ describe('ChiefEngineerWorkspace', () => {
               workspace: 'C:/Temp/Product',
               exists: true,
               error: null,
+            },
+            llm: {
+              ok: true,
+              state: 'ready',
+              role: 'chief_engineer',
+              blocked_roles: [],
+              unsupported_roles: [],
+              required_ready_roles: ['chief_engineer'],
+              provider_id: 'qwen',
+              model: 'Qwen3-Max',
+              error: null,
+              details: {},
             },
             blueprints: {
               ok: true,
@@ -103,7 +117,9 @@ describe('ChiefEngineerWorkspace', () => {
               latest_updated_at: hasBlueprint ? '2026-05-23T08:10:00Z' : null,
               error: null,
             },
-            issues: [],
+            issues: hasBlueprint ? [] : ['blueprint_handoff_not_ready'],
+            generate_blockers: [],
+            handoff_blockers: hasBlueprint ? [] : ['blueprint_handoff_not_ready'],
           }),
         });
       }
@@ -292,10 +308,46 @@ describe('ChiefEngineerWorkspace', () => {
     fireEvent.click(screen.getByTestId('chief-engineer-kernel-cache-clear'));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/cache-clear', { method: 'POST' }));
     expect(await screen.findByTestId('chief-engineer-kernel-cache-clear-result')).toHaveTextContent('/v2/chief-engineer/cache-clear · Cache cleared');
-    expect(screen.getByTestId('chief-engineer-diagnostics-status')).toHaveTextContent('ready');
+    expect(screen.getByTestId('chief-engineer-diagnostics-status')).toHaveTextContent('degraded');
+    expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('ready · Qwen3-Max');
     expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('0/0');
+    expect(screen.getByTestId('chief-engineer-diagnostics-issues')).toHaveTextContent('blueprint_handoff_not_ready');
     expect(screen.getByTestId('chief-engineer-blueprint-empty')).toHaveTextContent('未发现已落盘的 Chief Engineer 蓝图证据');
     expect(screen.getByTestId('chief-engineer-director-empty')).toHaveTextContent('暂无 Director worker 心跳');
+  });
+
+  it('renders Chief Engineer runtime activity evidence inside the control room', async () => {
+    render(
+      <ChiefEngineerWorkspace
+        {...baseProps}
+        currentPhase="llm_calling"
+        llmStreamEvents={[
+          {
+            id: 'ce-thinking-1',
+            timestamp: '2026-05-23T08:00:00Z',
+            level: 'thinking',
+            source: 'Chief Engineer',
+            message: 'Reviewing blueprint handoff constraints',
+            meta: { streamEvent: 'thinking_chunk' },
+          },
+        ]}
+        executionLogs={[
+          {
+            id: 'ce-log-1',
+            timestamp: '2026-05-23T08:00:01Z',
+            level: 'info',
+            source: 'CE',
+            message: 'Blueprint diagnostics refreshed',
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/blueprints'));
+    const activity = screen.getByTestId('chief-engineer-runtime-activity');
+    expect(activity).toHaveTextContent('调用 LLM');
+    expect(activity).toHaveTextContent('2 条记录');
+    expect(activity).toHaveTextContent('Reviewing blueprint handoff constraints');
   });
 
   it('exports Chief Engineer dialogue RoleSession to the Director workflow contract', async () => {
@@ -323,7 +375,9 @@ describe('ChiefEngineerWorkspace', () => {
       export_kind: 'session_bundle',
       include_audit_log: true,
     });
-    expect(await screen.findByTestId('ai-role-session-export-status')).toHaveAttribute('title', 'director-run-from-ce');
+    const exportStatus = await screen.findByTestId('ai-role-session-export-status');
+    expect(exportStatus).toHaveTextContent('Run director-r...');
+    expect(exportStatus).toHaveAttribute('title', 'director-run-from-ce · artifacts=2 · messages=0');
   });
 
   it('opens the shared settings surface from the Chief Engineer header control', () => {
@@ -538,6 +592,113 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('ready');
   });
 
+  it('disables blueprint generation when Chief Engineer LLM diagnostics are blocked', async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === '/v2/chief-engineer/diagnostics') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: false,
+            role: 'chief_engineer',
+            can_handoff: false,
+            can_generate: false,
+            generated_at: '2026-05-23T08:00:00Z',
+            workspace: {
+              ok: true,
+              status: 'ok',
+              workspace: 'C:/Temp/Product',
+              exists: true,
+              error: null,
+            },
+            llm: {
+              ok: false,
+              state: 'blocked',
+              role: 'chief_engineer',
+              blocked_roles: ['chief_engineer'],
+              unsupported_roles: [],
+              required_ready_roles: ['chief_engineer'],
+              provider_id: 'qwen',
+              model: 'Qwen3-Max',
+              error: null,
+              details: {},
+            },
+            blueprints: {
+              ok: false,
+              status: 'empty',
+              source: 'runtime/blueprints',
+              total: 0,
+              loadable: 0,
+              invalid_payloads: 0,
+              planned_tasks: 1,
+              covered_tasks: 0,
+              missing_task_ids: ['PM-summary-only'],
+              director_handoff_ready: false,
+              latest_updated_at: null,
+              error: null,
+            },
+            issues: ['llm_not_ready', 'blueprint_coverage_incomplete'],
+            generate_blockers: ['llm_not_ready'],
+            handoff_blockers: ['blueprint_coverage_incomplete'],
+          }),
+        });
+      }
+      if (path === '/v2/chief-engineer/blueprints') {
+        return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
+      }
+      if (path === '/v2/director/workers') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/director/tasks') {
+        return Promise.resolve({ ok: true, json: async () => ({ tasks: [] }) });
+      }
+      if (path === '/v2/roles/sessions') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, session: { id: 'ce-session-blocked' } }),
+        });
+      }
+      if (path === '/v2/roles/sessions/ce-session-blocked') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            session: {
+              id: 'ce-session-blocked',
+              role: 'chief_engineer',
+              host_kind: 'electron_workbench',
+              attachment_mode: 'isolated',
+              state: 'active',
+              message_count: 0,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ready: true, configured: true, role: 'chief_engineer', events: [], count: 0 }),
+      });
+    });
+    const tasks: PmTask[] = [
+      {
+        id: 'PM-summary-only',
+        title: '只有摘要的任务',
+        summary: '这里不是 Chief Engineer 蓝图',
+        status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: ['Director 可追踪'],
+      },
+    ];
+
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={tasks} />);
+
+    const generate = await screen.findByTestId('chief-engineer-blueprint-generate-PM-summary-only');
+    expect(generate).toBeDisabled();
+    expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('blocked · Qwen3-Max');
+    expect(screen.getByTestId('chief-engineer-diagnostics-issues')).toHaveTextContent('llm_not_ready');
+    expect(apiFetchMock.mock.calls.some((call) => call[0] === '/v2/chief-engineer/blueprints' && call[1]?.method === 'POST')).toBe(false);
+  });
+
   it('checks task blueprint status through the backend query route without generating', async () => {
     const tasks: PmTask[] = [
       {
@@ -619,6 +780,130 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('do not edit target project');
   });
 
+  it('deletes a persisted Chief Engineer blueprint and refreshes diagnostics evidence', async () => {
+    let diagnosticsCalls = 0;
+    apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/v2/chief-engineer/blueprints' && !init?.method) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            total: 1,
+            blueprints: [
+              {
+                blueprint_id: 'bp-delete',
+                title: 'Blueprint to delete',
+                summary: 'Stale blueprint record',
+                status: 'generated',
+                source: 'runtime/blueprints',
+                target_files: ['src/stale.ts'],
+                updated_at: '2026-05-24T00:00:00Z',
+                raw: { task_id: 'PM-delete' },
+              },
+            ],
+          }),
+        });
+      }
+      if (path === '/v2/chief-engineer/blueprints/bp-delete' && init?.method === 'DELETE') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            blueprint_id: 'bp-delete',
+            deleted: true,
+            source: 'runtime/blueprints',
+          }),
+        });
+      }
+      if (path === '/v2/chief-engineer/blueprints/bp-delete') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            blueprint_id: 'bp-delete',
+            source: 'runtime/blueprints',
+            blueprint: { summary: 'Stale blueprint detail' },
+          }),
+        });
+      }
+      if (path === '/v2/chief-engineer/diagnostics') {
+        diagnosticsCalls += 1;
+        const hasBlueprint = diagnosticsCalls === 1;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: hasBlueprint,
+            role: 'chief_engineer',
+            generated_at: '2026-05-24T00:00:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            blueprints: {
+              ok: hasBlueprint,
+              status: hasBlueprint ? 'ready' : 'empty',
+              source: 'runtime/blueprints',
+              total: hasBlueprint ? 1 : 0,
+              loadable: hasBlueprint ? 1 : 0,
+              invalid_payloads: 0,
+              planned_tasks: 0,
+              covered_tasks: 0,
+              missing_task_ids: [],
+              director_handoff_ready: false,
+              latest_updated_at: hasBlueprint ? '2026-05-24T00:00:00Z' : null,
+              error: null,
+            },
+            issues: [],
+          }),
+        });
+      }
+      if (path === '/v2/director/tasks?source=auto' || path === '/v2/director/tasks?source=local' || path === '/v2/director/workers') {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === '/v2/roles/sessions') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, session: { id: 'ce-delete-session' } }),
+        });
+      }
+      if (path === '/v2/roles/sessions/ce-delete-session') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            session: {
+              id: 'ce-delete-session',
+              role: 'chief_engineer',
+              host_kind: 'electron_workbench',
+              attachment_mode: 'isolated',
+              state: 'active',
+              message_count: 0,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ok: true, ready: true, configured: true, role: 'chief_engineer' }),
+      });
+    });
+
+    render(<ChiefEngineerWorkspace {...baseProps} />);
+
+    expect(await screen.findByText('Blueprint to delete')).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId('chief-engineer-blueprint-open-bp-delete'));
+    expect(await screen.findByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('Stale blueprint detail');
+
+    fireEvent.click(screen.getByTestId('chief-engineer-blueprint-delete-bp-delete'));
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(
+      '/v2/chief-engineer/blueprints/bp-delete',
+      expect.objectContaining({ method: 'DELETE' }),
+    ));
+    expect(await screen.findByTestId('chief-engineer-blueprint-delete-evidence')).toHaveTextContent(
+      '/v2/chief-engineer/blueprints/bp-delete · deleted',
+    );
+    await waitFor(() => expect(screen.queryByTestId('chief-engineer-blueprint-delete-bp-delete')).not.toBeInTheDocument());
+    expect(screen.getByTestId('chief-engineer-blueprint-detail-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-blueprint-empty')).toHaveTextContent('未发现已落盘的 Chief Engineer 蓝图证据');
+    expect(apiFetchMock.mock.calls.filter(([path]) => path === '/v2/chief-engineer/diagnostics')).toHaveLength(2);
+  });
+
   it('toggles Director from Chief Engineer and shows backend status evidence', async () => {
     const onToggleDirector = vi.fn().mockResolvedValue(undefined);
     const tasks: PmTask[] = [
@@ -654,6 +939,113 @@ describe('ChiefEngineerWorkspace', () => {
     expect(statusEvidence).toHaveTextContent('pid=7242');
     expect(statusEvidence).toHaveTextContent('mode=desktop_service');
     expect(statusEvidence).toHaveTextContent('source=status_file');
+  });
+
+  it('locks Chief Engineer Director control while Director is stopping', () => {
+    const onToggleDirector = vi.fn();
+
+    render(
+      <ChiefEngineerWorkspace
+        {...baseProps}
+        directorRunning={true}
+        isStoppingDirector={true}
+        onToggleDirector={onToggleDirector}
+      />,
+    );
+
+    const startDirector = screen.getByTestId('chief-engineer-start-director');
+    expect(startDirector).toBeDisabled();
+    expect(startDirector).toHaveTextContent('停止中');
+    expect(startDirector).toHaveAttribute('title', 'Director 正在停止，请等待状态回传。');
+
+    fireEvent.click(startDirector);
+    expect(onToggleDirector).not.toHaveBeenCalled();
+  });
+
+  it('blocks Director start from Chief Engineer when Director LLM readiness is blocked', async () => {
+    const onToggleDirector = vi.fn().mockResolvedValue(undefined);
+    const tasks: PmTask[] = [
+      {
+        id: 'PM-ready',
+        title: '已具备蓝图的任务',
+        status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
+        metadata: {
+          blueprint_id: 'bp-ready',
+          runtime_blueprint_path: 'runtime/blueprints/bp-ready.json',
+        },
+      },
+    ];
+    const blockedReason = 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。';
+
+    render(
+      <ChiefEngineerWorkspace
+        {...baseProps}
+        tasks={tasks}
+        directorStartBlockedReason={blockedReason}
+        onToggleDirector={onToggleDirector}
+      />,
+    );
+
+    const gate = screen.getByTestId('chief-engineer-director-start-gate');
+    expect(gate).toHaveTextContent(blockedReason);
+
+    const startDirector = screen.getByTestId('chief-engineer-start-director');
+    expect(startDirector).toBeDisabled();
+    expect(startDirector).toHaveAttribute('title', blockedReason);
+
+    fireEvent.click(startDirector);
+    expect(onToggleDirector).not.toHaveBeenCalled();
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/diagnostics'));
+  });
+
+  it('uses backend Chief Engineer handoff blockers even when legacy blueprint flag is ready', async () => {
+    const onToggleDirector = vi.fn();
+    const defaultApiFetch = apiFetchMock.getMockImplementation();
+    apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/v2/chief-engineer/diagnostics') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: false,
+            can_handoff: false,
+            role: 'chief_engineer',
+            generated_at: '2026-05-23T08:00:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            blueprints: {
+              ok: false,
+              status: 'degraded',
+              source: 'runtime/blueprints',
+              total: 2,
+              loadable: 1,
+              invalid_payloads: 1,
+              planned_tasks: 0,
+              covered_tasks: 0,
+              missing_task_ids: [],
+              director_handoff_ready: true,
+              latest_updated_at: '2026-05-23T08:00:00Z',
+              error: null,
+            },
+            issues: ['blueprint_payload_invalid'],
+            handoff_blockers: ['blueprint_payload_invalid'],
+          }),
+        });
+      }
+      return defaultApiFetch?.(path, init) ?? Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+
+    render(<ChiefEngineerWorkspace {...baseProps} onToggleDirector={onToggleDirector} tasks={[]} />);
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/diagnostics'));
+    const startDirector = screen.getByTestId('chief-engineer-start-director');
+    expect(startDirector).toBeDisabled();
+    expect(startDirector).toHaveAttribute('title', 'Chief Engineer 交接诊断未通过：存在无效蓝图 payload');
+    expect(screen.getByTestId('chief-engineer-director-start-gate')).toHaveTextContent('存在无效蓝图 payload');
+
+    fireEvent.click(startDirector);
+    expect(onToggleDirector).not.toHaveBeenCalled();
   });
 
   it('loads Director workers through the backend route when realtime heartbeats are absent', async () => {

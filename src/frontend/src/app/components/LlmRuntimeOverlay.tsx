@@ -47,6 +47,7 @@ interface LlmRuntimeOverlayProps {
   llmBlockedRoles: string[];
   llmRequiredRoles: string[];
   llmLastUpdated?: string | null;
+  factoryRuntimeActive?: boolean;
   currentPhase: string;
   qualityGate: QualityGateData | null;
   executionLogs: LogEntry[];
@@ -254,6 +255,7 @@ export function LlmRuntimeOverlay({
   llmBlockedRoles,
   llmRequiredRoles,
   llmLastUpdated,
+  factoryRuntimeActive = false,
   currentPhase,
   qualityGate,
   executionLogs,
@@ -265,12 +267,15 @@ export function LlmRuntimeOverlay({
   const compactFactoryMode = activeView === 'factory';
   const running = pmRunning || directorRunning;
   const llmStateToken = normalizeStateToken(llmState);
-  const runtimeActive = running || isActiveRuntimePhase(currentPhase);
+  const runtimeActive = running || factoryRuntimeActive || isActiveRuntimePhase(currentPhase);
+  const factoryBlockedRoleVisible = factoryRuntimeActive && llmBlockedRoles.some((role) => (
+    ['pm', 'chief_engineer', 'director', 'qa'].includes(role)
+  ));
   const blockedRoleForView =
     (activeView === 'pm' && llmBlockedRoles.includes('pm')) ||
     (activeView === 'director' && llmBlockedRoles.includes('director')) ||
     (activeView === 'chief_engineer' && llmBlockedRoles.includes('chief_engineer')) ||
-    (activeView === 'factory' && llmBlockedRoles.some((role) => ['pm', 'director', 'qa'].includes(role)));
+    (activeView === 'factory' && factoryBlockedRoleVisible);
   const isLlmBlocked = llmStateToken === 'blocked' && (runtimeActive || blockedRoleForView);
   const phaseLabel = (
     PHASE_LABELS[currentPhase] ||
@@ -279,6 +284,12 @@ export function LlmRuntimeOverlay({
     currentPhase ||
     '等待中'
   );
+
+  useEffect(() => {
+    if (compactFactoryMode) {
+      setExpanded(false);
+    }
+  }, [compactFactoryMode]);
 
   useEffect(() => {
     if (compactFactoryMode) {

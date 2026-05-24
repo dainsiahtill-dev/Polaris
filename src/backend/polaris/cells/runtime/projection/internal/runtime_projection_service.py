@@ -99,6 +99,98 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
+def _dedupe_text_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _is_pm_contract_path(path: str) -> bool:
+    """Return True for PM task contract paths emitted by runtime storage."""
+
+    raw = str(path or "").strip()
+    if not raw:
+        return False
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if resolved.name != "pm_tasks.contract.json":
+        return False
+    if resolved.parent.name != "contracts":
+        return False
+    parts = [part.lower() for part in resolved.parts]
+    return "projects" in parts and "runtime" in parts
+
+
+def _runtime_root_from_pm_contract_path(path: str) -> str:
+    if not _is_pm_contract_path(path):
+        return ""
+    try:
+        return str(Path(path).expanduser().resolve().parent.parent)
+    except (OSError, RuntimeError, ValueError):
+        return ""
+
+
+def _candidate_runtime_roots(projection: RuntimeProjection, resolved_cache_root: str) -> list[str]:
+    roots = [str(resolved_cache_root or "").strip()]
+    pm_contract_path = ""
+    if isinstance(projection.pm_local, dict):
+        pm_contract_path = str(projection.pm_local.get("contract_path") or "").strip()
+    inferred_root = _runtime_root_from_pm_contract_path(pm_contract_path)
+    if inferred_root:
+        roots.append(inferred_root)
+    return _dedupe_text_values(roots)
+
+
+def _resolve_runtime_artifact_candidates(workspace: str, runtime_roots: list[str], rel_path: str) -> list[str]:
+    candidates: list[str] = []
+    if not workspace:
+        return candidates
+    for runtime_root in runtime_roots:
+        try:
+            candidates.append(resolve_artifact_path(workspace, runtime_root, rel_path))
+        except (RuntimeError, ValueError) as exc:
+            logger.debug(
+                "runtime artifact candidate rejected: workspace=%r root=%r rel=%r error=%s",
+                workspace,
+                runtime_root,
+                rel_path,
+                exc,
+            )
+    return _dedupe_text_values(candidates)
+
+
+def _read_first_json_candidate(paths: list[str]) -> dict[str, Any]:
+    for path in paths:
+        payload = read_json(path)
+        if isinstance(payload, dict):
+            return dict(payload)
+    return {}
+
+
+def _read_first_text_candidate(paths: list[str]) -> tuple[str, float | None]:
+    for path in paths:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read(), os.path.getmtime(path)
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.warning(
+                "build_snapshot_payload_from_projection: failed to read artifact at %r: %s",
+                path,
+                exc,
+            )
+    return "", None
+
+
 def _state_token(payload: dict[str, Any] | None) -> str:
     """Extract state token from payload."""
     if not isinstance(payload, dict):
@@ -217,13 +309,17 @@ async def get_pm_local_status() -> dict[str, Any]:
         mode = str(pm_status.get("mode", ""))
         started_at = pm_status.get("started_at")
 
-    return {
-        "running": running,
-        "pid": pid,
-        "mode": mode or ("workflow" if workflow_status else ""),
-        "started_at": started_at,
-        "workflow": workflow_status,
-    }
+    status_payload = dict(pm_status) if isinstance(pm_status, dict) else {}
+    status_payload.update(
+        {
+            "running": running,
+            "pid": pid,
+            "mode": mode or ("workflow" if workflow_status else ""),
+            "started_at": started_at,
+            "workflow": workflow_status,
+        }
+    )
+    return status_payload
 
 
 # =============================================================================
@@ -1021,16 +1117,14 @@ def build_snapshot_payload_from_projection(
                 workspace,
                 exc,
             )
-    pm_contract_payload: dict[str, Any] = {}
-    if workspace and resolved_cache_root:
-        pm_contract_path = resolve_artifact_path(
+    runtime_roots = _candidate_runtime_roots(projection, resolved_cache_root)
+    pm_contract_payload = _read_first_json_candidate(
+        _resolve_runtime_artifact_candidates(
             workspace,
-            resolved_cache_root,
+            runtime_roots,
             WORKFLOW_PM_TASKS_FILE,
         )
-        loaded_pm_contract = read_json(pm_contract_path)
-        if isinstance(loaded_pm_contract, dict):
-            pm_contract_payload = dict(loaded_pm_contract)
+    )
 
     tasks: list[dict[str, Any]] = []
     runtime_task_rows = load_runtime_task_rows(workspace)
@@ -1043,26 +1137,20 @@ def build_snapshot_payload_from_projection(
             if isinstance(base_tasks, list):
                 tasks = [dict(item) for item in base_tasks if isinstance(item, dict)]
 
-    pm_state: dict[str, Any] = {}
-    if workspace and resolved_cache_root:
-        pm_state_path = resolve_artifact_path(
+    pm_state = _read_first_json_candidate(
+        _resolve_runtime_artifact_candidates(
             workspace,
-            resolved_cache_root,
+            runtime_roots,
             "runtime/state/pm.state.json",
         )
-        loaded_pm_state = read_json(pm_state_path)
-        if isinstance(loaded_pm_state, dict):
-            pm_state = dict(loaded_pm_state)
-    director_result: dict[str, Any] = {}
-    if workspace and resolved_cache_root:
-        director_result_path = resolve_artifact_path(
+    )
+    director_result = _read_first_json_candidate(
+        _resolve_runtime_artifact_candidates(
             workspace,
-            resolved_cache_root,
+            runtime_roots,
             "runtime/results/director.result.json",
         )
-        loaded_director_result = read_json(director_result_path)
-        if isinstance(loaded_director_result, dict):
-            director_result = loaded_director_result
+    )
     if not str(pm_state.get("last_director_status") or "").strip() and compat.get("director_status"):
         pm_state["last_director_status"] = compat["director_status"]
     director_result_status = str(director_result.get("status") or "").strip()
@@ -1095,34 +1183,24 @@ def build_snapshot_payload_from_projection(
     plan_mtime = None
     agents_content = ""
     agents_mtime = None
-    if workspace and resolved_cache_root:
+    if workspace and runtime_roots:
         # Load plan.md
-        plan_path = resolve_artifact_path(workspace, resolved_cache_root, "runtime/contracts/plan.md")
-        if plan_path and os.path.isfile(plan_path):
-            try:
-                with open(plan_path, encoding="utf-8") as f:
-                    plan_text = f.read()
-                plan_mtime = os.path.getmtime(plan_path)
-            except (RuntimeError, ValueError) as exc:
-                logger.warning(
-                    "build_snapshot_payload_from_projection: failed to read plan.md at %r: %s",
-                    plan_path,
-                    exc,
-                )
+        plan_text, plan_mtime = _read_first_text_candidate(
+            _resolve_runtime_artifact_candidates(
+                workspace,
+                runtime_roots,
+                "runtime/contracts/plan.md",
+            )
+        )
 
         # Load agents.generated.md
-        agents_path = resolve_artifact_path(workspace, resolved_cache_root, "runtime/contracts/agents.generated.md")
-        if agents_path and os.path.isfile(agents_path):
-            try:
-                with open(agents_path, encoding="utf-8") as f:
-                    agents_content = f.read()
-                agents_mtime = os.path.getmtime(agents_path)
-            except (RuntimeError, ValueError) as exc:
-                logger.warning(
-                    "build_snapshot_payload_from_projection: failed to read agents.generated.md at %r: %s",
-                    agents_path,
-                    exc,
-                )
+        agents_content, agents_mtime = _read_first_text_candidate(
+            _resolve_runtime_artifact_candidates(
+                workspace,
+                runtime_roots,
+                "runtime/contracts/agents.generated.md",
+            )
+        )
 
     return {
         "pm": projection.pm_local,

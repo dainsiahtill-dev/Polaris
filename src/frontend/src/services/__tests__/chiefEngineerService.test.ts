@@ -2,13 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockApiGet = vi.fn();
 const mockApiPost = vi.fn();
+const mockApiDelete = vi.fn();
 
 vi.mock('@/services/apiClient', () => ({
+  apiDelete: (...args: unknown[]) => mockApiDelete(...args),
   apiGet: (...args: unknown[]) => mockApiGet(...args),
   apiPost: (...args: unknown[]) => mockApiPost(...args),
 }));
 
 import {
+  deleteChiefEngineerBlueprint,
   generateChiefEngineerBlueprint,
   getChiefEngineerDiagnostics,
   getChiefEngineerBlueprint,
@@ -27,6 +30,8 @@ describe('chiefEngineerService', () => {
       data: {
         ok: true,
         role: 'chief_engineer',
+        can_handoff: true,
+        can_generate: true,
         generated_at: '2026-05-23T08:00:00Z',
         workspace: {
           ok: true,
@@ -34,6 +39,18 @@ describe('chiefEngineerService', () => {
           workspace: 'C:/Temp/Product',
           exists: true,
           error: null,
+        },
+        llm: {
+          ok: true,
+          state: 'ready',
+          role: 'chief_engineer',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['chief_engineer'],
+          provider_id: 'qwen',
+          model: 'Qwen3-Max',
+          error: null,
+          details: {},
         },
         blueprints: {
           ok: true,
@@ -50,6 +67,8 @@ describe('chiefEngineerService', () => {
           error: null,
         },
         issues: [],
+        generate_blockers: [],
+        handoff_blockers: [],
       },
     });
 
@@ -60,6 +79,8 @@ describe('chiefEngineerService', () => {
       'Failed to load Chief Engineer diagnostics',
     );
     expect(result.ok).toBe(true);
+    expect(result.data?.llm.ok).toBe(true);
+    expect(result.data?.can_generate).toBe(true);
     expect(result.data?.blueprints.director_handoff_ready).toBe(true);
     expect(result.data?.blueprints.covered_tasks).toBe(2);
   });
@@ -163,5 +184,26 @@ describe('chiefEngineerService', () => {
     );
     expect(result.ok).toBe(true);
     expect(result.data?.blueprint.summary).toBe('Director work package');
+  });
+
+  it('deletes a Chief Engineer blueprint with an encoded id', async () => {
+    mockApiDelete.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        blueprint_id: 'bp 1',
+        deleted: true,
+        source: 'runtime/blueprints',
+      },
+    });
+
+    const result = await deleteChiefEngineerBlueprint('bp 1');
+
+    expect(mockApiDelete).toHaveBeenCalledWith(
+      '/v2/chief-engineer/blueprints/bp%201',
+      'Failed to delete Chief Engineer blueprint',
+    );
+    expect(result.ok).toBe(true);
+    expect(result.data?.deleted).toBe(true);
   });
 });

@@ -31,12 +31,14 @@ qualification. The cell also owns deterministic role benchmarks
 
 - `workspace/.polaris/llm_test_index.evaluation.json`
 - `workspace/.polaris/runtime/llm_evaluations/*`
+- `workspace/.polaris/runtime/llm_tests/*`
 
 ## Effects Allowed
 
 - `fs.read:workspace/.polaris/**`
 - `fs.write:workspace/.polaris/llm_test_index.evaluation.json`
 - `fs.write:workspace/.polaris/runtime/llm_evaluations/*`
+- `fs.write:workspace/.polaris/runtime/llm_tests/*`
 - `network.http_outbound:llm/*`
 
 ## Invariants

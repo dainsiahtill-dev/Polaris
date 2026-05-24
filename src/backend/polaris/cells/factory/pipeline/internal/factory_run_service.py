@@ -1405,6 +1405,85 @@ class FactoryRunService:
         logger.info("Run %s recovered at stage %s", run_id, last_successful_stage)
         return run
 
+    async def retry_run_from_stage(
+        self,
+        run_id: str,
+        target_stage: str | None = None,
+        reason: str | None = None,
+    ) -> FactoryRun:
+        """Move a run into recovery from a checkpoint or configured stage."""
+        run_lock = self._get_run_lock(run_id)
+        async with run_lock:
+            run = await self.store.get_run(run_id)
+            if run is None:
+                raise ValueError(f"Run {run_id} not found")
+
+            if run.status in {FactoryRunStatus.COMPLETED, FactoryRunStatus.CANCELLED}:
+                return run
+            if run.status != FactoryRunStatus.FAILED:
+                raise ValueError(f"Run {run_id} cannot be retried in status {run.status.value}")
+
+            configured_stages = [str(stage).strip() for stage in run.config.stages if str(stage).strip()]
+            requested_stage = str(target_stage or "").strip()
+            if requested_stage and requested_stage not in configured_stages:
+                raise ValueError(f"Stage {requested_stage} is not configured for run {run_id}")
+
+            retry_stage = (
+                requested_stage
+                or str(run.metadata.get("last_successful_stage") or "").strip()
+                or str(run.recovery_point or "").strip()
+                or str(await self._find_last_successful_stage(run_id) or "").strip()
+                or None
+            )
+            retry_start_policy = "rerun_stage" if requested_stage else "after_checkpoint"
+            retry_execution_stage = retry_stage
+            if retry_stage and retry_stage in configured_stages:
+                stage_index = configured_stages.index(retry_stage)
+                rerun_start_index = stage_index if requested_stage else stage_index + 1
+            else:
+                rerun_start_index = 0
+            stages_to_rerun = set(configured_stages[rerun_start_index:])
+            if stages_to_rerun:
+                run.stages_completed = [stage for stage in run.stages_completed if stage not in stages_to_rerun]
+                run.stages_failed = [stage for stage in run.stages_failed if stage not in stages_to_rerun]
+                retry_execution_stage = (
+                    configured_stages[rerun_start_index] if rerun_start_index < len(configured_stages) else retry_stage
+                )
+
+            timestamp = self._now()
+            previous_status = run.status.value
+            previous_failure = run.metadata.get("failure")
+            run.recovery_point = retry_stage
+            run.status = FactoryRunStatus.RECOVERING
+            run.completed_at = None
+            run.updated_at = timestamp
+            run.metadata["current_stage"] = retry_execution_stage
+            run.metadata["last_stage"] = retry_stage
+            run.metadata["retry_from_status"] = previous_status
+            run.metadata["retry_start_policy"] = retry_start_policy
+            run.metadata["retry_requested_stage"] = requested_stage or None
+            run.metadata["retry_execution_stage"] = retry_execution_stage
+            if previous_failure:
+                run.metadata["retry_previous_failure"] = previous_failure
+            run.metadata["failure"] = None
+            run.metadata["last_failed_stage"] = None
+            if reason:
+                run.metadata["retry_reason"] = reason
+            await self.store.save_run(run)
+            await self._append_event(
+                run_id,
+                {
+                    "type": "retry_requested",
+                    "stage": retry_stage,
+                    "message": f"Retry requested from {retry_stage or 'start'}",
+                    "reason": reason,
+                    "previous_status": previous_status,
+                    "timestamp": timestamp,
+                },
+            )
+            logger.info("Run %s retry requested from stage %s", run_id, retry_stage)
+            return run
+
     async def execute_pause(self, run_id: str) -> FactoryRun:
         """Pause a running factory run."""
         run_lock = self._get_run_lock(run_id)
@@ -1449,6 +1528,29 @@ class FactoryRunService:
                     },
                 )
                 logger.info("Run %s resumed", run_id)
+            return run
+
+    async def update_run_metadata(self, run_id: str, metadata: dict[str, Any]) -> FactoryRun:
+        """Persist metadata updates for an existing factory run."""
+        run_lock = self._get_run_lock(run_id)
+        async with run_lock:
+            run = await self.store.get_run(run_id)
+            if run is None:
+                raise ValueError(f"Run {run_id} not found")
+
+            run.metadata.update(dict(metadata))
+            run.updated_at = self._now()
+            await self.store.save_run(run)
+            await self._append_event(
+                run_id,
+                {
+                    "type": "metadata_updated",
+                    "message": "Run metadata updated",
+                    "metadata_keys": sorted(str(key) for key in metadata),
+                    "timestamp": run.updated_at,
+                },
+            )
+            logger.info("Run %s metadata updated: keys=%s", run_id, sorted(str(key) for key in metadata))
             return run
 
     async def start_run(self, run_id: str) -> FactoryRun:

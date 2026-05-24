@@ -29,6 +29,7 @@ from polaris.cells.roles.kernel.public.service import (
 )
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.delivery.http.dependencies import get_pm_service, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
 from polaris.delivery.http.workspace import active_workspace_value, requested_or_active_workspace
 from pydantic import BaseModel, Field
 
@@ -133,11 +134,13 @@ class PMDiagnosticsResponse(BaseModel):
     """Side-effect-free PM startup readiness snapshot."""
 
     ok: bool
+    can_start: bool
     generated_at: str
     lancedb: PMDiagnosticsLanceDBStatus
     llm: PMDiagnosticsLLMStatus
     workspace: PMDiagnosticsWorkspaceStatus
     issues: list[str] = Field(default_factory=list)
+    startup_blockers: list[str] = Field(default_factory=list)
 
 
 def _utc_now() -> str:
@@ -197,12 +200,18 @@ def _build_llm_diagnostics(settings: Any) -> PMDiagnosticsLLMStatus:
     )
 
 
-def _workspace_value(settings: Any) -> str:
+def _workspace_value(settings: Any, workspace_override: str | None = None) -> str:
+    override = str(workspace_override or "").strip()
+    if override:
+        return override
     return active_workspace_value(settings)
 
 
-def _build_workspace_diagnostics(settings: Any) -> PMDiagnosticsWorkspaceStatus:
-    workspace = _workspace_value(settings)
+def _build_workspace_diagnostics(
+    settings: Any,
+    workspace_override: str | None = None,
+) -> PMDiagnosticsWorkspaceStatus:
+    workspace = _workspace_value(settings, workspace_override)
     if not workspace:
         return PMDiagnosticsWorkspaceStatus(
             ok=False,
@@ -236,7 +245,85 @@ def _issue_tokens(
         issues.append("llm_not_ready")
     if not workspace.ok:
         issues.append("workspace_unavailable")
+    elif not workspace.docs_present:
+        issues.append("workspace_docs_missing")
     return issues
+
+
+def _startup_blockers(
+    lancedb: PMDiagnosticsLanceDBStatus,
+    llm: PMDiagnosticsLLMStatus,
+    workspace: PMDiagnosticsWorkspaceStatus,
+) -> list[str]:
+    """Return hard blockers that should disable PM desktop start controls."""
+    blockers: list[str] = []
+    if not lancedb.ok:
+        blockers.append("lancedb_unavailable")
+    if not llm.ok:
+        blockers.append("llm_not_ready")
+    if not workspace.ok:
+        blockers.append("workspace_unavailable")
+    elif not workspace.docs_present:
+        blockers.append("workspace_docs_missing")
+    return blockers
+
+
+def _build_pm_diagnostics(
+    settings: Any,
+    workspace_override: str | None = None,
+) -> PMDiagnosticsResponse:
+    """Build the side-effect-free PM readiness snapshot used by UI and gates."""
+
+    lancedb = _build_lancedb_diagnostics()
+    llm = _build_llm_diagnostics(settings)
+    workspace = _build_workspace_diagnostics(settings, workspace_override=workspace_override)
+    issues = _issue_tokens(lancedb, llm, workspace)
+    startup_blockers = _startup_blockers(lancedb, llm, workspace)
+    return PMDiagnosticsResponse(
+        ok=not issues,
+        can_start=not startup_blockers,
+        generated_at=_utc_now(),
+        lancedb=lancedb,
+        llm=llm,
+        workspace=workspace,
+        issues=issues,
+        startup_blockers=startup_blockers,
+    )
+
+
+def _build_pm_diagnostics_for_request(
+    request: Request,
+    workspace_override: str | None = None,
+) -> PMDiagnosticsResponse:
+    """Resolve settings and build PM diagnostics for guarded execution starts."""
+
+    settings = request.app.state.app_state.settings
+    return _build_pm_diagnostics(settings, workspace_override=workspace_override)
+
+
+def _ensure_pm_can_start(diagnostics: PMDiagnosticsResponse) -> None:
+    """Raise a structured 409 when PM startup prerequisites are not met."""
+
+    if diagnostics.can_start and not diagnostics.startup_blockers:
+        return
+
+    raise StructuredHTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        code="PM_START_BLOCKED",
+        message="PM startup prerequisites are not satisfied",
+        details={
+            "startup_blockers": diagnostics.startup_blockers,
+            "issues": diagnostics.issues,
+            "diagnostics": diagnostics.model_dump(mode="json"),
+        },
+    )
+
+
+def _ensure_director_handoff_llm_ready(request: Request) -> None:
+    """Ensure Director runtime LLM is ready before PM auto-dispatch is allowed."""
+
+    state = getattr(request.app.state, "app_state", None) or request.app.state
+    ensure_required_roles_ready(state, default_roles=["director"], force_first="director")
 
 
 @router.post(
@@ -248,7 +335,10 @@ def _issue_tokens(
         500: {"description": "Process error"},
     },
 )
-async def pm_run_once(pm_service: PMService = Depends(get_pm_service)) -> dict:
+async def pm_run_once(
+    request: Request,
+    pm_service: PMService = Depends(get_pm_service),
+) -> dict:
     """Run PM once.
 
     Raises:
@@ -256,6 +346,7 @@ async def pm_run_once(pm_service: PMService = Depends(get_pm_service)) -> dict:
         ServiceUnavailableError: If backend is not available
         ProcessError: If process fails to start
     """
+    _ensure_pm_can_start(_build_pm_diagnostics_for_request(request))
     return await pm_service.run_once()
 
 
@@ -269,6 +360,7 @@ async def pm_run_once(pm_service: PMService = Depends(get_pm_service)) -> dict:
     },
 )
 async def pm_start(
+    request: Request,
     resume: bool = False,
     pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
@@ -284,6 +376,7 @@ async def pm_start(
         ServiceUnavailableError: If backend is not available
         ProcessError: If process fails to start
     """
+    _ensure_pm_can_start(_build_pm_diagnostics_for_request(request))
     return await pm_service.start_loop(resume=resume)
 
 
@@ -297,6 +390,7 @@ async def pm_start(
     },
 )
 async def pm_start_loop(
+    request: Request,
     resume: bool = False,
     pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
@@ -310,6 +404,7 @@ async def pm_start_loop(
         DeprecationWarning,
         stacklevel=2,
     )
+    _ensure_pm_can_start(_build_pm_diagnostics_for_request(request))
     return await pm_service.start_loop(resume=resume)
 
 
@@ -345,19 +440,7 @@ def pm_status(pm_service: PMService = Depends(get_pm_service)) -> dict:
 def pm_diagnostics(request: Request) -> PMDiagnosticsResponse:
     """Return side-effect-free PM startup diagnostics for the desktop modal."""
 
-    settings = request.app.state.app_state.settings
-    lancedb = _build_lancedb_diagnostics()
-    llm = _build_llm_diagnostics(settings)
-    workspace = _build_workspace_diagnostics(settings)
-    issues = _issue_tokens(lancedb, llm, workspace)
-    return PMDiagnosticsResponse(
-        ok=not issues,
-        generated_at=_utc_now(),
-        lancedb=lancedb,
-        llm=llm,
-        workspace=workspace,
-        issues=issues,
-    )
+    return _build_pm_diagnostics_for_request(request)
 
 
 # ============================================================================
@@ -394,6 +477,10 @@ async def pm_run_orchestration(
 
         settings = request.app.state.app_state.settings
         workspace = requested_or_active_workspace(settings, payload.workspace)
+        _ensure_pm_can_start(_build_pm_diagnostics_for_request(request, workspace_override=workspace))
+        if payload.run_director:
+            _ensure_director_handoff_llm_ready(request)
+
         service = OrchestrationCommandService(settings)
 
         result = await service.execute_pm_run(

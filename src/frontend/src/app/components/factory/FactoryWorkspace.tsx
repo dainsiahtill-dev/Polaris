@@ -1,6 +1,5 @@
 /** FactoryWorkspace - 无人值守开发工厂工作区 */
 import { useEffect, useMemo, useState } from 'react';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import {
   Activity,
   AlertCircle,
@@ -15,6 +14,7 @@ import {
   Layers,
   Loader2,
   PackageCheck,
+  Pause,
   Play,
   RotateCcw,
   Route,
@@ -50,6 +50,9 @@ interface FactoryWorkspaceProps {
   isArtifactsLoading?: boolean;
   onStart?: () => void;
   onCancel?: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
+  onRetryCheckpoint?: () => void;
   isLoading?: boolean;
 }
 
@@ -113,6 +116,12 @@ interface FactoryDeliveryStats {
   blocked: number;
   completed: number;
   claimed: number;
+}
+
+interface FactorySourceEvidenceRow {
+  label: string;
+  value: string;
+  tone: string;
 }
 
 const PHASE_CONFIG: Record<FactoryPhase, { label: string; color: string; icon: React.ReactNode }> = {
@@ -232,6 +241,52 @@ function toSummaryRows(summaryJson?: Record<string, unknown> | null): Array<[str
   return Object.entries(summaryJson)
     .slice(0, 5)
     .map(([key, value]) => [key, formatSummaryValue(value)]);
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function runMetadata(run?: FactoryRunStatus | null): Record<string, unknown> {
+  return recordValue(run?.metadata);
+}
+
+function metadataString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  }
+  return '';
+}
+
+function buildRunSourceEvidence(run?: FactoryRunStatus | null): FactorySourceEvidenceRow[] {
+  const metadata = runMetadata(run);
+  const startRequest = recordValue(metadata.factory_start_request);
+  const rows: FactorySourceEvidenceRow[] = [];
+  const sessionId = metadataString(metadata, ['export_session_id', 'session_id']);
+  const bundlePath = metadataString(metadata, ['export_bundle_path', 'bundle_path']);
+  const directive = metadataString(metadata, ['directive']) || metadataString(startRequest, ['directive']);
+  const inputSource = metadataString(startRequest, ['input_source']) || metadataString(metadata, ['input_source']);
+  const startFrom = metadataString(startRequest, ['start_from']);
+
+  if (sessionId) {
+    rows.push({ label: '会话', value: sessionId, tone: 'text-cyan-200' });
+  }
+  if (bundlePath) {
+    rows.push({ label: '证据包', value: bundlePath, tone: 'text-emerald-200' });
+  }
+  if (directive) {
+    rows.push({ label: '指令', value: directive, tone: 'text-slate-200' });
+  }
+  if (inputSource || startFrom) {
+    rows.push({
+      label: '入口',
+      value: [inputSource, startFrom].filter(Boolean).join(' / '),
+      tone: 'text-amber-200',
+    });
+  }
+  return rows;
 }
 
 function gateTone(gate: FactoryRunStatus['gates'][number]): string {
@@ -755,6 +810,9 @@ export function FactoryWorkspace({
   isArtifactsLoading = false,
   onStart,
   onCancel,
+  onPause,
+  onResume,
+  onRetryCheckpoint,
   isLoading = false,
 }: FactoryWorkspaceProps) {
   const factoryPhase = mapRunToFactoryPhase(currentRun);
@@ -762,8 +820,12 @@ export function FactoryWorkspace({
   const phaseConfig = PHASE_CONFIG[factoryPhase];
   const runStatus = normalizeToken(currentRun?.status);
   const isRunActive = runStatus === 'running' || runStatus === 'recovering';
+  const isRunPaused = runStatus === 'paused';
   const canStart = !currentRun || TERMINAL_RUN_STATUSES.has(runStatus);
-  const canCancel = runStatus === 'running' || runStatus === 'recovering';
+  const canCancel = runStatus === 'running' || runStatus === 'recovering' || isRunPaused;
+  const canPause = runStatus === 'running' || runStatus === 'recovering';
+  const canResume = isRunPaused;
+  const canRetryCheckpoint = runStatus === 'failed' || runStatus === 'blocked' || runStatus === 'timeout';
 
   const pmWorkflowTasks = pmTasks ?? tasks;
   const directorWorkflowTasks = directorTasks ?? tasks;
@@ -831,10 +893,10 @@ export function FactoryWorkspace({
           </div>
         </div>
 
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center justify-end gap-2">
           <div
             className={cn(
-              'flex items-center gap-2 rounded-lg border px-3 py-1.5',
+              'flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5',
               factoryPhase === 'planning' && 'border-amber-500/30 bg-amber-500/10',
               factoryPhase === 'executing' && 'border-indigo-500/30 bg-indigo-500/10',
               factoryPhase === 'verifying' && 'border-cyan-500/30 bg-cyan-500/10',
@@ -852,10 +914,12 @@ export function FactoryWorkspace({
             <span className={cn('text-sm font-medium', phaseConfig.color)}>{phaseConfig.label}</span>
           </div>
 
-          <StatusChip label="阶段" value={currentRun?.phase || 'pending'} />
-          <StatusChip label="状态" value={currentRun?.status || 'idle'} />
-          <StatusChip label="步骤" value={currentRun?.current_stage || 'n/a'} />
-          <StatusChip label="进度" value={`${Math.round(currentRun?.progress || 0)}%`} />
+          <div className="hidden min-w-0 items-center gap-2 lg:flex">
+            <StatusChip label="阶段" value={currentRun?.phase || 'pending'} />
+            <StatusChip label="状态" value={currentRun?.status || 'idle'} />
+            <StatusChip label="步骤" value={currentRun?.current_stage || 'n/a'} />
+            <StatusChip label="进度" value={`${Math.round(currentRun?.progress || 0)}%`} />
+          </div>
 
           <div className="ml-1 flex items-center gap-2">
             {canStart && onStart && (
@@ -873,8 +937,47 @@ export function FactoryWorkspace({
                 {isLoading ? '启动中...' : '启动'}
               </Button>
             )}
+            {canPause && onPause && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onPause}
+                disabled={isLoading}
+                className="border-amber-500/25 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20"
+                data-testid="factory-run-pause"
+              >
+                <Pause className="mr-1 h-4 w-4" />
+                暂停
+              </Button>
+            )}
+            {canResume && onResume && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onResume}
+                disabled={isLoading}
+                className="border-emerald-500/25 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+                data-testid="factory-run-resume"
+              >
+                <Play className="mr-1 h-4 w-4" />
+                恢复
+              </Button>
+            )}
+            {canRetryCheckpoint && onRetryCheckpoint && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onRetryCheckpoint}
+                disabled={isLoading}
+                className="border-cyan-500/25 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"
+                data-testid="factory-run-retry-checkpoint"
+              >
+                <RotateCcw className="mr-1 h-4 w-4" />
+                重试
+              </Button>
+            )}
             {canCancel && onCancel && (
-              <Button size="sm" variant="destructive" onClick={onCancel} disabled={isLoading}>
+              <Button size="sm" variant="destructive" onClick={onCancel} disabled={isLoading} data-testid="factory-run-cancel">
                 <Square className="mr-1 h-4 w-4" />
                 取消
               </Button>
@@ -884,7 +987,7 @@ export function FactoryWorkspace({
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <section className="shrink-0 border-b border-white/10 bg-slate-950/70 px-4 py-3">
+        <section className="shrink-0 border-b border-white/10 bg-slate-950/75 px-4 py-3">
           <RoleLayerRail
             layers={roleLayers}
             activeLayer={activeLayerView.id}
@@ -893,63 +996,60 @@ export function FactoryWorkspace({
           />
         </section>
 
-        <PanelGroup direction="horizontal" className="min-h-0 flex-1">
-          <Panel defaultSize={72} minSize={48}>
-            <section className="h-full min-w-0 overflow-hidden" data-testid="factory-focused-layer">
-              {activeLayerView.id === 'pm' && (
-                <FactoryPmLayer
-                  tasks={pmWorkflowTasks}
-                  workspace={workspace}
-                  executionLogs={executionLogs}
-                  roleStatus={getRunRole(currentRun?.roles, ['pm'])}
-                  currentRun={currentRun}
-                  blueprintCoverage={blueprintCoverage}
-                />
-              )}
-              {activeLayerView.id === 'chief_engineer' && (
-                <FactoryChiefEngineerLayer
-                  workspace={workspace}
-                  blueprintEvidence={blueprintEvidence}
-                  blueprintCoverage={blueprintCoverage}
-                  roleStatus={getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect'])}
-                  currentRun={currentRun}
-                />
-              )}
-              {activeLayerView.id === 'director' && (
-                <FactoryDirectorLayer
-                  workspace={workspace}
-                  tasks={directorWorkflowTasks}
-                  fileEditEvents={fileEditEvents}
-                  executionLogs={executionLogs}
-                  roleStatus={getRunRole(currentRun?.roles, ['director'])}
-                  currentRun={currentRun}
-                  blueprintCoverage={blueprintCoverage}
-                />
-              )}
-            </section>
-          </Panel>
+        <div
+          data-testid="factory-layered-layout"
+          className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(260px,36vh)] overflow-hidden xl:grid-cols-[minmax(720px,1fr)_360px] xl:grid-rows-1 2xl:grid-cols-[minmax(860px,1fr)_400px]"
+        >
+          <section className="h-full min-w-0 overflow-hidden" data-testid="factory-focused-layer">
+            {activeLayerView.id === 'pm' && (
+              <FactoryPmLayer
+                tasks={pmWorkflowTasks}
+                workspace={workspace}
+                executionLogs={executionLogs}
+                roleStatus={getRunRole(currentRun?.roles, ['pm'])}
+                currentRun={currentRun}
+                blueprintCoverage={blueprintCoverage}
+              />
+            )}
+            {activeLayerView.id === 'chief_engineer' && (
+              <FactoryChiefEngineerLayer
+                workspace={workspace}
+                blueprintEvidence={blueprintEvidence}
+                blueprintCoverage={blueprintCoverage}
+                roleStatus={getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect'])}
+                currentRun={currentRun}
+              />
+            )}
+            {activeLayerView.id === 'director' && (
+              <FactoryDirectorLayer
+                workspace={workspace}
+                tasks={directorWorkflowTasks}
+                fileEditEvents={fileEditEvents}
+                executionLogs={executionLogs}
+                roleStatus={getRunRole(currentRun?.roles, ['director'])}
+                currentRun={currentRun}
+                blueprintCoverage={blueprintCoverage}
+              />
+            )}
+          </section>
 
-          <PanelResizeHandle className="w-1 bg-white/5 transition-colors hover:bg-emerald-500/30" />
-
-          <Panel defaultSize={28} minSize={24} maxSize={38}>
-            <FactoryOperationsRail
-              currentRun={currentRun}
-              factoryPhase={factoryPhase}
-              workspacePhase={workspacePhase}
-              activeLayer={activeLayerView.id}
-              activityLogs={operationsActivityLogs}
-              llmStreamEvents={llmStreamEvents}
-              processStreamEvents={processStreamEvents}
-              gateResults={gateResults}
-              deliveryArtifacts={deliveryArtifacts}
-              summaryMarkdown={summaryMarkdown}
-              summaryRows={summaryRows}
-              artifactErrorMessage={artifactErrorMessage}
-              isArtifactsLoading={isArtifactsLoading}
-              isRunning={isRunActive || isLoading}
-            />
-          </Panel>
-        </PanelGroup>
+          <FactoryOperationsRail
+            currentRun={currentRun}
+            factoryPhase={factoryPhase}
+            workspacePhase={workspacePhase}
+            activeLayer={activeLayerView.id}
+            activityLogs={operationsActivityLogs}
+            llmStreamEvents={llmStreamEvents}
+            processStreamEvents={processStreamEvents}
+            gateResults={gateResults}
+            deliveryArtifacts={deliveryArtifacts}
+            summaryMarkdown={summaryMarkdown}
+            summaryRows={summaryRows}
+            artifactErrorMessage={artifactErrorMessage}
+            isArtifactsLoading={isArtifactsLoading}
+            isRunning={isRunActive || isLoading}
+          />
+        </div>
       </main>
     </div>
   );
@@ -968,12 +1068,12 @@ function RoleLayerRail({
 }) {
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
           <Layers className="h-3.5 w-3.5 text-emerald-300" />
           <span>角色分层</span>
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+        <div className="hidden items-center gap-1.5 text-[11px] text-slate-500 md:flex">
           <Route className="h-3.5 w-3.5" />
           <span>PM 任务合同</span>
           <ChevronRight className="h-3 w-3" />
@@ -982,7 +1082,7 @@ function RoleLayerRail({
           <span>Director 执行交付</span>
         </div>
       </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_28px_minmax(0,1fr)_28px_minmax(0,1fr)] items-stretch gap-0">
+      <div className="grid grid-cols-1 items-stretch gap-2 xl:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)_32px_minmax(0,1fr)] xl:gap-0">
         {layers.map((layer, index) => {
           const label = ROLE_LAYER_LABELS[layer.id];
           const isActive = activeLayer === layer.id;
@@ -995,7 +1095,7 @@ function RoleLayerRail({
                 data-testid={`factory-role-layer-${layer.id}`}
                 aria-pressed={isActive}
                 className={cn(
-                  'group flex min-h-[108px] cursor-pointer flex-col rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70',
+                  'group flex min-h-[96px] cursor-pointer flex-col rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 xl:min-h-[108px]',
                   isActive ? layer.tone.active : layer.tone.idle
                 )}
               >
@@ -1041,7 +1141,7 @@ function RoleLayerRail({
                 </div>
               </button>
               {index < layers.length - 1 ? (
-                <div className="relative flex items-center justify-center px-2">
+                <div className="relative hidden items-center justify-center px-2 xl:flex">
                   <div className="h-px w-full bg-slate-700" />
                   <ChevronRight className="absolute h-3.5 w-3.5 text-slate-500" />
                 </div>
@@ -1050,7 +1150,7 @@ function RoleLayerRail({
           );
         })}
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-3 text-[10px] text-slate-600">
+      <div className="mt-2 hidden grid-cols-3 gap-3 text-[10px] text-slate-600 md:grid">
         {layers.map((layer) => (
           <div key={`${layer.id}-route`} className="truncate px-1">
             {ROLE_LAYER_LABELS[layer.id].route}
@@ -1112,7 +1212,7 @@ function FactoryPmLayer({
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px] gap-4 overflow-hidden p-4">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
         <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-amber-500/15 bg-white/[0.03]">
           <div className="shrink-0 border-b border-white/10 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
@@ -1199,7 +1299,7 @@ function FactoryPmLayer({
           </div>
         </section>
 
-        <aside className="flex min-h-0 flex-col gap-3 overflow-auto">
+        <aside className="grid min-h-0 grid-cols-1 gap-3 overflow-auto lg:grid-cols-3 2xl:flex 2xl:flex-col">
           <section className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
               <Route className="h-3.5 w-3.5 text-amber-300" />
@@ -1323,7 +1423,7 @@ function FactoryDirectorLayer({
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[340px_minmax(0,1fr)_320px] gap-4 overflow-hidden p-4">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 2xl:grid-cols-[300px_minmax(0,1fr)_300px]">
         <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-indigo-500/15 bg-white/[0.03]">
           <div className="shrink-0 border-b border-white/10 px-3 py-3">
             <div className="flex items-center justify-between gap-2">
@@ -1422,7 +1522,7 @@ function FactoryDirectorLayer({
                   <p className="text-xs leading-5 text-slate-400">{taskGoal(selectedTask)}</p>
                 </section>
 
-                <section className="grid grid-cols-2 gap-3">
+                <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   <DetailList title="执行步骤" items={taskStepItems(selectedTask)} empty="等待 PM 合同补充步骤" />
                   <DetailList title="验收标准" items={taskAcceptanceItems(selectedTask)} empty="等待 PM 合同补充验收" />
                 </section>
@@ -1456,7 +1556,7 @@ function FactoryDirectorLayer({
           </div>
         </section>
 
-        <aside className="flex min-h-0 flex-col gap-3 overflow-auto">
+        <aside className="grid min-h-0 grid-cols-1 gap-3 overflow-auto lg:grid-cols-3 2xl:flex 2xl:flex-col">
           <section className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
               <Route className="h-3.5 w-3.5 text-indigo-300" />
@@ -1603,7 +1703,7 @@ function FactoryChiefEngineerLayer({
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px] gap-4 overflow-hidden p-4">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
         <section className="min-h-0 overflow-auto rounded-lg border border-cyan-500/15 bg-white/[0.035]">
           <div className="border-b border-white/10 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
@@ -1658,7 +1758,7 @@ function FactoryChiefEngineerLayer({
           </div>
         </section>
 
-        <aside className="flex min-h-0 flex-col gap-3 overflow-auto">
+        <aside className="grid min-h-0 grid-cols-1 gap-3 overflow-auto lg:grid-cols-2 2xl:flex 2xl:flex-col">
           <section className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
               <Route className="h-3.5 w-3.5 text-cyan-300" />
@@ -1731,8 +1831,13 @@ function FactoryOperationsRail({
   isArtifactsLoading: boolean;
   isRunning: boolean;
 }) {
+  const sourceEvidence = buildRunSourceEvidence(currentRun);
+
   return (
-    <aside className="flex h-full min-w-0 flex-col overflow-hidden border-l border-white/10 bg-slate-950/80" data-testid="factory-operations-rail">
+    <aside
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-t border-white/10 bg-slate-950/80 xl:border-l xl:border-t-0"
+      data-testid="factory-operations-rail"
+    >
       <section className="shrink-0 border-b border-white/10 p-3">
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
@@ -1749,6 +1854,31 @@ function FactoryOperationsRail({
           <MiniMetric label="运行ID" value={currentRun?.run_id || 'n/a'} />
           <MiniMetric label="进度" value={`${Math.round(currentRun?.progress || 0)}%`} />
         </div>
+        {sourceEvidence.length > 0 ? (
+          <div data-testid="factory-source-evidence" className="mt-3 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.04] p-2">
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
+              <Route className="h-3.5 w-3.5" />
+              来源证据
+            </div>
+            <div className="space-y-1.5">
+              {sourceEvidence.map((row) => (
+                <div key={`${row.label}-${row.value}`} className="grid grid-cols-[48px_minmax(0,1fr)] gap-2 text-[11px]">
+                  <span className="text-slate-500">{row.label}</span>
+                  <span
+                    className={cn(
+                      'min-w-0 break-words font-medium leading-4',
+                      row.label === '指令' ? 'line-clamp-3' : 'truncate',
+                      row.tone
+                    )}
+                    title={row.value}
+                  >
+                    {row.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="min-h-[260px] flex-[1.05] overflow-hidden border-b border-white/10">

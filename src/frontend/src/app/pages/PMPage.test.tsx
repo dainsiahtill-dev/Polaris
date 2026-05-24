@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PMPage } from './PMPage';
 
 const pmWorkspaceProps = vi.hoisted(() => vi.fn());
@@ -58,6 +58,11 @@ function renderPage(
 }
 
 describe('PMPage', () => {
+  beforeEach(() => {
+    pmWorkspaceProps.mockClear();
+    runtimeOverlayProps.mockClear();
+  });
+
   it('forwards the settings callback to PMWorkspace', () => {
     const onOpenSettings = vi.fn();
 
@@ -97,6 +102,19 @@ describe('PMPage', () => {
       pmRunning: false,
       directorRunning: true,
       fileEditEvents,
+    }));
+  });
+
+  it('forwards the PM stopping transition to PMWorkspace', () => {
+    renderPage(vi.fn(), {
+      pmRunning: true,
+      isStopping: true,
+    });
+
+    expect(pmWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      pmRunning: true,
+      isStarting: false,
+      isStopping: true,
     }));
   });
 });

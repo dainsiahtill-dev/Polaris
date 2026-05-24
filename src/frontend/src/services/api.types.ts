@@ -9,10 +9,25 @@
 // ============================================================================
 
 export interface ApiErrorDetail {
-  detail?: string;
-  error?: string;
+  detail?: string | ApiErrorPayload;
+  error?: string | ApiErrorPayload;
   message?: string;
   code?: string;
+  details?: ApiErrorStructuredDetails;
+}
+
+export interface ApiErrorPayload {
+  code?: string;
+  message?: string;
+  detail?: string;
+  error?: string;
+  details?: ApiErrorStructuredDetails;
+}
+
+export interface ApiErrorStructuredDetails {
+  required_roles?: string[];
+  missing_roles?: string[];
+  [key: string]: unknown;
 }
 
 export interface ApiResult<T> {
@@ -178,6 +193,7 @@ export interface FactoryRunStatus {
   completed_at?: string;
   summary_md?: string;
   summary_json?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown>;
   artifacts?: FactoryRunArtifact[];
   artifacts_error?: string | null;
 }
@@ -215,6 +231,14 @@ export interface FactoryStartOptions {
   run_director?: boolean;
   director_iterations?: number;
   loop?: boolean;
+}
+
+export type FactoryControlAction = 'pause' | 'resume' | 'cancel' | 'retry_phase' | 'retry_from_checkpoint';
+
+export interface FactoryControlOptions {
+  action: FactoryControlAction;
+  target_phase?: string | null;
+  reason?: string | null;
 }
 
 export interface FactoryRunListResponse {

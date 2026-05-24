@@ -398,18 +398,21 @@ class MessageListResponse(BaseModel):
     ok: bool
     messages: list[dict[str, Any]]
     session: dict[str, Any]
+    total: int = 0
 
 
 class ArtifactListResponse(BaseModel):
     model_config = {"extra": "allow"}
     ok: bool
     artifacts: list[dict[str, Any]]
+    total: int = 0
 
 
 class AuditLogResponse(BaseModel):
     model_config = {"extra": "allow"}
     ok: bool
     audit_events: list[dict[str, Any]]
+    total: int = 0
 
 
 class HistoryRunListResponse(BaseModel):
@@ -546,6 +549,7 @@ class WorkflowExportResponse(BaseModel):
     run_id: str
     session_id: str
     artifact_count: int
+    message_count: int = 0
 
 
 class RoleCapabilitiesResponse(BaseModel):

@@ -22,6 +22,10 @@ import {
   AlertCircle,
   RefreshCw,
   GitBranch,
+  Database,
+  Coins,
+  Trash2,
+  Wrench,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
@@ -38,17 +42,28 @@ import type { LogEntry } from '@/types/log';
 import type { TaskTraceMap } from '@/app/types/taskTrace';
 import {
   getPmStatus,
+  getPmStartupDiagnostics,
   listPmTasks,
   getPmRequirement,
   listPmDirectorTaskHistory,
   listPmRequirements,
   listPmTaskHistory,
+  clearRoleKernelCache,
+  getRoleKernelCacheStats,
+  getRoleKernelLLMEvents,
+  getRoleKernelTokenBudgetStats,
   type PmStatus,
+  type PmStartupDiagnosticsResponse,
   type PmDirectorHistoryIteration,
   type PmRequirementEntry,
   type PmTaskHistoryEntry,
   type PmTaskSearchResult,
+  type RoleKernelCacheStats,
+  type RoleKernelLLMEvent,
+  type RoleKernelLLMEventsResponse,
+  type RoleKernelTokenBudgetStats,
 } from '@/services/pmService';
+import { getRoleCapabilities, resolveRoleCapabilities } from '@/services/roleSessionService';
 
 // 阶段到视图的映射
 const PHASE_TO_VIEW: Record<string, { view: 'tasks' | 'activity' | 'documents'; icon: React.ReactNode; label: string; color: string }> = {
@@ -71,6 +86,7 @@ interface PMWorkspaceProps {
   pmStartBlockedReason?: string;
   runtimeIssue?: PMRuntimeIssue | null;
   isStarting?: boolean;
+  isStopping?: boolean;
   onBackToMain: () => void;
   onTogglePm: () => void | boolean | Promise<void | boolean>;
   onRunPmOnce: () => void | boolean | Promise<void | boolean>;
@@ -122,8 +138,146 @@ interface PMToggleStatusEvidence {
   error: string | null;
 }
 
+interface PMBackendEvidenceState {
+  loading: boolean;
+  capabilities: string[];
+  capabilitiesError: string;
+  diagnostics: PmStartupDiagnosticsResponse | null;
+  diagnosticsError: string;
+  cacheStats: RoleKernelCacheStats | null;
+  cacheError: string;
+  llmEvents: RoleKernelLLMEventsResponse | null;
+  llmEventsError: string;
+  tokenBudgetStats: RoleKernelTokenBudgetStats | null;
+  tokenBudgetError: string;
+}
+
+const EMPTY_PM_BACKEND_EVIDENCE: PMBackendEvidenceState = {
+  loading: false,
+  capabilities: [],
+  capabilitiesError: '',
+  diagnostics: null,
+  diagnosticsError: '',
+  cacheStats: null,
+  cacheError: '',
+  llmEvents: null,
+  llmEventsError: '',
+  tokenBudgetStats: null,
+  tokenBudgetError: '',
+};
+
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function readRecordNumber(record: Record<string, unknown> | null | undefined, keys: string[]): number | undefined {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return undefined;
+}
+
+function readKernelEventString(event: RoleKernelLLMEvent | null | undefined, keys: string[]): string {
+  if (!event) return '';
+  for (const key of keys) {
+    const value = event[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function formatPmKernelEvent(event: RoleKernelLLMEvent | null | undefined): string {
+  if (!event) return 'none';
+  const eventType = readKernelEventString(event, ['event_type', 'type', 'status']) || 'event';
+  const model = readKernelEventString(event, ['model', 'model_name', 'provider']);
+  const tokens = readRecordNumber(event, ['tokens', 'token_count', 'total_tokens']);
+  return [
+    eventType.replace(/_/g, ' '),
+    model,
+    typeof tokens === 'number' ? `${tokens} tokens` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+function formatPmCacheStats(stats: RoleKernelCacheStats | null): string {
+  if (!stats) return 'unavailable';
+  const hits = readRecordNumber(stats, ['hits']) ?? 0;
+  const misses = readRecordNumber(stats, ['misses']) ?? 0;
+  const size = readRecordNumber(stats, ['size']) ?? 0;
+  const maxSize = readRecordNumber(stats, ['max_size', 'maxSize']);
+  const hitRate = readRecordNumber(stats, ['hit_rate', 'hitRate']);
+  return [
+    `hits=${hits}`,
+    `misses=${misses}`,
+    `size=${size}${typeof maxSize === 'number' ? `/${maxSize}` : ''}`,
+    typeof hitRate === 'number' ? `hit=${hitRate}%` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+function formatPmTokenBudget(stats: RoleKernelTokenBudgetStats | null): string {
+  if (!stats) return 'unavailable';
+  const total = readRecordNumber(stats, ['total', 'total_budget']);
+  const available = readRecordNumber(stats, ['available_conversation', 'remaining']);
+  const safety = readRecordNumber(stats, ['safety_margin']);
+  return [
+    typeof total === 'number' ? `total=${total}` : '',
+    typeof available === 'number' ? `available=${available}` : '',
+    typeof safety === 'number' ? `margin=${safety}` : '',
+  ].filter(Boolean).join(' · ') || 'stats ready';
+}
+
+function formatPmDiagnostics(diagnostics: PmStartupDiagnosticsResponse | null): string {
+  if (!diagnostics) return 'unavailable';
+  const llmState = diagnostics.llm?.state || (diagnostics.llm?.ok ? 'ready' : 'blocked');
+  const workspaceState = diagnostics.workspace?.status || (diagnostics.workspace?.ok ? 'ready' : 'blocked');
+  const blockedRoles = Array.isArray(diagnostics.llm?.blocked_roles) ? diagnostics.llm.blocked_roles : [];
+  const issues = Array.isArray(diagnostics.issues) ? diagnostics.issues.length : 0;
+  const startupBlockers = pmStartupBlockers(diagnostics).length;
+  return [
+    startupBlockers > 0 ? 'start=blocked' : diagnostics.ok ? 'ready' : 'degraded',
+    `llm=${llmState}`,
+    blockedRoles.length > 0 ? `blocked=${blockedRoles.join(',')}` : '',
+    `workspace=${workspaceState}`,
+    issues > 0 ? `issues=${issues}` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+const PM_STARTUP_BLOCKER_LABELS: Record<string, string> = {
+  lancedb_unavailable: 'LanceDB 不可用',
+  llm_not_ready: 'PM LLM 未通过就绪检查',
+  workspace_unavailable: '工作区不可用',
+  workspace_docs_missing: 'docs/ 初始化未完成',
+};
+
+const PM_HARD_BLOCKER_ISSUES = new Set(Object.keys(PM_STARTUP_BLOCKER_LABELS));
+
+function pmStartupBlockers(diagnostics: PmStartupDiagnosticsResponse | null): string[] {
+  if (!diagnostics) {
+    return [];
+  }
+  if (Array.isArray(diagnostics.startup_blockers) && diagnostics.startup_blockers.length > 0) {
+    return diagnostics.startup_blockers
+      .map((issue) => String(issue || '').trim())
+      .filter((issue) => issue.length > 0);
+  }
+  const hasExplicitStartupSignal = typeof diagnostics.can_start === 'boolean' || Array.isArray(diagnostics.startup_blockers);
+  if (hasExplicitStartupSignal && diagnostics.can_start !== false) {
+    return [];
+  }
+  return (diagnostics.issues || []).filter((issue) => PM_HARD_BLOCKER_ISSUES.has(issue));
+}
+
+function formatPmStartupBlockReason(diagnostics: PmStartupDiagnosticsResponse | null): string {
+  const blockers = pmStartupBlockers(diagnostics);
+  if (blockers.length === 0) {
+    return '';
+  }
+  const primary = PM_STARTUP_BLOCKER_LABELS[blockers[0]] || blockers[0].replace(/_/g, ' ');
+  const extraCount = blockers.length - 1;
+  return `PM 启动诊断未通过：${primary}${extraCount > 0 ? `，另有 ${extraCount} 项阻断` : ''}`;
 }
 
 function taskListRecord(task: PmTaskSearchResult): Record<string, unknown> {
@@ -309,6 +463,138 @@ function resolvePMRuntimeBanner({
   };
 }
 
+function PMBackendEvidenceStrip({
+  evidence,
+  cacheClearing,
+  cacheClearStatus,
+  onRefresh,
+  onClearCache,
+}: {
+  evidence: PMBackendEvidenceState;
+  cacheClearing: boolean;
+  cacheClearStatus: string;
+  onRefresh: () => void;
+  onClearCache: () => void;
+}) {
+  const llmEventCount = evidence.llmEvents?.count
+    ?? (Array.isArray(evidence.llmEvents?.events) ? evidence.llmEvents.events.length : 0);
+  const latestLLMEvent = evidence.llmEvents?.events?.[0] ?? null;
+
+  return (
+    <section
+      className="border-b border-amber-500/15 bg-slate-950/75 px-4 py-2 text-xs text-slate-300"
+      data-testid="pm-backend-evidence-strip"
+      aria-label="PM backend evidence"
+    >
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <Wrench className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+          <span className="shrink-0 font-medium text-amber-100">Capabilities</span>
+          <span className="shrink-0 font-mono text-[11px] text-amber-300">
+            /v2/roles/capabilities/pm?host_kind=electron_workbench
+          </span>
+          {evidence.loading ? (
+            <span className="text-slate-400">读取中...</span>
+          ) : evidence.capabilitiesError ? (
+            <span className="text-rose-300">{evidence.capabilitiesError}</span>
+          ) : (
+            <span className="max-w-[260px] truncate text-emerald-300" title={evidence.capabilities.join(', ')}>
+              {evidence.capabilities.length > 0 ? evidence.capabilities.slice(0, 5).join(', ') : 'none'}
+            </span>
+          )}
+        </div>
+
+        <div className="flex min-w-0 items-center gap-2">
+          <Activity className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+          <span className="shrink-0 font-medium text-amber-100">Diagnostics</span>
+          <span className="shrink-0 font-mono text-[11px] text-amber-300">/v2/pm/diagnostics</span>
+          {evidence.loading ? (
+            <span className="text-slate-400">读取中...</span>
+          ) : evidence.diagnosticsError ? (
+            <span className="text-rose-300">{evidence.diagnosticsError}</span>
+          ) : (
+            <span className="max-w-[320px] truncate text-emerald-300" title={formatPmDiagnostics(evidence.diagnostics)}>
+              {formatPmDiagnostics(evidence.diagnostics)}
+            </span>
+          )}
+        </div>
+
+        <div className="flex min-w-0 items-center gap-2">
+          <Brain className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+          <span className="shrink-0 font-medium text-amber-100">LLM events</span>
+          <span className="shrink-0 font-mono text-[11px] text-amber-300">/v2/pm/llm-events?role=pm&amp;limit=5</span>
+          {evidence.loading ? (
+            <span className="text-slate-400">读取中...</span>
+          ) : evidence.llmEventsError ? (
+            <span className="text-rose-300">{evidence.llmEventsError}</span>
+          ) : (
+            <span className="max-w-[260px] truncate text-emerald-300">
+              events={llmEventCount}{latestLLMEvent ? ` · ${formatPmKernelEvent(latestLLMEvent)}` : ''}
+            </span>
+          )}
+        </div>
+
+        <div className="flex min-w-0 items-center gap-2">
+          <Database className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+          <span className="shrink-0 font-medium text-amber-100">Kernel cache</span>
+          <span className="shrink-0 font-mono text-[11px] text-amber-300">/v2/pm/cache-stats</span>
+          {evidence.loading ? (
+            <span className="text-slate-400">读取中...</span>
+          ) : evidence.cacheError ? (
+            <span className="text-rose-300">{evidence.cacheError}</span>
+          ) : (
+            <span className="max-w-[260px] truncate text-emerald-300">{formatPmCacheStats(evidence.cacheStats)}</span>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClearCache}
+            disabled={evidence.loading || cacheClearing}
+            data-testid="pm-kernel-cache-clear"
+            title="清空 PM LLM 缓存"
+            className="h-6 w-6 text-slate-400 hover:bg-red-500/10 hover:text-red-300"
+          >
+            {cacheClearing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+          </Button>
+          {cacheClearStatus ? (
+            <span data-testid="pm-kernel-cache-clear-result" className="truncate text-amber-200">
+              /v2/pm/cache-clear · {cacheClearStatus}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="flex min-w-0 items-center gap-2">
+          <Coins className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+          <span className="shrink-0 font-medium text-amber-100">Token budget</span>
+          <span className="shrink-0 font-mono text-[11px] text-amber-300">/v2/pm/token-budget-stats</span>
+          {evidence.loading ? (
+            <span className="text-slate-400">读取中...</span>
+          ) : evidence.tokenBudgetError ? (
+            <span className="text-rose-300">{evidence.tokenBudgetError}</span>
+          ) : (
+            <span className="max-w-[260px] truncate text-emerald-300">{formatPmTokenBudget(evidence.tokenBudgetStats)}</span>
+          )}
+        </div>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onRefresh}
+          disabled={evidence.loading || cacheClearing}
+          title="刷新 PM 后端证据"
+          className="ml-auto h-7 w-7 shrink-0 text-slate-400 hover:bg-amber-500/10 hover:text-amber-300"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', evidence.loading && 'animate-spin')} />
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 type PMActiveView = 'tasks' | 'activity' | 'documents' | 'requirements' | 'history' | 'analytics' | 'workbench';
 
 export function PMWorkspace({
@@ -319,6 +605,7 @@ export function PMWorkspace({
   pmStartBlockedReason = '',
   runtimeIssue = null,
   isStarting,
+  isStopping = false,
   onBackToMain,
   onTogglePm,
   onRunPmOnce,
@@ -352,6 +639,9 @@ export function PMWorkspace({
   const [backendPmTasks, setBackendPmTasks] = useState<PmTask[]>([]);
   const [backendPmTaskError, setBackendPmTaskError] = useState('');
   const [isLoadingBackendPmTasks, setIsLoadingBackendPmTasks] = useState(false);
+  const [pmBackendEvidence, setPmBackendEvidence] = useState<PMBackendEvidenceState>(EMPTY_PM_BACKEND_EVIDENCE);
+  const [pmKernelCacheClearing, setPmKernelCacheClearing] = useState(false);
+  const [pmKernelCacheClearStatus, setPmKernelCacheClearStatus] = useState('');
 
   const loadBackendPmTasks = useCallback(async () => {
     if (!workspace) {
@@ -385,6 +675,79 @@ export function PMWorkspace({
   useEffect(() => {
     void loadBackendPmTasks();
   }, [loadBackendPmTasks]);
+
+  const loadPmBackendEvidence = useCallback(async () => {
+    if (!workspace || factoryMode) {
+      setPmBackendEvidence(EMPTY_PM_BACKEND_EVIDENCE);
+      setPmKernelCacheClearStatus('');
+      return;
+    }
+
+    setPmBackendEvidence((current) => ({
+      ...current,
+      loading: true,
+    }));
+
+    try {
+      const [capabilityResult, diagnosticsResult, cacheResult, tokenBudgetResult, llmResult] = await Promise.all([
+        getRoleCapabilities('pm', 'electron_workbench'),
+        getPmStartupDiagnostics(),
+        getRoleKernelCacheStats('pm'),
+        getRoleKernelTokenBudgetStats('pm'),
+        getRoleKernelLLMEvents('pm', { role: 'pm', limit: 5 }),
+      ]);
+
+      setPmBackendEvidence({
+        loading: false,
+        capabilities: capabilityResult.ok && capabilityResult.data
+          ? resolveRoleCapabilities(capabilityResult.data, 'electron_workbench').sort()
+          : [],
+        capabilitiesError: capabilityResult.ok ? '' : capabilityResult.error || 'PM capabilities unavailable',
+        diagnostics: diagnosticsResult.ok && diagnosticsResult.data ? diagnosticsResult.data : null,
+        diagnosticsError: diagnosticsResult.ok ? '' : diagnosticsResult.error || 'PM diagnostics unavailable',
+        cacheStats: cacheResult.ok && cacheResult.data ? cacheResult.data : null,
+        cacheError: cacheResult.ok ? '' : cacheResult.error || 'PM cache stats unavailable',
+        llmEvents: llmResult.ok && llmResult.data
+          ? { ...llmResult.data, events: Array.isArray(llmResult.data.events) ? llmResult.data.events : [] }
+          : null,
+        llmEventsError: llmResult.ok ? '' : llmResult.error || 'PM LLM events unavailable',
+        tokenBudgetStats: tokenBudgetResult.ok && tokenBudgetResult.data ? tokenBudgetResult.data : null,
+        tokenBudgetError: tokenBudgetResult.ok ? '' : tokenBudgetResult.error || 'PM token budget unavailable',
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'PM backend evidence unavailable';
+      setPmBackendEvidence({
+        ...EMPTY_PM_BACKEND_EVIDENCE,
+        capabilitiesError: message,
+        diagnosticsError: message,
+        cacheError: message,
+        llmEventsError: message,
+        tokenBudgetError: message,
+      });
+    }
+  }, [factoryMode, workspace]);
+
+  useEffect(() => {
+    void loadPmBackendEvidence();
+  }, [loadPmBackendEvidence]);
+
+  const handleClearPmKernelCache = useCallback(async () => {
+    setPmKernelCacheClearing(true);
+    setPmKernelCacheClearStatus('');
+    try {
+      const result = await clearRoleKernelCache('pm');
+      if (result.ok) {
+        setPmKernelCacheClearStatus(result.data?.message || 'cleared');
+        await loadPmBackendEvidence();
+      } else {
+        setPmKernelCacheClearStatus(result.error || 'clear failed');
+      }
+    } catch (error) {
+      setPmKernelCacheClearStatus(error instanceof Error ? error.message : 'clear failed');
+    } finally {
+      setPmKernelCacheClearing(false);
+    }
+  }, [loadPmBackendEvidence]);
 
   const pmTaskEvidenceRows = useMemo(
     () => mergePmTaskEvidenceRows(tasks, backendPmTasks),
@@ -431,7 +794,50 @@ export function PMWorkspace({
     });
   }, []);
 
+  const pmDiagnosticStartReason = useMemo(
+    () => formatPmStartupBlockReason(pmBackendEvidence.diagnostics),
+    [pmBackendEvidence.diagnostics],
+  );
+  const pmStartBlockReason = !pmRunning ? pmStartBlockedReason || pmDiagnosticStartReason : '';
+  const pmStarting = Boolean(isStarting);
+  const pmStopping = Boolean(isStopping);
+  const pmToggleBusyReason = pmStarting
+    ? 'PM 正在启动，请等待状态回传。'
+    : pmStopping
+      ? 'PM 正在停止，请等待状态回传。'
+      : toggleStatusEvidence.loading
+        ? 'PM 状态确认中，请等待后端回传。'
+        : '';
+  const pmRunOnceBusyReason = pmStarting
+    ? 'PM 正在启动，请等待状态回传。'
+    : pmStopping
+      ? 'PM 正在停止，请等待状态回传。'
+      : runOnceStatusEvidence.loading
+        ? 'PM 单次督办状态确认中，请等待后端回传。'
+        : '';
+  const pmRunOnceDisabledReason = factoryMode
+    ? '工厂模式下无法使用此功能'
+    : pmRunOnceBusyReason
+      || (pmRunning ? 'PM 正在运行，不能同时触发单次督办。' : '')
+      || pmStartBlockReason;
+  const pmToggleDisabledReason = factoryMode
+    ? '工厂模式下无法使用此功能'
+    : pmToggleBusyReason || pmStartBlockReason;
+
   const handleRunPmOnce = useCallback(async () => {
+    if (pmRunOnceBusyReason) {
+      return;
+    }
+
+    if (pmStartBlockReason) {
+      setRunOnceStatusEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: pmStartBlockReason,
+      });
+      return;
+    }
     setRunOnceStatusEvidence({
       triggered: true,
       loading: true,
@@ -464,9 +870,22 @@ export function PMWorkspace({
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
-  }, [onRunPmOnce]);
+  }, [onRunPmOnce, pmRunOnceBusyReason, pmStartBlockReason]);
 
   const handleTogglePm = useCallback(async () => {
+    if (pmToggleBusyReason) {
+      return;
+    }
+
+    if (!pmRunning && pmStartBlockReason) {
+      setToggleStatusEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: pmStartBlockReason,
+      });
+      return;
+    }
     setToggleStatusEvidence({
       triggered: true,
       loading: true,
@@ -499,7 +918,7 @@ export function PMWorkspace({
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
-  }, [onTogglePm]);
+  }, [onTogglePm, pmRunning, pmStartBlockReason, pmToggleBusyReason]);
 
   const handleDocumentSelect = useCallback((path: string) => {
     userSwitchedViewRef.current = true;
@@ -524,10 +943,12 @@ export function PMWorkspace({
   
   // 获取当前正在执行的任务
   const currentTask = pmTaskEvidenceRows.find((task) => task.status === 'in_progress' || String(task.status) === 'running') ?? null;
-  const pmStartBlocked = Boolean(pmStartBlockedReason && !pmRunning);
+  const pmStartBlocked = Boolean(pmStartBlockReason && !pmRunning);
+  const pmRunOnceDisabled = Boolean(pmRunOnceDisabledReason);
+  const pmToggleDisabled = Boolean(pmToggleDisabledReason);
   const pmRuntimeBanner = resolvePMRuntimeBanner({
     pmRunning,
-    pmStartBlockedReason,
+    pmStartBlockedReason: pmStartBlockReason,
     runtimeIssue,
     pmTerminalStatus,
   });
@@ -653,11 +1074,11 @@ export function PMWorkspace({
             size="sm"
             onClick={() => { void handleRunPmOnce(); }}
             data-testid="pm-workspace-run-once"
-            disabled={pmRunning || isStarting || factoryMode || pmStartBlocked || runOnceStatusEvidence.loading}
-            title={factoryMode ? "工厂模式下无法使用此功能" : pmStartBlocked ? pmStartBlockedReason : undefined}
+            disabled={pmRunOnceDisabled}
+            title={pmRunOnceDisabledReason || undefined}
             className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/20"
           >
-            {isStarting || runOnceStatusEvidence.loading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+            {pmStarting || pmStopping || runOnceStatusEvidence.loading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
             单次 Run
           </Button>
 
@@ -666,16 +1087,19 @@ export function PMWorkspace({
             size="sm"
             onClick={() => { void handleTogglePm(); }}
             data-testid="pm-workspace-toggle"
-            disabled={isStarting || factoryMode || pmStartBlocked || toggleStatusEvidence.loading}
-            title={factoryMode ? "工厂模式下无法使用此功能" : pmStartBlocked ? pmStartBlockedReason : undefined}
+            disabled={pmToggleDisabled}
+            title={pmToggleDisabledReason || undefined}
             className={cn(
               pmRunning
                 ? 'bg-amber-600 hover:bg-amber-700 text-white'
                 : 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10'
-            )}
+              )}
           >
-            {isStarting || toggleStatusEvidence.loading ? (
-              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            {pmStarting || pmStopping || toggleStatusEvidence.loading ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                {pmStopping ? '停止中' : pmStarting ? '启动中' : '确认中'}
+              </>
             ) : pmRunning ? (
               <>
                 <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse mr-2" />
@@ -715,6 +1139,16 @@ export function PMWorkspace({
           </Button>
         </div>
       </header>
+      )}
+
+      {!factoryMode && (
+        <PMBackendEvidenceStrip
+          evidence={pmBackendEvidence}
+          cacheClearing={pmKernelCacheClearing}
+          cacheClearStatus={pmKernelCacheClearStatus}
+          onRefresh={() => { void loadPmBackendEvidence(); }}
+          onClearCache={() => { void handleClearPmKernelCache(); }}
+        />
       )}
 
       {runOnceStatusEvidence.triggered && (

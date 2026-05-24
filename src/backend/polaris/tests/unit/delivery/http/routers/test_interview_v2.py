@@ -165,6 +165,45 @@ async def test_v2_llm_interview_ask_accepts_frontend_camel_case_payload(client: 
 
 
 @pytest.mark.asyncio
+async def test_v2_llm_interview_ask_prefers_active_workspace_path(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Interview generation should use the same active workspace as LLM status projection."""
+    stale_workspace = tmp_path / "stale"
+    active_workspace = tmp_path / "active"
+    stale_workspace.mkdir()
+    active_workspace.mkdir()
+    mock_settings.workspace = str(stale_workspace)
+    mock_settings.workspace_path = str(active_workspace)
+
+    with patch(
+        "polaris.delivery.http.routers.interview.generate_interview_answer",
+        new_callable=AsyncMock,
+        return_value={
+            "raw_output": "raw",
+            "thinking": "",
+            "answer": "answer text",
+            "evaluation": {"score": 9},
+        },
+    ) as mock_generate:
+        response = await client.post(
+            "/v2/llm/interview/ask",
+            json={
+                "role": "pm",
+                "provider_id": "openai_compat-1",
+                "model": "Qwen3-Max",
+                "question": "How would you plan a complex delivery?",
+            },
+        )
+
+    assert response.status_code == 200
+    assert mock_generate.await_args is not None
+    assert mock_generate.await_args.kwargs["workspace"] == str(active_workspace)
+
+
+@pytest.mark.asyncio
 async def test_v2_llm_interview_ask_generation_failed(client: AsyncClient) -> None:
     """POST /v2/llm/interview/ask should 500 when generation returns None."""
     with patch(
@@ -320,6 +359,48 @@ async def test_v2_llm_interview_save_accepts_frontend_camel_case_payload(
     assert data["saved"] is True
     assert data["readiness_updated"] is True
     assert data["report_path"].endswith(".json")
+
+
+@pytest.mark.asyncio
+async def test_v2_llm_interview_save_prefers_active_workspace_path(
+    client: AsyncClient,
+    tmp_path: Path,
+    mock_settings: Settings,
+) -> None:
+    """Passed PM interviews must update readiness for the active desktop workspace, not a stale setting."""
+    stale_workspace = tmp_path / "stale"
+    active_workspace = tmp_path / "active"
+    stale_workspace.mkdir()
+    active_workspace.mkdir()
+    mock_settings.workspace = str(stale_workspace)
+    mock_settings.workspace_path = str(active_workspace)
+    index_path = active_workspace / ".polaris" / "llm_test_index.json"
+
+    with patch(
+        "polaris.cells.llm.evaluation.internal.index._resolve_index_paths",
+        return_value=[str(index_path)],
+    ):
+        response = await client.post(
+            "/v2/llm/interview/save",
+            json={
+                "roleId": "pm",
+                "providerId": "openai_compat-1",
+                "model": "Qwen3-Max",
+                "sessionId": "sess-active-save",
+                "report": {
+                    "id": "sess-active-save",
+                    "overallStatus": "passed",
+                    "provider": {"id": "openai_compat-1", "model": "Qwen3-Max"},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["readiness_updated"] is True
+    normalized_report_path = str(data["report_path"]).replace("\\", "/")
+    assert "/projects/active-" in normalized_report_path
+    assert "/projects/stale-" not in normalized_report_path
 
 
 # ---------------------------------------------------------------------------

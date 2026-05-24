@@ -1120,10 +1120,12 @@ cells:
       - execution_governance_pipeline
     state_owners:
       - workspace/.polaris/runtime/llm_evaluations/*
+      - workspace/.polaris/runtime/llm_tests/*
       - workspace/.polaris/llm_test_index.evaluation.json
     effects_allowed:
       - fs.read:workspace/.polaris/**
       - fs.write:workspace/.polaris/runtime/llm_evaluations/*
+      - fs.write:workspace/.polaris/runtime/llm_tests/*
       - fs.write:workspace/.polaris/llm_test_index.evaluation.json
       - network.http_outbound:llm/*
     verification:
@@ -1906,6 +1908,7 @@ cells:
       - policy.permission
       - llm.provider_runtime
       - orchestration.pm_dispatch
+      - chief_engineer.blueprint
     subgraphs:
       - storage_archive_pipeline
       - execution_governance_pipeline
@@ -2232,6 +2235,7 @@ cells:
       - fs.read:workspace/**
       - fs.write:runtime/state/blueprints/*
       - fs.write:runtime/blueprints/*
+      - fs.delete:runtime/blueprints/*
       - fs.write:runtime/events/runtime.events.jsonl
       - llm.invoke:chief_engineer/*
       - process.spawn:git/*

@@ -42,11 +42,13 @@ export interface PmDiagnosticsWorkspaceStatus {
 
 export interface PmStartupDiagnosticsResponse {
   ok: boolean;
+  can_start?: boolean;
   generated_at: string;
   lancedb: PmDiagnosticsLanceDBStatus;
   llm: PmDiagnosticsLLMStatus;
   workspace: PmDiagnosticsWorkspaceStatus;
   issues: string[];
+  startup_blockers?: string[];
 }
 
 export interface PmManagementStatusResponse extends Record<string, unknown> {
@@ -515,6 +517,8 @@ export interface DirectorDiagnosticsTaskSection {
   cancelled: number;
   ready_to_execute: number;
   ready_task_ids: string[];
+  blueprint_ready_task_ids?: string[];
+  missing_blueprint_task_ids?: string[];
   blocked_task_ids: string[];
   running_task_ids: string[];
   error?: string | null;
@@ -531,15 +535,31 @@ export interface DirectorDiagnosticsWorkerSection {
   error?: string | null;
 }
 
+export interface DirectorDiagnosticsLLMSection {
+  ok: boolean;
+  state: string;
+  role?: 'director';
+  blocked_roles?: string[];
+  unsupported_roles?: string[];
+  required_ready_roles?: string[];
+  provider_id?: string | null;
+  model?: string | null;
+  error?: string | null;
+  details?: Record<string, unknown>;
+}
+
 export interface DirectorDiagnosticsResponse {
   ok: boolean;
+  can_execute?: boolean;
   role: 'director';
   generated_at: string;
   workspace: string;
   status: DirectorDiagnosticsStatusSection;
   tasks: DirectorDiagnosticsTaskSection;
   workers: DirectorDiagnosticsWorkerSection;
+  llm?: DirectorDiagnosticsLLMSection;
   issues: string[];
+  execution_blockers?: string[];
 }
 
 export interface PmTaskHistoryEntry {

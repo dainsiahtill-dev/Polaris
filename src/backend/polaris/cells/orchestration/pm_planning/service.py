@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sys
@@ -61,6 +62,23 @@ def _clamp_pm_planning_timeout(seconds: int) -> int:
         _MIN_PM_PLANNING_TIMEOUT_SECONDS,
         min(_MAX_PM_PLANNING_TIMEOUT_SECONDS, int(seconds)),
     )
+
+
+def _read_contract_terminal_error(contract_path: Path) -> str:
+    if not contract_path.is_file():
+        return ""
+    try:
+        payload = json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        logger.debug("Failed to read PM contract terminal error from %s: %s", contract_path, exc)
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    code = str(payload.get("terminal_error_code") or "").strip()
+    if not code:
+        return ""
+    detail = str(payload.get("terminal_error") or payload.get("notes") or "").strip()
+    return f"{code}: {detail}" if detail else code
 
 
 @dataclass
@@ -387,6 +405,12 @@ class PMService:
         contract_path = self._resolve_contract_path()
         contract_exists = contract_path.exists()
         contract_size = contract_path.stat().st_size if contract_exists else 0
+        contract_terminal_error = _read_contract_terminal_error(contract_path)
+        if contract_terminal_error and not running and exit_code is None and not execution_error:
+            terminal = True
+            ok = False
+            exit_code = 1
+            execution_error = contract_terminal_error
 
         return {
             "running": running,

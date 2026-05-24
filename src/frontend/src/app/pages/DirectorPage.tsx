@@ -29,6 +29,8 @@ export interface DirectorPageProps {
   isStopping: boolean;
   /** Director 切换回调 */
   onToggleDirector: () => void | boolean | Promise<void | boolean>;
+  /** 外部统一计算的 Director 启动阻断原因 */
+  directorStartBlockedReason?: string;
   /** 打开系统配置 */
   onOpenSettings?: () => void;
   /** 当前任务 ID */
@@ -70,6 +72,8 @@ export interface DirectorPageProps {
   agentsRequired?: boolean;
   /** 草稿是否就绪 */
   agentsDraftReady?: boolean;
+  /** 草稿是否生成失败 */
+  agentsDraftFailed?: boolean;
   /** 质量门 */
   qualityGate?: unknown;
   /** 错误通知回调 */
@@ -80,17 +84,22 @@ function resolveDirectorStartBlockedReason({
   directorRunning,
   agentsRequired,
   agentsDraftReady,
+  agentsDraftFailed,
   llmRuntimeState,
 }: {
   directorRunning: boolean;
   agentsRequired: boolean;
   agentsDraftReady: boolean;
+  agentsDraftFailed: boolean;
   llmRuntimeState: DirectorPageProps['llmRuntimeState'];
 }): string {
   if (directorRunning) {
     return '';
   }
   if (agentsRequired) {
+    if (agentsDraftFailed) {
+      return 'AGENTS 草稿生成失败，请返回主界面重新生成或人工处理后再启动 Director。';
+    }
     return agentsDraftReady
       ? '需要先确认 AGENTS.md 后才能启动 Director。'
       : 'AGENTS.md 审核未完成，等待草稿生成或人工确认后才能启动 Director。';
@@ -115,8 +124,9 @@ export function DirectorPage({
   directorRunning,
   pmRunning = false,
   isStarting,
-  isStopping: _isStopping,
+  isStopping,
   onToggleDirector,
+  directorStartBlockedReason = '',
   onOpenSettings,
   currentTaskId,
   currentTaskTitle,
@@ -135,15 +145,20 @@ export function DirectorPage({
   llmRuntimeState,
   agentsRequired = false,
   agentsDraftReady = false,
+  agentsDraftFailed = false,
   qualityGate,
   notifyError,
 }: DirectorPageProps) {
-  const startBlockedReason = resolveDirectorStartBlockedReason({
+  const localStartBlockedReason = resolveDirectorStartBlockedReason({
     directorRunning,
     agentsRequired,
     agentsDraftReady,
+    agentsDraftFailed,
     llmRuntimeState,
   });
+  const startBlockedReason = !directorRunning && directorStartBlockedReason.trim()
+    ? directorStartBlockedReason.trim()
+    : localStartBlockedReason;
 
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
@@ -154,6 +169,7 @@ export function DirectorPage({
         workers={workers}
         directorRunning={directorRunning}
         isStarting={isStarting}
+        isStopping={isStopping}
         startBlockedReason={startBlockedReason}
         onToggleDirector={() => onToggleDirector()}
         onOpenSettings={onOpenSettings}

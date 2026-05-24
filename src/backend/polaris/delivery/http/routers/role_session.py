@@ -68,7 +68,7 @@ from polaris.kernelone.events.constants import (
 )
 from pydantic import BaseModel
 
-from ._shared import StructuredHTTPException, get_state, require_auth
+from ._shared import StructuredHTTPException, ensure_required_roles_ready, get_state, require_auth
 from .sse_utils import create_sse_response, sse_event_generator
 
 if TYPE_CHECKING:
@@ -141,11 +141,114 @@ class ExportToWorkflowRequest(BaseModel):
 # ==================== Helper Functions ====================
 
 
-def _build_directive_from_artifacts(artifacts: list[Any]) -> str:
-    """Build a directive string from session artifacts.
+def _record_value(record: Any, key: str, default: Any = None) -> Any:
+    if isinstance(record, dict):
+        return record.get(key, default)
+    return getattr(record, key, default)
+
+
+def _record_text(record: Any, key: str) -> str:
+    value = _record_value(record, key, "")
+    if isinstance(value, str):
+        return value.strip()
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value).strip()
+
+
+def _safe_records(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _ensure_workflow_export_runtime_ready(state: Any, target: str) -> None:
+    """Fail closed before exporting role-session evidence into role workflows."""
+
+    if target == "pm":
+        ensure_required_roles_ready(state, default_roles=["pm"], force_first="pm")
+    elif target == "director":
+        ensure_required_roles_ready(state, default_roles=["director"], force_first="director")
+    elif target == "factory":
+        roles = ["pm", "chief_engineer", "director"]
+        if bool(getattr(state.settings, "qa_enabled", True)):
+            roles.append("qa")
+        ensure_required_roles_ready(state, default_roles=roles, force_roles=roles)
+
+
+def _non_negative_int(value: Any, fallback: int = 0) -> int:
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, str):
+        token = value.strip()
+        if token.isdigit():
+            return int(token)
+    return fallback
+
+
+def _serialize_artifact(artifact: Any) -> dict[str, Any]:
+    return {
+        "id": _record_text(artifact, "id"),
+        "type": _record_text(artifact, "type"),
+        "content": _record_value(artifact, "content", None),
+        "metadata": _record_value(artifact, "metadata", {}) or {},
+    }
+
+
+def _serialize_message(message: Any) -> dict[str, Any]:
+    to_dict = getattr(message, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return payload
+    return {
+        "id": _record_text(message, "id"),
+        "role": _record_text(message, "role"),
+        "content": _record_text(message, "content"),
+        "thinking": _record_value(message, "thinking", None),
+        "meta": _record_value(message, "meta", {}) or {},
+        "created_at": _record_value(message, "created_at", None),
+    }
+
+
+def _serialize_audit_event(event: Any) -> dict[str, Any]:
+    to_dict = getattr(event, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return payload
+    if isinstance(event, dict):
+        return dict(event)
+    return {
+        "event_type": _record_text(event, "event_type") or _record_text(event, "type"),
+        "timestamp": _record_value(event, "timestamp", None),
+        "details": _record_value(event, "details", {}) or {},
+    }
+
+
+def _message_directive_lines(messages: list[Any]) -> list[str]:
+    lines: list[str] = []
+    for message in messages:
+        role = _record_text(message, "role") or "message"
+        if role == "system":
+            continue
+        content = _record_text(message, "content")
+        if not content:
+            continue
+        if len(content) > 700:
+            content = content[:700] + "..."
+        lines.append(f"{role}: {content}")
+    return lines
+
+
+def _build_directive_from_artifacts(artifacts: list[Any], messages: list[Any] | None = None) -> str:
+    """Build a directive string from session artifacts and conversation messages.
 
     Args:
         artifacts: List of artifacts from the session
+        messages: Optional RoleSession messages to preserve desktop dialogue intent
 
     Returns:
         Combined directive text
@@ -154,8 +257,8 @@ def _build_directive_from_artifacts(artifacts: list[Any]) -> str:
 
     # Look for specific artifact types that contain directives
     for artifact in artifacts:
-        content = getattr(artifact, "content", "") or ""
-        artifact_type = getattr(artifact, "type", "") or ""
+        content = _record_text(artifact, "content")
+        artifact_type = _record_text(artifact, "type")
 
         # Prioritize certain artifact types
         if artifact_type in ("directive", "requirement", "goal"):
@@ -166,22 +269,26 @@ def _build_directive_from_artifacts(artifacts: list[Any]) -> str:
     # If no specific directives found, use all text artifacts
     if not directives:
         for artifact in artifacts:
-            content = getattr(artifact, "content", "") or ""
-            artifact_type = getattr(artifact, "type", "") or ""
+            content = _record_text(artifact, "content")
+            artifact_type = _record_text(artifact, "type")
             if artifact_type in ("message", "text", "code") and content:
                 # Truncate long content
                 if len(content) > 500:
                     content = content[:500] + "..."
                 directives.append(content)
 
+    if messages:
+        directives.extend(_message_directive_lines(messages))
+
     return "\n\n".join(directives) if directives else "Continue from exported session"
 
 
-def _build_task_filter_from_artifacts(artifacts: list[Any]) -> str:
-    """Build a task filter from session artifacts.
+def _build_task_filter_from_artifacts(artifacts: list[Any], messages: list[Any] | None = None) -> str:
+    """Build a task filter from session artifacts and conversation messages.
 
     Args:
         artifacts: List of artifacts from the session
+        messages: Optional RoleSession messages to preserve desktop dialogue intent
 
     Returns:
         Task filter string for Director
@@ -190,8 +297,8 @@ def _build_task_filter_from_artifacts(artifacts: list[Any]) -> str:
     tasks = []
 
     for artifact in artifacts:
-        content = getattr(artifact, "content", "") or ""
-        artifact_type = getattr(artifact, "type", "") or ""
+        content = _record_text(artifact, "content")
+        artifact_type = _record_text(artifact, "type")
 
         if artifact_type in ("task", "todo", "action_item"):
             tasks.append(content)
@@ -200,8 +307,31 @@ def _build_task_filter_from_artifacts(artifacts: list[Any]) -> str:
         return "Execute tasks: " + "; ".join(tasks[:5])  # Limit to first 5 tasks
 
     # Fallback to using directive
-    directive = _build_directive_from_artifacts(artifacts)
+    directive = _build_directive_from_artifacts(artifacts, messages)
     return directive[:200] if directive else "Execute ready tasks"
+
+
+def _session_payload(session: Any) -> dict[str, Any]:
+    to_dict = getattr(session, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def _message_total(session: Any, messages: list[Any], offset: int) -> int:
+    fallback = max(0, int(offset or 0)) + len(messages)
+    payload = _session_payload(session)
+    return max(_non_negative_int(payload.get("message_count"), fallback), fallback)
+
+
+def _audit_total(audit_service: Any, session_id: str, event_type: str | None, events: list[Any], offset: int) -> int:
+    fallback = max(0, int(offset or 0)) + len(events)
+    get_event_count = getattr(audit_service, "get_event_count", None)
+    if not callable(get_event_count):
+        return fallback
+    return max(_non_negative_int(get_event_count(session_id, event_type), fallback), fallback)
 
 
 def _workspace_value(settings: Any) -> str:
@@ -504,11 +634,13 @@ async def get_messages(
                 )
 
             messages = service.get_messages(session_id, limit=limit, offset=offset)
+            session_payload = _session_payload(session)
 
             return {
                 "ok": True,
                 "messages": [m.to_dict() for m in messages],
-                "session": session.to_dict(),
+                "session": session_payload,
+                "total": _message_total(session, messages, offset),
             }
 
     except (RuntimeError, ValueError) as e:
@@ -896,6 +1028,7 @@ async def get_artifacts(
         return {
             "ok": True,
             "artifacts": [a.to_dict() for a in artifacts],
+            "total": len(artifacts),
         }
 
     except (RuntimeError, ValueError) as e:
@@ -943,6 +1076,7 @@ async def get_audit(
         return {
             "ok": True,
             "audit_events": events,
+            "total": _audit_total(audit_service, session_id, event_type, events, offset),
         }
 
     except (RuntimeError, ValueError) as e:
@@ -1236,6 +1370,9 @@ async def export_to_workflow(
     state = get_state(request)
 
     try:
+        include_artifacts = payload.export_kind in {"session_bundle", "artifacts_only"}
+        include_messages = payload.export_kind in {"session_bundle", "messages_only"}
+
         # Verify session exists
         with _role_session_service(request) as service:
             session = service.get_session(session_id)
@@ -1245,14 +1382,17 @@ async def export_to_workflow(
                     code="SESSION_NOT_FOUND",
                     message=f"Session not found: {session_id}",
                 )
+            messages = _safe_records(service.get_messages(session_id, limit=200, offset=0)) if include_messages else []
+
+        _ensure_workflow_export_runtime_ready(state, payload.target)
 
         session_workspace = _session_workspace(session, request)
         artifact_service = RoleSessionArtifactService(Path(session_workspace))
         audit_service = RoleSessionAuditService(Path(session_workspace))
 
         # 1. Collect session content
-        artifacts = artifact_service.list_artifacts(session_id)
-        events = audit_service.get_events(session_id, limit=1000)
+        artifacts = _safe_records(artifact_service.list_artifacts(session_id)) if include_artifacts else []
+        events = _safe_records(audit_service.get_events(session_id, limit=1000)) if payload.include_audit_log else []
 
         # 2. Build export bundle
         export_bundle = {
@@ -1260,10 +1400,12 @@ async def export_to_workflow(
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "target": payload.target,
             "export_kind": payload.export_kind,
-            "artifacts": [
-                {"id": a.id, "type": a.type, "content": a.content, "metadata": a.metadata} for a in artifacts
-            ],
-            "event_count": len(events) if payload.include_audit_log else 0,
+            "artifacts": [_serialize_artifact(artifact) for artifact in artifacts],
+            "messages": [_serialize_message(message) for message in messages],
+            "audit_events": [_serialize_audit_event(event) for event in events],
+            "artifact_count": len(artifacts),
+            "message_count": len(messages),
+            "event_count": len(events),
         }
 
         # 3. Persist export bundle and create target workflow
@@ -1292,7 +1434,7 @@ async def export_to_workflow(
             from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
 
             cmd_service = OrchestrationCommandService(state.settings)
-            directive = _build_directive_from_artifacts(artifacts)
+            directive = _build_directive_from_artifacts(artifacts, messages)
 
             result = await cmd_service.execute_pm_run(
                 workspace=session_workspace,
@@ -1311,7 +1453,7 @@ async def export_to_workflow(
             from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
 
             cmd_service = OrchestrationCommandService(state.settings)
-            task_filter = _build_task_filter_from_artifacts(artifacts)
+            task_filter = _build_task_filter_from_artifacts(artifacts, messages)
 
             result = await cmd_service.execute_director_run(
                 workspace=session_workspace,
@@ -1328,14 +1470,31 @@ async def export_to_workflow(
         else:
             # Export to Factory via FactoryRunService
             from polaris.cells.factory.pipeline.public.service import FactoryConfig, FactoryRunService
+            from polaris.cells.factory.pipeline.public.types import FactoryStartRequest
+            from polaris.delivery.http.routers.factory import _schedule_factory_run_task
 
             factory_service = FactoryRunService(workspace=Path(session_workspace))
-            directive = _build_directive_from_artifacts(artifacts)
+            directive = _build_directive_from_artifacts(artifacts, messages)
+            start_payload = FactoryStartRequest(
+                workspace=session_workspace,
+                start_from="architect",
+                directive=directive,
+                run_director=True,
+                director_iterations=1,
+                loop=False,
+                input_source="role_session",
+            )
 
             config = FactoryConfig(
                 name=f"export_from_{session_id}",
-                description=f"Factory run exported from session {session_id}",
-                stages=["docs_generation", "pm_planning", "director_dispatch", "quality_gate"],
+                description=directive or f"Factory run exported from session {session_id}",
+                stages=[
+                    "docs_generation",
+                    "pm_planning",
+                    "chief_engineer_review",
+                    "director_dispatch",
+                    "quality_gate",
+                ],
                 auto_dispatch=True,
             )
 
@@ -1346,9 +1505,17 @@ async def export_to_workflow(
             await factory_service.start_run(run_id)
 
             # Record export reference in metadata
-            run.metadata["export_session_id"] = session_id
-            run.metadata["export_bundle_path"] = str(export_path)
-            run.metadata["directive"] = directive
+            await factory_service.update_run_metadata(
+                run_id,
+                {
+                    "export_session_id": session_id,
+                    "export_bundle_path": str(export_path),
+                    "directive": directive,
+                    "input_source": "role_session",
+                    "factory_start_request": start_payload.model_dump(mode="json"),
+                },
+            )
+            _schedule_factory_run_task(factory_service, run_id, start_payload, state)
 
         # 4. Record export event
         audit_service.append_audit_event(
@@ -1358,6 +1525,7 @@ async def export_to_workflow(
                 "target": payload.target,
                 "run_id": run_id,
                 "artifact_count": len(artifacts),
+                "message_count": len(messages),
                 "export_kind": payload.export_kind,
             },
         )
@@ -1368,6 +1536,7 @@ async def export_to_workflow(
             "run_id": run_id,
             "session_id": session_id,
             "artifact_count": len(artifacts),
+            "message_count": len(messages),
         }
 
     except (RuntimeError, ValueError) as e:

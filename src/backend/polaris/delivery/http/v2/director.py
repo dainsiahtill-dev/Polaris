@@ -30,6 +30,7 @@ from polaris.cells.runtime.projection.public.role_contracts import RoleTaskContr
 from polaris.cells.runtime.projection.public.service import (
     RuntimeProjectionService,
     build_cache_root,
+    build_llm_status,
     build_workflow_status_payload,
     build_workflow_task_rows,
     get_workflow_runtime_status,
@@ -40,7 +41,7 @@ from polaris.delivery.http.dependencies import (
     get_director_service as get_director_service_dep,
     require_auth,
 )
-from polaris.delivery.http.routers._shared import StructuredHTTPException
+from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
 from polaris.delivery.http.schemas.common import RoleCapabilitiesResponse
 from polaris.delivery.http.workspace import active_workspace_value, requested_or_active_workspace
 from polaris.domain.entities import TaskPriority
@@ -222,7 +223,7 @@ async def _projected_task_response(request: Request, task_id: str) -> TaskRespon
 
     try:
         projection = await RuntimeProjectionService.build_async(workspace, state=state)
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError, TypeError, AttributeError):
         logger.debug("Failed to build Director task projection for task_id=%s", task_id, exc_info=True)
         return None
 
@@ -546,6 +547,30 @@ class DirectorOrchestrationResponse(BaseModel):
     message: str
 
 
+def _director_snapshot_status(snapshot: Any) -> str:
+    status_value = getattr(snapshot, "status", None)
+    value = getattr(status_value, "value", status_value)
+    return str(value or "unknown")
+
+
+def _director_snapshot_task_count(snapshot: Any) -> int:
+    tasks = getattr(snapshot, "tasks", None)
+    if isinstance(tasks, (dict, list, tuple, set)):
+        return len(tasks)
+    return 0
+
+
+def _director_orchestration_response(snapshot: Any) -> DirectorOrchestrationResponse:
+    status_value = _director_snapshot_status(snapshot)
+    return DirectorOrchestrationResponse(
+        run_id=str(snapshot.run_id),
+        status=status_value,
+        workspace=str(snapshot.workspace),
+        tasks_queued=_director_snapshot_task_count(snapshot),
+        message=f"Status: {status_value}",
+    )
+
+
 # ============================================================================
 # 原有请求/响应模型
 # ============================================================================
@@ -600,6 +625,8 @@ class DirectorDiagnosticsTaskSection(BaseModel):
     cancelled: int = 0
     ready_to_execute: int = 0
     ready_task_ids: list[str] = Field(default_factory=list)
+    blueprint_ready_task_ids: list[str] = Field(default_factory=list)
+    missing_blueprint_task_ids: list[str] = Field(default_factory=list)
     blocked_task_ids: list[str] = Field(default_factory=list)
     running_task_ids: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -618,17 +645,35 @@ class DirectorDiagnosticsWorkerSection(BaseModel):
     error: str | None = None
 
 
+class DirectorDiagnosticsLLMSection(BaseModel):
+    """Director role-specific LLM readiness evidence."""
+
+    ok: bool
+    state: str
+    role: str = "director"
+    blocked_roles: list[str] = Field(default_factory=list)
+    unsupported_roles: list[str] = Field(default_factory=list)
+    required_ready_roles: list[str] = Field(default_factory=list)
+    provider_id: str | None = None
+    model: str | None = None
+    error: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class DirectorDiagnosticsResponse(BaseModel):
     """Side-effect-free Director desktop readiness snapshot."""
 
     ok: bool
+    can_execute: bool
     role: str = "director"
     generated_at: str
     workspace: str
     status: DirectorDiagnosticsStatusSection
     tasks: DirectorDiagnosticsTaskSection
     workers: DirectorDiagnosticsWorkerSection
+    llm: DirectorDiagnosticsLLMSection
     issues: list[str] = Field(default_factory=list)
+    execution_blockers: list[str] = Field(default_factory=list)
 
 
 def _task_diagnostics_from_rows(rows: list[dict[str, Any]], source: str) -> DirectorDiagnosticsTaskSection:
@@ -640,19 +685,32 @@ def _task_diagnostics_from_rows(rows: list[dict[str, Any]], source: str) -> Dire
     completed = 0
     cancelled = 0
     ready_task_ids: list[str] = []
+    blueprint_ready_task_ids: list[str] = []
+    missing_blueprint_task_ids: list[str] = []
     blocked_task_ids: list[str] = []
     running_task_ids: list[str] = []
+    requires_blueprint_evidence = source == "workflow"
 
     for row in rows:
         task_id = _task_id_from_row(row)
         details = _task_details(row)
         status_token = str(details["status"])
         dependencies = details["dependencies"]
+        has_blueprint_evidence = bool(
+            str(details.get("blueprint_id") or "").strip()
+            or str(details.get("blueprint_path") or "").strip()
+            or str(details.get("runtime_blueprint_path") or "").strip()
+        )
 
         if status_token == "PENDING":
             pending += 1
             if not dependencies and task_id:
-                ready_task_ids.append(task_id)
+                if requires_blueprint_evidence and not has_blueprint_evidence:
+                    missing_blueprint_task_ids.append(task_id)
+                else:
+                    ready_task_ids.append(task_id)
+                    if has_blueprint_evidence:
+                        blueprint_ready_task_ids.append(task_id)
         elif status_token == "CLAIMED":
             claimed += 1
             running += 1
@@ -689,6 +747,8 @@ def _task_diagnostics_from_rows(rows: list[dict[str, Any]], source: str) -> Dire
         cancelled=cancelled,
         ready_to_execute=len(ready_task_ids),
         ready_task_ids=ready_task_ids,
+        blueprint_ready_task_ids=blueprint_ready_task_ids,
+        missing_blueprint_task_ids=missing_blueprint_task_ids,
         blocked_task_ids=blocked_task_ids,
         running_task_ids=running_task_ids,
     )
@@ -709,6 +769,83 @@ def _worker_payload_from_object(worker: Any) -> dict[str, Any]:
         "current_task_id": getattr(worker, "current_task_id", None) or getattr(worker, "task_id", None),
         "healthy": getattr(worker, "healthy", None),
     }
+
+
+def _worker_id_from_row(row: dict[str, Any]) -> str:
+    return str(row.get("id") or row.get("worker_id") or row.get("name") or "").strip()
+
+
+def _worker_row_matches_id(row: dict[str, Any], worker_id: str) -> bool:
+    requested = str(worker_id or "").strip()
+    if not requested:
+        return False
+    return requested in {
+        str(row.get("id") or "").strip(),
+        str(row.get("worker_id") or "").strip(),
+        str(row.get("name") or "").strip(),
+    }
+
+
+def _worker_rows_from_payload(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+
+    worker_payload: Any = payload.get("workers")
+    if worker_payload is None:
+        status_payload = payload.get("status")
+        if isinstance(status_payload, dict):
+            worker_payload = status_payload.get("workers")
+
+    candidates: Any = None
+    if isinstance(worker_payload, list):
+        candidates = worker_payload
+    elif isinstance(worker_payload, dict):
+        for key in ("worker_rows", "rows", "items", "workers"):
+            value = worker_payload.get(key)
+            if isinstance(value, list):
+                candidates = value
+                break
+        if candidates is None:
+            dict_rows: list[dict[str, Any]] = []
+            for key, value in worker_payload.items():
+                if not isinstance(value, dict):
+                    continue
+                row = dict(value)
+                row.setdefault("id", str(key))
+                dict_rows.append(row)
+            candidates = dict_rows
+    elif isinstance(payload.get("worker_rows"), list):
+        candidates = payload.get("worker_rows")
+
+    rows: list[dict[str, Any]] = []
+    for item in candidates or []:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        if not _worker_id_from_row(row):
+            continue
+        rows.append(row)
+    return rows
+
+
+def _worker_rows_from_projection(projection: Any) -> list[dict[str, Any]]:
+    merged_payload = getattr(projection, "director_merged", None)
+    rows = _worker_rows_from_payload(merged_payload if isinstance(merged_payload, dict) else None)
+    if rows:
+        return rows
+    local_payload = getattr(projection, "director_local", None)
+    return _worker_rows_from_payload(local_payload if isinstance(local_payload, dict) else None)
+
+
+async def _projected_worker_rows(request: Request) -> list[dict[str, Any]]:
+    state = getattr(request.app.state, "app_state", None) or request.app.state
+    workspace = active_workspace_value(state.settings)
+    try:
+        projection = await RuntimeProjectionService.build_async(workspace, state=state)
+    except (RuntimeError, ValueError):
+        logger.debug("Director worker projection unavailable for workspace=%s", workspace, exc_info=True)
+        return []
+    return _worker_rows_from_projection(projection)
 
 
 def _worker_diagnostics_from_workers(workers: list[Any]) -> DirectorDiagnosticsWorkerSection:
@@ -749,18 +886,78 @@ def _worker_diagnostics_from_workers(workers: list[Any]) -> DirectorDiagnosticsW
     )
 
 
+def _role_payload(payload: dict[str, Any], role: str) -> dict[str, Any]:
+    roles_value = payload.get("roles")
+    roles = roles_value if isinstance(roles_value, dict) else {}
+    target = str(role or "").strip().lower()
+    for key, value in roles.items():
+        if str(key or "").strip().lower() == target and isinstance(value, dict):
+            return value
+    return {}
+
+
+def _build_llm_diagnostics(settings: Any) -> DirectorDiagnosticsLLMSection:
+    try:
+        payload = build_llm_status(settings)
+    except (RuntimeError, OSError, ValueError) as exc:
+        return DirectorDiagnosticsLLMSection(
+            ok=False,
+            state="error",
+            blocked_roles=["director"],
+            error=str(exc),
+        )
+
+    if not isinstance(payload, dict):
+        return DirectorDiagnosticsLLMSection(
+            ok=False,
+            state="error",
+            blocked_roles=["director"],
+            error="invalid_llm_status_payload",
+        )
+
+    role_info = _role_payload(payload, "director")
+    ready = bool(role_info.get("ready"))
+    runtime_supported = bool(role_info.get("runtime_supported"))
+    blocked_roles = _string_list(payload.get("blocked_roles"))
+    unsupported_roles = _string_list(payload.get("unsupported_roles"))
+    required_ready_roles = _string_list(payload.get("required_ready_roles"))
+    if "director" not in required_ready_roles:
+        required_ready_roles.append("director")
+    if not ready and "director" not in blocked_roles:
+        blocked_roles.append("director")
+    if not runtime_supported and "director" not in unsupported_roles:
+        unsupported_roles.append("director")
+
+    ok = ready and runtime_supported
+    return DirectorDiagnosticsLLMSection(
+        ok=ok,
+        state="ready" if ok else "blocked",
+        blocked_roles=blocked_roles,
+        unsupported_roles=unsupported_roles,
+        required_ready_roles=required_ready_roles,
+        provider_id=str(role_info.get("provider_id") or "").strip() or None,
+        model=str(role_info.get("model") or "").strip() or None,
+        details=payload,
+    )
+
+
 def _director_diagnostic_issues(
     status_section: DirectorDiagnosticsStatusSection,
     task_section: DirectorDiagnosticsTaskSection,
     worker_section: DirectorDiagnosticsWorkerSection,
+    llm_section: DirectorDiagnosticsLLMSection,
 ) -> list[str]:
     issues: list[str] = []
+    if not llm_section.ok:
+        issues.append("director_llm_not_ready")
     if not status_section.ok:
         issues.append("director_status_unavailable")
     if task_section.error:
         issues.append("director_tasks_unavailable")
     if task_section.total == 0:
         issues.append("director_no_tasks")
+    elif task_section.missing_blueprint_task_ids:
+        issues.append("director_ready_tasks_missing_blueprints")
     elif task_section.ready_to_execute == 0 and task_section.running == 0 and not status_section.running:
         issues.append("director_no_ready_tasks")
     if task_section.blocked > 0:
@@ -776,6 +973,166 @@ def _director_diagnostic_issues(
     if worker_section.unhealthy > 0:
         issues.append("director_workers_unhealthy")
     return issues
+
+
+def _director_execution_blockers(
+    status_section: DirectorDiagnosticsStatusSection,
+    task_section: DirectorDiagnosticsTaskSection,
+    worker_section: DirectorDiagnosticsWorkerSection,
+    llm_section: DirectorDiagnosticsLLMSection,
+) -> list[str]:
+    """Return hard blockers that should disable a new Director run."""
+
+    blockers: list[str] = []
+    if not llm_section.ok:
+        blockers.append("director_llm_not_ready")
+
+    if status_section.running:
+        return blockers
+
+    if not status_section.ok:
+        blockers.append("director_status_unavailable")
+    if task_section.error:
+        blockers.append("director_tasks_unavailable")
+    if task_section.total == 0:
+        blockers.append("director_no_tasks")
+    elif task_section.missing_blueprint_task_ids:
+        blockers.append("director_ready_tasks_missing_blueprints")
+    elif task_section.ready_to_execute == 0:
+        blockers.append("director_no_ready_tasks")
+
+    if worker_section.error:
+        blockers.append("director_workers_unavailable")
+    elif worker_section.total == 0:
+        blockers.append("director_no_workers")
+    elif task_section.ready_to_execute > 0 and worker_section.idle == 0:
+        blockers.append("director_no_idle_workers")
+    return blockers
+
+
+async def _build_director_diagnostics(
+    request: Request,
+    service: DirectorService,
+    workspace_override: str | None = None,
+) -> DirectorDiagnosticsResponse:
+    """Build a side-effect-free Director readiness snapshot."""
+
+    state = getattr(request.app.state, "app_state", None) or request.app.state
+    settings = state.settings
+    workspace = str(workspace_override or active_workspace_value(settings))
+
+    status_section = DirectorDiagnosticsStatusSection(
+        ok=False,
+        state="UNKNOWN",
+        running=False,
+        error="projection unavailable",
+    )
+    task_rows: list[dict[str, Any]] = []
+    projected_workers: list[dict[str, Any]] = []
+    task_source = "empty"
+
+    try:
+        projection = await RuntimeProjectionService.build_async(workspace, state=state)
+        selected_status = (
+            getattr(projection, "director_merged", None)
+            if getattr(projection, "director_merged", None)
+            else projection.director_local
+        )
+        projection_source = "director_merged" if getattr(projection, "director_merged", None) else "director_local"
+        local_status = _flatten_director_status(selected_status or {"running": False, "status": {"state": "IDLE"}})
+        status_section = DirectorDiagnosticsStatusSection(
+            ok=True,
+            state=str(local_status.get("state") or "IDLE"),
+            running=bool(local_status.get("running")),
+            source=str(local_status.get("source") or "none"),
+            projection_source=projection_source,
+        )
+        task_rows = _projection_task_rows(projection)
+        projected_workers = _worker_rows_from_projection(projection)
+        task_source = "workflow" if task_rows else "empty"
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("Director diagnostics projection unavailable for workspace=%s", workspace, exc_info=True)
+        status_section.error = str(exc)
+
+    if not task_rows:
+        try:
+            task_rows = _task_rows_from_local_tasks(await service.list_tasks(status=None))
+            task_source = "local" if task_rows else "empty"
+        except (RuntimeError, ValueError, AttributeError) as exc:
+            logger.debug("Director diagnostics local task queue unavailable", exc_info=True)
+            task_section = DirectorDiagnosticsTaskSection(
+                ok=False,
+                source="error",
+                error=str(exc),
+            )
+        else:
+            task_section = _task_diagnostics_from_rows(task_rows, task_source)
+    else:
+        task_section = _task_diagnostics_from_rows(task_rows, task_source)
+
+    try:
+        workers = await service.list_workers()
+    except (RuntimeError, ValueError, AttributeError) as exc:
+        logger.debug("Director diagnostics worker pool unavailable", exc_info=True)
+        worker_section = (
+            _worker_diagnostics_from_workers(projected_workers)
+            if projected_workers
+            else DirectorDiagnosticsWorkerSection(ok=False, error=str(exc))
+        )
+    else:
+        worker_rows = list(workers)
+        worker_section = _worker_diagnostics_from_workers(worker_rows if worker_rows else projected_workers)
+
+    llm_section = _build_llm_diagnostics(settings)
+    issues = _director_diagnostic_issues(status_section, task_section, worker_section, llm_section)
+    execution_blockers = _director_execution_blockers(status_section, task_section, worker_section, llm_section)
+    return DirectorDiagnosticsResponse(
+        ok=not issues,
+        can_execute=not execution_blockers,
+        generated_at=_utc_now(),
+        workspace=workspace,
+        status=status_section,
+        tasks=task_section,
+        workers=worker_section,
+        llm=llm_section,
+        issues=issues,
+        execution_blockers=execution_blockers,
+    )
+
+
+async def _build_director_diagnostics_for_request(
+    request: Request,
+    workspace: str,
+) -> DirectorDiagnosticsResponse:
+    """Resolve DirectorService and build diagnostics for guarded run starts."""
+
+    service = await get_director_service_dep(request)
+    return await _build_director_diagnostics(request, service, workspace_override=workspace)
+
+
+def _ensure_director_can_execute(diagnostics: DirectorDiagnosticsResponse) -> None:
+    """Raise a structured 409 when Director execution prerequisites are not met."""
+
+    if diagnostics.can_execute and not diagnostics.execution_blockers:
+        return
+
+    raise StructuredHTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        code="DIRECTOR_EXECUTION_BLOCKED",
+        message="Director execution prerequisites are not satisfied",
+        details={
+            "execution_blockers": diagnostics.execution_blockers,
+            "issues": diagnostics.issues,
+            "diagnostics": diagnostics.model_dump(mode="json"),
+        },
+    )
+
+
+def _ensure_director_lifecycle_can_start(request: Request) -> None:
+    """Ensure the Director role LLM runtime is ready before service startup."""
+
+    state = getattr(request.app.state, "app_state", None) or request.app.state
+    ensure_required_roles_ready(state, default_roles=["director"], force_first="director")
 
 
 def _parse_task_priority(value: str) -> TaskPriority:
@@ -804,9 +1161,11 @@ def _parse_task_priority(value: str) -> TaskPriority:
 
 @router.post("/start", dependencies=[Depends(require_auth)])
 async def start_director(
-    service: DirectorService = Depends(get_director_service_dep),
+    request: Request,
 ) -> dict[str, Any]:
     """Start the Director service."""
+    _ensure_director_lifecycle_can_start(request)
+    service = await get_director_service_dep(request)
     await service.start()
     return {"ok": True, "state": service.state.name}
 
@@ -879,75 +1238,7 @@ async def get_director_diagnostics(
     service: DirectorService = Depends(get_director_service_dep),
 ) -> DirectorDiagnosticsResponse:
     """Return side-effect-free Director desktop readiness diagnostics."""
-    state = getattr(request.app.state, "app_state", None) or request.app.state
-    settings = state.settings
-    workspace = active_workspace_value(settings)
-
-    status_section = DirectorDiagnosticsStatusSection(
-        ok=False,
-        state="UNKNOWN",
-        running=False,
-        error="projection unavailable",
-    )
-    task_rows: list[dict[str, Any]] = []
-    task_source = "empty"
-
-    try:
-        projection = await RuntimeProjectionService.build_async(workspace, state=state)
-        selected_status = (
-            getattr(projection, "director_merged", None)
-            if getattr(projection, "director_merged", None)
-            else projection.director_local
-        )
-        projection_source = "director_merged" if getattr(projection, "director_merged", None) else "director_local"
-        local_status = _flatten_director_status(selected_status or {"running": False, "status": {"state": "IDLE"}})
-        status_section = DirectorDiagnosticsStatusSection(
-            ok=True,
-            state=str(local_status.get("state") or "IDLE"),
-            running=bool(local_status.get("running")),
-            source=str(local_status.get("source") or "none"),
-            projection_source=projection_source,
-        )
-        task_rows = _projection_task_rows(projection)
-        task_source = "workflow" if task_rows else "empty"
-    except (RuntimeError, ValueError) as exc:
-        logger.debug("Director diagnostics projection unavailable for workspace=%s", workspace, exc_info=True)
-        status_section.error = str(exc)
-
-    if not task_rows:
-        try:
-            task_rows = _task_rows_from_local_tasks(await service.list_tasks(status=None))
-            task_source = "local" if task_rows else "empty"
-        except (RuntimeError, ValueError, AttributeError) as exc:
-            logger.debug("Director diagnostics local task queue unavailable", exc_info=True)
-            task_section = DirectorDiagnosticsTaskSection(
-                ok=False,
-                source="error",
-                error=str(exc),
-            )
-        else:
-            task_section = _task_diagnostics_from_rows(task_rows, task_source)
-    else:
-        task_section = _task_diagnostics_from_rows(task_rows, task_source)
-
-    try:
-        workers = await service.list_workers()
-    except (RuntimeError, ValueError, AttributeError) as exc:
-        logger.debug("Director diagnostics worker pool unavailable", exc_info=True)
-        worker_section = DirectorDiagnosticsWorkerSection(ok=False, error=str(exc))
-    else:
-        worker_section = _worker_diagnostics_from_workers(list(workers))
-
-    issues = _director_diagnostic_issues(status_section, task_section, worker_section)
-    return DirectorDiagnosticsResponse(
-        ok=not issues,
-        generated_at=_utc_now(),
-        workspace=workspace,
-        status=status_section,
-        tasks=task_section,
-        workers=worker_section,
-        issues=issues,
-    )
+    return await _build_director_diagnostics(request, service)
 
 
 @router.post("/tasks", response_model=TaskResponse, dependencies=[Depends(require_auth)])
@@ -1063,25 +1354,34 @@ async def cancel_task(
 
 @router.get("/workers", dependencies=[Depends(require_auth)])
 async def list_workers(
+    request: Request,
     service: DirectorService = Depends(get_director_service_dep),
 ) -> list[dict[str, Any]]:
     """List all workers."""
     workers = await service.list_workers()
-    return [w.to_dict() for w in workers]
+    local_rows = [_worker_payload_from_object(worker) for worker in workers]
+    if local_rows:
+        return local_rows
+    return await _projected_worker_rows(request)
 
 
 @router.get("/workers/{worker_id}", dependencies=[Depends(require_auth)])
 async def get_worker(
+    request: Request,
     worker_id: str,
     service: DirectorService = Depends(get_director_service_dep),
 ) -> dict[str, Any]:
     """Get worker by ID."""
     worker = await service.get_worker(worker_id)
 
-    if not worker:
-        raise HTTPException(status_code=404, detail="Worker not found")
+    if worker:
+        return _worker_payload_from_object(worker)
 
-    return worker.to_dict()
+    for row in await _projected_worker_rows(request):
+        if _worker_row_matches_id(row, worker_id):
+            return row
+
+    raise HTTPException(status_code=404, detail="Worker not found")
 
 
 # ============================================================================
@@ -1195,6 +1495,9 @@ async def director_run_orchestration(
 
         settings = request.app.state.app_state.settings
         workspace = requested_or_active_workspace(settings, payload.workspace)
+        diagnostics = await _build_director_diagnostics_for_request(request, workspace)
+        _ensure_director_can_execute(diagnostics)
+
         service = OrchestrationCommandService(settings)
         task_ids = [str(payload.task_id).strip()] if str(payload.task_id or "").strip() else []
         task_filter = payload.task_filter or (task_ids[0] if task_ids else None)
@@ -1247,17 +1550,11 @@ async def director_get_orchestration(run_id: str) -> DirectorOrchestrationRespon
                 detail=f"Run not found: {run_id}",
             )
 
-        return DirectorOrchestrationResponse(
-            run_id=snapshot.run_id,
-            status=snapshot.status.value,
-            workspace=str(snapshot.workspace),
-            tasks_queued=len(snapshot.tasks),
-            message=f"Status: {snapshot.status.value}",
-        )
+        return _director_orchestration_response(snapshot)
 
     except HTTPException:
         raise
-    except (RuntimeError, ValueError) as e:
+    except (RuntimeError, ValueError, OrchestrationError) as e:
         logger.error("Failed to query Director run: run_id=%s: %s", run_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1282,18 +1579,12 @@ async def director_cancel_orchestration(run_id: str) -> DirectorOrchestrationRes
                 detail=f"Run not found: {run_id}",
             )
 
-        status_token = str(snapshot.status.value).lower()
+        status_token = _director_snapshot_status(snapshot).lower()
         terminal_statuses = {"completed", "failed", "cancelled", "canceled", "blocked", "timeout"}
         if status_token not in terminal_statuses:
             snapshot = await service.cancel_run(run_id)
 
-        return DirectorOrchestrationResponse(
-            run_id=snapshot.run_id,
-            status=snapshot.status.value,
-            workspace=str(snapshot.workspace),
-            tasks_queued=len(snapshot.tasks),
-            message=f"Status: {snapshot.status.value}",
-        )
+        return _director_orchestration_response(snapshot)
 
     except HTTPException:
         raise

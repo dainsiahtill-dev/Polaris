@@ -40,15 +40,54 @@ function extractStringDetail(value: unknown): string | null {
   );
 }
 
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(item => String(item || '').trim()).filter(Boolean);
+}
+
+function extractStructuredDetails(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const payload = value as Record<string, unknown>;
+  if (payload.details && typeof payload.details === 'object') {
+    return payload.details as Record<string, unknown>;
+  }
+  return (
+    extractStructuredDetails(payload.error) ||
+    extractStructuredDetails(payload.detail) ||
+    null
+  );
+}
+
+function appendRoleReadinessDetails(message: string, payload: unknown): string {
+  const details = extractStructuredDetails(payload);
+  if (!details) {
+    return message;
+  }
+  const missingRoles = stringList(details.missing_roles);
+  if (missingRoles.length > 0) {
+    return `${message} · blocked: ${missingRoles.join(', ')}`;
+  }
+  const requiredRoles = stringList(details.required_roles);
+  if (requiredRoles.length > 0) {
+    return `${message} · required: ${requiredRoles.join(', ')}`;
+  }
+  return message;
+}
+
 export async function extractErrorDetail(response: Response, fallback: string): Promise<string> {
   try {
     const payload = (await response.json()) as ApiErrorDetail;
-    return (
+    const message = (
       extractStringDetail(payload.detail) ||
       extractStringDetail(payload.error) ||
       extractStringDetail(payload.message) ||
       fallback
     );
+    return appendRoleReadinessDetails(message, payload);
   } catch {
     return fallback;
   }

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { GitBranch, Loader2, Play, PlusCircle, UploadCloud, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, GitBranch, Loader2, Play, PlusCircle, RefreshCw, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIDialoguePanel, type AIDialoguePanelProps } from '@/app/components/ai-dialogue';
+import { RoleFactoryRunEvidenceStrip } from '@/app/components/common/RoleFactoryRunEvidenceStrip';
+import { RoleSessionEvidencePanel } from '@/app/components/common/RoleSessionEvidencePanel';
+import { RoleRunEvidenceStrip } from '@/app/components/common/RoleRunEvidenceStrip';
+import { useRoleSessionFactoryExport } from '@/app/components/common/useRoleSessionFactoryExport';
 import { devLogger } from '@/app/utils/devLogger';
 import {
   createRoleSession,
@@ -11,8 +15,10 @@ import {
 } from '@/services/roleSessionService';
 import {
   cancelPmRun,
+  getDirectorDiagnostics,
   getPmRun,
   runPm,
+  type DirectorDiagnosticsResponse,
   type PmOrchestrationRunResponse,
   type RunPmPayload,
 } from '@/services/pmService';
@@ -47,10 +53,50 @@ interface PMWorkflowRunCancelEvidence {
   error: string | null;
 }
 
+interface LoadPmRunEvidenceOptions {
+  preserveData?: boolean;
+  preserveCancel?: boolean;
+}
+
+interface DirectorHandoffDiagnosticsState {
+  loading: boolean;
+  data: DirectorDiagnosticsResponse | null;
+  error: string | null;
+}
+
 const TERMINAL_PM_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
+const RUN_EVIDENCE_REFRESH_INTERVAL_MS = 3000;
 
 function isTerminalPmRunStatus(status?: string | null): boolean {
   return TERMINAL_PM_RUN_STATUSES.has(String(status || '').trim().toLowerCase());
+}
+
+function directorHandoffLlmBlockReason(state: DirectorHandoffDiagnosticsState): string {
+  if (state.loading) {
+    return 'Director LLM 诊断读取中';
+  }
+  if (state.error) {
+    return `Director LLM 诊断不可用：${state.error}`;
+  }
+  if (!state.data?.llm) {
+    return 'Director LLM 诊断不可用';
+  }
+  if (state.data.llm.ok) {
+    return '';
+  }
+  const blockedRoles = state.data.llm.blocked_roles?.filter(Boolean) || [];
+  const unsupportedRoles = state.data.llm.unsupported_roles?.filter(Boolean) || [];
+  const details = [...blockedRoles, ...unsupportedRoles].length
+    ? `: ${[...blockedRoles, ...unsupportedRoles].join(', ')}`
+    : '';
+  return `Director LLM 未就绪${details}`;
+}
+
+function directorHandoffLlmLabel(state: DirectorHandoffDiagnosticsState): string {
+  if (state.loading) return 'checking';
+  if (state.error) return 'error';
+  if (!state.data?.llm) return 'unknown';
+  return state.data.llm.ok ? 'ready' : state.data.llm.state || 'blocked';
 }
 
 /**
@@ -92,6 +138,24 @@ export function PMWorkbenchPanel({
     message: null,
     error: null,
   });
+  const [directorHandoffDiagnostics, setDirectorHandoffDiagnostics] = useState<DirectorHandoffDiagnosticsState>({
+    loading: false,
+    data: null,
+    error: null,
+  });
+  const {
+    isExportingFactory,
+    factoryRunEvidence,
+    factoryRunCancelEvidence,
+    factoryRunAutoRefreshActive,
+    cancelFactoryRunDisabled,
+    handleExportToFactory,
+    handleRefreshFactoryRun,
+    handleCancelFactoryRun,
+  } = useRoleSessionFactoryExport({
+    sessionId,
+    logPrefix: 'PMWorkbenchPanel',
+  });
 
   const loadSessions = useCallback(async () => {
     if (!workspace) return;
@@ -114,6 +178,43 @@ export function PMWorkbenchPanel({
     void loadSessions();
   }, [loadSessions]);
 
+  const loadDirectorHandoffDiagnostics = useCallback(async () => {
+    if (!workspace) {
+      setDirectorHandoffDiagnostics({ loading: false, data: null, error: null });
+      return;
+    }
+    setDirectorHandoffDiagnostics((current) => ({
+      ...current,
+      loading: true,
+      error: null,
+    }));
+    try {
+      const result = await getDirectorDiagnostics();
+      if (result.ok && result.data) {
+        setDirectorHandoffDiagnostics({ loading: false, data: result.data, error: null });
+        return;
+      }
+      setDirectorHandoffDiagnostics({
+        loading: false,
+        data: null,
+        error: result.error || 'Director diagnostics unavailable',
+      });
+    } catch (error) {
+      setDirectorHandoffDiagnostics({
+        loading: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'Director diagnostics unavailable',
+      });
+    }
+  }, [workspace]);
+
+  useEffect(() => {
+    if (!shouldRunDirector) {
+      return;
+    }
+    void loadDirectorHandoffDiagnostics();
+  }, [loadDirectorHandoffDiagnostics, shouldRunDirector]);
+
   const selectableSessions = useMemo(() => {
     if (!sessionId || sessions.some((session) => session.id === sessionId)) {
       return sessions;
@@ -130,36 +231,57 @@ export function PMWorkbenchPanel({
     setSessionId(newSessionId);
   };
 
-  const loadPmRunEvidence = useCallback(async (runId: string) => {
-    setWorkflowRunEvidence({
+  const loadPmRunEvidence = useCallback(async (runId: string, options: LoadPmRunEvidenceOptions = {}) => {
+    setWorkflowRunEvidence((current) => ({
       runId,
       loading: true,
-      data: null,
+      data: options.preserveData && current.runId === runId ? current.data : null,
       error: null,
-    });
-    setWorkflowRunCancelEvidence({
-      runId,
-      loading: false,
-      message: null,
-      error: null,
-    });
-    const runResult = await getPmRun(runId);
-    if (runResult.ok && runResult.data) {
-      setWorkflowRunEvidence({
+    }));
+    if (!options.preserveCancel) {
+      setWorkflowRunCancelEvidence({
         runId,
         loading: false,
-        data: runResult.data,
+        message: null,
         error: null,
       });
-    } else {
+    }
+
+    try {
+      const runResult = await getPmRun(runId);
+      if (runResult.ok && runResult.data) {
+        setWorkflowRunEvidence({
+          runId,
+          loading: false,
+          data: runResult.data,
+          error: null,
+        });
+        return;
+      }
       setWorkflowRunEvidence({
         runId,
         loading: false,
         data: null,
         error: runResult.error || 'PM run detail unavailable',
       });
+    } catch (err) {
+      setWorkflowRunEvidence({
+        runId,
+        loading: false,
+        data: null,
+        error: err instanceof Error ? err.message : 'PM run detail unavailable',
+      });
     }
   }, []);
+
+  const handleRefreshPmRun = useCallback(() => {
+    const runId = String(workflowRunEvidence.runId || '').trim();
+    if (!runId) return;
+    void loadPmRunEvidence(runId, {
+      preserveData: true,
+      preserveCancel: true,
+    });
+  }, [loadPmRunEvidence, workflowRunEvidence.runId]);
 
   const handleCancelPmRun = useCallback(async () => {
     const runId = String(workflowRunEvidence.runId || '').trim();
@@ -287,6 +409,15 @@ export function PMWorkbenchPanel({
       });
       return;
     }
+    const directorBlockReason = shouldRunDirector
+      ? directorHandoffLlmBlockReason(directorHandoffDiagnostics)
+      : '';
+    if (directorBlockReason) {
+      toast.error('PM 编排启动失败', {
+        description: directorBlockReason,
+      });
+      return;
+    }
 
     setIsLaunchingOrchestration(true);
     try {
@@ -353,6 +484,29 @@ export function PMWorkbenchPanel({
     workflowRunEvidence.loading ||
     workflowRunCancelEvidence.loading ||
     isTerminalPmRunStatus(workflowRunEvidence.data?.status);
+  const pmRunAutoRefreshActive = Boolean(workflowRunEvidence.runId)
+    && !workflowRunEvidence.loading
+    && !workflowRunCancelEvidence.loading
+    && !workflowRunEvidence.error
+    && !isTerminalPmRunStatus(workflowRunEvidence.data?.status);
+  const directorHandoffBlockReason = shouldRunDirector
+    ? directorHandoffLlmBlockReason(directorHandoffDiagnostics)
+    : '';
+  const directorHandoffLlmState = directorHandoffLlmLabel(directorHandoffDiagnostics);
+
+  useEffect(() => {
+    const runId = String(workflowRunEvidence.runId || '').trim();
+    if (!runId || !pmRunAutoRefreshActive) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void loadPmRunEvidence(runId, {
+        preserveData: true,
+        preserveCancel: true,
+      });
+    }, RUN_EVIDENCE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadPmRunEvidence, pmRunAutoRefreshActive, workflowRunEvidence.runId]);
 
   return (
     <div className="flex flex-col h-full">
@@ -402,8 +556,25 @@ export function PMWorkbenchPanel({
               导出到流程
             </button>
           )}
+          {sessionId && (
+            <button
+              type="button"
+              onClick={handleExportToFactory}
+              disabled={isExportingFactory}
+              className="inline-flex h-7 items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/15 px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isExportingFactory ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <UploadCloud className="h-3.5 w-3.5" />
+              )}
+              导出 Factory
+            </button>
+          )}
         </div>
       </div>
+
+      <RoleSessionEvidencePanel sessionId={sessionId} tone="amber" />
 
       <div className="flex flex-wrap items-center gap-2 border-b border-amber-500/15 bg-slate-950/60 px-4 py-2 text-xs">
         <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded border border-amber-500/20 bg-slate-950/70 px-2 py-1.5">
@@ -436,10 +607,40 @@ export function PMWorkbenchPanel({
           />
           Director
         </label>
+        {shouldRunDirector ? (
+          <div
+            data-testid="pm-workbench-director-readiness"
+            className="flex h-8 items-center gap-1.5 rounded border border-amber-500/15 bg-slate-950/70 px-2 text-[11px] text-amber-100"
+            title={directorHandoffBlockReason || 'Director LLM ready'}
+          >
+            {directorHandoffDiagnostics.loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-300" />
+            ) : directorHandoffBlockReason ? (
+              <AlertTriangle className="h-3.5 w-3.5 text-red-300" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+            )}
+            <span className="font-mono text-[10px] text-amber-200/80">director-llm</span>
+            <span className={directorHandoffBlockReason ? 'text-red-200' : 'text-emerald-200'}>
+              {directorHandoffLlmState}
+            </span>
+            <button
+              type="button"
+              onClick={loadDirectorHandoffDiagnostics}
+              disabled={directorHandoffDiagnostics.loading}
+              data-testid="pm-workbench-director-readiness-refresh"
+              title="刷新 Director LLM readiness"
+              className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded text-amber-200/70 hover:bg-amber-500/10 hover:text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${directorHandoffDiagnostics.loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        ) : null}
         <button
           type="button"
           onClick={handleRunPMOrchestration}
-          disabled={!workspace || isLaunchingOrchestration}
+          disabled={!workspace || isLaunchingOrchestration || Boolean(directorHandoffBlockReason)}
+          title={directorHandoffBlockReason || undefined}
           data-testid="pm-workbench-run-pm"
           className="inline-flex h-8 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2.5 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -453,52 +654,46 @@ export function PMWorkbenchPanel({
       </div>
 
       {workflowRunEvidence.runId && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/15 bg-slate-950/70 px-4 py-2 text-[11px]"
-          data-testid="pm-workbench-run-evidence"
-        >
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-mono text-amber-200/80">/v2/pm/runs/{workflowRunEvidence.runId}</span>
-            <span className="text-slate-300">
-              {workflowRunEvidence.loading
-                ? '正在读取运行快照...'
-                : workflowRunEvidence.error
-                  ? workflowRunEvidence.error
-                  : `${workflowRunEvidence.data?.status || 'unknown'} · ${workflowRunEvidence.data?.stage || 'stage unknown'}`}
-            </span>
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                void handleCancelPmRun();
-              }}
-              data-testid="pm-workbench-run-cancel"
-              disabled={cancelPmRunDisabled}
-              className="inline-flex h-6 cursor-pointer items-center gap-1 rounded border border-rose-500/20 bg-rose-500/10 px-2 text-[11px] text-rose-200 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:border-slate-600/20 disabled:bg-slate-700/20 disabled:text-slate-500"
-            >
-              {workflowRunCancelEvidence.loading ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <XCircle className="h-3 w-3" />
-              )}
-              取消
-            </button>
-            {workflowRunCancelEvidence.runId === workflowRunEvidence.runId &&
-            (workflowRunCancelEvidence.loading || workflowRunCancelEvidence.message || workflowRunCancelEvidence.error) ? (
-              <span
-                className={workflowRunCancelEvidence.error ? 'font-mono text-rose-300' : 'font-mono text-amber-200/80'}
-                data-testid="pm-workbench-run-cancel-result"
-              >
-                /v2/pm/runs/{workflowRunEvidence.runId}/cancel ·{' '}
-                {workflowRunCancelEvidence.loading
-                  ? 'cancelling'
-                  : workflowRunCancelEvidence.error || workflowRunCancelEvidence.message}
-              </span>
-            ) : null}
-          </div>
-        </div>
+        <RoleRunEvidenceStrip
+          tone="amber"
+          testId="pm-workbench-run-evidence"
+          endpoint={`/v2/pm/runs/${workflowRunEvidence.runId}`}
+          loading={workflowRunEvidence.loading}
+          error={workflowRunEvidence.error}
+          status={workflowRunEvidence.data?.status}
+          details={[workflowRunEvidence.data?.stage || 'stage unknown']}
+          message={workflowRunEvidence.data?.message}
+          refreshTestId="pm-workbench-run-refresh"
+          refreshDisabled={!workflowRunEvidence.runId || workflowRunEvidence.loading}
+          refreshLoading={workflowRunEvidence.loading}
+          autoRefreshActive={pmRunAutoRefreshActive}
+          onRefresh={handleRefreshPmRun}
+          cancelTestId="pm-workbench-run-cancel"
+          cancelDisabled={cancelPmRunDisabled}
+          cancelLoading={workflowRunCancelEvidence.loading}
+          onCancel={() => { void handleCancelPmRun(); }}
+          cancelResultTestId="pm-workbench-run-cancel-result"
+          cancelResultEndpoint={`/v2/pm/runs/${workflowRunEvidence.runId}/cancel`}
+          cancelResultVisible={
+            workflowRunCancelEvidence.runId === workflowRunEvidence.runId
+            && (workflowRunCancelEvidence.loading || Boolean(workflowRunCancelEvidence.message) || Boolean(workflowRunCancelEvidence.error))
+          }
+          cancelResultLoading={workflowRunCancelEvidence.loading}
+          cancelResultMessage={workflowRunCancelEvidence.message}
+          cancelResultError={workflowRunCancelEvidence.error}
+        />
       )}
+
+      <RoleFactoryRunEvidenceStrip
+        tone="amber"
+        testId="pm-workbench-factory-evidence"
+        runEvidence={factoryRunEvidence}
+        cancelEvidence={factoryRunCancelEvidence}
+        autoRefreshActive={factoryRunAutoRefreshActive}
+        cancelDisabled={cancelFactoryRunDisabled}
+        onRefresh={handleRefreshFactoryRun}
+        onCancel={() => { void handleCancelFactoryRun(); }}
+      />
 
       {/* 对话面板 */}
       <div className="flex-1 min-h-0">

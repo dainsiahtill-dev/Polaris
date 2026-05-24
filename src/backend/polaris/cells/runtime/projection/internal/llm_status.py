@@ -103,6 +103,22 @@ def _role_key(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
+def _normalize_required_roles(value: Any, *, qa_enabled: bool) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    roles: list[str] = []
+    for item in value:
+        role = _role_key(item)
+        if not role or role == "docs":
+            continue
+        if role == "qa" and not qa_enabled:
+            continue
+        if role not in roles:
+            roles.append(role)
+    return roles
+
+
 def _lookup_role_status(index: dict[str, Any], role: str) -> dict[str, Any] | None:
     roles = index.get("roles") if isinstance(index.get("roles"), dict) else {}
     if not isinstance(roles, dict):
@@ -134,9 +150,13 @@ def _active_workspace(settings: Settings) -> str:
     return ""
 
 
+def _qa_enabled(settings: Settings) -> bool:
+    return bool(getattr(settings, "qa_enabled", True))
+
+
 def build_llm_status(settings: Settings) -> dict[str, Any]:
     workspace = _active_workspace(settings)
-    cache_root = build_cache_root(str(settings.ramdisk_root or ""), workspace)
+    cache_root = build_cache_root(str(getattr(settings, "ramdisk_root", "") or ""), workspace)
     config = llm_config.load_llm_config(workspace, cache_root, settings=settings)
     index = load_llm_test_index(workspace)
 
@@ -194,9 +214,11 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
             "role": test_info.get("role") if isinstance(test_info, dict) else None,
         }
 
-    required = config.get("policies", {}).get("required_ready_roles") or []
-    if not settings.qa_enabled:
-        required = [role for role in required if str(role).strip().lower() != "qa"]
+    policies = config.get("policies", {}) if isinstance(config.get("policies"), dict) else {}
+    required = _normalize_required_roles(
+        policies.get("required_ready_roles") if isinstance(policies, dict) else None,
+        qa_enabled=_qa_enabled(settings),
+    )
 
     blocked = [r for r in required if not roles_status.get(r, {}).get("ready")]
     unsupported = [r for r in required if not roles_status.get(r, {}).get("runtime_supported")]

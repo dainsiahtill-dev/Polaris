@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import time
 from pathlib import Path
 
@@ -148,6 +149,35 @@ def test_pm_status_uses_broker_active_state_when_process_handle_is_terminal(
     assert status["execution_id"] == "exec-active"
     assert service.handle.execution_id == "exec-active"
     assert process.terminated is False
+
+
+def test_pm_status_infers_terminal_failure_from_pm_contract(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=str(workspace))
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    contract_path = storage.get_path("contracts", "pm_tasks.contract.json")
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(
+        json.dumps(
+            {
+                "tasks": [],
+                "terminal_error_code": "PM_LLM_INVOKE_FAILED",
+                "terminal_error": "quota exhausted",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is True
+    assert status["ok"] is False
+    assert status["exit_code"] == 1
+    assert status["error"] == "PM_LLM_INVOKE_FAILED: quota exhausted"
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from polaris.cells.orchestration.pm_planning.public.service import evaluate_pm_t
 from polaris.delivery.cli.pm.orchestration_engine import (  # noqa: E402
     _apply_requirements_fallback_for_empty_tasks,
     _downgrade_recovered_pm_invoke_error,
+    _mark_pm_invoke_terminal_failure,
     _pm_invoke_failed,
 )
 from polaris.delivery.cli.pm.tasks_utils import (  # noqa: E402
@@ -406,6 +407,31 @@ def test_pm_invoke_failed_detects_pipeline_fallback_payload() -> None:
     }
 
     assert _pm_invoke_failed(pm_state, normalized) is True
+
+
+def test_mark_pm_invoke_terminal_failure_adds_contract_error_without_requirements() -> None:
+    pm_state = {
+        "last_pm_error_code": "PM_LLM_INVOKE_FAILED",
+        "last_pm_error_detail": "quota exhausted",
+    }
+    normalized = {
+        "tasks": [],
+        "notes": "PM runtime provider invocation failed: 429",
+        "schema_warnings": ["PM invoke failed"],
+    }
+
+    _mark_pm_invoke_terminal_failure(
+        pm_state,
+        normalized,
+        warning="PM LLM provider invocation failed; Director dispatch suppressed.",
+    )
+
+    assert normalized["terminal_error_code"] == "PM_LLM_INVOKE_FAILED"
+    assert normalized["terminal_error"] == "quota exhausted"
+    warnings = normalized.get("schema_warnings")
+    assert isinstance(warnings, list)
+    assert "PM invoke failed" in warnings
+    assert "PM LLM provider invocation failed; Director dispatch suppressed." in warnings
 
 
 def test_pm_invoke_failed_ignores_empty_parse_output() -> None:

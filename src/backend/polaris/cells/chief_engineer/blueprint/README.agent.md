@@ -28,11 +28,14 @@ Generate task-level implementation blueprints and dependency analysis for Direct
 ## State Ownership
 
 - `runtime/state/blueprints/*`
+- `runtime/blueprints/*`
 
 ## Effects Allowed
 
 - `fs.read:workspace/**`
 - `fs.write:runtime/state/blueprints/*`
+- `fs.write:runtime/blueprints/*`
+- `fs.delete:runtime/blueprints/*`
 - `fs.write:runtime/events/runtime.events.jsonl`
 - `llm.invoke:chief_engineer/*`
 

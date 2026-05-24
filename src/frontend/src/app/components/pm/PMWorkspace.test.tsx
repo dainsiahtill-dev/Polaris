@@ -8,14 +8,35 @@ const listPmTasksMock = vi.hoisted(() => vi.fn());
 const listPmRequirementsMock = vi.hoisted(() => vi.fn());
 const getPmRequirementMock = vi.hoisted(() => vi.fn());
 const getPmStatusMock = vi.hoisted(() => vi.fn());
+const getPmStartupDiagnosticsMock = vi.hoisted(() => vi.fn());
+const getRoleKernelCacheStatsMock = vi.hoisted(() => vi.fn());
+const getRoleKernelTokenBudgetStatsMock = vi.hoisted(() => vi.fn());
+const getRoleKernelLLMEventsMock = vi.hoisted(() => vi.fn());
+const clearRoleKernelCacheMock = vi.hoisted(() => vi.fn());
+const getRoleCapabilitiesMock = vi.hoisted(() => vi.fn());
+const resolveRoleCapabilitiesMock = vi.hoisted(() => vi.fn((payload: { capabilities?: Record<string, string[]> }, hostKind: string) => {
+  const capabilities = payload.capabilities;
+  if (!capabilities || typeof capabilities !== 'object') return [];
+  return Array.isArray(capabilities[hostKind]) ? capabilities[hostKind] : [];
+}));
 
 vi.mock('@/services/pmService', () => ({
   getPmStatus: getPmStatusMock,
+  getPmStartupDiagnostics: getPmStartupDiagnosticsMock,
   listPmTasks: listPmTasksMock,
   listPmRequirements: listPmRequirementsMock,
   getPmRequirement: getPmRequirementMock,
   listPmTaskHistory: listPmTaskHistoryMock,
   listPmDirectorTaskHistory: listPmDirectorTaskHistoryMock,
+  getRoleKernelCacheStats: getRoleKernelCacheStatsMock,
+  getRoleKernelTokenBudgetStats: getRoleKernelTokenBudgetStatsMock,
+  getRoleKernelLLMEvents: getRoleKernelLLMEventsMock,
+  clearRoleKernelCache: clearRoleKernelCacheMock,
+}));
+
+vi.mock('@/services/roleSessionService', () => ({
+  getRoleCapabilities: getRoleCapabilitiesMock,
+  resolveRoleCapabilities: resolveRoleCapabilitiesMock,
 }));
 
 vi.mock('./PMAIDialoguePanel', () => ({
@@ -150,6 +171,135 @@ describe('PMWorkspace history panel', () => {
         source: 'handle',
       },
     });
+    getRoleCapabilitiesMock.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        role: 'pm',
+        capabilities: {
+          electron_workbench: ['chat', 'role_session', 'export_snapshot'],
+        },
+      },
+    });
+    getPmStartupDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        can_start: true,
+        generated_at: '2026-05-23T00:00:00Z',
+        lancedb: { ok: true, state: 'ready' },
+        llm: {
+          ok: true,
+          state: 'ready',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['pm'],
+        },
+        workspace: {
+          ok: true,
+          status: 'ready',
+          workspace: 'C:/Temp/Product',
+          docs_present: true,
+        },
+        issues: [],
+        startup_blockers: [],
+      },
+    });
+    getRoleKernelCacheStatsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        hits: 2,
+        misses: 1,
+        size: 3,
+        max_size: 1000,
+        hit_rate: 66.67,
+      },
+    });
+    getRoleKernelTokenBudgetStatsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        total: 12000,
+        available_conversation: 7300,
+        safety_margin: 800,
+      },
+    });
+    getRoleKernelLLMEventsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        count: 1,
+        events: [
+          {
+            event_type: 'call_complete',
+            model: 'Qwen3-Max',
+            total_tokens: 4096,
+          },
+        ],
+        stats: { call_error: 0, call_retry: 0 },
+      },
+    });
+    clearRoleKernelCacheMock.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        message: 'cache cleared',
+      },
+    });
+  });
+
+  it('renders PM backend capability, diagnostic, cache, token, and LLM evidence in the desktop surface', async () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    const strip = await screen.findByTestId('pm-backend-evidence-strip');
+    await waitFor(() => expect(getRoleCapabilitiesMock).toHaveBeenCalledWith('pm', 'electron_workbench'));
+    expect(getPmStartupDiagnosticsMock).toHaveBeenCalledTimes(1);
+    expect(getRoleKernelCacheStatsMock).toHaveBeenCalledWith('pm');
+    expect(getRoleKernelTokenBudgetStatsMock).toHaveBeenCalledWith('pm');
+    expect(getRoleKernelLLMEventsMock).toHaveBeenCalledWith('pm', { role: 'pm', limit: 5 });
+    expect(strip).toHaveTextContent('/v2/roles/capabilities/pm?host_kind=electron_workbench');
+    expect(strip).toHaveTextContent('/v2/pm/diagnostics');
+    expect(strip).toHaveTextContent('/v2/pm/cache-stats');
+    expect(strip).toHaveTextContent('/v2/pm/token-budget-stats');
+    expect(strip).toHaveTextContent('/v2/pm/llm-events?role=pm&limit=5');
+    expect(strip).toHaveTextContent('chat');
+    expect(strip).toHaveTextContent('llm=ready');
+    expect(strip).toHaveTextContent('hits=2');
+    expect(strip).toHaveTextContent('total=12000');
+    expect(strip).toHaveTextContent('events=1');
+    expect(strip).toHaveTextContent('Qwen3-Max');
+  });
+
+  it('clears PM kernel cache from the desktop evidence strip and refreshes PM evidence', async () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(getRoleKernelCacheStatsMock).toHaveBeenCalledTimes(1));
+    const clearButton = await screen.findByTestId('pm-kernel-cache-clear');
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+
+    await waitFor(() => expect(clearRoleKernelCacheMock).toHaveBeenCalledWith('pm'));
+    await waitFor(() => expect(getRoleKernelCacheStatsMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId('pm-kernel-cache-clear-result')).toHaveTextContent('/v2/pm/cache-clear · cache cleared');
   });
 
   it('uses backend PM task list fallback when runtime tasks are absent', async () => {
@@ -390,6 +540,146 @@ describe('PMWorkspace history panel', () => {
     expect(evidence).toHaveTextContent('pid=4242');
     expect(evidence).toHaveTextContent('mode=run_once');
     expect(evidence).toHaveTextContent('source=handle');
+  });
+
+  it('uses PM startup diagnostics blockers to disable PM start controls', async () => {
+    const onRunPmOnce = vi.fn();
+    const onTogglePm = vi.fn();
+    getPmStartupDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_start: false,
+        generated_at: '2026-05-23T00:00:00Z',
+        lancedb: { ok: false, state: 'unavailable', error: 'missing' },
+        llm: {
+          ok: false,
+          state: 'blocked',
+          blocked_roles: ['pm'],
+          unsupported_roles: [],
+          required_ready_roles: ['pm'],
+        },
+        workspace: {
+          ok: false,
+          status: 'missing',
+          workspace: 'C:/Temp/Missing',
+          docs_present: false,
+        },
+        issues: ['lancedb_unavailable', 'llm_not_ready', 'workspace_unavailable'],
+        startup_blockers: ['lancedb_unavailable', 'llm_not_ready', 'workspace_unavailable'],
+      },
+    });
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={onTogglePm}
+        onRunPmOnce={onRunPmOnce}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('pm-backend-evidence-strip')).toHaveTextContent('start=blocked'));
+    const runOnce = screen.getByTestId('pm-workspace-run-once');
+    const toggle = screen.getByTestId('pm-workspace-toggle');
+    expect(runOnce).toBeDisabled();
+    expect(toggle).toBeDisabled();
+    expect(runOnce).toHaveAttribute('title', 'PM 启动诊断未通过：LanceDB 不可用，另有 2 项阻断');
+    expect(toggle).toHaveAttribute('title', 'PM 启动诊断未通过：LanceDB 不可用，另有 2 项阻断');
+    expect(screen.getByTestId('pm-runtime-terminal-banner')).toHaveTextContent('PM 启动诊断未通过');
+
+    fireEvent.click(runOnce);
+    fireEvent.click(toggle);
+    expect(onRunPmOnce).not.toHaveBeenCalled();
+    expect(onTogglePm).not.toHaveBeenCalled();
+  });
+
+  it('uses missing docs diagnostics to disable PM workspace start controls', async () => {
+    const onRunPmOnce = vi.fn();
+    const onTogglePm = vi.fn();
+    getPmStartupDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_start: false,
+        generated_at: '2026-05-23T00:00:00Z',
+        lancedb: { ok: true, state: 'ready' },
+        llm: {
+          ok: true,
+          state: 'ready',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['pm'],
+        },
+        workspace: {
+          ok: true,
+          status: 'ok',
+          workspace: 'C:/Temp/Product',
+          docs_present: false,
+        },
+        issues: ['workspace_docs_missing'],
+        startup_blockers: ['workspace_docs_missing'],
+      },
+    });
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={onTogglePm}
+        onRunPmOnce={onRunPmOnce}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('pm-backend-evidence-strip')).toHaveTextContent('start=blocked'));
+    const runOnce = screen.getByTestId('pm-workspace-run-once');
+    const toggle = screen.getByTestId('pm-workspace-toggle');
+    expect(runOnce).toBeDisabled();
+    expect(toggle).toBeDisabled();
+    expect(runOnce).toHaveAttribute('title', 'PM 启动诊断未通过：docs/ 初始化未完成');
+    expect(toggle).toHaveAttribute('title', 'PM 启动诊断未通过：docs/ 初始化未完成');
+
+    fireEvent.click(runOnce);
+    fireEvent.click(toggle);
+    expect(onRunPmOnce).not.toHaveBeenCalled();
+    expect(onTogglePm).not.toHaveBeenCalled();
+  });
+
+  it('locks PM workspace controls while a stop request is pending', () => {
+    const onRunPmOnce = vi.fn();
+    const onTogglePm = vi.fn();
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={true}
+        isStopping={true}
+        onBackToMain={vi.fn()}
+        onTogglePm={onTogglePm}
+        onRunPmOnce={onRunPmOnce}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    const runOnce = screen.getByTestId('pm-workspace-run-once');
+    const toggle = screen.getByTestId('pm-workspace-toggle');
+    expect(runOnce).toBeDisabled();
+    expect(toggle).toBeDisabled();
+    expect(runOnce).toHaveAttribute('title', 'PM 正在停止，请等待状态回传。');
+    expect(toggle).toHaveAttribute('title', 'PM 正在停止，请等待状态回传。');
+    expect(toggle).toHaveTextContent('停止中');
+
+    fireEvent.click(runOnce);
+    fireEvent.click(toggle);
+    expect(onRunPmOnce).not.toHaveBeenCalled();
+    expect(onTogglePm).not.toHaveBeenCalled();
   });
 
   it('runs the PM toggle callback and shows backend status evidence', async () => {

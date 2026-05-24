@@ -1,0 +1,72 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { RoleRunEvidenceStrip } from './RoleRunEvidenceStrip';
+
+describe('RoleRunEvidenceStrip', () => {
+  it('renders a run endpoint, normalized status details, backend message, and cancel result', () => {
+    const onCancel = vi.fn();
+    const onRefresh = vi.fn();
+
+    render(
+      <RoleRunEvidenceStrip
+        tone="emerald"
+        testId="run-evidence"
+        endpoint="/v2/director/runs/run-1"
+        loading={false}
+        status="RUNNING"
+        details={['queued=3']}
+        message="Status: RUNNING"
+        refreshTestId="run-refresh"
+        refreshDisabled={false}
+        refreshLoading={false}
+        autoRefreshActive
+        onRefresh={onRefresh}
+        cancelTestId="run-cancel"
+        cancelDisabled={false}
+        cancelLoading={false}
+        onCancel={onCancel}
+        cancelResultTestId="run-cancel-result"
+        cancelResultEndpoint="/v2/director/runs/run-1/cancel"
+        cancelResultVisible
+        cancelResultLoading={false}
+        cancelResultMessage="取消运行已提交: CANCELLED"
+      />,
+    );
+
+    const evidence = screen.getByTestId('run-evidence');
+    expect(evidence).toHaveTextContent('/v2/director/runs/run-1');
+    expect(evidence).toHaveTextContent('RUNNING · queued=3');
+    expect(evidence).toHaveTextContent('Status: RUNNING');
+    expect(screen.getByTestId('run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+    expect(screen.getByTestId('run-cancel-result')).toHaveTextContent('/v2/director/runs/run-1/cancel');
+
+    fireEvent.click(screen.getByTestId('run-refresh'));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('run-cancel'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows loading and error states without hiding the cancel endpoint evidence', () => {
+    render(
+      <RoleRunEvidenceStrip
+        tone="amber"
+        testId="run-evidence"
+        endpoint="/v2/pm/runs/run-2"
+        loading={false}
+        error="run detail unavailable"
+        cancelTestId="run-cancel"
+        cancelDisabled
+        cancelLoading
+        onCancel={vi.fn()}
+        cancelResultTestId="run-cancel-result"
+        cancelResultEndpoint="/v2/pm/runs/run-2/cancel"
+        cancelResultVisible
+        cancelResultLoading
+      />,
+    );
+
+    expect(screen.getByTestId('run-evidence')).toHaveTextContent('run detail unavailable');
+    expect(screen.getByTestId('run-cancel-result')).toHaveTextContent('/v2/pm/runs/run-2/cancel · cancelling');
+    expect(screen.getByTestId('run-cancel')).toBeDisabled();
+  });
+});

@@ -294,7 +294,8 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
   const allReady =
     status.lancedb?.ok &&
     status.llm?.state === 'ready' &&
-    status.workspace?.status === 'ok';
+    status.workspace?.status === 'ok' &&
+    status.workspace.docs_present;
   const roleEvidenceRows = llmRoleEvidenceRows(status.llm);
   const kernelDiagnosticStatus: 'success' | 'warning' | 'error' = kernelError
     ? 'error'
@@ -462,7 +463,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
               <DiagnosticItem
                 title="工作区"
                 icon={<FileText className="w-4 h-4" />}
-                status={status.workspace?.status === 'ok' ? 'success' : 'error'}
+                status={status.workspace?.status === 'ok' && status.workspace.docs_present ? 'success' : 'error'}
                 expanded={expanded.includes('workspace')}
                 onToggle={() => toggleExpanded('workspace', expanded, setExpanded)}
               >
@@ -470,9 +471,16 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
                   <div className="space-y-1">
                     <p className="text-sm text-slate-300">工作区已配置</p>
                     {!status.workspace.docs_present && (
-                      <p className="text-sm text-amber-400">
-                        警告: docs/ 目录不存在，但这不是启动失败的直接原因
-                      </p>
+                      <div className="space-y-2 text-sm">
+                        <p className="text-red-300">docs/ 目录不存在，PM 启动已被阻断</p>
+                        <div className="text-slate-400 space-y-1">
+                          <p>解决方案:</p>
+                          <ul className="list-disc list-inside ml-2 space-y-1">
+                            <li>返回主界面完成 docs 初始化</li>
+                            <li>确认工作区包含可审计的 docs/ 规划材料</li>
+                          </ul>
+                        </div>
+                      </div>
                     )}
                   </div>
                 ) : (

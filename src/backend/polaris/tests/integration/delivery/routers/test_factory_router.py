@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import factory as factory_router
 from polaris.delivery.http.routers._shared import require_auth
-from polaris.delivery.http.error_handlers import setup_exception_handlers
 
 
 def _build_client() -> TestClient:
@@ -26,9 +26,11 @@ def _build_client() -> TestClient:
 
 def _mock_run(run_id: str = "run-1", status: Any = None) -> MagicMock:
     """Return a mock FactoryRun."""
+    from polaris.cells.factory.pipeline.public.service import FactoryRunStatus
+
     run = MagicMock()
     run.id = run_id
-    run.status = status or MagicMock()
+    run.status = FactoryRunStatus(status) if isinstance(status, str) else status or MagicMock()
     run.config.stages = ["pm_planning", "quality_gate"]
     run.stages_completed = []
     run.stages_failed = []
@@ -50,6 +52,9 @@ def _make_mock_service() -> MagicMock:
     service.start_run = AsyncMock(return_value=_mock_run("run-1"))
     service.get_run_events = AsyncMock(return_value=[])
     service.cancel_run = AsyncMock(return_value=_mock_run("run-1"))
+    service.execute_pause = AsyncMock(return_value=_mock_run("run-1", status="paused"))
+    service.execute_resume = AsyncMock(return_value=_mock_run("run-1", status="running"))
+    service.retry_run_from_stage = AsyncMock(return_value=_mock_run("run-1", status="recovering"))
     service.store = MagicMock()
     mock_artifact = MagicMock()
     mock_artifact.is_file = lambda: True
@@ -241,8 +246,8 @@ class TestFactoryRouter:
 
         assert response.status_code == 404
 
-    def test_control_factory_run_unsupported_action(self) -> None:
-        """POST /v2/factory/runs/{run_id}/control with unsupported action returns 501."""
+    def test_control_factory_run_pause(self) -> None:
+        """POST /v2/factory/runs/{run_id}/control with pause returns paused status."""
         client = _build_client()
         mock_service = _make_mock_service()
         mock_run = _mock_run("run-1")
@@ -257,8 +262,30 @@ class TestFactoryRouter:
                 json={"action": "pause", "reason": "test"},
             )
 
-        assert response.status_code == 501
-        assert "not implemented" in response.json()["error"]["message"].lower()
+        assert response.status_code == 200
+        assert response.json()["status"] == "paused"
+        mock_service.execute_pause.assert_awaited_once_with("run-1")
+
+    def test_control_factory_run_retry_phase(self) -> None:
+        """POST /v2/factory/runs/{run_id}/control maps retry_phase to a configured stage."""
+        client = _build_client()
+        mock_service = _make_mock_service()
+        mock_run = _mock_run("run-1", status="failed")
+        mock_run.config.stages = ["pm_planning", "director_dispatch"]
+        mock_service.get_run.return_value = mock_run
+
+        with patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+            return_value=mock_service,
+        ):
+            response = client.post(
+                "/v2/factory/runs/run-1/control",
+                json={"action": "retry_phase", "target_phase": "implementation", "reason": "rerun"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "recovering"
+        mock_service.retry_run_from_stage.assert_awaited_once_with("run-1", "director_dispatch", "rerun")
 
     def test_get_factory_run_artifacts_happy_path(self) -> None:
         """GET /v2/factory/runs/{run_id}/artifacts returns 200 with artifacts."""

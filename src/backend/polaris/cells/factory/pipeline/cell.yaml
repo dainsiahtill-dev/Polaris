@@ -48,6 +48,7 @@ depends_on:
 - archive.factory_archive
 - audit.evidence
 - policy.workspace_guard
+- chief_engineer.blueprint
 subgraphs:
 - storage_archive_pipeline
 state_owners:

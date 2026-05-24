@@ -27,6 +27,10 @@ def _workspace_value(settings: Any) -> str:
     return active_workspace_value(settings)
 
 
+def _settings_qa_enabled(settings: Any) -> bool:
+    return bool(getattr(settings, "qa_enabled", True))
+
+
 def _role_key(value: Any) -> str:
     return str(value or "").strip().lower()
 
@@ -75,7 +79,7 @@ def _readiness_candidate_issue(
 def _ensure_llm_ready(state: AppState, role: str) -> None:
     role_key = _role_key(role)
     workspace = _workspace_value(state.settings)
-    cache_root = build_cache_root(str(state.settings.ramdisk_root or ""), workspace)
+    cache_root = build_cache_root(str(getattr(state.settings, "ramdisk_root", "") or ""), workspace)
     config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
     index = load_llm_test_index(workspace)
     role_status = _lookup_role_status(index, role_key) if isinstance(index, dict) else None
@@ -138,6 +142,7 @@ def required_ready_roles(
     state: AppState,
     default_roles: list[str] | None = None,
     force_first: str | None = None,
+    force_roles: list[str] | None = None,
 ) -> list[str]:
     """Return the list of roles that must pass LLM-readiness checks.
 
@@ -147,9 +152,13 @@ def required_ready_roles(
     *force_first* – if given and the role is absent from the resolved
     list it is inserted at position 0 (used by the director router to
     guarantee "director" is always checked).
+
+    *force_roles* – if given, every listed role is included before any
+    policy-derived roles. This is used by multi-stage desktop workflows whose
+    execution graph already proves the required runtime roles.
     """
     workspace = _workspace_value(state.settings)
-    cache_root = build_cache_root(str(state.settings.ramdisk_root or ""), workspace)
+    cache_root = build_cache_root(str(getattr(state.settings, "ramdisk_root", "") or ""), workspace)
     config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
     policies = config.get("policies") if isinstance(config.get("policies"), dict) else {}
     configured = policies.get("required_ready_roles") if isinstance(policies, dict) else None
@@ -162,10 +171,15 @@ def required_ready_roles(
             roles.append(role)
     if not roles:
         roles = list(default_roles or ["director", "qa"])
-    if not state.settings.qa_enabled:
+    if not _settings_qa_enabled(state.settings):
         roles = [role for role in roles if role != "qa"]
-    if force_first and force_first not in roles:
-        roles.insert(0, force_first)
+    forced: list[str] = []
+    for value in [force_first, *(force_roles or [])]:
+        role = str(value or "").strip().lower()
+        if role and role not in forced:
+            forced.append(role)
+    if forced:
+        roles = [*forced, *[role for role in roles if role not in forced]]
     return roles
 
 
@@ -173,13 +187,19 @@ def ensure_required_roles_ready(
     state: AppState,
     default_roles: list[str] | None = None,
     force_first: str | None = None,
+    force_roles: list[str] | None = None,
 ) -> None:
     """Raise 409 if any of the required roles fail the LLM-readiness check.
 
     Returns a structured error response via JSONResponse to properly format
     the error details (instead of using HTTPException.detail which expects a string).
     """
-    roles = required_ready_roles(state, default_roles=default_roles, force_first=force_first)
+    roles = required_ready_roles(
+        state,
+        default_roles=default_roles,
+        force_first=force_first,
+        force_roles=force_roles,
+    )
     missing_roles: list[str] = []
     for role in roles:
         try:

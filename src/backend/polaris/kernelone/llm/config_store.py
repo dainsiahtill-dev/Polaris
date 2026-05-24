@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import shutil
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -58,6 +59,29 @@ _SENSITIVE_CONFIG_KEYS = {
 
 #: Schema migration registry: (from_version, to_version) -> migrator
 _MIGRATIONS: dict[tuple[int, int], Callable[[dict[str, Any]], dict[str, Any]]] = {}
+
+_CONFIG_LOCKS_GUARD = threading.Lock()
+_CONFIG_PROCESS_LOCKS: dict[str, Any] = {}
+
+
+def _llm_config_process_lock(path: str) -> Any:
+    key = os.path.abspath(path)
+    with _CONFIG_LOCKS_GUARD:
+        lock = _CONFIG_PROCESS_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _CONFIG_PROCESS_LOCKS[key] = lock
+        return lock
+
+
+def _fallback_provider_id(providers: dict[str, Any]) -> str | None:
+    if "ollama" in providers:
+        return "ollama"
+    if "default" in providers:
+        return "default"
+    if len(providers) == 1:
+        return next(iter(providers))
+    return None
 
 
 def _is_sensitive_config_key(key: str) -> bool:
@@ -690,15 +714,16 @@ def _load_json_payload(path: str) -> dict[str, Any]:
 
 
 def _ensure_llm_config_exists(path: str, settings: Any | None = None) -> None:
-    if os.path.isfile(path):
-        return
-    lock_path = f"{path}.lock"
-    with file_lock(lock_path, timeout_sec=5.0) as acquired:
-        if not acquired:
-            raise TimeoutError(f"Timed out creating LLM config: {path}")
+    with _llm_config_process_lock(path):
         if os.path.isfile(path):
             return
-        write_json_atomic(path, build_default_config(settings), lock_timeout_sec=None)
+        lock_path = f"{path}.lock"
+        with file_lock(lock_path, timeout_sec=5.0) as acquired:
+            if not acquired:
+                raise TimeoutError(f"Timed out creating LLM config: {path}")
+            if os.path.isfile(path):
+                return
+            write_json_atomic(path, build_default_config(settings), lock_timeout_sec=None)
 
 
 def load_llm_config(
@@ -707,10 +732,11 @@ def load_llm_config(
     settings: Any | None = None,
 ) -> dict[str, Any]:
     path = llm_config_path(workspace, cache_root)
-    _ensure_llm_config_exists(path, settings)
-    data = _load_json_payload(path)
-    # Read path must be non-destructive: do not rewrite user config during load.
-    return normalize_llm_config(data, settings=settings)
+    with _llm_config_process_lock(path):
+        _ensure_llm_config_exists(path, settings)
+        data = _load_json_payload(path)
+        # Read path must be non-destructive: do not rewrite user config during load.
+        return normalize_llm_config(data, settings=settings)
 
 
 def save_llm_config(
@@ -723,7 +749,7 @@ def save_llm_config(
     path = llm_config_path(workspace, cache_root)
     lock_path = f"{path}.lock"
 
-    with file_lock(lock_path, timeout_sec=5.0) as acquired:
+    with _llm_config_process_lock(path), file_lock(lock_path, timeout_sec=5.0) as acquired:
         if not acquired:
             raise TimeoutError(f"Timed out saving LLM config: {path}")
 
@@ -814,12 +840,12 @@ def normalize_llm_config(payload: dict[str, Any], settings: Any | None = None) -
     user_providers = data.get("providers")
     providers = user_providers if isinstance(user_providers, dict) else base.get("providers", {})
 
-    roles = data.get("roles")
-    roles = base.get("roles", {}) if not isinstance(roles, dict) else dict(roles)
-    if isinstance(roles, dict):
-        if "architect" not in roles and isinstance(roles.get("docs"), dict):
-            roles["architect"] = roles.get("docs")
-        roles.pop("docs", None)
+    raw_roles = data.get("roles")
+    roles = {} if not isinstance(raw_roles, dict) else dict(raw_roles)
+    if "architect" not in roles and isinstance(roles.get("docs"), dict):
+        roles["architect"] = roles.get("docs")
+    roles.pop("docs", None)
+    user_role_ids = set(roles)
 
     policies = data.get("policies")
     if not isinstance(policies, dict):
@@ -865,10 +891,20 @@ def normalize_llm_config(payload: dict[str, Any], settings: Any | None = None) -
     if not isinstance(visual_viewport, dict):
         visual_viewport = None
 
+    merged_roles = {**base.get("roles", {}), **roles}
+    fallback_provider_id = _fallback_provider_id(providers) if isinstance(providers, dict) else None
+    if fallback_provider_id:
+        for role_id, role_cfg in list(merged_roles.items()):
+            if role_id in user_role_ids or not isinstance(role_cfg, dict):
+                continue
+            provider_id = role_cfg.get("provider_id")
+            if provider_id and provider_id not in providers:
+                merged_roles[role_id] = {**role_cfg, "provider_id": fallback_provider_id}
+
     merged = {
         "schema_version": int(schema_version or 1),
         "providers": providers,
-        "roles": {**base.get("roles", {}), **roles},
+        "roles": merged_roles,
         "policies": {**base.get("policies", {}), **policies},
         "visual_layout": visual_layout,
         "visual_node_states": visual_node_states,

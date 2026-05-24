@@ -76,6 +76,11 @@ def _make_mock_factory_service() -> MagicMock:
     service.create_run = AsyncMock(return_value=_mock_factory_run("factory_abc123", ServiceRunStatus.PENDING))
     service.start_run = AsyncMock(return_value=_mock_factory_run("factory_abc123", ServiceRunStatus.RUNNING))
     service.cancel_run = AsyncMock(return_value=_mock_factory_run("factory_abc123", ServiceRunStatus.CANCELLED))
+    service.execute_pause = AsyncMock(return_value=_mock_factory_run("factory_abc123", ServiceRunStatus.PAUSED))
+    service.execute_resume = AsyncMock(return_value=_mock_factory_run("factory_abc123", ServiceRunStatus.RUNNING))
+    service.retry_run_from_stage = AsyncMock(
+        return_value=_mock_factory_run("factory_abc123", ServiceRunStatus.RECOVERING)
+    )
     service.get_run_events = AsyncMock(return_value=[])
     service.store = MagicMock()
     service.store.get_run_dir.return_value = MagicMock(
@@ -435,8 +440,8 @@ class TestFactoryRunErrorPaths:
         data = response.json()
         assert data["error"]["code"] == "RUN_NOT_FOUND"
 
-    async def test_invalid_control_action(self, client: AsyncClient) -> None:
-        """POST /v2/factory/runs/{id}/control with invalid action returns 501."""
+    async def test_pause_control_action(self, client: AsyncClient) -> None:
+        """POST /v2/factory/runs/{id}/control with pause returns paused status."""
         mock_service = _make_mock_factory_service()
         running_run = _mock_factory_run("factory_abc123", ServiceRunStatus.RUNNING)
         mock_service.get_run.return_value = running_run
@@ -450,10 +455,10 @@ class TestFactoryRunErrorPaths:
                 json={"action": "pause"},
             )
 
-        assert response.status_code == 501
+        assert response.status_code == 200
         data = response.json()
-        assert data["error"]["code"] == "INVALID_REQUEST"
-        assert "pause" in data["error"]["message"]
+        assert data["status"] == "paused"
+        mock_service.execute_pause.assert_awaited_once_with("factory_abc123")
 
     async def test_get_run_not_found(self, client: AsyncClient) -> None:
         """GET /v2/factory/runs/{id} for non-existent run returns 404."""

@@ -116,6 +116,20 @@ describe('AIDialoguePanel RoleSession visibility', () => {
           ],
         }));
       }
+      if (path === '/v2/roles/sessions/session-1/messages?limit=5&offset=0') {
+        return Promise.resolve(jsonResponse({
+          ok: true,
+          session: { id: 'session-1' },
+          messages: [
+            {
+              id: 'msg-evidence-1',
+              role: 'assistant',
+              content: 'Persisted PM evidence message',
+              created_at: '2026-05-23T00:00:03Z',
+            },
+          ],
+        }));
+      }
       if (path === '/v2/roles/sessions/session-1/artifacts') {
         return Promise.resolve(jsonResponse({
           ok: true,
@@ -129,7 +143,7 @@ describe('AIDialoguePanel RoleSession visibility', () => {
           ],
         }));
       }
-      if (path === '/v2/roles/sessions/session-1/audit?limit=20&offset=0') {
+      if (path === '/v2/roles/sessions/session-1/audit?limit=5&offset=0') {
         return Promise.resolve(jsonResponse({
           ok: true,
           audit_events: [
@@ -216,6 +230,7 @@ describe('AIDialoguePanel RoleSession visibility', () => {
           run_id: 'pm-run-1',
           session_id: 'session-1',
           artifact_count: 2,
+          message_count: 3,
         }));
       }
       if (path.startsWith('/v2/conversations?')) {
@@ -272,6 +287,10 @@ describe('AIDialoguePanel RoleSession visibility', () => {
     fireEvent.click(screen.getByTestId('ai-role-session-export'));
 
     await waitFor(() => expect(screen.getByTestId('ai-role-session-export-status')).toHaveTextContent('Run pm-run-1'));
+    expect(screen.getByTestId('ai-role-session-export-status')).toHaveAttribute(
+      'title',
+      'pm-run-1 · artifacts=2 · messages=3',
+    );
     const [, exportInit] = findApiCall('/v2/roles/sessions/session-1/actions/export-to-workflow');
     expect(JSON.parse(String(exportInit?.body))).toMatchObject({
       target: 'pm',
@@ -297,13 +316,14 @@ describe('AIDialoguePanel RoleSession visibility', () => {
 
     fireEvent.click(screen.getByTestId('ai-role-session-evidence-toggle'));
 
-    await waitFor(() => expect(screen.getByTestId('ai-role-session-evidence-panel')).toBeInTheDocument());
-    expect(screen.getByTestId('ai-role-session-evidence-counts')).toHaveTextContent('1 artifacts / 1 audit');
-    expect(screen.getByTestId('ai-role-session-artifact-row')).toHaveTextContent('directive');
-    expect(screen.getByTestId('ai-role-session-artifact-row')).toHaveTextContent('Use persisted PM directive');
-    expect(screen.getByTestId('ai-role-session-audit-row')).toHaveTextContent('message_sent');
+    await waitFor(() => expect(screen.getByTestId('role-session-evidence-panel')).toBeInTheDocument());
+    expect(screen.queryByTestId('ai-role-session-evidence-panel')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('assistant: Persisted PM evidence message'));
+    expect(screen.getByTestId('role-session-evidence-artifacts')).toHaveTextContent('directive: artifact-1');
+    expect(screen.getByTestId('role-session-evidence-audit')).toHaveTextContent('message_sent');
+    expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/sessions/session-1/messages?limit=5&offset=0');
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/sessions/session-1/artifacts');
-    expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/sessions/session-1/audit?limit=20&offset=0');
+    expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/sessions/session-1/audit?limit=5&offset=0');
 
     fireEvent.click(screen.getByTestId('ai-role-session-memory-toggle'));
 

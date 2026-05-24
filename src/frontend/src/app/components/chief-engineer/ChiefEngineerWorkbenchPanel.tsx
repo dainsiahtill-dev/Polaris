@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { GitBranch, Loader2, PlusCircle, UploadCloud, XCircle } from 'lucide-react';
+import { GitBranch, PlusCircle, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIDialoguePanel, type AIDialoguePanelProps } from '@/app/components/ai-dialogue';
+import { RoleFactoryRunEvidenceStrip } from '@/app/components/common/RoleFactoryRunEvidenceStrip';
+import { RoleSessionEvidencePanel } from '@/app/components/common/RoleSessionEvidencePanel';
+import { RoleRunEvidenceStrip } from '@/app/components/common/RoleRunEvidenceStrip';
+import { useRoleSessionFactoryExport } from '@/app/components/common/useRoleSessionFactoryExport';
 import { devLogger } from '@/app/utils/devLogger';
 import {
   createRoleSession,
@@ -38,7 +42,13 @@ interface DirectorRunCancelEvidence {
   error: string | null;
 }
 
+interface LoadDirectorRunEvidenceOptions {
+  preserveData?: boolean;
+  preserveCancel?: boolean;
+}
+
 const TERMINAL_DIRECTOR_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
+const RUN_EVIDENCE_REFRESH_INTERVAL_MS = 3000;
 
 function isTerminalDirectorRunStatus(status?: string | null): boolean {
   return TERMINAL_DIRECTOR_RUN_STATUSES.has(String(status || '').trim().toLowerCase());
@@ -69,6 +79,19 @@ export function ChiefEngineerWorkbenchPanel({
     loading: false,
     message: null,
     error: null,
+  });
+  const {
+    isExportingFactory,
+    factoryRunEvidence,
+    factoryRunCancelEvidence,
+    factoryRunAutoRefreshActive,
+    cancelFactoryRunDisabled,
+    handleExportToFactory,
+    handleRefreshFactoryRun,
+    handleCancelFactoryRun,
+  } = useRoleSessionFactoryExport({
+    sessionId,
+    logPrefix: 'ChiefEngineerWorkbenchPanel',
   });
 
   const loadSessions = useCallback(async () => {
@@ -108,37 +131,57 @@ export function ChiefEngineerWorkbenchPanel({
     setSessionId(newSessionId);
   };
 
-  const loadDirectorRunEvidence = useCallback(async (runId: string) => {
-    setDirectorRunEvidence({
+  const loadDirectorRunEvidence = useCallback(async (runId: string, options: LoadDirectorRunEvidenceOptions = {}) => {
+    setDirectorRunEvidence((current) => ({
       runId,
       loading: true,
-      data: null,
+      data: options.preserveData && current.runId === runId ? current.data : null,
       error: null,
-    });
-    setDirectorRunCancelEvidence({
-      runId,
-      loading: false,
-      message: null,
-      error: null,
-    });
+    }));
+    if (!options.preserveCancel) {
+      setDirectorRunCancelEvidence({
+        runId,
+        loading: false,
+        message: null,
+        error: null,
+      });
+    }
 
-    const result = await getDirectorRun(runId);
-    if (result.ok && result.data) {
+    try {
+      const result = await getDirectorRun(runId);
+      if (result.ok && result.data) {
+        setDirectorRunEvidence({
+          runId,
+          loading: false,
+          data: result.data,
+          error: null,
+        });
+        return;
+      }
       setDirectorRunEvidence({
         runId,
         loading: false,
-        data: result.data,
-        error: null,
+        data: null,
+        error: result.error || 'Director run detail unavailable',
       });
-      return;
+    } catch (err) {
+      setDirectorRunEvidence({
+        runId,
+        loading: false,
+        data: null,
+        error: err instanceof Error ? err.message : 'Director run detail unavailable',
+      });
     }
-    setDirectorRunEvidence({
-      runId,
-      loading: false,
-      data: null,
-      error: result.error || 'Director run detail unavailable',
-    });
   }, []);
+
+  const handleRefreshDirectorRun = useCallback(() => {
+    const runId = String(directorRunEvidence.runId || '').trim();
+    if (!runId) return;
+    void loadDirectorRunEvidence(runId, {
+      preserveData: true,
+      preserveCancel: true,
+    });
+  }, [directorRunEvidence.runId, loadDirectorRunEvidence]);
 
   const handleNewSession = async () => {
     try {
@@ -293,6 +336,25 @@ export function ChiefEngineerWorkbenchPanel({
     directorRunEvidence.loading ||
     directorRunCancelEvidence.loading ||
     isTerminalDirectorRunStatus(directorRunEvidence.data?.status);
+  const directorRunAutoRefreshActive = Boolean(directorRunEvidence.runId)
+    && !directorRunEvidence.loading
+    && !directorRunCancelEvidence.loading
+    && !directorRunEvidence.error
+    && !isTerminalDirectorRunStatus(directorRunEvidence.data?.status);
+
+  useEffect(() => {
+    const runId = String(directorRunEvidence.runId || '').trim();
+    if (!runId || !directorRunAutoRefreshActive) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void loadDirectorRunEvidence(runId, {
+        preserveData: true,
+        preserveCancel: true,
+      });
+    }, RUN_EVIDENCE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [directorRunAutoRefreshActive, directorRunEvidence.runId, loadDirectorRunEvidence]);
 
   return (
     <div className="flex h-full flex-col">
@@ -341,8 +403,21 @@ export function ChiefEngineerWorkbenchPanel({
               导出 Director
             </button>
           )}
+          {sessionId && (
+            <button
+              type="button"
+              onClick={handleExportToFactory}
+              disabled={isExportingFactory}
+              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/15 px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <UploadCloud className="h-3.5 w-3.5" />
+              导出 Factory
+            </button>
+          )}
         </div>
       </div>
+
+      <RoleSessionEvidencePanel sessionId={sessionId} tone="cyan" />
 
       <div className="flex flex-wrap items-center gap-2 border-b border-cyan-500/15 bg-slate-950/60 px-4 py-2 text-[11px]">
         <MetricPill label="PM tasks" value={taskCount} />
@@ -352,52 +427,46 @@ export function ChiefEngineerWorkbenchPanel({
       </div>
 
       {directorRunEvidence.runId && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-cyan-500/15 bg-slate-950/70 px-4 py-2 text-[11px]"
-          data-testid="chief-engineer-workbench-run-evidence"
-        >
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-mono text-cyan-200/80">/v2/director/runs/{directorRunEvidence.runId}</span>
-            <span className="text-slate-300">
-              {directorRunEvidence.loading
-                ? '正在读取运行快照...'
-                : directorRunEvidence.error
-                  ? directorRunEvidence.error
-                  : `${directorRunEvidence.data?.status || 'unknown'} · queued=${directorRunEvidence.data?.tasks_queued ?? 0}`}
-            </span>
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                void handleCancelDirectorRun();
-              }}
-              data-testid="chief-engineer-workbench-run-cancel"
-              disabled={cancelDirectorRunDisabled}
-              className="inline-flex h-6 cursor-pointer items-center gap-1 rounded border border-rose-500/20 bg-rose-500/10 px-2 text-[11px] text-rose-200 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:border-slate-600/20 disabled:bg-slate-700/20 disabled:text-slate-500"
-            >
-              {directorRunCancelEvidence.loading ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <XCircle className="h-3 w-3" />
-              )}
-              取消
-            </button>
-            {directorRunCancelEvidence.runId === directorRunEvidence.runId &&
-            (directorRunCancelEvidence.loading || directorRunCancelEvidence.message || directorRunCancelEvidence.error) ? (
-              <span
-                className={directorRunCancelEvidence.error ? 'font-mono text-rose-300' : 'font-mono text-cyan-200/80'}
-                data-testid="chief-engineer-workbench-run-cancel-result"
-              >
-                /v2/director/runs/{directorRunEvidence.runId}/cancel ·{' '}
-                {directorRunCancelEvidence.loading
-                  ? 'cancelling'
-                  : directorRunCancelEvidence.error || directorRunCancelEvidence.message}
-              </span>
-            ) : null}
-          </div>
-        </div>
+        <RoleRunEvidenceStrip
+          tone="cyan"
+          testId="chief-engineer-workbench-run-evidence"
+          endpoint={`/v2/director/runs/${directorRunEvidence.runId}`}
+          loading={directorRunEvidence.loading}
+          error={directorRunEvidence.error}
+          status={directorRunEvidence.data?.status}
+          details={[`queued=${directorRunEvidence.data?.tasks_queued ?? 0}`]}
+          message={directorRunEvidence.data?.message}
+          refreshTestId="chief-engineer-workbench-run-refresh"
+          refreshDisabled={!directorRunEvidence.runId || directorRunEvidence.loading}
+          refreshLoading={directorRunEvidence.loading}
+          autoRefreshActive={directorRunAutoRefreshActive}
+          onRefresh={handleRefreshDirectorRun}
+          cancelTestId="chief-engineer-workbench-run-cancel"
+          cancelDisabled={cancelDirectorRunDisabled}
+          cancelLoading={directorRunCancelEvidence.loading}
+          onCancel={() => { void handleCancelDirectorRun(); }}
+          cancelResultTestId="chief-engineer-workbench-run-cancel-result"
+          cancelResultEndpoint={`/v2/director/runs/${directorRunEvidence.runId}/cancel`}
+          cancelResultVisible={
+            directorRunCancelEvidence.runId === directorRunEvidence.runId
+            && (directorRunCancelEvidence.loading || Boolean(directorRunCancelEvidence.message) || Boolean(directorRunCancelEvidence.error))
+          }
+          cancelResultLoading={directorRunCancelEvidence.loading}
+          cancelResultMessage={directorRunCancelEvidence.message}
+          cancelResultError={directorRunCancelEvidence.error}
+        />
       )}
+
+      <RoleFactoryRunEvidenceStrip
+        tone="cyan"
+        testId="chief-engineer-workbench-factory-evidence"
+        runEvidence={factoryRunEvidence}
+        cancelEvidence={factoryRunCancelEvidence}
+        autoRefreshActive={factoryRunAutoRefreshActive}
+        cancelDisabled={cancelFactoryRunDisabled}
+        onRefresh={handleRefreshFactoryRun}
+        onCancel={() => { void handleCancelFactoryRun(); }}
+      />
 
       <div className="min-h-0 flex-1">
         <AIDialoguePanel {...dialoguePanelProps} />

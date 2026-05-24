@@ -122,9 +122,16 @@ test("Factory + Mission Control visibility surfaces are reachable", async ({ win
 
   await window.locator("button[title*='Factory 模式']").click();
   await expect(window.getByText("Factory 模式", { exact: false }).first()).toBeVisible();
-  await expect(window.getByText("流程阶段", { exact: false }).first()).toBeVisible();
-  await expect(window.getByText("任务概览", { exact: false }).first()).toBeVisible();
-  await window.locator("header button").first().click();
+  await expect(window.getByTestId("factory-layered-layout")).toBeVisible();
+  await expect(window.getByTestId("factory-role-layer-pm")).toBeVisible();
+  await expect(window.getByTestId("factory-role-layer-chief_engineer")).toBeVisible();
+  await expect(window.getByTestId("factory-role-layer-director")).toBeVisible();
+  await expect(window.getByTestId("factory-focused-layer")).toBeVisible();
+  await expect(window.getByTestId("factory-operations-rail")).toBeVisible();
+  await expect(window.getByTestId("factory-operations-rail")).toContainText("运行观测");
+  await expect(window.getByTestId("factory-pm-layer")).toContainText("PM 任务合同层");
+  await expect(window.getByTestId("factory-pm-layer")).toContainText("交接门禁");
+  await window.getByLabel("返回主界面").click();
   await expect(window.locator("[data-testid='project-progress-panel']")).toBeVisible();
 
   await window.getByRole("button", { name: /更多功能/ }).click();

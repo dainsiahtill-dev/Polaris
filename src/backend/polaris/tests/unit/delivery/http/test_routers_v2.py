@@ -374,10 +374,13 @@ async def test_director_start_stop(client: AsyncClient) -> None:
     mock_director.state.name = "RUNNING"
     mock_director.config.workspace = "."
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch("polaris.delivery.http.v2.director.ensure_required_roles_ready") as mock_roles_ready,
+    ):
 
         async def _resolve_start_stop(iface: type) -> object:
             if iface.__name__ == "DirectorService":
@@ -389,6 +392,7 @@ async def test_director_start_stop(client: AsyncClient) -> None:
         start_resp = await client.post("/v2/director/start")
         assert start_resp.status_code == 200
         assert start_resp.json()["ok"] is True
+        mock_roles_ready.assert_called_once()
 
         stop_resp = await client.post("/v2/director/stop")
         assert stop_resp.status_code == 200
@@ -885,10 +889,10 @@ async def test_pm_chat_ping(client: AsyncClient) -> None:
 async def test_pm_chat_empty_message(client: AsyncClient) -> None:
     """PM chat with empty message should return error."""
     response = await client.post("/v2/pm/chat", json={"message": ""})
-    assert response.status_code == 200
+    assert response.status_code == 422
     data = response.json()
-    assert data["ok"] is False
-    assert "message is required" in data["error"]
+    assert data["error"]["code"] == "MISSING_MESSAGE"
+    assert data["error"]["message"] == "message is required"
 
 
 @pytest.mark.asyncio

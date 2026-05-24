@@ -89,6 +89,46 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
             yield ac
 
 
+def _pm_startup_diagnostics(
+    *,
+    workspace: str = ".",
+    can_start: bool = True,
+    startup_blockers: list[str] | None = None,
+    issues: list[str] | None = None,
+) -> object:
+    """Build a PM diagnostics payload for guarded execution endpoint tests."""
+    from polaris.delivery.http.v2.pm import (
+        PMDiagnosticsLanceDBStatus,
+        PMDiagnosticsLLMStatus,
+        PMDiagnosticsResponse,
+        PMDiagnosticsWorkspaceStatus,
+    )
+
+    blockers = list(startup_blockers or [])
+    issue_tokens = list(issues if issues is not None else blockers)
+    return PMDiagnosticsResponse(
+        ok=not issue_tokens,
+        can_start=can_start,
+        generated_at="2026-05-24T00:00:00Z",
+        lancedb=PMDiagnosticsLanceDBStatus(ok=True, state="ready"),
+        llm=PMDiagnosticsLLMStatus(
+            ok=True,
+            state="ready",
+            blocked_roles=[],
+            unsupported_roles=[],
+            required_ready_roles=["pm"],
+        ),
+        workspace=PMDiagnosticsWorkspaceStatus(
+            ok=True,
+            status="ok",
+            workspace=workspace,
+            docs_present=True,
+        ),
+        issues=issue_tokens,
+        startup_blockers=blockers,
+    )
+
+
 # ---------------------------------------------------------------------------
 # PM Service Lifecycle
 # ---------------------------------------------------------------------------
@@ -100,16 +140,23 @@ async def test_pm_run_once(client: AsyncClient) -> None:
     mock_pm = MagicMock()
     mock_pm.run_once = AsyncMock(return_value={"ok": True, "result": "done"})
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ) as mock_preflight,
+    ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         response = await client.post("/v2/pm/run_once")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
         assert data["result"] == "done"
+        mock_preflight.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -118,16 +165,23 @@ async def test_pm_start(client: AsyncClient) -> None:
     mock_pm = MagicMock()
     mock_pm.start_loop = AsyncMock(return_value={"ok": True, "state": "RUNNING"})
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ) as mock_preflight,
+    ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         response = await client.post("/v2/pm/start")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
         assert data["state"] == "RUNNING"
+        mock_preflight.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -136,10 +190,16 @@ async def test_pm_start_with_resume(client: AsyncClient) -> None:
     mock_pm = MagicMock()
     mock_pm.start_loop = AsyncMock(return_value={"ok": True, "state": "RUNNING"})
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ),
+    ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         response = await client.post("/v2/pm/start?resume=true")
         assert response.status_code == 200
@@ -152,15 +212,84 @@ async def test_pm_start_loop_deprecated(client: AsyncClient) -> None:
     mock_pm = MagicMock()
     mock_pm.start_loop = AsyncMock(return_value={"ok": True, "state": "RUNNING"})
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ),
+    ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         response = await client.post("/v2/pm/start_loop")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_pm_run_once_blocks_when_startup_diagnostics_cannot_start(client: AsyncClient) -> None:
+    """PM run_once should fail closed when startup diagnostics report blockers."""
+    mock_pm = MagicMock()
+    mock_pm.run_once = AsyncMock(return_value={"ok": True, "result": "done"})
+
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(
+                can_start=False,
+                startup_blockers=["workspace_docs_missing"],
+            ),
+        ),
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
+        response = await client.post("/v2/pm/run_once")
+
+    assert response.status_code == 409
+    data = response.json()
+    assert data["error"]["code"] == "PM_START_BLOCKED"
+    assert data["error"]["details"]["startup_blockers"] == ["workspace_docs_missing"]
+    assert data["error"]["details"]["diagnostics"]["can_start"] is False
+    mock_pm.run_once.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["/v2/pm/start", "/v2/pm/start_loop"])
+async def test_pm_loop_start_blocks_when_startup_diagnostics_cannot_start(
+    client: AsyncClient,
+    endpoint: str,
+) -> None:
+    """PM loop start endpoints should fail closed when startup diagnostics block."""
+    mock_pm = MagicMock()
+    mock_pm.start_loop = AsyncMock(return_value={"ok": True, "state": "RUNNING"})
+
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(
+                can_start=False,
+                startup_blockers=["lancedb_unavailable", "llm_not_ready"],
+            ),
+        ),
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
+        response = await client.post(endpoint)
+
+    assert response.status_code == 409
+    data = response.json()
+    assert data["error"]["code"] == "PM_START_BLOCKED"
+    assert data["error"]["details"]["startup_blockers"] == ["lancedb_unavailable", "llm_not_ready"]
+    mock_pm.start_loop.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -244,7 +373,9 @@ async def test_pm_diagnostics_ready(
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
+    assert data["can_start"] is True
     assert data["issues"] == []
+    assert data["startup_blockers"] == []
     assert data["lancedb"]["state"] == "ready"
     assert data["llm"]["state"] == "ready"
     assert data["workspace"]["workspace"] == str(workspace)
@@ -281,8 +412,47 @@ async def test_pm_diagnostics_prefers_active_workspace_path(
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
+    assert data["can_start"] is True
+    assert data["startup_blockers"] == []
     assert data["workspace"]["workspace"] == str(active_workspace)
     assert data["workspace"]["docs_present"] is True
+
+
+@pytest.mark.asyncio
+async def test_pm_diagnostics_blocks_start_when_workspace_docs_missing(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """PM diagnostics should align with desktop startup gates when docs/ is missing."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    mock_settings.workspace = workspace
+    mock_settings.workspace_path = workspace
+
+    with (
+        patch("polaris.delivery.http.v2.pm.get_lancedb_status", return_value={"ok": True}),
+        patch(
+            "polaris.delivery.http.v2.pm.build_llm_status",
+            return_value={
+                "state": "READY",
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "required_ready_roles": ["pm"],
+            },
+        ),
+    ):
+        response = await client.get("/v2/pm/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is False
+    assert data["can_start"] is False
+    assert data["issues"] == ["workspace_docs_missing"]
+    assert data["startup_blockers"] == ["workspace_docs_missing"]
+    assert data["workspace"]["ok"] is True
+    assert data["workspace"]["status"] == "ok"
+    assert data["workspace"]["docs_present"] is False
 
 
 @pytest.mark.asyncio
@@ -313,7 +483,9 @@ async def test_pm_diagnostics_reports_blockers(
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is False
+    assert data["can_start"] is False
     assert data["issues"] == ["lancedb_unavailable", "llm_not_ready", "workspace_unavailable"]
+    assert data["startup_blockers"] == ["lancedb_unavailable", "llm_not_ready", "workspace_unavailable"]
     assert data["lancedb"]["error"] == "missing"
     assert data["llm"]["blocked_roles"] == ["pm"]
     assert data["workspace"]["status"] == "missing"
@@ -343,6 +515,10 @@ async def test_pm_run_orchestration(client: AsyncClient) -> None:
         patch(
             "polaris.cells.roles.adapters.public.service.register_all_adapters",
         ),
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ) as mock_preflight,
     ):
         mock_service = MagicMock()
         mock_service.execute_pm_run = AsyncMock(return_value=mock_result)
@@ -363,6 +539,7 @@ async def test_pm_run_orchestration(client: AsyncClient) -> None:
         assert data["run_id"] == "run-123"
         assert data["status"] == "running"
         assert data["stage"] == "pm"
+        assert mock_preflight.call_args.kwargs["workspace_override"] == "."
 
 
 @pytest.mark.asyncio
@@ -389,6 +566,10 @@ async def test_pm_run_orchestration_defaults_to_active_workspace_path(
         patch(
             "polaris.cells.roles.adapters.public.service.register_all_adapters",
         ),
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ) as mock_preflight,
     ):
         mock_service = MagicMock()
         mock_service.execute_pm_run = AsyncMock(return_value=mock_result)
@@ -406,6 +587,7 @@ async def test_pm_run_orchestration_defaults_to_active_workspace_path(
     _, kwargs = mock_service.execute_pm_run.await_args
     assert kwargs["workspace"] == "C:/Temp/Product"
     assert response.json()["workspace"] == "C:/Temp/Product"
+    assert mock_preflight.call_args.kwargs["workspace_override"] == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio
@@ -432,6 +614,10 @@ async def test_pm_run_orchestration_preserves_explicit_workspace(
         patch(
             "polaris.cells.roles.adapters.public.service.register_all_adapters",
         ),
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(workspace="D:/Explicit/Product"),
+        ) as mock_preflight,
     ):
         mock_service = MagicMock()
         mock_service.execute_pm_run = AsyncMock(return_value=mock_result)
@@ -450,6 +636,7 @@ async def test_pm_run_orchestration_preserves_explicit_workspace(
     _, kwargs = mock_service.execute_pm_run.await_args
     assert kwargs["workspace"] == "D:/Explicit/Product"
     assert response.json()["workspace"] == "D:/Explicit/Product"
+    assert mock_preflight.call_args.kwargs["workspace_override"] == "D:/Explicit/Product"
 
 
 @pytest.mark.asyncio
@@ -471,6 +658,11 @@ async def test_pm_run_orchestration_with_director(client: AsyncClient) -> None:
         patch(
             "polaris.cells.roles.adapters.public.service.register_all_adapters",
         ),
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ),
+        patch("polaris.delivery.http.v2.pm.ensure_required_roles_ready") as mock_roles_ready,
     ):
         mock_service = MagicMock()
         mock_service.execute_pm_run = AsyncMock(return_value=mock_result)
@@ -490,6 +682,90 @@ async def test_pm_run_orchestration_with_director(client: AsyncClient) -> None:
         data = response.json()
         assert data["run_id"] == "run-456"
         assert data["stage"] == "architect"
+        mock_roles_ready.assert_called_once()
+        assert mock_roles_ready.call_args.kwargs["default_roles"] == ["director"]
+        assert mock_roles_ready.call_args.kwargs["force_first"] == "director"
+
+
+@pytest.mark.asyncio
+async def test_pm_run_orchestration_with_director_blocks_when_director_llm_not_ready(
+    client: AsyncClient,
+) -> None:
+    """PM auto-dispatch should fail closed before run creation when Director LLM is blocked."""
+    from polaris.delivery.http.routers._shared import StructuredHTTPException
+
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ) as mock_preflight,
+        patch("polaris.delivery.http.v2.pm.ensure_required_roles_ready") as mock_roles_ready,
+    ):
+        mock_roles_ready.side_effect = StructuredHTTPException(
+            status_code=409,
+            code="RUNTIME_ROLES_NOT_READY",
+            message="One or more required runtime roles are not ready",
+            details={
+                "required_roles": ["director"],
+                "missing_roles": ["director"],
+            },
+        )
+
+        response = await client.post(
+            "/v2/pm/run",
+            json={
+                "workspace": ".",
+                "directive": "build a login page",
+                "stage": "architect",
+                "run_director": True,
+                "director_iterations": 3,
+            },
+        )
+
+    assert response.status_code == 409
+    data = response.json()
+    assert data["error"]["code"] == "RUNTIME_ROLES_NOT_READY"
+    assert data["error"]["details"]["missing_roles"] == ["director"]
+    assert mock_preflight.call_args.kwargs["workspace_override"] == "."
+    mock_service_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pm_run_orchestration_blocks_when_startup_diagnostics_cannot_start(
+    client: AsyncClient,
+) -> None:
+    """PM run orchestration should fail closed when readiness diagnostics block."""
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(
+                can_start=False,
+                startup_blockers=["workspace_docs_missing", "llm_not_ready"],
+            ),
+        ) as mock_preflight,
+    ):
+        response = await client.post(
+            "/v2/pm/run",
+            json={
+                "workspace": ".",
+                "directive": "test directive",
+                "stage": "pm",
+            },
+        )
+
+    assert response.status_code == 409
+    data = response.json()
+    assert data["error"]["code"] == "PM_START_BLOCKED"
+    assert data["error"]["details"]["startup_blockers"] == ["workspace_docs_missing", "llm_not_ready"]
+    assert data["error"]["details"]["diagnostics"]["can_start"] is False
+    assert mock_preflight.call_args.kwargs["workspace_override"] == "."
+    mock_service_cls.assert_not_called()
 
 
 @pytest.mark.asyncio

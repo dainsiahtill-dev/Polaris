@@ -36,11 +36,14 @@
     "audit.evidence"
   ],
   "state_owners": [
-    "runtime/state/blueprints/*"
+    "runtime/state/blueprints/*",
+    "runtime/blueprints/*"
   ],
   "effects_allowed": [
     "fs.read:workspace/**",
     "fs.write:runtime/state/blueprints/*",
+    "fs.write:runtime/blueprints/*",
+    "fs.delete:runtime/blueprints/*",
     "fs.write:runtime/events/runtime.events.jsonl",
     "llm.invoke:chief_engineer/*"
   ],

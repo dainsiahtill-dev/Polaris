@@ -377,6 +377,33 @@ class TestFactoryRunService:
         assert len(resume_events) == 1
 
     @pytest.mark.asyncio
+    async def test_update_run_metadata_persists_export_evidence(self, temp_workspace):
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        config = FactoryConfig(name="test-run")
+        run = await service.create_run(config)
+        await service.start_run(run.id)
+
+        updated = await service.update_run_metadata(
+            run.id,
+            {
+                "export_session_id": "sess_pm",
+                "export_bundle_path": ".polaris/exports/sess_pm_export.json",
+                "directive": "Build the role desktop workflow",
+            },
+        )
+
+        reloaded = await service.get_run(run.id)
+        assert updated.metadata["export_session_id"] == "sess_pm"
+        assert reloaded is not None
+        assert reloaded.metadata["export_bundle_path"] == ".polaris/exports/sess_pm_export.json"
+        assert reloaded.metadata["directive"] == "Build the role desktop workflow"
+
+        events = await service.get_run_events(run.id)
+        metadata_events = [event for event in events if event.get("type") == "metadata_updated"]
+        assert metadata_events
+        assert metadata_events[-1]["metadata_keys"] == ["directive", "export_bundle_path", "export_session_id"]
+
+    @pytest.mark.asyncio
     async def test_complete_run(self, temp_workspace):
         service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
         config = FactoryConfig(name="test-run")
@@ -446,6 +473,75 @@ class TestFactoryRunService:
 
         assert recovered.status == FactoryRunStatus.RECOVERING
         assert recovered.recovery_point == "docs_generation"
+
+    @pytest.mark.asyncio
+    async def test_retry_run_from_stage_recovers_failed_run(self, temp_workspace):
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        config = FactoryConfig(name="test-run", stages=["pm_planning", "director_dispatch"])
+        run = await service.create_run(config)
+        await service.start_run(run.id)
+        run = await service.get_run(run.id)
+        run.status = FactoryRunStatus.FAILED
+        run.completed_at = "2026-05-24T00:00:00+00:00"
+        run.metadata["failure"] = {"detail": "director failed"}
+        run.metadata["last_failed_stage"] = "director_dispatch"
+        await service.store.save_run(run)
+
+        retried = await service.retry_run_from_stage(run.id, "director_dispatch", "rerun delivery")
+
+        assert retried.status == FactoryRunStatus.RECOVERING
+        assert retried.recovery_point == "director_dispatch"
+        assert retried.completed_at is None
+        assert retried.metadata["retry_from_status"] == "failed"
+        assert retried.metadata["retry_start_policy"] == "rerun_stage"
+        assert retried.metadata["retry_execution_stage"] == "director_dispatch"
+        assert retried.metadata["retry_reason"] == "rerun delivery"
+        assert retried.metadata["retry_previous_failure"] == {"detail": "director failed"}
+        assert retried.metadata["failure"] is None
+        assert retried.metadata["last_failed_stage"] is None
+        events = await service.get_run_events(run.id)
+        assert events[-1]["type"] == "retry_requested"
+        assert events[-1]["stage"] == "director_dispatch"
+
+    @pytest.mark.asyncio
+    async def test_retry_run_from_checkpoint_resumes_after_last_successful_stage(self, temp_workspace):
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        config = FactoryConfig(name="test-run", stages=["pm_planning", "director_dispatch", "quality_gate"])
+        run = await service.create_run(config)
+        await service.start_run(run.id)
+        run = await service.get_run(run.id)
+        run.status = FactoryRunStatus.FAILED
+        run.completed_at = "2026-05-24T00:00:00+00:00"
+        run.recovery_point = "pm_planning"
+        run.stages_completed = ["pm_planning", "director_dispatch"]
+        run.stages_failed = ["director_dispatch"]
+        run.metadata["last_successful_stage"] = "pm_planning"
+        run.metadata["last_failed_stage"] = "director_dispatch"
+        run.metadata["failure"] = {"detail": "director failed"}
+        await service.store.save_run(run)
+
+        retried = await service.retry_run_from_stage(run.id, None, "resume delivery")
+
+        assert retried.status == FactoryRunStatus.RECOVERING
+        assert retried.recovery_point == "pm_planning"
+        assert retried.metadata["retry_start_policy"] == "after_checkpoint"
+        assert retried.metadata["retry_execution_stage"] == "director_dispatch"
+        assert retried.metadata["current_stage"] == "director_dispatch"
+        assert retried.stages_completed == ["pm_planning"]
+        assert retried.stages_failed == []
+
+    @pytest.mark.asyncio
+    async def test_retry_run_from_stage_rejects_unconfigured_stage(self, temp_workspace):
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        config = FactoryConfig(name="test-run", stages=["pm_planning"])
+        run = await service.create_run(config)
+        await service.start_run(run.id)
+        run = await service.get_run(run.id)
+        run.status = FactoryRunStatus.FAILED
+        await service.store.save_run(run)
+
+        with pytest.raises(ValueError, match="not configured"):
+            await service.retry_run_from_stage(run.id, "director_dispatch")
 
     @pytest.mark.asyncio
     async def test_all_stage_handlers(self, temp_workspace):

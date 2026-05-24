@@ -42,6 +42,9 @@ const baseProps = {
   tasks: [],
   onStart: vi.fn(),
   onCancel: vi.fn(),
+  onPause: vi.fn(),
+  onResume: vi.fn(),
+  onRetryCheckpoint: vi.fn(),
 };
 
 describe('FactoryWorkspace', () => {
@@ -59,6 +62,37 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByText('暂无质量门结果')).toBeInTheDocument();
     expect(screen.getByText('暂无交付产物')).toBeInTheDocument();
     expect(screen.getByText('暂无交付摘要')).toBeInTheDocument();
+  });
+
+  it('renders RoleSession lineage from Factory run metadata', () => {
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        currentRun={{
+          run_id: 'factory-exported',
+          phase: 'planning',
+          status: 'running',
+          current_stage: 'pm_planning',
+          last_successful_stage: null,
+          progress: 20,
+          roles: {},
+          gates: [],
+          created_at: '2026-05-23T00:00:00Z',
+          metadata: {
+            export_session_id: 'sess_pm',
+            export_bundle_path: '.polaris/exports/sess_pm_export.json',
+            directive: 'Build the PM Director desktop handoff.',
+          },
+        }}
+        events={[]}
+      />
+    );
+
+    const evidence = screen.getByTestId('factory-source-evidence');
+    expect(within(evidence).getByText('来源证据')).toBeInTheDocument();
+    expect(within(evidence).getByText('sess_pm')).toBeInTheDocument();
+    expect(within(evidence).getByText('.polaris/exports/sess_pm_export.json')).toBeInTheDocument();
+    expect(within(evidence).getByText('Build the PM Director desktop handoff.')).toBeInTheDocument();
   });
 
   it('renders three role layers and opens Chief Engineer handoff evidence', () => {
@@ -86,9 +120,12 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByTestId('factory-role-layer-pm')).toBeInTheDocument();
     expect(screen.getByTestId('factory-role-layer-chief_engineer')).toBeInTheDocument();
     expect(screen.getByTestId('factory-role-layer-director')).toBeInTheDocument();
+    expect(screen.getByTestId('factory-layered-layout')).toBeInTheDocument();
+    expect(screen.getByTestId('factory-role-layer-pm')).toHaveAttribute('aria-pressed', 'true');
 
     fireEvent.click(screen.getByTestId('factory-role-layer-chief_engineer'));
 
+    expect(screen.getByTestId('factory-role-layer-chief_engineer')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('factory-chief-layer')).toBeInTheDocument();
     expect(screen.getByText('docs/blueprints/bp-1.md')).toBeInTheDocument();
   });
@@ -364,10 +401,12 @@ describe('FactoryWorkspace', () => {
     expect(activity).toHaveAttribute('data-process-count', '1');
   });
 
-  it('shows cancel button for a running run', () => {
+  it('shows pause and cancel buttons for a running run', () => {
+    const onPause = vi.fn();
     render(
       <FactoryWorkspace
         {...baseProps}
+        onPause={onPause}
         currentRun={{
           run_id: 'run-1',
           phase: 'implementation',
@@ -383,11 +422,76 @@ describe('FactoryWorkspace', () => {
       />
     );
 
+    fireEvent.click(screen.getByTestId('factory-run-pause'));
+    expect(onPause).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '启动' })).not.toBeInTheDocument();
     expect(screen.getByText('implementation')).toBeInTheDocument();
     expect(screen.getAllByText('running').length).toBeGreaterThan(0);
     expect(screen.getByText('director_dispatch')).toBeInTheDocument();
+  });
+
+  it('shows resume control for a paused run', () => {
+    const onResume = vi.fn();
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        onResume={onResume}
+        currentRun={{
+          run_id: 'run-paused',
+          phase: 'implementation',
+          status: 'paused',
+          current_stage: 'director_dispatch',
+          last_successful_stage: 'pm_planning',
+          progress: 60,
+          roles: {},
+          gates: [],
+          created_at: '2026-03-07T00:00:00Z',
+        }}
+        events={[]}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('factory-run-resume'));
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: '恢复' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '暂停' })).not.toBeInTheDocument();
+  });
+
+  it('shows checkpoint retry control for a failed run', () => {
+    const onRetryCheckpoint = vi.fn();
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        onRetryCheckpoint={onRetryCheckpoint}
+        currentRun={{
+          run_id: 'run-failed',
+          phase: 'failed',
+          status: 'failed',
+          current_stage: 'director_dispatch',
+          last_successful_stage: 'pm_planning',
+          progress: 60,
+          roles: {},
+          gates: [],
+          failure: {
+            failure_type: 'deterministic',
+            code: 'director_failed',
+            detail: 'Director failed',
+            phase: 'implementation',
+            recoverable: true,
+          },
+          created_at: '2026-03-07T00:00:00Z',
+        }}
+        events={[]}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('factory-run-retry-checkpoint'));
+    expect(onRetryCheckpoint).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '启动' })).toBeInTheDocument();
   });
 
   it('renders gates, artifacts and summary in the audit panel', () => {

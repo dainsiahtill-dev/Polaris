@@ -22,6 +22,7 @@ This cell now owns two adjacent concerns:
   - `archive.factory_archive`
   - `audit.evidence`
   - `policy.workspace_guard`
+  - `chief_engineer.blueprint`
 - **Effects Allowed**:
   - workspace reads
   - hidden factory artifact writes

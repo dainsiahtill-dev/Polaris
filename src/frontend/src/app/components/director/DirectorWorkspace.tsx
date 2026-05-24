@@ -110,6 +110,7 @@ interface DirectorWorkspaceProps {
   workers?: RuntimeWorkerState[];
   directorRunning: boolean;
   isStarting?: boolean;
+  isStopping?: boolean;
   startBlockedReason?: string;
   onToggleDirector: () => void | boolean | Promise<void | boolean>;
   onOpenSettings?: () => void;
@@ -1142,6 +1143,49 @@ function formatDirectorDiagnosticIssue(issue: string): string {
     .trim() || 'unknown';
 }
 
+const DIRECTOR_EXECUTION_BLOCKER_LABELS: Record<string, string> = {
+  director_llm_not_ready: 'Director LLM 角色未通过运行前测试',
+  director_status_unavailable: 'Director 状态投影不可用',
+  director_tasks_unavailable: 'Director 任务队列不可用',
+  director_no_tasks: '没有可执行的 Director 任务',
+  director_no_ready_tasks: '没有 ready 任务，需先完成 PM/Chief Engineer 交接',
+  director_ready_tasks_missing_blueprints: 'workflow 任务缺少 Chief Engineer 蓝图证据',
+  director_workers_unavailable: 'Director worker 池不可用',
+  director_no_workers: '没有可用 worker',
+  director_no_idle_workers: '有 ready 任务但没有空闲 worker',
+};
+
+const DIRECTOR_HARD_BLOCKER_ISSUES = new Set(Object.keys(DIRECTOR_EXECUTION_BLOCKER_LABELS));
+
+function directorExecutionBlockers(diagnostics: DirectorDiagnosticsResponse | null): string[] {
+  if (!diagnostics) {
+    return [];
+  }
+  if (Array.isArray(diagnostics.execution_blockers) && diagnostics.execution_blockers.length > 0) {
+    return diagnostics.execution_blockers
+      .map((issue) => String(issue || '').trim())
+      .filter((issue) => issue.length > 0);
+  }
+  if (diagnostics.status?.running) {
+    return [];
+  }
+  const hasExplicitExecutionSignal = typeof diagnostics.can_execute === 'boolean' || Array.isArray(diagnostics.execution_blockers);
+  if (hasExplicitExecutionSignal && diagnostics.can_execute !== false) {
+    return [];
+  }
+  return (diagnostics.issues || []).filter((issue) => DIRECTOR_HARD_BLOCKER_ISSUES.has(issue));
+}
+
+function formatDirectorExecutionBlockReason(diagnostics: DirectorDiagnosticsResponse | null): string {
+  const blockers = directorExecutionBlockers(diagnostics);
+  if (blockers.length === 0) {
+    return '';
+  }
+  const primary = DIRECTOR_EXECUTION_BLOCKER_LABELS[blockers[0]] || formatDirectorDiagnosticIssue(blockers[0]);
+  const extraCount = blockers.length - 1;
+  return `Director 交接诊断未通过：${primary}${extraCount > 0 ? `，另有 ${extraCount} 项阻断` : ''}`;
+}
+
 function DirectorReadinessDiagnosticsStrip({
   diagnostics,
   isLoading,
@@ -1156,8 +1200,16 @@ function DirectorReadinessDiagnosticsStrip({
   compact?: boolean;
 }) {
   const issues = diagnostics?.issues || [];
-  const visibleIssues = compact ? [] : issues.slice(0, 3);
-  const blocked = issues.length > 0 || diagnostics?.ok === false;
+  const executionBlockers = directorExecutionBlockers(diagnostics);
+  const visibleIssues = compact ? [] : [...new Set([...executionBlockers, ...issues])].slice(0, 3);
+  const blocked = executionBlockers.length > 0;
+  const llmValues = diagnostics?.llm
+    ? [
+        diagnostics.llm.state || (diagnostics.llm.ok ? 'ready' : 'blocked'),
+        diagnostics.llm.model || diagnostics.llm.provider_id || 'model n/a',
+        ...(diagnostics.llm.blocked_roles?.length ? [`blocked ${diagnostics.llm.blocked_roles.join(',')}`] : []),
+      ]
+    : ['checking'];
 
   return (
     <section
@@ -1211,6 +1263,9 @@ function DirectorReadinessDiagnosticsStrip({
               endpoint={diagnostics.tasks.source}
               values={[
                 `ready ${diagnostics.tasks.ready_to_execute}/${diagnostics.tasks.total}`,
+                ...(diagnostics.tasks.missing_blueprint_task_ids?.length
+                  ? [`missing BP ${diagnostics.tasks.missing_blueprint_task_ids.length}`]
+                  : []),
                 `blocked ${diagnostics.tasks.blocked}`,
                 `running ${diagnostics.tasks.running}`,
               ]}
@@ -1233,6 +1288,12 @@ function DirectorReadinessDiagnosticsStrip({
                 diagnostics.status.running ? 'running' : diagnostics.status.state.toLowerCase(),
                 `src ${diagnostics.status.source || 'none'}`,
               ]}
+            />
+            <KernelStripMetric
+              icon={<Zap className="h-3.5 w-3.5 text-amber-300" />}
+              label="LLM"
+              endpoint="/v2/llm/status"
+              values={llmValues}
             />
             {visibleIssues.length > 0 ? (
               <div className="flex shrink-0 items-center gap-1" data-testid="director-readiness-issues">
@@ -1306,6 +1367,7 @@ export function DirectorWorkspace({
   workers = [],
   directorRunning,
   isStarting,
+  isStopping = false,
   startBlockedReason = '',
   onToggleDirector,
   onOpenSettings,
@@ -1977,8 +2039,10 @@ export function DirectorWorkspace({
     executionTasks.forEach((task) => mapping.set(task.id, task));
     return mapping;
   }, [executionTasks]);
-  const isExecuting = directorRunning || Boolean(isStarting);
-  const sessionStatus = resolveSessionStatus(directorRunning, Boolean(isStarting), executionTasks);
+  const directorStarting = Boolean(isStarting);
+  const directorStopping = Boolean(isStopping);
+  const isExecuting = directorRunning || directorStarting || directorStopping;
+  const sessionStatus = resolveSessionStatus(directorRunning || directorStopping, directorStarting, executionTasks);
 
   const handleTaskSelect = useCallback((taskId: string) => {
     setSelectedTaskId(taskId);
@@ -2323,9 +2387,40 @@ export function DirectorWorkspace({
     }
   }, [onToggleDirector]);
 
+  const directorDiagnosticExecutionReason = useMemo(
+    () => formatDirectorExecutionBlockReason(directorDiagnostics.data),
+    [directorDiagnostics.data],
+  );
+  const executionBlockReasonForStart = factoryMode
+    ? '工厂模式下由 Factory 编排 Director，不能在嵌入层直接启动。'
+    : !directorRunning
+      ? startBlockedReason || directorDiagnosticExecutionReason
+      : '';
+  const directorToggleBusy = directorToggleStatusEvidence.loading;
+  const directorControlBusyReason = directorStarting
+    ? 'Director 正在启动，请等待状态回传。'
+    : directorStopping
+      ? 'Director 正在停止，请等待状态回传。'
+      : directorToggleBusy
+        ? 'Director 状态确认中，请等待后端回传。'
+        : '';
+  const executionDisabledReason = executionBlockReasonForStart || directorControlBusyReason;
+  const directorPrimaryActionLabel = directorStarting
+    ? '启动中'
+    : directorStopping
+      ? '停止中'
+      : directorRunning
+        ? '停止'
+        : '执行';
+
   const handleExecute = useCallback(async () => {
-    if (!directorRunning && startBlockedReason) {
-      setTerminalOutput(prev => `${prev}[${new Date().toLocaleTimeString()}] Director 启动被阻断: ${startBlockedReason}\n`);
+    if (directorControlBusyReason) {
+      setTerminalOutput(prev => `${prev}[${new Date().toLocaleTimeString()}] Director 控制请求等待中: ${directorControlBusyReason}\n`);
+      return;
+    }
+
+    if (!directorRunning && executionBlockReasonForStart) {
+      setTerminalOutput(prev => `${prev}[${new Date().toLocaleTimeString()}] Director 启动被阻断: ${executionBlockReasonForStart}\n`);
       return;
     }
 
@@ -2362,22 +2457,23 @@ export function DirectorWorkspace({
     }
   }, [
     currentTaskTitle,
+    directorControlBusyReason,
     directorRunning,
     executionTasks,
+    executionBlockReasonForStart,
     loadDirectorRunEvidence,
     selectedTaskId,
-    startBlockedReason,
     toggleDirectorWithStatusEvidence,
     workspace,
   ]);
 
   const handlePause = useCallback(async () => {
-    if (!directorRunning) {
+    if (!directorRunning || directorControlBusyReason) {
       return;
     }
     setTerminalOutput(prev => prev + `[${new Date().toLocaleTimeString()}] 停止 Director 执行\n`);
     await toggleDirectorWithStatusEvidence();
-  }, [directorRunning, toggleDirectorWithStatusEvidence]);
+  }, [directorControlBusyReason, directorRunning, toggleDirectorWithStatusEvidence]);
 
   const handleReset = useCallback(() => {
     setSelectedTaskId(null);
@@ -2418,12 +2514,6 @@ export function DirectorWorkspace({
   const pendingTasks = executionTasks.filter(t => t.status === 'pending').length;
   const totalTasks = executionTasks.length;
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-  const directorToggleBusy = directorToggleStatusEvidence.loading;
-  const executionDisabledReason = factoryMode
-    ? '工厂模式下由 Factory 编排 Director，不能在嵌入层直接启动。'
-    : !directorRunning
-      ? startBlockedReason
-      : '';
   const directorRunCancelDisabled =
     !directorRunEvidence.runId ||
     directorRunEvidence.loading ||
@@ -2540,12 +2630,12 @@ export function DirectorWorkspace({
             title={executionDisabledReason || undefined}
             className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
           >
-            {isStarting || directorToggleBusy ? (
+            {directorStarting || directorStopping || directorToggleBusy ? (
               <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
             ) : (
               <Play className="w-3.5 h-3.5 mr-1.5" />
             )}
-            {directorRunning ? '停止' : '执行'}
+            {directorPrimaryActionLabel}
           </Button>
 
           <Button
@@ -2553,7 +2643,7 @@ export function DirectorWorkspace({
             size="icon"
             onClick={() => { void handlePause(); }}
             data-testid="director-workspace-pause"
-            disabled={!directorRunning || directorToggleBusy}
+            disabled={!directorRunning || Boolean(directorControlBusyReason)}
             className="text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10"
           >
             <Pause className="w-4 h-4" />

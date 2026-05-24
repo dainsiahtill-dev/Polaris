@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DirectorPage } from './DirectorPage';
 
 const directorWorkspaceProps = vi.hoisted(() => vi.fn());
@@ -24,6 +24,11 @@ vi.mock('@/app/components/ui/sonner', () => ({
 }));
 
 describe('DirectorPage', () => {
+  beforeEach(() => {
+    directorWorkspaceProps.mockClear();
+    runtimeOverlayProps.mockClear();
+  });
+
   it('forwards workspace evidence and cross-role runtime state', () => {
     const fileEditEvents = [{ task_id: 'D-1', path: 'src/app.ts' }];
     const taskTraceMap = new Map([['D-1', [{ phase: 'tool_running' }]]]);
@@ -70,6 +75,37 @@ describe('DirectorPage', () => {
     }));
   });
 
+  it('forwards the Director stopping transition to the workspace shell', () => {
+    render(
+      <DirectorPage
+        workspace="C:/Temp/Product"
+        tasks={[]}
+        workers={[]}
+        directorRunning={true}
+        isStarting={false}
+        isStopping={true}
+        onToggleDirector={vi.fn()}
+        onBackToMain={vi.fn()}
+        websocketLive={true}
+        websocketReconnecting={false}
+        websocketAttemptCount={0}
+        llmRuntimeState={{
+          state: 'READY',
+          blockedRoles: [],
+          requiredRoles: ['director'],
+          lastUpdated: '2026-05-23T00:00:00Z',
+        }}
+        notifyError={vi.fn()}
+      />,
+    );
+
+    expect(directorWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      directorRunning: true,
+      isStarting: false,
+      isStopping: true,
+    }));
+  });
+
   it('passes AGENTS and LLM start blockers into the Director workspace', () => {
     const { rerender } = render(
       <DirectorPage
@@ -113,6 +149,36 @@ describe('DirectorPage', () => {
         websocketLive={true}
         websocketReconnecting={false}
         websocketAttemptCount={0}
+        agentsRequired
+        agentsDraftReady={false}
+        agentsDraftFailed
+        llmRuntimeState={{
+          state: 'READY',
+          blockedRoles: [],
+          requiredRoles: ['director'],
+          lastUpdated: '2026-05-23T00:00:00Z',
+        }}
+        notifyError={vi.fn()}
+      />,
+    );
+
+    expect(directorWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      startBlockedReason: 'AGENTS 草稿生成失败，请返回主界面重新生成或人工处理后再启动 Director。',
+    }));
+
+    rerender(
+      <DirectorPage
+        workspace="C:/Temp/Product"
+        tasks={[]}
+        workers={[]}
+        directorRunning={false}
+        isStarting={false}
+        isStopping={false}
+        onToggleDirector={vi.fn()}
+        onBackToMain={vi.fn()}
+        websocketLive={true}
+        websocketReconnecting={false}
+        websocketAttemptCount={0}
         agentsRequired={false}
         agentsDraftReady={false}
         llmRuntimeState={{
@@ -127,6 +193,38 @@ describe('DirectorPage', () => {
 
     expect(directorWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
       startBlockedReason: 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
+    }));
+  });
+
+  it('prefers the app-level Director start blocker over local role checks', () => {
+    render(
+      <DirectorPage
+        workspace="C:/Temp/Product"
+        tasks={[]}
+        workers={[]}
+        directorRunning={false}
+        isStarting={false}
+        isStopping={false}
+        directorStartBlockedReason="docs/ 初始化未完成"
+        onToggleDirector={vi.fn()}
+        onBackToMain={vi.fn()}
+        websocketLive={true}
+        websocketReconnecting={false}
+        websocketAttemptCount={0}
+        agentsRequired
+        agentsDraftReady={false}
+        llmRuntimeState={{
+          state: 'BLOCKED',
+          blockedRoles: ['director'],
+          requiredRoles: ['director'],
+          lastUpdated: '2026-05-23T00:00:00Z',
+        }}
+        notifyError={vi.fn()}
+      />,
+    );
+
+    expect(directorWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      startBlockedReason: 'docs/ 初始化未完成',
     }));
   });
 });

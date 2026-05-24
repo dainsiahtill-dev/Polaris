@@ -1,5 +1,6 @@
 import json
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 from polaris.bootstrap.config import Settings
@@ -9,6 +10,7 @@ from polaris.cells.llm.evaluation.public.service import (
     reset_llm_test_index,
     update_index_with_report,
 )
+from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 from polaris.cells.storage.layout.internal.settings_utils import get_polaris_root
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -170,16 +172,16 @@ def test_reconcile_preserves_unrelated_providers(tmp_path):
     assert index["providers"]["new_provider"]["model"] == "new"
 
 
-def test_load_llm_test_index_prefers_global_index_over_workspace_copy(tmp_path):
+def test_load_llm_test_index_prefers_workspace_index_over_global_default(tmp_path):
     workspace = str(tmp_path)
 
     global_index = {
-        "roles": {"pm": {"ready": True, "grade": "PASS"}},
-        "providers": {"global_provider": {"model": "global-model", "ready": True}},
+        "roles": {"pm": {"ready": False, "grade": "FAIL"}},
+        "providers": {"global_provider": {"model": "global-model", "ready": False}},
     }
     workspace_index = {
-        "roles": {"pm": {"ready": False, "grade": "FAIL"}},
-        "providers": {"workspace_provider": {"model": "workspace-model", "ready": False}},
+        "roles": {"pm": {"ready": True, "grade": "PASS"}},
+        "providers": {"workspace_provider": {"model": "workspace-model", "ready": True}},
     }
 
     global_path = _index_path(workspace)
@@ -195,8 +197,90 @@ def test_load_llm_test_index_prefers_global_index_over_workspace_copy(tmp_path):
     index = load_llm_test_index(workspace)
 
     assert index["roles"]["pm"]["ready"] is True
-    assert "global_provider" in index["providers"]
-    assert "workspace_provider" not in index["providers"]
+    assert "workspace_provider" in index["providers"]
+    assert "global_provider" not in index["providers"]
+
+
+def test_workspace_index_unblocks_pm_when_global_index_is_stale(tmp_path):
+    workspace = tmp_path / "active-workspace"
+    workspace.mkdir()
+
+    global_index = {
+        "roles": {
+            "pm": {
+                "ready": False,
+                "grade": "FAIL",
+                "provider_id": "openai_compat-1",
+                "model": "Qwen3-Max",
+            },
+        },
+        "providers": {
+            "openai_compat-1": {
+                "ready": False,
+                "grade": "FAIL",
+                "model": "Qwen3-Max",
+                "role": "pm",
+            },
+        },
+        "version": "2.0",
+    }
+    workspace_index = {
+        "roles": {
+            "pm": {
+                "ready": True,
+                "grade": "PASS",
+                "provider_id": "openai_compat-1",
+                "model": "Qwen3-Max",
+            },
+        },
+        "providers": {
+            "openai_compat-1": {
+                "ready": True,
+                "grade": "PASS",
+                "model": "Qwen3-Max",
+                "role": "pm",
+            },
+        },
+        "version": "2.0",
+    }
+
+    global_path = _index_path(str(workspace))
+    os.makedirs(os.path.dirname(global_path), exist_ok=True)
+    with open(global_path, "w", encoding="utf-8") as f:
+        json.dump(global_index, f)
+
+    workspace_path = workspace / ".polaris" / "llm_test_index.json"
+    workspace_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(workspace_path, "w", encoding="utf-8") as f:
+        json.dump(workspace_index, f)
+
+    settings = MagicMock()
+    settings.workspace = str(workspace)
+    settings.workspace_path = str(workspace)
+    settings.ramdisk_root = ""
+    settings.qa_enabled = False
+    config_payload = {
+        "schema_version": 1,
+        "providers": {
+            "openai_compat-1": {"type": "openai_compat"},
+        },
+        "roles": {
+            "pm": {"provider_id": "openai_compat-1", "model": "Qwen3-Max"},
+        },
+        "policies": {
+            "required_ready_roles": ["pm"],
+        },
+    }
+
+    with patch(
+        "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+        return_value=config_payload,
+    ):
+        status = build_llm_status(settings)
+
+    assert status["state"] == "READY"
+    assert status["blocked_roles"] == []
+    assert status["roles"]["pm"]["readiness_source"] == "role_index"
 
 
 def test_load_llm_test_index_uses_app_global_index_for_separate_workspace(tmp_path):

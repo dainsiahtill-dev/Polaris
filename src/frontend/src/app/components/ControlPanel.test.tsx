@@ -122,6 +122,19 @@ describe('ControlPanel', () => {
       expect(screen.getByTestId('control-panel-pm-toggle')).toBeDisabled();
     });
 
+    it('shows the PM blocked reason on the PM controls', () => {
+      render(
+        <ControlPanel
+          {...defaultProps}
+          pmToggleDisabled={true}
+          pmBlockedReason="docs/ 初始化未完成"
+        />,
+      );
+
+      expect(screen.getByText('docs/ 初始化未完成')).toBeInTheDocument();
+      expect(screen.getByTestId('control-panel-pm-toggle')).toHaveAttribute('title', 'docs/ 初始化未完成');
+    });
+
     it('disables PM toggle when isStartingPM is true', () => {
       render(<ControlPanel {...defaultProps} isStartingPM={true} />);
       expect(screen.getByTestId('control-panel-pm-toggle')).toBeDisabled();
@@ -268,9 +281,22 @@ describe('ControlPanel', () => {
       expect(evidence).toHaveTextContent('source=status_file');
     });
 
-    it('disables run once when runOnceDisabled is true', () => {
-      render(<ControlPanel {...defaultProps} onRunPmOnce={vi.fn()} runOnceDisabled={true} />);
-      expect(screen.getByTestId('control-panel-pm-run-once')).toBeDisabled();
+    it('disables run once with the explicit blocked reason', () => {
+      const onRunPmOnce = vi.fn();
+      render(
+        <ControlPanel
+          {...defaultProps}
+          onRunPmOnce={onRunPmOnce}
+          runOnceDisabled={true}
+          runOnceBlockedReason="PM 启动诊断未通过：docs/ 初始化未完成"
+        />,
+      );
+
+      const runOnce = screen.getByTestId('control-panel-pm-run-once');
+      expect(runOnce).toBeDisabled();
+      expect(runOnce).toHaveAttribute('title', 'PM 启动诊断未通过：docs/ 初始化未完成');
+      fireEvent.click(runOnce);
+      expect(onRunPmOnce).not.toHaveBeenCalled();
     });
 
     it('shows PM backend status evidence after resume', async () => {

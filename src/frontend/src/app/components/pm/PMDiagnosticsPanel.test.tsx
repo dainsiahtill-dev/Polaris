@@ -127,6 +127,40 @@ describe('PMDiagnosticsPanel', () => {
     expect(screen.getByText('工作区已配置')).toBeInTheDocument();
   });
 
+  it('treats a missing docs directory as a PM startup blocker', async () => {
+    serviceMocks.getPmStartupDiagnostics.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: false,
+        can_start: false,
+        generated_at: '2026-05-23T00:00:00Z',
+        issues: ['workspace_docs_missing'],
+        startup_blockers: ['workspace_docs_missing'],
+        lancedb: { ok: true, state: 'ready' },
+        llm: {
+          ok: true,
+          state: 'ready',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['pm'],
+        },
+        workspace: {
+          ok: true,
+          status: 'ok',
+          workspace: 'C:/Temp/Product',
+          docs_present: false,
+        },
+      },
+    });
+
+    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} />);
+
+    expect(await screen.findByText('检测到问题')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /工作区/ }));
+    expect(screen.getByText('docs/ 目录不存在，PM 启动已被阻断')).toBeInTheDocument();
+    expect(screen.getByText('返回主界面完成 docs 初始化')).toBeInTheDocument();
+  });
+
   it('loads and clears PM kernel cache and token budget diagnostics', async () => {
     render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} />);
 

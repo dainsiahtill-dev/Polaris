@@ -651,6 +651,30 @@ async def test_v2_list_tasks_with_filters(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/pm/v2/pm/tasks", "/v2/pm/tasks"])
+async def test_v2_list_tasks_returns_idle_projection_when_pm_runtime_import_fails(
+    client: AsyncClient,
+    path: str,
+) -> None:
+    """Desktop PM task list should not 500 when the legacy PM adapter cannot import."""
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        side_effect=ImportError("get_pm function not found in pm_integration module"),
+    ):
+        response = await client.get(path)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["tasks"] == []
+    assert data["items"] == []
+    assert data["total"] == 0
+    assert data["initialized"] is False
+    assert data["reason"] == "PM_RUNTIME_UNAVAILABLE"
+    assert "get_pm function not found" in data["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/pm/v2/pm/tasks", "/v2/pm/tasks"])
 async def test_v2_create_task_aliases(client: AsyncClient, path: str) -> None:
     """POST PM task aliases should create through the PM task adapter."""
     mock_pm = _mock_pm_adapter(

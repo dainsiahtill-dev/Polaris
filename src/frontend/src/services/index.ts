@@ -31,6 +31,8 @@ export type {
   FactoryRunArtifactsResponse,
   FactoryRunStatus,
   FactoryStartOptions,
+  FactoryControlOptions,
+  FactoryControlAction,
   FactoryAuditEvent,
   // Court
   CourtState,
@@ -190,6 +192,7 @@ export {
   getChiefEngineerBlueprintStatus,
   listChiefEngineerBlueprints,
   getChiefEngineerBlueprint,
+  deleteChiefEngineerBlueprint,
 } from './chiefEngineerService';
 
 export type {
@@ -198,6 +201,7 @@ export type {
   ChiefEngineerDiagnosticsBlueprintStatus,
   GenerateChiefEngineerBlueprintPayload,
   ChiefEngineerTaskBlueprintResultResponse,
+  ChiefEngineerBlueprintDeleteResponse,
   ChiefEngineerBlueprintListResponse,
   ChiefEngineerBlueprintDetailResponse,
 } from './chiefEngineerService';
@@ -248,8 +252,12 @@ export type {
 // ============================================================================
 
 export {
+  controlFactoryRun,
   startFactoryRun,
   stopFactoryRun,
+  pauseFactoryRun,
+  resumeFactoryRun,
+  retryFactoryRunFromCheckpoint,
   getFactoryRun,
   getFactoryRunArtifacts,
   listFactoryRuns,

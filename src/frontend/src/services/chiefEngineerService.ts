@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './apiClient';
+import { apiDelete, apiGet, apiPost } from './apiClient';
 import type { ApiResult } from './api.types';
 import type {
   ChiefEngineerBlueprintDetailV1,
@@ -14,6 +14,19 @@ export interface ChiefEngineerDiagnosticsWorkspaceStatus {
   workspace: string;
   exists: boolean;
   error: string | null;
+}
+
+export interface ChiefEngineerDiagnosticsLLMStatus {
+  ok: boolean;
+  state: string;
+  role: 'chief_engineer';
+  blocked_roles: string[];
+  unsupported_roles: string[];
+  required_ready_roles: string[];
+  provider_id: string | null;
+  model: string | null;
+  error: string | null;
+  details: Record<string, unknown>;
 }
 
 export interface ChiefEngineerDiagnosticsBlueprintStatus {
@@ -33,11 +46,16 @@ export interface ChiefEngineerDiagnosticsBlueprintStatus {
 
 export interface ChiefEngineerDiagnosticsResponse {
   ok: boolean;
+  can_handoff?: boolean;
   role: 'chief_engineer';
   generated_at: string;
   workspace: ChiefEngineerDiagnosticsWorkspaceStatus;
+  llm: ChiefEngineerDiagnosticsLLMStatus;
   blueprints: ChiefEngineerDiagnosticsBlueprintStatus;
+  can_generate?: boolean;
   issues: string[];
+  generate_blockers?: string[];
+  handoff_blockers?: string[];
 }
 
 export interface GenerateChiefEngineerBlueprintPayload {
@@ -60,6 +78,13 @@ export interface ChiefEngineerTaskBlueprintResultResponse {
   recommendations: string[];
   risks: string[];
   blueprint: Record<string, unknown>;
+}
+
+export interface ChiefEngineerBlueprintDeleteResponse {
+  ok: boolean;
+  blueprint_id: string;
+  deleted: boolean;
+  source: string;
 }
 
 export async function getChiefEngineerDiagnostics(): Promise<ApiResult<ChiefEngineerDiagnosticsResponse>> {
@@ -106,5 +131,14 @@ export async function getChiefEngineerBlueprint(
   return apiGet<ChiefEngineerBlueprintDetailResponse>(
     `/v2/chief-engineer/blueprints/${encodeURIComponent(blueprintId)}`,
     'Failed to load Chief Engineer blueprint',
+  );
+}
+
+export async function deleteChiefEngineerBlueprint(
+  blueprintId: string,
+): Promise<ApiResult<ChiefEngineerBlueprintDeleteResponse>> {
+  return apiDelete<ChiefEngineerBlueprintDeleteResponse>(
+    `/v2/chief-engineer/blueprints/${encodeURIComponent(blueprintId)}`,
+    'Failed to delete Chief Engineer blueprint',
   );
 }

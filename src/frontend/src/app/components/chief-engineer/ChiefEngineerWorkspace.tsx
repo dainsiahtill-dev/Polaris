@@ -16,12 +16,15 @@ import {
   Play,
   Settings,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import { AIDialoguePanel } from '@/app/components/ai-dialogue';
+import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
 import {
   generateChiefEngineerBlueprint,
+  deleteChiefEngineerBlueprint,
   getChiefEngineerDiagnostics,
   getChiefEngineerBlueprint,
   getChiefEngineerBlueprintStatus,
@@ -55,6 +58,7 @@ import type {
 import type { EngineStatus } from '@/app/types/appContracts';
 import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
 import type { PmTask } from '@/types/task';
+import type { LogEntry } from '@/types/log';
 import type {
   ChiefEngineerBlueprintDetailV1,
   ChiefEngineerBlueprintSummaryV1,
@@ -68,10 +72,16 @@ interface ChiefEngineerWorkspaceProps {
   engineStatus: EngineStatus | null;
   directorRunning: boolean;
   isStartingDirector?: boolean;
+  isStoppingDirector?: boolean;
+  directorStartBlockedReason?: string;
   onBackToMain: () => void;
   onEnterDirectorWorkspace: () => void;
   onToggleDirector: () => void | boolean | Promise<void | boolean>;
   onOpenSettings?: () => void;
+  executionLogs?: LogEntry[];
+  llmStreamEvents?: LogEntry[];
+  processStreamEvents?: LogEntry[];
+  currentPhase?: string;
 }
 
 interface BlueprintEvidence {
@@ -379,7 +389,99 @@ function formatChiefTokenBudget(stats: RoleKernelTokenBudgetStats | null): strin
 function diagnosticsTone(diagnostics: DiagnosticsResponse | null, error: string): DiagnosticTone {
   if (error) return 'error';
   if (!diagnostics) return 'checking';
+  if (diagnostics.can_handoff === false || (diagnostics.handoff_blockers || []).length > 0) return 'degraded';
   return diagnostics.ok ? 'ready' : 'degraded';
+}
+
+const CHIEF_HANDOFF_BLOCKER_LABELS: Record<string, string> = {
+  workspace_unavailable: '工作区不可用',
+  blueprint_store_unreadable: '蓝图存储不可读',
+  blueprint_payload_invalid: '存在无效蓝图 payload',
+  blueprint_coverage_incomplete: 'PM 任务蓝图覆盖不完整',
+  blueprint_handoff_not_ready: '没有可交接的 Chief Engineer 蓝图',
+};
+
+const CHIEF_HANDOFF_HARD_ISSUES = new Set(Object.keys(CHIEF_HANDOFF_BLOCKER_LABELS));
+const CHIEF_GENERATE_BLOCKER_LABELS: Record<string, string> = {
+  workspace_unavailable: '工作区不可用',
+  llm_not_ready: 'Chief Engineer LLM 未就绪',
+};
+const CHIEF_GENERATE_HARD_ISSUES = new Set(Object.keys(CHIEF_GENERATE_BLOCKER_LABELS));
+
+function chiefHandoffBlockers(diagnostics: DiagnosticsResponse | null): string[] {
+  if (!diagnostics) {
+    return [];
+  }
+  if (Array.isArray(diagnostics.handoff_blockers) && diagnostics.handoff_blockers.length > 0) {
+    return diagnostics.handoff_blockers
+      .map((issue) => String(issue || '').trim())
+      .filter((issue) => issue.length > 0);
+  }
+  const hasExplicitHandoffSignal = typeof diagnostics.can_handoff === 'boolean' || Array.isArray(diagnostics.handoff_blockers);
+  if (hasExplicitHandoffSignal && diagnostics.can_handoff !== false) {
+    return [];
+  }
+  const issueBlockers = (diagnostics.issues || []).filter((issue) => CHIEF_HANDOFF_HARD_ISSUES.has(issue));
+  if (issueBlockers.length > 0) {
+    return issueBlockers;
+  }
+  if (!hasExplicitHandoffSignal && !diagnostics.blueprints.director_handoff_ready && diagnostics.blueprints.planned_tasks > 0) {
+    return ['blueprint_coverage_incomplete'];
+  }
+  return [];
+}
+
+function chiefGenerateBlockers(diagnostics: DiagnosticsResponse | null): string[] {
+  if (!diagnostics) {
+    return [];
+  }
+  if (Array.isArray(diagnostics.generate_blockers) && diagnostics.generate_blockers.length > 0) {
+    return diagnostics.generate_blockers
+      .map((issue) => String(issue || '').trim())
+      .filter((issue) => issue.length > 0);
+  }
+  const hasExplicitGenerateSignal = typeof diagnostics.can_generate === 'boolean' || Array.isArray(diagnostics.generate_blockers);
+  if (hasExplicitGenerateSignal && diagnostics.can_generate !== false) {
+    return [];
+  }
+  const issueBlockers = (diagnostics.issues || []).filter((issue) => CHIEF_GENERATE_HARD_ISSUES.has(issue));
+  if (issueBlockers.length > 0) {
+    return issueBlockers;
+  }
+  if (!diagnostics.workspace.ok) {
+    return ['workspace_unavailable'];
+  }
+  if (diagnostics.llm && diagnostics.llm.ok === false) {
+    return ['llm_not_ready'];
+  }
+  return [];
+}
+
+function formatChiefGenerateBlockReason(diagnostics: DiagnosticsResponse | null): string {
+  const blockers = chiefGenerateBlockers(diagnostics);
+  if (blockers.length === 0) {
+    return '';
+  }
+  const primary = CHIEF_GENERATE_BLOCKER_LABELS[blockers[0]] || blockers[0].replace(/_/g, ' ');
+  const extraCount = blockers.length - 1;
+  return `Chief Engineer 蓝图生成前置检查未通过：${primary}${extraCount > 0 ? `，另有 ${extraCount} 项阻断` : ''}`;
+}
+
+function formatChiefHandoffBlockReason(diagnostics: DiagnosticsResponse | null): string {
+  const blockers = chiefHandoffBlockers(diagnostics);
+  if (blockers.length === 0) {
+    return '';
+  }
+  const missingTaskIds = diagnostics?.blueprints.missing_task_ids || [];
+  const planned = diagnostics?.blueprints.planned_tasks ?? 0;
+  const covered = diagnostics?.blueprints.covered_tasks ?? 0;
+  if (blockers.includes('blueprint_coverage_incomplete')) {
+    const missingCount = missingTaskIds.length || Math.max(0, planned - covered);
+    return `诊断显示 ${missingCount || 1} 个 PM 任务缺少蓝图证据，不能启动 Director`;
+  }
+  const primary = CHIEF_HANDOFF_BLOCKER_LABELS[blockers[0]] || blockers[0].replace(/_/g, ' ');
+  const extraCount = blockers.length - 1;
+  return `Chief Engineer 交接诊断未通过：${primary}${extraCount > 0 ? `，另有 ${extraCount} 项阻断` : ''}`;
 }
 
 function blueprintSummaryFromResult(
@@ -411,10 +513,16 @@ export function ChiefEngineerWorkspace({
   engineStatus,
   directorRunning,
   isStartingDirector,
+  isStoppingDirector = false,
+  directorStartBlockedReason = '',
   onBackToMain,
   onEnterDirectorWorkspace,
   onToggleDirector,
   onOpenSettings,
+  executionLogs = [],
+  llmStreamEvents = [],
+  processStreamEvents = [],
+  currentPhase = 'idle',
 }: ChiefEngineerWorkspaceProps) {
   const [runtimeBlueprints, setRuntimeBlueprints] = useState<RuntimeBlueprintSummary[]>([]);
   const [blueprintApiError, setBlueprintApiError] = useState('');
@@ -435,6 +543,9 @@ export function ChiefEngineerWorkspace({
   const [blueprintDetail, setBlueprintDetail] = useState<RuntimeBlueprintDetailResponse | null>(null);
   const [blueprintDetailError, setBlueprintDetailError] = useState('');
   const [blueprintDetailLoading, setBlueprintDetailLoading] = useState(false);
+  const [deletingBlueprintId, setDeletingBlueprintId] = useState('');
+  const [blueprintDeleteError, setBlueprintDeleteError] = useState('');
+  const [blueprintDeleteEvidence, setBlueprintDeleteEvidence] = useState('');
   const [generatingTaskId, setGeneratingTaskId] = useState('');
   const [generateError, setGenerateError] = useState('');
   const [blueprintStatusChecks, setBlueprintStatusChecks] = useState<Record<string, BlueprintStatusCheckState>>({});
@@ -741,18 +852,54 @@ export function ChiefEngineerWorkspace({
   const blueprintCoveragePlanned = diagnostics?.blueprints.planned_tasks ?? 0;
   const blueprintCoverageCovered = diagnostics?.blueprints.covered_tasks ?? 0;
   const missingBlueprintTaskIds = diagnostics?.blueprints.missing_task_ids ?? [];
-  const diagnosticsHandoffBlocked =
-    !directorRunning
-    && Boolean(diagnostics)
-    && !diagnostics?.blueprints.director_handoff_ready
-    && blueprintCoveragePlanned > 0;
+  const diagnosticsHandoffBlockers = chiefHandoffBlockers(diagnostics);
+  const diagnosticsHandoffBlocked = !directorRunning && diagnosticsHandoffBlockers.length > 0;
+  const diagnosticsHandoffBlockReason = formatChiefHandoffBlockReason(diagnostics);
+  const diagnosticsGenerateBlockers = chiefGenerateBlockers(diagnostics);
+  const diagnosticsGenerateBlocked = diagnosticsGenerateBlockers.length > 0;
+  const diagnosticsGenerateBlockReason = formatChiefGenerateBlockReason(diagnostics);
+  const llmDiagnosticTone: DiagnosticTone = !diagnostics
+    ? 'checking'
+    : diagnostics.llm?.ok
+      ? 'ready'
+      : 'error';
+  const llmDiagnosticValue = !diagnostics
+    ? 'checking'
+    : diagnostics.llm
+      ? [
+        diagnostics.llm.state || (diagnostics.llm.ok ? 'ready' : 'blocked'),
+        diagnostics.llm.model || diagnostics.llm.provider_id || '',
+      ].filter(Boolean).join(' · ')
+      : 'missing';
+  const externalDirectorStartBlocked = Boolean(!directorRunning && directorStartBlockedReason.trim());
   const startDirectorBlocked =
-    !directorRunning && (missingBlueprintHandoffTasks.length > 0 || diagnosticsHandoffBlocked);
-  const startDirectorBlockedTitle = missingBlueprintHandoffTasks.length > 0
-    ? '缺少 Chief Engineer 蓝图证据，不能从 CE 页直接启动 Director'
-    : diagnosticsHandoffBlocked
-      ? `诊断显示 ${missingBlueprintTaskIds.length || blueprintCoveragePlanned - blueprintCoverageCovered} 个 PM 任务缺少蓝图证据，不能启动 Director`
-      : undefined;
+    !directorRunning
+    && (externalDirectorStartBlocked || missingBlueprintHandoffTasks.length > 0 || diagnosticsHandoffBlocked);
+  const startDirectorBlockedTitle = externalDirectorStartBlocked
+    ? directorStartBlockedReason
+    : missingBlueprintHandoffTasks.length > 0
+      ? '缺少 Chief Engineer 蓝图证据，不能从 CE 页直接启动 Director'
+      : diagnosticsHandoffBlocked
+        ? diagnosticsHandoffBlockReason
+        : undefined;
+  const directorStarting = Boolean(isStartingDirector);
+  const directorStopping = Boolean(isStoppingDirector);
+  const directorControlBusyReason = directorStarting
+    ? 'Director 正在启动，请等待状态回传。'
+    : directorStopping
+      ? 'Director 正在停止，请等待状态回传。'
+      : directorToggleStatusEvidence.loading
+        ? 'Director 状态确认中，请等待后端回传。'
+        : '';
+  const directorPrimaryActionLabel = directorStarting
+    ? '启动中'
+    : directorStopping
+      ? '停止中'
+      : directorToggleStatusEvidence.loading
+        ? '确认中'
+        : directorRunning
+          ? '停止 Director'
+          : '启动 Director';
   const blueprintCoverageValue = !diagnostics
     ? 'checking'
     : blueprintCoveragePlanned > 0
@@ -814,6 +961,10 @@ export function ChiefEngineerWorkspace({
   const handleGenerateBlueprint = async (task: TaskEvidenceRow) => {
     const taskId = taskHandoffId(task);
     if (!taskId) return;
+    if (diagnosticsGenerateBlocked) {
+      setGenerateError(diagnosticsGenerateBlockReason);
+      return;
+    }
     setGeneratingTaskId(taskId);
     setGenerateError('');
     const result = await generateChiefEngineerBlueprint({
@@ -925,6 +1076,20 @@ export function ChiefEngineerWorkspace({
   };
 
   const handleToggleDirector = async () => {
+    if (directorControlBusyReason) {
+      return;
+    }
+
+    if (!directorRunning && startDirectorBlockedTitle) {
+      setDirectorToggleStatusEvidence({
+        triggered: true,
+        loading: false,
+        data: null,
+        error: startDirectorBlockedTitle,
+      });
+      return;
+    }
+
     setDirectorToggleStatusEvidence({
       triggered: true,
       loading: true,
@@ -959,12 +1124,38 @@ export function ChiefEngineerWorkspace({
     }
   };
 
+  const handleDeleteBlueprint = async (blueprintId: string) => {
+    const token = String(blueprintId || '').trim();
+    if (!token) return;
+
+    setDeletingBlueprintId(token);
+    setBlueprintDeleteError('');
+    setBlueprintDeleteEvidence('');
+    const result = await deleteChiefEngineerBlueprint(token);
+    if (!result.ok || !result.data?.deleted) {
+      setBlueprintDeleteError(result.error || '蓝图删除 API 暂不可用');
+      setDeletingBlueprintId('');
+      return;
+    }
+
+    setRuntimeBlueprints((current) => current.filter((item) => item.blueprint_id !== token));
+    if (selectedBlueprintId === token) {
+      setSelectedBlueprintId('');
+      setBlueprintDetail(null);
+      setBlueprintDetailError('');
+    }
+    setBlueprintDeleteEvidence(`/v2/chief-engineer/blueprints/${token} · deleted`);
+    await refreshChiefEngineerDiagnostics();
+    setDeletingBlueprintId('');
+  };
+
   const latestChiefLLMEvent = chiefLLMEvents?.events[0] ?? null;
   const chiefLLMEventCount = chiefLLMEvents?.count
     ?? readRecordNumber(chiefLLMEvents?.stats, ['total'])
     ?? chiefLLMEvents?.events.length
     ?? 0;
-  const directorToggleBusy = Boolean(isStartingDirector || directorToggleStatusEvidence.loading);
+  const directorToggleBusy = Boolean(directorControlBusyReason);
+  const chiefRuntimeActive = directorRunning || !['', 'idle', 'unknown', 'none'].includes(normalizeToken(currentPhase));
 
   return (
     <div data-testid="chief-engineer-workspace" className="flex h-full flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/30 text-slate-100">
@@ -1035,12 +1226,12 @@ export function ChiefEngineerWorkspace({
             size="sm"
             onClick={() => { void handleToggleDirector(); }}
             disabled={directorToggleBusy || startDirectorBlocked}
-            title={startDirectorBlockedTitle}
+            title={directorControlBusyReason || startDirectorBlockedTitle}
             data-testid="chief-engineer-start-director"
             className="border-cyan-500/30 text-cyan-200 hover:bg-cyan-500/10"
           >
             {directorToggleBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
-            {directorRunning ? '停止 Director' : '启动 Director'}
+            {directorPrimaryActionLabel}
           </Button>
           <Button
             variant="ghost"
@@ -1135,6 +1326,18 @@ export function ChiefEngineerWorkspace({
           </div>
         </div>
       </section>
+
+      {startDirectorBlockedTitle ? (
+        <section
+          className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-100"
+          data-testid="chief-engineer-director-start-gate"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 break-words">{startDirectorBlockedTitle}</span>
+          </div>
+        </section>
+      ) : null}
 
       {directorToggleStatusEvidence.triggered ? (
         <section
@@ -1243,6 +1446,24 @@ export function ChiefEngineerWorkspace({
                           <FileCode className="mr-1 h-3 w-3" />
                           详情
                         </Button>
+                        {item.source === 'runtime/blueprints' ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => { void handleDeleteBlueprint(item.blueprintId); }}
+                            disabled={deletingBlueprintId === item.blueprintId}
+                            data-testid={`chief-engineer-blueprint-delete-${item.blueprintId}`}
+                            className="h-6 px-2 text-[10px] text-rose-200 hover:bg-rose-500/10 hover:text-rose-100 disabled:opacity-50"
+                            title="删除已落盘的 Chief Engineer 蓝图"
+                          >
+                            {deletingBlueprintId === item.blueprintId ? (
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="mr-1 h-3 w-3" />
+                            )}
+                            清理
+                          </Button>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -1270,6 +1491,22 @@ export function ChiefEngineerWorkspace({
                 </article>
               ))
             )}
+            {blueprintDeleteError ? (
+              <div
+                data-testid="chief-engineer-blueprint-delete-error"
+                className="rounded-md border border-red-500/25 bg-red-500/10 px-2 py-1.5 text-xs text-red-100"
+              >
+                {blueprintDeleteError}
+              </div>
+            ) : null}
+            {blueprintDeleteEvidence ? (
+              <div
+                data-testid="chief-engineer-blueprint-delete-evidence"
+                className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1.5 font-mono text-[11px] text-emerald-100"
+              >
+                {blueprintDeleteEvidence}
+              </div>
+            ) : null}
 
             {blueprintCandidateTasks.length > 0 ? (
               <div data-testid="chief-engineer-blueprint-candidates" className="rounded-lg border border-cyan-500/20 bg-slate-950/45 p-3">
@@ -1281,6 +1518,7 @@ export function ChiefEngineerWorkspace({
                   {blueprintCandidateTasks.map((task) => {
                     const taskId = taskHandoffId(task);
                     const isGenerating = generatingTaskId === taskId;
+                    const generationDisabled = isGenerating || diagnosticsGenerateBlocked;
                     const statusCheck = blueprintStatusChecks[taskId];
                     return (
                       <div key={taskId} className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-2">
@@ -1305,7 +1543,8 @@ export function ChiefEngineerWorkspace({
                               variant="ghost"
                               size="sm"
                               onClick={() => { void handleGenerateBlueprint(task); }}
-                              disabled={isGenerating}
+                              disabled={generationDisabled}
+                              title={diagnosticsGenerateBlocked ? diagnosticsGenerateBlockReason : undefined}
                               data-testid={`chief-engineer-blueprint-generate-${taskId}`}
                               className="h-7 px-2 text-[10px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100"
                             >
@@ -1385,6 +1624,11 @@ export function ChiefEngineerWorkspace({
                 tone={workspaceDiagnosticTone}
               />
               <DiagnosticRow
+                label="LLM"
+                value={llmDiagnosticValue}
+                tone={llmDiagnosticTone}
+              />
+              <DiagnosticRow
                 label="Blueprints"
                 value={diagnostics ? `${diagnostics.blueprints.loadable}/${diagnostics.blueprints.total}` : 'checking'}
                 tone={blueprintDiagnosticTone}
@@ -1415,6 +1659,20 @@ export function ChiefEngineerWorkspace({
                 {diagnostics.issues.join(', ')}
               </div>
             ) : null}
+          </section>
+
+          <section
+            data-testid="chief-engineer-runtime-activity"
+            className="h-[340px] min-h-[280px] overflow-hidden rounded-lg border border-cyan-500/20 bg-slate-950/60"
+          >
+            <RealtimeActivityPanel
+              executionLogs={executionLogs}
+              llmStreamEvents={llmStreamEvents}
+              processStreamEvents={processStreamEvents}
+              currentPhase={currentPhase}
+              isRunning={chiefRuntimeActive}
+              role="chief_engineer"
+            />
           </section>
 
           <section data-testid="chief-engineer-director-task-pool" className="rounded-lg border border-white/10 bg-white/[0.035] p-3">

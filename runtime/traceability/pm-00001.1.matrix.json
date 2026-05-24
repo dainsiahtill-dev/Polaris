@@ -1,44 +1,8 @@
 {
-  "matrix_id": "5cbccec7-c449-4db2-99a4-c8bf8aa43112",
+  "matrix_id": "13b34c47-cc96-47cf-9a6f-d97f5d1b6e93",
   "run_id": "pm-00001",
   "iteration": 1,
-  "nodes": [
-    {
-      "node_id": "51d82e5a-6f43-455a-ad89-ee446901a141",
-      "kind": "doc",
-      "role": "pm",
-      "external_id": "pm-00001",
-      "content_hash": "0d651a9a78afec3d218754ae3a4fdfdce16972b639e18d3021ffa32a18ad1c7b",
-      "timestamp_ms": 1779561279105,
-      "metadata": {}
-    },
-    {
-      "node_id": "c78bd893-1070-40b0-a513-b72a2d38bf1a",
-      "kind": "task",
-      "role": "pm",
-      "external_id": "T01-initialize_project_s",
-      "content_hash": "4e350e49328b418e84b9bbdcddd6a03fa8782bf8e8d423d8632c8f6286b46c6b",
-      "timestamp_ms": 1779561279105,
-      "metadata": {}
-    },
-    {
-      "node_id": "bbb80088-4cac-4714-8de2-7bcbbd8c4cc8",
-      "kind": "qa_verdict",
-      "role": "qa",
-      "external_id": "qa-pm-00001-1",
-      "content_hash": "9fc09bd043a60c581d98eb3a616fe89b2c3ef3817de2ce4f69ed3972f441ff9d",
-      "timestamp_ms": 1779561311382,
-      "metadata": {}
-    }
-  ],
-  "links": [
-    {
-      "link_id": "1c06b626-5d00-4dc5-8f4e-3c44558e6cc5",
-      "source": "51d82e5a-6f43-455a-ad89-ee446901a141",
-      "target": "c78bd893-1070-40b0-a513-b72a2d38bf1a",
-      "kind": "derives_from",
-      "timestamp_ms": 1779561279105
-    }
-  ],
-  "created_at_ms": 1779561311398
+  "nodes": [],
+  "links": [],
+  "created_at_ms": 1779587451322
 }

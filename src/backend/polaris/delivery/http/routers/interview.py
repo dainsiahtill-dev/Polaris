@@ -19,6 +19,7 @@ from polaris.delivery.http.schemas import (
     InterviewCancelResponse,
     InterviewSaveResponse,
 )
+from polaris.delivery.http.workspace import active_workspace_value
 
 from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
 from .sse_utils import create_sse_response, sse_event_generator
@@ -27,7 +28,7 @@ from .sse_utils import create_sse_response, sse_event_generator
 # 适配器函数，保持与旧接口的兼容性
 async def run_interactive_interview_question(settings, role, provider_id, model, question, **kwargs):
     """兼容旧接口的面试问答函数"""
-    workspace = settings.workspace
+    workspace = active_workspace_value(settings)
 
     result = await generate_interview_answer(
         workspace=workspace,
@@ -57,7 +58,7 @@ async def run_interactive_interview_question(settings, role, provider_id, model,
 
 def save_interactive_interview_report(settings, role, provider_id, model, report, **kwargs):
     """兼容旧接口的保存报告函数"""
-    workspace = str(getattr(settings, "workspace", "") or getattr(settings, "workspace_path", "") or "").strip()
+    workspace = active_workspace_value(settings)
     return save_interview_report(
         workspace=workspace,
         role=role,
@@ -72,7 +73,7 @@ async def run_interactive_interview_streaming(
     settings, role, provider_id, model, question, output_queue, **kwargs
 ) -> None:
     """兼容旧接口的流式面试函数"""
-    workspace = settings.workspace
+    workspace = active_workspace_value(settings)
     await generate_interview_answer_streaming(
         workspace=workspace,
         settings=settings,

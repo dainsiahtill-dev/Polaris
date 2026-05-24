@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,6 +10,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from polaris.bootstrap.config import Settings
 from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
+from polaris.delivery.http.routers._shared import StructuredHTTPException
 
 
 @pytest.fixture
@@ -71,6 +72,31 @@ async def client(mock_settings: Settings) -> AsyncIterator[AsyncClient]:
             yield ac
 
 
+@pytest.fixture(autouse=True)
+def chief_engineer_llm_ready() -> Iterator[MagicMock]:
+    """Keep CE router tests focused unless a test overrides LLM readiness."""
+
+    payload = {
+        "state": "READY",
+        "required_ready_roles": ["chief_engineer"],
+        "blocked_roles": [],
+        "unsupported_roles": [],
+        "roles": {
+            "chief_engineer": {
+                "ready": True,
+                "runtime_supported": True,
+                "provider_id": "qwen",
+                "model": "Qwen3-Max",
+            }
+        },
+    }
+    with (
+        patch("polaris.delivery.http.v2.chief_engineer.build_llm_status", return_value=payload),
+        patch("polaris.delivery.http.v2.chief_engineer.ensure_required_roles_ready") as ready_gate,
+    ):
+        yield ready_gate
+
+
 @pytest.mark.asyncio
 async def test_get_chief_engineer_diagnostics_reports_blueprint_store_health(client: AsyncClient) -> None:
     """Chief Engineer diagnostics should summarize blueprint store readiness without writes."""
@@ -99,6 +125,11 @@ async def test_get_chief_engineer_diagnostics_reports_blueprint_store_health(cli
     data = response.json()
     assert data["role"] == "chief_engineer"
     assert data["ok"] is False
+    assert data["can_generate"] is True
+    assert data["generate_blockers"] == []
+    assert data["llm"]["ok"] is True
+    assert data["llm"]["provider_id"] == "qwen"
+    assert data["llm"]["model"] == "Qwen3-Max"
     assert data["workspace"]["ok"] is True
     assert data["blueprints"]["status"] == "degraded"
     assert data["blueprints"]["total"] == 2
@@ -107,6 +138,49 @@ async def test_get_chief_engineer_diagnostics_reports_blueprint_store_health(cli
     assert data["blueprints"]["director_handoff_ready"] is True
     assert data["blueprints"]["latest_updated_at"] == "2026-05-23T08:00:00Z"
     assert data["issues"] == ["blueprint_payload_invalid"]
+    assert data["can_handoff"] is False
+    assert data["handoff_blockers"] == ["blueprint_payload_invalid"]
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_blocks_generation_when_llm_not_ready(
+    client: AsyncClient,
+) -> None:
+    """Chief Engineer diagnostics should expose role-specific LLM generation blockers."""
+
+    llm_payload = {
+        "state": "BLOCKED",
+        "required_ready_roles": ["pm", "director"],
+        "blocked_roles": [],
+        "unsupported_roles": [],
+        "roles": {
+            "chief_engineer": {
+                "ready": False,
+                "runtime_supported": True,
+                "provider_id": "qwen",
+                "model": "Qwen3-Max",
+            }
+        },
+    }
+    persistence = MagicMock()
+    persistence.list_all.return_value = ["bp-ready"]
+    persistence.load.return_value = {"blueprint_id": "bp-ready", "task_id": "PM-1"}
+
+    with (
+        patch("polaris.delivery.http.v2.chief_engineer.build_llm_status", return_value=llm_payload),
+        patch("polaris.delivery.http.v2.chief_engineer.BlueprintPersistence", return_value=persistence),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is False
+    assert data["can_generate"] is False
+    assert data["generate_blockers"] == ["llm_not_ready"]
+    assert data["llm"]["ok"] is False
+    assert data["llm"]["state"] == "blocked"
+    assert data["llm"]["blocked_roles"] == ["chief_engineer"]
+    assert "llm_not_ready" in data["issues"]
 
 
 @pytest.mark.asyncio
@@ -124,6 +198,42 @@ async def test_get_chief_engineer_diagnostics_reports_store_error(client: AsyncC
     assert data["blueprints"]["status"] == "error"
     assert data["blueprints"]["error"] == "RuntimeError: store offline"
     assert data["issues"] == ["blueprint_store_unreadable"]
+    assert data["can_handoff"] is False
+    assert data["handoff_blockers"] == ["blueprint_store_unreadable"]
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_reports_no_handoff_when_blueprints_empty(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Empty blueprint evidence should not be reported as a ready CE handoff state."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    persistence = MagicMock()
+    persistence.list_all.return_value = []
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.resolve_logical_path",
+            return_value=str(tmp_path / "runtime" / "tasks" / "plan.json"),
+        ),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is False
+    assert data["can_handoff"] is False
+    assert data["blueprints"]["status"] == "empty"
+    assert data["blueprints"]["director_handoff_ready"] is False
+    assert data["issues"] == ["blueprint_handoff_not_ready"]
+    assert data["handoff_blockers"] == ["blueprint_handoff_not_ready"]
 
 
 @pytest.mark.asyncio
@@ -169,6 +279,8 @@ async def test_get_chief_engineer_diagnostics_reports_complete_plan_coverage(
     assert data["blueprints"]["missing_task_ids"] == []
     assert data["blueprints"]["director_handoff_ready"] is True
     assert data["issues"] == []
+    assert data["can_handoff"] is True
+    assert data["handoff_blockers"] == []
 
 
 @pytest.mark.asyncio
@@ -214,6 +326,8 @@ async def test_get_chief_engineer_diagnostics_blocks_partial_plan_coverage(
     assert data["blueprints"]["missing_task_ids"] == ["PM-missing"]
     assert data["blueprints"]["director_handoff_ready"] is False
     assert data["issues"] == ["blueprint_coverage_incomplete"]
+    assert data["can_handoff"] is False
+    assert data["handoff_blockers"] == ["blueprint_coverage_incomplete"]
 
 
 @pytest.mark.asyncio
@@ -457,6 +571,37 @@ async def test_generate_chief_engineer_blueprint_uses_public_command_contract(cl
 
 
 @pytest.mark.asyncio
+async def test_generate_chief_engineer_blueprint_blocks_when_llm_not_ready(client: AsyncClient) -> None:
+    """Blueprint generation should fail closed when CE LLM readiness is blocked."""
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.ensure_required_roles_ready",
+            side_effect=StructuredHTTPException(
+                status_code=409,
+                code="RUNTIME_ROLES_NOT_READY",
+                message="One or more required runtime roles are not ready",
+                details={"required_roles": ["chief_engineer"], "missing_roles": ["chief_engineer"]},
+            ),
+        ),
+        patch("polaris.delivery.http.v2.chief_engineer.generate_task_blueprint") as generate,
+    ):
+        response = await client.post(
+            "/v2/chief-engineer/blueprints",
+            json={
+                "task_id": "PM-42",
+                "objective": "Build Director task board",
+            },
+        )
+
+    assert response.status_code == 409
+    data = response.json()
+    assert data["error"]["code"] == "RUNTIME_ROLES_NOT_READY"
+    assert data["error"]["details"]["missing_roles"] == ["chief_engineer"]
+    generate.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_generate_chief_engineer_blueprint_prefers_active_workspace_path(
     client: AsyncClient,
     mock_settings: Settings,
@@ -566,6 +711,57 @@ async def test_get_chief_engineer_blueprint_missing_is_read_only(
     blueprint_dir = tmp_path / "runtime" / "blueprints"
 
     response = await client.get("/v2/chief-engineer/blueprints/missing-blueprint")
+
+    assert response.status_code == 404
+    assert not blueprint_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_chief_engineer_blueprint_removes_persisted_record(client: AsyncClient) -> None:
+    """Blueprint delete should remove one persisted blueprint through the owned store."""
+    persistence = MagicMock()
+    persistence.delete.return_value = True
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+        return_value=persistence,
+    ) as persistence_cls:
+        response = await client.delete("/v2/chief-engineer/blueprints/bp-001")
+
+    assert response.status_code == 200
+    persistence_cls.assert_called_once_with(".", ensure_directory=False)
+    persistence.delete.assert_called_once_with("bp-001")
+    data = response.json()
+    assert data == {
+        "ok": True,
+        "blueprint_id": "bp-001",
+        "deleted": True,
+        "source": "runtime/blueprints",
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_chief_engineer_blueprint_rejects_invalid_id(client: AsyncClient) -> None:
+    """Blueprint delete must reject unsafe ids before touching persistence."""
+    with patch("polaris.delivery.http.v2.chief_engineer.BlueprintPersistence") as persistence_cls:
+        response = await client.delete("/v2/chief-engineer/blueprints/bad$id")
+
+    assert response.status_code == 400
+    persistence_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_chief_engineer_blueprint_missing_is_read_only(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Missing blueprint deletion should not initialize the blueprint store."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    blueprint_dir = tmp_path / "runtime" / "blueprints"
+
+    response = await client.delete("/v2/chief-engineer/blueprints/missing-blueprint")
 
     assert response.status_code == 404
     assert not blueprint_dir.exists()

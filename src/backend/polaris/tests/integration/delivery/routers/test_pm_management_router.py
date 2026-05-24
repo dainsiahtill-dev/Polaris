@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -350,6 +352,26 @@ class TestPMManagementRouter:
         assert payload["items"] == []
         assert payload["total"] == 0
         assert payload["initialized"] is False
+        assert payload["reason"] == "PM_NOT_INITIALIZED"
+
+    async def test_v2_list_tasks_recovers_from_poisoned_pm_module_cache(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A stale pm_integration module cache must not turn the PM desktop task list into a 500."""
+        module_name = "polaris.delivery.cli.pm.pm_integration"
+        monkeypatch.setitem(sys.modules, module_name, ModuleType(module_name))
+
+        app = _build_app()
+        app.state.app_state.settings.workspace_path = str(tmp_path)
+        app.state.app_state.settings.workspace = str(tmp_path)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/v2/pm/tasks")
+
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert payload["ok"] is True
+        assert payload["tasks"] == []
         assert payload["reason"] == "PM_NOT_INITIALIZED"
 
     async def test_v2_pm_desktop_list_projections_return_idle_empty_state(self, tmp_path: Path) -> None:

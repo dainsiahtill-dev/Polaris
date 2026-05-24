@@ -59,6 +59,15 @@ def _isolate_reports_port():
     set_reports_port(_MockReportsPort())
 
 
+@pytest.fixture(autouse=True)
+def _isolate_kernelone_home(tmp_path, monkeypatch):
+    """Keep global LLM index reads inside the test temp directory."""
+    kernelone_root = tmp_path / "kernelone-root"
+    kernelone_home = kernelone_root / ".polaris"
+    monkeypatch.setenv("KERNELONE_ROOT", str(kernelone_root))
+    monkeypatch.setenv("KERNELONE_HOME", str(kernelone_home))
+
+
 @pytest.fixture
 def temp_workspace(tmp_path) -> str:
     """Create a temporary workspace with required directories."""
@@ -196,7 +205,7 @@ class TestConcurrency:
                     }
                     update_index_with_report(temp_workspace, report)
                     time.sleep(0.001)  # Small delay to encourage interleaving
-            except Exception as exc:  # pragma: no cover
+            except (RuntimeError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:  # pragma: no cover
                 # Intentionally catch all exceptions to detect thread safety issues.
                 # SystemExit/KeyboardInterrupt should not occur in worker threads.
                 errors.append(exc)
@@ -204,7 +213,7 @@ class TestConcurrency:
         # Run concurrent updates
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [executor.submit(update_worker, i) for i in range(num_threads)]
-            for future in as_completed(futures):
+            for _future in as_completed(futures):
                 pass  # Wait for completion
 
         assert not errors, f"Update errors occurred: {errors}"
@@ -256,7 +265,7 @@ class TestConcurrency:
                 for _ in range(3):  # Each thread reconciles 3 times
                     reconcile_llm_test_index(temp_workspace)
                     time.sleep(0.005)
-            except Exception as exc:
+            except (RuntimeError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
                 # Intentionally catch all exceptions to detect thread safety issues.
                 # Filter transient Windows file access errors which are expected on Windows.
                 if "Access is denied" in str(exc) or "PermissionError" in type(exc).__name__:
@@ -265,7 +274,7 @@ class TestConcurrency:
 
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [executor.submit(reconcile_worker) for _ in range(num_threads)]
-            for future in as_completed(futures):
+            for _future in as_completed(futures):
                 pass
 
         assert not errors, f"Reconcile errors: {errors}"
@@ -317,7 +326,7 @@ class TestConcurrency:
                     }
                     update_index_with_report(temp_workspace, report)
                     time.sleep(0.002)
-            except Exception as exc:  # pragma: no cover
+            except (RuntimeError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:  # pragma: no cover
                 # Intentionally catch all exceptions to detect thread safety issues.
                 errors.append(exc)
 
@@ -330,7 +339,7 @@ class TestConcurrency:
                     with read_lock:
                         read_count[0] += 1
                     time.sleep(0.001)
-            except Exception as exc:  # pragma: no cover
+            except (RuntimeError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:  # pragma: no cover
                 # Intentionally catch all exceptions to detect thread safety issues.
                 errors.append(exc)
 
@@ -340,7 +349,7 @@ class TestConcurrency:
                 futures.append(executor.submit(writer_worker, i))
             for _ in range(num_readers):
                 futures.append(executor.submit(reader_worker))
-            for future in as_completed(futures):
+            for _future in as_completed(futures):
                 pass
 
         assert not errors, f"Errors during mixed read/write: {errors}"
@@ -572,7 +581,7 @@ class TestStress:
                         )
                     else:
                         load_llm_test_index(temp_workspace)
-            except Exception as exc:
+            except (RuntimeError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
                 # Intentionally catch all exceptions to detect thread safety issues.
                 # Filter transient Windows file access errors which are expected on Windows.
                 if "Access is denied" in str(exc) or "PermissionError" in type(exc).__name__:
@@ -581,7 +590,7 @@ class TestStress:
 
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [executor.submit(worker, i) for i in range(num_threads)]
-            for future in as_completed(futures):
+            for _future in as_completed(futures):
                 pass
 
         # Allow transient permission errors on Windows

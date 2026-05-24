@@ -101,6 +101,7 @@ export interface RoleSessionMessagesResponse {
   ok?: boolean;
   messages?: RoleSessionMessageItem[];
   session?: RoleSessionDetailItem | null;
+  total?: number;
   error?: string;
   detail?: string;
   message?: string;
@@ -109,6 +110,7 @@ export interface RoleSessionMessagesResponse {
 export interface RoleSessionArtifactsResponse {
   ok?: boolean;
   artifacts?: RoleSessionArtifactItem[];
+  total?: number;
   error?: string;
   detail?: string;
   message?: string;
@@ -117,9 +119,16 @@ export interface RoleSessionArtifactsResponse {
 export interface RoleSessionAuditResponse {
   ok?: boolean;
   audit_events?: RoleSessionAuditEventItem[];
+  total?: number;
   error?: string;
   detail?: string;
   message?: string;
+}
+
+export interface RoleSessionEvidenceList<T> {
+  items: T[];
+  total: number;
+  session?: RoleSessionDetailItem | null;
 }
 
 export interface RoleSessionMemorySearchResponse {
@@ -171,6 +180,7 @@ export interface RoleSessionWorkflowExportResponse {
   run_id?: string;
   session_id?: string;
   artifact_count?: number;
+  message_count?: number;
   error?: string;
   detail?: string;
   message?: string;
@@ -266,6 +276,14 @@ function normalizeMemoryItems(items: unknown): RoleSessionMemoryItem[] {
   return items
     .map((item) => item && typeof item === 'object' ? item as RoleSessionMemoryItem : null)
     .filter((item): item is RoleSessionMemoryItem => Boolean(item));
+}
+
+function normalizeTotal(value: unknown, fallback: number): number {
+  if (typeof value === 'boolean') {
+    return fallback;
+  }
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : fallback;
 }
 
 export function resolveRoleCapabilities(
@@ -394,6 +412,17 @@ export async function listRoleSessionMessages(
   sessionId: string,
   params: { limit?: number; offset?: number } = {},
 ): Promise<ApiResult<RoleSessionMessageItem[]>> {
+  const result = await listRoleSessionMessageEvidence(sessionId, params);
+  if (!result.ok || !result.data) {
+    return fail(result.error || 'Failed to list RoleSession messages');
+  }
+  return { ok: true, data: result.data.items };
+}
+
+export async function listRoleSessionMessageEvidence(
+  sessionId: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<ApiResult<RoleSessionEvidenceList<RoleSessionMessageItem>>> {
   const query = new URLSearchParams({
     limit: String(params.limit ?? 100),
     offset: String(params.offset ?? 0),
@@ -408,13 +437,33 @@ export async function listRoleSessionMessages(
   if (result.data.ok === false || !Array.isArray(result.data.messages)) {
     return fail(responseError(result.data, 'RoleSession messages response missing messages'));
   }
-  return { ok: true, data: result.data.messages };
+  const items = result.data.messages;
+  const total = normalizeTotal(result.data.total ?? result.data.session?.message_count, items.length);
+  return {
+    ok: true,
+    data: {
+      items,
+      total,
+      session: result.data.session ?? null,
+    },
+  };
 }
 
 export async function listRoleSessionArtifacts(
   sessionId: string,
   artifactType?: string,
 ): Promise<ApiResult<RoleSessionArtifactItem[]>> {
+  const result = await listRoleSessionArtifactEvidence(sessionId, artifactType);
+  if (!result.ok || !result.data) {
+    return fail(result.error || 'Failed to list RoleSession artifacts');
+  }
+  return { ok: true, data: result.data.items };
+}
+
+export async function listRoleSessionArtifactEvidence(
+  sessionId: string,
+  artifactType?: string,
+): Promise<ApiResult<RoleSessionEvidenceList<RoleSessionArtifactItem>>> {
   const query = artifactType ? `?artifact_type=${encodeURIComponent(artifactType)}` : '';
   const result = await apiGet<RoleSessionArtifactsResponse>(
     `/v2/roles/sessions/${encodeURIComponent(sessionId)}/artifacts${query}`,
@@ -426,13 +475,31 @@ export async function listRoleSessionArtifacts(
   if (result.data.ok === false || !Array.isArray(result.data.artifacts)) {
     return fail(responseError(result.data, 'RoleSession artifacts response missing artifacts'));
   }
-  return { ok: true, data: normalizeArtifacts(result.data.artifacts) };
+  const items = normalizeArtifacts(result.data.artifacts);
+  return {
+    ok: true,
+    data: {
+      items,
+      total: normalizeTotal(result.data.total, items.length),
+    },
+  };
 }
 
 export async function listRoleSessionAuditEvents(
   sessionId: string,
   params: { eventType?: string; limit?: number; offset?: number } = {},
 ): Promise<ApiResult<RoleSessionAuditEventItem[]>> {
+  const result = await listRoleSessionAuditEvidence(sessionId, params);
+  if (!result.ok || !result.data) {
+    return fail(result.error || 'Failed to list RoleSession audit events');
+  }
+  return { ok: true, data: result.data.items };
+}
+
+export async function listRoleSessionAuditEvidence(
+  sessionId: string,
+  params: { eventType?: string; limit?: number; offset?: number } = {},
+): Promise<ApiResult<RoleSessionEvidenceList<RoleSessionAuditEventItem>>> {
   const query = new URLSearchParams({
     limit: String(params.limit ?? 20),
     offset: String(params.offset ?? 0),
@@ -450,7 +517,14 @@ export async function listRoleSessionAuditEvents(
   if (result.data.ok === false || !Array.isArray(result.data.audit_events)) {
     return fail(responseError(result.data, 'RoleSession audit response missing events'));
   }
-  return { ok: true, data: normalizeAuditEvents(result.data.audit_events) };
+  const items = normalizeAuditEvents(result.data.audit_events);
+  return {
+    ok: true,
+    data: {
+      items,
+      total: normalizeTotal(result.data.total, items.length),
+    },
+  };
 }
 
 export async function searchRoleSessionMemory(

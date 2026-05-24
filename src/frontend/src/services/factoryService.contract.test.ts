@@ -42,7 +42,7 @@ class MockEventSource {
 
 vi.stubGlobal('EventSource', MockEventSource as unknown as typeof EventSource);
 
-import { connectFactoryStream } from './factoryService';
+import { connectFactoryStream, pauseFactoryRun, resumeFactoryRun, retryFactoryRunFromCheckpoint } from './factoryService';
 
 describe('factoryService contract', () => {
   beforeEach(() => {
@@ -102,5 +102,32 @@ describe('factoryService contract', () => {
     expect(onStatus).toHaveBeenCalledWith(expect.objectContaining({ run_id: 'run-2', status: 'running' }));
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'stage_started', stage: 'pm_planning' }));
     expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ run_id: 'run-2', status: 'completed' }));
+  });
+
+  it('posts canonical Factory lifecycle control actions', async () => {
+    apiPostMock.mockResolvedValue({ ok: true, data: { run_id: 'run-3', status: 'paused' } });
+
+    await pauseFactoryRun('run-3', 'operator pause');
+    await resumeFactoryRun('run-3', 'operator resume');
+    await retryFactoryRunFromCheckpoint('run-3', 'operator retry');
+
+    expect(apiPostMock).toHaveBeenNthCalledWith(
+      1,
+      '/v2/factory/runs/run-3/control',
+      { action: 'pause', reason: 'operator pause' },
+      '控制Factory失败'
+    );
+    expect(apiPostMock).toHaveBeenNthCalledWith(
+      2,
+      '/v2/factory/runs/run-3/control',
+      { action: 'resume', reason: 'operator resume' },
+      '控制Factory失败'
+    );
+    expect(apiPostMock).toHaveBeenNthCalledWith(
+      3,
+      '/v2/factory/runs/run-3/control',
+      { action: 'retry_from_checkpoint', reason: 'operator retry' },
+      '控制Factory失败'
+    );
   });
 });

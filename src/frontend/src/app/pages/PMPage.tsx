@@ -30,6 +30,8 @@ export interface PMPageProps {
   runtimeIssue?: Parameters<typeof PMWorkspace>[0]['runtimeIssue'];
   /** 是否正在启动 */
   isStarting: boolean;
+  /** 是否正在停止 */
+  isStopping?: boolean;
   /** PM 切换回调 */
   onTogglePm: () => void | boolean | Promise<void | boolean>;
   /** 单次运行回调 */
@@ -82,6 +84,7 @@ export function PMPage({
   pmStartBlockedReason = '',
   runtimeIssue = null,
   isStarting,
+  isStopping = false,
   onTogglePm,
   onRunPmOnce,
   onBackToMain,
@@ -109,6 +112,7 @@ export function PMPage({
         pmStartBlockedReason={pmStartBlockedReason}
         runtimeIssue={runtimeIssue}
         isStarting={isStarting}
+        isStopping={isStopping}
         onBackToMain={onBackToMain}
         onTogglePm={onTogglePm}
         onRunPmOnce={onRunPmOnce}

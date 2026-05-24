@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -88,13 +91,14 @@ class TestPydanticValidation:
 
     def test_invalid_timeout_raises(self) -> None:
         """Invalid timeout (out of range) raises validation error."""
+        from polaris.kernelone.constants import MAX_LLM_PROVIDER_TIMEOUT_SECONDS
         from polaris.kernelone.llm.config_store import ProviderConfig
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
             ProviderConfig(
                 type="ollama",
-                timeout=500.0,  # Exceeds max of 300
+                timeout=MAX_LLM_PROVIDER_TIMEOUT_SECONDS + 1.0,
             )
 
     def test_invalid_temperature_raises(self) -> None:
@@ -364,6 +368,60 @@ class TestCodexSecurityDefaults:
 
 class TestSaveWithSecurityFeatures:
     """Integration tests for save_llm_config with security features."""
+
+    def test_concurrent_load_and_save_are_serialized_before_file_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Concurrent LLM status/config requests share one process lock per config path."""
+        from polaris.kernelone.llm import config_store
+
+        config_path = str(tmp_path / "llm_config.json")
+        active_locks: set[str] = set()
+        collisions: list[str] = []
+        guard = threading.Lock()
+
+        class FakeFileLock:
+            def __init__(self, lock_path: str, timeout_sec: float = 5.0, poll_sec: float = 0.1) -> None:
+                del timeout_sec, poll_sec
+                self.lock_path = lock_path
+                self.acquired = False
+
+            def __enter__(self) -> bool:
+                with guard:
+                    if self.lock_path in active_locks:
+                        collisions.append(self.lock_path)
+                        return False
+                    active_locks.add(self.lock_path)
+                    self.acquired = True
+                time.sleep(0.05)
+                return True
+
+            def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+                del exc_type, exc, traceback
+                if self.acquired:
+                    with guard:
+                        active_locks.discard(self.lock_path)
+                return False
+
+        def mock_config_path(workspace: str, cache_root: str) -> str:
+            del workspace, cache_root
+            return config_path
+
+        monkeypatch.setattr(config_store, "llm_config_path", mock_config_path)
+        monkeypatch.setattr(config_store, "file_lock", FakeFileLock)
+
+        payload = config_store.build_default_config()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(config_store.load_llm_config, ".", "."),
+                executor.submit(config_store.save_llm_config, ".", ".", payload),
+            ]
+            results = [future.result(timeout=3.0) for future in futures]
+
+        assert collisions == []
+        assert len(results) == 2
+        assert Path(config_path).is_file()
 
     def test_save_creates_backup(self, tmp_path: Path) -> None:
         """Save creates backup before writing."""
@@ -646,6 +704,7 @@ class TestMigrationIntegration:
         assert result["schema_version"] == 2
         assert "providers" in result
         assert "default" in result["providers"]
+        assert result["roles"]["chief_engineer"]["provider_id"] == "default"
 
 
 if __name__ == "__main__":

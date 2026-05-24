@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChiefEngineerPage } from './ChiefEngineerPage';
 
 const chiefEngineerWorkspaceProps = vi.hoisted(() => vi.fn());
@@ -9,6 +9,12 @@ vi.mock('@/app/components/chief-engineer', () => ({
   ChiefEngineerWorkspace: (props: {
     onOpenSettings?: () => void;
     onEnterDirectorWorkspace: () => void;
+    directorStartBlockedReason?: string;
+    isStoppingDirector?: boolean;
+    executionLogs?: unknown[];
+    llmStreamEvents?: unknown[];
+    processStreamEvents?: unknown[];
+    currentPhase?: string;
   }) => {
     chiefEngineerWorkspaceProps(props);
     return (
@@ -64,6 +70,11 @@ function renderPage(overrides: Partial<Parameters<typeof ChiefEngineerPage>[0]> 
 }
 
 describe('ChiefEngineerPage', () => {
+  beforeEach(() => {
+    chiefEngineerWorkspaceProps.mockClear();
+    runtimeOverlayProps.mockClear();
+  });
+
   it('forwards settings and Director navigation callbacks to ChiefEngineerWorkspace', () => {
     const onOpenSettings = vi.fn();
     const onEnterDirectorWorkspace = vi.fn();
@@ -89,6 +100,138 @@ describe('ChiefEngineerPage', () => {
       activeView: 'chief_engineer',
       pmRunning: true,
       directorRunning: true,
+    }));
+  });
+
+  it('forwards runtime stream evidence into the Chief Engineer workspace', () => {
+    const executionLogs = [{ id: 'exec-1', timestamp: '2026-05-23T00:00:00Z', level: 'info', message: 'exec' }];
+    const llmStreamEvents = [{ id: 'llm-1', timestamp: '2026-05-23T00:00:01Z', level: 'thinking', message: 'think' }];
+    const processStreamEvents = [{ id: 'proc-1', timestamp: '2026-05-23T00:00:02Z', level: 'exec', message: 'tool' }];
+
+    renderPage({
+      executionLogs,
+      llmStreamEvents,
+      processStreamEvents,
+      currentPhase: 'llm_calling',
+    });
+
+    expect(chiefEngineerWorkspaceProps).toHaveBeenCalledWith(expect.objectContaining({
+      executionLogs,
+      llmStreamEvents,
+      processStreamEvents,
+      currentPhase: 'llm_calling',
+    }));
+  });
+
+  it('forwards the Director stopping transition into the Chief Engineer workspace', () => {
+    renderPage({
+      directorRunning: true,
+      isStoppingDirector: true,
+    });
+
+    expect(chiefEngineerWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      directorRunning: true,
+      isStartingDirector: false,
+      isStoppingDirector: true,
+    }));
+  });
+
+  it('passes AGENTS review blockers into the Chief Engineer Director gate', () => {
+    const { rerender } = render(
+      <ChiefEngineerPage
+        workspace="C:/Temp/Product"
+        engineStatus={null}
+        tasks={[]}
+        workers={[]}
+        pmState={null}
+        directorRunning={false}
+        isStartingDirector={false}
+        agentsRequired
+        agentsDraftReady={false}
+        agentsDraftFailed={false}
+        onBackToMain={vi.fn()}
+        onEnterDirectorWorkspace={vi.fn()}
+        onToggleDirector={vi.fn()}
+        websocketLive={true}
+        websocketReconnecting={false}
+        websocketAttemptCount={0}
+        llmRuntimeState={{
+          state: 'READY',
+          blockedRoles: [],
+          requiredRoles: ['chief_engineer', 'director'],
+          lastUpdated: '2026-05-23T00:00:00Z',
+        }}
+        notifyError={vi.fn()}
+      />,
+    );
+
+    expect(chiefEngineerWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      directorStartBlockedReason: 'AGENTS.md 审核未完成，等待草稿生成或人工确认后才能启动 Director。',
+    }));
+
+    rerender(
+      <ChiefEngineerPage
+        workspace="C:/Temp/Product"
+        engineStatus={null}
+        tasks={[]}
+        workers={[]}
+        pmState={null}
+        directorRunning={false}
+        isStartingDirector={false}
+        agentsRequired
+        agentsDraftReady={false}
+        agentsDraftFailed
+        onBackToMain={vi.fn()}
+        onEnterDirectorWorkspace={vi.fn()}
+        onToggleDirector={vi.fn()}
+        websocketLive={true}
+        websocketReconnecting={false}
+        websocketAttemptCount={0}
+        llmRuntimeState={{
+          state: 'READY',
+          blockedRoles: [],
+          requiredRoles: ['chief_engineer', 'director'],
+          lastUpdated: '2026-05-23T00:00:00Z',
+        }}
+        notifyError={vi.fn()}
+      />,
+    );
+
+    expect(chiefEngineerWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      directorStartBlockedReason: 'AGENTS 草稿生成失败，请返回主界面重新生成或人工处理后再启动 Director。',
+    }));
+  });
+
+  it('passes Director LLM readiness blocks into the Chief Engineer workspace', () => {
+    renderPage({
+      llmRuntimeState: {
+        state: 'BLOCKED',
+        blockedRoles: ['director'],
+        requiredRoles: ['chief_engineer', 'director'],
+        lastUpdated: '2026-05-23T00:00:00Z',
+      },
+    });
+
+    expect(chiefEngineerWorkspaceProps).toHaveBeenCalledWith(expect.objectContaining({
+      directorStartBlockedReason: 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
+    }));
+  });
+
+  it('prefers the app-level Director start blocker over local role checks', () => {
+    renderPage({
+      directorStartBlockedReason: 'LanceDB unavailable: lock timeout',
+      agentsRequired: true,
+      agentsDraftReady: false,
+      llmRuntimeState: {
+        state: 'BLOCKED',
+        blockedRoles: ['director'],
+        requiredRoles: ['chief_engineer', 'director'],
+        lastUpdated: '2026-05-23T00:00:00Z',
+      },
+    });
+
+    expect(chiefEngineerWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      directorStartBlockedReason: 'LanceDB unavailable: lock timeout',
     }));
   });
 });

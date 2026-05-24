@@ -30,6 +30,14 @@ export interface ChiefEngineerPageProps {
   directorRunning: boolean;
   /** Director 是否正在启动 */
   isStartingDirector: boolean;
+  /** Director 是否正在停止 */
+  isStoppingDirector?: boolean;
+  /** 是否需要 AGENTS.md 审核 */
+  agentsRequired?: boolean;
+  /** AGENTS.md 草稿是否就绪 */
+  agentsDraftReady?: boolean;
+  /** AGENTS.md 草稿是否生成失败 */
+  agentsDraftFailed?: boolean;
   /** 返回主界面回调 */
   onBackToMain: () => void;
   /** 进入 Director 工作区回调 */
@@ -38,6 +46,8 @@ export interface ChiefEngineerPageProps {
   onOpenSettings?: () => void;
   /** Director 切换回调 */
   onToggleDirector: () => void | boolean | Promise<void | boolean>;
+  /** 外部统一计算的 Director 启动阻断原因 */
+  directorStartBlockedReason?: string;
   /** WebSocket 连接状态 */
   websocketLive: boolean;
   /** WebSocket 重连状态 */
@@ -67,6 +77,40 @@ export interface ChiefEngineerPageProps {
   notifyError: (message: string) => void;
 }
 
+function resolveChiefEngineerDirectorStartBlockedReason({
+  directorRunning,
+  agentsRequired,
+  agentsDraftReady,
+  agentsDraftFailed,
+  llmRuntimeState,
+}: {
+  directorRunning: boolean;
+  agentsRequired: boolean;
+  agentsDraftReady: boolean;
+  agentsDraftFailed: boolean;
+  llmRuntimeState: ChiefEngineerPageProps['llmRuntimeState'];
+}): string {
+  if (directorRunning) {
+    return '';
+  }
+  if (agentsRequired) {
+    if (agentsDraftFailed) {
+      return 'AGENTS 草稿生成失败，请返回主界面重新生成或人工处理后再启动 Director。';
+    }
+    return agentsDraftReady
+      ? '需要先确认 AGENTS.md 后才能启动 Director。'
+      : 'AGENTS.md 审核未完成，等待草稿生成或人工确认后才能启动 Director。';
+  }
+  if (
+    llmRuntimeState.state === 'BLOCKED'
+    && llmRuntimeState.requiredRoles.includes('director')
+    && llmRuntimeState.blockedRoles.includes('director')
+  ) {
+    return 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。';
+  }
+  return '';
+}
+
 /**
  * Chief Engineer 工作区页面
  */
@@ -79,10 +123,15 @@ export function ChiefEngineerPage({
   pmRunning = false,
   directorRunning,
   isStartingDirector,
+  isStoppingDirector = false,
+  agentsRequired = false,
+  agentsDraftReady = false,
+  agentsDraftFailed = false,
   onBackToMain,
   onEnterDirectorWorkspace,
   onOpenSettings,
   onToggleDirector,
+  directorStartBlockedReason: externalDirectorStartBlockedReason = '',
   websocketLive,
   websocketReconnecting,
   websocketAttemptCount,
@@ -95,6 +144,17 @@ export function ChiefEngineerPage({
   fileEditEvents,
   notifyError,
 }: ChiefEngineerPageProps) {
+  const localDirectorStartBlockedReason = resolveChiefEngineerDirectorStartBlockedReason({
+    directorRunning,
+    agentsRequired,
+    agentsDraftReady,
+    agentsDraftFailed,
+    llmRuntimeState,
+  });
+  const directorStartBlockedReason = !directorRunning && externalDirectorStartBlockedReason.trim()
+    ? externalDirectorStartBlockedReason.trim()
+    : localDirectorStartBlockedReason;
+
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
       <ChiefEngineerWorkspace
@@ -105,10 +165,16 @@ export function ChiefEngineerPage({
         pmState={pmState}
         directorRunning={directorRunning}
         isStartingDirector={isStartingDirector}
+        isStoppingDirector={isStoppingDirector}
+        directorStartBlockedReason={directorStartBlockedReason}
         onBackToMain={onBackToMain}
         onEnterDirectorWorkspace={onEnterDirectorWorkspace}
         onOpenSettings={onOpenSettings}
         onToggleDirector={onToggleDirector}
+        executionLogs={executionLogs}
+        llmStreamEvents={llmStreamEvents}
+        processStreamEvents={processStreamEvents}
+        currentPhase={currentPhase}
       />
       <LlmRuntimeOverlay
         activeView="chief_engineer"

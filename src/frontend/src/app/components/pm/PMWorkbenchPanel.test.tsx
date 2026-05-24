@@ -5,13 +5,22 @@ import { PMWorkbenchPanel } from './PMWorkbenchPanel';
 const roleSessionMocks = vi.hoisted(() => ({
   createRoleSession: vi.fn(),
   exportRoleSessionToWorkflow: vi.fn(),
+  listRoleSessionArtifactEvidence: vi.fn(),
+  listRoleSessionAuditEvidence: vi.fn(),
+  listRoleSessionMessageEvidence: vi.fn(),
   listRoleSessions: vi.fn(),
 }));
 
 const pmServiceMocks = vi.hoisted(() => ({
   cancelPmRun: vi.fn(),
+  getDirectorDiagnostics: vi.fn(),
   getPmRun: vi.fn(),
   runPm: vi.fn(),
+}));
+
+const factoryServiceMocks = vi.hoisted(() => ({
+  getFactoryRun: vi.fn(),
+  stopFactoryRun: vi.fn(),
 }));
 
 const toastMocks = vi.hoisted(() => ({
@@ -21,6 +30,7 @@ const toastMocks = vi.hoisted(() => ({
 
 vi.mock('@/services/roleSessionService', () => roleSessionMocks);
 vi.mock('@/services/pmService', () => pmServiceMocks);
+vi.mock('@/services/factoryService', () => factoryServiceMocks);
 
 vi.mock('sonner', () => ({
   toast: toastMocks,
@@ -47,6 +57,27 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
       ok: true,
       data: { ok: true, run_id: 'pm-run-1', artifact_count: 2 },
     });
+    roleSessionMocks.listRoleSessionMessageEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'pm-message-1', role: 'assistant', content: 'PM contract evidence ready' }],
+        total: 6,
+      },
+    });
+    roleSessionMocks.listRoleSessionArtifactEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'pm-artifact-1', type: 'directive' }],
+        total: 1,
+      },
+    });
+    roleSessionMocks.listRoleSessionAuditEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'pm-audit-1', event_type: 'workflow_exported', timestamp: '2026-05-23T00:00:00Z' }],
+        total: 3,
+      },
+    });
     pmServiceMocks.getPmRun.mockResolvedValue({
       ok: true,
       data: {
@@ -55,6 +86,60 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
         workspace: 'C:/Temp/Product',
         stage: 'architect',
         message: 'Status: RUNNING',
+      },
+    });
+    pmServiceMocks.getDirectorDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        can_execute: false,
+        role: 'director',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: 'C:/Temp/Product',
+        status: {
+          ok: true,
+          state: 'IDLE',
+          running: false,
+          source: 'workflow',
+          projection_source: 'director_merged',
+        },
+        tasks: {
+          ok: false,
+          source: 'empty',
+          total: 0,
+          pending: 0,
+          claimed: 0,
+          running: 0,
+          blocked: 0,
+          failed: 0,
+          completed: 0,
+          cancelled: 0,
+          ready_to_execute: 0,
+          ready_task_ids: [],
+          blocked_task_ids: [],
+          running_task_ids: [],
+        },
+        workers: {
+          ok: true,
+          total: 1,
+          idle: 1,
+          busy: 0,
+          healthy: 1,
+          unhealthy: 0,
+          active_task_ids: [],
+        },
+        llm: {
+          ok: true,
+          state: 'ready',
+          role: 'director',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['director'],
+          provider_id: 'qwen',
+          model: 'qwen3-max',
+        },
+        issues: ['director_no_tasks'],
+        execution_blockers: ['director_no_tasks'],
       },
     });
     pmServiceMocks.runPm.mockResolvedValue({
@@ -75,6 +160,30 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
         workspace: 'C:/Temp/Product',
         stage: 'architect',
         message: 'Status: CANCELLED',
+      },
+    });
+    factoryServiceMocks.getFactoryRun.mockResolvedValue({
+      ok: true,
+      data: {
+        run_id: 'factory-run-from-pm',
+        status: 'running',
+        phase: 'planning',
+        progress: 25,
+        roles: {},
+        gates: [],
+        created_at: '2026-05-23T00:00:00Z',
+      },
+    });
+    factoryServiceMocks.stopFactoryRun.mockResolvedValue({
+      ok: true,
+      data: {
+        run_id: 'factory-run-from-pm',
+        status: 'cancelled',
+        phase: 'cancelled',
+        progress: 25,
+        roles: {},
+        gates: [],
+        created_at: '2026-05-23T00:00:00Z',
       },
     });
   });
@@ -100,6 +209,20 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
 
     fireEvent.change(selector, { target: { value: 'pm-session-1' } });
     await waitFor(() => expect(screen.getByTestId('pm-dialogue')).toHaveAttribute('data-session-id', 'pm-session-1'));
+    await waitFor(() => expect(roleSessionMocks.listRoleSessionMessageEvidence).toHaveBeenCalledWith('pm-session-1', {
+      limit: 5,
+      offset: 0,
+    }));
+    expect(roleSessionMocks.listRoleSessionArtifactEvidence).toHaveBeenCalledWith('pm-session-1');
+    expect(roleSessionMocks.listRoleSessionAuditEvidence).toHaveBeenCalledWith('pm-session-1', {
+      limit: 5,
+      offset: 0,
+    });
+    expect(await screen.findByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/pm-session-1');
+    expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('assistant: PM contract evidence ready');
+    expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('6');
+    expect(screen.getByTestId('role-session-evidence-artifacts')).toHaveTextContent('directive: pm-artifact-1');
+    expect(screen.getByTestId('role-session-evidence-audit')).toHaveTextContent('workflow_exported');
 
     fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
 
@@ -138,6 +261,23 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     const evidence = await screen.findByTestId('pm-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/pm/runs/pm-run-1');
     expect(evidence).toHaveTextContent('RUNNING · architect');
+    expect(screen.getByTestId('pm-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+
+    pmServiceMocks.getPmRun.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        run_id: 'pm-run-1',
+        status: 'COMPLETED',
+        workspace: 'C:/Temp/Product',
+        stage: 'architect',
+        message: 'Status: COMPLETED',
+      },
+    });
+    fireEvent.click(screen.getByTestId('pm-workbench-run-refresh'));
+
+    await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledTimes(2));
+    expect(evidence).toHaveTextContent('COMPLETED · architect');
+    expect(screen.queryByTestId('pm-workbench-run-evidence-auto-refresh')).not.toBeInTheDocument();
   });
 
   it('launches PM orchestration through the typed /v2/pm/run service', async () => {
@@ -155,6 +295,7 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
       target: { value: 'architect' },
     });
     fireEvent.click(screen.getByTestId('pm-workbench-run-director'));
+    await waitFor(() => expect(screen.getByTestId('pm-workbench-director-readiness')).toHaveTextContent('ready'));
     fireEvent.click(screen.getByTestId('pm-workbench-run-pm'));
 
     await waitFor(() => expect(pmServiceMocks.runPm).toHaveBeenCalledWith({
@@ -175,6 +316,84 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-direct'));
     const evidence = await screen.findByTestId('pm-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/pm/runs/pm-run-direct');
+  });
+
+  it('blocks PM auto-dispatch when Director LLM readiness is blocked', async () => {
+    pmServiceMocks.getDirectorDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_execute: false,
+        role: 'director',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: 'C:/Temp/Product',
+        status: {
+          ok: true,
+          state: 'IDLE',
+          running: false,
+          source: 'workflow',
+          projection_source: 'director_merged',
+        },
+        tasks: {
+          ok: true,
+          source: 'workflow',
+          total: 1,
+          pending: 1,
+          claimed: 0,
+          running: 0,
+          blocked: 0,
+          failed: 0,
+          completed: 0,
+          cancelled: 0,
+          ready_to_execute: 1,
+          ready_task_ids: ['director-ready'],
+          blocked_task_ids: [],
+          running_task_ids: [],
+        },
+        workers: {
+          ok: true,
+          total: 1,
+          idle: 1,
+          busy: 0,
+          healthy: 1,
+          unhealthy: 0,
+          active_task_ids: [],
+        },
+        llm: {
+          ok: false,
+          state: 'blocked',
+          role: 'director',
+          blocked_roles: ['director'],
+          unsupported_roles: [],
+          required_ready_roles: ['director'],
+          provider_id: 'qwen',
+          model: 'qwen3-max',
+        },
+        issues: ['director_llm_not_ready'],
+        execution_blockers: ['director_llm_not_ready'],
+      },
+    });
+
+    render(
+      <PMWorkbenchPanel
+        workspace="C:/Temp/Product"
+        initialSessionId="pm-session-1"
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId('pm-workbench-run-directive'), {
+      target: { value: 'Plan the payment workflow' },
+    });
+    fireEvent.click(screen.getByTestId('pm-workbench-run-director'));
+
+    const readiness = await screen.findByTestId('pm-workbench-director-readiness');
+    await waitFor(() => expect(readiness).toHaveTextContent('blocked'));
+    const runButton = screen.getByTestId('pm-workbench-run-pm');
+    expect(runButton).toBeDisabled();
+    expect(runButton).toHaveAttribute('title', 'Director LLM 未就绪: director');
+
+    fireEvent.click(runButton);
+    expect(pmServiceMocks.runPm).not.toHaveBeenCalled();
   });
 
   it('cancels the visible PM orchestration run from the evidence strip', async () => {
@@ -202,6 +421,43 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     expect(cancelEvidence).toHaveTextContent('取消运行已提交: CANCELLED');
     expect(toastMocks.success).toHaveBeenCalledWith('PM 编排取消已提交', {
       description: 'Run ID: pm-run-direct',
+    });
+  });
+
+  it('exports the active PM session to Factory and shows cancellable Factory evidence', async () => {
+    roleSessionMocks.exportRoleSessionToWorkflow.mockResolvedValueOnce({
+      ok: true,
+      data: { ok: true, run_id: 'factory-run-from-pm', artifact_count: 5 },
+    });
+    render(
+      <PMWorkbenchPanel
+        workspace="C:/Temp/Product"
+        initialSessionId="pm-session-1"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 Factory' }));
+
+    await waitFor(() => expect(roleSessionMocks.exportRoleSessionToWorkflow).toHaveBeenCalledWith('pm-session-1', {
+      target: 'factory',
+      export_kind: 'session_bundle',
+      include_audit_log: true,
+    }));
+    expect(toastMocks.success).toHaveBeenCalledWith('已导出到 Factory 流水线', {
+      description: 'Run ID: factory-run-from-pm\nArtifacts: 5',
+    });
+    await waitFor(() => expect(factoryServiceMocks.getFactoryRun).toHaveBeenCalledWith('factory-run-from-pm'));
+    const evidence = await screen.findByTestId('pm-workbench-factory-evidence');
+    expect(evidence).toHaveTextContent('/v2/factory/runs/factory-run-from-pm');
+    expect(evidence).toHaveTextContent('running · phase=planning · progress=25%');
+
+    fireEvent.click(screen.getByTestId('pm-workbench-factory-evidence-cancel'));
+
+    await waitFor(() => expect(factoryServiceMocks.stopFactoryRun).toHaveBeenCalledWith('factory-run-from-pm'));
+    expect(evidence).toHaveTextContent('cancelled · phase=cancelled · progress=25%');
+    expect(screen.getByTestId('pm-workbench-factory-evidence-cancel-result')).toHaveTextContent('/v2/factory/runs/factory-run-from-pm/control');
+    expect(toastMocks.success).toHaveBeenCalledWith('Factory 流水线取消已提交', {
+      description: 'Run ID: factory-run-from-pm',
     });
   });
 });

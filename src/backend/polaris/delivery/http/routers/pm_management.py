@@ -159,23 +159,34 @@ def _empty_v2_collection_response(
     offset: int,
     reason: str,
     normalize_item: bool = False,
+    error: str | None = None,
 ) -> dict[str, Any]:
     """Return an idle desktop collection projection when PM has not started."""
+    payload: dict[str, Any] = {
+        "ok": True,
+        collection_key: [],
+        "pagination": {"total": 0, "limit": limit, "offset": offset},
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+
     return _with_desktop_collection_aliases(
-        {
-            "ok": True,
-            collection_key: [],
-            "pagination": {"total": 0, "limit": limit, "offset": offset},
-            "initialized": False,
-            "state": "idle",
-            "reason": reason,
-        },
+        payload,
         collection_key,
         normalize_item=normalize_item,
     )
 
 
-def _empty_v2_task_list_response(*, limit: int, offset: int, reason: str) -> dict[str, Any]:
+def _empty_v2_task_list_response(
+    *,
+    limit: int,
+    offset: int,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
     """Return an idle desktop task-list projection when PM has not started."""
     return _empty_v2_collection_response(
         "tasks",
@@ -183,6 +194,7 @@ def _empty_v2_task_list_response(*, limit: int, offset: int, reason: str) -> dic
         offset=offset,
         reason=reason,
         normalize_item=True,
+        error=error,
     )
 
 
@@ -920,6 +932,13 @@ def v2_list_tasks(
         if exc.code != "PM_NOT_INITIALIZED":
             raise
         return _empty_v2_task_list_response(limit=limit, offset=offset, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_task_list_response(
+            limit=limit,
+            offset=offset,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
     return _with_desktop_collection_aliases(result, "tasks", normalize_item=True)
 
 
@@ -952,6 +971,14 @@ def v2_get_task_history(
         if exc.code != "PM_NOT_INITIALIZED":
             raise
         return _empty_v2_collection_response("history", limit=limit, offset=offset, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_collection_response(
+            "history",
+            limit=limit,
+            offset=offset,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @v2_router.get("/v2/pm/tasks/director", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
@@ -969,6 +996,14 @@ def v2_get_director_task_history(
         if exc.code != "PM_NOT_INITIALIZED":
             raise
         return _empty_v2_collection_response("iterations", limit=limit, offset=offset, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_collection_response(
+            "iterations",
+            limit=limit,
+            offset=offset,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @v2_router.get(

@@ -9,6 +9,7 @@ import { apiGet, apiPost, buildQueryString } from './apiClient';
 import type { ApiResult } from './api.types';
 import type {
   FactoryAuditEvent,
+  FactoryControlOptions,
   FactoryRunArtifactsResponse,
   FactoryRunStatus,
   FactoryStartOptions,
@@ -16,6 +17,7 @@ import type {
 
 export type {
   FactoryAuditEvent,
+  FactoryControlOptions,
   FactoryRunArtifactsResponse,
   FactoryRunStatus,
   FactoryStartOptions,
@@ -51,11 +53,36 @@ export async function stopFactoryRun(
   runId: string,
   reason?: string
 ): Promise<ApiResult<FactoryRunStatus>> {
+  return controlFactoryRun(runId, { action: 'cancel', reason });
+}
+
+/**
+ * 控制 Factory Run 生命周期。
+ */
+export async function controlFactoryRun(
+  runId: string,
+  options: FactoryControlOptions
+): Promise<ApiResult<FactoryRunStatus>> {
   return apiPost<FactoryRunStatus>(
     `/v2/factory/runs/${encodeURIComponent(runId)}/control`,
-    { action: 'cancel', reason },
-    '停止Factory失败'
+    options,
+    '控制Factory失败'
   );
+}
+
+export async function pauseFactoryRun(runId: string, reason?: string): Promise<ApiResult<FactoryRunStatus>> {
+  return controlFactoryRun(runId, { action: 'pause', reason });
+}
+
+export async function resumeFactoryRun(runId: string, reason?: string): Promise<ApiResult<FactoryRunStatus>> {
+  return controlFactoryRun(runId, { action: 'resume', reason });
+}
+
+export async function retryFactoryRunFromCheckpoint(
+  runId: string,
+  reason?: string
+): Promise<ApiResult<FactoryRunStatus>> {
+  return controlFactoryRun(runId, { action: 'retry_from_checkpoint', reason });
 }
 
 /**

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import sys
 from pathlib import Path
 from typing import Any
+
+_PM_INTEGRATION_MODULE = "polaris.delivery.cli.pm.pm_integration"
 
 
 class ScriptsPMAdapter:
@@ -42,13 +45,18 @@ class ScriptsPMAdapter:
             return self._pm_module
 
         try:
-            module = importlib.import_module("polaris.delivery.cli.pm.pm_integration")
+            module = importlib.import_module(_PM_INTEGRATION_MODULE)
         except ImportError as exc:
             raise ImportError(
                 "Unable to import 'polaris.delivery.cli.pm.pm_integration'. "
                 "Ensure backend bootstrap adds src/backend to PYTHONPATH before "
                 "constructing ScriptsPMAdapter."
             ) from exc
+
+        if not callable(getattr(module, "get_pm", None)):
+            sys.modules.pop(_PM_INTEGRATION_MODULE, None)
+            importlib.invalidate_caches()
+            module = importlib.import_module(_PM_INTEGRATION_MODULE)
 
         self._pm_module = module
         return module
@@ -64,10 +72,16 @@ class ScriptsPMAdapter:
 
         module = self._load_pm_module()
         get_pm_func = getattr(module, "get_pm", None)
-        if get_pm_func is None:
-            raise ImportError("get_pm function not found in pm_integration module")
+        if callable(get_pm_func):
+            self._pm_instance = get_pm_func(str(self.workspace))
+            return self._pm_instance
 
-        self._pm_instance = get_pm_func(str(self.workspace))
+        pm_cls = getattr(module, "PM", None)
+        if not callable(pm_cls):
+            module_file = getattr(module, "__file__", "<unknown>")
+            raise ImportError(f"get_pm function not found in pm_integration module: {module_file}")
+
+        self._pm_instance = pm_cls(str(self.workspace))
         return self._pm_instance
 
     def is_initialized(self) -> bool:
@@ -79,7 +93,7 @@ class ScriptsPMAdapter:
         try:
             pm = self.get_pm()
             return pm.is_initialized()
-        except (RuntimeError, ValueError):
+        except (ImportError, RuntimeError, ValueError):
             return False
 
     def initialize(self, project_name: str = "", description: str = "") -> dict[str, Any]:

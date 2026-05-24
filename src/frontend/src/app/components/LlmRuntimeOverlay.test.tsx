@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { LlmRuntimeOverlay } from './LlmRuntimeOverlay';
 
@@ -92,6 +92,70 @@ describe('LlmRuntimeOverlay', () => {
     expect(screen.getByTestId('llm-runtime-overlay')).toHaveClass('sm:w-[320px]');
     expect(screen.getByTestId('llm-runtime-overlay-details')).toHaveClass('grid-rows-[0fr]');
     expect(screen.getByText('LLM Runtime')).toBeInTheDocument();
+  });
+
+  it('treats Chief Engineer as a Factory runtime blocker', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        activeView="factory"
+        factoryRuntimeActive={true}
+        llmState="blocked"
+        llmRequiredRoles={['pm', 'chief_engineer', 'director']}
+        llmBlockedRoles={['chief_engineer']}
+      />
+    );
+
+    expect(screen.getByText('LLM BLOCKED')).toBeInTheDocument();
+    expect(screen.getByTestId('llm-runtime-overlay-details')).toHaveClass('grid-rows-[0fr]');
+  });
+
+  it('does not show stale Factory role blockers while Factory is idle', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        activeView="factory"
+        llmState="blocked"
+        llmRequiredRoles={['pm', 'chief_engineer', 'director']}
+        llmBlockedRoles={['pm']}
+      />
+    );
+
+    expect(screen.getByText('LLM IDLE')).toBeInTheDocument();
+    expect(screen.queryByText('LLM BLOCKED')).not.toBeInTheDocument();
+    expect(screen.queryByText(/blocked: pm/)).not.toBeInTheDocument();
+  });
+
+  it('collapses expanded runtime details when switching into Factory view', async () => {
+    const { rerender } = render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        activeView="main"
+        pmRunning={true}
+        llmState="blocked"
+        llmRequiredRoles={['pm', 'director', 'qa']}
+        llmBlockedRoles={['pm']}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('llm-runtime-overlay-details')).toHaveClass('grid-rows-[1fr]');
+    });
+
+    rerender(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        activeView="factory"
+        pmRunning={true}
+        llmState="blocked"
+        llmRequiredRoles={['pm', 'director', 'qa']}
+        llmBlockedRoles={['pm']}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('llm-runtime-overlay-details')).toHaveClass('grid-rows-[0fr]');
+    });
   });
 
   it('filters structured JSON fragments from the real-time event list', () => {

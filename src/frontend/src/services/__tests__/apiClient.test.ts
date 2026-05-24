@@ -19,6 +19,26 @@ describe('apiClient', () => {
       );
     });
 
+    it('includes missing runtime roles from structured backend errors', async () => {
+      const response = new Response(
+        JSON.stringify({
+          error: {
+            code: 'RUNTIME_ROLES_NOT_READY',
+            message: 'One or more required runtime roles are not ready',
+            details: {
+              required_roles: ['pm', 'chief_engineer', 'director', 'qa'],
+              missing_roles: ['pm', 'director'],
+            },
+          },
+        }),
+        { status: 409 }
+      );
+
+      await expect(extractErrorDetail(response, 'fallback')).resolves.toBe(
+        'One or more required runtime roles are not ready · blocked: pm, director'
+      );
+    });
+
     it('falls back when the response body is not JSON', async () => {
       const response = new Response('not json', { status: 500 });
 

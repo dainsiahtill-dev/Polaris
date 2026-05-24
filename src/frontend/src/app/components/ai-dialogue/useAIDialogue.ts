@@ -23,8 +23,6 @@ import {
   exportRoleSessionToWorkflow,
   getRoleCapabilities,
   getRoleSession,
-  listRoleSessionArtifacts,
-  listRoleSessionAuditEvents,
   listRoleSessionMessages,
   listRoleSessions,
   readRoleSessionMemoryArtifact,
@@ -32,8 +30,6 @@ import {
   readRoleSessionMemoryState,
   resolveRoleCapabilities,
   searchRoleSessionMemory,
-  type RoleSessionArtifactItem,
-  type RoleSessionAuditEventItem,
   type RoleSessionDetailItem,
   type RoleSessionListItem,
   type RoleSessionMemoryDetailItem,
@@ -75,6 +71,7 @@ export interface WorkflowExportStatus {
   message: string;
   runId?: string;
   artifactCount?: number;
+  messageCount?: number;
 }
 
 export interface RoleSessionSnapshotExportStatus {
@@ -142,10 +139,6 @@ export interface UseAIDialogueReturn {
   isLoadingRoleSessions: boolean;
   roleSessionListError: string;
   showRoleSessionEvidence: boolean;
-  roleSessionArtifacts: RoleSessionArtifactItem[];
-  roleSessionAuditEvents: RoleSessionAuditEventItem[];
-  isLoadingRoleSessionEvidence: boolean;
-  roleSessionEvidenceError: string;
   showRoleSessionMemory: boolean;
   roleSessionMemoryQuery: string;
   roleSessionMemoryItems: RoleSessionMemoryItem[];
@@ -182,7 +175,6 @@ export interface UseAIDialogueReturn {
   handleToggleRoleSessions: () => void;
   handleSelectRoleSession: (id: string) => Promise<void>;
   handleDetachRoleSession: () => Promise<void>;
-  handleLoadRoleSessionEvidence: () => Promise<void>;
   handleToggleRoleSessionEvidence: () => void;
   setRoleSessionMemoryQuery: (value: string) => void;
   handleLoadRoleSessionMemory: (queryOverride?: string) => Promise<void>;
@@ -232,10 +224,6 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
   const [isLoadingRoleSessions, setIsLoadingRoleSessions] = useState(false);
   const [roleSessionListError, setRoleSessionListError] = useState('');
   const [showRoleSessionEvidence, setShowRoleSessionEvidence] = useState(false);
-  const [roleSessionArtifacts, setRoleSessionArtifacts] = useState<RoleSessionArtifactItem[]>([]);
-  const [roleSessionAuditEvents, setRoleSessionAuditEvents] = useState<RoleSessionAuditEventItem[]>([]);
-  const [isLoadingRoleSessionEvidence, setIsLoadingRoleSessionEvidence] = useState(false);
-  const [roleSessionEvidenceError, setRoleSessionEvidenceError] = useState('');
   const [showRoleSessionMemory, setShowRoleSessionMemory] = useState(false);
   const [roleSessionMemoryQuery, setRoleSessionMemoryQuery] = useState('');
   const [roleSessionMemoryItems, setRoleSessionMemoryItems] = useState<RoleSessionMemoryItem[]>([]);
@@ -305,9 +293,6 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
 
   useEffect(() => {
     setWorkflowExportStatus({ kind: 'idle', message: '' });
-    setRoleSessionArtifacts([]);
-    setRoleSessionAuditEvents([]);
-    setRoleSessionEvidenceError('');
     setRoleSessionMemoryItems([]);
     setRoleSessionMemoryError('');
     setRoleSessionMemoryDetail(null);
@@ -780,37 +765,6 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
     }
   }, [role, hostKind, workspace]);
 
-  const handleLoadRoleSessionEvidence = useCallback(async () => {
-    if (!sessionId) {
-      setRoleSessionEvidenceError('RoleSession 尚未创建');
-      return;
-    }
-
-    setIsLoadingRoleSessionEvidence(true);
-    setRoleSessionEvidenceError('');
-    try {
-      const [artifactsResult, auditResult] = await Promise.all([
-        listRoleSessionArtifacts(sessionId),
-        listRoleSessionAuditEvents(sessionId, { limit: 20, offset: 0 }),
-      ]);
-      if (!artifactsResult.ok || !Array.isArray(artifactsResult.data)) {
-        throw new Error(`artifacts: ${artifactsResult.error || 'RoleSession 产物加载失败'}`);
-      }
-      if (!auditResult.ok || !Array.isArray(auditResult.data)) {
-        throw new Error(`audit: ${auditResult.error || 'RoleSession 审计加载失败'}`);
-      }
-
-      setRoleSessionArtifacts(artifactsResult.data);
-      setRoleSessionAuditEvents(auditResult.data);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'RoleSession 证据加载失败';
-      setRoleSessionEvidenceError(message);
-      devLogger.error('[useAIDialogue] Failed to load role session evidence:', err);
-    } finally {
-      setIsLoadingRoleSessionEvidence(false);
-    }
-  }, [sessionId]);
-
   // 新建 RoleSession
   const handleNewRoleSession = useCallback(() => {
     lastAttachmentKeyRef.current = '';
@@ -906,14 +860,8 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
   }, [welcomeMessage, onSessionChange]);
 
   const handleToggleRoleSessionEvidence = useCallback(() => {
-    setShowRoleSessionEvidence((current) => {
-      const next = !current;
-      if (next) {
-        void handleLoadRoleSessionEvidence();
-      }
-      return next;
-    });
-  }, [handleLoadRoleSessionEvidence]);
+    setShowRoleSessionEvidence((current) => !current);
+  }, []);
 
   const handleLoadRoleSessionMemory = useCallback(async (queryOverride?: string) => {
     if (!sessionId) {
@@ -1108,11 +1056,13 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
       }
 
       const artifactCount = Number(result.data.artifact_count ?? 0);
+      const messageCount = Number(result.data.message_count ?? 0);
       setWorkflowExportStatus({
         kind: 'success',
         message: `已导出到 ${workflowExportTarget.toUpperCase()} 工作流`,
         runId,
         artifactCount: Number.isFinite(artifactCount) ? artifactCount : 0,
+        messageCount: Number.isFinite(messageCount) ? messageCount : 0,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : '导出到工作流失败';
@@ -1184,10 +1134,6 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
     isLoadingRoleSessions,
     roleSessionListError,
     showRoleSessionEvidence,
-    roleSessionArtifacts,
-    roleSessionAuditEvents,
-    isLoadingRoleSessionEvidence,
-    roleSessionEvidenceError,
     showRoleSessionMemory,
     roleSessionMemoryQuery,
     roleSessionMemoryItems,
@@ -1222,7 +1168,6 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
     handleToggleRoleSessions,
     handleSelectRoleSession,
     handleDetachRoleSession,
-    handleLoadRoleSessionEvidence,
     handleToggleRoleSessionEvidence,
     setRoleSessionMemoryQuery,
     handleLoadRoleSessionMemory,

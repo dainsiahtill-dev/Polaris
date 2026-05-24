@@ -5,12 +5,20 @@ import { DirectorWorkbenchPanel } from '../DirectorWorkbenchPanel';
 const roleSessionMocks = vi.hoisted(() => ({
   createRoleSession: vi.fn(),
   exportRoleSessionToWorkflow: vi.fn(),
+  listRoleSessionArtifactEvidence: vi.fn(),
+  listRoleSessionAuditEvidence: vi.fn(),
+  listRoleSessionMessageEvidence: vi.fn(),
   listRoleSessions: vi.fn(),
 }));
 
 const pmServiceMocks = vi.hoisted(() => ({
   cancelDirectorRun: vi.fn(),
   getDirectorRun: vi.fn(),
+}));
+
+const factoryServiceMocks = vi.hoisted(() => ({
+  getFactoryRun: vi.fn(),
+  stopFactoryRun: vi.fn(),
 }));
 
 const toastMocks = vi.hoisted(() => ({
@@ -20,6 +28,7 @@ const toastMocks = vi.hoisted(() => ({
 
 vi.mock('@/services/roleSessionService', () => roleSessionMocks);
 vi.mock('@/services/pmService', () => pmServiceMocks);
+vi.mock('@/services/factoryService', () => factoryServiceMocks);
 
 vi.mock('sonner', () => ({
   toast: toastMocks,
@@ -46,6 +55,27 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
       ok: true,
       data: { ok: true, run_id: 'director-run-1', artifact_count: 4 },
     });
+    roleSessionMocks.listRoleSessionMessageEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'director-message-1', role: 'assistant', content: 'Director patch evidence ready' }],
+        total: 7,
+      },
+    });
+    roleSessionMocks.listRoleSessionArtifactEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'director-artifact-1', type: 'patch' }],
+        total: 1,
+      },
+    });
+    roleSessionMocks.listRoleSessionAuditEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'director-audit-1', event_type: 'workflow_exported', timestamp: '2026-05-23T00:00:00Z' }],
+        total: 4,
+      },
+    });
     pmServiceMocks.getDirectorRun.mockResolvedValue({
       ok: true,
       data: {
@@ -64,6 +94,30 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
         workspace: 'C:/Temp/Product',
         tasks_queued: 5,
         message: 'Status: CANCELLED',
+      },
+    });
+    factoryServiceMocks.getFactoryRun.mockResolvedValue({
+      ok: true,
+      data: {
+        run_id: 'factory-run-from-director',
+        status: 'running',
+        phase: 'implementation',
+        progress: 65,
+        roles: {},
+        gates: [],
+        created_at: '2026-05-23T00:00:00Z',
+      },
+    });
+    factoryServiceMocks.stopFactoryRun.mockResolvedValue({
+      ok: true,
+      data: {
+        run_id: 'factory-run-from-director',
+        status: 'cancelled',
+        phase: 'cancelled',
+        progress: 65,
+        roles: {},
+        gates: [],
+        created_at: '2026-05-23T00:00:00Z',
       },
     });
   });
@@ -89,6 +143,20 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
 
     fireEvent.change(selector, { target: { value: 'director-session-1' } });
     await waitFor(() => expect(screen.getByTestId('director-dialogue')).toHaveAttribute('data-session-id', 'director-session-1'));
+    await waitFor(() => expect(roleSessionMocks.listRoleSessionMessageEvidence).toHaveBeenCalledWith('director-session-1', {
+      limit: 5,
+      offset: 0,
+    }));
+    expect(roleSessionMocks.listRoleSessionArtifactEvidence).toHaveBeenCalledWith('director-session-1');
+    expect(roleSessionMocks.listRoleSessionAuditEvidence).toHaveBeenCalledWith('director-session-1', {
+      limit: 5,
+      offset: 0,
+    });
+    expect(await screen.findByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/director-session-1');
+    expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('assistant: Director patch evidence ready');
+    expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('7');
+    expect(screen.getByTestId('role-session-evidence-artifacts')).toHaveTextContent('patch: director-artifact-1');
+    expect(screen.getByTestId('role-session-evidence-audit')).toHaveTextContent('workflow_exported');
 
     fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
 
@@ -118,6 +186,23 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
     const evidence = await screen.findByTestId('director-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/director/runs/director-run-1');
     expect(evidence).toHaveTextContent('RUNNING · queued=5');
+    expect(screen.getByTestId('director-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+
+    pmServiceMocks.getDirectorRun.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        run_id: 'director-run-1',
+        status: 'COMPLETED',
+        workspace: 'C:/Temp/Product',
+        tasks_queued: 5,
+        message: 'Status: COMPLETED',
+      },
+    });
+    fireEvent.click(screen.getByTestId('director-workbench-run-refresh'));
+
+    await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledTimes(2));
+    expect(evidence).toHaveTextContent('COMPLETED · queued=5');
+    expect(screen.queryByTestId('director-workbench-run-evidence-auto-refresh')).not.toBeInTheDocument();
   });
 
   it('cancels the visible Director orchestration run from the workbench evidence strip', async () => {
@@ -145,5 +230,40 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
     expect(toastMocks.success).toHaveBeenCalledWith('Director 编排取消已提交', {
       description: 'Run ID: director-run-1',
     });
+  });
+
+  it('exports Director RoleSession to Factory with run evidence', async () => {
+    roleSessionMocks.exportRoleSessionToWorkflow.mockResolvedValueOnce({
+      ok: true,
+      data: { ok: true, run_id: 'factory-run-from-director', artifact_count: 7 },
+    });
+    render(
+      <DirectorWorkbenchPanel
+        workspace="C:/Temp/Product"
+        initialSessionId="director-session-1"
+        tasksCount={5}
+        runningTasks={1}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 Factory' }));
+
+    await waitFor(() => expect(roleSessionMocks.exportRoleSessionToWorkflow).toHaveBeenCalledWith('director-session-1', {
+      target: 'factory',
+      export_kind: 'session_bundle',
+      include_audit_log: true,
+    }));
+    expect(toastMocks.success).toHaveBeenCalledWith('已导出到 Factory 流水线', {
+      description: 'Run ID: factory-run-from-director\nArtifacts: 7',
+    });
+    await waitFor(() => expect(factoryServiceMocks.getFactoryRun).toHaveBeenCalledWith('factory-run-from-director'));
+    const evidence = await screen.findByTestId('director-workbench-factory-evidence');
+    expect(evidence).toHaveTextContent('/v2/factory/runs/factory-run-from-director');
+    expect(evidence).toHaveTextContent('running · phase=implementation · progress=65%');
+
+    fireEvent.click(screen.getByTestId('director-workbench-factory-evidence-cancel'));
+
+    await waitFor(() => expect(factoryServiceMocks.stopFactoryRun).toHaveBeenCalledWith('factory-run-from-director'));
+    expect(evidence).toHaveTextContent('cancelled · phase=cancelled · progress=65%');
   });
 });

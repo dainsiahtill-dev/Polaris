@@ -16,11 +16,15 @@ import {
   getFactoryRun,
   getFactoryRunArtifacts,
   listFactoryRuns,
+  pauseFactoryRun,
+  resumeFactoryRun,
+  retryFactoryRunFromCheckpoint,
   startFactoryRun,
   stopFactoryRun,
 } from '@/services';
 import type {
   FactoryAuditEvent,
+  FactoryControlAction,
   FactoryRunArtifact,
   FactoryRunArtifactsResponse,
   FactoryRunStatus,
@@ -45,6 +49,12 @@ const TERMINAL_FACTORY_RUN_STATUSES = new Set([
   ...CANCELLED_FACTORY_RUN_STATUSES,
   ...FAILED_FACTORY_RUN_STATUSES,
 ]);
+
+type FactoryControlMutationInput = {
+  runId: string;
+  action: FactoryControlAction;
+  reason?: string;
+};
 
 function factoryRunArtifactsKey(runId: string) {
   return ['factory', 'run', runId, 'artifacts'] as const;
@@ -186,6 +196,40 @@ export function useFactory(options: UseFactoryOptions = {}) {
     },
     onError: (error: Error) => {
       toast.error(error.message || '停止Factory失败');
+    },
+  });
+
+  const controlRunMutation = useMutation({
+    mutationFn: async ({ runId, action, reason }: FactoryControlMutationInput) => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      abortControllerRef.current = new AbortController();
+
+      const result = action === 'pause'
+        ? await pauseFactoryRun(runId, reason)
+        : action === 'resume'
+          ? await resumeFactoryRun(runId, reason)
+          : action === 'retry_from_checkpoint'
+            ? await retryFactoryRunFromCheckpoint(runId, reason)
+            : await stopFactoryRun(runId, reason);
+      if (!result.ok || !result.data) {
+        throw new Error(result.error || '控制Factory失败');
+      }
+      return result.data;
+    },
+    onSuccess: (run) => {
+      queryClient.invalidateQueries({ queryKey: factoryRunsKey });
+      queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
+      latestRunIdRef.current = run.run_id;
+      setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
+      if (isTerminalRun(run)) {
+        void fetchRunArtifacts(run.run_id);
+        disconnectStream();
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || '控制Factory失败');
     },
   });
 
@@ -442,6 +486,39 @@ export function useFactory(options: UseFactoryOptions = {}) {
     }
   }, [stopRunMutation]);
 
+  const controlRun = useCallback(async (
+    runId: string,
+    action: FactoryControlAction,
+    reason?: string
+  ): Promise<FactoryRunStatus | null> => {
+    try {
+      return await controlRunMutation.mutateAsync({ runId, action, reason });
+    } catch {
+      return null;
+    }
+  }, [controlRunMutation]);
+
+  const pauseRun = useCallback(
+    (runId: string, reason?: string) => controlRun(runId, 'pause', reason),
+    [controlRun],
+  );
+
+  const resumeRun = useCallback(
+    (runId: string, reason?: string) => controlRun(runId, 'resume', reason),
+    [controlRun],
+  );
+
+  const retryRunFromCheckpoint = useCallback(async (runId: string, reason?: string) => {
+    const run = await controlRun(runId, 'retry_from_checkpoint', reason);
+    if (run && !isTerminalRun(run)) {
+      const connected = await connectStream(run.run_id);
+      if (!connected) {
+        await fetchRunStatus(run.run_id);
+      }
+    }
+    return run;
+  }, [connectStream, controlRun, fetchRunStatus]);
+
   const fetchRuns = useCallback(async (limit = 20) => {
     // Cancel any pending requests
     if (abortControllerRef.current) {
@@ -538,8 +615,8 @@ export function useFactory(options: UseFactoryOptions = {}) {
   return {
     currentRun,
     events,
-    isLoading: startRunMutation.isPending || stopRunMutation.isPending,
-    error: (startRunMutation.error || stopRunMutation.error) as Error | null,
+    isLoading: startRunMutation.isPending || stopRunMutation.isPending || controlRunMutation.isPending,
+    error: (startRunMutation.error || stopRunMutation.error || controlRunMutation.error) as Error | null,
     isStreaming,
     artifacts: activeArtifactsSnapshot?.artifacts || currentRun?.artifacts || [],
     summaryMd: activeArtifactsSnapshot?.summary_md ?? currentRun?.summary_md ?? null,
@@ -548,6 +625,9 @@ export function useFactory(options: UseFactoryOptions = {}) {
     isArtifactsLoading,
     startRun,
     stopRun,
+    pauseRun,
+    resumeRun,
+    retryRunFromCheckpoint,
     fetchRunStatus,
     fetchRunArtifacts,
     fetchRuns,

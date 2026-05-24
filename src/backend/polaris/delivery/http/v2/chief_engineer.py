@@ -26,7 +26,13 @@ from polaris.cells.runtime.projection.public.role_contracts import (
     ChiefEngineerBlueprintListV1,
     ChiefEngineerBlueprintSummaryV1,
 )
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.cells.runtime.projection.public.service import build_llm_status
+from polaris.delivery.http.routers._shared import (
+    StructuredHTTPException,
+    ensure_required_roles_ready,
+    get_state,
+    require_auth,
+)
 from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone.storage import resolve_logical_path
 from pydantic import BaseModel, Field
@@ -74,6 +80,15 @@ class ChiefEngineerTaskBlueprintResultResponse(BaseModel):
     blueprint: dict[str, Any] = Field(default_factory=dict)
 
 
+class ChiefEngineerBlueprintDeleteResponse(BaseModel):
+    """Deletion evidence for a persisted Chief Engineer blueprint."""
+
+    ok: bool
+    blueprint_id: str
+    deleted: bool
+    source: str = "runtime/blueprints"
+
+
 class ChiefEngineerDiagnosticsWorkspaceStatus(BaseModel):
     """Workspace readiness section for Chief Engineer desktop diagnostics."""
 
@@ -82,6 +97,21 @@ class ChiefEngineerDiagnosticsWorkspaceStatus(BaseModel):
     workspace: str
     exists: bool
     error: str | None = None
+
+
+class ChiefEngineerDiagnosticsLLMStatus(BaseModel):
+    """Chief Engineer role-specific LLM readiness section."""
+
+    ok: bool
+    state: str
+    role: str = "chief_engineer"
+    blocked_roles: list[str] = Field(default_factory=list)
+    unsupported_roles: list[str] = Field(default_factory=list)
+    required_ready_roles: list[str] = Field(default_factory=list)
+    provider_id: str | None = None
+    model: str | None = None
+    error: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChiefEngineerDiagnosticsBlueprintStatus(BaseModel):
@@ -105,11 +135,16 @@ class ChiefEngineerDiagnosticsResponse(BaseModel):
     """Side-effect-free Chief Engineer desktop readiness snapshot."""
 
     ok: bool
+    can_handoff: bool
     role: str = "chief_engineer"
     generated_at: str
     workspace: ChiefEngineerDiagnosticsWorkspaceStatus
+    llm: ChiefEngineerDiagnosticsLLMStatus
     blueprints: ChiefEngineerDiagnosticsBlueprintStatus
+    can_generate: bool
     issues: list[str] = Field(default_factory=list)
+    generate_blockers: list[str] = Field(default_factory=list)
+    handoff_blockers: list[str] = Field(default_factory=list)
 
 
 def _utc_now() -> str:
@@ -294,6 +329,61 @@ def _build_workspace_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsWorks
     )
 
 
+def _role_payload(payload: dict[str, Any], role: str) -> dict[str, Any]:
+    roles_value = payload.get("roles")
+    roles = roles_value if isinstance(roles_value, dict) else {}
+    target = role.strip().lower()
+    for key, value in roles.items():
+        if str(key or "").strip().lower() == target and isinstance(value, dict):
+            return value
+    return {}
+
+
+def _build_llm_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsLLMStatus:
+    try:
+        payload = build_llm_status(settings)
+    except (RuntimeError, OSError, ValueError) as exc:
+        return ChiefEngineerDiagnosticsLLMStatus(
+            ok=False,
+            state="error",
+            blocked_roles=["chief_engineer"],
+            error=str(exc),
+        )
+
+    if not isinstance(payload, dict):
+        return ChiefEngineerDiagnosticsLLMStatus(
+            ok=False,
+            state="error",
+            blocked_roles=["chief_engineer"],
+            error="invalid_llm_status_payload",
+        )
+
+    role_info = _role_payload(payload, "chief_engineer")
+    ready = bool(role_info.get("ready"))
+    runtime_supported = bool(role_info.get("runtime_supported"))
+    blocked_roles = _string_list(payload.get("blocked_roles"))
+    unsupported_roles = _string_list(payload.get("unsupported_roles"))
+    required_ready_roles = _string_list(payload.get("required_ready_roles"))
+    if "chief_engineer" not in required_ready_roles:
+        required_ready_roles.append("chief_engineer")
+    if not ready and "chief_engineer" not in blocked_roles:
+        blocked_roles.append("chief_engineer")
+    if not runtime_supported and "chief_engineer" not in unsupported_roles:
+        unsupported_roles.append("chief_engineer")
+
+    ok = ready and runtime_supported
+    return ChiefEngineerDiagnosticsLLMStatus(
+        ok=ok,
+        state="ready" if ok else "blocked",
+        blocked_roles=blocked_roles,
+        unsupported_roles=unsupported_roles,
+        required_ready_roles=required_ready_roles,
+        provider_id=str(role_info.get("provider_id") or "").strip() or None,
+        model=str(role_info.get("model") or "").strip() or None,
+        details=payload,
+    )
+
+
 def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBlueprintStatus:
     workspace = _workspace_value(settings)
     if not workspace:
@@ -365,18 +455,55 @@ def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBluep
 
 def _diagnostic_issues(
     workspace: ChiefEngineerDiagnosticsWorkspaceStatus,
+    llm: ChiefEngineerDiagnosticsLLMStatus,
     blueprints: ChiefEngineerDiagnosticsBlueprintStatus,
 ) -> list[str]:
     issues: list[str] = []
     if not workspace.ok:
         issues.append("workspace_unavailable")
+    if not llm.ok:
+        issues.append("llm_not_ready")
     if blueprints.status == "error":
         issues.append("blueprint_store_unreadable")
     if blueprints.invalid_payloads:
         issues.append("blueprint_payload_invalid")
     if blueprints.missing_task_ids:
         issues.append("blueprint_coverage_incomplete")
+    if not blueprints.director_handoff_ready and not issues:
+        issues.append("blueprint_handoff_not_ready")
     return issues
+
+
+def _generate_blockers(
+    workspace: ChiefEngineerDiagnosticsWorkspaceStatus,
+    llm: ChiefEngineerDiagnosticsLLMStatus,
+) -> list[str]:
+    """Return hard blockers for Chief Engineer blueprint generation."""
+    blockers: list[str] = []
+    if not workspace.ok:
+        blockers.append("workspace_unavailable")
+    if not llm.ok:
+        blockers.append("llm_not_ready")
+    return blockers
+
+
+def _handoff_blockers(
+    workspace: ChiefEngineerDiagnosticsWorkspaceStatus,
+    blueprints: ChiefEngineerDiagnosticsBlueprintStatus,
+) -> list[str]:
+    """Return hard blockers that should disable Chief Engineer -> Director handoff."""
+    blockers: list[str] = []
+    if not workspace.ok:
+        blockers.append("workspace_unavailable")
+    if blueprints.status == "error":
+        blockers.append("blueprint_store_unreadable")
+    if blueprints.invalid_payloads:
+        blockers.append("blueprint_payload_invalid")
+    if blueprints.missing_task_ids:
+        blockers.append("blueprint_coverage_incomplete")
+    if not blueprints.director_handoff_ready and not blockers:
+        blockers.append("blueprint_handoff_not_ready")
+    return blockers
 
 
 def _llm_event_stats(events: list[Any]) -> dict[str, int]:
@@ -401,14 +528,22 @@ def get_chief_engineer_diagnostics(request: Request) -> ChiefEngineerDiagnostics
 
     settings = get_state(request).settings
     workspace = _build_workspace_diagnostics(settings)
+    llm = _build_llm_diagnostics(settings)
     blueprints = _build_blueprint_diagnostics(settings)
-    issues = _diagnostic_issues(workspace, blueprints)
+    generate_blockers = _generate_blockers(workspace, llm)
+    issues = _diagnostic_issues(workspace, llm, blueprints)
+    handoff_blockers = _handoff_blockers(workspace, blueprints)
     return ChiefEngineerDiagnosticsResponse(
-        ok=workspace.ok and blueprints.ok,
+        ok=not issues,
+        can_handoff=not handoff_blockers,
+        can_generate=not generate_blockers,
         generated_at=_utc_now(),
         workspace=workspace,
+        llm=llm,
         blueprints=blueprints,
         issues=issues,
+        generate_blockers=generate_blockers,
+        handoff_blockers=handoff_blockers,
     )
 
 
@@ -496,7 +631,9 @@ def generate_chief_engineer_blueprint(
 ) -> ChiefEngineerTaskBlueprintResultResponse:
     """Generate and persist a Chief Engineer blueprint through the cell command contract."""
 
-    workspace = _workspace_value(get_state(request).settings)
+    state = get_state(request)
+    ensure_required_roles_ready(state, default_roles=["chief_engineer"], force_first="chief_engineer")
+    workspace = _workspace_value(state.settings)
     try:
         command = GenerateTaskBlueprintCommandV1(
             task_id=payload.task_id,
@@ -567,4 +704,30 @@ def get_chief_engineer_blueprint(
     return ChiefEngineerBlueprintDetailResponse(
         blueprint_id=_blueprint_id_from_payload(payload, safe_blueprint_id),
         blueprint=payload,
+    )
+
+
+@router.delete(
+    "/chief-engineer/blueprints/{blueprint_id}",
+    dependencies=[Depends(require_auth)],
+    response_model=ChiefEngineerBlueprintDeleteResponse,
+)
+def delete_chief_engineer_blueprint(
+    request: Request,
+    blueprint_id: str,
+) -> ChiefEngineerBlueprintDeleteResponse:
+    """Delete one persisted Chief Engineer blueprint by id."""
+
+    safe_blueprint_id = _validate_blueprint_id(blueprint_id)
+    deleted = _persistence_for_request(request, ensure_directory=False).delete(safe_blueprint_id)
+    if not deleted:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="BLUEPRINT_NOT_FOUND",
+            message="blueprint not found",
+        )
+    return ChiefEngineerBlueprintDeleteResponse(
+        ok=True,
+        blueprint_id=safe_blueprint_id,
+        deleted=True,
     )

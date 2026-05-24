@@ -219,10 +219,18 @@ def _global_index_path(workspace_path: str | None) -> str:
 
 def _resolve_index_paths(workspace: Any) -> list[str]:
     workspace_path = _resolve_workspace_path(workspace)
-    candidates = [
-        _global_index_path(workspace_path),
-        _workspace_index_path(workspace_path),
-    ]
+    if workspace_path is None:
+        workspace_path = os.environ.get("KERNELONE_WORKSPACE", "").strip() or None
+    if workspace_path:
+        candidates = [
+            _workspace_index_path(workspace_path),
+            _global_index_path(workspace_path),
+        ]
+    else:
+        candidates = [
+            _global_index_path(workspace_path),
+            _workspace_index_path(workspace_path),
+        ]
     unique_paths: list[str] = []
     for candidate in candidates:
         # Pure path normalization — no filesystem I/O.
@@ -355,7 +363,8 @@ def reset_llm_test_index(workspace: Any = None) -> None:
     payload["reset_at"] = utc_now()
     paths = _resolve_index_paths(workspace)
 
-    # Use write lock on primary path (global index)
+    # Use write lock on the primary path; workspace-local indexes take precedence
+    # over global defaults when a workspace is available.
     primary_path = paths[0] if paths else _get_default_index_path()
     with _index_write_lock(primary_path):
         _write_index_payload(paths, payload)
@@ -449,7 +458,7 @@ def reconcile_llm_test_index(
 
         index["last_reconcile"] = utc_now()
 
-        # Save index (global priority, mirrored to compatible path)
+        # Save index to the primary workspace path and mirror to the fallback path.
         _write_index_payload(paths, index)
 
         return index

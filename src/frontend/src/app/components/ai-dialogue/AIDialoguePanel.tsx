@@ -11,7 +11,6 @@ import {
   Database,
   Download,
   Eye,
-  FileText,
   Link2,
   Link2Off,
   List as ListIcon,
@@ -29,8 +28,6 @@ import { AIStatusBar, AIHistoryPanel } from './AIStatusBar';
 import {
   useAIDialogue,
   type RoleSessionDetachStatus,
-  type RoleSessionArtifactItem,
-  type RoleSessionAuditEventItem,
   type RoleSessionDetailItem,
   type RoleSessionListItem,
   type RoleSessionMemoryDetailItem,
@@ -41,6 +38,7 @@ import {
   type WorkflowExportTarget,
 } from './useAIDialogue';
 import { Button } from '@/app/components/ui/button';
+import { RoleSessionEvidencePanel as CommonRoleSessionEvidencePanel } from '@/app/components/common/RoleSessionEvidencePanel';
 import type { DialogueRole } from '@/services/conversationApi';
 import type { ConversationItem } from './AIStatusBar';
 
@@ -99,6 +97,13 @@ const DEFAULT_THEMES: Record<DialogueRole, NonNullable<AIDialoguePanelProps['rol
   qa: { primary: 'rose', secondary: 'rose-400', gradient: 'from-rose-500 to-rose-700' },
   scout: { primary: 'indigo', secondary: 'indigo-400', gradient: 'from-indigo-500 to-indigo-700' },
 };
+
+type RoleSessionEvidenceTone = 'amber' | 'emerald' | 'cyan' | 'purple' | 'rose' | 'indigo';
+
+function getRoleSessionEvidenceTone(theme: NonNullable<AIDialoguePanelProps['roleTheme']>): RoleSessionEvidenceTone {
+  const supported = ['amber', 'emerald', 'cyan', 'purple', 'rose', 'indigo'];
+  return supported.includes(theme.primary) ? theme.primary as RoleSessionEvidenceTone : 'cyan';
+}
 
 /**
  * 获取状态显示组件
@@ -193,7 +198,6 @@ interface RoleSessionStripProps {
   showRoleSessions: boolean;
   isLoadingRoleSessions: boolean;
   showRoleSessionEvidence: boolean;
-  isLoadingRoleSessionEvidence: boolean;
   showRoleSessionMemory: boolean;
   isLoadingRoleSessionMemory: boolean;
   showRoleSessionSnapshotExport: boolean;
@@ -231,7 +235,6 @@ function RoleSessionStrip({
   showRoleSessions,
   isLoadingRoleSessions,
   showRoleSessionEvidence,
-  isLoadingRoleSessionEvidence,
   showRoleSessionMemory,
   isLoadingRoleSessionMemory,
   showRoleSessionSnapshotExport,
@@ -281,6 +284,13 @@ function RoleSessionStrip({
   const exportStatusTone = workflowExportStatus.kind === 'success'
     ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
     : 'border-red-400/20 bg-red-500/10 text-red-200';
+  const workflowExportTitle = workflowExportStatus.runId
+    ? [
+      workflowExportStatus.runId,
+      `artifacts=${workflowExportStatus.artifactCount ?? 0}`,
+      `messages=${workflowExportStatus.messageCount ?? 0}`,
+    ].join(' · ')
+    : workflowExportStatus.message;
   const detachStatusTone = roleSessionDetachStatus.kind === 'success'
     ? 'border-cyan-400/20 bg-cyan-500/10 text-cyan-100'
     : 'border-red-400/20 bg-red-500/10 text-red-200';
@@ -373,7 +383,7 @@ function RoleSessionStrip({
           <span
             data-testid="ai-role-session-export-status"
             className={`inline-flex max-w-40 shrink items-center truncate rounded border px-1.5 py-0.5 ${exportStatusTone}`}
-            title={workflowExportStatus.runId || workflowExportStatus.message}
+            title={workflowExportTitle}
           >
             {workflowExportStatus.runId
               ? `Run ${formatShortId(workflowExportStatus.runId)}`
@@ -426,11 +436,7 @@ function RoleSessionStrip({
           }`}
           title="查看 RoleSession 产物与审计"
         >
-          {isLoadingRoleSessionEvidence ? (
-            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-          ) : (
-            <Activity className="mr-1 h-3 w-3" />
-          )}
+          <Activity className="mr-1 h-3 w-3" />
           证据
         </Button>
         <Button
@@ -517,141 +523,6 @@ function RoleSessionStrip({
           <Plus className="mr-1 h-3 w-3" />
           新会话
         </Button>
-      </div>
-    </div>
-  );
-}
-
-function compactPayload(value: unknown): string {
-  if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value.trim();
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function evidenceTime(value?: string): string {
-  return formatSessionTime(value);
-}
-
-interface RoleSessionEvidencePanelProps {
-  artifacts: RoleSessionArtifactItem[];
-  auditEvents: RoleSessionAuditEventItem[];
-  isLoading: boolean;
-  error: string;
-  onReload: () => void;
-}
-
-function RoleSessionEvidencePanel({
-  artifacts,
-  auditEvents,
-  isLoading,
-  error,
-  onReload,
-}: RoleSessionEvidencePanelProps) {
-  return (
-    <div data-testid="ai-role-session-evidence-panel" className="border-b border-white/10 bg-slate-900/85 px-3 py-2">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[11px] text-slate-400">
-          <FileText className="h-3.5 w-3.5 text-slate-500" />
-          <span>RoleSession 证据</span>
-          <span data-testid="ai-role-session-evidence-counts" className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300">
-            {artifacts.length} artifacts / {auditEvents.length} audit
-          </span>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onReload}
-          disabled={isLoading}
-          className="h-6 px-2 text-[10px] text-slate-400 hover:bg-white/5 hover:text-slate-100"
-          title="刷新 RoleSession 证据"
-        >
-          <RefreshCw className={`mr-1 h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
-          刷新
-        </Button>
-      </div>
-
-      {error ? (
-        <div className="mb-2 rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] text-red-200">
-          {error}
-        </div>
-      ) : null}
-
-      <div className="grid max-h-56 gap-2 overflow-auto md:grid-cols-2">
-        <section className="min-w-0 rounded-md border border-white/10 bg-slate-950/45 p-2">
-          <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
-            <span>Artifacts</span>
-            <span>{artifacts.length}</span>
-          </div>
-          {isLoading && artifacts.length === 0 ? (
-            <div className="flex items-center gap-2 py-3 text-[11px] text-slate-500">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              加载产物...
-            </div>
-          ) : artifacts.length === 0 ? (
-            <p className="py-3 text-[11px] text-slate-500">暂无产物</p>
-          ) : (
-            <div className="space-y-1">
-              {artifacts.slice(0, 6).map((artifact) => {
-                const payload = compactPayload(artifact.content || artifact.metadata);
-                return (
-                  <div key={artifact.id} data-testid="ai-role-session-artifact-row" className="rounded border border-white/5 bg-white/[0.035] px-2 py-1.5">
-                    <div className="flex items-center justify-between gap-2 text-[11px]">
-                      <span className="truncate font-mono text-slate-300">{formatShortId(artifact.id)}</span>
-                      <span className="shrink-0 rounded bg-cyan-500/10 px-1.5 py-0.5 text-[9px] text-cyan-200">
-                        {artifact.type || 'artifact'}
-                      </span>
-                    </div>
-                    {payload ? (
-                      <div className="mt-1 truncate text-[10px] text-slate-500" title={payload}>
-                        {payload}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <section className="min-w-0 rounded-md border border-white/10 bg-slate-950/45 p-2">
-          <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500">
-            <span>Audit</span>
-            <span>{auditEvents.length}</span>
-          </div>
-          {isLoading && auditEvents.length === 0 ? (
-            <div className="flex items-center gap-2 py-3 text-[11px] text-slate-500">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              加载审计...
-            </div>
-          ) : auditEvents.length === 0 ? (
-            <p className="py-3 text-[11px] text-slate-500">暂无审计事件</p>
-          ) : (
-            <div className="space-y-1">
-              {auditEvents.slice(0, 8).map((event, index) => {
-                const label = event.event_type || event.type || 'event';
-                const time = evidenceTime(event.timestamp || event.created_at);
-                const payload = compactPayload(event.payload || event.metadata);
-                return (
-                  <div key={event.id || `${label}-${index}`} data-testid="ai-role-session-audit-row" className="rounded border border-white/5 bg-white/[0.035] px-2 py-1.5">
-                    <div className="flex items-center justify-between gap-2 text-[11px]">
-                      <span className="truncate text-slate-300">{label}</span>
-                      {time ? <span className="shrink-0 text-[9px] text-slate-500">{time}</span> : null}
-                    </div>
-                    {payload ? (
-                      <div className="mt-1 truncate text-[10px] text-slate-500" title={payload}>
-                        {payload}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
       </div>
     </div>
   );
@@ -1069,10 +940,6 @@ export function AIDialoguePanel({
     isLoadingRoleSessions,
     roleSessionListError,
     showRoleSessionEvidence,
-    roleSessionArtifacts,
-    roleSessionAuditEvents,
-    isLoadingRoleSessionEvidence,
-    roleSessionEvidenceError,
     showRoleSessionMemory,
     roleSessionMemoryQuery,
     roleSessionMemoryItems,
@@ -1106,7 +973,6 @@ export function AIDialoguePanel({
     handleLoadRoleSessions,
     handleToggleRoleSessions,
     handleSelectRoleSession,
-    handleLoadRoleSessionEvidence,
     handleToggleRoleSessionEvidence,
     setRoleSessionMemoryQuery,
     handleLoadRoleSessionMemory,
@@ -1186,7 +1052,6 @@ export function AIDialoguePanel({
         showRoleSessions={showRoleSessions}
         isLoadingRoleSessions={isLoadingRoleSessions}
         showRoleSessionEvidence={showRoleSessionEvidence}
-        isLoadingRoleSessionEvidence={isLoadingRoleSessionEvidence}
         showRoleSessionMemory={showRoleSessionMemory}
         isLoadingRoleSessionMemory={isLoadingRoleSessionMemory}
         showRoleSessionSnapshotExport={showRoleSessionSnapshotExport}
@@ -1210,12 +1075,9 @@ export function AIDialoguePanel({
       />
 
       {showRoleSessionEvidence && (
-        <RoleSessionEvidencePanel
-          artifacts={roleSessionArtifacts}
-          auditEvents={roleSessionAuditEvents}
-          isLoading={isLoadingRoleSessionEvidence}
-          error={roleSessionEvidenceError}
-          onReload={handleLoadRoleSessionEvidence}
+        <CommonRoleSessionEvidencePanel
+          sessionId={activeSessionId}
+          tone={getRoleSessionEvidenceTone(theme)}
         />
       )}
 

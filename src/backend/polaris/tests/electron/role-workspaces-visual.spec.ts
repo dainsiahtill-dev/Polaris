@@ -248,6 +248,8 @@ test("settings and role workspaces expose real operational surfaces", async ({ w
   await expect(window.getByText("施工蓝图证据")).toBeVisible();
   await expect(window.getByText("Director 任务池")).toBeVisible();
   await expect(window.getByText("当前 Director 列表")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-runtime-activity")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-runtime-activity")).toContainText("实时活动");
   await attachScreenshot(window, testInfo, "chief-engineer-workspace");
 
   await window.getByTestId("chief-engineer-enter-director").click();

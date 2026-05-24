@@ -5,12 +5,20 @@ import { ChiefEngineerWorkbenchPanel } from './ChiefEngineerWorkbenchPanel';
 const roleSessionMocks = vi.hoisted(() => ({
   createRoleSession: vi.fn(),
   exportRoleSessionToWorkflow: vi.fn(),
+  listRoleSessionArtifactEvidence: vi.fn(),
+  listRoleSessionAuditEvidence: vi.fn(),
+  listRoleSessionMessageEvidence: vi.fn(),
   listRoleSessions: vi.fn(),
 }));
 
 const pmServiceMocks = vi.hoisted(() => ({
   cancelDirectorRun: vi.fn(),
   getDirectorRun: vi.fn(),
+}));
+
+const factoryServiceMocks = vi.hoisted(() => ({
+  getFactoryRun: vi.fn(),
+  stopFactoryRun: vi.fn(),
 }));
 
 const toastMocks = vi.hoisted(() => ({
@@ -20,6 +28,7 @@ const toastMocks = vi.hoisted(() => ({
 
 vi.mock('@/services/roleSessionService', () => roleSessionMocks);
 vi.mock('@/services/pmService', () => pmServiceMocks);
+vi.mock('@/services/factoryService', () => factoryServiceMocks);
 
 vi.mock('sonner', () => ({
   toast: toastMocks,
@@ -46,6 +55,27 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
       ok: true,
       data: { ok: true, run_id: 'director-run-from-ce', artifact_count: 3 },
     });
+    roleSessionMocks.listRoleSessionMessageEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'ce-message-1', role: 'assistant', content: 'Blueprint evidence ready' }],
+        total: 8,
+      },
+    });
+    roleSessionMocks.listRoleSessionArtifactEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'ce-artifact-1', type: 'blueprint' }],
+        total: 1,
+      },
+    });
+    roleSessionMocks.listRoleSessionAuditEvidence.mockResolvedValue({
+      ok: true,
+      data: {
+        items: [{ id: 'ce-audit-1', event_type: 'workflow_exported', timestamp: '2026-05-23T00:00:00Z' }],
+        total: 5,
+      },
+    });
     pmServiceMocks.getDirectorRun.mockResolvedValue({
       ok: true,
       data: {
@@ -64,6 +94,30 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
         workspace: 'C:/Temp/Product',
         tasks_queued: 2,
         message: 'Status: CANCELLED',
+      },
+    });
+    factoryServiceMocks.getFactoryRun.mockResolvedValue({
+      ok: true,
+      data: {
+        run_id: 'factory-run-from-ce',
+        status: 'running',
+        phase: 'planning',
+        progress: 40,
+        roles: {},
+        gates: [],
+        created_at: '2026-05-23T00:00:00Z',
+      },
+    });
+    factoryServiceMocks.stopFactoryRun.mockResolvedValue({
+      ok: true,
+      data: {
+        run_id: 'factory-run-from-ce',
+        status: 'cancelled',
+        phase: 'cancelled',
+        progress: 40,
+        roles: {},
+        gates: [],
+        created_at: '2026-05-23T00:00:00Z',
       },
     });
   });
@@ -91,6 +145,20 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
 
     fireEvent.change(selector, { target: { value: 'ce-session-1' } });
     await waitFor(() => expect(screen.getByTestId('chief_engineer-dialogue')).toHaveAttribute('data-session-id', 'ce-session-1'));
+    await waitFor(() => expect(roleSessionMocks.listRoleSessionMessageEvidence).toHaveBeenCalledWith('ce-session-1', {
+      limit: 5,
+      offset: 0,
+    }));
+    expect(roleSessionMocks.listRoleSessionArtifactEvidence).toHaveBeenCalledWith('ce-session-1');
+    expect(roleSessionMocks.listRoleSessionAuditEvidence).toHaveBeenCalledWith('ce-session-1', {
+      limit: 5,
+      offset: 0,
+    });
+    expect(await screen.findByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/ce-session-1');
+    expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('assistant: Blueprint evidence ready');
+    expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('8');
+    expect(screen.getByTestId('role-session-evidence-artifacts')).toHaveTextContent('blueprint: ce-artifact-1');
+    expect(screen.getByTestId('role-session-evidence-audit')).toHaveTextContent('workflow_exported');
 
     fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
 
@@ -122,6 +190,23 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
     const evidence = await screen.findByTestId('chief-engineer-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/director/runs/director-run-from-ce');
     expect(evidence).toHaveTextContent('RUNNING · queued=2');
+    expect(screen.getByTestId('chief-engineer-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+
+    pmServiceMocks.getDirectorRun.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        run_id: 'director-run-from-ce',
+        status: 'COMPLETED',
+        workspace: 'C:/Temp/Product',
+        tasks_queued: 2,
+        message: 'Status: COMPLETED',
+      },
+    });
+    fireEvent.click(screen.getByTestId('chief-engineer-workbench-run-refresh'));
+
+    await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledTimes(2));
+    expect(evidence).toHaveTextContent('COMPLETED · queued=2');
+    expect(screen.queryByTestId('chief-engineer-workbench-run-evidence-auto-refresh')).not.toBeInTheDocument();
   });
 
   it('cancels the Director run created from Chief Engineer workbench export', async () => {
@@ -149,5 +234,40 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
     expect(toastMocks.success).toHaveBeenCalledWith('Director 编排取消已提交', {
       description: 'Run ID: director-run-from-ce',
     });
+  });
+
+  it('exports Chief Engineer RoleSession to Factory with run evidence', async () => {
+    roleSessionMocks.exportRoleSessionToWorkflow.mockResolvedValueOnce({
+      ok: true,
+      data: { ok: true, run_id: 'factory-run-from-ce', artifact_count: 6 },
+    });
+    render(
+      <ChiefEngineerWorkbenchPanel
+        workspace="C:/Temp/Product"
+        initialSessionId="ce-session-1"
+        taskCount={6}
+        blueprintCount={2}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 Factory' }));
+
+    await waitFor(() => expect(roleSessionMocks.exportRoleSessionToWorkflow).toHaveBeenCalledWith('ce-session-1', {
+      target: 'factory',
+      export_kind: 'session_bundle',
+      include_audit_log: true,
+    }));
+    expect(toastMocks.success).toHaveBeenCalledWith('已导出到 Factory 流水线', {
+      description: 'Run ID: factory-run-from-ce\nArtifacts: 6',
+    });
+    await waitFor(() => expect(factoryServiceMocks.getFactoryRun).toHaveBeenCalledWith('factory-run-from-ce'));
+    const evidence = await screen.findByTestId('chief-engineer-workbench-factory-evidence');
+    expect(evidence).toHaveTextContent('/v2/factory/runs/factory-run-from-ce');
+    expect(evidence).toHaveTextContent('running · phase=planning · progress=40%');
+
+    fireEvent.click(screen.getByTestId('chief-engineer-workbench-factory-evidence-cancel'));
+
+    await waitFor(() => expect(factoryServiceMocks.stopFactoryRun).toHaveBeenCalledWith('factory-run-from-ce'));
+    expect(evidence).toHaveTextContent('cancelled · phase=cancelled · progress=40%');
   });
 });

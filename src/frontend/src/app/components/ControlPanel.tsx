@@ -25,9 +25,11 @@ interface ControlPanelProps {
   pmRunning: boolean;
   directorRunning: boolean;
   pmToggleDisabled?: boolean;
+  pmBlockedReason?: string;
   directorToggleDisabled?: boolean;
   directorBlockedReason?: string;
   runOnceDisabled?: boolean;
+  runOnceBlockedReason?: string;
   agentsNeeded?: boolean;
   agentsDraftReady?: boolean;
   agentsDraftFailed?: boolean;
@@ -103,9 +105,11 @@ export function ControlPanel({
   pmRunning,
   directorRunning,
   pmToggleDisabled,
+  pmBlockedReason,
   directorToggleDisabled,
   directorBlockedReason,
   runOnceDisabled,
+  runOnceBlockedReason,
   agentsNeeded,
   agentsDraftReady,
   agentsDraftFailed,
@@ -163,6 +167,12 @@ export function ControlPanel({
   const pmDisabled = !!pmToggleDisabled;
   const directorDisabled = !!directorToggleDisabled;
   const runOnceBlocked = !!runOnceDisabled;
+  const pmDisabledTitle = pmDisabled && pmBlockedReason
+    ? pmBlockedReason
+    : pmRunning
+      ? UI_TERMS.actions.stopLoop
+      : UI_TERMS.actions.startLoop;
+  const runOnceTitle = runOnceBlocked && runOnceBlockedReason ? runOnceBlockedReason : UI_TERMS.actions.runOnce;
   const pmToggleBusy = Boolean(isStartingPM || isStoppingPM || pmToggleEvidence.loading);
   const directorToggleBusy = Boolean(isStartingDirector || isStoppingDirector || directorToggleEvidence.loading);
   const showAgents = !!agentsNeeded;
@@ -430,6 +440,14 @@ export function ControlPanel({
         {/* PM 控制 */}
         <div className="no-drag flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/5 backdrop-blur-sm">
           <span className="text-[10px] uppercase font-bold text-text-dim tracking-wider px-1">{UI_TERMS.roles.pm}</span>
+          {pmBlockedReason ? (
+            <span
+              className="max-w-[170px] truncate rounded border border-status-error/20 bg-status-error/20 px-1.5 py-0.5 text-[10px] text-status-error"
+              title={pmBlockedReason}
+            >
+              {pmBlockedReason}
+            </span>
+          ) : null}
           <button
             onClick={() => { void handleTogglePm(); }}
             data-testid="control-panel-pm-toggle"
@@ -438,7 +456,7 @@ export function ControlPanel({
               ? 'bg-gradient-primary text-white shadow-glow'
               : 'bg-white/5 text-text-muted hover:bg-white/10 hover:text-text-main'
               } ${pmDisabled || pmToggleBusy ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
-            title={pmRunning ? UI_TERMS.actions.stopLoop : UI_TERMS.actions.startLoop}
+            title={pmDisabledTitle}
           >
             {pmToggleBusy ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -469,7 +487,7 @@ export function ControlPanel({
               disabled={runOnceBlocked || pmToggleBusy}
               className={`p-1.5 rounded-md transition-colors text-text-muted hover:text-accent hover:bg-accent-dim relative ${runOnceBlocked || pmToggleBusy ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''
                 }`}
-              title={UI_TERMS.actions.runOnce}
+              title={runOnceTitle}
             >
               {pmToggleBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}
             </button>

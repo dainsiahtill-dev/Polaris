@@ -137,6 +137,48 @@ def _make_factory_run(
     return run
 
 
+def test_execution_stages_for_recovery_after_checkpoint() -> None:
+    """Recovered checkpoint retries should resume after the saved checkpoint."""
+    from polaris.delivery.http.routers.factory import _execution_stages_for_run
+
+    run = _make_factory_run(
+        status="recovering",
+        stages=["pm_planning", "director_dispatch", "quality_gate"],
+        metadata={
+            "current_stage": "director_dispatch",
+            "last_successful_stage": "pm_planning",
+            "retry_execution_stage": "director_dispatch",
+            "retry_start_policy": "after_checkpoint",
+        },
+    )
+    run.recovery_point = "pm_planning"
+
+    assert _execution_stages_for_run(run, run.config.stages) == ["director_dispatch", "quality_gate"]
+
+
+def test_execution_stages_for_explicit_retry_phase_reruns_target_stage() -> None:
+    """Explicit retry phase requests should rerun the selected stage."""
+    from polaris.delivery.http.routers.factory import _execution_stages_for_run
+
+    run = _make_factory_run(
+        status="recovering",
+        stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+        metadata={
+            "current_stage": "pm_planning",
+            "retry_execution_stage": "pm_planning",
+            "retry_start_policy": "rerun_stage",
+        },
+    )
+    run.recovery_point = "pm_planning"
+
+    assert _execution_stages_for_run(run, run.config.stages) == [
+        "pm_planning",
+        "chief_engineer_review",
+        "director_dispatch",
+        "quality_gate",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # GET /v2/factory/runs
 # ---------------------------------------------------------------------------
@@ -219,7 +261,8 @@ async def test_start_factory_run_success(client: AsyncClient) -> None:
         ),
         patch(
             "polaris.delivery.http.routers.factory.create_task_with_context",
-        ),
+        ) as create_task_with_context_mock,
+        patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
     ):
         mock_svc = MagicMock()
         mock_svc_cls.return_value = mock_svc
@@ -243,6 +286,71 @@ async def test_start_factory_run_success(client: AsyncClient) -> None:
         assert data["status"] == "running"
         mock_svc.create_run.assert_awaited_once()
         mock_svc.start_run.assert_awaited_once()
+        mock_roles_ready.assert_called_once()
+        assert mock_roles_ready.call_args.kwargs["default_roles"] == [
+            "pm",
+            "chief_engineer",
+            "director",
+            "qa",
+        ]
+        assert mock_roles_ready.call_args.kwargs["force_roles"] == [
+            "pm",
+            "chief_engineer",
+            "director",
+            "qa",
+        ]
+        scheduled_coro = create_task_with_context_mock.call_args.args[0]
+        assert scheduled_coro.cr_frame is None
+
+
+@pytest.mark.asyncio
+async def test_start_factory_run_blocks_when_stage_roles_not_ready(client: AsyncClient) -> None:
+    """Factory start should fail closed before run creation when stage runtime roles are blocked."""
+    from polaris.delivery.http.routers._shared import StructuredHTTPException
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+        ) as mock_svc_cls,
+        patch(
+            "polaris.delivery.http.routers.factory.sync_process_settings_environment",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.save_persisted_settings",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.create_task_with_context",
+        ) as create_task_with_context_mock,
+        patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
+    ):
+        mock_roles_ready.side_effect = StructuredHTTPException(
+            status_code=409,
+            code="RUNTIME_ROLES_NOT_READY",
+            message="One or more required runtime roles are not ready",
+            details={
+                "required_roles": ["pm", "chief_engineer", "director", "qa"],
+                "missing_roles": ["pm"],
+            },
+        )
+
+        response = await client.post(
+            "/v2/factory/runs",
+            json={
+                "workspace": ".",
+                "start_from": "pm",
+                "directive": "Build a thing",
+                "run_director": True,
+                "director_iterations": 1,
+                "loop": False,
+            },
+        )
+
+    assert response.status_code == 409
+    data = response.json()
+    assert data["error"]["code"] == "RUNTIME_ROLES_NOT_READY"
+    assert data["error"]["details"]["missing_roles"] == ["pm"]
+    mock_svc_cls.return_value.create_run.assert_not_called()
+    create_task_with_context_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -294,6 +402,43 @@ async def test_get_factory_run_status_success(client: AsyncClient) -> None:
         assert data["run_id"] == "factory_abc"
         assert data["status"] == "running"
         assert "roles" in data
+
+
+@pytest.mark.asyncio
+async def test_get_factory_run_status_exposes_audit_metadata(client: AsyncClient) -> None:
+    """Factory status should expose safe lineage metadata for desktop evidence."""
+    run = _make_factory_run(
+        run_id="factory_exported",
+        status="running",
+        metadata={
+            "current_stage": "pm_planning",
+            "last_successful_stage": None,
+            "export_session_id": "sess_pm",
+            "export_bundle_path": ".polaris/exports/sess_pm_export.json",
+            "directive": "Build the PM Director desktop handoff.",
+            "summary_md": "# Hidden duplicate summary",
+            "failure": {
+                "detail": "previous failure detail",
+                "traceback": "internal traceback should not appear in status metadata",
+            },
+        },
+    )
+
+    with patch(
+        "polaris.delivery.http.routers.factory.FactoryRunService",
+    ) as mock_svc_cls:
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.get_run = AsyncMock(return_value=run)
+
+        response = await client.get("/v2/factory/runs/factory_exported")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["metadata"]["export_session_id"] == "sess_pm"
+        assert data["metadata"]["export_bundle_path"] == ".polaris/exports/sess_pm_export.json"
+        assert "Build the PM Director desktop handoff." in data["metadata"]["directive"]
+        assert "summary_md" not in data["metadata"]
+        assert "traceback" not in data["metadata"]["failure"]
 
 
 @pytest.mark.asyncio
@@ -521,9 +666,130 @@ async def test_control_factory_run_not_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_control_factory_run_unsupported_action(client: AsyncClient) -> None:
-    """POST /v2/factory/runs/{run_id}/control with unsupported action should 501."""
+async def test_control_factory_run_pause(client: AsyncClient) -> None:
+    """POST /v2/factory/runs/{run_id}/control with pause should pause run."""
     run = _make_factory_run(run_id="factory_abc", status="running")
+    paused = _make_factory_run(run_id="factory_abc", status="paused")
+
+    with patch(
+        "polaris.delivery.http.routers.factory.FactoryRunService",
+    ) as mock_svc_cls:
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.get_run = AsyncMock(return_value=run)
+        mock_svc.execute_pause = AsyncMock(return_value=paused)
+
+        response = await client.post(
+            "/v2/factory/runs/factory_abc/control",
+            json={"action": "pause"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["run_id"] == "factory_abc"
+        assert data["status"] == "paused"
+        mock_svc.execute_pause.assert_awaited_once_with("factory_abc")
+
+
+@pytest.mark.asyncio
+async def test_control_factory_run_resume(client: AsyncClient) -> None:
+    """POST /v2/factory/runs/{run_id}/control with resume should resume run."""
+    run = _make_factory_run(run_id="factory_abc", status="paused")
+    resumed = _make_factory_run(run_id="factory_abc", status="running")
+
+    with patch(
+        "polaris.delivery.http.routers.factory.FactoryRunService",
+    ) as mock_svc_cls:
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.get_run = AsyncMock(return_value=run)
+        mock_svc.execute_resume = AsyncMock(return_value=resumed)
+
+        response = await client.post(
+            "/v2/factory/runs/factory_abc/control",
+            json={"action": "resume"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["run_id"] == "factory_abc"
+        assert data["status"] == "running"
+        mock_svc.execute_resume.assert_awaited_once_with("factory_abc")
+
+
+@pytest.mark.asyncio
+async def test_control_factory_run_retry_from_checkpoint(client: AsyncClient) -> None:
+    """POST /v2/factory/runs/{run_id}/control can recover from the latest checkpoint."""
+    run = _make_factory_run(run_id="factory_abc", status="failed")
+    recovered = _make_factory_run(run_id="factory_abc", status="recovering")
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+        ) as mock_svc_cls,
+        patch(
+            "polaris.delivery.http.routers.factory.create_task_with_context",
+        ) as create_task_with_context_mock,
+    ):
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.get_run = AsyncMock(return_value=run)
+        mock_svc.retry_run_from_stage = AsyncMock(return_value=recovered)
+
+        response = await client.post(
+            "/v2/factory/runs/factory_abc/control",
+            json={"action": "retry_from_checkpoint", "reason": "operator retry"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["run_id"] == "factory_abc"
+        assert data["status"] == "recovering"
+        mock_svc.retry_run_from_stage.assert_awaited_once_with("factory_abc", None, "operator retry")
+        scheduled_coro = create_task_with_context_mock.call_args.args[0]
+        assert scheduled_coro.cr_frame is None
+
+
+@pytest.mark.asyncio
+async def test_control_factory_run_retry_phase(client: AsyncClient) -> None:
+    """POST /v2/factory/runs/{run_id}/control maps target phase to a configured stage."""
+    run = _make_factory_run(
+        run_id="factory_abc",
+        status="failed",
+        stages=["docs_generation", "pm_planning", "director_dispatch"],
+    )
+    recovered = _make_factory_run(run_id="factory_abc", status="recovering")
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+        ) as mock_svc_cls,
+        patch(
+            "polaris.delivery.http.routers.factory.create_task_with_context",
+        ) as create_task_with_context_mock,
+    ):
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.get_run = AsyncMock(return_value=run)
+        mock_svc.retry_run_from_stage = AsyncMock(return_value=recovered)
+
+        response = await client.post(
+            "/v2/factory/runs/factory_abc/control",
+            json={"action": "retry_phase", "target_phase": "implementation", "reason": "rerun delivery"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "recovering"
+        mock_svc.retry_run_from_stage.assert_awaited_once_with(
+            "factory_abc",
+            "director_dispatch",
+            "rerun delivery",
+        )
+        scheduled_coro = create_task_with_context_mock.call_args.args[0]
+        assert scheduled_coro.cr_frame is None
+
+
+@pytest.mark.asyncio
+async def test_control_factory_run_retry_phase_rejects_unconfigured_phase(client: AsyncClient) -> None:
+    """POST /v2/factory/runs/{run_id}/control rejects phases outside the run stage graph."""
+    run = _make_factory_run(run_id="factory_abc", status="failed", stages=["pm_planning"])
 
     with patch(
         "polaris.delivery.http.routers.factory.FactoryRunService",
@@ -534,12 +800,12 @@ async def test_control_factory_run_unsupported_action(client: AsyncClient) -> No
 
         response = await client.post(
             "/v2/factory/runs/factory_abc/control",
-            json={"action": "pause"},
+            json={"action": "retry_phase", "target_phase": "implementation"},
         )
-        assert response.status_code == 501
+        assert response.status_code == 400
         data = response.json()
         assert data["error"]["code"] == "INVALID_REQUEST"
-        assert "pause" in data["error"]["message"]
+        assert "implementation" in data["error"]["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +831,7 @@ async def test_get_factory_run_artifacts_success(client: AsyncClient, tmp_path: 
         mock_svc = MagicMock()
         mock_svc_cls.return_value = mock_svc
         mock_svc.get_run = AsyncMock(return_value=run)
+        mock_svc.get_run_events = AsyncMock(return_value=[])
         mock_svc.store.get_run_dir.return_value = run_dir
 
         response = await client.get("/v2/factory/runs/factory_abc/artifacts")
@@ -606,6 +873,7 @@ async def test_get_factory_run_artifacts_empty(client: AsyncClient, tmp_path: Pa
         mock_svc = MagicMock()
         mock_svc_cls.return_value = mock_svc
         mock_svc.get_run = AsyncMock(return_value=run)
+        mock_svc.get_run_events = AsyncMock(return_value=[])
         mock_svc.store.get_run_dir.return_value = run_dir
 
         response = await client.get("/v2/factory/runs/factory_abc/artifacts")

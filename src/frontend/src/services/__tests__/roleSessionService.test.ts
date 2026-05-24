@@ -16,8 +16,11 @@ import {
   exportRoleSessionToWorkflow,
   getRoleCapabilities,
   getRoleSession,
+  listRoleSessionArtifactEvidence,
   listRoleSessionArtifacts,
+  listRoleSessionAuditEvidence,
   listRoleSessionAuditEvents,
+  listRoleSessionMessageEvidence,
   listRoleSessionMessages,
   listRoleSessions,
   readRoleSessionMemoryArtifact,
@@ -135,15 +138,30 @@ describe('roleSessionService', () => {
       data: {
         ok: true,
         messages: [{ id: 'msg-1', role: 'assistant', content: 'answer' }],
+        session: { id: 'session-1', message_count: 8 },
+        total: 8,
       },
     });
 
-    const result = await listRoleSessionMessages('session-1', { limit: 100, offset: 0 });
+    const evidence = await listRoleSessionMessageEvidence('session-1', { limit: 100, offset: 0 });
 
     expect(mockApiGet).toHaveBeenCalledWith(
       '/v2/roles/sessions/session-1/messages?limit=100&offset=0',
       'Failed to list RoleSession messages',
     );
+    expect(evidence.ok).toBe(true);
+    expect(evidence.data?.total).toBe(8);
+    expect(evidence.data?.items[0].content).toBe('answer');
+
+    mockApiGet.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        messages: [{ id: 'msg-1', role: 'assistant', content: 'answer' }],
+        total: 8,
+      },
+    });
+    const result = await listRoleSessionMessages('session-1', { limit: 100, offset: 0 });
     expect(result.ok).toBe(true);
     expect(result.data?.[0].content).toBe('answer');
   });
@@ -198,6 +216,7 @@ describe('roleSessionService', () => {
         data: {
           ok: true,
           artifacts: [{ id: 'artifact-1', type: 'directive' }, { type: 'invalid' }],
+          total: 7,
         },
       })
       .mockResolvedValueOnce({
@@ -205,11 +224,12 @@ describe('roleSessionService', () => {
         data: {
           ok: true,
           audit_events: [{ id: 'audit-1', event_type: 'message_sent' }],
+          total: 11,
         },
       });
 
-    const artifacts = await listRoleSessionArtifacts('session-1');
-    const audit = await listRoleSessionAuditEvents('session-1', { limit: 20, offset: 0 });
+    const artifacts = await listRoleSessionArtifactEvidence('session-1');
+    const audit = await listRoleSessionAuditEvidence('session-1', { limit: 20, offset: 0 });
 
     expect(mockApiGet).toHaveBeenNthCalledWith(
       1,
@@ -222,9 +242,33 @@ describe('roleSessionService', () => {
       'Failed to list RoleSession audit events',
     );
     expect(artifacts.ok).toBe(true);
-    expect(artifacts.data).toEqual([{ id: 'artifact-1', type: 'directive' }]);
+    expect(artifacts.data?.items).toEqual([{ id: 'artifact-1', type: 'directive' }]);
+    expect(artifacts.data?.total).toBe(7);
     expect(audit.ok).toBe(true);
-    expect(audit.data?.[0].event_type).toBe('message_sent');
+    expect(audit.data?.items[0].event_type).toBe('message_sent');
+    expect(audit.data?.total).toBe(11);
+
+    mockApiGet
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          ok: true,
+          artifacts: [{ id: 'artifact-1', type: 'directive' }],
+          total: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          ok: true,
+          audit_events: [{ id: 'audit-1', event_type: 'message_sent' }],
+          total: 1,
+        },
+      });
+    const artifactItems = await listRoleSessionArtifacts('session-1');
+    const auditItems = await listRoleSessionAuditEvents('session-1', { limit: 20, offset: 0 });
+    expect(artifactItems.data).toEqual([{ id: 'artifact-1', type: 'directive' }]);
+    expect(auditItems.data?.[0].event_type).toBe('message_sent');
   });
 
   it('searches and reads RoleSession memory payloads', async () => {
@@ -297,7 +341,7 @@ describe('roleSessionService', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        data: { ok: true, run_id: 'pm-run-1', artifact_count: 2 },
+        data: { ok: true, run_id: 'pm-run-1', artifact_count: 2, message_count: 3 },
       });
 
     const snapshotPayload = { include_messages: true, format: 'json' as const };
@@ -323,5 +367,6 @@ describe('roleSessionService', () => {
     );
     expect(snapshot.data).toEqual({ id: 'session-1', messages: [] });
     expect(workflow.data?.run_id).toBe('pm-run-1');
+    expect(workflow.data?.message_count).toBe(3);
   });
 });

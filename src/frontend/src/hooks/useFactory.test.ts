@@ -5,6 +5,9 @@ import React from 'react';
 
 const startFactoryRunMock = vi.fn();
 const stopFactoryRunMock = vi.fn();
+const pauseFactoryRunMock = vi.fn();
+const resumeFactoryRunMock = vi.fn();
+const retryFactoryRunFromCheckpointMock = vi.fn();
 const getFactoryRunMock = vi.fn();
 const getFactoryRunArtifactsMock = vi.fn();
 const listFactoryRunsMock = vi.fn();
@@ -25,6 +28,9 @@ vi.mock('sonner', () => ({
 vi.mock('@/services', () => ({
   startFactoryRun: (...args: unknown[]) => startFactoryRunMock(...args),
   stopFactoryRun: (...args: unknown[]) => stopFactoryRunMock(...args),
+  pauseFactoryRun: (...args: unknown[]) => pauseFactoryRunMock(...args),
+  resumeFactoryRun: (...args: unknown[]) => resumeFactoryRunMock(...args),
+  retryFactoryRunFromCheckpoint: (...args: unknown[]) => retryFactoryRunFromCheckpointMock(...args),
   getFactoryRun: (...args: unknown[]) => getFactoryRunMock(...args),
   getFactoryRunArtifacts: (...args: unknown[]) => getFactoryRunArtifactsMock(...args),
   listFactoryRuns: (...args: unknown[]) => listFactoryRunsMock(...args),
@@ -69,6 +75,15 @@ describe('useFactory', () => {
     stopFactoryRunMock.mockResolvedValue({
       ok: true,
       data: { ...baseRun, status: 'cancelled', phase: 'cancelled', progress: 25 },
+    });
+    pauseFactoryRunMock.mockResolvedValue({
+      ok: true,
+      data: { ...baseRun, status: 'paused' },
+    });
+    resumeFactoryRunMock.mockResolvedValue({ ok: true, data: baseRun });
+    retryFactoryRunFromCheckpointMock.mockResolvedValue({
+      ok: true,
+      data: { ...baseRun, status: 'recovering' },
     });
     getFactoryRunMock.mockResolvedValue({ ok: true, data: baseRun });
     getFactoryRunArtifactsMock.mockImplementation(async (runId: string) => ({
@@ -229,6 +244,35 @@ describe('useFactory', () => {
     expect(stopFactoryRunMock).toHaveBeenCalledWith('run-1', 'operator stop');
     expect(result.current.currentRun?.status).toBe('cancelled');
     expect(result.current.isStreaming).toBe(false);
+  });
+
+  it('exposes pause, resume and retry controls through the canonical factory control API', async () => {
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await result.current.pauseRun('run-1', 'operator pause');
+    });
+    expect(pauseFactoryRunMock).toHaveBeenCalledWith('run-1', 'operator pause');
+    expect(result.current.currentRun?.status).toBe('paused');
+
+    await act(async () => {
+      await result.current.resumeRun('run-1', 'operator resume');
+    });
+    expect(resumeFactoryRunMock).toHaveBeenCalledWith('run-1', 'operator resume');
+    expect(result.current.currentRun?.status).toBe('running');
+
+    await act(async () => {
+      await result.current.retryRunFromCheckpoint('run-1', 'operator retry');
+    });
+    expect(retryFactoryRunFromCheckpointMock).toHaveBeenCalledWith('run-1', 'operator retry');
+    expect(result.current.currentRun?.status).toBe('recovering');
+    expect(connectFactoryStreamMock).toHaveBeenCalledWith(
+      'run-1',
+      expect.objectContaining({
+        onStatus: expect.any(Function),
+      }),
+    );
+    expect(result.current.isStreaming).toBe(true);
   });
 
   it('falls back to fetch and reconnects after connection errors', async () => {

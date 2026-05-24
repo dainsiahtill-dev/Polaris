@@ -274,6 +274,7 @@ class FactoryRunStatus(BaseModel):
     completed_at: datetime | None
 
     summary_md: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class FactoryRunList(BaseModel):

@@ -30,7 +30,7 @@ import { FactoryWorkspace } from '@/app/components/factory/FactoryWorkspace';
 import { ResidentWorkspace } from '@/app/components/resident';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
-import { apiFetch, apiFetchFresh, openPath, pickWorkspace } from '@/api';
+import { apiFetchFresh, openPath, pickWorkspace } from '@/api';
 import { runtimeService } from '@/services';
 import { useRuntime } from './hooks/useRuntime';
 import { useRuntimeConnectionNotifications } from './hooks/useConnectionNotifications';
@@ -41,6 +41,7 @@ import { useFactory } from '@/hooks/useFactory';
 import { getLatestExecutionActivityLog } from '@/app/utils/appRuntime';
 import { isLancedbExplicitlyBlocked } from '@/app/utils/lancedbGate';
 import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
+import { isRoleLlmBlocked, useLlmRuntimeGate } from './hooks/useLlmRuntimeGate';
 
 // Lazy load pages
 
@@ -65,6 +66,8 @@ const TerminalPanel = lazy(() =>
 );
 
 const RUN_ID_PREFIX = 'pm-';
+const TERMINAL_FACTORY_RUN_TOKENS = new Set(['completed', 'failed', 'error', 'blocked', 'timeout', 'cancelled', 'canceled']);
+const IDLE_FACTORY_RUN_TOKENS = new Set(['', 'idle', 'pending', 'waiting', 'stopped', 'unknown', 'none']);
 
 function parseIterationFromRunId(runId: string): number | null {
   const raw = runId.trim().toLowerCase();
@@ -159,6 +162,14 @@ function shouldKeepRicherSnapshot(
 function isActiveRuntimePhase(value: string): boolean {
   const token = String(value || '').trim().toLowerCase();
   return Boolean(token && !['idle', 'unknown', 'none'].includes(token));
+}
+
+function isFactoryRunActive(run: { status?: unknown; phase?: unknown } | null | undefined): boolean {
+  if (!run) return false;
+  const status = String(run.status || '').trim().toLowerCase();
+  const phase = String(run.phase || '').trim().toLowerCase();
+  if (TERMINAL_FACTORY_RUN_TOKENS.has(status) || TERMINAL_FACTORY_RUN_TOKENS.has(phase)) return false;
+  return !IDLE_FACTORY_RUN_TOKENS.has(status) || !IDLE_FACTORY_RUN_TOKENS.has(phase);
 }
 
 function isPmTerminalFailure(status: BackendStatus | null): boolean {
@@ -258,8 +269,12 @@ function AppContent() {
     isArtifactsLoading: factoryArtifactsLoading,
     startRun: startFactoryRun,
     stopRun: stopFactoryRun,
+    pauseRun: pauseFactoryRun,
+    resumeRun: resumeFactoryRun,
+    retryRunFromCheckpoint: retryFactoryRunFromCheckpoint,
     isLoading: factoryIsLoading,
   } = useFactory({ workspace });
+  const factoryRuntimeActive = factoryIsLoading || isFactoryRunActive(factoryCurrentRun);
 
   const { stats: usageStats, loading: usageLoading, error: usageError, refresh: refreshUsage } = useUsageStats(workspace || null);
   const directorRunning = resolveRunning(directorStatus);
@@ -269,17 +284,14 @@ function AppContent() {
     [processStreamEvents],
   );
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
-  const [llmDirectorBlockedReason, setLlmDirectorBlockedReason] = useState('');
-  const [llmRuntimeState, setLlmRuntimeState] = useState<{
-    state: 'READY' | 'BLOCKED' | 'UNKNOWN';
-    blockedRoles: string[];
-    requiredRoles: string[];
-    lastUpdated: string | null;
-  }>({
-    state: 'UNKNOWN',
-    blockedRoles: [],
-    requiredRoles: [],
-    lastUpdated: null,
+  const {
+    llmRuntimeState,
+    llmDirectorBlockedReason,
+    handleLlmStatusChange,
+  } = useLlmRuntimeGate({
+    workspace,
+    live,
+    llmStatus,
   });
 
   useEffect(() => {
@@ -549,123 +561,30 @@ function AppContent() {
   const rawPmRunning = Boolean(pmStatus?.running);
   const effectivePmRunning = resolveEffectivePmRunning(pmStatus, activeRuntimeIssue);
   const effectiveCurrentPhase = resolveEffectivePhase(currentPhase, effectivePmRunning, activeRuntimeIssue);
-  const llmPmBlocked = (
-    llmRuntimeState.state === 'BLOCKED'
-    && llmRuntimeState.requiredRoles.includes('pm')
-    && llmRuntimeState.blockedRoles.includes('pm')
-  );
-  const pmStartBlockedReason = llmPmBlocked
+  const llmPmBlocked = isRoleLlmBlocked(llmRuntimeState, 'pm');
+  const docsStartBlockedReason = docsMissing ? 'docs/ 初始化未完成' : '';
+  const lancedbStartBlockedReason = lancedbBlocked
+    ? String(lancedbStatus?.error || '').trim() || 'LanceDB 不可用'
+    : '';
+  const pmLlmBlockedReason = llmPmBlocked
     ? 'LLM 就绪检查未通过：PM 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。'
     : '';
-
-  const applyLlmStatusPayload = useCallback((payload: {
-    state?: unknown;
-    blocked_roles?: unknown;
-    required_ready_roles?: unknown;
-    last_updated?: unknown;
-  }) => {
-    const stateToken = String(payload.state || '').trim().toUpperCase();
-    const blockedRoles = Array.isArray(payload.blocked_roles)
-      ? payload.blocked_roles.map((role) => String(role).trim().toLowerCase())
-      : [];
-    const requiredRoles = Array.isArray(payload.required_ready_roles)
-      ? payload.required_ready_roles.map((role) => String(role).trim().toLowerCase())
-      : [];
-
-    const shouldBlockDirector =
-      stateToken === 'BLOCKED' &&
-      requiredRoles.includes('director') &&
-      blockedRoles.includes('director');
-
-    setLlmRuntimeState({
-      state: stateToken === 'READY' ? 'READY' : stateToken === 'BLOCKED' ? 'BLOCKED' : 'UNKNOWN',
-      blockedRoles,
-      requiredRoles,
-      lastUpdated: typeof payload.last_updated === 'string' ? payload.last_updated : null,
-    });
-    setLlmDirectorBlockedReason(shouldBlockDirector ? 'LLM 就绪检查未通过' : '');
-  }, []);
-
-  const handleLlmStatusChange = useCallback((status: {
-    state?: unknown;
-    blocked_roles?: unknown;
-    required_ready_roles?: unknown;
-    last_updated?: unknown;
-  } | null) => {
-    if (status) {
-      applyLlmStatusPayload(status);
-      return;
-    }
-
-    setLlmDirectorBlockedReason('');
-    setLlmRuntimeState({
-      state: 'UNKNOWN',
-      blockedRoles: [],
-      requiredRoles: [],
-      lastUpdated: null,
-    });
-  }, [applyLlmStatusPayload]);
-
-  useEffect(() => {
-    if (!llmStatus) return;
-    applyLlmStatusPayload(llmStatus);
-  }, [llmStatus, applyLlmStatusPayload]);
-
-  // 这里保留一个初始化获取，当 WebSocket 断开时作为降级方案
-  useEffect(() => {
-    if (!workspace) {
-      setLlmDirectorBlockedReason('');
-      setLlmRuntimeState({
-        state: 'UNKNOWN',
-        blockedRoles: [],
-        requiredRoles: [],
-        lastUpdated: null,
-      });
-      return;
-    }
-
-    let cancelled = false;
-
-    const refreshLlmGate = async () => {
-      try {
-        const response = await apiFetch('/v2/llm/status');
-        if (!response.ok) {
-          throw new Error(`llm status fetch failed: ${response.status}`);
-        }
-        const payload = (await response.json()) as {
-          state?: unknown;
-          blocked_roles?: unknown;
-          required_ready_roles?: unknown;
-          last_updated?: unknown;
-        };
-
-        if (cancelled) return;
-
-        if (!cancelled) {
-          applyLlmStatusPayload(payload);
-        }
-      } catch {
-        if (!cancelled) {
-          setLlmRuntimeState({
-            state: 'UNKNOWN',
-            blockedRoles: [],
-            requiredRoles: [],
-            lastUpdated: null,
-          });
-          setLlmDirectorBlockedReason('');
-        }
-      }
-    };
-
-    // 仅在 WebSocket 未连接或未回传 llm_status 时进行降级获取
-    if (!live || !llmStatus) {
-      void refreshLlmGate();
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [workspace, live, llmStatus, applyLlmStatusPayload]);
+  const pmStartBlockedReason = docsStartBlockedReason || lancedbStartBlockedReason || pmLlmBlockedReason;
+  const directorAgentsBlockedReason = agentsRequired && agentsDraftFailed
+    ? 'AGENTS 草稿生成失败'
+    : agentsRequired
+      ? '需要先确认 AGENTS.md'
+      : '';
+  const directorStartBlockedReason =
+    docsStartBlockedReason ||
+    lancedbStartBlockedReason ||
+    directorAgentsBlockedReason ||
+    (llmDirectorBlocked ? llmDirectorBlockedReason : '');
+  const runOnceBlockedReason = rawPmRunning
+    ? 'PM 正在运行'
+    : directorRunning
+      ? 'Director 正在运行'
+      : pmStartBlockedReason;
 
   const runtimeLlmGateActive = effectivePmRunning || directorRunning || isActiveRuntimePhase(effectiveCurrentPhase);
   const llmStatusForBar = llmRuntimeState.state === 'READY'
@@ -848,6 +767,11 @@ function AppContent() {
         pmRunning={effectivePmRunning}
         directorRunning={directorRunning}
         isStartingDirector={isStartingDirector}
+        isStoppingDirector={isStoppingDirector}
+        directorStartBlockedReason={!directorRunning ? directorStartBlockedReason : ''}
+        agentsRequired={agentsRequired}
+        agentsDraftReady={agentsDraftReady}
+        agentsDraftFailed={agentsDraftFailed}
         onBackToMain={handleBackToMain}
         onEnterDirectorWorkspace={handleEnterDirectorWorkspace}
         onOpenSettings={() => uiActions.openSettings()}
@@ -882,6 +806,7 @@ function AppContent() {
         pmRunning={effectivePmRunning}
         isStarting={isStartingDirector}
         isStopping={isStoppingDirector}
+        directorStartBlockedReason={!directorRunning ? directorStartBlockedReason : ''}
         onToggleDirector={() => toggleDirector(directorRunning, {
           required: agentsRequired,
           draftReady: agentsDraftReady,
@@ -903,6 +828,7 @@ function AppContent() {
         llmRuntimeState={llmRuntimeState}
         agentsRequired={agentsRequired}
         agentsDraftReady={agentsDraftReady}
+        agentsDraftFailed={agentsDraftFailed}
         qualityGate={qualityGate}
         notifyError={notifyError}
       />
@@ -921,6 +847,7 @@ function AppContent() {
         pmStartBlockedReason={pmStartBlockedReason}
         runtimeIssue={activeRuntimeIssue}
         isStarting={isStartingPM}
+        isStopping={isStoppingPM}
         onBackToMain={handleBackToMain}
         onTogglePm={() => togglePm(rawPmRunning)}
         onRunPmOnce={runPmOnce}
@@ -967,6 +894,9 @@ function AppContent() {
           isArtifactsLoading={factoryArtifactsLoading}
           onStart={() => startFactoryRun({ workspace, run_director: true })}
           onCancel={() => factoryCurrentRun && stopFactoryRun(factoryCurrentRun.run_id)}
+          onPause={() => factoryCurrentRun && pauseFactoryRun(factoryCurrentRun.run_id, 'operator pause')}
+          onResume={() => factoryCurrentRun && resumeFactoryRun(factoryCurrentRun.run_id, 'operator resume')}
+          onRetryCheckpoint={() => factoryCurrentRun && retryFactoryRunFromCheckpoint(factoryCurrentRun.run_id, 'operator retry')}
           isLoading={factoryIsLoading}
         />
         <LlmRuntimeOverlay
@@ -980,6 +910,7 @@ function AppContent() {
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
+          factoryRuntimeActive={factoryRuntimeActive}
           currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
@@ -1050,6 +981,7 @@ function AppContent() {
           llmBlockedRoles={llmRuntimeState.blockedRoles}
           llmRequiredRoles={llmRuntimeState.requiredRoles}
           llmLastUpdated={llmRuntimeState.lastUpdated}
+          factoryRuntimeActive={factoryRuntimeActive}
           currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
           executionLogs={executionLogs}
@@ -1078,22 +1010,12 @@ function AppContent() {
           workspace={workspace}
           pmRunning={effectivePmRunning}
           directorRunning={directorRunning}
-          pmToggleDisabled={(lancedbBlocked || docsMissing || llmPmBlocked) && !rawPmRunning}
-          directorToggleDisabled={
-            ((lancedbBlocked || docsMissing) && !directorRunning) ||
-            (agentsRequired && !directorRunning) ||
-            (llmDirectorBlocked && !directorRunning)
-          }
-          directorBlockedReason={
-            docsMissing && !directorRunning
-              ? 'docs/ missing'
-              : agentsRequired && !directorRunning
-                ? agentsDraftFailed ? 'AGENTS 草稿生成失败' : '需要先确认 AGENTS.md'
-                : llmDirectorBlocked && !directorRunning
-                  ? llmDirectorBlockedReason
-                  : ''
-          }
-          runOnceDisabled={rawPmRunning || directorRunning || llmPmBlocked}
+          pmToggleDisabled={Boolean(pmStartBlockedReason) && !rawPmRunning}
+          pmBlockedReason={!rawPmRunning ? pmStartBlockedReason : ''}
+          directorToggleDisabled={Boolean(directorStartBlockedReason) && !directorRunning}
+          directorBlockedReason={!directorRunning ? directorStartBlockedReason : ''}
+          runOnceDisabled={Boolean(runOnceBlockedReason)}
+          runOnceBlockedReason={runOnceBlockedReason}
           onOpenSettings={() => uiActions.openSettings()}
           onPickWorkspace={handlePickWorkspace}
           onTogglePm={() => togglePm(rawPmRunning)}

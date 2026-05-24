@@ -82,7 +82,8 @@ def test_command_executor_allows_repo_scoped_python_module(tmp_path: Path) -> No
         )
     )
 
-    assert spec["argv"][:3] == ["python", "-m", "pytest"]
+    assert Path(spec["argv"][0]).name.casefold() in {"python", "python.exe"}
+    assert spec["argv"][1:3] == ["-m", "pytest"]
 
 
 def test_command_executor_allows_workspace_package_module(tmp_path: Path) -> None:
@@ -103,7 +104,8 @@ def test_command_executor_allows_workspace_package_module(tmp_path: Path) -> Non
         )
     )
 
-    assert spec["argv"][:3] == ["python", "-m", "demo_app.delivery.cli"]
+    assert Path(spec["argv"][0]).name.casefold() in {"python", "python.exe"}
+    assert spec["argv"][1:3] == ["-m", "demo_app.delivery.cli"]
 
 
 def test_native_function_calling_rejects_malformed_tool_arguments(

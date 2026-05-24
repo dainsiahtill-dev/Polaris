@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import os
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -38,7 +39,7 @@ from polaris.cells.storage.layout.public.service import (
     save_persisted_settings,
     sync_process_settings_environment,
 )
-from polaris.delivery.http.routers._shared import StructuredHTTPException
+from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
 from polaris.delivery.http.routers.sse_utils import (
     create_sse_jetstream_consumer,
     sse_jetstream_generator,
@@ -77,6 +78,13 @@ STAGE_TO_ROLE: dict[str, str] = {
     "quality_gate": "qa",
 }
 
+PHASE_TO_RETRY_STAGES: dict[RunPhase, tuple[str, ...]] = {
+    RunPhase.ARCHITECT: ("docs_generation",),
+    RunPhase.PLANNING: ("pm_planning", "chief_engineer_review"),
+    RunPhase.IMPLEMENTATION: ("director_dispatch",),
+    RunPhase.QA_GATE: ("quality_gate",),
+}
+
 SERVICE_STATUS_TO_CONTRACT: dict[ServiceRunStatus, RunLifecycleStatus] = {
     ServiceRunStatus.PENDING: RunLifecycleStatus.PENDING,
     ServiceRunStatus.RUNNING: RunLifecycleStatus.RUNNING,
@@ -89,6 +97,8 @@ SERVICE_STATUS_TO_CONTRACT: dict[ServiceRunStatus, RunLifecycleStatus] = {
 
 _DEFAULT_LOOP_MAX_CYCLES = 12
 _DEFAULT_LOOP_STALL_THRESHOLD = 2
+_RETRY_START_POLICY_AFTER_CHECKPOINT = "after_checkpoint"
+FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director"]
 
 
 def _get_service(workspace: str) -> FactoryRunService:
@@ -108,7 +118,10 @@ def _resolve_workspace(state: AppState, workspace: str | None = None) -> str:
 def _parse_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
-    return datetime.fromisoformat(value)
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _calculate_progress(run: FactoryRun) -> float:
@@ -138,6 +151,120 @@ def _resolve_phase(run: FactoryRun) -> RunPhase:
         return STAGE_TO_PHASE.get(last_successful_stage, RunPhase.PENDING)
 
     return RunPhase.PENDING
+
+
+def _resolve_retry_stage(run: FactoryRun, target_phase: RunPhase | None) -> str:
+    if target_phase is None:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_REQUEST",
+            message="target_phase is required for retry_phase",
+        )
+
+    configured_stages = [str(stage).strip() for stage in run.config.stages if str(stage).strip()]
+    for candidate in PHASE_TO_RETRY_STAGES.get(target_phase, ()):
+        if candidate in configured_stages:
+            return candidate
+
+    raise StructuredHTTPException(
+        status_code=400,
+        code="INVALID_REQUEST",
+        message=f"Factory phase '{target_phase.value}' cannot be retried for this run",
+        details={
+            "target_phase": target_phase.value,
+            "configured_stages": configured_stages,
+            "supported_phases": [phase.value for phase in PHASE_TO_RETRY_STAGES],
+        },
+    )
+
+
+async def _save_service_run(service: FactoryRunService, run: FactoryRun) -> None:
+    save_run = getattr(getattr(service, "store", None), "save_run", None)
+    if not callable(save_run):
+        return
+    result = save_run(run)
+    if inspect.isawaitable(result):
+        await result
+
+
+def _infer_start_from_stages(stages: list[str]) -> str:
+    first_stage = next((stage for stage in stages if stage), "")
+    if first_stage == "docs_generation":
+        return "architect"
+    if first_stage == "director_dispatch":
+        return "director"
+    return "pm"
+
+
+def _coerce_director_iterations(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(parsed, 10))
+
+
+def _coerce_optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _store_start_request_metadata(run: FactoryRun, payload: FactoryStartRequest, start_from: str) -> None:
+    start_payload = payload.model_dump(mode="json")
+    start_payload["start_from"] = start_from
+    run.metadata["factory_start_request"] = start_payload
+
+
+def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartRequest:
+    configured_stages = [str(stage).strip() for stage in run.config.stages if str(stage).strip()]
+    raw_start_payload = run.metadata.get("factory_start_request")
+    start_payload = dict(raw_start_payload) if isinstance(raw_start_payload, dict) else {}
+
+    start_from = str(start_payload.get("start_from") or _infer_start_from_stages(configured_stages)).strip().lower()
+    if start_from not in {"auto", "architect", "pm", "director"}:
+        start_from = _infer_start_from_stages(configured_stages)
+
+    directive_value = _coerce_optional_string(start_payload.get("directive"))
+    if directive_value is None:
+        directive_value = _coerce_optional_string(run.config.description)
+
+    return FactoryStartRequest(
+        workspace=str(start_payload.get("workspace") or workspace),
+        start_from=cast(FactoryStartFrom, start_from),
+        directive=directive_value,
+        run_director=bool(start_payload.get("run_director", "director_dispatch" in configured_stages)),
+        director_iterations=_coerce_director_iterations(start_payload.get("director_iterations", 1)),
+        loop=bool(start_payload.get("loop", run.metadata.get("loop_requested", False))),
+        input_source=_coerce_optional_string(start_payload.get("input_source")),
+    )
+
+
+def _execution_stages_for_run(run: FactoryRun, configured_stages: list[str]) -> list[str]:
+    stages = [str(stage).strip() for stage in configured_stages if str(stage).strip()]
+    if run.status != ServiceRunStatus.RECOVERING:
+        return stages
+
+    policy = str(run.metadata.get("retry_start_policy") or "").strip()
+    if policy == _RETRY_START_POLICY_AFTER_CHECKPOINT:
+        recovery_stage = (
+            str(run.recovery_point or "").strip() or str(run.metadata.get("last_successful_stage") or "").strip()
+        )
+    else:
+        recovery_stage = (
+            str(run.metadata.get("retry_execution_stage") or "").strip()
+            or str(run.recovery_point or "").strip()
+            or str(run.metadata.get("current_stage") or "").strip()
+        )
+    if not recovery_stage or recovery_stage not in stages:
+        return stages
+
+    start_index = stages.index(recovery_stage)
+    if policy == _RETRY_START_POLICY_AFTER_CHECKPOINT:
+        start_index += 1
+    return stages[start_index:]
 
 
 def _build_roles(run: FactoryRun, phase: RunPhase) -> dict[str, RoleStatus]:
@@ -244,6 +371,22 @@ def _build_failure(run: FactoryRun, phase: RunPhase) -> FailureInfo | None:
     )
 
 
+def _json_safe_metadata(value: Any) -> dict[str, Any]:
+    try:
+        payload = json.loads(json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    payload.pop("summary_md", None)
+    payload.pop("summary_json", None)
+    failure = payload.get("failure")
+    if isinstance(failure, dict):
+        failure.pop("traceback", None)
+    return payload
+
+
 def _map_service_run_to_contract(run: FactoryRun) -> FactoryRunStatusContract:
     phase = _resolve_phase(run)
     current_stage = str(run.metadata.get("current_stage") or "").strip() or None
@@ -264,6 +407,7 @@ def _map_service_run_to_contract(run: FactoryRun) -> FactoryRunStatusContract:
         updated_at=_parse_datetime(run.updated_at),
         completed_at=_parse_datetime(run.completed_at),
         summary_md=str(run.metadata.get("summary_md") or "").strip() or None,
+        metadata=_json_safe_metadata(run.metadata),
     )
 
 
@@ -317,6 +461,34 @@ def _build_stage_list(start_from: str, run_director: bool) -> list[str]:
         *(["director_dispatch"] if run_director else []),
         "quality_gate",
     ]
+
+
+def _required_ready_roles_for_stages(stages: list[str], *, qa_enabled: bool) -> list[str]:
+    roles: list[str] = []
+    for stage in stages:
+        role = STAGE_TO_ROLE.get(str(stage or "").strip())
+        if not role or role == "architect":
+            continue
+        if role == "qa" and not qa_enabled:
+            continue
+        if role not in roles:
+            roles.append(role)
+    return roles
+
+
+def _settings_qa_enabled(settings: Any) -> bool:
+    return bool(getattr(settings, "qa_enabled", True))
+
+
+def _ensure_factory_runtime_ready(state: AppState, stages: list[str]) -> None:
+    roles = _required_ready_roles_for_stages(stages, qa_enabled=_settings_qa_enabled(state.settings))
+    if not roles:
+        return
+    ensure_required_roles_ready(
+        state,
+        default_roles=roles,
+        force_roles=roles,
+    )
 
 
 def _build_stage_context(stage: str, payload: FactoryStartRequest, state: AppState) -> dict[str, Any]:
@@ -815,22 +987,23 @@ async def _execute_run_with_service(
         if run is None:
             return
 
-        configured_stages = list(run.config.stages or [])
+        configured_stages = [str(stage).strip() for stage in run.config.stages if str(stage).strip()]
+        if not configured_stages:
+            raise RuntimeError("Factory run has no configured stages")
+
+        execution_stages = _execution_stages_for_run(run, configured_stages)
         loop_requested = bool(payload.loop)
-        loop_enabled = loop_requested and ("pm_planning" in configured_stages)
+        loop_enabled = loop_requested and ("pm_planning" in execution_stages)
         run.metadata["loop_requested"] = loop_requested
         run.metadata["loop_enabled"] = loop_enabled
         await service.store.save_run(run)
 
-        if not configured_stages:
-            raise RuntimeError("Factory run has no configured stages")
-
         if loop_enabled:
-            pm_index = configured_stages.index("pm_planning")
-            prefix_stages = configured_stages[:pm_index]
+            pm_index = execution_stages.index("pm_planning")
+            prefix_stages = execution_stages[:pm_index]
             iterative_stages: list[str] = []
             terminal_stages: list[str] = []
-            for stage_name in configured_stages[pm_index:]:
+            for stage_name in execution_stages[pm_index:]:
                 if stage_name == "quality_gate":
                     terminal_stages.append(stage_name)
                 else:
@@ -934,12 +1107,12 @@ async def _execute_run_with_service(
                         return
 
         if not loop_enabled:
-            completed = await _execute_stage_sequence(configured_stages)
+            completed = await _execute_stage_sequence(execution_stages)
             if not completed:
                 return
 
         current_run = await service.get_run(run_id)
-        if current_run is not None and current_run.status == ServiceRunStatus.RUNNING:
+        if current_run is not None and current_run.status in {ServiceRunStatus.RUNNING, ServiceRunStatus.RECOVERING}:
             await _persist_run_summary(
                 service=service,
                 run_id=run_id,
@@ -989,6 +1162,23 @@ async def _execute_run_with_service(
             await service.complete_run(run_id, success=False)
 
 
+def _schedule_factory_run_task(
+    service: FactoryRunService,
+    run_id: str,
+    payload: FactoryStartRequest,
+    state: AppState,
+) -> Any:
+    coro = _execute_run_with_service(service, run_id, payload, state)
+    try:
+        task: Any = create_task_with_context(coro, name=f"factory-run:{run_id}")
+    except BaseException:
+        coro.close()
+        raise
+    if not isinstance(task, asyncio.Task):
+        coro.close()
+    return task
+
+
 # ---- Core implementations ----
 
 
@@ -1023,12 +1213,18 @@ async def _start_factory_run_core(
 ) -> FactoryRunStatusContract:
     workspace = _resolve_workspace(state, payload.workspace)
     state.settings.workspace = Path(workspace)
+    try:
+        if hasattr(state.settings, "workspace_path"):
+            state.settings.workspace_path = workspace
+    except (AttributeError, ValueError):
+        logger.debug("Factory settings object does not accept workspace_path assignment")
     sync_process_settings_environment(state.settings)
     save_persisted_settings(state.settings)
     service = _get_service(workspace)
 
     start_from = _normalize_start_from(payload.start_from, workspace)
     stages = _build_stage_list(start_from, payload.run_director)
+    _ensure_factory_runtime_ready(state, stages)
 
     config = FactoryConfig(
         name=f"Factory Run - {start_from}",
@@ -1039,7 +1235,9 @@ async def _start_factory_run_core(
 
     run = await service.create_run(config)
     run = await service.start_run(run.id)
-    create_task_with_context(_execute_run_with_service(service, run.id, payload, state))
+    _store_start_request_metadata(run, payload, start_from)
+    await _save_service_run(service, run)
+    _schedule_factory_run_task(service, run.id, payload, state)
     return _map_service_run_to_contract(run)
 
 
@@ -1047,7 +1245,8 @@ async def _get_factory_run_status_core(
     run_id: str,
     state: AppState,
 ) -> FactoryRunStatusContract:
-    service = _get_service(_resolve_workspace(state))
+    workspace = _resolve_workspace(state)
+    service = _get_service(workspace)
     run = await service.get_run(run_id)
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
@@ -1176,19 +1375,41 @@ async def _control_factory_run_core(
     payload: FactoryControlRequest,
     state: AppState,
 ) -> FactoryRunStatusContract:
-    service = _get_service(_resolve_workspace(state))
+    workspace = _resolve_workspace(state)
+    service = _get_service(workspace)
     run = await service.get_run(run_id)
     if run is None:
         raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
 
     if payload.action == "cancel":
         return _map_service_run_to_contract(await service.cancel_run(run_id, payload.reason))
+    if payload.action == "pause":
+        return _map_service_run_to_contract(await service.execute_pause(run_id))
+    if payload.action == "resume":
+        return _map_service_run_to_contract(await service.execute_resume(run_id))
+    if payload.action == "retry_from_checkpoint":
+        try:
+            recovered = await service.retry_run_from_stage(run_id, None, payload.reason)
+        except ValueError as exc:
+            raise StructuredHTTPException(status_code=400, code="INVALID_REQUEST", message=str(exc)) from exc
+        if recovered.status == ServiceRunStatus.RECOVERING:
+            _schedule_factory_run_task(service, recovered.id, _build_retry_start_request(recovered, workspace), state)
+        return _map_service_run_to_contract(recovered)
+    if payload.action == "retry_phase":
+        retry_stage = _resolve_retry_stage(run, payload.target_phase)
+        try:
+            recovered = await service.retry_run_from_stage(run_id, retry_stage, payload.reason)
+        except ValueError as exc:
+            raise StructuredHTTPException(status_code=400, code="INVALID_REQUEST", message=str(exc)) from exc
+        if recovered.status == ServiceRunStatus.RECOVERING:
+            _schedule_factory_run_task(service, recovered.id, _build_retry_start_request(recovered, workspace), state)
+        return _map_service_run_to_contract(recovered)
 
     raise StructuredHTTPException(
         status_code=501,
         code="INVALID_REQUEST",
         message=f"Factory action '{payload.action}' is not implemented in this phase",
-        details={"supported_actions": ["cancel"]},
+        details={"supported_actions": ["cancel", "pause", "resume", "retry_from_checkpoint", "retry_phase"]},
     )
 
 
