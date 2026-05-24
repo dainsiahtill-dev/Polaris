@@ -43,7 +43,11 @@ from polaris.delivery.http.dependencies import (
 )
 from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
 from polaris.delivery.http.schemas.common import RoleCapabilitiesResponse
-from polaris.delivery.http.workspace import active_workspace_value, requested_or_active_workspace
+from polaris.delivery.http.workspace import (
+    active_workspace_value,
+    requested_or_active_workspace,
+    settings_with_workspace_override,
+)
 from polaris.domain.entities import TaskPriority
 from polaris.kernelone._runtime_config import resolve_env_str
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_OPERATION_TIMEOUT_SECONDS
@@ -215,14 +219,18 @@ def _cancel_failure_detail(result: Any) -> str:
     return "Task cannot be cancelled"
 
 
-async def _projected_task_response(request: Request, task_id: str) -> TaskResponse | None:
+def _workspace_from_request(request: Request, workspace: str | None = None) -> str:
+    state = getattr(request.app.state, "app_state", None) or request.app.state
+    return requested_or_active_workspace(state.settings, workspace or "")
+
+
+async def _projected_task_response(request: Request, task_id: str, workspace: str | None = None) -> TaskResponse | None:
     """Return a workflow/projection task detail when local Director queue misses."""
     state = getattr(request.app.state, "app_state", None) or request.app.state
-    settings = state.settings
-    workspace = active_workspace_value(settings)
+    resolved_workspace = _workspace_from_request(request, workspace)
 
     try:
-        projection = await RuntimeProjectionService.build_async(workspace, state=state)
+        projection = await RuntimeProjectionService.build_async(resolved_workspace, state=state)
     except (RuntimeError, ValueError, TypeError, AttributeError):
         logger.debug("Failed to build Director task projection for task_id=%s", task_id, exc_info=True)
         return None
@@ -837,13 +845,13 @@ def _worker_rows_from_projection(projection: Any) -> list[dict[str, Any]]:
     return _worker_rows_from_payload(local_payload if isinstance(local_payload, dict) else None)
 
 
-async def _projected_worker_rows(request: Request) -> list[dict[str, Any]]:
+async def _projected_worker_rows(request: Request, workspace: str | None = None) -> list[dict[str, Any]]:
     state = getattr(request.app.state, "app_state", None) or request.app.state
-    workspace = active_workspace_value(state.settings)
+    resolved_workspace = _workspace_from_request(request, workspace)
     try:
-        projection = await RuntimeProjectionService.build_async(workspace, state=state)
+        projection = await RuntimeProjectionService.build_async(resolved_workspace, state=state)
     except (RuntimeError, ValueError):
-        logger.debug("Director worker projection unavailable for workspace=%s", workspace, exc_info=True)
+        logger.debug("Director worker projection unavailable for workspace=%s", resolved_workspace, exc_info=True)
         return []
     return _worker_rows_from_projection(projection)
 
@@ -1018,8 +1026,8 @@ async def _build_director_diagnostics(
     """Build a side-effect-free Director readiness snapshot."""
 
     state = getattr(request.app.state, "app_state", None) or request.app.state
-    settings = state.settings
-    workspace = str(workspace_override or active_workspace_value(settings))
+    settings = settings_with_workspace_override(state.settings, workspace_override or "")
+    workspace = active_workspace_value(settings)
 
     status_section = DirectorDiagnosticsStatusSection(
         ok=False,
@@ -1183,6 +1191,7 @@ async def stop_director(
 async def get_status(
     request: Request,
     source: Literal["local", "auto"] = "local",
+    workspace: str = "",
 ) -> dict[str, Any]:
     """Get director status.
 
@@ -1191,11 +1200,10 @@ async def get_status(
     """
     # Get service from app state
     state = getattr(request.app.state, "app_state", None) or request.app.state
-    settings = state.settings
 
     # Use RuntimeProjectionService for consistent state
-    workspace = active_workspace_value(settings)
-    projection = await RuntimeProjectionService.build_async(workspace, state=state)
+    resolved_workspace = requested_or_active_workspace(state.settings, workspace)
+    projection = await RuntimeProjectionService.build_async(resolved_workspace, state=state)
 
     selected_status = (
         getattr(projection, "director_merged", None)
@@ -1235,10 +1243,11 @@ def get_director_capabilities() -> dict[str, Any]:
 @router.get("/diagnostics", dependencies=[Depends(require_auth)], response_model=DirectorDiagnosticsResponse)
 async def get_director_diagnostics(
     request: Request,
+    workspace: str = "",
     service: DirectorService = Depends(get_director_service_dep),
 ) -> DirectorDiagnosticsResponse:
     """Return side-effect-free Director desktop readiness diagnostics."""
-    return await _build_director_diagnostics(request, service)
+    return await _build_director_diagnostics(request, service, workspace_override=workspace)
 
 
 @router.post("/tasks", response_model=TaskResponse, dependencies=[Depends(require_auth)])
@@ -1268,6 +1277,7 @@ async def list_tasks(
     request: Request,
     status: str | None = None,
     source: Literal["auto", "local", "workflow"] = "auto",
+    workspace: str = "",
     service: DirectorService = Depends(get_director_service_dep),
 ) -> list[TaskResponse]:
     """List all tasks.
@@ -1290,9 +1300,8 @@ async def list_tasks(
             # Use RuntimeProjectionService for workflow/auto selection only.
             # Keep local-only path fast for high-frequency observers and stress tracer.
             state = getattr(request.app.state, "app_state", None) or request.app.state
-            settings = state.settings
-            workspace = active_workspace_value(settings)
-            projection = await RuntimeProjectionService.build_async(workspace, state=state)
+            resolved_workspace = requested_or_active_workspace(state.settings, workspace)
+            projection = await RuntimeProjectionService.build_async(resolved_workspace, state=state)
             used_projection = True
 
             tasks = _projection_task_rows(projection)
@@ -1323,6 +1332,7 @@ async def list_tasks(
 async def get_task(
     request: Request,
     task_id: str,
+    workspace: str = "",
     service: DirectorService = Depends(get_director_service_dep),
 ) -> TaskResponse:
     """Get task by ID."""
@@ -1330,7 +1340,7 @@ async def get_task(
     if task:
         return _task_response_from_row(_task_row_from_object(task))
 
-    projected = await _projected_task_response(request, task_id)
+    projected = await _projected_task_response(request, task_id, workspace)
     if projected is not None:
         return projected
 
@@ -1355,6 +1365,7 @@ async def cancel_task(
 @router.get("/workers", dependencies=[Depends(require_auth)])
 async def list_workers(
     request: Request,
+    workspace: str = "",
     service: DirectorService = Depends(get_director_service_dep),
 ) -> list[dict[str, Any]]:
     """List all workers."""
@@ -1362,13 +1373,14 @@ async def list_workers(
     local_rows = [_worker_payload_from_object(worker) for worker in workers]
     if local_rows:
         return local_rows
-    return await _projected_worker_rows(request)
+    return await _projected_worker_rows(request, workspace)
 
 
 @router.get("/workers/{worker_id}", dependencies=[Depends(require_auth)])
 async def get_worker(
     request: Request,
     worker_id: str,
+    workspace: str = "",
     service: DirectorService = Depends(get_director_service_dep),
 ) -> dict[str, Any]:
     """Get worker by ID."""
@@ -1377,7 +1389,7 @@ async def get_worker(
     if worker:
         return _worker_payload_from_object(worker)
 
-    for row in await _projected_worker_rows(request):
+    for row in await _projected_worker_rows(request, workspace):
         if _worker_row_matches_id(row, worker_id):
             return row
 

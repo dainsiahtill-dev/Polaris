@@ -189,7 +189,7 @@ export function PMWorkbenchPanel({
       error: null,
     }));
     try {
-      const result = await getDirectorDiagnostics();
+      const result = await getDirectorDiagnostics(workspace);
       if (result.ok && result.data) {
         setDirectorHandoffDiagnostics({ loading: false, data: result.data, error: null });
         return;

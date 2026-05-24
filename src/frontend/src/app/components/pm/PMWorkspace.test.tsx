@@ -339,7 +339,11 @@ describe('PMWorkspace history panel', () => {
       />,
     );
 
-    await waitFor(() => expect(listPmTasksMock).toHaveBeenCalledWith({ limit: 100, offset: 0 }));
+    await waitFor(() => expect(listPmTasksMock).toHaveBeenCalledWith({
+      limit: 100,
+      offset: 0,
+      workspace: 'C:/Temp/Product',
+    }));
     const evidence = await screen.findByTestId('pm-task-backend-evidence');
     expect(evidence).toHaveTextContent('/v2/pm/tasks');
     expect(evidence).toHaveTextContent('backend=2');
@@ -390,8 +394,16 @@ describe('PMWorkspace history panel', () => {
 
     fireEvent.click(screen.getByTitle('历史'));
 
-    await waitFor(() => expect(listPmTaskHistoryMock).toHaveBeenCalledWith({ limit: 50, offset: 0 }));
-    expect(listPmDirectorTaskHistoryMock).toHaveBeenCalledWith({ limit: 25, offset: 0 });
+    await waitFor(() => expect(listPmTaskHistoryMock).toHaveBeenCalledWith({
+      limit: 50,
+      offset: 0,
+      workspace: 'C:/Temp/Product',
+    }));
+    expect(listPmDirectorTaskHistoryMock).toHaveBeenCalledWith({
+      limit: 25,
+      offset: 0,
+      workspace: 'C:/Temp/Product',
+    });
     expect(screen.getByTestId('pm-history-task-list')).toHaveTextContent('PM-1');
     expect(screen.getByTestId('pm-history-task-list')).toHaveTextContent('created');
     expect(screen.getByTestId('pm-history-director-list')).toHaveTextContent('Iteration 3');
@@ -439,12 +451,16 @@ describe('PMWorkspace history panel', () => {
 
     fireEvent.click(screen.getByTitle('需求'));
 
-    await waitFor(() => expect(listPmRequirementsMock).toHaveBeenCalledWith({ limit: 100, offset: 0 }));
+    await waitFor(() => expect(listPmRequirementsMock).toHaveBeenCalledWith({
+      limit: 100,
+      offset: 0,
+      workspace: 'C:/Temp/Product',
+    }));
     const panel = await screen.findByTestId('pm-requirements-panel');
     expect(panel).toHaveTextContent('/v2/pm/requirements');
     await waitFor(() => expect(screen.getByTestId('pm-requirements-count')).toHaveTextContent('1'));
     expect(screen.getByTestId('pm-requirements-list')).toHaveTextContent('Traceable requirement');
-    await waitFor(() => expect(getPmRequirementMock).toHaveBeenCalledWith('REQ-1'));
+    await waitFor(() => expect(getPmRequirementMock).toHaveBeenCalledWith('REQ-1', 'C:/Temp/Product'));
     await waitFor(() => expect(screen.getByTestId('pm-requirement-detail')).toHaveTextContent('Requirement detail payload'));
     const detail = screen.getByTestId('pm-requirement-detail');
     expect(detail).toHaveTextContent('/v2/pm/requirements/REQ-1');
@@ -501,15 +517,27 @@ describe('PMWorkspace history panel', () => {
 
     fireEvent.click(screen.getByTitle('需求'));
 
-    await waitFor(() => expect(listPmRequirementsMock).toHaveBeenCalledWith({ limit: 100, offset: 0 }));
+    await waitFor(() => expect(listPmRequirementsMock).toHaveBeenCalledWith({
+      limit: 100,
+      offset: 0,
+      workspace: 'C:/Temp/Product',
+    }));
     expect(screen.queryByTestId('pm-requirements-error')).not.toBeInTheDocument();
     expect(screen.getByTestId('pm-requirements-list')).toHaveTextContent('暂无需求合同');
     expect(screen.getByTestId('pm-requirements-count')).toHaveTextContent('0');
 
     fireEvent.click(screen.getByTitle('历史'));
 
-    await waitFor(() => expect(listPmTaskHistoryMock).toHaveBeenCalledWith({ limit: 50, offset: 0 }));
-    expect(listPmDirectorTaskHistoryMock).toHaveBeenCalledWith({ limit: 25, offset: 0 });
+    await waitFor(() => expect(listPmTaskHistoryMock).toHaveBeenCalledWith({
+      limit: 50,
+      offset: 0,
+      workspace: 'C:/Temp/Product',
+    }));
+    expect(listPmDirectorTaskHistoryMock).toHaveBeenCalledWith({
+      limit: 25,
+      offset: 0,
+      workspace: 'C:/Temp/Product',
+    });
     expect(screen.queryByTestId('pm-history-error')).not.toBeInTheDocument();
     expect(screen.getByTestId('pm-history-task-list')).toHaveTextContent('暂无任务历史');
     expect(screen.getByTestId('pm-history-director-list')).toHaveTextContent('暂无 Director 分发历史');
@@ -533,7 +561,7 @@ describe('PMWorkspace history panel', () => {
     fireEvent.click(screen.getByTestId('pm-workspace-run-once'));
 
     await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getPmStatusMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getPmStatusMock).toHaveBeenCalledWith('C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-run-once-status-evidence');
     expect(evidence).toHaveTextContent('/v2/pm/status');
     expect(evidence).toHaveTextContent('running');
@@ -710,7 +738,7 @@ describe('PMWorkspace history panel', () => {
     fireEvent.click(screen.getByTestId('pm-workspace-toggle'));
 
     await waitFor(() => expect(onTogglePm).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getPmStatusMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getPmStatusMock).toHaveBeenCalledWith('C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-toggle-status-evidence');
     expect(evidence).toHaveTextContent('/v2/pm/status');
     expect(evidence).toHaveTextContent('running');

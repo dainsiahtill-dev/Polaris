@@ -47,9 +47,11 @@ function makeTask(overrides: Partial<PmTask> = {}): PmTask {
 function PMTaskPanelHarness({
   tasks = [],
   onTaskCreated,
+  workspace = 'C:/Temp/Product',
 }: {
   tasks?: PmTask[];
   onTaskCreated?: (task: PmTask) => void;
+  workspace?: string;
 }) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   return (
@@ -59,6 +61,7 @@ function PMTaskPanelHarness({
       onTaskSelect={setSelectedTaskId}
       onTaskCreated={onTaskCreated}
       pmRunning={false}
+      workspace={workspace}
     />
   );
 }
@@ -130,10 +133,11 @@ describe('PMTaskPanel', () => {
         selectedTaskId="PM-1"
         onTaskSelect={() => undefined}
         pmRunning={false}
+        workspace="C:/Temp/Product"
       />,
     );
 
-    await waitFor(() => expect(getPmTaskMock).toHaveBeenCalledWith('PM-1'));
+    await waitFor(() => expect(getPmTaskMock).toHaveBeenCalledWith('PM-1', 'C:/Temp/Product'));
     const backendDetail = await screen.findByTestId('pm-task-backend-detail');
     expect(backendDetail).toHaveTextContent('/v2/pm/tasks/PM-1');
     expect(backendDetail).toHaveTextContent('Hydrated');
@@ -168,10 +172,11 @@ describe('PMTaskPanel', () => {
         selectedTaskId="PM-1"
         onTaskSelect={() => undefined}
         pmRunning={false}
+        workspace="C:/Temp/Product"
       />,
     );
 
-    await waitFor(() => expect(listPmTaskAssignmentsMock).toHaveBeenCalledWith('PM-1', 100));
+    await waitFor(() => expect(listPmTaskAssignmentsMock).toHaveBeenCalledWith('PM-1', 100, 'C:/Temp/Product'));
     const assignments = await screen.findByTestId('pm-task-assignments-panel');
     expect(assignments).toHaveTextContent('/v2/pm/tasks/PM-1/assignments');
     expect(assignments).toHaveTextContent('Assignment Evidence');
@@ -206,7 +211,7 @@ describe('PMTaskPanel', () => {
 
     fireEvent.change(screen.getByPlaceholderText('搜索任务...'), { target: { value: 'audit' } });
 
-    await waitFor(() => expect(searchPmTasksMock).toHaveBeenCalledWith('audit', 20));
+    await waitFor(() => expect(searchPmTasksMock).toHaveBeenCalledWith('audit', 20, 'C:/Temp/Product'));
     expect(await screen.findByTestId('pm-task-search-results')).toHaveTextContent(
       'Backend task match from PM search',
     );
@@ -234,7 +239,7 @@ describe('PMTaskPanel', () => {
 
     fireEvent.change(screen.getByPlaceholderText('搜索任务...'), { target: { value: 'audit' } });
 
-    await waitFor(() => expect(searchPmTasksMock).toHaveBeenCalledWith('audit', 20));
+    await waitFor(() => expect(searchPmTasksMock).toHaveBeenCalledWith('audit', 20, 'C:/Temp/Product'));
     expect(await screen.findByTestId('pm-task-search-empty')).toHaveTextContent('后端未返回匹配任务');
     expect(screen.queryByTestId('pm-task-search-error')).not.toBeInTheDocument();
   });
@@ -272,13 +277,16 @@ describe('PMTaskPanel', () => {
     });
     fireEvent.click(screen.getByTestId('pm-task-create-submit'));
 
-    await waitFor(() => expect(createPmTaskMock).toHaveBeenCalledWith({
-      subject: '补齐 PM 桌面任务创建',
-      description: '使用 POST /v2/pm/tasks',
-      priority: 'high',
-      status: 'pending',
-      acceptance: ['返回任务详情', '选择创建后的任务'],
-    }));
+    await waitFor(() => expect(createPmTaskMock).toHaveBeenCalledWith(
+      {
+        subject: '补齐 PM 桌面任务创建',
+        description: '使用 POST /v2/pm/tasks',
+        priority: 'high',
+        status: 'pending',
+        acceptance: ['返回任务详情', '选择创建后的任务'],
+      },
+      'C:/Temp/Product',
+    ));
     const evidence = await screen.findByTestId('pm-task-create-evidence');
     expect(evidence).toHaveTextContent('POST /v2/pm/tasks');
     expect(evidence).toHaveTextContent('created · PM-created-1');

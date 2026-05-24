@@ -35,6 +35,10 @@ function normalizeArtifactPath(path: string): string {
   return normalized;
 }
 
+function workspaceQuerySuffix(workspace = ''): string {
+  return workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+}
+
 async function handleResponse<T>(res: Response, fallbackError: string): Promise<ApiResult<T>> {
   if (!res.ok) {
     let detail = fallbackError;
@@ -748,20 +752,23 @@ export const factoryStreamService = {
 
 export const pmTaskService = {
   /** GET /v2/pm/tasks — List PM tasks */
-  async list(): Promise<ApiResult<import('./api.types').PmTaskListResponse>> {
-    const res = await apiFetch('/v2/pm/tasks');
+  async list(workspace = ''): Promise<ApiResult<import('./api.types').PmTaskListResponse>> {
+    const res = await apiFetch(`/v2/pm/tasks${workspaceQuerySuffix(workspace)}`);
     return handleResponse(res, 'Failed to list PM tasks');
   },
 
   /** GET /v2/pm/tasks/{id} — Get PM task detail */
-  async get(id: string): Promise<ApiResult<import('./api.types').PmTaskDetailResponse>> {
-    const res = await apiFetch(`/v2/pm/tasks/${encodeURIComponent(id)}`);
+  async get(id: string, workspace = ''): Promise<ApiResult<import('./api.types').PmTaskDetailResponse>> {
+    const res = await apiFetch(`/v2/pm/tasks/${encodeURIComponent(id)}${workspaceQuerySuffix(workspace)}`);
     return handleResponse(res, 'Failed to get PM task detail');
   },
 
   /** POST /v2/pm/tasks — Create PM task */
-  async create(request: import('./api.types').PmCreateTaskRequest): Promise<ApiResult<import('./api.types').PmTaskDetailResponse>> {
-    const res = await apiFetch('/v2/pm/tasks', {
+  async create(
+    request: import('./api.types').PmCreateTaskRequest,
+    workspace = '',
+  ): Promise<ApiResult<import('./api.types').PmTaskDetailResponse>> {
+    const res = await apiFetch(`/v2/pm/tasks${workspaceQuerySuffix(workspace)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),

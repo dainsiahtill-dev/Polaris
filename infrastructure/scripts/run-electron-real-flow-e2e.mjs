@@ -303,6 +303,41 @@ function rolesMissingReadiness(indexPayload, requiredRoles = null) {
   });
 }
 
+function modelIdentityKey(model) {
+  return String(model || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[/:]+/g, "-")
+    .replace(/[\s_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function modelIdentityAliases(model) {
+  const token = String(model || "").trim();
+  if (!token) {
+    return new Set();
+  }
+
+  const aliases = new Set([modelIdentityKey(token)]);
+  const parts = token.split(/[/:]+/).filter((part) => part.trim());
+  if (parts.length > 0) {
+    aliases.add(modelIdentityKey(parts[parts.length - 1]));
+  }
+  aliases.delete("");
+  return aliases;
+}
+
+function modelIdentityEqual(left, right) {
+  const leftAliases = modelIdentityAliases(left);
+  const rightAliases = modelIdentityAliases(right);
+  for (const alias of leftAliases) {
+    if (rightAliases.has(alias)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function roleReadinessBindingIssues(configPayload, indexPayload, requiredRoles) {
   const rolesCfg = configPayload?.roles && typeof configPayload.roles === "object" ? configPayload.roles : {};
   const rolesIndex = indexPayload?.roles && typeof indexPayload.roles === "object" ? indexPayload.roles : {};
@@ -329,7 +364,7 @@ function roleReadinessBindingIssues(configPayload, indexPayload, requiredRoles) 
       reason = "provider_mismatch";
     } else if (!testedModel) {
       reason = "tested_model_missing";
-    } else if (testedModel !== model) {
+    } else if (!modelIdentityEqual(testedModel, model)) {
       reason = "model_mismatch";
     }
 

@@ -298,6 +298,58 @@ def test_real_flow_runner_dry_run_seeds_llm_test_index_for_required_roles(tmp_pa
     assert str(llm_test_index_path) not in result.stdout
 
 
+def test_real_flow_runner_accepts_separator_variant_model_identity_for_required_roles(tmp_path: Path) -> None:
+    settings = {
+        "workspace": str(tmp_path / "workspace"),
+        "llm_provider": "openai_compat",
+        "llm_model": "Qwen3-Max",
+    }
+    llm_config = {
+        "schema_version": 2,
+        "providers": {"openai_compat-1": {"type": "openai_compat", "name": "Qwen"}},
+        "roles": {
+            "pm": {"provider_id": "openai_compat-1", "model": "Qwen3-Max"},
+        },
+        "policies": {"required_ready_roles": ["pm"]},
+    }
+    llm_test_index = {
+        "version": "2.0",
+        "roles": {
+            "pm": {
+                "ready": True,
+                "grade": "PASS",
+                "provider_id": "openai_compat-1",
+                "model": "qwen3 max",
+            },
+        },
+        "providers": {
+            "openai_compat-1": {"ready": True, "grade": "PASS", "model": "provider/qwen3_max", "role": "pm"},
+        },
+    }
+    settings_seed = base64.b64encode(json.dumps(settings, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    llm_seed = base64.b64encode(json.dumps(llm_config, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    index_seed = base64.b64encode(json.dumps(llm_test_index, ensure_ascii=False).encode("utf-8")).decode("ascii")
+
+    result = _run_node(
+        [
+            REAL_FLOW_RUNNER,
+            "--dry-run",
+        ],
+        env={
+            "KERNELONE_E2E_SETTINGS_JSON_BASE64": settings_seed,
+            "KERNELONE_E2E_LLM_CONFIG_JSON_BASE64": llm_seed,
+            "KERNELONE_E2E_LLM_TEST_INDEX_JSON_BASE64": index_seed,
+            "KERNELONE_E2E_HOME": str(tmp_path / "home"),
+        },
+    )
+
+    payload = json.loads(result.stdout)
+
+    assert payload["status"] == "DRY_RUN"
+    assert payload["llm_readiness_seed_ok"] is True
+    assert payload["llm_readiness_binding_issues"] == []
+
+
 def test_real_flow_runner_accepts_bom_prefixed_real_home_json(tmp_path: Path) -> None:
     home = tmp_path / "home"
     config_dir = home / "config"

@@ -236,6 +236,102 @@ async def test_v2_pm_management_prefers_active_workspace_path(
 
 
 @pytest.mark.asyncio
+async def test_v2_pm_management_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Desktop PM routes should honor an explicit workspace query override."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Old/Product"
+    mock_pm = _mock_pm_adapter()
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ) as adapter_cls:
+        response = await client.get("/v2/pm/tasks", params={"workspace": "C:/Temp/Product"})
+
+    assert response.status_code == 200
+    adapter_cls.assert_called_once_with("C:/Temp/Product")
+
+
+@pytest.mark.asyncio
+async def test_v2_pm_management_status_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """PM management status should inspect the explicitly requested workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Old/Product"
+    mock_pm = _mock_pm_adapter(initialized=False)
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+            return_value=mock_pm,
+        ) as adapter_cls,
+        patch(
+            "polaris.delivery.http.routers.pm_management._get_pm_process_status",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+    ):
+        response = await client.get("/pm/v2/pm/status", params={"workspace": "C:/Temp/Product"})
+
+    assert response.status_code == 200
+    assert response.json()["workspace"] == "C:/Temp/Product"
+    adapter_cls.assert_called_once_with("C:/Temp/Product")
+
+
+@pytest.mark.asyncio
+async def test_v2_pm_management_health_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """PM management health should inspect the explicitly requested workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Old/Product"
+    mock_pm = _mock_pm_adapter()
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ) as adapter_cls:
+        response = await client.get("/pm/v2/pm/health", params={"workspace": "C:/Temp/Product"})
+
+    assert response.status_code == 200
+    adapter_cls.assert_called_once_with("C:/Temp/Product")
+
+
+@pytest.mark.asyncio
+async def test_v2_pm_management_init_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """PM management init should initialize the explicitly requested workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Old/Product"
+    mock_pm = _mock_pm_adapter(initialized=False)
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ) as adapter_cls:
+        response = await client.post(
+            "/pm/v2/pm/init",
+            params={
+                "project_name": "My Project",
+                "description": "A test project",
+                "workspace": "C:/Temp/Product",
+            },
+        )
+
+    assert response.status_code == 200
+    adapter_cls.assert_called_once_with("C:/Temp/Product")
+    mock_pm.initialize.assert_called_once_with(project_name="My Project", description="A test project")
+
+
+@pytest.mark.asyncio
 async def test_v2_pm_management_requires_configured_workspace(
     client: AsyncClient,
     mock_settings: Settings,

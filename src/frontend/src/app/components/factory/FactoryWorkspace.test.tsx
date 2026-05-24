@@ -120,6 +120,7 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByTestId('factory-role-layer-pm')).toBeInTheDocument();
     expect(screen.getByTestId('factory-role-layer-chief_engineer')).toBeInTheDocument();
     expect(screen.getByTestId('factory-role-layer-director')).toBeInTheDocument();
+    expect(screen.getByTestId('factory-role-flow-rail')).toBeInTheDocument();
     expect(screen.getByTestId('factory-layered-layout')).toBeInTheDocument();
     expect(screen.getByTestId('factory-role-layer-pm')).toHaveAttribute('aria-pressed', 'true');
 

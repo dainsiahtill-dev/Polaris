@@ -654,7 +654,7 @@ export function PMWorkspace({
     setIsLoadingBackendPmTasks(true);
     setBackendPmTaskError('');
     try {
-      const result = await listPmTasks({ limit: 100, offset: 0 });
+      const result = await listPmTasks({ limit: 100, offset: 0, workspace });
       if (!result.ok || !result.data) {
         throw new Error(result.error || 'PM task list unavailable');
       }
@@ -691,7 +691,7 @@ export function PMWorkspace({
     try {
       const [capabilityResult, diagnosticsResult, cacheResult, tokenBudgetResult, llmResult] = await Promise.all([
         getRoleCapabilities('pm', 'electron_workbench'),
-        getPmStartupDiagnostics(),
+        getPmStartupDiagnostics(workspace),
         getRoleKernelCacheStats('pm'),
         getRoleKernelTokenBudgetStats('pm'),
         getRoleKernelLLMEvents('pm', { role: 'pm', limit: 5 }),
@@ -846,7 +846,7 @@ export function PMWorkspace({
     });
     try {
       await Promise.resolve(onRunPmOnce());
-      const statusResult = await getPmStatus();
+      const statusResult = await getPmStatus(workspace);
       if (statusResult.ok && statusResult.data) {
         setRunOnceStatusEvidence({
           triggered: true,
@@ -870,7 +870,7 @@ export function PMWorkspace({
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
-  }, [onRunPmOnce, pmRunOnceBusyReason, pmStartBlockReason]);
+  }, [onRunPmOnce, pmRunOnceBusyReason, pmStartBlockReason, workspace]);
 
   const handleTogglePm = useCallback(async () => {
     if (pmToggleBusyReason) {
@@ -894,7 +894,7 @@ export function PMWorkspace({
     });
     try {
       await Promise.resolve(onTogglePm());
-      const statusResult = await getPmStatus();
+      const statusResult = await getPmStatus(workspace);
       if (statusResult.ok && statusResult.data) {
         setToggleStatusEvidence({
           triggered: true,
@@ -918,7 +918,7 @@ export function PMWorkspace({
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
-  }, [onTogglePm, pmRunning, pmStartBlockReason, pmToggleBusyReason]);
+  }, [onTogglePm, pmRunning, pmStartBlockReason, pmToggleBusyReason, workspace]);
 
   const handleDocumentSelect = useCallback((path: string) => {
     userSwitchedViewRef.current = true;
@@ -1182,6 +1182,11 @@ export function PMWorkspace({
                 {runOnceStatusEvidence.data.source ? (
                   <span className="text-slate-400">source={runOnceStatusEvidence.data.source}</span>
                 ) : null}
+                {runOnceStatusEvidence.data.workspace ? (
+                  <span className="max-w-[260px] truncate text-slate-400" title={runOnceStatusEvidence.data.workspace}>
+                    workspace={runOnceStatusEvidence.data.workspace}
+                  </span>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -1218,6 +1223,11 @@ export function PMWorkspace({
                 ) : null}
                 {toggleStatusEvidence.data.source ? (
                   <span className="text-slate-400">source={toggleStatusEvidence.data.source}</span>
+                ) : null}
+                {toggleStatusEvidence.data.workspace ? (
+                  <span className="max-w-[260px] truncate text-slate-400" title={toggleStatusEvidence.data.workspace}>
+                    workspace={toggleStatusEvidence.data.workspace}
+                  </span>
                 ) : null}
               </>
             ) : null}
@@ -1356,6 +1366,7 @@ export function PMWorkspace({
                       onTaskCreated={handleBackendPmTaskCreated}
                       pmRunning={pmRunning}
                       taskTraceMap={taskTraceMap}
+                      workspace={workspace}
                     />
                   </div>
                 </div>
@@ -1378,10 +1389,10 @@ export function PMWorkspace({
                 />
               )}
               {activeView === 'requirements' && (
-                <PMRequirementsPanel />
+                <PMRequirementsPanel workspace={workspace} />
               )}
               {activeView === 'history' && (
-                <PMHistoryPanel pmState={pmState} />
+                <PMHistoryPanel pmState={pmState} workspace={workspace} />
               )}
               {activeView === 'analytics' && (
                 <PMAnalyticsPanel tasks={pmTaskEvidenceRows} />
@@ -1427,6 +1438,7 @@ export function PMWorkspace({
       <PMDiagnosticsPanel
         isOpen={showDiagnostics}
         onClose={() => setShowDiagnostics(false)}
+        workspace={workspace}
       />
     </div>
   );
@@ -1531,7 +1543,7 @@ function requirementSource(requirement: PmRequirementEntry): string {
   return readRequirementString(requirement, ['source_doc', 'sourceDoc', 'source', 'path']);
 }
 
-function PMRequirementsPanel() {
+function PMRequirementsPanel({ workspace }: { workspace: string }) {
   const [requirements, setRequirements] = useState<PmRequirementEntry[]>([]);
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null);
   const [selectedRequirement, setSelectedRequirement] = useState<PmRequirementEntry | null>(null);
@@ -1544,7 +1556,7 @@ function PMRequirementsPanel() {
     setIsLoadingRequirements(true);
     setRequirementsError('');
     try {
-      const result = await listPmRequirements({ limit: 100, offset: 0 });
+      const result = await listPmRequirements({ limit: 100, offset: 0, workspace });
       if (!result.ok || !result.data) {
         throw new Error(result.error || 'PM requirements unavailable');
       }
@@ -1574,7 +1586,7 @@ function PMRequirementsPanel() {
     } finally {
       setIsLoadingRequirements(false);
     }
-  }, []);
+  }, [workspace]);
 
   useEffect(() => {
     void loadRequirements();
@@ -1591,7 +1603,7 @@ function PMRequirementsPanel() {
     let cancelled = false;
     setIsLoadingRequirementDetail(true);
     setRequirementDetailError('');
-    void getPmRequirement(selectedRequirementId)
+    void getPmRequirement(selectedRequirementId, workspace)
       .then((result) => {
         if (cancelled) return;
         if (!result.ok || !result.data) {
@@ -1613,7 +1625,7 @@ function PMRequirementsPanel() {
     return () => {
       cancelled = true;
     };
-  }, [selectedRequirementId]);
+  }, [selectedRequirementId, workspace]);
 
   const selectedListRequirement = useMemo(
     () => requirements.find((requirement) => requirementApiId(requirement) === selectedRequirementId) || null,
@@ -1817,7 +1829,7 @@ function directorIterationTaskCount(iteration: PmDirectorHistoryIteration): numb
   return Array.isArray(iteration.tasks) ? iteration.tasks.length : 0;
 }
 
-function PMHistoryPanel({ pmState }: { pmState: Record<string, unknown> | null }) {
+function PMHistoryPanel({ pmState, workspace }: { pmState: Record<string, unknown> | null; workspace: string }) {
   const [taskHistory, setTaskHistory] = useState<PmTaskHistoryEntry[]>([]);
   const [directorIterations, setDirectorIterations] = useState<PmDirectorHistoryIteration[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -1828,8 +1840,8 @@ function PMHistoryPanel({ pmState }: { pmState: Record<string, unknown> | null }
     setHistoryError('');
     try {
       const [taskResult, directorResult] = await Promise.all([
-        listPmTaskHistory({ limit: 50, offset: 0 }),
-        listPmDirectorTaskHistory({ limit: 25, offset: 0 }),
+        listPmTaskHistory({ limit: 50, offset: 0, workspace }),
+        listPmDirectorTaskHistory({ limit: 25, offset: 0, workspace }),
       ]);
       if (!taskResult.ok || !taskResult.data) {
         throw new Error(taskResult.error || 'PM 任务历史加载失败');
@@ -1847,7 +1859,7 @@ function PMHistoryPanel({ pmState }: { pmState: Record<string, unknown> | null }
     } finally {
       setIsLoadingHistory(false);
     }
-  }, []);
+  }, [workspace]);
 
   useEffect(() => {
     void loadHistory();

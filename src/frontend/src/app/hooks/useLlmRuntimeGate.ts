@@ -14,7 +14,7 @@ interface UseLlmRuntimeGateOptions {
   live: boolean;
   llmStatus: LlmStatus | null;
   blockedRefreshIntervalMs?: number;
-  fetchStatus?: () => Promise<unknown>;
+  fetchStatus?: (workspace: string) => Promise<unknown>;
 }
 
 const EMPTY_LLM_RUNTIME_STATE: LlmRuntimeGateState = {
@@ -24,8 +24,9 @@ const EMPTY_LLM_RUNTIME_STATE: LlmRuntimeGateState = {
   lastUpdated: null,
 };
 
-async function fetchLlmStatusPayload(): Promise<unknown> {
-  const response = await apiFetch('/v2/llm/status');
+async function fetchLlmStatusPayload(workspace = ''): Promise<unknown> {
+  const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+  const response = await apiFetch(`/v2/llm/status${suffix}`);
   if (!response.ok) {
     throw new Error(`llm status fetch failed: ${response.status}`);
   }
@@ -98,7 +99,7 @@ export function useLlmRuntimeGate({
     }
 
     try {
-      const payload = await fetchStatus();
+      const payload = await fetchStatus(workspace);
       applyLlmStatusPayload(payload);
       return payload;
     } catch {

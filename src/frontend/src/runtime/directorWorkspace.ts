@@ -409,7 +409,7 @@ export function useDirectorWorkspaceVM(
     
     const syncTasks = async () => {
       try {
-        const result = await listDirectorTaskFallbackRows(runtime.directorStatus?.running === true);
+        const result = await listDirectorTaskFallbackRows(runtime.directorStatus?.running === true, workspace);
         if (!result.ok || !Array.isArray(result.data) || cancelled) return;
         setFallbackTasks(result.data as unknown as PmTask[]);
       } catch {

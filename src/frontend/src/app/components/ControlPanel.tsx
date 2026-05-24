@@ -97,7 +97,8 @@ function processEvidenceText<T extends ProcessStatus>(
   const pid = evidence.data.pid ?? 'none';
   const mode = evidence.data.mode ? ` · mode=${evidence.data.mode}` : '';
   const source = evidence.data.source ? ` · source=${evidence.data.source}` : '';
-  return `${endpoint} · ${evidence.data.running ? 'running' : 'idle'} · pid=${pid}${mode}${source}`;
+  const statusWorkspace = evidence.data.workspace ? ` · workspace=${evidence.data.workspace}` : '';
+  return `${endpoint} · ${evidence.data.running ? 'running' : 'idle'} · pid=${pid}${mode}${source}${statusWorkspace}`;
 }
 
 export function ControlPanel({
@@ -227,7 +228,7 @@ export function ControlPanel({
     });
     try {
       await Promise.resolve(onTogglePm());
-      const statusResult = await getPmStatus();
+      const statusResult = await getPmStatus(workspace);
       if (statusResult.ok && statusResult.data) {
         setPmToggleEvidence({
           triggered: true,
@@ -265,7 +266,7 @@ export function ControlPanel({
     });
     try {
       await Promise.resolve(onRunPmOnce());
-      const statusResult = await getPmStatus();
+      const statusResult = await getPmStatus(workspace);
       if (statusResult.ok && statusResult.data) {
         setPmToggleEvidence({
           triggered: true,
@@ -303,7 +304,7 @@ export function ControlPanel({
     });
     try {
       await Promise.resolve(onResumePm());
-      const statusResult = await getPmStatus();
+      const statusResult = await getPmStatus(workspace);
       if (statusResult.ok && statusResult.data) {
         setPmToggleEvidence({
           triggered: true,
@@ -338,7 +339,7 @@ export function ControlPanel({
     });
     try {
       await Promise.resolve(onToggleDirector());
-      const statusResult = await getDirectorStatus();
+      const statusResult = await getDirectorStatus(workspace);
       if (statusResult.ok && statusResult.data) {
         setDirectorToggleEvidence({
           triggered: true,

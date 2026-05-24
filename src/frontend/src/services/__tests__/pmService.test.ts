@@ -48,6 +48,20 @@ describe('pmService', () => {
       expect(result.data?.running).toBe(true);
     });
 
+    it('should pass explicit workspace to PM status', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: { running: false, workspace: 'C:/Temp/Product' },
+      });
+
+      await pmService.getPmStatus('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/pm/status?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load PM status',
+      );
+    });
+
     it('should return error on API failure', async () => {
       mockApiGet.mockResolvedValueOnce({
         ok: false,
@@ -87,6 +101,17 @@ describe('pmService', () => {
       expect(result.data?.ok).toBe(true);
       expect(result.data?.workspace.docs_present).toBe(true);
     });
+
+    it('should pass explicit workspace to PM diagnostics', async () => {
+      mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true } });
+
+      await pmService.getPmStartupDiagnostics('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/pm/diagnostics?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load PM diagnostics',
+      );
+    });
   });
 
   describe('PM management diagnostics', () => {
@@ -108,6 +133,23 @@ describe('pmService', () => {
       expect(result.data?.initialized).toBe(true);
     });
 
+    it('passes explicit workspace to PM management status', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          initialized: true,
+          workspace: 'C:/Temp/Product',
+        },
+      });
+
+      await pmService.getPmManagementStatus('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/pm/v2/pm/status?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load PM management status',
+      );
+    });
+
     it('loads PM management health through the management route', async () => {
       mockApiGet.mockResolvedValueOnce({
         ok: true,
@@ -124,6 +166,25 @@ describe('pmService', () => {
       expect(mockApiGet).toHaveBeenCalledWith('/pm/v2/pm/health', 'Failed to load PM management health');
       expect(result.ok).toBe(true);
       expect(result.data?.overall).toBe('healthy');
+    });
+
+    it('passes explicit workspace to PM management health', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          overall: 'healthy',
+          components: {},
+          metrics: {},
+          recommendations: [],
+        },
+      });
+
+      await pmService.getPmManagementHealth('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/pm/v2/pm/health?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load PM management health',
+      );
     });
 
     it('initializes PM management with encoded query parameters', async () => {
@@ -147,6 +208,30 @@ describe('pmService', () => {
       );
       expect(result.ok).toBe(true);
       expect(result.data?.project_name).toBe('My Project');
+    });
+
+    it('passes explicit workspace when initializing PM management', async () => {
+      mockApiPostEmpty.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          initialized: true,
+          workspace: 'C:/Temp/Product',
+          project_name: 'My Project',
+        },
+      });
+
+      await pmService.initializePmManagement(
+        {
+          projectName: 'My Project',
+          description: 'A PM managed workspace',
+        },
+        'C:/Temp/Product',
+      );
+
+      expect(mockApiPostEmpty).toHaveBeenCalledWith(
+        '/pm/v2/pm/init?project_name=My+Project&description=A+PM+managed+workspace&workspace=C%3A%2FTemp%2FProduct',
+        'Failed to initialize PM management',
+      );
     });
   });
 
@@ -293,6 +378,20 @@ describe('pmService', () => {
       );
     });
 
+    it('passes workspace when loading a Director task detail', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: { id: 'task/1', subject: 'Task detail', status: 'RUNNING' },
+      });
+
+      await pmService.getDirectorTask('task/1', 'C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/director/tasks/task%2F1?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load Director task',
+      );
+    });
+
     it('lists Director workers through the backend worker route', async () => {
       mockApiGet.mockResolvedValueOnce({
         ok: true,
@@ -306,6 +405,20 @@ describe('pmService', () => {
       expect(result.data?.[0].id).toBe('worker-1');
     });
 
+    it('passes workspace when listing Director workers', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: [{ id: 'worker-1', status: 'idle' }],
+      });
+
+      await pmService.listDirectorWorkers('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/director/workers?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to list Director workers',
+      );
+    });
+
     it('loads a Director worker detail with an encoded worker id', async () => {
       mockApiGet.mockResolvedValueOnce({
         ok: true,
@@ -316,6 +429,20 @@ describe('pmService', () => {
 
       expect(mockApiGet).toHaveBeenCalledWith(
         '/v2/director/workers/worker%2F1',
+        'Failed to load Director worker',
+      );
+    });
+
+    it('passes workspace when loading a Director worker detail', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: { id: 'worker/1', status: 'busy' },
+      });
+
+      await pmService.getDirectorWorker('worker/1', 'C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/director/workers/worker%2F1?workspace=C%3A%2FTemp%2FProduct',
         'Failed to load Director worker',
       );
     });
@@ -356,6 +483,23 @@ describe('pmService', () => {
       expect(result.ok).toBe(true);
       expect(result.data?.running).toBe(true);
       expect(result.data?.pid).toBe(12346);
+    });
+
+    it('should pass explicit workspace to Director status', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          running: false,
+          pid: null,
+        },
+      });
+
+      await pmService.getDirectorStatus('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load Director status',
+      );
     });
 
     it('should normalize state-based status', async () => {
@@ -471,6 +615,31 @@ describe('pmService', () => {
 
       expect(result.pm.ok).toBe(true);
       expect(result.director.ok).toBe(false);
+    });
+
+    it('should pass explicit workspace to both status endpoints', async () => {
+      mockApiGet
+        .mockResolvedValueOnce({
+          ok: true,
+          data: { running: true, pid: 12345 },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: { running: false, pid: null },
+        });
+
+      await pmService.getAllStatuses('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenNthCalledWith(
+        1,
+        '/v2/pm/status?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load PM status',
+      );
+      expect(mockApiGet).toHaveBeenNthCalledWith(
+        2,
+        '/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load Director status',
+      );
     });
   });
 
@@ -751,6 +920,17 @@ describe('pmService', () => {
       expect(result.ok).toBe(true);
       expect(result.data?.tasks.ready_to_execute).toBe(1);
     });
+
+    it('should pass explicit workspace to Director diagnostics', async () => {
+      mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true } });
+
+      await pmService.getDirectorDiagnostics('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/director/diagnostics?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load Director diagnostics',
+      );
+    });
   });
 
   describe('listDirectorTasks', () => {
@@ -779,6 +959,20 @@ describe('pmService', () => {
       await pmService.listDirectorTasks('pm');
 
       expect(mockApiGet).toHaveBeenCalledWith('/v2/director/tasks?source=pm', 'Failed to list Director tasks');
+    });
+
+    it('should include source and workspace query parameters when provided', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: [{ id: 'task-1', subject: 'Task 1' }],
+      });
+
+      await pmService.listDirectorTasks('workflow', 'C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/director/tasks?source=workflow&workspace=C%3A%2FTemp%2FProduct',
+        'Failed to list Director tasks',
+      );
     });
 
     it('should return error on API failure', async () => {
@@ -852,6 +1046,32 @@ describe('pmService', () => {
           metadata: { director_task_source: 'local' },
         },
       ]);
+    });
+
+    it('should pass workspace through each Director fallback source request', async () => {
+      mockApiGet
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [{ id: 'director-task-1', subject: 'Auto task' }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [{ id: 'director-task-2', subject: 'Local task' }],
+        });
+
+      const result = await pmService.listDirectorTaskFallbackRows(false, 'C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenNthCalledWith(
+        1,
+        '/v2/director/tasks?source=auto&workspace=C%3A%2FTemp%2FProduct',
+        'Failed to list Director tasks',
+      );
+      expect(mockApiGet).toHaveBeenNthCalledWith(
+        2,
+        '/v2/director/tasks?source=local&workspace=C%3A%2FTemp%2FProduct',
+        'Failed to list Director tasks',
+      );
+      expect(result.ok).toBe(true);
     });
 
     it('should deduplicate later local rows by Director task id', async () => {
@@ -948,10 +1168,11 @@ describe('pmService', () => {
         status: 'done',
         limit: 20,
         offset: 5,
+        workspace: 'C:/Temp/Product',
       });
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/tasks/history?task_id=PM-1&assignee=pm&status=done&limit=20&offset=5',
+        '/v2/pm/tasks/history?task_id=PM-1&assignee=pm&status=done&limit=20&offset=5&workspace=C%3A%2FTemp%2FProduct',
         'Failed to list PM task history',
       );
       expect(result.ok).toBe(true);
@@ -987,10 +1208,11 @@ describe('pmService', () => {
         assignee: 'pm',
         limit: 20,
         offset: 5,
+        workspace: 'C:/Temp/Product',
       });
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/tasks?status=pending&assignee=pm&limit=20&offset=5',
+        '/v2/pm/tasks?status=pending&assignee=pm&limit=20&offset=5&workspace=C%3A%2FTemp%2FProduct',
         'Failed to list PM tasks',
       );
       expect(result.ok).toBe(true);
@@ -1016,10 +1238,10 @@ describe('pmService', () => {
         data: { id: 'PM/task 1', title: 'Task detail', status: 'pending' },
       });
 
-      await pmService.getPmTask('PM/task 1');
+      await pmService.getPmTask('PM/task 1', 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/tasks/PM%2Ftask%201',
+        '/v2/pm/tasks/PM%2Ftask%201?workspace=C%3A%2FTemp%2FProduct',
         'Failed to load PM task',
       );
     });
@@ -1036,10 +1258,10 @@ describe('pmService', () => {
         },
       });
 
-      const result = await pmService.listPmTaskAssignments('PM/task 1', 25);
+      const result = await pmService.listPmTaskAssignments('PM/task 1', 25, 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/tasks/PM%2Ftask%201/assignments?limit=25',
+        '/v2/pm/tasks/PM%2Ftask%201/assignments?limit=25&workspace=C%3A%2FTemp%2FProduct',
         'Failed to list PM task assignments',
       );
       expect(result.ok).toBe(true);
@@ -1078,10 +1300,11 @@ describe('pmService', () => {
         priority: 'high',
         limit: 20,
         offset: 5,
+        workspace: 'C:/Temp/Product',
       });
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/requirements?status=open&priority=high&limit=20&offset=5',
+        '/v2/pm/requirements?status=open&priority=high&limit=20&offset=5&workspace=C%3A%2FTemp%2FProduct',
         'Failed to list PM requirements',
       );
       expect(result.ok).toBe(true);
@@ -1105,10 +1328,10 @@ describe('pmService', () => {
         data: { id: 'REQ/1', title: 'Requirement detail', status: 'open' },
       });
 
-      await pmService.getPmRequirement('REQ/1');
+      await pmService.getPmRequirement('REQ/1', 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/requirements/REQ%2F1',
+        '/v2/pm/requirements/REQ%2F1?workspace=C%3A%2FTemp%2FProduct',
         'Failed to load PM requirement',
       );
     });
@@ -1124,10 +1347,15 @@ describe('pmService', () => {
         },
       });
 
-      const result = await pmService.listPmDirectorTaskHistory({ iteration: 2, limit: 10, offset: 3 });
+      const result = await pmService.listPmDirectorTaskHistory({
+        iteration: 2,
+        limit: 10,
+        offset: 3,
+        workspace: 'C:/Temp/Product',
+      });
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/tasks/director?iteration=2&limit=10&offset=3',
+        '/v2/pm/tasks/director?iteration=2&limit=10&offset=3&workspace=C%3A%2FTemp%2FProduct',
         'Failed to list PM Director task history',
       );
       expect(result.ok).toBe(true);
@@ -1157,10 +1385,10 @@ describe('pmService', () => {
         },
       });
 
-      const result = await pmService.searchPmTasks('quality gate', 9);
+      const result = await pmService.searchPmTasks('quality gate', 9, 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/search/tasks?q=quality+gate&limit=9',
+        '/v2/pm/search/tasks?q=quality+gate&limit=9&workspace=C%3A%2FTemp%2FProduct',
         'Failed to search PM tasks',
       );
       expect(result.ok).toBe(true);
@@ -1180,6 +1408,42 @@ describe('pmService', () => {
   });
 
   describe('pmDocumentService.search', () => {
+    it('should list PM documents with explicit workspace', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: { documents: [], pagination: { total: 0 } },
+      });
+
+      const result = await pmService.pmDocumentService.list('C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith(
+        '/v2/pm/documents?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to list PM documents',
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('should save PM documents with explicit workspace', async () => {
+      mockApiPost.mockResolvedValueOnce({
+        ok: true,
+        data: { success: true, path: 'docs/product plan.md', version: '3' },
+      });
+
+      const result = await pmService.pmDocumentService.save(
+        'docs/product plan.md',
+        '# Updated',
+        'verified update',
+        'C:/Temp/Product',
+      );
+
+      expect(mockApiPost).toHaveBeenCalledWith(
+        '/v2/pm/documents/docs/product%20plan.md?workspace=C%3A%2FTemp%2FProduct',
+        { content: '# Updated', change_summary: 'verified update' },
+        'Failed to save PM document',
+      );
+      expect(result.ok).toBe(true);
+    });
+
     it('should call PM document search endpoint with encoded query', async () => {
       mockApiGet.mockResolvedValueOnce({
         ok: true,
@@ -1190,10 +1454,10 @@ describe('pmService', () => {
         },
       });
 
-      const result = await pmService.pmDocumentService.search('quality gate', 12);
+      const result = await pmService.pmDocumentService.search('quality gate', 12, 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/search/documents?q=quality+gate&limit=12',
+        '/v2/pm/search/documents?q=quality+gate&limit=12&workspace=C%3A%2FTemp%2FProduct',
         'Failed to search PM documents',
       );
       expect(result.ok).toBe(true);
@@ -1226,10 +1490,10 @@ describe('pmService', () => {
         },
       });
 
-      const result = await pmService.pmDocumentService.get('docs/product plan.md', '1.0');
+      const result = await pmService.pmDocumentService.get('docs/product plan.md', '1.0', 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/documents/docs/product%20plan.md?version=1.0',
+        '/v2/pm/documents/docs/product%20plan.md?version=1.0&workspace=C%3A%2FTemp%2FProduct',
         'Failed to read PM document',
       );
       expect(result.ok).toBe(true);
@@ -1245,10 +1509,10 @@ describe('pmService', () => {
         },
       });
 
-      const result = await pmService.pmDocumentService.versions('docs/product plan.md');
+      const result = await pmService.pmDocumentService.versions('docs/product plan.md', 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/documents/docs/product%20plan.md/versions',
+        '/v2/pm/documents/docs/product%20plan.md/versions?workspace=C%3A%2FTemp%2FProduct',
         'Failed to list PM document versions',
       );
       expect(result.ok).toBe(true);
@@ -1270,10 +1534,10 @@ describe('pmService', () => {
         },
       });
 
-      const result = await pmService.pmDocumentService.compare('docs/product plan.md', '1', '2');
+      const result = await pmService.pmDocumentService.compare('docs/product plan.md', '1', '2', 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/documents/docs/product%20plan.md/compare?old_version=1&new_version=2',
+        '/v2/pm/documents/docs/product%20plan.md/compare?old_version=1&new_version=2&workspace=C%3A%2FTemp%2FProduct',
         'Failed to compare PM document versions',
       );
       expect(result.ok).toBe(true);
@@ -1292,10 +1556,10 @@ describe('pmService', () => {
         },
       });
 
-      const result = await pmService.pmDocumentService.delete('docs/product plan.md', false);
+      const result = await pmService.pmDocumentService.delete('docs/product plan.md', false, 'C:/Temp/Product');
 
       expect(mockApiDelete).toHaveBeenCalledWith(
-        '/v2/pm/documents/docs/product%20plan.md?delete_file=false',
+        '/v2/pm/documents/docs/product%20plan.md?delete_file=false&workspace=C%3A%2FTemp%2FProduct',
         'Failed to delete PM document',
       );
       expect(result.ok).toBe(true);

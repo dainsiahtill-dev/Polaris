@@ -134,6 +134,11 @@ def _normalize_abs_path(value: Any) -> str:
     return os.path.abspath(os.path.expanduser(os.path.expandvars(raw)))
 
 
+def _workspace_path_exists(value: Any) -> bool:
+    workspace = _normalize_abs_path(value)
+    return not workspace or os.path.isdir(workspace)
+
+
 def _runtime_cache_env_value(settings: "Settings") -> str:
     runtime_settings = getattr(settings, "runtime", None)
     explicit_cache_root = _normalize_abs_path(getattr(runtime_settings, "cache_root", ""))
@@ -250,6 +255,13 @@ def _normalize_persisted_payload(payload: dict[str, Any]) -> dict[str, Any]:
     raw_json_log_path = str(normalized.get("json_log_path") or "").strip()
     if raw_json_log_path:
         normalized["json_log_path"] = normalize_artifact_rel_path(raw_json_log_path) or DEFAULT_PM_LOG
+    raw_workspace = normalized.get("workspace")
+    if raw_workspace and not _workspace_path_exists(raw_workspace):
+        logger.warning(
+            "Ignoring persisted workspace because it no longer exists: %s",
+            _normalize_abs_path(raw_workspace),
+        )
+        normalized.pop("workspace", None)
     return normalized
 
 

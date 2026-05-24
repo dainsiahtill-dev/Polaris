@@ -138,36 +138,48 @@ export interface RoleKernelLLMEventsQuery {
 /**
  * 获取PM状态
  */
-export async function getPmStatus(): Promise<ApiResult<PmStatus>> {
-  return apiGet<PmStatus>('/v2/pm/status', 'Failed to load PM status');
+function workspaceQuerySuffix(workspace = ''): string {
+  return workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+}
+
+function setWorkspaceQuery(query: URLSearchParams, workspace?: string | null): void {
+  if (workspace) {
+    query.set('workspace', workspace);
+  }
+}
+
+export async function getPmStatus(workspace = ''): Promise<ApiResult<PmStatus>> {
+  return apiGet<PmStatus>(`/v2/pm/status${workspaceQuerySuffix(workspace)}`, 'Failed to load PM status');
 }
 
 /**
  * 获取 PM 启动诊断快照。
  */
-export async function getPmStartupDiagnostics(): Promise<ApiResult<PmStartupDiagnosticsResponse>> {
+
+export async function getPmStartupDiagnostics(workspace = ''): Promise<ApiResult<PmStartupDiagnosticsResponse>> {
   return apiGet<PmStartupDiagnosticsResponse>(
-    '/v2/pm/diagnostics',
+    `/v2/pm/diagnostics${workspaceQuerySuffix(workspace)}`,
     'Failed to load PM diagnostics',
   );
 }
 
-export async function getPmManagementStatus(): Promise<ApiResult<PmManagementStatusResponse>> {
+export async function getPmManagementStatus(workspace = ''): Promise<ApiResult<PmManagementStatusResponse>> {
   return apiGet<PmManagementStatusResponse>(
-    '/pm/v2/pm/status',
+    `/pm/v2/pm/status${workspaceQuerySuffix(workspace)}`,
     'Failed to load PM management status',
   );
 }
 
-export async function getPmManagementHealth(): Promise<ApiResult<PmManagementHealthResponse>> {
+export async function getPmManagementHealth(workspace = ''): Promise<ApiResult<PmManagementHealthResponse>> {
   return apiGet<PmManagementHealthResponse>(
-    '/pm/v2/pm/health',
+    `/pm/v2/pm/health${workspaceQuerySuffix(workspace)}`,
     'Failed to load PM management health',
   );
 }
 
 export async function initializePmManagement(
   payload: PmManagementInitPayload = {},
+  workspace = '',
 ): Promise<ApiResult<PmManagementInitResponse>> {
   const query = new URLSearchParams();
   if (payload.projectName) {
@@ -176,6 +188,7 @@ export async function initializePmManagement(
   if (payload.description) {
     query.set('description', payload.description);
   }
+  setWorkspaceQuery(query, workspace);
   const suffix = query.toString();
   return apiPostEmpty<PmManagementInitResponse>(
     suffix ? `/pm/v2/pm/init?${suffix}` : '/pm/v2/pm/init',
@@ -261,8 +274,13 @@ export async function getDirectorTaskKernelLLMEvents(
 /**
  * 获取Director状态
  */
-export async function getDirectorStatus(): Promise<ApiResult<DirectorStatus>> {
-  const result = await apiGet<DirectorStatusPayload>('/v2/director/status?source=auto', 'Failed to load Director status');
+export async function getDirectorStatus(workspace = ''): Promise<ApiResult<DirectorStatus>> {
+  const query = new URLSearchParams({ source: 'auto' });
+  setWorkspaceQuery(query, workspace);
+  const result = await apiGet<DirectorStatusPayload>(
+    `/v2/director/status?${query.toString()}`,
+    'Failed to load Director status',
+  );
 
   if (!result.ok || !result.data) {
     return { ok: false, error: result.error || 'Failed to load Director status' };
@@ -304,13 +322,13 @@ export async function getDirectorStatus(): Promise<ApiResult<DirectorStatus>> {
 /**
  * 获取所有进程状态
  */
-export async function getAllStatuses(): Promise<{
+export async function getAllStatuses(workspace = ''): Promise<{
   pm: ApiResult<PmStatus>;
   director: ApiResult<DirectorStatus>;
 }> {
   const [pm, director] = await Promise.all([
-    getPmStatus(),
-    getDirectorStatus(),
+    getPmStatus(workspace),
+    getDirectorStatus(workspace),
   ]);
 
   return { pm, director };
@@ -621,6 +639,7 @@ export interface PmTaskListParams {
   assignee?: string | null;
   limit?: number;
   offset?: number;
+  workspace?: string | null;
 }
 
 export interface PmTaskListResponse {
@@ -678,6 +697,7 @@ export interface PmRequirementListParams {
   priority?: string | null;
   limit?: number;
   offset?: number;
+  workspace?: string | null;
 }
 
 export interface PmRequirementListResponse {
@@ -692,28 +712,33 @@ export interface PmRequirementListResponse {
 /**
  * 获取Director任务列表
  */
-export async function listDirectorTasks(source?: string): Promise<ApiResult<DirectorTask[]>> {
-  const query = source ? `?source=${encodeURIComponent(source)}` : '';
-  return apiGet<DirectorTask[]>(`/v2/director/tasks${query}`, 'Failed to list Director tasks');
+export async function listDirectorTasks(source?: string, workspace = ''): Promise<ApiResult<DirectorTask[]>> {
+  const query = new URLSearchParams();
+  if (source) {
+    query.set('source', source);
+  }
+  setWorkspaceQuery(query, workspace);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiGet<DirectorTask[]>(`/v2/director/tasks${suffix}`, 'Failed to list Director tasks');
 }
 
-export async function getDirectorTask(taskId: string): Promise<ApiResult<DirectorTask>> {
+export async function getDirectorTask(taskId: string, workspace = ''): Promise<ApiResult<DirectorTask>> {
   return apiGet<DirectorTask>(
-    `/v2/director/tasks/${encodeURIComponent(taskId)}`,
+    `/v2/director/tasks/${encodeURIComponent(taskId)}${workspaceQuerySuffix(workspace)}`,
     'Failed to load Director task',
   );
 }
 
-export async function listDirectorWorkers(): Promise<ApiResult<DirectorWorker[]>> {
+export async function listDirectorWorkers(workspace = ''): Promise<ApiResult<DirectorWorker[]>> {
   return apiGet<DirectorWorker[]>(
-    '/v2/director/workers',
+    `/v2/director/workers${workspaceQuerySuffix(workspace)}`,
     'Failed to list Director workers',
   );
 }
 
-export async function getDirectorWorker(workerId: string): Promise<ApiResult<DirectorWorker>> {
+export async function getDirectorWorker(workerId: string, workspace = ''): Promise<ApiResult<DirectorWorker>> {
   return apiGet<DirectorWorker>(
-    `/v2/director/workers/${encodeURIComponent(workerId)}`,
+    `/v2/director/workers/${encodeURIComponent(workerId)}${workspaceQuerySuffix(workspace)}`,
     'Failed to load Director worker',
   );
 }
@@ -739,13 +764,14 @@ export function resolveDirectorTaskSources(directorRunning: boolean): DirectorTa
  */
 export async function listDirectorTaskFallbackRows(
   directorRunning: boolean,
+  workspace = '',
 ): Promise<ApiResult<DirectorFallbackTaskRow[]>> {
   const rows = new Map<string, DirectorFallbackTaskRow>();
   let sawSuccessfulSource = false;
   let lastError = '';
 
   for (const source of resolveDirectorTaskSources(directorRunning)) {
-    const result = await listDirectorTasks(source);
+    const result = await listDirectorTasks(source, workspace);
     if (!result.ok || !Array.isArray(result.data)) {
       lastError = result.error || lastError;
       continue;
@@ -782,6 +808,7 @@ export async function listPmTasks(params: PmTaskListParams = {}): Promise<ApiRes
   if (params.assignee) query.set('assignee', params.assignee);
   query.set('limit', String(params.limit ?? 100));
   query.set('offset', String(params.offset ?? 0));
+  setWorkspaceQuery(query, params.workspace);
   return apiGet<PmTaskListResponse>(
     `/v2/pm/tasks?${query.toString()}`,
     'Failed to list PM tasks',
@@ -791,9 +818,9 @@ export async function listPmTasks(params: PmTaskListParams = {}): Promise<ApiRes
 /**
  * 获取 PM 任务合同详情。
  */
-export async function getPmTask(taskId: string): Promise<ApiResult<PmTaskSearchResult>> {
+export async function getPmTask(taskId: string, workspace = ''): Promise<ApiResult<PmTaskSearchResult>> {
   return apiGet<PmTaskSearchResult>(
-    `/v2/pm/tasks/${encodeURIComponent(taskId)}`,
+    `/v2/pm/tasks/${encodeURIComponent(taskId)}${workspaceQuerySuffix(workspace)}`,
     'Failed to load PM task',
   );
 }
@@ -804,9 +831,11 @@ export async function getPmTask(taskId: string): Promise<ApiResult<PmTaskSearchR
 export async function listPmTaskAssignments(
   taskId: string,
   limit = 100,
+  workspace = '',
 ): Promise<ApiResult<PmTaskAssignmentsResponse>> {
   const query = new URLSearchParams();
   query.set('limit', String(limit));
+  setWorkspaceQuery(query, workspace);
   return apiGet<PmTaskAssignmentsResponse>(
     `/v2/pm/tasks/${encodeURIComponent(taskId)}/assignments?${query.toString()}`,
     'Failed to list PM task assignments',
@@ -824,6 +853,7 @@ export async function listPmRequirements(
   if (params.priority) query.set('priority', params.priority);
   query.set('limit', String(params.limit ?? 100));
   query.set('offset', String(params.offset ?? 0));
+  setWorkspaceQuery(query, params.workspace);
   return apiGet<PmRequirementListResponse>(
     `/v2/pm/requirements?${query.toString()}`,
     'Failed to list PM requirements',
@@ -833,9 +863,9 @@ export async function listPmRequirements(
 /**
  * 获取 PM 需求详情。
  */
-export async function getPmRequirement(requirementId: string): Promise<ApiResult<PmRequirementEntry>> {
+export async function getPmRequirement(requirementId: string, workspace = ''): Promise<ApiResult<PmRequirementEntry>> {
   return apiGet<PmRequirementEntry>(
-    `/v2/pm/requirements/${encodeURIComponent(requirementId)}`,
+    `/v2/pm/requirements/${encodeURIComponent(requirementId)}${workspaceQuerySuffix(workspace)}`,
     'Failed to load PM requirement',
   );
 }
@@ -849,6 +879,7 @@ export async function listPmTaskHistory(params: {
   status?: string | null;
   limit?: number;
   offset?: number;
+  workspace?: string | null;
 } = {}): Promise<ApiResult<PmTaskHistoryResponse>> {
   const query = new URLSearchParams();
   if (params.taskId) query.set('task_id', params.taskId);
@@ -856,6 +887,7 @@ export async function listPmTaskHistory(params: {
   if (params.status) query.set('status', params.status);
   query.set('limit', String(params.limit ?? 50));
   query.set('offset', String(params.offset ?? 0));
+  setWorkspaceQuery(query, params.workspace);
   return apiGet<PmTaskHistoryResponse>(
     `/v2/pm/tasks/history?${query.toString()}`,
     'Failed to list PM task history',
@@ -869,11 +901,13 @@ export async function listPmDirectorTaskHistory(params: {
   iteration?: number | null;
   limit?: number;
   offset?: number;
+  workspace?: string | null;
 } = {}): Promise<ApiResult<PmDirectorTaskHistoryResponse>> {
   const query = new URLSearchParams();
   if (typeof params.iteration === 'number') query.set('iteration', String(params.iteration));
   query.set('limit', String(params.limit ?? 25));
   query.set('offset', String(params.offset ?? 0));
+  setWorkspaceQuery(query, params.workspace);
   return apiGet<PmDirectorTaskHistoryResponse>(
     `/v2/pm/tasks/director?${query.toString()}`,
     'Failed to list PM Director task history',
@@ -883,10 +917,15 @@ export async function listPmDirectorTaskHistory(params: {
 /**
  * 搜索 PM 任务合同。
  */
-export async function searchPmTasks(queryText: string, limit = 20): Promise<ApiResult<PmTaskSearchResponse>> {
+export async function searchPmTasks(
+  queryText: string,
+  limit = 20,
+  workspace = '',
+): Promise<ApiResult<PmTaskSearchResponse>> {
   const query = new URLSearchParams();
   query.set('q', queryText);
   query.set('limit', String(limit));
+  setWorkspaceQuery(query, workspace);
   return apiGet<PmTaskSearchResponse>(
     `/v2/pm/search/tasks?${query.toString()}`,
     'Failed to search PM tasks',
@@ -962,9 +1001,9 @@ export async function getDirectorCapabilities(): Promise<ApiResult<DirectorCapab
 /**
  * 获取 Director 桌面运行前诊断。
  */
-export async function getDirectorDiagnostics(): Promise<ApiResult<DirectorDiagnosticsResponse>> {
+export async function getDirectorDiagnostics(workspace = ''): Promise<ApiResult<DirectorDiagnosticsResponse>> {
   return apiGet<DirectorDiagnosticsResponse>(
-    '/v2/director/diagnostics',
+    `/v2/director/diagnostics${workspaceQuerySuffix(workspace)}`,
     'Failed to load Director diagnostics',
   );
 }
@@ -1057,15 +1096,19 @@ function encodeDocumentPath(path: string): string {
 }
 
 export const pmDocumentService = {
-  list(): Promise<ApiResult<PmDocumentListResponse>> {
-    return apiGet<PmDocumentListResponse>('/v2/pm/documents', 'Failed to list PM documents');
+  list(workspace = ''): Promise<ApiResult<PmDocumentListResponse>> {
+    return apiGet<PmDocumentListResponse>(
+      `/v2/pm/documents${workspaceQuerySuffix(workspace)}`,
+      'Failed to list PM documents',
+    );
   },
 
-  get(path: string, version?: string | null): Promise<ApiResult<PmDocumentDetailResponse>> {
+  get(path: string, version?: string | null, workspace = ''): Promise<ApiResult<PmDocumentDetailResponse>> {
     const query = new URLSearchParams();
     if (version) {
       query.set('version', version);
     }
+    setWorkspaceQuery(query, workspace);
     const suffix = query.toString();
     return apiGet<PmDocumentDetailResponse>(
       `/v2/pm/documents/${encodeDocumentPath(path)}${suffix ? `?${suffix}` : ''}`,
@@ -1073,44 +1116,57 @@ export const pmDocumentService = {
     );
   },
 
-  save(path: string, content: string, changeSummary: string): Promise<ApiResult<PmDocumentWriteResponse>> {
+  save(
+    path: string,
+    content: string,
+    changeSummary: string,
+    workspace = '',
+  ): Promise<ApiResult<PmDocumentWriteResponse>> {
     return apiPost<PmDocumentWriteResponse>(
-      `/v2/pm/documents/${encodeDocumentPath(path)}`,
+      `/v2/pm/documents/${encodeDocumentPath(path)}${workspaceQuerySuffix(workspace)}`,
       { content, change_summary: changeSummary },
       'Failed to save PM document',
     );
   },
 
-  delete(path: string, deleteFile = true): Promise<ApiResult<PmDocumentDeleteResponse>> {
+  delete(path: string, deleteFile = true, workspace = ''): Promise<ApiResult<PmDocumentDeleteResponse>> {
     const query = new URLSearchParams();
     query.set('delete_file', String(deleteFile));
+    setWorkspaceQuery(query, workspace);
     return apiDelete<PmDocumentDeleteResponse>(
       `/v2/pm/documents/${encodeDocumentPath(path)}?${query.toString()}`,
       'Failed to delete PM document',
     );
   },
 
-  versions(path: string): Promise<ApiResult<PmDocumentVersionsResponse>> {
+  versions(path: string, workspace = ''): Promise<ApiResult<PmDocumentVersionsResponse>> {
     return apiGet<PmDocumentVersionsResponse>(
-      `/v2/pm/documents/${encodeDocumentPath(path)}/versions`,
+      `/v2/pm/documents/${encodeDocumentPath(path)}/versions${workspaceQuerySuffix(workspace)}`,
       'Failed to list PM document versions',
     );
   },
 
-  compare(path: string, oldVersion: string, newVersion: string): Promise<ApiResult<PmDocumentDiffResponse>> {
+  compare(
+    path: string,
+    oldVersion: string,
+    newVersion: string,
+    workspace = '',
+  ): Promise<ApiResult<PmDocumentDiffResponse>> {
     const query = new URLSearchParams();
     query.set('old_version', oldVersion);
     query.set('new_version', newVersion);
+    setWorkspaceQuery(query, workspace);
     return apiGet<PmDocumentDiffResponse>(
       `/v2/pm/documents/${encodeDocumentPath(path)}/compare?${query.toString()}`,
       'Failed to compare PM document versions',
     );
   },
 
-  search(queryText: string, limit = 20): Promise<ApiResult<PmDocumentSearchResponse>> {
+  search(queryText: string, limit = 20, workspace = ''): Promise<ApiResult<PmDocumentSearchResponse>> {
     const query = new URLSearchParams();
     query.set('q', queryText);
     query.set('limit', String(limit));
+    setWorkspaceQuery(query, workspace);
     return apiGet<PmDocumentSearchResponse>(
       `/v2/pm/search/documents?${query.toString()}`,
       'Failed to search PM documents',

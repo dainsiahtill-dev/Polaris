@@ -378,7 +378,7 @@ export function useDirectorWorkspace({
 
     const syncTasks = async () => {
       try {
-        const result = await listDirectorTaskFallbackRows(directorRunning);
+        const result = await listDirectorTaskFallbackRows(directorRunning, workspace);
         if (!result.ok || !Array.isArray(result.data) || cancelled) {
           return;
         }

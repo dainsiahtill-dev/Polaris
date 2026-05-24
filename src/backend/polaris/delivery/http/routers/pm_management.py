@@ -28,7 +28,7 @@ from polaris.delivery.http.schemas.common import (
     TaskListResponse,
     TaskSearchResponse,
 )
-from polaris.delivery.http.workspace import active_workspace_value
+from polaris.delivery.http.workspace import active_workspace_value, requested_or_active_workspace
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/pm", tags=["PM Management"])
@@ -45,15 +45,12 @@ def _resolve_document_path(workspace: str, doc_path: str) -> str:
     return resolve_safe_path(workspace, "", doc_path)
 
 
-def _workspace_value(settings: Any) -> str:
-    """Resolve the active PM workspace from desktop settings."""
-    return active_workspace_value(settings)
-
-
-def _workspace_from_request(request: Request) -> str:
+def _workspace_from_request(request: Request, requested: Any = "") -> str:
     """Resolve the active workspace for PM management requests."""
-    workspace = _workspace_value(get_state(request).settings)
-    if not workspace:
+    settings = get_state(request).settings
+    active_workspace = active_workspace_value(settings)
+    workspace = requested_or_active_workspace(settings, requested)
+    if not active_workspace and not str(requested or "").strip():
         raise StructuredHTTPException(
             status_code=400,
             code="WORKSPACE_NOT_CONFIGURED",
@@ -330,9 +327,10 @@ def list_documents(
     pattern: str | None = Query(None, description="Glob pattern to filter paths"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """List all tracked documents in the workspace."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -348,9 +346,10 @@ def create_or_update_document(
     request: Request,
     doc_path: str,
     body: DocumentUpdateRequest,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Create or update a document."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -387,9 +386,10 @@ def delete_document(
     request: Request,
     doc_path: str,
     delete_file: bool = Query(True, description="Whether to delete the actual file"),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Delete a document and its version history."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -413,9 +413,10 @@ def delete_document(
 def get_document_versions(
     request: Request,
     doc_path: str,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get all versions of a document."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -450,9 +451,10 @@ def compare_document_versions(
     doc_path: str,
     old_version: str = Query(..., description="Old version number"),
     new_version: str = Query(..., description="New version number"),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Compare two document versions."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -487,9 +489,10 @@ def get_document(
     request: Request,
     doc_path: str,
     version: str | None = Query(None, description="Specific version (default: current)"),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get document information including versions and analysis."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -516,9 +519,10 @@ def search_documents(
     request: Request,
     q: str = Query(..., description="Search query"),
     limit: int = Query(20, ge=1, le=100),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Search documents by content or path."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -540,9 +544,10 @@ def list_tasks(
     assignee: str | None = Query(None, description="Filter by assignee"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """List tasks with optional filtering."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -563,9 +568,10 @@ def get_task_history(
     end_date: str | None = Query(None, description="End date (ISO format)"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get task history with filtering and pagination."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -590,12 +596,13 @@ def get_director_task_history(
     iteration: int | None = Query(None, description="Filter by PM iteration number"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get tasks that were dispatched to Director.
 
     This retrieves the task list sent to Director in each orchestration iteration.
     """
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -610,9 +617,10 @@ def get_director_task_history(
 def get_task(
     request: Request,
     task_id: str,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get a specific task by ID."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -629,9 +637,10 @@ def get_task(
 def create_task(
     request: Request,
     body: PMTaskCreateRequest,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Create a PM task in the workspace-owned task registry."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -660,9 +669,10 @@ def get_task_assignments(
     request: Request,
     task_id: str,
     limit: int = Query(100, ge=1, le=500),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get assignment history for a task."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -679,9 +689,10 @@ def search_tasks(
     request: Request,
     q: str = Query(..., description="Search query"),
     limit: int = Query(20, ge=1, le=100),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Search tasks by title or description."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -703,9 +714,10 @@ def list_requirements(
     priority: str | None = Query(None, description="Filter by priority"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """List requirements with optional filtering."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -720,9 +732,10 @@ def list_requirements(
 def get_requirement(
     request: Request,
     req_id: str,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get a specific requirement by ID."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -740,9 +753,12 @@ def get_requirement(
 
 
 @router.get("/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
-async def get_pm_status(request: Request) -> dict[str, Any]:
+async def get_pm_status(
+    request: Request,
+    workspace: str = Query("", description="Workspace override"),
+) -> dict[str, Any]:
     """Get PM system status."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
     process_status = await _get_pm_process_status()
@@ -765,9 +781,12 @@ async def get_pm_status(request: Request) -> dict[str, Any]:
 
 
 @router.get("/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)
-def get_pm_health(request: Request) -> dict[str, Any]:
+def get_pm_health(
+    request: Request,
+    workspace: str = Query("", description="Workspace override"),
+) -> dict[str, Any]:
     """Get project health analysis."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -782,9 +801,10 @@ def init_pm(
     request: Request,
     project_name: str = Query("", description="Project name"),
     description: str = Query("", description="Project description"),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Initialize PM system for the workspace."""
-    workspace = _workspace_from_request(request)
+    workspace = _workspace_from_request(request, workspace)
 
     pm = _get_pm_instance(workspace)
 
@@ -806,10 +826,11 @@ def v2_list_documents(
     pattern: str | None = Query(None, description="Glob pattern to filter paths"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """List tracked documents in the workspace."""
     try:
-        result = list_documents(request, doc_type, pattern, limit, offset)
+        result = list_documents(request, doc_type, pattern, limit, offset, workspace)
     except StructuredHTTPException as exc:
         if exc.code != "PM_NOT_INITIALIZED":
             raise
@@ -830,9 +851,10 @@ def v2_list_documents(
 def v2_get_document_versions(
     request: Request,
     doc_path: str,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get all versions of a document."""
-    return get_document_versions(request, doc_path)
+    return get_document_versions(request, doc_path, workspace)
 
 
 @v2_router.get(
@@ -850,9 +872,10 @@ def v2_compare_document_versions(
     doc_path: str,
     old_version: str = Query(..., description="Old version number"),
     new_version: str = Query(..., description="New version number"),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Compare two versions of a document."""
-    return compare_document_versions(request, doc_path, old_version, new_version)
+    return compare_document_versions(request, doc_path, old_version, new_version, workspace)
 
 
 @v2_router.get(
@@ -865,9 +888,10 @@ def v2_get_document(
     request: Request,
     doc_path: str,
     version: str | None = Query(None, description="Specific version (default: current)"),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get a single document with optional version."""
-    return get_document(request, doc_path, version)
+    return get_document(request, doc_path, version, workspace)
 
 
 @v2_router.post(
@@ -880,9 +904,10 @@ def v2_create_or_update_document(
     request: Request,
     doc_path: str,
     body: DocumentUpdateRequest,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Create or update a document."""
-    return create_or_update_document(request, doc_path, body)
+    return create_or_update_document(request, doc_path, body, workspace)
 
 
 @v2_router.delete(
@@ -895,9 +920,10 @@ def v2_delete_document(
     request: Request,
     doc_path: str,
     delete_file: bool = Query(True, description="Whether to delete the actual file"),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Delete a document and optionally its backing file."""
-    return delete_document(request, doc_path, delete_file)
+    return delete_document(request, doc_path, delete_file, workspace)
 
 
 @v2_router.get("/v2/pm/search/documents", dependencies=[Depends(require_auth)], response_model=DocumentSearchResponse)
@@ -906,10 +932,11 @@ def v2_search_documents(
     request: Request,
     q: str = Query(..., description="Search query"),
     limit: int = Query(20, ge=1, le=100),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Search documents by content or path."""
     try:
-        return search_documents(request, q, limit)
+        return search_documents(request, q, limit, workspace)
     except StructuredHTTPException as exc:
         if exc.code != "PM_NOT_INITIALIZED":
             raise
@@ -924,10 +951,11 @@ def v2_list_tasks(
     assignee: str | None = Query(None, description="Filter by assignee"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """List tasks with optional filtering."""
     try:
-        result = list_tasks(request, status, assignee, limit, offset)
+        result = list_tasks(request, status, assignee, limit, offset, workspace)
     except StructuredHTTPException as exc:
         if exc.code != "PM_NOT_INITIALIZED":
             raise
@@ -947,9 +975,10 @@ def v2_list_tasks(
 def v2_create_task(
     request: Request,
     body: PMTaskCreateRequest,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Create a PM task through the desktop v2 management API."""
-    return create_task(request, body)
+    return create_task(request, body, workspace)
 
 
 @v2_router.get("/v2/pm/tasks/history", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
@@ -963,10 +992,11 @@ def v2_get_task_history(
     end_date: str | None = Query(None, description="End date (ISO format)"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get task history with filtering and pagination."""
     try:
-        return get_task_history(request, task_id, assignee, status, start_date, end_date, limit, offset)
+        return get_task_history(request, task_id, assignee, status, start_date, end_date, limit, offset, workspace)
     except StructuredHTTPException as exc:
         if exc.code != "PM_NOT_INITIALIZED":
             raise
@@ -988,10 +1018,11 @@ def v2_get_director_task_history(
     iteration: int | None = Query(None, description="Filter by PM iteration number"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get tasks dispatched to Director by iteration."""
     try:
-        return get_director_task_history(request, iteration, limit, offset)
+        return get_director_task_history(request, iteration, limit, offset, workspace)
     except StructuredHTTPException as exc:
         if exc.code != "PM_NOT_INITIALIZED":
             raise
@@ -1016,9 +1047,10 @@ def v2_get_task_assignments(
     request: Request,
     task_id: str,
     limit: int = Query(100, ge=1, le=500),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get assignment history for a task."""
-    return get_task_assignments(request, task_id, limit)
+    return get_task_assignments(request, task_id, limit, workspace)
 
 
 @v2_router.get("/v2/pm/tasks/{task_id}", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
@@ -1026,9 +1058,10 @@ def v2_get_task_assignments(
 def v2_get_task(
     request: Request,
     task_id: str,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get a specific task by ID."""
-    return get_task(request, task_id)
+    return get_task(request, task_id, workspace)
 
 
 @v2_router.get("/v2/pm/search/tasks", dependencies=[Depends(require_auth)], response_model=TaskSearchResponse)
@@ -1037,10 +1070,11 @@ def v2_search_tasks(
     request: Request,
     q: str = Query(..., description="Search query"),
     limit: int = Query(20, ge=1, le=100),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Search tasks by title or description."""
     try:
-        return search_tasks(request, q, limit)
+        return search_tasks(request, q, limit, workspace)
     except StructuredHTTPException as exc:
         if exc.code != "PM_NOT_INITIALIZED":
             raise
@@ -1055,10 +1089,11 @@ def v2_list_requirements(
     priority: str | None = Query(None, description="Filter by priority"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """List requirements with optional filtering."""
     try:
-        result = list_requirements(request, status, priority, limit, offset)
+        result = list_requirements(request, status, priority, limit, offset, workspace)
     except StructuredHTTPException as exc:
         if exc.code != "PM_NOT_INITIALIZED":
             raise
@@ -1075,21 +1110,28 @@ def v2_list_requirements(
 def v2_get_requirement(
     request: Request,
     req_id: str,
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get a specific requirement by ID."""
-    return get_requirement(request, req_id)
+    return get_requirement(request, req_id, workspace)
 
 
 @router.get("/v2/pm/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
-async def v2_get_pm_status(request: Request) -> dict[str, Any]:
+async def v2_get_pm_status(
+    request: Request,
+    workspace: str = Query("", description="Workspace override"),
+) -> dict[str, Any]:
     """Get PM system status for the workspace."""
-    return await get_pm_status(request)
+    return await get_pm_status(request, workspace)
 
 
 @router.get("/v2/pm/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)
-def v2_get_pm_health(request: Request) -> dict[str, Any]:
+def v2_get_pm_health(
+    request: Request,
+    workspace: str = Query("", description="Workspace override"),
+) -> dict[str, Any]:
     """Get project health analysis."""
-    return get_pm_health(request)
+    return get_pm_health(request, workspace)
 
 
 @router.post("/v2/pm/init", dependencies=[Depends(require_auth)], response_model=PMInitResponse)
@@ -1097,6 +1139,7 @@ def v2_init_pm(
     request: Request,
     project_name: str = Query("", description="Project name"),
     description: str = Query("", description="Project description"),
+    workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Initialize PM system for the workspace."""
-    return init_pm(request, project_name, description)
+    return init_pm(request, project_name, description, workspace)

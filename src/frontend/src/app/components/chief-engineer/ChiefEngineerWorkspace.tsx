@@ -575,8 +575,8 @@ export function ChiefEngineerWorkspace({
     let cancelled = false;
     const loadChiefEngineerState = async () => {
       const [blueprintResult, diagnosticsResult] = await Promise.all([
-        listChiefEngineerBlueprints(),
-        getChiefEngineerDiagnostics(),
+        listChiefEngineerBlueprints(workspace),
+        getChiefEngineerDiagnostics(workspace),
       ]);
       if (cancelled) {
         return;
@@ -708,7 +708,7 @@ export function ChiefEngineerWorkspace({
     const syncDirectorWorkers = async () => {
       setDirectorWorkerLoading(true);
       try {
-        const result = await listDirectorWorkers();
+        const result = await listDirectorWorkers(workspace);
         if (cancelled) {
           return;
         }
@@ -732,7 +732,7 @@ export function ChiefEngineerWorkspace({
     const syncDirectorTasks = async () => {
       setDirectorTaskLoading(true);
       try {
-        const result = await listDirectorTaskFallbackRows(directorRunning);
+        const result = await listDirectorTaskFallbackRows(directorRunning, workspace);
         if (cancelled) {
           return;
         }
@@ -932,7 +932,7 @@ export function ChiefEngineerWorkspace({
       return;
     }
 
-    const diagnosticsResult = await getChiefEngineerDiagnostics();
+    const diagnosticsResult = await getChiefEngineerDiagnostics(workspace);
     if (diagnosticsResult.ok && diagnosticsResult.data) {
       setDiagnostics(diagnosticsResult.data);
       setDiagnosticsError('');
@@ -949,7 +949,7 @@ export function ChiefEngineerWorkspace({
     setBlueprintDetail(null);
     setBlueprintDetailError('');
     setBlueprintDetailLoading(true);
-    const result = await getChiefEngineerBlueprint(token);
+    const result = await getChiefEngineerBlueprint(token, workspace);
     if (result.ok && result.data) {
       setBlueprintDetail(result.data);
     } else {
@@ -967,18 +967,21 @@ export function ChiefEngineerWorkspace({
     }
     setGeneratingTaskId(taskId);
     setGenerateError('');
-    const result = await generateChiefEngineerBlueprint({
-      task_id: taskId,
-      objective: taskObjective(task),
-      context: {
-        source: 'chief_engineer_desktop',
-        task_title: taskTitle(task),
-        goal: readString(task, ['goal']),
-        summary: readString(task, ['summary']),
-        acceptance: readTaskStringList(task, ['acceptance']),
-        target_files: readTaskStringList(task, ['target_files', 'scope_paths', 'files']),
+    const result = await generateChiefEngineerBlueprint(
+      {
+        task_id: taskId,
+        objective: taskObjective(task),
+        context: {
+          source: 'chief_engineer_desktop',
+          task_title: taskTitle(task),
+          goal: readString(task, ['goal']),
+          summary: readString(task, ['summary']),
+          acceptance: readTaskStringList(task, ['acceptance']),
+          target_files: readTaskStringList(task, ['target_files', 'scope_paths', 'files']),
+        },
       },
-    });
+      workspace,
+    );
     if (!result.ok || !result.data) {
       setGenerateError(result.error || '蓝图生成 API 暂不可用');
       setGeneratingTaskId('');
@@ -1014,7 +1017,7 @@ export function ChiefEngineerWorkspace({
         result: current[taskId]?.result ?? null,
       },
     }));
-    const result = await getChiefEngineerBlueprintStatus(taskId);
+    const result = await getChiefEngineerBlueprintStatus(taskId, null, workspace);
     if (!result.ok || !result.data) {
       setBlueprintStatusChecks((current) => ({
         ...current,
@@ -1098,7 +1101,7 @@ export function ChiefEngineerWorkspace({
     });
     try {
       await Promise.resolve(onToggleDirector());
-      const statusResult = await getDirectorStatus();
+      const statusResult = await getDirectorStatus(workspace);
       if (statusResult.ok && statusResult.data) {
         setDirectorToggleStatusEvidence({
           triggered: true,
@@ -1131,7 +1134,7 @@ export function ChiefEngineerWorkspace({
     setDeletingBlueprintId(token);
     setBlueprintDeleteError('');
     setBlueprintDeleteEvidence('');
-    const result = await deleteChiefEngineerBlueprint(token);
+    const result = await deleteChiefEngineerBlueprint(token, workspace);
     if (!result.ok || !result.data?.deleted) {
       setBlueprintDeleteError(result.error || '蓝图删除 API 暂不可用');
       setDeletingBlueprintId('');

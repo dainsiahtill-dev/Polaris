@@ -342,6 +342,28 @@ async def test_pm_status(client: AsyncClient) -> None:
         data = response.json()
         assert data["running"] is False
         assert data["state"] == "IDLE"
+        assert data["workspace"] == "."
+
+
+@pytest.mark.asyncio
+async def test_pm_status_uses_requested_workspace(client: AsyncClient, tmp_path: Path) -> None:
+    """PM status should expose the workspace used for desktop status evidence."""
+    workspace = tmp_path / "product"
+    workspace.mkdir()
+    mock_pm = MagicMock()
+    mock_pm.get_status.return_value = {"running": False, "state": "IDLE", "iterations": 0}
+
+    with patch(
+        "polaris.delivery.http.dependencies.get_container",
+        new_callable=AsyncMock,
+    ) as mock_container:
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
+        response = await client.get("/v2/pm/status", params={"workspace": workspace.as_posix()})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["running"] is False
+        assert data["state"] == "IDLE"
+        assert data["workspace"] == workspace.as_posix()
 
 
 @pytest.mark.asyncio
@@ -416,6 +438,45 @@ async def test_pm_diagnostics_prefers_active_workspace_path(
     assert data["startup_blockers"] == []
     assert data["workspace"]["workspace"] == str(active_workspace)
     assert data["workspace"]["docs_present"] is True
+
+
+@pytest.mark.asyncio
+async def test_pm_diagnostics_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """PM diagnostics should bind both workspace and LLM checks to the requested workspace."""
+    active_workspace = tmp_path / "active"
+    requested_workspace = tmp_path / "requested"
+    (active_workspace / "docs").mkdir(parents=True)
+    (requested_workspace / "docs").mkdir(parents=True)
+    mock_settings.workspace = str(active_workspace)
+    mock_settings.workspace_path = ""
+
+    with (
+        patch("polaris.delivery.http.v2.pm.get_lancedb_status", return_value={"ok": True}),
+        patch(
+            "polaris.delivery.http.v2.pm.build_llm_status",
+            return_value={
+                "state": "READY",
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "required_ready_roles": ["pm"],
+            },
+        ) as mock_llm_status,
+    ):
+        response = await client.get(
+            "/v2/pm/diagnostics",
+            params={"workspace": str(requested_workspace)},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert Path(data["workspace"]["workspace"]).resolve() == requested_workspace.resolve()
+    called_settings = mock_llm_status.call_args.args[0]
+    assert Path(str(called_settings.workspace)).resolve() == requested_workspace.resolve()
+    assert Path(str(mock_settings.workspace)).resolve() == active_workspace.resolve()
 
 
 @pytest.mark.asyncio

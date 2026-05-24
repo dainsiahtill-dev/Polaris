@@ -56,6 +56,7 @@ interface PmManagementDiagnosticsStatus {
 interface PMDiagnosticsPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  workspace?: string;
 }
 
 interface LlmRoleEvidenceRow {
@@ -106,7 +107,7 @@ function llmRoleEvidenceRows(llm: PmStartupDiagnosticsResponse['llm'] | null): L
     });
 }
 
-export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps) {
+export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagnosticsPanelProps) {
   const [status, setStatus] = useState<DiagnosticsStatus>({
     lancedb: null,
     llm: null,
@@ -175,7 +176,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
     setManagementLoading(true);
     setManagementError('');
     try {
-      const statusResult = await getPmManagementStatus();
+      const statusResult = await getPmManagementStatus(workspace);
       if (!statusResult.ok || !statusResult.data) {
         setManagementStatus((current) => ({
           ...current,
@@ -196,7 +197,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
         return;
       }
 
-      const healthResult = await getPmManagementHealth();
+      const healthResult = await getPmManagementHealth(workspace);
       setManagementStatus((current) => ({
         ...current,
         status: nextStatus,
@@ -215,14 +216,14 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
     } finally {
       setManagementLoading(false);
     }
-  }, []);
+  }, [workspace]);
 
   const runDiagnostics = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const [result] = await Promise.all([
-        getPmStartupDiagnostics(),
+        getPmStartupDiagnostics(workspace),
         loadKernelDiagnostics(),
         loadManagementDiagnostics(),
       ]);
@@ -240,7 +241,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
     } finally {
       setLoading(false);
     }
-  }, [loadKernelDiagnostics]);
+  }, [loadKernelDiagnostics, loadManagementDiagnostics, workspace]);
 
   const handleClearKernelCache = useCallback(async () => {
     setCacheClearing(true);
@@ -263,10 +264,13 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
     setManagementInitializing(true);
     setManagementError('');
     try {
-      const result = await initializePmManagement({
-        projectName: initProjectName.trim(),
-        description: initDescription.trim(),
-      });
+      const result = await initializePmManagement(
+        {
+          projectName: initProjectName.trim(),
+          description: initDescription.trim(),
+        },
+        workspace,
+      );
       if (result.ok && result.data) {
         setManagementStatus((current) => ({
           ...current,
@@ -281,7 +285,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose }: PMDiagnosticsPanelProps)
     } finally {
       setManagementInitializing(false);
     }
-  }, [initDescription, initProjectName, loadManagementDiagnostics]);
+  }, [initDescription, initProjectName, loadManagementDiagnostics, workspace]);
 
   useEffect(() => {
     if (isOpen) {

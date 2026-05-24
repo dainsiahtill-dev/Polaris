@@ -41,6 +41,7 @@ interface PMTaskPanelProps {
   onTaskCreated?: (task: PmTask) => void;
   pmRunning: boolean;
   taskTraceMap?: TaskTraceMap;
+  workspace?: string;
 }
 
 type TaskFilter = 'all' | 'pending' | 'running' | 'completed' | 'blocked';
@@ -306,6 +307,7 @@ export function PMTaskPanel({
   onTaskCreated,
   pmRunning,
   taskTraceMap,
+  workspace = '',
 }: PMTaskPanelProps) {
   const [filter, setFilter] = useState<TaskFilter>('all');
   const [sort, setSort] = useState<TaskSort>('priority');
@@ -367,7 +369,7 @@ export function PMTaskPanel({
     setTaskSearchError(null);
 
     const timeoutId = window.setTimeout(async () => {
-      const result = await searchPmTasks(query, 20);
+      const result = await searchPmTasks(query, 20, workspace);
       if (!isCurrent) return;
 
       if (result.ok && result.data) {
@@ -384,7 +386,7 @@ export function PMTaskPanel({
       isCurrent = false;
       window.clearTimeout(timeoutId);
     };
-  }, [searchQuery]);
+  }, [searchQuery, workspace]);
 
   useEffect(() => {
     const taskId = selectedTaskId?.trim();
@@ -406,7 +408,7 @@ export function PMTaskPanel({
       task: null,
     });
 
-    void getPmTask(taskId).then((result) => {
+    void getPmTask(taskId, workspace).then((result) => {
       if (!isCurrent) return;
 
       if (result.ok && result.data) {
@@ -439,7 +441,7 @@ export function PMTaskPanel({
     return () => {
       isCurrent = false;
     };
-  }, [selectedTaskId]);
+  }, [selectedTaskId, workspace]);
 
   useEffect(() => {
     const taskId = selectedTaskId?.trim();
@@ -463,7 +465,7 @@ export function PMTaskPanel({
       count: 0,
     });
 
-    void listPmTaskAssignments(taskId, 100).then((result) => {
+    void listPmTaskAssignments(taskId, 100, workspace).then((result) => {
       if (!isCurrent) return;
 
       if (result.ok && result.data) {
@@ -499,7 +501,7 @@ export function PMTaskPanel({
     return () => {
       isCurrent = false;
     };
-  }, [selectedTaskId]);
+  }, [selectedTaskId, workspace]);
 
   const filteredTasks = useMemo(() => {
     let result = [...tasks];
@@ -595,13 +597,16 @@ export function PMTaskPanel({
       task: null,
     });
 
-    const result = await pmTaskService.create({
-      subject,
-      description: createDescription.trim(),
-      priority: createPriority,
-      status: 'pending',
-      acceptance,
-    });
+    const result = await pmTaskService.create(
+      {
+        subject,
+        description: createDescription.trim(),
+        priority: createPriority,
+        status: 'pending',
+        acceptance,
+      },
+      workspace,
+    );
 
     if (!result.ok || !result.data) {
       setCreateEvidence({

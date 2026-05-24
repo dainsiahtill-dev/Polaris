@@ -1603,7 +1603,7 @@ export function DirectorWorkspace({
     }));
 
     try {
-      const result = await getDirectorDiagnostics();
+      const result = await getDirectorDiagnostics(workspace);
       if (result.ok && result.data) {
         setDirectorDiagnostics({
           loading: false,
@@ -1680,7 +1680,7 @@ export function DirectorWorkspace({
 
     const syncTasks = async () => {
       try {
-        const result = await listDirectorTaskFallbackRows(directorRunning);
+        const result = await listDirectorTaskFallbackRows(directorRunning, workspace);
         if (cancelled) {
           return;
         }
@@ -1723,7 +1723,7 @@ export function DirectorWorkspace({
 
     const syncWorkers = async () => {
       try {
-        const result = await listDirectorWorkers();
+        const result = await listDirectorWorkers(workspace);
         if (cancelled) {
           return;
         }
@@ -1781,7 +1781,7 @@ export function DirectorWorkspace({
     }));
 
     const loadTaskBackendDetail = async () => {
-      const result = await getDirectorTask(taskId);
+      const result = await getDirectorTask(taskId, workspace);
       if (detailCancelled) {
         return;
       }
@@ -1843,7 +1843,7 @@ export function DirectorWorkspace({
       detailCancelled = true;
       cancelled = true;
     };
-  }, [selectedTaskId]);
+  }, [selectedTaskId, workspace]);
 
   const visibleTasks = useMemo(() => {
     const toTaskId = (task: PmTask): string => String(task.id || '').trim();
@@ -2073,7 +2073,7 @@ export function DirectorWorkspace({
     setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] 读取 Director worker: ${normalizedWorkerId}\n`);
 
     try {
-      const result = await getDirectorWorker(normalizedWorkerId);
+      const result = await getDirectorWorker(normalizedWorkerId, workspace);
       if (!result.ok || !result.data) {
         setWorkerBackendDetail({
           workerId: normalizedWorkerId,
@@ -2097,7 +2097,7 @@ export function DirectorWorkspace({
         error: error instanceof Error ? error.message : 'Director worker detail unavailable',
       });
     }
-  }, []);
+  }, [workspace]);
 
   const handleTaskCreate = useCallback(async (draft: DirectorTaskCreateDraft) => {
     const subject = String(draft.subject || '').trim();
@@ -2167,7 +2167,7 @@ export function DirectorWorkspace({
       }
 
       try {
-        const refreshed = await listDirectorTaskFallbackRows(directorRunning);
+        const refreshed = await listDirectorTaskFallbackRows(directorRunning, workspace);
         if (refreshed.ok && Array.isArray(refreshed.data)) {
           const refreshedTasks = refreshed.data as unknown as PmTask[];
           setFallbackTasks(createdTask ? upsertDirectorFallbackTaskRow(refreshedTasks, createdTask) : refreshedTasks);
@@ -2183,7 +2183,7 @@ export function DirectorWorkspace({
         taskId: null,
       });
     }
-  }, [directorRunning, executionTaskMap, selectedTaskId]);
+  }, [directorRunning, executionTaskMap, selectedTaskId, workspace]);
 
   const handleTaskCancel = useCallback(async (taskId: string) => {
     const normalizedTaskId = String(taskId || '').trim();
@@ -2230,7 +2230,7 @@ export function DirectorWorkspace({
       );
 
       try {
-        const refreshed = await listDirectorTaskFallbackRows(directorRunning);
+        const refreshed = await listDirectorTaskFallbackRows(directorRunning, workspace);
         if (refreshed.ok && Array.isArray(refreshed.data)) {
           setFallbackTasks(refreshed.data as unknown as PmTask[]);
         }
@@ -2247,7 +2247,7 @@ export function DirectorWorkspace({
       });
       setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] Director 任务取消失败: ${message}\n`);
     }
-  }, [directorRunning]);
+  }, [directorRunning, workspace]);
 
   const loadDirectorRunEvidence = useCallback(async (runId: string) => {
     const normalizedRunId = String(runId || '').trim();
@@ -2361,7 +2361,7 @@ export function DirectorWorkspace({
     });
     try {
       await Promise.resolve(onToggleDirector());
-      const statusResult = await getDirectorStatus();
+      const statusResult = await getDirectorStatus(workspace);
       if (statusResult.ok && statusResult.data) {
         setDirectorToggleStatusEvidence({
           triggered: true,
@@ -2385,7 +2385,7 @@ export function DirectorWorkspace({
         error: error instanceof Error ? error.message : 'Director status unavailable',
       });
     }
-  }, [onToggleDirector]);
+  }, [onToggleDirector, workspace]);
 
   const directorDiagnosticExecutionReason = useMemo(
     () => formatDirectorExecutionBlockReason(directorDiagnostics.data),

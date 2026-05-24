@@ -25,6 +25,7 @@ export interface ProcessOperationsState {
 }
 
 export interface UseProcessOperationsOptions {
+  workspace?: string;
   onStatusChange?: () => void;
   onOpenLogs?: (sourceId: string, banner: string) => void;
   lancedbBlocked?: boolean;
@@ -157,7 +158,7 @@ async function loadFreshPmTasks(): Promise<PmTask[]> {
 }
 
 export function useProcessOperations(options: UseProcessOperationsOptions = {}) {
-  const { onStatusChange, onOpenLogs, lancedbBlocked, lancedbBlockMessage } = options;
+  const { workspace = '', onStatusChange, onOpenLogs, lancedbBlocked, lancedbBlockMessage } = options;
 
   const [state, setState] = useState<ProcessOperationsState>({
     isStartingPM: false,
@@ -185,8 +186,8 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     let combined = errorMessage;
     try {
       const statusResult = processType === 'director'
-        ? await getDirectorStatus()
-        : await getPmStatus();
+        ? await getDirectorStatus(workspace)
+        : await getPmStatus(workspace);
 
       if (statusResult.ok && statusResult.data) {
         const logPath = statusResult.data.log_path || defaultLogPath;
@@ -200,7 +201,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     }
 
     return combined;
-  }, []);
+  }, [workspace]);
 
   const startPmLoop = useCallback(async (resume = false) => {
     setField('pmActionError', null);
@@ -331,7 +332,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
       return true;
     }
 
-    const existingResult = await listDirectorTasks('local');
+    const existingResult = await listDirectorTasks('local', workspace);
     let existingTaskIds = new Set<string>();
 
     if (existingResult.ok && existingResult.data) {
@@ -362,7 +363,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     }
 
     return true;
-  }, []);
+  }, [workspace]);
 
   const startDirectorCallback = useCallback(async (
     checkAgents?: DirectorStartGuards,

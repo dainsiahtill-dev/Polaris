@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+from contextlib import suppress
+from copy import copy
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
@@ -42,4 +45,23 @@ def requested_or_active_workspace(settings: Any, requested: Any) -> str:
     return requested_text or "."
 
 
-__all__ = ["active_workspace_value", "requested_or_active_workspace"]
+def settings_with_workspace_override(settings: Any, requested: Any = "") -> Any:
+    """Return settings or a shallow clone pinned to an explicit workspace request."""
+
+    target_workspace = requested_or_active_workspace(settings, requested)
+    active_workspace = active_workspace_value(settings)
+    if not target_workspace or target_workspace == active_workspace:
+        return settings
+
+    cloned = copy(settings)
+    try:
+        cloned.workspace = Path(target_workspace)
+    except (TypeError, ValueError):
+        cloned.workspace = target_workspace
+    if hasattr(cloned, "workspace_path"):
+        with suppress(AttributeError, TypeError, ValueError):
+            cloned.workspace_path = target_workspace
+    return cloned
+
+
+__all__ = ["active_workspace_value", "requested_or_active_workspace", "settings_with_workspace_override"]

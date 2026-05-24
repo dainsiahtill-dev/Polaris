@@ -30,7 +30,11 @@ from polaris.cells.roles.kernel.public.service import (
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.delivery.http.dependencies import get_pm_service, require_auth
 from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
-from polaris.delivery.http.workspace import active_workspace_value, requested_or_active_workspace
+from polaris.delivery.http.workspace import (
+    active_workspace_value,
+    requested_or_active_workspace,
+    settings_with_workspace_override,
+)
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -274,9 +278,10 @@ def _build_pm_diagnostics(
 ) -> PMDiagnosticsResponse:
     """Build the side-effect-free PM readiness snapshot used by UI and gates."""
 
+    diagnostic_settings = settings_with_workspace_override(settings, workspace_override or "")
     lancedb = _build_lancedb_diagnostics()
-    llm = _build_llm_diagnostics(settings)
-    workspace = _build_workspace_diagnostics(settings, workspace_override=workspace_override)
+    llm = _build_llm_diagnostics(diagnostic_settings)
+    workspace = _build_workspace_diagnostics(diagnostic_settings)
     issues = _issue_tokens(lancedb, llm, workspace)
     startup_blockers = _startup_blockers(lancedb, llm, workspace)
     return PMDiagnosticsResponse(
@@ -427,9 +432,16 @@ async def pm_stop(
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
-def pm_status(pm_service: PMService = Depends(get_pm_service)) -> dict:
-    """Get PM process status."""
-    return pm_service.get_status()
+def pm_status(
+    request: Request,
+    workspace: str = "",
+    pm_service: PMService = Depends(get_pm_service),
+) -> dict:
+    """Get PM process status with the workspace used by desktop evidence."""
+    settings = request.app.state.app_state.settings
+    status_payload = dict(pm_service.get_status())
+    status_payload["workspace"] = _workspace_value(settings, workspace)
+    return status_payload
 
 
 @router.get(
@@ -437,10 +449,10 @@ def pm_status(pm_service: PMService = Depends(get_pm_service)) -> dict:
     response_model=PMDiagnosticsResponse,
     dependencies=[Depends(require_auth)],
 )
-def pm_diagnostics(request: Request) -> PMDiagnosticsResponse:
+def pm_diagnostics(request: Request, workspace: str = "") -> PMDiagnosticsResponse:
     """Return side-effect-free PM startup diagnostics for the desktop modal."""
 
-    return _build_pm_diagnostics_for_request(request)
+    return _build_pm_diagnostics_for_request(request, workspace_override=workspace)
 
 
 # ============================================================================

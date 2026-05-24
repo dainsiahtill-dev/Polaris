@@ -76,6 +76,7 @@ describe('useLlmRuntimeGate', () => {
     }));
 
     await waitFor(() => expect(fetchStatus).toHaveBeenCalledTimes(1));
+    expect(fetchStatus).toHaveBeenCalledWith('C:/Temp/Product');
     await waitFor(() => expect(result.current.llmRuntimeState.state).toBe('READY'));
     expect(result.current.llmRuntimeState.blockedRoles).toEqual([]);
   });
@@ -140,6 +141,7 @@ describe('useLlmRuntimeGate', () => {
     }));
 
     await waitFor(() => expect(fetchStatus).toHaveBeenCalledTimes(1));
+    expect(fetchStatus).toHaveBeenCalledWith('C:/Temp/Product');
     expect(result.current.llmRuntimeState.state).toBe('BLOCKED');
     expect(result.current.llmRuntimeState.blockedRoles).toEqual(['pm']);
   });

@@ -87,18 +87,31 @@ export interface ChiefEngineerBlueprintDeleteResponse {
   source: string;
 }
 
-export async function getChiefEngineerDiagnostics(): Promise<ApiResult<ChiefEngineerDiagnosticsResponse>> {
+function workspaceQuerySuffix(workspace = ''): string {
+  return workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+}
+
+function appendWorkspaceQuery(path: string, workspace = ''): string {
+  if (!workspace) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}workspace=${encodeURIComponent(workspace)}`;
+}
+
+export async function getChiefEngineerDiagnostics(
+  workspace = '',
+): Promise<ApiResult<ChiefEngineerDiagnosticsResponse>> {
   return apiGet<ChiefEngineerDiagnosticsResponse>(
-    '/v2/chief-engineer/diagnostics',
+    `/v2/chief-engineer/diagnostics${workspaceQuerySuffix(workspace)}`,
     'Failed to load Chief Engineer diagnostics',
   );
 }
 
 export async function generateChiefEngineerBlueprint(
   payload: GenerateChiefEngineerBlueprintPayload,
+  workspace = '',
 ): Promise<ApiResult<ChiefEngineerTaskBlueprintResultResponse>> {
   return apiPost<ChiefEngineerTaskBlueprintResultResponse>(
-    '/v2/chief-engineer/blueprints',
+    `/v2/chief-engineer/blueprints${workspaceQuerySuffix(workspace)}`,
     payload,
     'Failed to generate Chief Engineer blueprint',
   );
@@ -107,10 +120,14 @@ export async function generateChiefEngineerBlueprint(
 export async function getChiefEngineerBlueprintStatus(
   taskId: string,
   runId?: string | null,
+  workspace = '',
 ): Promise<ApiResult<ChiefEngineerTaskBlueprintResultResponse>> {
   const query = new URLSearchParams({ task_id: taskId });
   if (runId) {
     query.set('run_id', runId);
+  }
+  if (workspace) {
+    query.set('workspace', workspace);
   }
   return apiGet<ChiefEngineerTaskBlueprintResultResponse>(
     `/v2/chief-engineer/blueprints/status?${query.toString()}`,
@@ -118,27 +135,31 @@ export async function getChiefEngineerBlueprintStatus(
   );
 }
 
-export async function listChiefEngineerBlueprints(): Promise<ApiResult<ChiefEngineerBlueprintListResponse>> {
+export async function listChiefEngineerBlueprints(
+  workspace = '',
+): Promise<ApiResult<ChiefEngineerBlueprintListResponse>> {
   return apiGet<ChiefEngineerBlueprintListResponse>(
-    '/v2/chief-engineer/blueprints',
+    `/v2/chief-engineer/blueprints${workspaceQuerySuffix(workspace)}`,
     'Failed to list Chief Engineer blueprints',
   );
 }
 
 export async function getChiefEngineerBlueprint(
   blueprintId: string,
+  workspace = '',
 ): Promise<ApiResult<ChiefEngineerBlueprintDetailResponse>> {
   return apiGet<ChiefEngineerBlueprintDetailResponse>(
-    `/v2/chief-engineer/blueprints/${encodeURIComponent(blueprintId)}`,
+    appendWorkspaceQuery(`/v2/chief-engineer/blueprints/${encodeURIComponent(blueprintId)}`, workspace),
     'Failed to load Chief Engineer blueprint',
   );
 }
 
 export async function deleteChiefEngineerBlueprint(
   blueprintId: string,
+  workspace = '',
 ): Promise<ApiResult<ChiefEngineerBlueprintDeleteResponse>> {
   return apiDelete<ChiefEngineerBlueprintDeleteResponse>(
-    `/v2/chief-engineer/blueprints/${encodeURIComponent(blueprintId)}`,
+    appendWorkspaceQuery(`/v2/chief-engineer/blueprints/${encodeURIComponent(blueprintId)}`, workspace),
     'Failed to delete Chief Engineer blueprint',
   );
 }

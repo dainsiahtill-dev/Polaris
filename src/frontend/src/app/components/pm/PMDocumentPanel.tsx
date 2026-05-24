@@ -81,7 +81,7 @@ export function PMDocumentPanel({
     setIsTreeLoading(true);
     setTreeError(null);
 
-    const result = await pmDocumentService.list();
+    const result = await pmDocumentService.list(workspace);
     if (!result.ok || !result.data) {
       setFileTree([]);
       setTreeError(result.error || '无法读取 PM 文档索引');
@@ -111,7 +111,7 @@ export function PMDocumentPanel({
     setSearchError(null);
 
     const timeoutId = window.setTimeout(async () => {
-      const result = await pmDocumentService.search(query, 20);
+      const result = await pmDocumentService.search(query, 20, workspace);
       if (!isCurrent) return;
 
       if (result.ok && result.data) {
@@ -128,7 +128,7 @@ export function PMDocumentPanel({
       isCurrent = false;
       window.clearTimeout(timeoutId);
     };
-  }, [searchQuery]);
+  }, [searchQuery, workspace]);
 
   const toggleDirectory = useCallback((node: FileNode) => {
     const updateTree = (nodes: FileNode[]): FileNode[] =>
@@ -149,7 +149,7 @@ export function PMDocumentPanel({
     setIsVersionsLoading(true);
     setVersionsError(null);
 
-    const result = await pmDocumentService.versions(path);
+    const result = await pmDocumentService.versions(path, workspace);
     if (result.ok && result.data) {
       setDocumentVersions(result.data.versions || []);
     } else {
@@ -158,7 +158,7 @@ export function PMDocumentPanel({
     }
 
     setIsVersionsLoading(false);
-  }, []);
+  }, [workspace]);
 
   const loadDocumentNode = useCallback(async (node: FileNode) => {
     setIsLoading(true);
@@ -175,7 +175,7 @@ export function PMDocumentPanel({
     onDocumentSelect(node.path);
     void loadDocumentVersions(node.path);
 
-    const result = await pmDocumentService.get(node.path);
+    const result = await pmDocumentService.get(node.path, null, workspace);
     if (result.ok && result.data) {
       setFileContent(result.data.content || '');
       setSelectedFile((current) => current?.path === node.path
@@ -189,7 +189,7 @@ export function PMDocumentPanel({
     }
 
     setIsLoading(false);
-  }, [loadDocumentVersions, onDocumentSelect]);
+  }, [loadDocumentVersions, onDocumentSelect, workspace]);
 
   const handleFileSelect = useCallback(async (node: FileNode) => {
     if (node.type === 'directory') {
@@ -226,6 +226,7 @@ export function PMDocumentPanel({
       selectedFile.path,
       fileContent,
       'Updated from PM document workspace',
+      workspace,
     );
 
     if (result.ok && result.data?.success) {
@@ -261,7 +262,7 @@ export function PMDocumentPanel({
     setDocumentDiff(null);
     setDiffError(null);
 
-    const result = await pmDocumentService.get(selectedFile.path, version);
+    const result = await pmDocumentService.get(selectedFile.path, version, workspace);
     if (result.ok && result.data) {
       setFileContent(result.data.content || '');
       setSelectedDocumentVersion(version);
@@ -284,7 +285,7 @@ export function PMDocumentPanel({
     setDeleteError(null);
     setDeleteResult(null);
 
-    const result = await pmDocumentService.delete(deletedPath, deleteBackingFile);
+    const result = await pmDocumentService.delete(deletedPath, deleteBackingFile, workspace);
     if (result.ok && result.data?.success && result.data.deleted) {
       setDeleteResult(result.data);
       toast.success(deleteBackingFile ? 'PM 文档和文件已删除' : 'PM 文档记录已删除');
@@ -314,7 +315,7 @@ export function PMDocumentPanel({
     setDiffError(null);
     setDocumentDiff(null);
 
-    const result = await pmDocumentService.compare(selectedFile.path, pair.oldVersion, pair.newVersion);
+    const result = await pmDocumentService.compare(selectedFile.path, pair.oldVersion, pair.newVersion, workspace);
     if (result.ok && result.data) {
       setDocumentDiff(result.data);
     } else {

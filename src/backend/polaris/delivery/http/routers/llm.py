@@ -27,6 +27,7 @@ from polaris.delivery.http.schemas.common import (
     LLMRuntimeStatusResponse,
     LLMStatusResponse,
 )
+from polaris.delivery.http.workspace import settings_with_workspace_override
 from polaris.infrastructure.llm.providers.provider_registry import ProviderManager
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.runtime_config import load_role_config
@@ -147,9 +148,9 @@ def migrate_config(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/llm/status", dependencies=[Depends(require_auth)], response_model=LLMStatusResponse)
-def llm_status(request: Request) -> dict[str, Any]:
+def llm_status(request: Request, workspace: str = "") -> dict[str, Any]:
     state = get_state(request)
-    return build_llm_status(state.settings)
+    return build_llm_status(settings_with_workspace_override(state.settings, workspace))
 
 
 @router.get("/llm/runtime-status", dependencies=[Depends(require_auth)], response_model=LLMRuntimeStatusResponse)
@@ -204,9 +205,9 @@ def migrate_config_v2(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/v2/llm/status", dependencies=[Depends(require_auth)], response_model=LLMStatusResponse)
-def llm_status_v2(request: Request) -> dict[str, Any]:
+def llm_status_v2(request: Request, workspace: str = "") -> dict[str, Any]:
     """Get overall LLM system status."""
-    return llm_status(request)
+    return llm_status(request, workspace=workspace)
 
 
 @router.get("/v2/llm/runtime-status", dependencies=[Depends(require_auth)], response_model=LLMRuntimeStatusResponse)

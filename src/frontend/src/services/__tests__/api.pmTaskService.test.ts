@@ -40,6 +40,25 @@ describe('pmTaskService', () => {
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/pm/tasks');
   });
 
+  it('passes explicit workspace when listing PM tasks', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          tasks: [],
+          items: [],
+          total: 0,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await pmTaskService.list('C:/Temp/Product');
+
+    expect(result.ok).toBe(true);
+    expect(apiFetchMock).toHaveBeenCalledWith('/v2/pm/tasks?workspace=C%3A%2FTemp%2FProduct');
+  });
+
   it('creates PM tasks through POST /v2/pm/tasks', async () => {
     const payload = {
       subject: 'Close PM route gap',
@@ -71,6 +90,34 @@ describe('pmTaskService', () => {
     expect(result.ok).toBe(true);
     expect(result.data?.id).toBe('TASK-0001');
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/pm/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  });
+
+  it('creates PM tasks with explicit workspace', async () => {
+    const payload = {
+      subject: 'Close PM route gap',
+      description: 'Wire task creation to the backend',
+    };
+
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 'TASK-0001',
+          subject: 'Close PM route gap',
+          title: 'Close PM route gap',
+          status: 'pending',
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await pmTaskService.create(payload, 'C:/Temp/Product');
+
+    expect(result.ok).toBe(true);
+    expect(apiFetchMock).toHaveBeenCalledWith('/v2/pm/tasks?workspace=C%3A%2FTemp%2FProduct', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

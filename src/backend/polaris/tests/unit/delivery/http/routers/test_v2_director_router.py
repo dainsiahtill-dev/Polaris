@@ -9,6 +9,7 @@ External services are mocked to avoid DI container and LLM dependencies.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -312,6 +313,32 @@ async def test_director_status_prefers_active_workspace_path(
 
 
 @pytest.mark.asyncio
+async def test_director_status_accepts_workspace_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Director status projection should honor the desktop-selected workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Stale"
+    with patch(
+        "polaris.cells.runtime.projection.public.service.RuntimeProjectionService.build_async",
+        new_callable=AsyncMock,
+    ) as mock_build:
+        mock_projection = MagicMock()
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/status?workspace=C%3A%2FTemp%2FVerified")
+
+    assert response.status_code == 200
+    mock_build.assert_awaited_once()
+    build_call = mock_build.await_args
+    assert build_call is not None
+    assert build_call.args[0] == "C:/Temp/Verified"
+
+
+@pytest.mark.asyncio
 async def test_director_capabilities(client: AsyncClient) -> None:
     """Director capabilities should be exposed on the canonical v2 route."""
     with patch(
@@ -415,6 +442,74 @@ async def test_director_diagnostics_reports_ready_queue_and_workers(client: Asyn
     assert "director_tasks_blocked" in data["issues"]
     assert "director_no_ready_tasks" not in data["issues"]
     mock_director.list_tasks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_director_diagnostics_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Director diagnostics should bind projection and LLM checks to the requested workspace."""
+    active_workspace = tmp_path / "active"
+    requested_workspace = tmp_path / "requested"
+    active_workspace.mkdir()
+    requested_workspace.mkdir()
+    mock_settings.workspace = str(active_workspace)
+    mock_settings.workspace_path = ""
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.list_workers = AsyncMock(return_value=[])
+    mock_director.config.workspace = str(active_workspace)
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch("polaris.delivery.http.v2.director.select_task_rows_from_projection", return_value=[]),
+        patch(
+            "polaris.delivery.http.v2.director.build_llm_status",
+            return_value={
+                "roles": {
+                    "director": {
+                        "ready": True,
+                        "runtime_supported": True,
+                        "provider_id": "qwen",
+                        "model": "qwen3-max",
+                    }
+                },
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "required_ready_roles": ["director"],
+                "state": "READY",
+            },
+        ) as mock_llm_status,
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get(
+            "/v2/director/diagnostics",
+            params={"workspace": str(requested_workspace)},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert Path(data["workspace"]).resolve() == requested_workspace.resolve()
+    assert Path(str(mock_build.await_args.args[0])).resolve() == requested_workspace.resolve()
+    called_settings = mock_llm_status.call_args.args[0]
+    assert Path(str(called_settings.workspace)).resolve() == requested_workspace.resolve()
+    assert Path(str(mock_settings.workspace)).resolve() == active_workspace.resolve()
 
 
 @pytest.mark.asyncio
@@ -1034,6 +1129,46 @@ async def test_director_list_tasks_prefers_active_workspace_path(
     assert build_call.args[0] == "C:/Temp/Product"
 
 
+@pytest.mark.asyncio
+async def test_director_list_tasks_accepts_workspace_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Director task projection should honor the requested workspace query."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Stale"
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.config.workspace = "C:/Temp/Stale"
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.workflow_archive = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/tasks?source=workflow&workspace=C%3A%2FTemp%2FVerified")
+
+    assert response.status_code == 200
+    mock_build.assert_awaited_once()
+    build_call = mock_build.await_args
+    assert build_call is not None
+    assert build_call.args[0] == "C:/Temp/Verified"
+
+
 def test_director_debug_append_ignores_debug_log_failure() -> None:
     """Optional Director debug evidence should not leak filesystem failures."""
     with (
@@ -1237,6 +1372,52 @@ async def test_director_get_task_projection_fallback_prefers_active_workspace_pa
     build_call = mock_build.await_args
     assert build_call is not None
     assert build_call.args[0] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
+async def test_director_get_task_projection_fallback_accepts_workspace_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Director task detail fallback should honor the requested workspace query."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Stale"
+    mock_director = MagicMock()
+    mock_director.get_task = AsyncMock(return_value=None)
+    mock_director.config.workspace = "C:/Temp/Stale"
+
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+    ):
+
+        async def _resolve_projection_fallback(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_projection_fallback)
+        mock_projection = MagicMock()
+        mock_projection.workflow_archive = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/tasks/PM-404?workspace=C%3A%2FTemp%2FVerified")
+
+    assert response.status_code == 404
+    mock_build.assert_awaited_once()
+    build_call = mock_build.await_args
+    assert build_call is not None
+    assert build_call.args[0] == "C:/Temp/Verified"
 
 
 @pytest.mark.asyncio
@@ -1479,6 +1660,49 @@ async def test_director_list_workers_falls_back_to_projection(client: AsyncClien
     ]
     mock_director.list_workers.assert_awaited_once()
     mock_build.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_director_list_workers_projection_accepts_workspace_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Projected worker fallback should honor the requested workspace query."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Stale"
+    mock_director = MagicMock()
+    mock_director.list_workers = AsyncMock(return_value=[])
+    mock_director.config.workspace = "C:/Temp/Stale"
+
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+    ):
+
+        async def _resolve_workers(iface: type) -> object:
+            if iface.__name__ == "DirectorService":
+                return mock_director
+            return MagicMock()
+
+        mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_workers)
+        mock_projection = MagicMock()
+        mock_projection.director_merged = {}
+        mock_projection.director_local = {}
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/workers?workspace=C%3A%2FTemp%2FVerified")
+
+    assert response.status_code == 200
+    mock_build.assert_awaited_once()
+    build_call = mock_build.await_args
+    assert build_call is not None
+    assert build_call.args[0] == "C:/Temp/Verified"
 
 
 @pytest.mark.asyncio

@@ -127,13 +127,14 @@ describe('useProcessOperations', () => {
     it('returns false and opens logs on failure', async () => {
       mockStartPm.mockResolvedValue({ ok: false, error: 'Connection failed' });
       const onOpenLogs = vi.fn();
-      const { result } = renderHook(() => useProcessOperations({ onOpenLogs }));
+      const { result } = renderHook(() => useProcessOperations({ onOpenLogs, workspace: 'C:/Temp/Product' }));
 
       await act(async () => {
         const success = await result.current.startPmLoop();
         expect(success).toBe(false);
       });
 
+      expect(mockGetPmStatus).toHaveBeenCalledWith('C:/Temp/Product');
       expect(onOpenLogs).toHaveBeenCalledWith('pm-subprocess', expect.any(String));
       expect(toast.error).toHaveBeenCalledWith('Failed to start PM');
     });
@@ -358,7 +359,7 @@ describe('useProcessOperations', () => {
         await result.current.startDirector(undefined, tasks);
       });
 
-      expect(mockListDirectorTasks).toHaveBeenCalledWith('local');
+      expect(mockListDirectorTasks).toHaveBeenCalledWith('local', '');
       expect(mockCreateDirectorTask).toHaveBeenCalled();
       const payload = mockCreateDirectorTask.mock.calls[0][0];
       expect(payload.metadata.target_files).toEqual(['src/task.ts']);

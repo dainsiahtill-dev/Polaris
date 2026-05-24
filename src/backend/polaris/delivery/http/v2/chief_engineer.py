@@ -6,6 +6,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -33,7 +34,7 @@ from polaris.delivery.http.routers._shared import (
     get_state,
     require_auth,
 )
-from polaris.delivery.http.workspace import active_workspace_value
+from polaris.delivery.http.workspace import active_workspace_value, settings_with_workspace_override
 from polaris.kernelone.storage import resolve_logical_path
 from pydantic import BaseModel, Field
 
@@ -270,16 +271,33 @@ def _blueprint_summary(payload: dict[str, Any], fallback_id: str) -> ChiefEngine
     )
 
 
-def _persistence_for_request(request: Request, *, ensure_directory: bool = True) -> BlueprintPersistence:
+def _settings_for_request(request: Request, workspace: str = "") -> Any:
     state = get_state(request)
-    workspace = _workspace_value(state.settings)
-    if not workspace:
+    return settings_with_workspace_override(state.settings, workspace)
+
+
+def _state_for_settings(request: Request, settings: Any) -> Any:
+    state = get_state(request)
+    if settings is state.settings:
+        return state
+    return SimpleNamespace(settings=settings)
+
+
+def _persistence_for_request(
+    request: Request,
+    *,
+    ensure_directory: bool = True,
+    workspace: str = "",
+) -> BlueprintPersistence:
+    settings = _settings_for_request(request, workspace)
+    target_workspace = _workspace_value(settings)
+    if not target_workspace:
         raise StructuredHTTPException(
             status_code=400,
             code="WORKSPACE_NOT_CONFIGURED",
             message="workspace is not configured",
         )
-    return BlueprintPersistence(workspace, ensure_directory=ensure_directory)
+    return BlueprintPersistence(target_workspace, ensure_directory=ensure_directory)
 
 
 def _blueprint_payload_for_result(result: TaskBlueprintResultV1) -> dict[str, Any]:
@@ -523,22 +541,22 @@ def _llm_event_stats(events: list[Any]) -> dict[str, int]:
     dependencies=[Depends(require_auth)],
     response_model=ChiefEngineerDiagnosticsResponse,
 )
-def get_chief_engineer_diagnostics(request: Request) -> ChiefEngineerDiagnosticsResponse:
+def get_chief_engineer_diagnostics(request: Request, workspace: str = "") -> ChiefEngineerDiagnosticsResponse:
     """Return side-effect-free Chief Engineer desktop readiness diagnostics."""
 
-    settings = get_state(request).settings
-    workspace = _build_workspace_diagnostics(settings)
+    settings = _settings_for_request(request, workspace)
+    workspace_status = _build_workspace_diagnostics(settings)
     llm = _build_llm_diagnostics(settings)
     blueprints = _build_blueprint_diagnostics(settings)
-    generate_blockers = _generate_blockers(workspace, llm)
-    issues = _diagnostic_issues(workspace, llm, blueprints)
-    handoff_blockers = _handoff_blockers(workspace, blueprints)
+    generate_blockers = _generate_blockers(workspace_status, llm)
+    issues = _diagnostic_issues(workspace_status, llm, blueprints)
+    handoff_blockers = _handoff_blockers(workspace_status, blueprints)
     return ChiefEngineerDiagnosticsResponse(
         ok=not issues,
         can_handoff=not handoff_blockers,
         can_generate=not generate_blockers,
         generated_at=_utc_now(),
-        workspace=workspace,
+        workspace=workspace_status,
         llm=llm,
         blueprints=blueprints,
         issues=issues,
@@ -606,10 +624,13 @@ async def get_chief_engineer_token_budget_stats() -> dict[str, Any]:
     dependencies=[Depends(require_auth)],
     response_model=ChiefEngineerBlueprintListResponse,
 )
-def list_chief_engineer_blueprints(request: Request) -> ChiefEngineerBlueprintListResponse:
+def list_chief_engineer_blueprints(
+    request: Request,
+    workspace: str = "",
+) -> ChiefEngineerBlueprintListResponse:
     """List persisted Chief Engineer blueprints for the active workspace."""
 
-    persistence = _persistence_for_request(request, ensure_directory=False)
+    persistence = _persistence_for_request(request, ensure_directory=False, workspace=workspace)
     rows: list[ChiefEngineerBlueprintSummaryV1] = []
     for blueprint_id in persistence.list_all():
         payload = persistence.load(blueprint_id)
@@ -628,16 +649,21 @@ def list_chief_engineer_blueprints(request: Request) -> ChiefEngineerBlueprintLi
 def generate_chief_engineer_blueprint(
     request: Request,
     payload: ChiefEngineerGenerateBlueprintRequest,
+    workspace: str = "",
 ) -> ChiefEngineerTaskBlueprintResultResponse:
     """Generate and persist a Chief Engineer blueprint through the cell command contract."""
 
-    state = get_state(request)
-    ensure_required_roles_ready(state, default_roles=["chief_engineer"], force_first="chief_engineer")
-    workspace = _workspace_value(state.settings)
+    settings = _settings_for_request(request, workspace)
+    ensure_required_roles_ready(
+        _state_for_settings(request, settings),
+        default_roles=["chief_engineer"],
+        force_first="chief_engineer",
+    )
+    target_workspace = _workspace_value(settings)
     try:
         command = GenerateTaskBlueprintCommandV1(
             task_id=payload.task_id,
-            workspace=workspace,
+            workspace=target_workspace,
             objective=payload.objective,
             run_id=payload.run_id,
             constraints=payload.constraints,
@@ -662,14 +688,15 @@ def get_chief_engineer_blueprint_status(
     request: Request,
     task_id: str,
     run_id: str | None = None,
+    workspace: str = "",
 ) -> ChiefEngineerTaskBlueprintResultResponse:
     """Return Chief Engineer blueprint status for a task through the cell query contract."""
 
-    workspace = _workspace_value(get_state(request).settings)
+    target_workspace = _workspace_value(_settings_for_request(request, workspace))
     try:
         query = GetBlueprintStatusQueryV1(
             task_id=task_id,
-            workspace=workspace,
+            workspace=target_workspace,
             run_id=run_id,
         )
         result = get_blueprint_status(query)
@@ -690,11 +717,12 @@ def get_chief_engineer_blueprint_status(
 def get_chief_engineer_blueprint(
     request: Request,
     blueprint_id: str,
+    workspace: str = "",
 ) -> ChiefEngineerBlueprintDetailResponse:
     """Load one persisted Chief Engineer blueprint by id."""
 
     safe_blueprint_id = _validate_blueprint_id(blueprint_id)
-    payload = _persistence_for_request(request, ensure_directory=False).load(safe_blueprint_id)
+    payload = _persistence_for_request(request, ensure_directory=False, workspace=workspace).load(safe_blueprint_id)
     if not isinstance(payload, dict):
         raise StructuredHTTPException(
             status_code=404,
@@ -715,11 +743,12 @@ def get_chief_engineer_blueprint(
 def delete_chief_engineer_blueprint(
     request: Request,
     blueprint_id: str,
+    workspace: str = "",
 ) -> ChiefEngineerBlueprintDeleteResponse:
     """Delete one persisted Chief Engineer blueprint by id."""
 
     safe_blueprint_id = _validate_blueprint_id(blueprint_id)
-    deleted = _persistence_for_request(request, ensure_directory=False).delete(safe_blueprint_id)
+    deleted = _persistence_for_request(request, ensure_directory=False, workspace=workspace).delete(safe_blueprint_id)
     if not deleted:
         raise StructuredHTTPException(
             status_code=404,

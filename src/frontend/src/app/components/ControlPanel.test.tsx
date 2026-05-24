@@ -108,7 +108,7 @@ describe('ControlPanel', () => {
       fireEvent.click(screen.getByTestId('control-panel-pm-toggle'));
 
       await waitFor(() => expect(onTogglePm).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
       expect(evidence).toHaveTextContent('/v2/pm/status');
       expect(evidence).toHaveTextContent('running');
@@ -176,7 +176,7 @@ describe('ControlPanel', () => {
       fireEvent.click(screen.getByTestId('control-panel-director-toggle'));
 
       await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledWith('/test/workspace'));
       const evidence = await screen.findByTestId('control-panel-director-toggle-evidence');
       expect(evidence).toHaveTextContent('/v2/director/status?source=auto');
       expect(evidence).toHaveTextContent('idle');
@@ -272,7 +272,7 @@ describe('ControlPanel', () => {
       fireEvent.click(screen.getByTestId('control-panel-pm-run-once'));
 
       await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
       expect(evidence).toHaveTextContent('/v2/pm/status');
       expect(evidence).toHaveTextContent('idle');
@@ -317,7 +317,7 @@ describe('ControlPanel', () => {
       fireEvent.click(screen.getByTitle('Resume Last'));
 
       await waitFor(() => expect(onResumePm).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
       expect(evidence).toHaveTextContent('/v2/pm/status');
       expect(evidence).toHaveTextContent('running');

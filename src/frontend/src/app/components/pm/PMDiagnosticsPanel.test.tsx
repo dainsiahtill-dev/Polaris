@@ -112,7 +112,7 @@ describe('PMDiagnosticsPanel', () => {
   });
 
   it('loads PM startup diagnostics through the backend contract', async () => {
-    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} />);
+    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
 
     await waitFor(() => expect(serviceMocks.getPmStartupDiagnostics).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('所有检查通过')).toBeInTheDocument();
@@ -153,7 +153,7 @@ describe('PMDiagnosticsPanel', () => {
       },
     });
 
-    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} />);
+    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
 
     expect(await screen.findByText('检测到问题')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /工作区/ }));
@@ -162,7 +162,7 @@ describe('PMDiagnosticsPanel', () => {
   });
 
   it('loads and clears PM kernel cache and token budget diagnostics', async () => {
-    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} />);
+    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
 
     await waitFor(() => expect(serviceMocks.getRoleKernelCacheStats).toHaveBeenCalledWith('pm'));
     expect(serviceMocks.getRoleKernelTokenBudgetStats).toHaveBeenCalledWith('pm');
@@ -184,7 +184,7 @@ describe('PMDiagnosticsPanel', () => {
   });
 
   it('loads PM management status and health through management backend contracts', async () => {
-    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} />);
+    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
 
     await waitFor(() => expect(serviceMocks.getPmManagementStatus).toHaveBeenCalledTimes(1));
     expect(serviceMocks.getPmManagementHealth).toHaveBeenCalledTimes(1);
@@ -196,6 +196,14 @@ describe('PMDiagnosticsPanel', () => {
     expect(management).toHaveTextContent('/pm/v2/pm/health');
     expect(management).toHaveTextContent('healthy');
     expect(management).toHaveTextContent('docs · ok');
+  });
+
+  it('passes the active workspace to PM management diagnostics', async () => {
+    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
+
+    await waitFor(() => expect(serviceMocks.getPmStartupDiagnostics).toHaveBeenCalledWith('C:/Temp/Product'));
+    expect(serviceMocks.getPmManagementStatus).toHaveBeenCalledWith('C:/Temp/Product');
+    expect(serviceMocks.getPmManagementHealth).toHaveBeenCalledWith('C:/Temp/Product');
   });
 
   it('initializes PM management from diagnostics when status is not initialized', async () => {
@@ -234,7 +242,7 @@ describe('PMDiagnosticsPanel', () => {
       },
     });
 
-    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} />);
+    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
 
     await waitFor(() => expect(serviceMocks.getPmManagementStatus).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: /PM 管理状态/ }));
@@ -249,10 +257,13 @@ describe('PMDiagnosticsPanel', () => {
     });
     fireEvent.click(screen.getByTestId('pm-management-init-submit'));
 
-    await waitFor(() => expect(serviceMocks.initializePmManagement).toHaveBeenCalledWith({
-      projectName: 'Recovered Project',
-      description: 'Initialize PM management state',
-    }));
+    await waitFor(() => expect(serviceMocks.initializePmManagement).toHaveBeenCalledWith(
+      {
+        projectName: 'Recovered Project',
+        description: 'Initialize PM management state',
+      },
+      'C:/Temp/Product',
+    ));
     await waitFor(() => expect(serviceMocks.getPmManagementStatus).toHaveBeenCalledTimes(2));
     expect(await screen.findByTestId('pm-management-init-result')).toHaveTextContent('Recovered Project');
   });

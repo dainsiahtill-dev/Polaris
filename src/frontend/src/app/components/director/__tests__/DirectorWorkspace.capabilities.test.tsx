@@ -821,7 +821,7 @@ describe.sequential('Director capability desktop integration', () => {
     expect(strip).toHaveTextContent('Backend worker task');
 
     fireEvent.click(await screen.findByTestId('director-worker-item'));
-    await waitFor(() => expect(serviceMocks.getDirectorWorker).toHaveBeenCalledWith('worker-backend-1'));
+    await waitFor(() => expect(serviceMocks.getDirectorWorker).toHaveBeenCalledWith('worker-backend-1', 'C:/Temp/Product'));
     const workerDetail = await screen.findByTestId('director-worker-backend-detail');
     expect(workerDetail).toHaveTextContent('/v2/director/workers/worker-backend-1');
     expect(workerDetail).toHaveTextContent('Backend Worker 1');
@@ -904,7 +904,7 @@ describe.sequential('Director capability desktop integration', () => {
       'director-task-llm',
       { limit: 25 },
     ));
-    await waitFor(() => expect(serviceMocks.getDirectorTask).toHaveBeenCalledWith('director-task-llm'));
+    await waitFor(() => expect(serviceMocks.getDirectorTask).toHaveBeenCalledWith('director-task-llm', 'C:/Temp/Product'));
     const backendDetail = await view.findByTestId('director-task-backend-detail');
     expect(backendDetail).toHaveTextContent('/v2/director/tasks/director-task-llm');
     expect(backendDetail).toHaveTextContent('HIGH');
@@ -1053,7 +1053,7 @@ describe.sequential('Director capability desktop integration', () => {
       />,
     );
 
-    await waitFor(() => expect(serviceMocks.listDirectorTaskFallbackRows).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(serviceMocks.listDirectorTaskFallbackRows).toHaveBeenCalledWith(false, 'C:/Temp/Product'));
     expect(await screen.findByText('Implement runtime contract')).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('director-task-item'));
@@ -1182,7 +1182,7 @@ describe.sequential('Director capability desktop integration', () => {
     fireEvent.click(screen.getByTestId('director-workspace-execute'));
 
     await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledWith('C:/Temp/Product'));
     expect(serviceMocks.runDirector).not.toHaveBeenCalled();
     const statusEvidence = await screen.findByTestId('director-toggle-status-evidence');
     expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto');

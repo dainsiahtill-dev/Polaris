@@ -42,12 +42,24 @@ const baseProps = {
   onToggleDirector: vi.fn(),
 };
 
+const CE_WORKSPACE_QUERY = 'workspace=C%3A%2FTemp%2FProduct';
+
+function cePath(path: string): string {
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}${CE_WORKSPACE_QUERY}`;
+}
+
+function directorPath(path: string): string {
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}${CE_WORKSPACE_QUERY}`;
+}
+
 describe('ChiefEngineerWorkspace', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     let diagnosticsCalls = 0;
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === '/v2/chief-engineer/blueprints' && init?.method === 'POST') {
+      if (path === cePath('/v2/chief-engineer/blueprints') && init?.method === 'POST') {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -73,7 +85,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         diagnosticsCalls += 1;
         const hasBlueprint = diagnosticsCalls > 1;
         return Promise.resolve({
@@ -123,7 +135,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints/status?task_id=PM-summary-only') {
+      if (path === cePath('/v2/chief-engineer/blueprints/status?task_id=PM-summary-only')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -148,13 +160,13 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints') {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({ blueprints: [], total: 0 }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints/bp-001') {
+      if (path === cePath('/v2/chief-engineer/blueprints/bp-001')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -168,13 +180,13 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/director/workers') {
+      if (path === directorPath('/v2/director/workers')) {
         return Promise.resolve({
           ok: true,
           json: async () => [],
         });
       }
-      if (path === '/v2/director/status?source=auto') {
+      if (path === directorPath('/v2/director/status?source=auto')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -287,8 +299,8 @@ describe('ChiefEngineerWorkspace', () => {
   it('does not invent blueprint content when no evidence exists', async () => {
     render(<ChiefEngineerWorkspace {...baseProps} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/blueprints'));
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/diagnostics'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/diagnostics')));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench'));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/llm-events?limit=5'));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/cache-stats'));
@@ -343,7 +355,7 @@ describe('ChiefEngineerWorkspace', () => {
       />,
     );
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/blueprints'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
     const activity = screen.getByTestId('chief-engineer-runtime-activity');
     expect(activity).toHaveTextContent('调用 LLM');
     expect(activity).toHaveTextContent('2 条记录');
@@ -432,14 +444,14 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} tasks={tasks} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/blueprints'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
     expect(screen.getByTestId('chief-engineer-blueprint-empty')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
   });
 
   it('does not list a PM task as pending when a runtime blueprint matches raw task_id', async () => {
     apiFetchMock.mockImplementation((path: string) => {
-      if (path === '/v2/chief-engineer/blueprints') {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -465,7 +477,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -491,10 +503,10 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/director/tasks?source=auto' || path === '/v2/director/tasks?source=local') {
+      if (path === directorPath('/v2/director/tasks?source=auto') || path === directorPath('/v2/director/tasks?source=local')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
-      if (path === '/v2/director/workers') {
+      if (path === directorPath('/v2/director/workers')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
       if (path === '/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench') {
@@ -548,7 +560,7 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} tasks={tasks} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/blueprints'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
     expect(screen.queryByTestId('chief-engineer-blueprint-empty')).not.toBeInTheDocument();
     expect(screen.getByText('Runtime-backed blueprint')).toBeInTheDocument();
     expect(screen.getByText('src/runtime.ts')).toBeInTheDocument();
@@ -574,10 +586,10 @@ describe('ChiefEngineerWorkspace', () => {
     fireEvent.click(await screen.findByTestId('chief-engineer-blueprint-generate-PM-summary-only'));
 
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(
-      '/v2/chief-engineer/blueprints',
+      cePath('/v2/chief-engineer/blueprints'),
       expect.objectContaining({ method: 'POST' }),
     ));
-    const postCall = apiFetchMock.mock.calls.find((call) => call[0] === '/v2/chief-engineer/blueprints' && call[1]?.method === 'POST');
+    const postCall = apiFetchMock.mock.calls.find((call) => call[0] === cePath('/v2/chief-engineer/blueprints') && call[1]?.method === 'POST');
     expect(JSON.parse(String(postCall?.[1]?.body || '{}'))).toMatchObject({
       task_id: 'PM-summary-only',
       objective: '这里不是 Chief Engineer 蓝图',
@@ -594,7 +606,7 @@ describe('ChiefEngineerWorkspace', () => {
 
   it('disables blueprint generation when Chief Engineer LLM diagnostics are blocked', async () => {
     apiFetchMock.mockImplementation((path: string) => {
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -642,13 +654,13 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints') {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
         return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
       }
-      if (path === '/v2/director/workers') {
+      if (path === directorPath('/v2/director/workers')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
-      if (path === '/v2/director/tasks') {
+      if (path === directorPath('/v2/director/tasks')) {
         return Promise.resolve({ ok: true, json: async () => ({ tasks: [] }) });
       }
       if (path === '/v2/roles/sessions') {
@@ -696,7 +708,7 @@ describe('ChiefEngineerWorkspace', () => {
     expect(generate).toBeDisabled();
     expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('blocked · Qwen3-Max');
     expect(screen.getByTestId('chief-engineer-diagnostics-issues')).toHaveTextContent('llm_not_ready');
-    expect(apiFetchMock.mock.calls.some((call) => call[0] === '/v2/chief-engineer/blueprints' && call[1]?.method === 'POST')).toBe(false);
+    expect(apiFetchMock.mock.calls.some((call) => call[0] === cePath('/v2/chief-engineer/blueprints') && call[1]?.method === 'POST')).toBe(false);
   });
 
   it('checks task blueprint status through the backend query route without generating', async () => {
@@ -717,13 +729,13 @@ describe('ChiefEngineerWorkspace', () => {
     fireEvent.click(await screen.findByTestId('chief-engineer-blueprint-status-PM-summary-only'));
 
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(
-      '/v2/chief-engineer/blueprints/status?task_id=PM-summary-only',
+      cePath('/v2/chief-engineer/blueprints/status?task_id=PM-summary-only'),
     ));
     expect(await screen.findByText('已有蓝图状态')).toBeInTheDocument();
     expect(screen.getByText('Existing backend blueprint status')).toBeInTheDocument();
     expect(await screen.findByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('src/status.ts');
     expect(screen.queryByTestId('chief-engineer-blueprint-status-result-PM-summary-only')).not.toBeInTheDocument();
-    const postCall = apiFetchMock.mock.calls.find((call) => call[0] === '/v2/chief-engineer/blueprints' && call[1]?.method === 'POST');
+    const postCall = apiFetchMock.mock.calls.find((call) => call[0] === cePath('/v2/chief-engineer/blueprints') && call[1]?.method === 'POST');
     expect(postCall).toBeUndefined();
   });
 
@@ -762,7 +774,7 @@ describe('ChiefEngineerWorkspace', () => {
       />,
     );
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/blueprints'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
     expect(screen.queryByTestId('chief-engineer-blueprint-empty')).not.toBeInTheDocument();
     expect(screen.getByText('实现任务看板')).toBeInTheDocument();
     expect(screen.getByText('bp-001')).toBeInTheDocument();
@@ -775,7 +787,7 @@ describe('ChiefEngineerWorkspace', () => {
 
     fireEvent.click(screen.getByTestId('chief-engineer-blueprint-open-bp-001'));
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/blueprints/bp-001'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints/bp-001')));
     expect(screen.getByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('Director TaskBoard detail');
     expect(screen.getByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('do not edit target project');
   });
@@ -783,7 +795,7 @@ describe('ChiefEngineerWorkspace', () => {
   it('deletes a persisted Chief Engineer blueprint and refreshes diagnostics evidence', async () => {
     let diagnosticsCalls = 0;
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === '/v2/chief-engineer/blueprints' && !init?.method) {
+      if (path === cePath('/v2/chief-engineer/blueprints') && !init?.method) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -803,7 +815,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints/bp-delete' && init?.method === 'DELETE') {
+      if (path === cePath('/v2/chief-engineer/blueprints/bp-delete') && init?.method === 'DELETE') {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -814,7 +826,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints/bp-delete') {
+      if (path === cePath('/v2/chief-engineer/blueprints/bp-delete')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -824,7 +836,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         diagnosticsCalls += 1;
         const hasBlueprint = diagnosticsCalls === 1;
         return Promise.resolve({
@@ -852,7 +864,11 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/director/tasks?source=auto' || path === '/v2/director/tasks?source=local' || path === '/v2/director/workers') {
+      if (
+        path === directorPath('/v2/director/tasks?source=auto')
+        || path === directorPath('/v2/director/tasks?source=local')
+        || path === directorPath('/v2/director/workers')
+      ) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
       if (path === '/v2/roles/sessions') {
@@ -892,7 +908,7 @@ describe('ChiefEngineerWorkspace', () => {
     fireEvent.click(screen.getByTestId('chief-engineer-blueprint-delete-bp-delete'));
 
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(
-      '/v2/chief-engineer/blueprints/bp-delete',
+      cePath('/v2/chief-engineer/blueprints/bp-delete'),
       expect.objectContaining({ method: 'DELETE' }),
     ));
     expect(await screen.findByTestId('chief-engineer-blueprint-delete-evidence')).toHaveTextContent(
@@ -901,7 +917,7 @@ describe('ChiefEngineerWorkspace', () => {
     await waitFor(() => expect(screen.queryByTestId('chief-engineer-blueprint-delete-bp-delete')).not.toBeInTheDocument());
     expect(screen.getByTestId('chief-engineer-blueprint-detail-empty')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-blueprint-empty')).toHaveTextContent('未发现已落盘的 Chief Engineer 蓝图证据');
-    expect(apiFetchMock.mock.calls.filter(([path]) => path === '/v2/chief-engineer/diagnostics')).toHaveLength(2);
+    expect(apiFetchMock.mock.calls.filter(([path]) => path === cePath('/v2/chief-engineer/diagnostics'))).toHaveLength(2);
   });
 
   it('toggles Director from Chief Engineer and shows backend status evidence', async () => {
@@ -932,7 +948,7 @@ describe('ChiefEngineerWorkspace', () => {
     fireEvent.click(screen.getByTestId('chief-engineer-start-director'));
 
     await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/director/status?source=auto'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/status?source=auto')));
     const statusEvidence = await screen.findByTestId('chief-engineer-director-status-evidence');
     expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto');
     expect(statusEvidence).toHaveTextContent('running');
@@ -998,14 +1014,14 @@ describe('ChiefEngineerWorkspace', () => {
 
     fireEvent.click(startDirector);
     expect(onToggleDirector).not.toHaveBeenCalled();
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/diagnostics'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/diagnostics')));
   });
 
   it('uses backend Chief Engineer handoff blockers even when legacy blueprint flag is ready', async () => {
     const onToggleDirector = vi.fn();
     const defaultApiFetch = apiFetchMock.getMockImplementation();
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -1038,7 +1054,7 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} onToggleDirector={onToggleDirector} tasks={[]} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/diagnostics'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/diagnostics')));
     const startDirector = screen.getByTestId('chief-engineer-start-director');
     expect(startDirector).toBeDisabled();
     expect(startDirector).toHaveAttribute('title', 'Chief Engineer 交接诊断未通过：存在无效蓝图 payload');
@@ -1050,7 +1066,7 @@ describe('ChiefEngineerWorkspace', () => {
 
   it('loads Director workers through the backend route when realtime heartbeats are absent', async () => {
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === '/v2/director/workers') {
+      if (path === directorPath('/v2/director/workers')) {
         return Promise.resolve({
           ok: true,
           json: async () => [
@@ -1066,7 +1082,7 @@ describe('ChiefEngineerWorkspace', () => {
           ],
         });
       }
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -1092,7 +1108,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints') {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({ blueprints: [], total: 0 }),
@@ -1138,7 +1154,7 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/director/workers'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/workers')));
     const directorList = await screen.findByTestId('chief-engineer-director-list');
     expect(screen.getByText('/v2/director/workers')).toBeInTheDocument();
     expect(directorList).toHaveTextContent('Backend Worker 1');
@@ -1150,7 +1166,7 @@ describe('ChiefEngineerWorkspace', () => {
 
   it('counts backend Director task blueprint fields as Chief Engineer handoff evidence', async () => {
     apiFetchMock.mockImplementation((path: string) => {
-      if (path === '/v2/director/tasks?source=auto') {
+      if (path === directorPath('/v2/director/tasks?source=auto')) {
         return Promise.resolve({
           ok: true,
           json: async () => [
@@ -1168,13 +1184,13 @@ describe('ChiefEngineerWorkspace', () => {
           ],
         });
       }
-      if (path === '/v2/director/tasks?source=local') {
+      if (path === directorPath('/v2/director/tasks?source=local')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
-      if (path === '/v2/director/workers') {
+      if (path === directorPath('/v2/director/workers')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -1200,7 +1216,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints') {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
         return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
       }
       if (path === '/v2/roles/sessions') {
@@ -1243,7 +1259,7 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/director/tasks?source=auto'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto')));
     expect(screen.queryByTestId('chief-engineer-blueprint-empty')).not.toBeInTheDocument();
     expect(await screen.findByText('Backend blueprint-backed task')).toBeInTheDocument();
     expect(screen.getByText('bp-backend-task')).toBeInTheDocument();
@@ -1255,7 +1271,7 @@ describe('ChiefEngineerWorkspace', () => {
 
   it('blocks Director start when only part of the backend task pool has blueprint coverage', async () => {
     apiFetchMock.mockImplementation((path: string) => {
-      if (path === '/v2/director/tasks?source=auto') {
+      if (path === directorPath('/v2/director/tasks?source=auto')) {
         return Promise.resolve({
           ok: true,
           json: async () => [
@@ -1278,13 +1294,13 @@ describe('ChiefEngineerWorkspace', () => {
           ],
         });
       }
-      if (path === '/v2/director/tasks?source=local') {
+      if (path === directorPath('/v2/director/tasks?source=local')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
-      if (path === '/v2/director/workers') {
+      if (path === directorPath('/v2/director/workers')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -1310,7 +1326,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints') {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
         return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
       }
       if (path === '/v2/roles/sessions') {
@@ -1353,7 +1369,7 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/director/tasks?source=auto'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto')));
     expect(screen.getByText('Covered backend task')).toBeInTheDocument();
     expect(screen.getByText('bp-covered')).toBeInTheDocument();
     expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-covered')).not.toBeInTheDocument();
@@ -1367,13 +1383,13 @@ describe('ChiefEngineerWorkspace', () => {
   it('blocks Director start from diagnostics even when Director task rows are temporarily empty', async () => {
     const onToggleDirector = vi.fn();
     apiFetchMock.mockImplementation((path: string) => {
-      if (path === '/v2/director/tasks?source=auto' || path === '/v2/director/tasks?source=local') {
+      if (path === directorPath('/v2/director/tasks?source=auto') || path === directorPath('/v2/director/tasks?source=local')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
-      if (path === '/v2/director/workers') {
+      if (path === directorPath('/v2/director/workers')) {
         return Promise.resolve({ ok: true, json: async () => [] });
       }
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -1399,7 +1415,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints') {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
         return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
       }
       if (path === '/v2/roles/sessions') {
@@ -1442,7 +1458,7 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} onToggleDirector={onToggleDirector} tasks={[]} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/diagnostics'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/diagnostics')));
     await waitFor(() => expect(screen.getByTitle('0/2')).toBeInTheDocument());
     expect(screen.getByTitle('PM-plan-1, PM-plan-2')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-diagnostics-issues')).toHaveTextContent('blueprint_coverage_incomplete');
@@ -1457,7 +1473,7 @@ describe('ChiefEngineerWorkspace', () => {
 
   it('loads Director task pool metrics through the backend route when runtime tasks are absent', async () => {
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === '/v2/director/tasks?source=auto') {
+      if (path === directorPath('/v2/director/tasks?source=auto')) {
         return Promise.resolve({
           ok: true,
           json: async () => [
@@ -1476,7 +1492,7 @@ describe('ChiefEngineerWorkspace', () => {
           ],
         });
       }
-      if (path === '/v2/director/tasks?source=local') {
+      if (path === directorPath('/v2/director/tasks?source=local')) {
         return Promise.resolve({
           ok: true,
           json: async () => [
@@ -1490,13 +1506,13 @@ describe('ChiefEngineerWorkspace', () => {
           ],
         });
       }
-      if (path === '/v2/director/workers') {
+      if (path === directorPath('/v2/director/workers')) {
         return Promise.resolve({
           ok: true,
           json: async () => [],
         });
       }
-      if (path === '/v2/chief-engineer/diagnostics') {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -1522,7 +1538,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/blueprints') {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({ blueprints: [], total: 0 }),
@@ -1568,8 +1584,8 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/director/tasks?source=auto'));
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/director/tasks?source=local'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto')));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=local')));
     const pool = await screen.findByTestId('chief-engineer-director-task-pool');
     expect(pool).toHaveTextContent('/v2/director/tasks');
     expect(screen.getByTestId('chief-engineer-director-task-source')).toHaveTextContent('backend fallback');

@@ -143,6 +143,60 @@ async def test_get_chief_engineer_diagnostics_reports_blueprint_store_health(cli
 
 
 @pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Chief Engineer diagnostics should inspect blueprint and LLM state for the requested workspace."""
+    active_workspace = tmp_path / "active"
+    requested_workspace = tmp_path / "requested"
+    active_workspace.mkdir()
+    requested_workspace.mkdir()
+    mock_settings.workspace = str(active_workspace)
+    mock_settings.workspace_path = ""
+
+    persistence = MagicMock()
+    persistence.list_all.return_value = []
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ) as persistence_cls,
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.build_llm_status",
+            return_value={
+                "state": "READY",
+                "required_ready_roles": ["chief_engineer"],
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "roles": {
+                    "chief_engineer": {
+                        "ready": True,
+                        "runtime_supported": True,
+                        "provider_id": "qwen",
+                        "model": "Qwen3-Max",
+                    }
+                },
+            },
+        ) as mock_llm_status,
+    ):
+        response = await client.get(
+            "/v2/chief-engineer/diagnostics",
+            params={"workspace": str(requested_workspace)},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert Path(data["workspace"]["workspace"]).resolve() == requested_workspace.resolve()
+    persistence_cls.assert_called_once_with(str(requested_workspace), ensure_directory=False)
+    called_settings = mock_llm_status.call_args.args[0]
+    assert Path(str(called_settings.workspace)).resolve() == requested_workspace.resolve()
+    assert Path(str(mock_settings.workspace)).resolve() == active_workspace.resolve()
+
+
+@pytest.mark.asyncio
 async def test_get_chief_engineer_diagnostics_blocks_generation_when_llm_not_ready(
     client: AsyncClient,
 ) -> None:

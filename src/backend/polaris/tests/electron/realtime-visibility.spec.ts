@@ -126,6 +126,7 @@ test("Factory + Mission Control visibility surfaces are reachable", async ({ win
   await expect(window.getByTestId("factory-role-layer-pm")).toBeVisible();
   await expect(window.getByTestId("factory-role-layer-chief_engineer")).toBeVisible();
   await expect(window.getByTestId("factory-role-layer-director")).toBeVisible();
+  await expect(window.getByTestId("factory-role-flow-rail")).toBeVisible();
   await expect(window.getByTestId("factory-focused-layer")).toBeVisible();
   await expect(window.getByTestId("factory-operations-rail")).toBeVisible();
   await expect(window.getByTestId("factory-operations-rail")).toContainText("运行观测");

@@ -354,6 +354,7 @@ function AppContent() {
     clearPmError,
     clearDirectorError,
   } = useProcessOperations({
+    workspace,
     onStatusChange: () => {
       loadSettings();
       // 不需要手动 reconnectWebSocket() - 状态已通过现有 WebSocket 实时推送

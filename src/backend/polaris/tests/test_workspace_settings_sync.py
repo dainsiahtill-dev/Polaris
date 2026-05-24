@@ -62,6 +62,27 @@ def test_load_persisted_settings_recovers_workspace_local_settings(tmp_path: Pat
     assert Path(str(persisted["workspace"])).resolve() == workspace.resolve()
 
 
+def test_load_persisted_settings_drops_missing_global_workspace(tmp_path: Path, monkeypatch) -> None:
+    config_root = tmp_path / "config-root"
+    missing_workspace = tmp_path / "deleted-workspace"
+    monkeypatch.setenv("KERNELONE_ROOT", str(config_root))
+
+    settings_path = Path(get_settings_path())
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps({"workspace": str(missing_workspace), "timeout": 42}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    payload = load_persisted_settings()
+
+    assert "workspace" not in payload
+    assert payload["timeout"] == 42
+    persisted = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert "workspace" not in persisted
+    assert persisted["timeout"] == 42
+
+
 def test_settings_route_rejects_meta_project_workspace_without_self_upgrade(tmp_path: Path, monkeypatch) -> None:
     test_token = "test-settings-token"
     workspace = tmp_path / "workspace"
@@ -80,7 +101,7 @@ def test_settings_route_rejects_meta_project_workspace_without_self_upgrade(tmp_
         )
 
     assert response.status_code == 400
-    assert "self_upgrade_mode" in str(response.json().get("detail") or "")
+    assert "self_upgrade_mode" in json.dumps(response.json(), ensure_ascii=False)
     os.environ.pop("KERNELONE_WORKSPACE", None)
     os.environ.pop(SELF_UPGRADE_MODE_ENV, None)
 

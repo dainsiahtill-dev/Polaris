@@ -53,6 +53,7 @@ export interface ProcessStatus {
   mode?: string;
   log_path?: string;
   source?: 'handle' | 'status_file' | 'none' | 'v2_service' | string;
+  workspace?: string;
   status?: Record<string, unknown> | string | null;
   execution_id?: string | null;
   terminal?: boolean;

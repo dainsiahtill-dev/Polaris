@@ -9,6 +9,7 @@ External services are mocked to avoid LLM provider and storage dependencies.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -281,6 +282,42 @@ async def test_get_llm_status_success(client: AsyncClient) -> None:
         assert data["configured"] is True
         assert data["provider"] == "openai"
         mock_build.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_llm_status_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """GET /v2/llm/status can inspect a requested workspace without mutating settings."""
+    active_workspace = tmp_path / "active"
+    requested_workspace = tmp_path / "requested"
+    active_workspace.mkdir()
+    requested_workspace.mkdir()
+    mock_settings.workspace = str(active_workspace)
+    mock_settings.workspace_path = ""
+
+    status = {
+        "ready": True,
+        "configured": True,
+        "provider": "openai",
+        "model": "qwen3-max",
+    }
+
+    with patch(
+        "polaris.delivery.http.routers.llm.build_llm_status",
+        return_value=status,
+    ) as mock_build:
+        response = await client.get(
+            "/v2/llm/status",
+            params={"workspace": str(requested_workspace)},
+        )
+
+    assert response.status_code == 200
+    called_settings = mock_build.call_args.args[0]
+    assert Path(str(called_settings.workspace)).resolve() == requested_workspace.resolve()
+    assert Path(str(mock_settings.workspace)).resolve() == active_workspace.resolve()
 
 
 # ---------------------------------------------------------------------------

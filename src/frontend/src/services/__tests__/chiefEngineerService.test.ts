@@ -85,6 +85,17 @@ describe('chiefEngineerService', () => {
     expect(result.data?.blueprints.covered_tasks).toBe(2);
   });
 
+  it('passes explicit workspace to Chief Engineer diagnostics', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true } });
+
+    await getChiefEngineerDiagnostics('C:/Temp/Product');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/diagnostics?workspace=C%3A%2FTemp%2FProduct',
+      'Failed to load Chief Engineer diagnostics',
+    );
+  });
+
   it('generates a Chief Engineer blueprint through the v2 command route', async () => {
     mockApiPost.mockResolvedValueOnce({
       ok: true,
@@ -119,6 +130,22 @@ describe('chiefEngineerService', () => {
     expect(result.data?.blueprint_id).toBe('ce_PM-42');
   });
 
+  it('passes explicit workspace when generating a Chief Engineer blueprint', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true } });
+    const payload = {
+      task_id: 'PM-42',
+      objective: 'Build Director task board',
+    };
+
+    await generateChiefEngineerBlueprint(payload, 'C:/Temp/Product');
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/blueprints?workspace=C%3A%2FTemp%2FProduct',
+      payload,
+      'Failed to generate Chief Engineer blueprint',
+    );
+  });
+
   it('loads Chief Engineer blueprint status with encoded query params', async () => {
     mockApiGet.mockResolvedValueOnce({
       ok: true,
@@ -147,6 +174,17 @@ describe('chiefEngineerService', () => {
     expect(result.data?.status).toBe('missing');
   });
 
+  it('passes explicit workspace to Chief Engineer blueprint status', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true } });
+
+    await getChiefEngineerBlueprintStatus('PM 42', 'run/1', 'C:/Temp/Product');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/blueprints/status?task_id=PM+42&run_id=run%2F1&workspace=C%3A%2FTemp%2FProduct',
+      'Failed to load Chief Engineer blueprint status',
+    );
+  });
+
   it('lists Chief Engineer blueprints through the v2 backend route', async () => {
     mockApiGet.mockResolvedValueOnce({
       ok: true,
@@ -164,6 +202,17 @@ describe('chiefEngineerService', () => {
     );
     expect(result.ok).toBe(true);
     expect(result.data?.blueprints[0].blueprint_id).toBe('bp-1');
+  });
+
+  it('passes explicit workspace when listing Chief Engineer blueprints', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { blueprints: [], total: 0 } });
+
+    await listChiefEngineerBlueprints('C:/Temp/Product');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/blueprints?workspace=C%3A%2FTemp%2FProduct',
+      'Failed to list Chief Engineer blueprints',
+    );
   });
 
   it('loads a Chief Engineer blueprint detail with an encoded id', async () => {
@@ -186,6 +235,17 @@ describe('chiefEngineerService', () => {
     expect(result.data?.blueprint.summary).toBe('Director work package');
   });
 
+  it('passes explicit workspace when loading Chief Engineer blueprint detail', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { blueprint_id: 'bp 1', blueprint: {} } });
+
+    await getChiefEngineerBlueprint('bp 1', 'C:/Temp/Product');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/blueprints/bp%201?workspace=C%3A%2FTemp%2FProduct',
+      'Failed to load Chief Engineer blueprint',
+    );
+  });
+
   it('deletes a Chief Engineer blueprint with an encoded id', async () => {
     mockApiDelete.mockResolvedValueOnce({
       ok: true,
@@ -205,5 +265,16 @@ describe('chiefEngineerService', () => {
     );
     expect(result.ok).toBe(true);
     expect(result.data?.deleted).toBe(true);
+  });
+
+  it('passes explicit workspace when deleting a Chief Engineer blueprint', async () => {
+    mockApiDelete.mockResolvedValueOnce({ ok: true, data: { ok: true, deleted: true } });
+
+    await deleteChiefEngineerBlueprint('bp 1', 'C:/Temp/Product');
+
+    expect(mockApiDelete).toHaveBeenCalledWith(
+      '/v2/chief-engineer/blueprints/bp%201?workspace=C%3A%2FTemp%2FProduct',
+      'Failed to delete Chief Engineer blueprint',
+    );
   });
 });

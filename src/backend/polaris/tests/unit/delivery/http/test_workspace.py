@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from polaris.delivery.http.workspace import active_workspace_value, requested_or_active_workspace
+from polaris.delivery.http.workspace import (
+    active_workspace_value,
+    requested_or_active_workspace,
+    settings_with_workspace_override,
+)
 
 
 def test_active_workspace_ignores_mock_placeholder_and_falls_back_to_workspace() -> None:
@@ -44,3 +48,23 @@ def test_requested_or_active_workspace_preserves_explicit_request() -> None:
     settings.workspace_path = "C:/Temp/Product"
 
     assert requested_or_active_workspace(settings, " C:/Explicit ") == "C:/Explicit"
+
+
+def test_settings_with_workspace_override_clones_without_mutating_original() -> None:
+    settings = MagicMock()
+    settings.workspace = "C:/Repo/Stale"
+    settings.workspace_path = "C:/Temp/Product"
+
+    overridden = settings_with_workspace_override(settings, "C:/Explicit")
+
+    assert overridden is not settings
+    assert active_workspace_value(overridden) == "C:/Explicit"
+    assert active_workspace_value(settings) == "C:/Temp/Product"
+
+
+def test_settings_with_workspace_override_returns_original_for_active_workspace() -> None:
+    settings = MagicMock()
+    settings.workspace = "C:/Repo/Stale"
+    settings.workspace_path = "C:/Temp/Product"
+
+    assert settings_with_workspace_override(settings, ".") is settings
