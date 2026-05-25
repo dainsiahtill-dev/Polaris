@@ -147,6 +147,7 @@ describe('DirectorTaskPanel', () => {
             },
           ],
         }}
+        workspace="C:/Temp/Product"
       />,
     );
 
@@ -166,10 +167,14 @@ describe('DirectorTaskPanel', () => {
     expect(within(screen.getByTestId('director-task-provenance')).getByText('BP-42')).toBeInTheDocument();
     expect(within(screen.getByTestId('director-task-provenance')).getByText('workflow')).toBeInTheDocument();
     expect(screen.getByTestId('director-task-cancel-evidence')).toHaveTextContent('/v2/director/tasks/PM-42/cancel');
+    expect(screen.getByTestId('director-task-cancel-evidence')).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(screen.getByTestId('director-task-cancel-evidence')).toHaveTextContent('取消请求已提交: PM-42');
     expect(screen.getByTestId('director-task-backend-detail')).toHaveTextContent('/v2/director/tasks/PM-42');
+    expect(screen.getByTestId('director-task-backend-detail')).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(screen.getByTestId('director-task-backend-detail')).toHaveTextContent('后端权威详情');
     expect(screen.getByTestId('director-task-backend-detail')).toHaveTextContent('验收项: 1');
+    expect(screen.getByTestId('director-task-llm-events')).toHaveTextContent('/v2/director/tasks/PM-42/llm-events?limit=25');
+    expect(screen.getByTestId('director-task-llm-events')).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
 
     fireEvent.click(screen.getByTestId('director-task-execute-selected'));
     expect(onExecute).toHaveBeenCalledTimes(1);
@@ -190,6 +195,7 @@ describe('DirectorTaskPanel', () => {
         onTaskCreate={onTaskCreate}
         isExecuting={false}
         taskCreateMessage="已创建 Director 任务: director-created-1"
+        workspace="C:/Temp/Product"
       />,
     );
 
@@ -213,6 +219,8 @@ describe('DirectorTaskPanel', () => {
       priority: 'HIGH',
       timeoutSeconds: 420,
     });
+    expect(screen.getByText('POST /v2/director/tasks?workspace=C%3A%2FTemp%2FProduct')).toBeInTheDocument();
+    expect(screen.getByTestId('director-task-create-evidence')).toHaveTextContent('/v2/director/tasks?workspace=C%3A%2FTemp%2FProduct');
     expect(screen.getByTestId('director-task-create-evidence')).toHaveTextContent('已创建 Director 任务: director-created-1');
   });
 });

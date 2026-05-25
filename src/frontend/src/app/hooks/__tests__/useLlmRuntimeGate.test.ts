@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  getRoleLlmBlockedReason,
   isRoleLlmBlocked,
   normalizeLlmRuntimeGatePayload,
   useLlmRuntimeGate,
@@ -28,6 +29,10 @@ describe('useLlmRuntimeGate', () => {
     });
     expect(isRoleLlmBlocked(state, 'pm')).toBe(true);
     expect(isRoleLlmBlocked(state, 'qa')).toBe(false);
+    expect(getRoleLlmBlockedReason(state, 'pm', 'PM')).toBe(
+      'LLM 就绪检查未通过：PM 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。',
+    );
+    expect(getRoleLlmBlockedReason(state, 'qa', 'QA')).toBe('');
   });
 
   it('applies incoming runtime llm status and exposes the Director blocked reason', () => {
@@ -50,7 +55,10 @@ describe('useLlmRuntimeGate', () => {
 
     expect(result.current.llmRuntimeState.state).toBe('BLOCKED');
     expect(result.current.llmRuntimeState.blockedRoles).toEqual(['director']);
-    expect(result.current.llmDirectorBlockedReason).toBe('LLM 就绪检查未通过');
+    expect(result.current.getLlmRoleBlockedReason('director', 'Director')).toBe(
+      'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。',
+    );
+    expect(result.current.getLlmRoleBlockedReason('pm', 'PM')).toBe('');
   });
 
   it('actively rechecks a blocked state even when websocket status exists', async () => {

@@ -186,9 +186,10 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
     expect(toastMocks.success).toHaveBeenCalledWith('已导出到 Director 工作流', {
       description: 'Run ID: director-run-from-ce\nArtifacts: 3',
     });
-    await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-from-ce'));
+    await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-from-ce', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('chief-engineer-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/director/runs/director-run-from-ce');
+    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(evidence).toHaveTextContent('RUNNING · queued=2');
     expect(screen.getByTestId('chief-engineer-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
 
@@ -221,15 +222,16 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '导出 Director' }));
 
-    await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-from-ce'));
+    await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-from-ce', 'C:/Temp/Product'));
     fireEvent.click(await screen.findByTestId('chief-engineer-workbench-run-cancel'));
 
-    await waitFor(() => expect(pmServiceMocks.cancelDirectorRun).toHaveBeenCalledWith('director-run-from-ce'));
+    await waitFor(() => expect(pmServiceMocks.cancelDirectorRun).toHaveBeenCalledWith('director-run-from-ce', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('chief-engineer-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/director/runs/director-run-from-ce');
     expect(evidence).toHaveTextContent('CANCELLED · queued=2');
     const cancelEvidence = await screen.findByTestId('chief-engineer-workbench-run-cancel-result');
     expect(cancelEvidence).toHaveTextContent('/v2/director/runs/director-run-from-ce/cancel');
+    expect(cancelEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(cancelEvidence).toHaveTextContent('取消运行已提交: CANCELLED');
     expect(toastMocks.success).toHaveBeenCalledWith('Director 编排取消已提交', {
       description: 'Run ID: director-run-from-ce',

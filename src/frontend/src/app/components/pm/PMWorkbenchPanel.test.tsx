@@ -18,6 +18,10 @@ const pmServiceMocks = vi.hoisted(() => ({
   runPm: vi.fn(),
 }));
 
+const chiefEngineerServiceMocks = vi.hoisted(() => ({
+  getChiefEngineerDiagnostics: vi.fn(),
+}));
+
 const factoryServiceMocks = vi.hoisted(() => ({
   getFactoryRun: vi.fn(),
   stopFactoryRun: vi.fn(),
@@ -30,6 +34,7 @@ const toastMocks = vi.hoisted(() => ({
 
 vi.mock('@/services/roleSessionService', () => roleSessionMocks);
 vi.mock('@/services/pmService', () => pmServiceMocks);
+vi.mock('@/services/chiefEngineerService', () => chiefEngineerServiceMocks);
 vi.mock('@/services/factoryService', () => factoryServiceMocks);
 
 vi.mock('sonner', () => ({
@@ -140,6 +145,52 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
         },
         issues: ['director_no_tasks'],
         execution_blockers: ['director_no_tasks'],
+      },
+    });
+    chiefEngineerServiceMocks.getChiefEngineerDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        can_handoff: true,
+        role: 'chief_engineer',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: {
+          ok: true,
+          status: 'ready',
+          workspace: 'C:/Temp/Product',
+          exists: true,
+          error: null,
+        },
+        llm: {
+          ok: true,
+          state: 'ready',
+          role: 'chief_engineer',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['chief_engineer'],
+          provider_id: 'qwen',
+          model: 'qwen3-max',
+          error: null,
+          details: {},
+        },
+        blueprints: {
+          ok: true,
+          status: 'ready',
+          source: 'chief_engineer_blueprints',
+          total: 1,
+          loadable: 1,
+          invalid_payloads: 0,
+          planned_tasks: 1,
+          covered_tasks: 1,
+          missing_task_ids: [],
+          director_handoff_ready: true,
+          latest_updated_at: '2026-05-23T00:00:00Z',
+          error: null,
+        },
+        can_generate: true,
+        issues: [],
+        generate_blockers: [],
+        handoff_blockers: [],
       },
     });
     pmServiceMocks.runPm.mockResolvedValue({
@@ -257,9 +308,10 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     expect(toastMocks.success).toHaveBeenCalledWith('已导出到 PM 工作流', {
       description: 'Run ID: pm-run-1\nArtifacts: 2',
     });
-    await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-1'));
+    await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-1', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/pm/runs/pm-run-1');
+    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(evidence).toHaveTextContent('RUNNING · architect');
     expect(screen.getByTestId('pm-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
 
@@ -295,7 +347,11 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
       target: { value: 'architect' },
     });
     fireEvent.click(screen.getByTestId('pm-workbench-run-director'));
-    await waitFor(() => expect(screen.getByTestId('pm-workbench-director-readiness')).toHaveTextContent('ready'));
+    const readiness = screen.getByTestId('pm-workbench-director-readiness');
+    await waitFor(() => expect(readiness).toHaveTextContent('director-llm'));
+    expect(readiness).toHaveTextContent('ce-blueprint');
+    expect(readiness).toHaveTextContent('ready');
+    expect(chiefEngineerServiceMocks.getChiefEngineerDiagnostics).toHaveBeenCalledWith('C:/Temp/Product');
     fireEvent.click(screen.getByTestId('pm-workbench-run-pm'));
 
     await waitFor(() => expect(pmServiceMocks.runPm).toHaveBeenCalledWith({
@@ -313,9 +369,10 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     expect(toastMocks.success).toHaveBeenCalledWith('PM 编排已启动', {
       description: 'Run ID: pm-run-direct',
     });
-    await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-direct'));
+    await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-direct', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/pm/runs/pm-run-direct');
+    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
   });
 
   it('blocks PM auto-dispatch when Director LLM readiness is blocked', async () => {
@@ -396,6 +453,74 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     expect(pmServiceMocks.runPm).not.toHaveBeenCalled();
   });
 
+  it('blocks PM auto-dispatch when Chief Engineer blueprint handoff is incomplete', async () => {
+    chiefEngineerServiceMocks.getChiefEngineerDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_handoff: false,
+        role: 'chief_engineer',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: {
+          ok: true,
+          status: 'ready',
+          workspace: 'C:/Temp/Product',
+          exists: true,
+          error: null,
+        },
+        llm: {
+          ok: true,
+          state: 'ready',
+          role: 'chief_engineer',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['chief_engineer'],
+          provider_id: 'qwen',
+          model: 'qwen3-max',
+          error: null,
+          details: {},
+        },
+        blueprints: {
+          ok: false,
+          status: 'blocked',
+          source: 'chief_engineer_blueprints',
+          total: 0,
+          loadable: 0,
+          invalid_payloads: 0,
+          planned_tasks: 2,
+          covered_tasks: 0,
+          missing_task_ids: ['PM-1', 'PM-2'],
+          director_handoff_ready: false,
+          latest_updated_at: null,
+          error: null,
+        },
+        can_generate: true,
+        issues: ['blueprint_coverage_incomplete'],
+        generate_blockers: [],
+        handoff_blockers: ['blueprint_coverage_incomplete'],
+      },
+    });
+
+    render(
+      <PMWorkbenchPanel
+        workspace="C:/Temp/Product"
+        initialSessionId="pm-session-1"
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('pm-workbench-run-director'));
+
+    const readiness = await screen.findByTestId('pm-workbench-director-readiness');
+    await waitFor(() => expect(readiness).toHaveTextContent('ce-blueprint'));
+    expect(readiness).toHaveTextContent('missing 2');
+    const runButton = screen.getByTestId('pm-workbench-run-pm');
+    expect(runButton).toBeDisabled();
+    expect(runButton).toHaveAttribute('title', 'Chief Engineer 蓝图覆盖不足：缺少 2 个 PM 任务');
+
+    fireEvent.click(runButton);
+    expect(pmServiceMocks.runPm).not.toHaveBeenCalled();
+  });
+
   it('cancels the visible PM orchestration run from the evidence strip', async () => {
     render(
       <PMWorkbenchPanel
@@ -409,15 +534,16 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     });
     fireEvent.click(screen.getByTestId('pm-workbench-run-pm'));
 
-    await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-direct'));
+    await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-direct', 'C:/Temp/Product'));
     fireEvent.click(await screen.findByTestId('pm-workbench-run-cancel'));
 
-    await waitFor(() => expect(pmServiceMocks.cancelPmRun).toHaveBeenCalledWith('pm-run-direct'));
+    await waitFor(() => expect(pmServiceMocks.cancelPmRun).toHaveBeenCalledWith('pm-run-direct', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-workbench-run-evidence');
     expect(evidence).toHaveTextContent('/v2/pm/runs/pm-run-direct');
     expect(evidence).toHaveTextContent('CANCELLED · architect');
     const cancelEvidence = await screen.findByTestId('pm-workbench-run-cancel-result');
     expect(cancelEvidence).toHaveTextContent('/v2/pm/runs/pm-run-direct/cancel');
+    expect(cancelEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(cancelEvidence).toHaveTextContent('取消运行已提交: CANCELLED');
     expect(toastMocks.success).toHaveBeenCalledWith('PM 编排取消已提交', {
       description: 'Run ID: pm-run-direct',

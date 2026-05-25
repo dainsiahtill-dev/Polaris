@@ -12,6 +12,7 @@ describe('RoleRunEvidenceStrip', () => {
         tone="emerald"
         testId="run-evidence"
         endpoint="/v2/director/runs/run-1"
+        workspace="C:/Temp/Product"
         loading={false}
         status="RUNNING"
         details={['queued=3']}
@@ -35,10 +36,12 @@ describe('RoleRunEvidenceStrip', () => {
 
     const evidence = screen.getByTestId('run-evidence');
     expect(evidence).toHaveTextContent('/v2/director/runs/run-1');
+    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(evidence).toHaveTextContent('RUNNING · queued=3');
     expect(evidence).toHaveTextContent('Status: RUNNING');
     expect(screen.getByTestId('run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
     expect(screen.getByTestId('run-cancel-result')).toHaveTextContent('/v2/director/runs/run-1/cancel');
+    expect(screen.getByTestId('run-cancel-result')).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
 
     fireEvent.click(screen.getByTestId('run-refresh'));
     expect(onRefresh).toHaveBeenCalledTimes(1);

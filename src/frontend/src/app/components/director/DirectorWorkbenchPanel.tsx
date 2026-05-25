@@ -162,7 +162,7 @@ export function DirectorWorkbenchPanel({
     }
 
     try {
-      const runResult = await getDirectorRun(runId);
+      const runResult = await getDirectorRun(runId, workspace);
       if (runResult.ok && runResult.data) {
         setWorkflowRunEvidence({
           runId,
@@ -186,7 +186,7 @@ export function DirectorWorkbenchPanel({
         error: err instanceof Error ? err.message : 'Director run detail unavailable',
       });
     }
-  }, []);
+  }, [workspace]);
 
   const handleRefreshDirectorRun = useCallback(() => {
     const runId = String(workflowRunEvidence.runId || '').trim();
@@ -272,7 +272,7 @@ export function DirectorWorkbenchPanel({
     });
 
     try {
-      const result = await cancelDirectorRun(runId);
+      const result = await cancelDirectorRun(runId, workspace);
       if (result.ok && result.data) {
         const status = String(result.data.status || 'unknown').trim() || 'unknown';
         setWorkflowRunEvidence({
@@ -314,7 +314,7 @@ export function DirectorWorkbenchPanel({
         description: error,
       });
     }
-  }, [workflowRunEvidence.runId]);
+  }, [workflowRunEvidence.runId, workspace]);
 
   const dialoguePanelProps: AIDialoguePanelProps = {
     dialogueRole: 'director',
@@ -432,6 +432,7 @@ export function DirectorWorkbenchPanel({
           tone="emerald"
           testId="director-workbench-run-evidence"
           endpoint={`/v2/director/runs/${workflowRunEvidence.runId}`}
+          workspace={workspace}
           loading={workflowRunEvidence.loading}
           error={workflowRunEvidence.error}
           status={workflowRunEvidence.data?.status}

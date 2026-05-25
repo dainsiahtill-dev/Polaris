@@ -124,6 +124,15 @@ interface FactorySourceEvidenceRow {
   tone: string;
 }
 
+interface FactoryFailureBrief {
+  rootRole: string;
+  headline: string;
+  detail: string;
+  cascades: string[];
+  code: string;
+  recoverable: boolean;
+}
+
 const PHASE_CONFIG: Record<FactoryPhase, { label: string; color: string; icon: React.ReactNode }> = {
   idle: { label: '等待启动', color: 'text-slate-400', icon: <Hammer className="h-4 w-4" /> },
   planning: { label: '规划中', color: 'text-amber-300', icon: <ClipboardList className="h-4 w-4" /> },
@@ -686,6 +695,74 @@ function getRunRole(roles: FactoryRunStatus['roles'] | undefined, keys: string[]
   return null;
 }
 
+function roleDetail(role: RunRoleStatus | null): string {
+  return String(role?.detail || role?.current_task || '').trim();
+}
+
+function isFailedRole(role: RunRoleStatus | null): boolean {
+  return ['failed', 'error', 'blocked', 'timeout'].includes(normalizeToken(role?.status));
+}
+
+function buildFactoryFailureBrief(run?: FactoryRunStatus | null): FactoryFailureBrief | null {
+  const status = normalizeToken(run?.status);
+  if (!run?.failure && !FAILED_RUN_STATUSES.has(status)) {
+    return null;
+  }
+
+  const pmRole = getRunRole(run?.roles, ['pm']);
+  const chiefRole = getRunRole(run?.roles, ['chief_engineer', 'chiefengineer', 'architect']);
+  const directorRole = getRunRole(run?.roles, ['director']);
+  const qaRole = getRunRole(run?.roles, ['qa']);
+  const failureDetail = String(run?.failure?.detail || '').trim();
+  const pmDetail = roleDetail(pmRole);
+  const chiefDetail = roleDetail(chiefRole);
+  const directorDetail = roleDetail(directorRole);
+  const qaDetail = roleDetail(qaRole);
+  const combined = [failureDetail, pmDetail, chiefDetail, directorDetail, qaDetail].join(' ').toLowerCase();
+
+  if (isFailedRole(pmRole) || combined.includes('pm iteration failed')) {
+    return {
+      rootRole: 'PM',
+      headline: 'PM 阶段失败',
+      detail: pmDetail || failureDetail || 'PM iteration failed',
+      cascades: [chiefDetail, directorDetail, qaDetail].filter((item) => item && item !== pmDetail),
+      code: run?.failure?.code || 'PM_ITERATION_FAILED',
+      recoverable: Boolean(run?.failure?.recoverable),
+    };
+  }
+
+  if (isFailedRole(chiefRole) || combined.includes('chief')) {
+    return {
+      rootRole: 'Chief Engineer',
+      headline: 'Chief Engineer 蓝图层阻塞',
+      detail: chiefDetail || failureDetail || 'Chief Engineer handoff blocked',
+      cascades: [directorDetail, qaDetail].filter(Boolean),
+      code: run?.failure?.code || 'CHIEF_ENGINEER_BLOCKED',
+      recoverable: Boolean(run?.failure?.recoverable),
+    };
+  }
+
+  if (isFailedRole(directorRole) || combined.includes('director')) {
+    return {
+      rootRole: 'Director',
+      headline: 'Director 执行层失败',
+      detail: directorDetail || failureDetail || 'Director execution failed',
+      cascades: [qaDetail].filter(Boolean),
+      code: run?.failure?.code || 'DIRECTOR_FAILED',
+      recoverable: Boolean(run?.failure?.recoverable),
+    };
+  }
+
+  return {
+    rootRole: 'Factory',
+    headline: 'Factory 运行失败',
+    detail: failureDetail || '运行已进入失败态',
+    cascades: [pmDetail, chiefDetail, directorDetail, qaDetail].filter(Boolean),
+    code: run?.failure?.code || status || 'FACTORY_FAILED',
+    recoverable: Boolean(run?.failure?.recoverable),
+  };
+}
+
 function percent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -988,11 +1065,11 @@ export function FactoryWorkspace({
 
       <main
         data-testid="factory-layered-layout"
-        className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)_minmax(260px,34vh)] overflow-hidden xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:grid-rows-1 2xl:grid-cols-[320px_minmax(0,1fr)_400px]"
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
-        <aside
+        <section
           data-testid="factory-role-flow-rail"
-          className="min-h-0 overflow-hidden border-b border-white/10 bg-slate-950/75 px-4 py-3 xl:border-b-0 xl:border-r xl:px-3"
+          className="shrink-0 border-b border-white/10 bg-slate-950/80 px-4 py-3"
         >
           <RoleLayerRail
             layers={roleLayers}
@@ -1000,57 +1077,59 @@ export function FactoryWorkspace({
             suggestedLayer={suggestedLayer}
             onSelect={setActiveLayer}
           />
-        </aside>
-
-        <section className="h-full min-w-0 overflow-hidden" data-testid="factory-focused-layer">
-          {activeLayerView.id === 'pm' && (
-            <FactoryPmLayer
-              tasks={pmWorkflowTasks}
-              workspace={workspace}
-              executionLogs={executionLogs}
-              roleStatus={getRunRole(currentRun?.roles, ['pm'])}
-              currentRun={currentRun}
-              blueprintCoverage={blueprintCoverage}
-            />
-          )}
-          {activeLayerView.id === 'chief_engineer' && (
-            <FactoryChiefEngineerLayer
-              workspace={workspace}
-              blueprintEvidence={blueprintEvidence}
-              blueprintCoverage={blueprintCoverage}
-              roleStatus={getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect'])}
-              currentRun={currentRun}
-            />
-          )}
-          {activeLayerView.id === 'director' && (
-            <FactoryDirectorLayer
-              workspace={workspace}
-              tasks={directorWorkflowTasks}
-              fileEditEvents={fileEditEvents}
-              executionLogs={executionLogs}
-              roleStatus={getRunRole(currentRun?.roles, ['director'])}
-              currentRun={currentRun}
-              blueprintCoverage={blueprintCoverage}
-            />
-          )}
         </section>
 
-        <FactoryOperationsRail
-          currentRun={currentRun}
-          factoryPhase={factoryPhase}
-          workspacePhase={workspacePhase}
-          activeLayer={activeLayerView.id}
-          activityLogs={operationsActivityLogs}
-          llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
-          gateResults={gateResults}
-          deliveryArtifacts={deliveryArtifacts}
-          summaryMarkdown={summaryMarkdown}
-          summaryRows={summaryRows}
-          artifactErrorMessage={artifactErrorMessage}
-          isArtifactsLoading={isArtifactsLoading}
-          isRunning={isRunActive || isLoading}
-        />
+        <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(260px,34vh)] overflow-hidden xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-1 2xl:grid-cols-[minmax(0,1fr)_400px]">
+          <section className="h-full min-w-0 overflow-hidden" data-testid="factory-focused-layer">
+            {activeLayerView.id === 'pm' && (
+              <FactoryPmLayer
+                tasks={pmWorkflowTasks}
+                workspace={workspace}
+                executionLogs={executionLogs}
+                roleStatus={getRunRole(currentRun?.roles, ['pm'])}
+                currentRun={currentRun}
+                blueprintCoverage={blueprintCoverage}
+              />
+            )}
+            {activeLayerView.id === 'chief_engineer' && (
+              <FactoryChiefEngineerLayer
+                workspace={workspace}
+                blueprintEvidence={blueprintEvidence}
+                blueprintCoverage={blueprintCoverage}
+                roleStatus={getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect'])}
+                currentRun={currentRun}
+              />
+            )}
+            {activeLayerView.id === 'director' && (
+              <FactoryDirectorLayer
+                workspace={workspace}
+                tasks={directorWorkflowTasks}
+                fileEditEvents={fileEditEvents}
+                executionLogs={executionLogs}
+                roleStatus={getRunRole(currentRun?.roles, ['director'])}
+                currentRun={currentRun}
+                blueprintCoverage={blueprintCoverage}
+              />
+            )}
+          </section>
+
+          <FactoryOperationsRail
+            currentRun={currentRun}
+            factoryPhase={factoryPhase}
+            workspacePhase={workspacePhase}
+            activeLayer={activeLayerView.id}
+            activityLogs={operationsActivityLogs}
+            llmStreamEvents={llmStreamEvents}
+            processStreamEvents={processStreamEvents}
+            gateResults={gateResults}
+            deliveryArtifacts={deliveryArtifacts}
+            summaryMarkdown={summaryMarkdown}
+            summaryRows={summaryRows}
+            artifactErrorMessage={artifactErrorMessage}
+            isArtifactsLoading={isArtifactsLoading}
+            isRunning={isRunActive || isLoading}
+          />
+        </div>
       </main>
     </div>
   );
@@ -1068,13 +1147,13 @@ function RoleLayerRail({
   onSelect: (layer: FactoryRoleLayer) => void;
 }) {
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 xl:block">
+    <div className="grid gap-3 xl:grid-cols-[220px_minmax(0,1fr)] xl:items-stretch">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 xl:block">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
           <Layers className="h-3.5 w-3.5 text-emerald-300" />
           <span>角色分层</span>
         </div>
-        <div className="mt-2 hidden items-center gap-1.5 text-[11px] text-slate-500 md:flex xl:hidden">
+        <div className="hidden items-center gap-1.5 text-[11px] text-slate-500 md:flex xl:mt-3">
           <Route className="h-3.5 w-3.5" />
           <span>PM 任务合同</span>
           <ChevronRight className="h-3 w-3" />
@@ -1082,24 +1161,21 @@ function RoleLayerRail({
           <ChevronRight className="h-3 w-3" />
           <span>Director 执行交付</span>
         </div>
-        <p className="mt-2 hidden text-[11px] leading-4 text-slate-500 xl:block">
-          Factory 只暴露一个当前工作层，其他角色保留为可切换的流程节点。
-        </p>
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-1 items-stretch gap-2 overflow-y-auto pr-0 xl:flex xl:flex-col xl:gap-0 xl:pr-1">
+      <div className="grid min-w-0 grid-cols-1 gap-2 md:grid-cols-3">
         {layers.map((layer, index) => {
           const label = ROLE_LAYER_LABELS[layer.id];
           const isActive = activeLayer === layer.id;
           const isSuggested = suggestedLayer === layer.id;
           return (
-            <div key={layer.id} className="contents">
+            <div key={layer.id} className="min-w-0">
               <button
                 type="button"
                 onClick={() => onSelect(layer.id)}
                 data-testid={`factory-role-layer-${layer.id}`}
                 aria-pressed={isActive}
                 className={cn(
-                  'group flex min-h-[96px] cursor-pointer flex-col rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 xl:min-h-[128px]',
+                  'group flex h-full min-h-[86px] w-full cursor-pointer flex-col rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70',
                   isActive ? layer.tone.active : layer.tone.idle
                 )}
               >
@@ -1129,7 +1205,7 @@ function RoleLayerRail({
                       <span className="h-1 w-1 rounded-full bg-slate-700" />
                       <span className="truncate">{layer.metric}</span>
                     </div>
-                    <div className="mt-1 hidden truncate text-[10px] text-slate-600 xl:block">
+                    <div className="mt-1 truncate text-[10px] text-slate-600">
                       {label.route}
                     </div>
                   </div>
@@ -1148,21 +1224,11 @@ function RoleLayerRail({
                 </div>
               </button>
               {index < layers.length - 1 ? (
-                <div className="relative hidden justify-center py-2 xl:flex" aria-hidden="true">
-                  <div className="h-6 w-px bg-slate-700" />
-                  <ChevronRight className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rotate-90 text-slate-500" />
-                </div>
+                <ChevronRight className="mx-auto my-1 h-4 w-4 rotate-90 text-slate-600 md:hidden" aria-hidden="true" />
               ) : null}
             </div>
           );
         })}
-      </div>
-      <div className="mt-2 hidden grid-cols-3 gap-3 text-[10px] text-slate-600 md:grid xl:hidden">
-        {layers.map((layer) => (
-          <div key={`${layer.id}-route`} className="truncate px-1">
-            {ROLE_LAYER_LABELS[layer.id].route}
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -1839,6 +1905,7 @@ function FactoryOperationsRail({
   isRunning: boolean;
 }) {
   const sourceEvidence = buildRunSourceEvidence(currentRun);
+  const failureBrief = buildFactoryFailureBrief(currentRun);
 
   return (
     <aside
@@ -1861,6 +1928,7 @@ function FactoryOperationsRail({
           <MiniMetric label="运行ID" value={currentRun?.run_id || 'n/a'} />
           <MiniMetric label="进度" value={`${Math.round(currentRun?.progress || 0)}%`} />
         </div>
+        {failureBrief ? <FactoryFailureBriefPanel brief={failureBrief} /> : null}
         {sourceEvidence.length > 0 ? (
           <div data-testid="factory-source-evidence" className="mt-3 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.04] p-2">
             <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
@@ -1911,6 +1979,56 @@ function FactoryOperationsRail({
         />
       </section>
     </aside>
+  );
+}
+
+function FactoryFailureBriefPanel({ brief }: { brief: FactoryFailureBrief }) {
+  return (
+    <section
+      data-testid="factory-failure-brief"
+      className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-2.5"
+      aria-label="Factory failure root cause"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-xs font-semibold text-red-200">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <span>{brief.headline}</span>
+          </div>
+          <p className="mt-1 line-clamp-3 text-[11px] leading-4 text-red-100/80">{brief.detail}</p>
+        </div>
+        <span className="shrink-0 rounded-md border border-red-400/25 bg-red-950/45 px-1.5 py-0.5 text-[10px] text-red-200">
+          根因 {brief.rootRole}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <span className="rounded-md border border-white/10 bg-black/20 px-1.5 py-0.5 font-mono text-[10px] text-red-200">
+          {brief.code}
+        </span>
+        <span className={cn(
+          'rounded-md border px-1.5 py-0.5 text-[10px]',
+          brief.recoverable
+            ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+            : 'border-slate-700 bg-slate-900/70 text-slate-400'
+        )}>
+          {brief.recoverable ? '可重试' : '需先修复根因'}
+        </span>
+        {brief.cascades.length > 0 ? (
+          <span className="rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+            {brief.cascades.length} 个级联阻塞
+          </span>
+        ) : null}
+      </div>
+      {brief.cascades.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {brief.cascades.slice(0, 3).map((cascade) => (
+            <p key={cascade} className="truncate text-[10px] text-red-100/65" title={cascade}>
+              {cascade}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

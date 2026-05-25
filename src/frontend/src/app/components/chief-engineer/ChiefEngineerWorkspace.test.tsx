@@ -119,6 +119,9 @@ describe('ChiefEngineerWorkspace', () => {
               ok: true,
               status: hasBlueprint ? 'ready' : 'empty',
               source: 'runtime/blueprints',
+              plan_status: hasBlueprint ? 'ready' : 'empty',
+              plan_path: 'C:/Temp/Product/.polaris/runtime/tasks/plan.json',
+              plan_error: hasBlueprint ? null : 'pm_task_plan_empty',
               total: hasBlueprint ? 1 : 0,
               loadable: hasBlueprint ? 1 : 0,
               invalid_payloads: 0,
@@ -129,9 +132,9 @@ describe('ChiefEngineerWorkspace', () => {
               latest_updated_at: hasBlueprint ? '2026-05-23T08:10:00Z' : null,
               error: null,
             },
-            issues: hasBlueprint ? [] : ['blueprint_handoff_not_ready'],
+            issues: hasBlueprint ? [] : ['blueprint_task_plan_empty'],
             generate_blockers: [],
-            handoff_blockers: hasBlueprint ? [] : ['blueprint_handoff_not_ready'],
+            handoff_blockers: hasBlueprint ? [] : ['blueprint_task_plan_empty'],
           }),
         });
       }
@@ -242,7 +245,7 @@ describe('ChiefEngineerWorkspace', () => {
           }),
         });
       }
-      if (path === '/v2/chief-engineer/llm-events?limit=5') {
+      if (path === cePath('/v2/chief-engineer/llm-events?limit=5')) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -302,16 +305,17 @@ describe('ChiefEngineerWorkspace', () => {
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/diagnostics')));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench'));
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/llm-events?limit=5'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/llm-events?limit=5')));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/cache-stats'));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/token-budget-stats'));
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/role/chief_engineer/chat/status'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/role/chief_engineer/chat/status?workspace=C%3A%2FTemp%2FProduct'));
     expect(screen.getByTestId('chief-engineer-workspace')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-dialogue')).toBeInTheDocument();
     const backendStrip = screen.getByTestId('chief-engineer-backend-strip');
     expect(backendStrip).toHaveTextContent('/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench');
     expect(backendStrip).toHaveTextContent('read_files, write_blueprint');
     expect(backendStrip).toHaveTextContent('/v2/chief-engineer/llm-events?limit=5');
+    expect(backendStrip).toHaveTextContent('/v2/chief-engineer/llm-events?limit=5&workspace=C%3A%2FTemp%2FProduct');
     expect(backendStrip).toHaveTextContent('events=1 · llm_call_start · gpt-test · 321 tokens');
     expect(backendStrip).toHaveTextContent('/v2/chief-engineer/cache-stats');
     expect(backendStrip).toHaveTextContent('hits=4 · misses=1 · size=5 · hit=80%');
@@ -323,7 +327,7 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByTestId('chief-engineer-diagnostics-status')).toHaveTextContent('degraded');
     expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('ready · Qwen3-Max');
     expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('0/0');
-    expect(screen.getByTestId('chief-engineer-diagnostics-issues')).toHaveTextContent('blueprint_handoff_not_ready');
+    expect(screen.getByTestId('chief-engineer-diagnostics-issues')).toHaveTextContent('blueprint_task_plan_empty');
     expect(screen.getByTestId('chief-engineer-blueprint-empty')).toHaveTextContent('未发现已落盘的 Chief Engineer 蓝图证据');
     expect(screen.getByTestId('chief-engineer-director-empty')).toHaveTextContent('暂无 Director worker 心跳');
   });
@@ -602,6 +606,132 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getAllByText('ce_PM-summary-only')).toHaveLength(2);
     await waitFor(() => expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('1/1'));
     expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('ready');
+  });
+
+  it('bulk generates missing Chief Engineer blueprints before Director handoff', async () => {
+    const defaultApiFetch = apiFetchMock.getMockImplementation();
+    apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === cePath('/v2/chief-engineer/blueprints/bulk') && init?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            workspace: 'C:/Temp/Product',
+            total: 2,
+            generated: 2,
+            failed: 0,
+            results: [
+              {
+                ok: true,
+                task_id: 'PM-bulk-1',
+                workspace: 'C:/Temp/Product',
+                status: 'generated',
+                blueprint_id: 'ce_PM-bulk-1',
+                blueprint_path: 'runtime/blueprints/ce_PM-bulk-1.json',
+                source: 'runtime/blueprints',
+                summary: 'Bulk generated blueprint one',
+                recommendations: [],
+                risks: [],
+                blueprint: {
+                  blueprint_id: 'ce_PM-bulk-1',
+                  task_id: 'PM-bulk-1',
+                  title: 'Bulk blueprint one',
+                  summary: 'Bulk generated blueprint one',
+                  status: 'generated',
+                  target_files: ['src/one.tsx'],
+                },
+              },
+              {
+                ok: true,
+                task_id: 'PM-bulk-2',
+                workspace: 'C:/Temp/Product',
+                status: 'generated',
+                blueprint_id: 'ce_PM-bulk-2',
+                blueprint_path: 'runtime/blueprints/ce_PM-bulk-2.json',
+                source: 'runtime/blueprints',
+                summary: 'Bulk generated blueprint two',
+                recommendations: [],
+                risks: [],
+                blueprint: {
+                  blueprint_id: 'ce_PM-bulk-2',
+                  task_id: 'PM-bulk-2',
+                  title: 'Bulk blueprint two',
+                  summary: 'Bulk generated blueprint two',
+                  status: 'generated',
+                  target_files: ['src/two.tsx'],
+                },
+              },
+            ],
+            errors: [],
+          }),
+        });
+      }
+      return defaultApiFetch
+        ? defaultApiFetch(path, init)
+        : Promise.resolve({ ok: true, json: async () => ({ ready: true }) });
+    });
+    const tasks: PmTask[] = [
+      {
+        id: 'PM-bulk-1',
+        title: 'Bulk source one',
+        summary: 'Generate first blueprint',
+        status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: ['first acceptance'],
+        metadata: { target_files: ['src/one.tsx'] },
+      },
+      {
+        id: 'PM-bulk-2',
+        title: 'Bulk source two',
+        summary: 'Generate second blueprint',
+        status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: ['second acceptance'],
+        metadata: { target_files: ['src/two.tsx'] },
+      },
+    ];
+
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={tasks} />);
+
+    fireEvent.click(await screen.findByTestId('chief-engineer-blueprint-generate-all'));
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(
+      cePath('/v2/chief-engineer/blueprints/bulk'),
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    const postCall = apiFetchMock.mock.calls.find((call) => (
+      call[0] === cePath('/v2/chief-engineer/blueprints/bulk') && call[1]?.method === 'POST'
+    ));
+    const body = JSON.parse(String(postCall?.[1]?.body || '{}'));
+    expect(body).toMatchObject({
+      stop_on_error: false,
+      tasks: [
+        {
+          task_id: 'PM-bulk-1',
+          objective: 'Generate first blueprint',
+          context: {
+            target_files: ['src/one.tsx'],
+            acceptance: ['first acceptance'],
+          },
+        },
+        {
+          task_id: 'PM-bulk-2',
+          objective: 'Generate second blueprint',
+          context: {
+            target_files: ['src/two.tsx'],
+            acceptance: ['second acceptance'],
+          },
+        },
+      ],
+    });
+    expect(await screen.findByTestId('chief-engineer-blueprint-bulk-evidence')).toHaveTextContent(
+      '/v2/chief-engineer/blueprints/bulk?workspace=C%3A%2FTemp%2FProduct · generated 2/2',
+    );
+    expect(screen.getByText('Bulk blueprint one')).toBeInTheDocument();
+    expect(screen.getByText('Bulk blueprint two')).toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('Bulk generated blueprint one');
   });
 
   it('disables blueprint generation when Chief Engineer LLM diagnostics are blocked', async () => {
@@ -912,7 +1042,7 @@ describe('ChiefEngineerWorkspace', () => {
       expect.objectContaining({ method: 'DELETE' }),
     ));
     expect(await screen.findByTestId('chief-engineer-blueprint-delete-evidence')).toHaveTextContent(
-      '/v2/chief-engineer/blueprints/bp-delete · deleted',
+      '/v2/chief-engineer/blueprints/bp-delete?workspace=C%3A%2FTemp%2FProduct · deleted',
     );
     await waitFor(() => expect(screen.queryByTestId('chief-engineer-blueprint-delete-bp-delete')).not.toBeInTheDocument());
     expect(screen.getByTestId('chief-engineer-blueprint-detail-empty')).toBeInTheDocument();
@@ -951,6 +1081,7 @@ describe('ChiefEngineerWorkspace', () => {
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/status?source=auto')));
     const statusEvidence = await screen.findByTestId('chief-engineer-director-status-evidence');
     expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto');
+    expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct');
     expect(statusEvidence).toHaveTextContent('running');
     expect(statusEvidence).toHaveTextContent('pid=7242');
     expect(statusEvidence).toHaveTextContent('mode=desktop_service');
@@ -994,7 +1125,8 @@ describe('ChiefEngineerWorkspace', () => {
         },
       },
     ];
-    const blockedReason = 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。';
+    const blockedReason =
+      'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。';
 
     render(
       <ChiefEngineerWorkspace
@@ -1060,6 +1192,59 @@ describe('ChiefEngineerWorkspace', () => {
     expect(startDirector).toHaveAttribute('title', 'Chief Engineer 交接诊断未通过：存在无效蓝图 payload');
     expect(screen.getByTestId('chief-engineer-director-start-gate')).toHaveTextContent('存在无效蓝图 payload');
 
+    fireEvent.click(startDirector);
+    expect(onToggleDirector).not.toHaveBeenCalled();
+  });
+
+  it('blocks Director handoff when Chief Engineer diagnostics cannot read the PM task plan', async () => {
+    const onToggleDirector = vi.fn();
+    const defaultApiFetch = apiFetchMock.getMockImplementation();
+    apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: false,
+            can_handoff: false,
+            can_generate: true,
+            role: 'chief_engineer',
+            generated_at: '2026-05-25T00:00:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            llm: { ok: true, state: 'ready', role: 'chief_engineer', blocked_roles: [], unsupported_roles: [], required_ready_roles: ['chief_engineer'], provider_id: 'qwen', model: 'Qwen3-Max', error: null, details: {} },
+            blueprints: {
+              ok: false,
+              status: 'ready',
+              source: 'runtime/blueprints',
+              plan_status: 'missing',
+              plan_path: 'C:/Temp/Product/.polaris/runtime/tasks/plan.json',
+              plan_error: 'pm_task_plan_missing',
+              total: 1,
+              loadable: 1,
+              invalid_payloads: 0,
+              planned_tasks: 0,
+              covered_tasks: 0,
+              missing_task_ids: [],
+              director_handoff_ready: false,
+              latest_updated_at: '2026-05-25T00:00:00Z',
+              error: null,
+            },
+            issues: ['blueprint_task_plan_unavailable'],
+            generate_blockers: [],
+            handoff_blockers: ['blueprint_task_plan_unavailable'],
+          }),
+        });
+      }
+      return defaultApiFetch?.(path, init) ?? Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+
+    render(<ChiefEngineerWorkspace {...baseProps} onToggleDirector={onToggleDirector} tasks={[]} />);
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/diagnostics')));
+    expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('missing');
+    expect(screen.getByTestId('chief-engineer-diagnostics-issues')).toHaveTextContent('blueprint_task_plan_unavailable');
+    const startDirector = screen.getByTestId('chief-engineer-start-director');
+    expect(startDirector).toBeDisabled();
+    expect(startDirector).toHaveAttribute('title', 'Chief Engineer 缺少可审计的 PM 任务计划，不能启动 Director');
     fireEvent.click(startDirector);
     expect(onToggleDirector).not.toHaveBeenCalled();
   });

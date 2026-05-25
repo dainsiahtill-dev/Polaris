@@ -38,6 +38,15 @@ describe('PMDiagnosticsPanel', () => {
           workspace: 'C:/Temp/Product',
           docs_present: true,
         },
+        planning_input: {
+          ok: true,
+          status: 'ready',
+          source: 'workspace_requirements',
+          path: 'C:/Temp/Product/docs/product/requirements.md',
+          bytes: 128,
+          chars: 120,
+          checked_paths: ['C:/Temp/Product/docs/product/requirements.md'],
+        },
       },
     });
     serviceMocks.getPmManagementStatus.mockResolvedValue({
@@ -125,6 +134,10 @@ describe('PMDiagnosticsPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /工作区/ }));
     expect(screen.getByText('工作区已配置')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /规划输入/ }));
+    expect(screen.getByTestId('pm-planning-input-diagnostics')).toHaveTextContent('PM 已找到可规划输入');
+    expect(screen.getByTestId('pm-planning-input-diagnostics')).toHaveTextContent('workspace requirements');
   });
 
   it('treats a missing docs directory as a PM startup blocker', async () => {
@@ -150,6 +163,12 @@ describe('PMDiagnosticsPanel', () => {
           workspace: 'C:/Temp/Product',
           docs_present: false,
         },
+        planning_input: {
+          ok: false,
+          status: 'docs_missing',
+          checked_paths: [],
+          error: 'workspace_docs_missing',
+        },
       },
     });
 
@@ -161,12 +180,60 @@ describe('PMDiagnosticsPanel', () => {
     expect(screen.getByText('返回主界面完成 docs 初始化')).toBeInTheDocument();
   });
 
+  it('treats missing planning input as a PM startup blocker', async () => {
+    serviceMocks.getPmStartupDiagnostics.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: false,
+        can_start: false,
+        generated_at: '2026-05-23T00:00:00Z',
+        issues: ['planning_input_missing'],
+        startup_blockers: ['planning_input_missing'],
+        lancedb: { ok: true, state: 'ready' },
+        llm: {
+          ok: true,
+          state: 'ready',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['pm'],
+        },
+        workspace: {
+          ok: true,
+          status: 'ok',
+          workspace: 'C:/Temp/Product',
+          docs_present: true,
+        },
+        planning_input: {
+          ok: false,
+          status: 'missing',
+          checked_paths: [
+            'C:/Temp/Product/docs/product/requirements.md',
+            'C:/Temp/Product/docs/product/plan.md',
+          ],
+          error: 'planning_input_missing',
+        },
+      },
+    });
+
+    render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
+
+    expect(await screen.findByText('检测到问题')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /规划输入/ }));
+    const planning = await screen.findByTestId('pm-planning-input-diagnostics');
+    expect(planning).toHaveTextContent('未找到需求或计划输入');
+    expect(planning).toHaveTextContent('docs/product/requirements.md');
+    expect(planning).toHaveTextContent('在 PM Workbench 中输入明确 directive 后再运行');
+  });
+
   it('loads and clears PM kernel cache and token budget diagnostics', async () => {
     render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
 
     await waitFor(() => expect(serviceMocks.getRoleKernelCacheStats).toHaveBeenCalledWith('pm'));
     expect(serviceMocks.getRoleKernelTokenBudgetStats).toHaveBeenCalledWith('pm');
-    expect(serviceMocks.getRoleKernelLLMEvents).toHaveBeenCalledWith('pm', { limit: 5 });
+    expect(serviceMocks.getRoleKernelLLMEvents).toHaveBeenCalledWith('pm', {
+      limit: 5,
+      workspace: 'C:/Temp/Product',
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /LLM 缓存与预算/ }));
     const kernel = await screen.findByTestId('pm-kernel-diagnostics');
@@ -176,6 +243,7 @@ describe('PMDiagnosticsPanel', () => {
     expect(kernel).toHaveTextContent('11,500');
     const llmEvents = screen.getByTestId('pm-llm-events-diagnostics');
     expect(llmEvents).toHaveTextContent('/v2/pm/llm-events?limit=5');
+    expect(llmEvents).toHaveTextContent('/v2/pm/llm-events?limit=5&workspace=C%3A%2FTemp%2FProduct');
     expect(llmEvents).toHaveTextContent('llm call start');
     expect(llmEvents).toHaveTextContent('gpt-test');
 
@@ -192,8 +260,10 @@ describe('PMDiagnosticsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /PM 管理状态/ }));
     const management = await screen.findByTestId('pm-management-diagnostics');
     expect(management).toHaveTextContent('/pm/v2/pm/status');
+    expect(management).toHaveTextContent('/pm/v2/pm/status?workspace=C%3A%2FTemp%2FProduct');
     expect(management).toHaveTextContent('Product');
     expect(management).toHaveTextContent('/pm/v2/pm/health');
+    expect(management).toHaveTextContent('/pm/v2/pm/health?workspace=C%3A%2FTemp%2FProduct');
     expect(management).toHaveTextContent('healthy');
     expect(management).toHaveTextContent('docs · ok');
   });
@@ -249,6 +319,7 @@ describe('PMDiagnosticsPanel', () => {
 
     const initPanel = await screen.findByTestId('pm-management-init-panel');
     expect(initPanel).toHaveTextContent('POST /pm/v2/pm/init');
+    expect(initPanel).toHaveTextContent('POST /pm/v2/pm/init?workspace=C%3A%2FTemp%2FProduct');
     fireEvent.change(screen.getByTestId('pm-management-init-project'), {
       target: { value: 'Recovered Project' },
     });
@@ -305,6 +376,12 @@ describe('PMDiagnosticsPanel', () => {
             status: 'ok',
             workspace: 'C:/Temp/Product',
             docs_present: false,
+          },
+          planning_input: {
+            ok: false,
+            status: 'docs_missing',
+            checked_paths: [],
+            error: 'workspace_docs_missing',
           },
         },
       });

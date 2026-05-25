@@ -40,6 +40,17 @@ export interface PmDiagnosticsWorkspaceStatus {
   error?: string | null;
 }
 
+export interface PmDiagnosticsPlanningInputStatus {
+  ok: boolean;
+  status: string;
+  source?: string | null;
+  path?: string | null;
+  bytes?: number;
+  chars?: number;
+  checked_paths?: string[];
+  error?: string | null;
+}
+
 export interface PmStartupDiagnosticsResponse {
   ok: boolean;
   can_start?: boolean;
@@ -47,6 +58,7 @@ export interface PmStartupDiagnosticsResponse {
   lancedb: PmDiagnosticsLanceDBStatus;
   llm: PmDiagnosticsLLMStatus;
   workspace: PmDiagnosticsWorkspaceStatus;
+  planning_input: PmDiagnosticsPlanningInputStatus;
   issues: string[];
   startup_blockers?: string[];
 }
@@ -119,6 +131,7 @@ export interface RoleKernelLLMEvent extends Record<string, unknown> {
 export interface RoleKernelLLMEventsResponse extends Record<string, unknown> {
   run_id?: string | null;
   task_id?: string | null;
+  workspace?: string | null;
   events: RoleKernelLLMEvent[];
   count?: number;
   stats?: Record<string, unknown>;
@@ -128,6 +141,7 @@ export interface RoleKernelLLMEventsQuery {
   runId?: string | null;
   taskId?: string | null;
   role?: string | null;
+  workspace?: string | null;
   limit?: number;
 }
 
@@ -215,6 +229,9 @@ function appendKernelLLMEventQuery(path: string, query: RoleKernelLLMEventsQuery
   }
   if (typeof query.limit === 'number') {
     params.set('limit', String(query.limit));
+  }
+  if (query.workspace) {
+    params.set('workspace', query.workspace);
   }
 
   const suffix = params.toString();
@@ -342,37 +359,43 @@ export async function getAllStatuses(workspace = ''): Promise<{
  * 启动PM
  * @param resume 是否恢复之前的运行
  */
-export async function startPm(resume = false): Promise<ApiResult<void>> {
-  const path = resume ? '/v2/pm/start?resume=true' : '/v2/pm/start';
+export async function startPm(resume = false, workspace = ''): Promise<ApiResult<void>> {
+  const query = new URLSearchParams();
+  if (resume) {
+    query.set('resume', 'true');
+  }
+  setWorkspaceQuery(query, workspace);
+  const suffix = query.toString();
+  const path = suffix ? `/v2/pm/start?${suffix}` : '/v2/pm/start';
   return apiPostEmpty<void>(path, 'Failed to start PM');
 }
 
 /**
  * 停止PM
  */
-export async function stopPm(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/pm/stop', 'Failed to stop PM');
+export async function stopPm(workspace = ''): Promise<ApiResult<void>> {
+  return apiPostEmpty<void>(`/v2/pm/stop${workspaceQuerySuffix(workspace)}`, 'Failed to stop PM');
 }
 
 /**
  * 单次运行PM
  */
-export async function runPmOnce(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/pm/run_once', 'PM Run Once failed');
+export async function runPmOnce(workspace = ''): Promise<ApiResult<void>> {
+  return apiPostEmpty<void>(`/v2/pm/run_once${workspaceQuerySuffix(workspace)}`, 'PM Run Once failed');
 }
 
 /**
  * 启动Director
  */
-export async function startDirector(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/director/start', 'Failed to start Director');
+export async function startDirector(workspace = ''): Promise<ApiResult<void>> {
+  return apiPostEmpty<void>(`/v2/director/start${workspaceQuerySuffix(workspace)}`, 'Failed to start Director');
 }
 
 /**
  * 停止Director
  */
-export async function stopDirector(): Promise<ApiResult<void>> {
-  return apiPostEmpty<void>('/v2/director/stop', 'Failed to stop Director');
+export async function stopDirector(workspace = ''): Promise<ApiResult<void>> {
+  return apiPostEmpty<void>(`/v2/director/stop${workspaceQuerySuffix(workspace)}`, 'Failed to stop Director');
 }
 
 // ============================================================================
@@ -537,6 +560,7 @@ export interface DirectorDiagnosticsTaskSection {
   ready_task_ids: string[];
   blueprint_ready_task_ids?: string[];
   missing_blueprint_task_ids?: string[];
+  invalid_blueprint_task_ids?: string[];
   blocked_task_ids: string[];
   running_task_ids: string[];
   error?: string | null;
@@ -935,13 +959,17 @@ export async function searchPmTasks(
 /**
  * 创建Director任务
  */
-export async function createDirectorTask(payload: CreateDirectorTaskPayload): Promise<ApiResult<DirectorTask>> {
-  return apiPost<DirectorTask>('/v2/director/tasks', payload, 'Failed to create Director task');
+export async function createDirectorTask(payload: CreateDirectorTaskPayload, workspace = ''): Promise<ApiResult<DirectorTask>> {
+  return apiPost<DirectorTask>(
+    `/v2/director/tasks${workspaceQuerySuffix(workspace)}`,
+    payload,
+    'Failed to create Director task',
+  );
 }
 
-export async function cancelDirectorTask(taskId: string): Promise<ApiResult<CancelDirectorTaskResponse>> {
+export async function cancelDirectorTask(taskId: string, workspace = ''): Promise<ApiResult<CancelDirectorTaskResponse>> {
   return apiPostEmpty<CancelDirectorTaskResponse>(
-    `/v2/director/tasks/${encodeURIComponent(taskId)}/cancel`,
+    `/v2/director/tasks/${encodeURIComponent(taskId)}/cancel${workspaceQuerySuffix(workspace)}`,
     'Failed to cancel Director task',
   );
 }
@@ -960,30 +988,30 @@ export async function runPm(payload: RunPmPayload): Promise<ApiResult<PmOrchestr
   return apiPost<PmOrchestrationRunResponse>('/v2/pm/run', payload, 'Failed to run PM');
 }
 
-export async function getPmRun(runId: string): Promise<ApiResult<PmOrchestrationRunResponse>> {
+export async function getPmRun(runId: string, workspace = ''): Promise<ApiResult<PmOrchestrationRunResponse>> {
   return apiGet<PmOrchestrationRunResponse>(
-    `/v2/pm/runs/${encodeURIComponent(runId)}`,
+    `/v2/pm/runs/${encodeURIComponent(runId)}${workspaceQuerySuffix(workspace)}`,
     'Failed to load PM run',
   );
 }
 
-export async function cancelPmRun(runId: string): Promise<ApiResult<PmOrchestrationRunResponse>> {
+export async function cancelPmRun(runId: string, workspace = ''): Promise<ApiResult<PmOrchestrationRunResponse>> {
   return apiPostEmpty<PmOrchestrationRunResponse>(
-    `/v2/pm/runs/${encodeURIComponent(runId)}/cancel`,
+    `/v2/pm/runs/${encodeURIComponent(runId)}/cancel${workspaceQuerySuffix(workspace)}`,
     'Failed to cancel PM run',
   );
 }
 
-export async function getDirectorRun(runId: string): Promise<ApiResult<DirectorOrchestrationRunResponse>> {
+export async function getDirectorRun(runId: string, workspace = ''): Promise<ApiResult<DirectorOrchestrationRunResponse>> {
   return apiGet<DirectorOrchestrationRunResponse>(
-    `/v2/director/runs/${encodeURIComponent(runId)}`,
+    `/v2/director/runs/${encodeURIComponent(runId)}${workspaceQuerySuffix(workspace)}`,
     'Failed to load Director run',
   );
 }
 
-export async function cancelDirectorRun(runId: string): Promise<ApiResult<DirectorOrchestrationRunResponse>> {
+export async function cancelDirectorRun(runId: string, workspace = ''): Promise<ApiResult<DirectorOrchestrationRunResponse>> {
   return apiPostEmpty<DirectorOrchestrationRunResponse>(
-    `/v2/director/runs/${encodeURIComponent(runId)}/cancel`,
+    `/v2/director/runs/${encodeURIComponent(runId)}/cancel${workspaceQuerySuffix(workspace)}`,
     'Failed to cancel Director run',
   );
 }

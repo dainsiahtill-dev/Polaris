@@ -187,6 +187,7 @@ export type {
 // ============================================================================
 
 export {
+  bulkGenerateChiefEngineerBlueprints,
   getChiefEngineerDiagnostics,
   generateChiefEngineerBlueprint,
   getChiefEngineerBlueprintStatus,
@@ -199,6 +200,9 @@ export type {
   ChiefEngineerDiagnosticsResponse,
   ChiefEngineerDiagnosticsWorkspaceStatus,
   ChiefEngineerDiagnosticsBlueprintStatus,
+  BulkGenerateChiefEngineerBlueprintPayload,
+  ChiefEngineerBulkBlueprintError,
+  ChiefEngineerBulkGenerateBlueprintResponse,
   GenerateChiefEngineerBlueprintPayload,
   ChiefEngineerTaskBlueprintResultResponse,
   ChiefEngineerBlueprintDeleteResponse,

@@ -160,6 +160,22 @@ describe('llmService', () => {
       expect(result.data?.role).toBe('chief_engineer');
     });
 
+    it('should pass explicit workspace to role chat status', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        ok: true,
+        data: {
+          ready: true,
+          role: 'pm',
+          workspace: 'C:/Temp/Product',
+        },
+      });
+
+      const result = await llmService.getRoleChatStatus('pm', 'C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenCalledWith('/v2/role/pm/chat/status?workspace=C%3A%2FTemp%2FProduct', '获取对话状态失败');
+      expect(result.ok).toBe(true);
+    });
+
     it('should return error on API failure', async () => {
       mockApiGet.mockResolvedValueOnce({
         ok: false,
@@ -181,7 +197,7 @@ describe('llmService', () => {
 
       const result = await llmService.sendRoleChatMessage('pm', request);
 
-      expect(mockApiFetch).toHaveBeenCalledWith('/v2/role/pm/chat/stream', {
+      expect(mockApiFetch).toHaveBeenCalledWith('/v2/role/pm/chat/stream?workspace=test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request),
@@ -203,6 +219,21 @@ describe('llmService', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request),
         signal,
+      });
+    });
+
+    it('should pass explicit workspace to role chat stream', async () => {
+      const request = { message: 'Hello', context: { workspace: 'stale' } };
+      const mockResponse = new Response(JSON.stringify({ type: 'complete' }));
+      mockApiFetch.mockResolvedValueOnce(mockResponse);
+
+      await llmService.sendRoleChatMessage('director', request, undefined, 'C:/Temp/Product');
+
+      expect(mockApiFetch).toHaveBeenCalledWith('/v2/role/director/chat/stream?workspace=C%3A%2FTemp%2FProduct', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: undefined,
       });
     });
 

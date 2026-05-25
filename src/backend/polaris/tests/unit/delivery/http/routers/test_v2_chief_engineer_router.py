@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -132,14 +133,15 @@ async def test_get_chief_engineer_diagnostics_reports_blueprint_store_health(cli
     assert data["llm"]["model"] == "Qwen3-Max"
     assert data["workspace"]["ok"] is True
     assert data["blueprints"]["status"] == "degraded"
+    assert data["blueprints"]["plan_status"] == "missing"
     assert data["blueprints"]["total"] == 2
     assert data["blueprints"]["loadable"] == 1
     assert data["blueprints"]["invalid_payloads"] == 1
-    assert data["blueprints"]["director_handoff_ready"] is True
+    assert data["blueprints"]["director_handoff_ready"] is False
     assert data["blueprints"]["latest_updated_at"] == "2026-05-23T08:00:00Z"
-    assert data["issues"] == ["blueprint_payload_invalid"]
+    assert data["issues"] == ["blueprint_task_plan_unavailable", "blueprint_payload_invalid"]
     assert data["can_handoff"] is False
-    assert data["handoff_blockers"] == ["blueprint_payload_invalid"]
+    assert data["handoff_blockers"] == ["blueprint_task_plan_unavailable", "blueprint_payload_invalid"]
 
 
 @pytest.mark.asyncio
@@ -285,9 +287,50 @@ async def test_get_chief_engineer_diagnostics_reports_no_handoff_when_blueprints
     assert data["ok"] is False
     assert data["can_handoff"] is False
     assert data["blueprints"]["status"] == "empty"
+    assert data["blueprints"]["plan_status"] == "missing"
     assert data["blueprints"]["director_handoff_ready"] is False
-    assert data["issues"] == ["blueprint_handoff_not_ready"]
-    assert data["handoff_blockers"] == ["blueprint_handoff_not_ready"]
+    assert data["issues"] == ["blueprint_task_plan_unavailable"]
+    assert data["handoff_blockers"] == ["blueprint_task_plan_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_blocks_stale_blueprint_without_pm_plan(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """A loadable blueprint is not handoff-ready without an auditable PM task plan."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    persistence = MagicMock()
+    persistence.list_all.return_value = ["bp-stale"]
+    persistence.load.return_value = {
+        "blueprint_id": "bp-stale",
+        "task_id": "PM-stale",
+        "summary": "Stale blueprint without PM plan",
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.resolve_logical_path",
+            return_value=str(tmp_path / "runtime" / "tasks" / "plan.json"),
+        ),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["blueprints"]["status"] == "ready"
+    assert data["blueprints"]["plan_status"] == "missing"
+    assert data["blueprints"]["loadable"] == 1
+    assert data["blueprints"]["director_handoff_ready"] is False
+    assert data["can_handoff"] is False
+    assert data["issues"] == ["blueprint_task_plan_unavailable"]
+    assert data["handoff_blockers"] == ["blueprint_task_plan_unavailable"]
 
 
 @pytest.mark.asyncio
@@ -328,6 +371,8 @@ async def test_get_chief_engineer_diagnostics_reports_complete_plan_coverage(
     data = response.json()
     assert data["ok"] is True
     assert data["blueprints"]["ok"] is True
+    assert data["blueprints"]["plan_status"] == "ready"
+    assert Path(data["blueprints"]["plan_path"]).resolve() == plan_path.resolve()
     assert data["blueprints"]["planned_tasks"] == 2
     assert data["blueprints"]["covered_tasks"] == 2
     assert data["blueprints"]["missing_task_ids"] == []
@@ -375,6 +420,7 @@ async def test_get_chief_engineer_diagnostics_blocks_partial_plan_coverage(
     data = response.json()
     assert data["ok"] is False
     assert data["blueprints"]["ok"] is False
+    assert data["blueprints"]["plan_status"] == "ready"
     assert data["blueprints"]["planned_tasks"] == 2
     assert data["blueprints"]["covered_tasks"] == 1
     assert data["blueprints"]["missing_task_ids"] == ["PM-missing"]
@@ -418,6 +464,55 @@ async def test_get_chief_engineer_llm_events_filters_role_and_task(client: Async
         role="chief_engineer",
         limit=5,
     )
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_llm_events_filters_requested_workspace(
+    client: AsyncClient,
+    tmp_path: Path,
+) -> None:
+    """Chief Engineer LLM events should be scoped to the requested workspace."""
+    requested_workspace = tmp_path / "requested"
+    other_workspace = tmp_path / "other"
+    requested_workspace.mkdir()
+    other_workspace.mkdir()
+
+    matching_event = MagicMock()
+    matching_event.event_type = "llm_call_start"
+    matching_event.metadata = {"workspace": str(requested_workspace)}
+    matching_event.to_dict.return_value = {
+        "event_type": "llm_call_start",
+        "run_id": "run-requested",
+        "role": "chief_engineer",
+    }
+
+    other_event = MagicMock()
+    other_event.event_type = "llm_call_start"
+    other_event.metadata = {"workspace": str(other_workspace)}
+    other_event.to_dict.return_value = {
+        "event_type": "llm_call_start",
+        "run_id": "run-other",
+        "role": "chief_engineer",
+    }
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [matching_event, other_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get(
+            "/v2/chief-engineer/llm-events",
+            params={"workspace": str(requested_workspace), "limit": "5"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert Path(data["workspace"]).resolve() == requested_workspace.resolve()
+    assert data["count"] == 1
+    assert data["events"][0]["run_id"] == "run-requested"
+    assert data["stats"]["call_start"] == 1
 
 
 @pytest.mark.asyncio
@@ -687,6 +782,124 @@ async def test_generate_chief_engineer_blueprint_prefers_active_workspace_path(
     command = generate.call_args.args[0]
     assert command.workspace == "C:/Temp/Product"
     assert response.json()["workspace"] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
+async def test_bulk_generate_chief_engineer_blueprints_uses_public_command_contract(
+    client: AsyncClient,
+) -> None:
+    """Bulk generation should cover multiple task handoffs through the CE command contract."""
+    persistence = MagicMock()
+
+    def load_payload(blueprint_id: str) -> dict[str, object]:
+        return {
+            "blueprint_id": blueprint_id,
+            "task_id": blueprint_id.removeprefix("ce_"),
+            "summary": f"Generated {blueprint_id}",
+        }
+
+    persistence.load.side_effect = load_payload
+
+    def generate_result(command: Any) -> TaskBlueprintResultV1:
+        task_id = str(command.task_id)
+        return TaskBlueprintResultV1(
+            ok=True,
+            task_id=task_id,
+            workspace=str(command.workspace),
+            status="generated",
+            blueprint_id=f"ce_{task_id}",
+            blueprint_path=f"runtime/blueprints/ce_{task_id}.json",
+            summary=f"Generated {task_id}",
+            recommendations=("Verify acceptance",),
+        )
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.generate_task_blueprint",
+            side_effect=generate_result,
+        ) as generate,
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+    ):
+        response = await client.post(
+            "/v2/chief-engineer/blueprints/bulk",
+            json={
+                "tasks": [
+                    {
+                        "task_id": "PM-1",
+                        "objective": "Build PM handoff",
+                        "context": {"target_files": ["src/pm.tsx"]},
+                    },
+                    {
+                        "task_id": "PM-2",
+                        "objective": "Build Director handoff",
+                        "run_id": "run-2",
+                    },
+                ]
+            },
+        )
+
+    assert response.status_code == 200
+    assert generate.call_count == 2
+    commands = [call.args[0] for call in generate.call_args_list]
+    assert [command.task_id for command in commands] == ["PM-1", "PM-2"]
+    assert [command.workspace for command in commands] == [".", "."]
+    assert commands[1].run_id == "run-2"
+    data = response.json()
+    assert data["ok"] is True
+    assert data["workspace"] == "."
+    assert data["total"] == 2
+    assert data["generated"] == 2
+    assert data["failed"] == 0
+    assert [item["blueprint_id"] for item in data["results"]] == ["ce_PM-1", "ce_PM-2"]
+    assert data["results"][0]["blueprint"]["summary"] == "Generated ce_PM-1"
+
+
+@pytest.mark.asyncio
+async def test_bulk_generate_chief_engineer_blueprints_rejects_empty_batch(client: AsyncClient) -> None:
+    """Bulk generation should fail before touching the CE command contract for empty batches."""
+    with patch("polaris.delivery.http.v2.chief_engineer.generate_task_blueprint") as generate:
+        response = await client.post("/v2/chief-engineer/blueprints/bulk", json={"tasks": []})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "EMPTY_BLUEPRINT_BATCH"
+    generate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bulk_generate_chief_engineer_blueprints_blocks_when_llm_not_ready(
+    client: AsyncClient,
+) -> None:
+    """Bulk generation should fail closed with the same CE LLM readiness gate."""
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.ensure_required_roles_ready",
+            side_effect=StructuredHTTPException(
+                status_code=409,
+                code="RUNTIME_ROLES_NOT_READY",
+                message="One or more required runtime roles are not ready",
+                details={"required_roles": ["chief_engineer"], "missing_roles": ["chief_engineer"]},
+            ),
+        ),
+        patch("polaris.delivery.http.v2.chief_engineer.generate_task_blueprint") as generate,
+    ):
+        response = await client.post(
+            "/v2/chief-engineer/blueprints/bulk",
+            json={
+                "tasks": [
+                    {
+                        "task_id": "PM-42",
+                        "objective": "Build Director task board",
+                    }
+                ]
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "RUNTIME_ROLES_NOT_READY"
+    generate.assert_not_called()
 
 
 @pytest.mark.asyncio

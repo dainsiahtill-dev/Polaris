@@ -359,6 +359,7 @@ describe.sequential('Director capability desktop integration', () => {
 
     const strip = await screen.findByTestId('director-readiness-diagnostics');
     expect(strip).toHaveTextContent('/v2/director/diagnostics');
+    expect(strip).toHaveTextContent('/v2/director/diagnostics?workspace=C%3A%2FTemp%2FProduct');
     expect(screen.getByTestId('director-readiness-state')).toHaveTextContent('ready');
     expect(strip).toHaveTextContent('ready 1/2');
     expect(strip).toHaveTextContent('idle 1/1');
@@ -593,6 +594,78 @@ describe.sequential('Director capability desktop integration', () => {
     );
   });
 
+  it('blocks workflow execution when Director blueprint artifacts are invalid', async () => {
+    serviceMocks.getDirectorDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_execute: false,
+        role: 'director',
+        generated_at: '2026-05-25T00:00:00Z',
+        workspace: 'C:/Temp/Product',
+        status: {
+          ok: true,
+          state: 'IDLE',
+          running: false,
+          source: 'workflow',
+          projection_source: 'director_merged',
+        },
+        tasks: {
+          ok: false,
+          source: 'workflow',
+          total: 1,
+          pending: 1,
+          claimed: 0,
+          running: 0,
+          blocked: 0,
+          failed: 0,
+          completed: 0,
+          cancelled: 0,
+          ready_to_execute: 0,
+          ready_task_ids: [],
+          blueprint_ready_task_ids: [],
+          missing_blueprint_task_ids: [],
+          invalid_blueprint_task_ids: ['director-stale-blueprint'],
+          blocked_task_ids: [],
+          running_task_ids: [],
+        },
+        workers: {
+          ok: true,
+          total: 1,
+          idle: 1,
+          busy: 0,
+          healthy: 1,
+          unhealthy: 0,
+          active_task_ids: [],
+        },
+        issues: ['director_ready_tasks_invalid_blueprints'],
+        execution_blockers: ['director_ready_tasks_invalid_blueprints'],
+      },
+    });
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[{ id: 'director-stale-blueprint', title: 'Stale CE blueprint', status: 'pending' } as PmTask]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('director-readiness-state')).toHaveTextContent('blocked'));
+    const headerExecute = screen.getByTestId('director-workspace-execute');
+    expect(headerExecute).toBeDisabled();
+    expect(headerExecute).toHaveAttribute(
+      'title',
+      'Director 交接诊断未通过：workflow 任务引用的 Chief Engineer 蓝图不可审计',
+    );
+    expect(screen.getByTestId('director-readiness-diagnostics')).toHaveTextContent('invalid BP 1');
+    expect(await screen.findByTestId('director-execution-guard')).toHaveTextContent(
+      'workflow 任务引用的 Chief Engineer 蓝图不可审计',
+    );
+  });
+
   it('opens the shared settings surface from the Director header control', () => {
     serviceMocks.getDirectorCapabilities.mockResolvedValueOnce({
       ok: true,
@@ -699,7 +772,7 @@ describe.sequential('Director capability desktop integration', () => {
 
     fireEvent.click(screen.getByTitle('调试'));
     fireEvent.click(screen.getByTestId('director-debug-cancel-task-failed'));
-    await waitFor(() => expect(serviceMocks.cancelDirectorTask).toHaveBeenCalledWith('task-failed'));
+    await waitFor(() => expect(serviceMocks.cancelDirectorTask).toHaveBeenCalledWith('task-failed', 'C:/Temp/Product'));
 
     fireEvent.click(screen.getByTestId('director-debug-inspect-task-failed'));
     expect(screen.getByTestId('director-task-detail')).toHaveTextContent('Fix failing contract');
@@ -742,7 +815,11 @@ describe.sequential('Director capability desktop integration', () => {
 
     await waitFor(() => expect(serviceMocks.getRoleKernelCacheStats).toHaveBeenCalledWith('director'));
     expect(serviceMocks.getRoleKernelTokenBudgetStats).toHaveBeenCalledWith('director');
-    expect(serviceMocks.getRoleKernelLLMEvents).toHaveBeenCalledWith('director', { role: 'director', limit: 5 });
+    expect(serviceMocks.getRoleKernelLLMEvents).toHaveBeenCalledWith('director', {
+      role: 'director',
+      limit: 5,
+      workspace: 'C:/Temp/Product',
+    });
 
     const strip = await screen.findByTestId('director-kernel-diagnostics-strip');
     expect(strip).toHaveTextContent('/v2/director/cache-stats');
@@ -750,6 +827,7 @@ describe.sequential('Director capability desktop integration', () => {
     expect(strip).toHaveTextContent('/v2/director/token-budget-stats');
     expect(strip).toHaveTextContent('total 11,500');
     expect(strip).toHaveTextContent('/v2/director/llm-events?role=director&limit=5');
+    expect(strip).toHaveTextContent('/v2/director/llm-events?role=director&limit=5&workspace=C%3A%2FTemp%2FProduct');
     expect(strip).toHaveTextContent('events 1');
     expect(strip).toHaveTextContent('last llm call start');
     expect(strip).toHaveTextContent('model gpt-test');
@@ -833,7 +911,7 @@ describe.sequential('Director capability desktop integration', () => {
     expect(screen.getByTestId('director-task-detail')).toHaveTextContent('Worker: Backend Worker 1');
     await waitFor(() => expect(serviceMocks.getDirectorTaskKernelLLMEvents).toHaveBeenCalledWith(
       'director-task-1',
-      { limit: 25 },
+      { limit: 25, workspace: 'C:/Temp/Product' },
     ));
     const workerTaskLLMPanel = await screen.findByTestId('director-task-llm-events');
     await waitFor(() => expect(workerTaskLLMPanel).toHaveTextContent('该任务暂无后端 LLM 事件记录。'));
@@ -902,7 +980,7 @@ describe.sequential('Director capability desktop integration', () => {
 
     await waitFor(() => expect(serviceMocks.getDirectorTaskKernelLLMEvents).toHaveBeenCalledWith(
       'director-task-llm',
-      { limit: 25 },
+      { limit: 25, workspace: 'C:/Temp/Product' },
     ));
     await waitFor(() => expect(serviceMocks.getDirectorTask).toHaveBeenCalledWith('director-task-llm', 'C:/Temp/Product'));
     const backendDetail = await view.findByTestId('director-task-backend-detail');
@@ -950,7 +1028,7 @@ describe.sequential('Director capability desktop integration', () => {
 
     fireEvent.click(view.getByTestId('director-task-cancel-selected'));
 
-    await waitFor(() => expect(serviceMocks.cancelDirectorTask).toHaveBeenCalledWith('director-task-cancel'));
+    await waitFor(() => expect(serviceMocks.cancelDirectorTask).toHaveBeenCalledWith('director-task-cancel', 'C:/Temp/Product'));
     const cancelEvidence = view.getByTestId('director-task-cancel-evidence');
     expect(cancelEvidence).toHaveTextContent('/v2/director/tasks/director-task-cancel/cancel');
     await waitFor(() => expect(cancelEvidence).toHaveTextContent('取消请求已提交: director-task-cancel (CANCELLED)'));
@@ -1013,7 +1091,7 @@ describe.sequential('Director capability desktop integration', () => {
         acceptance: ['created task can be audited'],
         guardrails: { source: 'director_desktop_task_create' },
       }),
-    })));
+    }), 'C:/Temp/Product'));
     expect(await screen.findByTestId('director-task-create-evidence')).toHaveTextContent('已创建 Director 任务: director-created-1');
     await waitFor(() => {
       expect(within(screen.getByTestId('director-task-board')).getByText('Create backend task')).toBeInTheDocument();
@@ -1065,9 +1143,10 @@ describe.sequential('Director capability desktop integration', () => {
       task_filter: 'director-task-1',
       execution_mode: 'parallel',
     }));
-    await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-1'));
+    await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-1', 'C:/Temp/Product'));
     const runEvidence = await screen.findByTestId('director-run-evidence');
     expect(runEvidence).toHaveTextContent('/v2/director/runs/director-run-1');
+    expect(runEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(runEvidence).toHaveTextContent('queued · queued=1');
     fireEvent.click(screen.getByTitle('终端'));
     expect(await screen.findByText(/Director run 已创建: director-run-1 queued=1/)).toBeInTheDocument();
@@ -1105,10 +1184,23 @@ describe.sequential('Director capability desktop integration', () => {
       execution_mode: 'parallel',
     }));
     expect(onToggleDirector).not.toHaveBeenCalled();
-    await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-queue-run'));
+    await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-queue-run', 'C:/Temp/Product'));
     const runEvidence = await screen.findByTestId('director-run-evidence');
     expect(runEvidence).toHaveTextContent('/v2/director/runs/director-queue-run');
+    expect(runEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(runEvidence).toHaveTextContent('queued · queued=2');
+    expect(screen.getByTestId('director-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+
+    serviceMocks.getDirectorRun.mockResolvedValueOnce({
+      ok: true,
+      data: { run_id: 'director-queue-run', status: 'RUNNING', workspace: 'C:/Temp/Product', tasks_queued: 2, message: 'Status: RUNNING' },
+    });
+
+    fireEvent.click(screen.getByTestId('director-run-refresh'));
+
+    await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledTimes(2));
+    expect(serviceMocks.getDirectorRun).toHaveBeenLastCalledWith('director-queue-run', 'C:/Temp/Product');
+    await waitFor(() => expect(runEvidence).toHaveTextContent('RUNNING · queued=2'));
   });
 
   it('cancels the visible Director orchestration run from the evidence strip', async () => {
@@ -1137,16 +1229,17 @@ describe.sequential('Director capability desktop integration', () => {
 
     fireEvent.click(screen.getByTestId('director-workspace-execute'));
 
-    await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-queue-run'));
+    await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-queue-run', 'C:/Temp/Product'));
     fireEvent.click(await screen.findByTestId('director-run-cancel'));
 
-    await waitFor(() => expect(serviceMocks.cancelDirectorRun).toHaveBeenCalledWith('director-queue-run'));
+    await waitFor(() => expect(serviceMocks.cancelDirectorRun).toHaveBeenCalledWith('director-queue-run', 'C:/Temp/Product'));
     const runEvidence = await screen.findByTestId('director-run-evidence');
     expect(runEvidence).toHaveTextContent('/v2/director/runs/director-queue-run');
     expect(runEvidence).toHaveTextContent('CANCELLED · queued=2');
     expect(screen.getByTestId('director-run-cancel-result')).toHaveTextContent(
       '/v2/director/runs/director-queue-run/cancel',
     );
+    expect(screen.getByTestId('director-run-cancel-result')).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
     expect(screen.getByTestId('director-run-cancel-result')).toHaveTextContent('取消运行已提交: CANCELLED');
   });
 
@@ -1186,6 +1279,7 @@ describe.sequential('Director capability desktop integration', () => {
     expect(serviceMocks.runDirector).not.toHaveBeenCalled();
     const statusEvidence = await screen.findByTestId('director-toggle-status-evidence');
     expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto');
+    expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct');
     expect(statusEvidence).toHaveTextContent('idle');
     expect(statusEvidence).toHaveTextContent('pid=none');
     expect(statusEvidence).toHaveTextContent('mode=desktop_service');
@@ -1308,6 +1402,8 @@ describe.sequential('Director capability desktop integration', () => {
 
   it('blocks standalone Director execution when a start gate reason is present', async () => {
     const onToggleDirector = vi.fn();
+    const blockedReason =
+      'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。';
     const directorTask = {
       id: 'director-gated-task',
       title: 'Implement gated task',
@@ -1321,17 +1417,14 @@ describe.sequential('Director capability desktop integration', () => {
         onBackToMain={vi.fn()}
         tasks={[directorTask]}
         directorRunning={false}
-        startBlockedReason="LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。"
+        startBlockedReason={blockedReason}
         onToggleDirector={onToggleDirector}
       />,
     );
 
     const headerExecute = screen.getByTestId('director-workspace-execute');
     expect(headerExecute).toBeDisabled();
-    expect(headerExecute).toHaveAttribute(
-      'title',
-      'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
-    );
+    expect(headerExecute).toHaveAttribute('title', blockedReason);
 
     const guard = await screen.findByTestId('director-execution-guard');
     expect(guard).toHaveTextContent('LLM 就绪检查未通过');
@@ -1345,10 +1438,7 @@ describe.sequential('Director capability desktop integration', () => {
     fireEvent.click(screen.getByTestId('director-task-item'));
     const selectedExecute = await screen.findByTestId('director-task-execute-selected');
     expect(selectedExecute).toBeDisabled();
-    expect(selectedExecute).toHaveAttribute(
-      'title',
-      'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
-    );
+    expect(selectedExecute).toHaveAttribute('title', blockedReason);
   });
 
   it('disables Director task execution controls when embedded in Factory mode', async () => {

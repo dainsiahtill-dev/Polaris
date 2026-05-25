@@ -65,6 +65,7 @@ interface DirectorTaskPanelProps {
   taskBackendDetail?: DirectorTaskBackendDetailState;
   taskLLMEvents?: DirectorTaskLLMEventsState;
   executionDisabledReason?: string;
+  workspace?: string;
 }
 
 export interface DirectorTaskBackendDetailState {
@@ -269,6 +270,19 @@ function formatEventTimestamp(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString();
 }
 
+function evidenceEndpoint(endpoint: string, workspace = ''): string {
+  const value = String(workspace || '').trim();
+  if (!value) {
+    return endpoint;
+  }
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
+}
+
+function directorTaskEndpoint(taskId: string, suffix = '', workspace = '', query = ''): string {
+  return evidenceEndpoint(`/v2/director/tasks/${encodeURIComponent(taskId)}${suffix}${query}`, workspace);
+}
+
 function DetailSection({ icon, title, items, emptyText }: {
   icon: React.ReactNode;
   title: string;
@@ -321,6 +335,7 @@ export function DirectorTaskPanel({
   taskBackendDetail,
   taskLLMEvents,
   executionDisabledReason,
+  workspace = '',
 }: DirectorTaskPanelProps) {
   const [activeFilter, setActiveFilter] = useState<TaskBoardFilter>('all');
   const [createSubject, setCreateSubject] = useState('');
@@ -384,6 +399,16 @@ export function DirectorTaskPanel({
   const normalizedCreateDescription = createDescription.trim() || normalizedCreateSubject;
   const canCreateTask = Boolean(onTaskCreate && normalizedCreateSubject && !isTaskCreating);
   const executionBlocked = Boolean(executionDisabledReason);
+  const taskCreateEndpoint = evidenceEndpoint('/v2/director/tasks', workspace);
+  const selectedTaskCancelEndpoint = selectedTask
+    ? directorTaskEndpoint(selectedTask.id, '/cancel', workspace)
+    : evidenceEndpoint('/v2/director/tasks/{task_id}/cancel', workspace);
+  const selectedTaskDetailEndpoint = selectedTask
+    ? directorTaskEndpoint(selectedTask.id, '', workspace)
+    : evidenceEndpoint('/v2/director/tasks/{task_id}', workspace);
+  const selectedTaskLLMEndpoint = selectedTask
+    ? directorTaskEndpoint(selectedTask.id, '/llm-events', workspace, '?limit=25')
+    : evidenceEndpoint('/v2/director/tasks/{task_id}/llm-events?limit=25', workspace);
 
   const submitCreateTask = () => {
     if (!canCreateTask) {
@@ -546,7 +571,7 @@ export function DirectorTaskPanel({
               创建 Director 任务
             </span>
             <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
-              POST /v2/director/tasks
+              POST {taskCreateEndpoint}
             </span>
           </div>
           <div className="grid gap-2">
@@ -617,6 +642,8 @@ export function DirectorTaskPanel({
               )}
               data-testid="director-task-create-evidence"
             >
+              <span className="font-mono text-[10px]">{taskCreateEndpoint}</span>
+              <span className="mx-1.5 text-emerald-200/50">·</span>
               {isTaskCreating ? '正在提交 Director 任务...' : taskCreateError || taskCreateMessage}
             </div>
           ) : null}
@@ -840,7 +867,7 @@ export function DirectorTaskPanel({
                       取消端点
                     </span>
                     <span className="font-mono text-[10px] text-red-100/80">
-                      /v2/director/tasks/{selectedTask.id}/cancel
+                      {selectedTaskCancelEndpoint}
                     </span>
                   </div>
                   {isTaskCancelling ? (
@@ -861,7 +888,7 @@ export function DirectorTaskPanel({
                     <span>后端任务详情</span>
                   </div>
                   <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-                    /v2/director/tasks/{selectedTask.id}
+                    {selectedTaskDetailEndpoint}
                   </span>
                 </div>
                 {hasSelectedBackendDetail && taskBackendDetail?.loading ? (
@@ -890,7 +917,7 @@ export function DirectorTaskPanel({
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed border-white/10 px-2 py-3 text-[11px] text-slate-500">
-                    选择任务后读取 `/v2/director/tasks/{selectedTask.id}` 的权威快照。
+                    选择任务后读取 `{selectedTaskDetailEndpoint}` 的权威快照。
                   </div>
                 )}
               </section>
@@ -929,7 +956,7 @@ export function DirectorTaskPanel({
                     <span>LLM 调用证据</span>
                   </div>
                   <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-                    /v2/director/tasks/{selectedTask.id}/llm-events
+                    {selectedTaskLLMEndpoint}
                   </span>
                 </div>
                 <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">

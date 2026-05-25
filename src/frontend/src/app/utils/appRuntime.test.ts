@@ -7,6 +7,7 @@ import {
   isArtifactProcessChannel,
   isExecutionProcessChannel,
   isProcessStreamChannel,
+  readEngineRoleDetail,
 } from '@/app/utils/appRuntime';
 
 function createLogEntry(
@@ -51,5 +52,17 @@ describe('appRuntime execution stream filtering', () => {
     ];
 
     expect(getLatestExecutionActivityLog(logs)?.id).toBe('exec');
+  });
+
+  it('reads engine role details across role naming variants', () => {
+    const roles = {
+      PM: { detail: 'PM iteration failed' },
+      ChiefEngineer: { detail: 'Blueprint generation skipped' },
+      director: { detail: 'Director dispatch skipped' },
+    };
+
+    expect(readEngineRoleDetail(roles, ['Chief Engineer', 'chief_engineer'])).toBe('Blueprint generation skipped');
+    expect(readEngineRoleDetail(roles, ['Director'])).toBe('Director dispatch skipped');
+    expect(readEngineRoleDetail(roles, ['QA'])).toBe('');
   });
 });

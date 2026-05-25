@@ -234,6 +234,7 @@ class DocumentVersionInfo(BaseModel):
 
 
 class DocumentDiffResponse(BaseModel):
+    model_config = {"extra": "allow"}
     path: str
     old_version: str
     new_version: str
@@ -271,6 +272,7 @@ class DocumentDetailResponse(BaseModel):
 
 
 class DocumentVersionsResponse(BaseModel):
+    model_config = {"extra": "allow"}
     path: str
     versions: list[DocumentVersionInfo]
 

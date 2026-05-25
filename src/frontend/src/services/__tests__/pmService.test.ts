@@ -91,6 +91,15 @@ describe('pmService', () => {
             workspace: 'C:/Temp/Product',
             docs_present: true,
           },
+          planning_input: {
+            ok: true,
+            status: 'ready',
+            source: 'workspace_requirements',
+            path: 'C:/Temp/Product/docs/product/requirements.md',
+            chars: 120,
+            bytes: 128,
+            checked_paths: ['C:/Temp/Product/docs/product/requirements.md'],
+          },
         },
       });
 
@@ -100,6 +109,7 @@ describe('pmService', () => {
       expect(result.ok).toBe(true);
       expect(result.data?.ok).toBe(true);
       expect(result.data?.workspace.docs_present).toBe(true);
+      expect(result.data?.planning_input.ok).toBe(true);
     });
 
     it('should pass explicit workspace to PM diagnostics', async () => {
@@ -287,10 +297,11 @@ describe('pmService', () => {
         runId: 'run 1',
         taskId: 'task/1',
         limit: 50,
+        workspace: 'C:/Temp/Product',
       });
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/pm/llm-events?run_id=run+1&task_id=task%2F1&limit=50',
+        '/v2/pm/llm-events?run_id=run+1&task_id=task%2F1&limit=50&workspace=C%3A%2FTemp%2FProduct',
         'Failed to load pm LLM events',
       );
     });
@@ -304,10 +315,11 @@ describe('pmService', () => {
       await pmService.getRoleKernelLLMEvents('director', {
         role: 'director',
         limit: 5,
+        workspace: 'C:/Temp/Product',
       });
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/director/llm-events?role=director&limit=5',
+        '/v2/director/llm-events?role=director&limit=5&workspace=C%3A%2FTemp%2FProduct',
         'Failed to load director LLM events',
       );
     });
@@ -354,10 +366,11 @@ describe('pmService', () => {
       await pmService.getDirectorTaskKernelLLMEvents('task/1', {
         runId: 'run 1',
         limit: 25,
+        workspace: 'C:/Temp/Product',
       });
 
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/v2/director/tasks/task%2F1/llm-events?run_id=run+1&limit=25',
+        '/v2/director/tasks/task%2F1/llm-events?run_id=run+1&limit=25&workspace=C%3A%2FTemp%2FProduct',
         'Failed to load Director task LLM events',
       );
     });
@@ -461,6 +474,20 @@ describe('pmService', () => {
       );
       expect(result.ok).toBe(true);
       expect(result.data?.task_id).toBe('task/1');
+    });
+
+    it('passes workspace when cancelling a Director task', async () => {
+      mockApiPostEmpty.mockResolvedValueOnce({
+        ok: true,
+        data: { ok: true, task_id: 'task/1', workspace: 'C:/Temp/Product' },
+      });
+
+      await pmService.cancelDirectorTask('task/1', 'C:/Temp/Product');
+
+      expect(mockApiPostEmpty).toHaveBeenCalledWith(
+        '/v2/director/tasks/task%2F1/cancel?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to cancel Director task',
+      );
     });
   });
 
@@ -661,6 +688,24 @@ describe('pmService', () => {
       expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/start?resume=true', 'Failed to start PM');
     });
 
+    it('should include explicit workspace when starting or resuming', async () => {
+      mockApiPostEmpty.mockResolvedValue({ ok: true });
+
+      await pmService.startPm(false, 'C:/Temp/Product');
+      await pmService.startPm(true, 'C:/Temp/Product');
+
+      expect(mockApiPostEmpty).toHaveBeenNthCalledWith(
+        1,
+        '/v2/pm/start?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to start PM',
+      );
+      expect(mockApiPostEmpty).toHaveBeenNthCalledWith(
+        2,
+        '/v2/pm/start?resume=true&workspace=C%3A%2FTemp%2FProduct',
+        'Failed to start PM',
+      );
+    });
+
     it('should return error on API failure', async () => {
       mockApiPostEmpty.mockResolvedValueOnce({
         ok: false,
@@ -682,6 +727,17 @@ describe('pmService', () => {
 
       expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/stop', 'Failed to stop PM');
       expect(result.ok).toBe(true);
+    });
+
+    it('should pass explicit workspace to PM stop', async () => {
+      mockApiPostEmpty.mockResolvedValueOnce({ ok: true });
+
+      await pmService.stopPm('C:/Temp/Product');
+
+      expect(mockApiPostEmpty).toHaveBeenCalledWith(
+        '/v2/pm/stop?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to stop PM',
+      );
     });
 
     it('should return error on API failure', async () => {
@@ -706,6 +762,17 @@ describe('pmService', () => {
       expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/pm/run_once', 'PM Run Once failed');
       expect(result.ok).toBe(true);
     });
+
+    it('should pass explicit workspace to PM run_once', async () => {
+      mockApiPostEmpty.mockResolvedValueOnce({ ok: true });
+
+      await pmService.runPmOnce('C:/Temp/Product');
+
+      expect(mockApiPostEmpty).toHaveBeenCalledWith(
+        '/v2/pm/run_once?workspace=C%3A%2FTemp%2FProduct',
+        'PM Run Once failed',
+      );
+    });
   });
 
   describe('startDirector', () => {
@@ -717,6 +784,17 @@ describe('pmService', () => {
       expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/start', 'Failed to start Director');
       expect(result.ok).toBe(true);
     });
+
+    it('should pass explicit workspace to Director start', async () => {
+      mockApiPostEmpty.mockResolvedValueOnce({ ok: true });
+
+      await pmService.startDirector('C:/Temp/Product');
+
+      expect(mockApiPostEmpty).toHaveBeenCalledWith(
+        '/v2/director/start?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to start Director',
+      );
+    });
   });
 
   describe('stopDirector', () => {
@@ -727,6 +805,17 @@ describe('pmService', () => {
 
       expect(mockApiPostEmpty).toHaveBeenCalledWith('/v2/director/stop', 'Failed to stop Director');
       expect(result.ok).toBe(true);
+    });
+
+    it('should pass explicit workspace to Director stop', async () => {
+      mockApiPostEmpty.mockResolvedValueOnce({ ok: true });
+
+      await pmService.stopDirector('C:/Temp/Product');
+
+      expect(mockApiPostEmpty).toHaveBeenCalledWith(
+        '/v2/director/stop?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to stop Director',
+      );
     });
   });
 
@@ -845,6 +934,53 @@ describe('pmService', () => {
         'Failed to cancel Director run',
       );
     });
+
+    it('passes explicit workspace to PM and Director run evidence routes', async () => {
+      mockApiGet
+        .mockResolvedValueOnce({
+          ok: true,
+          data: { run_id: 'pm/run 1', status: 'RUNNING', workspace: 'C:/Temp/Product', stage: 'pm', message: 'Status: RUNNING' },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: { run_id: 'director/run 1', status: 'RUNNING', workspace: 'C:/Temp/Product', tasks_queued: 1, message: 'Status: RUNNING' },
+        });
+      mockApiPostEmpty
+        .mockResolvedValueOnce({
+          ok: true,
+          data: { run_id: 'pm/run 1', status: 'CANCELLED', workspace: 'C:/Temp/Product', stage: 'pm', message: 'Status: CANCELLED' },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: { run_id: 'director/run 1', status: 'CANCELLED', workspace: 'C:/Temp/Product', tasks_queued: 1, message: 'Status: CANCELLED' },
+        });
+
+      await pmService.getPmRun('pm/run 1', 'C:/Temp/Product');
+      await pmService.cancelPmRun('pm/run 1', 'C:/Temp/Product');
+      await pmService.getDirectorRun('director/run 1', 'C:/Temp/Product');
+      await pmService.cancelDirectorRun('director/run 1', 'C:/Temp/Product');
+
+      expect(mockApiGet).toHaveBeenNthCalledWith(
+        1,
+        '/v2/pm/runs/pm%2Frun%201?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load PM run',
+      );
+      expect(mockApiPostEmpty).toHaveBeenNthCalledWith(
+        1,
+        '/v2/pm/runs/pm%2Frun%201/cancel?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to cancel PM run',
+      );
+      expect(mockApiGet).toHaveBeenNthCalledWith(
+        2,
+        '/v2/director/runs/director%2Frun%201?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to load Director run',
+      );
+      expect(mockApiPostEmpty).toHaveBeenNthCalledWith(
+        2,
+        '/v2/director/runs/director%2Frun%201/cancel?workspace=C%3A%2FTemp%2FProduct',
+        'Failed to cancel Director run',
+      );
+    });
   });
 
   describe('getDirectorCapabilities', () => {
@@ -895,6 +1031,9 @@ describe('pmService', () => {
             cancelled: 0,
             ready_to_execute: 1,
             ready_task_ids: ['director-task-1'],
+            blueprint_ready_task_ids: ['director-task-1'],
+            missing_blueprint_task_ids: [],
+            invalid_blueprint_task_ids: [],
             blocked_task_ids: [],
             running_task_ids: [],
           },
@@ -919,6 +1058,7 @@ describe('pmService', () => {
       );
       expect(result.ok).toBe(true);
       expect(result.data?.tasks.ready_to_execute).toBe(1);
+      expect(result.data?.tasks.invalid_blueprint_task_ids).toEqual([]);
     });
 
     it('should pass explicit workspace to Director diagnostics', async () => {
@@ -1592,6 +1732,32 @@ describe('pmService', () => {
       expect(mockApiPost).toHaveBeenCalledWith('/v2/director/tasks', payload, 'Failed to create Director task');
       expect(result.ok).toBe(true);
       expect(result.data?.id).toBe('director-task-1');
+    });
+
+    it('should call apiPost with explicit workspace when creating a Director task', async () => {
+      const payload = {
+        subject: 'New Task',
+        description: 'Task description',
+        priority: 'HIGH' as const,
+        timeout_seconds: 300,
+        metadata: {
+          pm_task_id: 'pm-task-1',
+        },
+      };
+
+      mockApiPost.mockResolvedValueOnce({
+        ok: true,
+        data: { id: 'director-task-1', ...payload },
+      });
+
+      const result = await pmService.createDirectorTask(payload, 'C:/Temp/Product');
+
+      expect(mockApiPost).toHaveBeenCalledWith(
+        '/v2/director/tasks?workspace=C%3A%2FTemp%2FProduct',
+        payload,
+        'Failed to create Director task',
+      );
+      expect(result.ok).toBe(true);
     });
 
     it('should return error on API failure', async () => {

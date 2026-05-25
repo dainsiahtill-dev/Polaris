@@ -11,6 +11,7 @@ import {
   ChevronRight,
   BarChart3,
   Brain,
+  ClipboardList,
   Coins,
   Trash2,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ interface DiagnosticsStatus {
   lancedb: PmStartupDiagnosticsResponse['lancedb'] | null;
   llm: PmStartupDiagnosticsResponse['llm'] | null;
   workspace: PmStartupDiagnosticsResponse['workspace'] | null;
+  planningInput: PmStartupDiagnosticsResponse['planning_input'] | null;
 }
 
 interface KernelDiagnosticsStatus {
@@ -66,6 +68,13 @@ interface LlmRoleEvidenceRow {
   issue: string;
   testedModel: string;
   providerId: string;
+}
+
+function evidenceEndpoint(endpoint: string, workspace = ''): string {
+  const value = String(workspace || '').trim();
+  if (!value) return endpoint;
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -112,6 +121,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
     lancedb: null,
     llm: null,
     workspace: null,
+    planningInput: null,
   });
   const [kernelStatus, setKernelStatus] = useState<KernelDiagnosticsStatus>({
     cache: null,
@@ -144,7 +154,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
       const [cacheResult, tokenResult, llmResult] = await Promise.all([
         getRoleKernelCacheStats('pm'),
         getRoleKernelTokenBudgetStats('pm'),
-        getRoleKernelLLMEvents('pm', { limit: 5 }),
+        getRoleKernelLLMEvents('pm', { limit: 5, workspace }),
       ]);
 
       setKernelStatus({
@@ -170,7 +180,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
     }
 
     setKernelError(errors.join('；'));
-  }, []);
+  }, [workspace]);
 
   const loadManagementDiagnostics = useCallback(async () => {
     setManagementLoading(true);
@@ -232,6 +242,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
           lancedb: result.data.lancedb,
           llm: result.data.llm,
           workspace: result.data.workspace,
+          planningInput: result.data.planning_input || null,
         });
       } else {
         setError(result.error || 'PM 启动诊断读取失败');
@@ -299,7 +310,8 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
     status.lancedb?.ok &&
     status.llm?.state === 'ready' &&
     status.workspace?.status === 'ok' &&
-    status.workspace.docs_present;
+    status.workspace.docs_present &&
+    status.planningInput?.ok;
   const roleEvidenceRows = llmRoleEvidenceRows(status.llm);
   const kernelDiagnosticStatus: 'success' | 'warning' | 'error' = kernelError
     ? 'error'
@@ -502,6 +514,66 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
               </DiagnosticItem>
 
               <DiagnosticItem
+                title="规划输入"
+                icon={<ClipboardList className="w-4 h-4" />}
+                status={status.planningInput?.ok ? 'success' : 'error'}
+                expanded={expanded.includes('planning-input')}
+                onToggle={() => toggleExpanded('planning-input', expanded, setExpanded)}
+              >
+                {status.planningInput?.ok ? (
+                  <div className="space-y-2" data-testid="pm-planning-input-diagnostics">
+                    <p className="text-sm text-slate-300">PM 已找到可规划输入</p>
+                    <div className="grid gap-2 rounded-md border border-emerald-500/15 bg-emerald-500/10 p-3 text-xs text-emerald-50">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-emerald-200/80">来源</span>
+                        <span className="font-mono">{formatPlanningInputSource(status.planningInput.source)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-emerald-200/80">字符/字节</span>
+                        <span className="font-mono">
+                          {formatNumber(status.planningInput.chars)} / {formatNumber(status.planningInput.bytes)}
+                        </span>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-emerald-200/80">路径</div>
+                        <div className="truncate font-mono text-[11px]" title={status.planningInput.path || ''}>
+                          {status.planningInput.path || '-'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3" data-testid="pm-planning-input-diagnostics">
+                    <p className="text-sm text-red-300">
+                      {status.planningInput?.status === 'empty'
+                        ? '规划输入文件为空，PM 启动已被阻断'
+                        : status.planningInput?.status === 'unreadable'
+                          ? '规划输入无法读取，PM 启动已被阻断'
+                          : '未找到需求或计划输入，PM 启动已被阻断'}
+                    </p>
+                    <div className="text-sm text-slate-400 space-y-1">
+                      <p>解决方案:</p>
+                      <ul className="list-disc list-inside ml-2 space-y-1">
+                        <li>通过政事堂生成 docs/product/requirements.md</li>
+                        <li>确认 runtime/contracts/requirements.md 或 plan.md 已同步</li>
+                        <li>在 PM Workbench 中输入明确 directive 后再运行</li>
+                      </ul>
+                    </div>
+                    {(status.planningInput?.checked_paths || []).length > 0 && (
+                      <div className="space-y-1 rounded-md border border-white/10 bg-slate-950/50 p-2 text-[11px] text-slate-400">
+                        {(status.planningInput?.checked_paths || []).slice(0, 5).map((path) => (
+                          <div key={path} className="truncate font-mono" title={path}>{path}</div>
+                        ))}
+                      </div>
+                    )}
+                    {status.planningInput?.error ? (
+                      <p className="text-xs text-red-200">错误: {status.planningInput.error}</p>
+                    ) : null}
+                  </div>
+                )}
+              </DiagnosticItem>
+
+              <DiagnosticItem
                 title="PM 管理状态"
                 icon={<Settings className="w-4 h-4" />}
                 status={managementDiagnosticStatus}
@@ -528,7 +600,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                       <div className="grid gap-3 sm:grid-cols-2">
                         <ManagementMetricBlock
                           label="状态"
-                          endpoint="/pm/v2/pm/status"
+                          endpoint={evidenceEndpoint('/pm/v2/pm/status', workspace)}
                           rows={[
                             ['Initialized', String(managementStatus.status?.initialized ?? false)],
                             ['Workspace', managementStatus.status?.workspace || '-'],
@@ -538,7 +610,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                         />
                         <ManagementMetricBlock
                           label="健康"
-                          endpoint="/pm/v2/pm/health"
+                          endpoint={evidenceEndpoint('/pm/v2/pm/health', workspace)}
                           rows={[
                             ['Overall', managementStatus.health?.overall || (managementStatus.status?.initialized ? 'unavailable' : 'not initialized')],
                             ['Components', String(Object.keys(managementStatus.health?.components || {}).length)],
@@ -575,7 +647,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                           <div className="mb-2 flex items-center justify-between gap-2 text-xs text-amber-100">
                             <span className="font-medium">PM 管理尚未初始化</span>
                             <span className="rounded border border-amber-500/20 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[10px]">
-                              POST /pm/v2/pm/init
+                              POST {evidenceEndpoint('/pm/v2/pm/init', workspace)}
                             </span>
                           </div>
                           <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_auto]">
@@ -674,7 +746,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                       <KernelMetricBlock
                         icon={<Brain className="h-3.5 w-3.5 text-indigo-300" />}
                         label="LLM 事件"
-                        endpoint="/v2/pm/llm-events?limit=5"
+                        endpoint={evidenceEndpoint('/v2/pm/llm-events?limit=5', workspace)}
                         testId="pm-llm-events-diagnostics"
                         rows={[
                           ['事件数', formatNumber(kernelStatus.llmEvents?.count ?? kernelStatus.llmEvents?.events?.length)],
@@ -739,6 +811,18 @@ function formatNumber(value: unknown): string {
 
 function formatPercent(value: unknown): string {
   return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-';
+}
+
+function formatPlanningInputSource(source: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    runtime_requirements: 'runtime requirements',
+    workspace_requirements: 'workspace requirements',
+    legacy_requirements: 'legacy requirements',
+    runtime_plan: 'runtime plan',
+    workspace_plan: 'workspace plan',
+  };
+  const token = String(source || '').trim();
+  return labels[token] || token || '-';
 }
 
 function readManagementString(record: Record<string, unknown> | null | undefined, keys: string[]): string {

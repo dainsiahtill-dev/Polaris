@@ -11,8 +11,10 @@ Phase 6 Update: 新增统一编排兼容端点，内部转发到 UnifiedOrchestr
 from __future__ import annotations
 
 import warnings
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -30,11 +32,14 @@ from polaris.cells.roles.kernel.public.service import (
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.delivery.http.dependencies import get_pm_service, require_auth
 from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
+from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
 from polaris.delivery.http.workspace import (
     active_workspace_value,
     requested_or_active_workspace,
     settings_with_workspace_override,
+    workspace_values_match,
 )
+from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -134,6 +139,19 @@ class PMDiagnosticsWorkspaceStatus(BaseModel):
     error: str | None = None
 
 
+class PMDiagnosticsPlanningInputStatus(BaseModel):
+    """Planning-input evidence used by PM startup diagnostics."""
+
+    ok: bool
+    status: str
+    source: str | None = None
+    path: str | None = None
+    bytes: int = 0
+    chars: int = 0
+    checked_paths: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class PMDiagnosticsResponse(BaseModel):
     """Side-effect-free PM startup readiness snapshot."""
 
@@ -143,6 +161,7 @@ class PMDiagnosticsResponse(BaseModel):
     lancedb: PMDiagnosticsLanceDBStatus
     llm: PMDiagnosticsLLMStatus
     workspace: PMDiagnosticsWorkspaceStatus
+    planning_input: PMDiagnosticsPlanningInputStatus
     issues: list[str] = Field(default_factory=list)
     startup_blockers: list[str] = Field(default_factory=list)
 
@@ -155,6 +174,16 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _role_payload(payload: dict[str, Any], role: str) -> dict[str, Any]:
+    roles_value = payload.get("roles")
+    roles = roles_value if isinstance(roles_value, dict) else {}
+    target = str(role or "").strip().lower()
+    for key, value in roles.items():
+        if str(key or "").strip().lower() == target and isinstance(value, dict):
+            return value
+    return {}
 
 
 def _build_lancedb_diagnostics() -> PMDiagnosticsLanceDBStatus:
@@ -193,12 +222,26 @@ def _build_llm_diagnostics(settings: Any) -> PMDiagnosticsLLMStatus:
     blocked_roles = _string_list(payload.get("blocked_roles")) if isinstance(payload, dict) else []
     unsupported_roles = _string_list(payload.get("unsupported_roles")) if isinstance(payload, dict) else []
     required_ready_roles = _string_list(payload.get("required_ready_roles")) if isinstance(payload, dict) else []
-    ok = state == "ready" and not blocked_roles and not unsupported_roles
+    if "pm" not in required_ready_roles:
+        required_ready_roles.append("pm")
+
+    role_info = _role_payload(payload, "pm") if isinstance(payload, dict) else {}
+    if role_info:
+        role_ready = bool(role_info.get("ready"))
+        runtime_supported = bool(role_info.get("runtime_supported", True))
+        pm_blocked = [] if role_ready else ["pm"]
+        pm_unsupported = [] if runtime_supported else ["pm"]
+        ok = role_ready and runtime_supported
+    else:
+        pm_blocked = ["pm"] if "pm" in blocked_roles else []
+        pm_unsupported = ["pm"] if "pm" in unsupported_roles else []
+        ok = state == "ready" or (not pm_blocked and not pm_unsupported)
+
     return PMDiagnosticsLLMStatus(
         ok=ok,
-        state=state,
-        blocked_roles=blocked_roles,
-        unsupported_roles=unsupported_roles,
+        state="ready" if ok else "blocked",
+        blocked_roles=pm_blocked,
+        unsupported_roles=pm_unsupported,
         required_ready_roles=required_ready_roles,
         details=payload if isinstance(payload, dict) else {},
     )
@@ -237,10 +280,130 @@ def _build_workspace_diagnostics(
     )
 
 
+_PM_PLANNING_INPUT_CANDIDATES: tuple[tuple[str, str], ...] = (
+    ("runtime_requirements", "runtime/contracts/requirements.md"),
+    ("workspace_requirements", "workspace/docs/product/requirements.md"),
+    ("legacy_requirements", "workspace/docs/10_requirements.md"),
+    ("runtime_plan", "runtime/contracts/plan.md"),
+    ("workspace_plan", "workspace/docs/product/plan.md"),
+)
+
+
+def _planning_input_candidate_paths(
+    workspace: str,
+    cache_root: str,
+    logical_path: str,
+) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+
+    def append(path: Path) -> None:
+        token = str(path)
+        if token and token not in seen:
+            seen.add(token)
+            paths.append(path)
+
+    with suppress(RuntimeError, ValueError, OSError):
+        append(Path(resolve_artifact_path(workspace, cache_root, logical_path)))
+
+    if logical_path.startswith("workspace/"):
+        append(Path(workspace) / logical_path[len("workspace/") :])
+    return paths
+
+
+def _build_planning_input_diagnostics(
+    settings: Any,
+    workspace: PMDiagnosticsWorkspaceStatus,
+) -> PMDiagnosticsPlanningInputStatus:
+    if not workspace.ok:
+        return PMDiagnosticsPlanningInputStatus(
+            ok=False,
+            status="workspace_missing",
+            error=workspace.error or "workspace_unavailable",
+        )
+    if not workspace.docs_present:
+        return PMDiagnosticsPlanningInputStatus(
+            ok=False,
+            status="docs_missing",
+            error="workspace_docs_missing",
+        )
+
+    cache_root = build_cache_root(str(getattr(settings, "ramdisk_root", "") or ""), workspace.workspace)
+    checked_paths: list[str] = []
+    first_empty: tuple[str, Path, int] | None = None
+    first_error: tuple[str, Path | None, str] | None = None
+
+    for source, logical_path in _PM_PLANNING_INPUT_CANDIDATES:
+        candidates = _planning_input_candidate_paths(workspace.workspace, cache_root, logical_path)
+        if not candidates:
+            first_error = first_error or (source, None, f"unresolved:{logical_path}")
+        for candidate in candidates:
+            checked_paths.append(str(candidate))
+            if not candidate.is_file():
+                continue
+
+            try:
+                text = candidate.read_text(encoding="utf-8").strip()
+                size = candidate.stat().st_size
+            except (OSError, UnicodeError) as exc:
+                first_error = first_error or (source, candidate, str(exc))
+                continue
+
+            if text:
+                return PMDiagnosticsPlanningInputStatus(
+                    ok=True,
+                    status="ready",
+                    source=source,
+                    path=str(candidate),
+                    bytes=size,
+                    chars=len(text),
+                    checked_paths=checked_paths,
+                )
+            first_empty = first_empty or (source, candidate, size)
+
+    if first_error:
+        source, path, error = first_error
+        return PMDiagnosticsPlanningInputStatus(
+            ok=False,
+            status="unreadable",
+            source=source,
+            path=str(path) if path else None,
+            checked_paths=checked_paths,
+            error=error,
+        )
+    if first_empty:
+        source, path, size = first_empty
+        return PMDiagnosticsPlanningInputStatus(
+            ok=False,
+            status="empty",
+            source=source,
+            path=str(path),
+            bytes=size,
+            checked_paths=checked_paths,
+            error="planning_input_empty",
+        )
+
+    return PMDiagnosticsPlanningInputStatus(
+        ok=False,
+        status="missing",
+        checked_paths=checked_paths,
+        error="planning_input_missing",
+    )
+
+
+def _planning_input_issue_token(planning_input: PMDiagnosticsPlanningInputStatus) -> str:
+    if planning_input.status == "empty":
+        return "planning_input_empty"
+    if planning_input.status == "unreadable":
+        return "planning_input_unreadable"
+    return "planning_input_missing"
+
+
 def _issue_tokens(
     lancedb: PMDiagnosticsLanceDBStatus,
     llm: PMDiagnosticsLLMStatus,
     workspace: PMDiagnosticsWorkspaceStatus,
+    planning_input: PMDiagnosticsPlanningInputStatus,
 ) -> list[str]:
     issues: list[str] = []
     if not lancedb.ok:
@@ -251,6 +414,8 @@ def _issue_tokens(
         issues.append("workspace_unavailable")
     elif not workspace.docs_present:
         issues.append("workspace_docs_missing")
+    elif not planning_input.ok:
+        issues.append(_planning_input_issue_token(planning_input))
     return issues
 
 
@@ -258,6 +423,9 @@ def _startup_blockers(
     lancedb: PMDiagnosticsLanceDBStatus,
     llm: PMDiagnosticsLLMStatus,
     workspace: PMDiagnosticsWorkspaceStatus,
+    planning_input: PMDiagnosticsPlanningInputStatus,
+    *,
+    allow_inline_directive: bool = False,
 ) -> list[str]:
     """Return hard blockers that should disable PM desktop start controls."""
     blockers: list[str] = []
@@ -269,12 +437,16 @@ def _startup_blockers(
         blockers.append("workspace_unavailable")
     elif not workspace.docs_present:
         blockers.append("workspace_docs_missing")
+    elif not planning_input.ok and not allow_inline_directive:
+        blockers.append(_planning_input_issue_token(planning_input))
     return blockers
 
 
 def _build_pm_diagnostics(
     settings: Any,
     workspace_override: str | None = None,
+    *,
+    allow_inline_directive: bool = False,
 ) -> PMDiagnosticsResponse:
     """Build the side-effect-free PM readiness snapshot used by UI and gates."""
 
@@ -282,8 +454,15 @@ def _build_pm_diagnostics(
     lancedb = _build_lancedb_diagnostics()
     llm = _build_llm_diagnostics(diagnostic_settings)
     workspace = _build_workspace_diagnostics(diagnostic_settings)
-    issues = _issue_tokens(lancedb, llm, workspace)
-    startup_blockers = _startup_blockers(lancedb, llm, workspace)
+    planning_input = _build_planning_input_diagnostics(diagnostic_settings, workspace)
+    issues = _issue_tokens(lancedb, llm, workspace, planning_input)
+    startup_blockers = _startup_blockers(
+        lancedb,
+        llm,
+        workspace,
+        planning_input,
+        allow_inline_directive=allow_inline_directive,
+    )
     return PMDiagnosticsResponse(
         ok=not issues,
         can_start=not startup_blockers,
@@ -291,6 +470,7 @@ def _build_pm_diagnostics(
         lancedb=lancedb,
         llm=llm,
         workspace=workspace,
+        planning_input=planning_input,
         issues=issues,
         startup_blockers=startup_blockers,
     )
@@ -299,11 +479,17 @@ def _build_pm_diagnostics(
 def _build_pm_diagnostics_for_request(
     request: Request,
     workspace_override: str | None = None,
+    *,
+    allow_inline_directive: bool = False,
 ) -> PMDiagnosticsResponse:
     """Resolve settings and build PM diagnostics for guarded execution starts."""
 
     settings = request.app.state.app_state.settings
-    return _build_pm_diagnostics(settings, workspace_override=workspace_override)
+    return _build_pm_diagnostics(
+        settings,
+        workspace_override=workspace_override,
+        allow_inline_directive=allow_inline_directive,
+    )
 
 
 def _ensure_pm_can_start(diagnostics: PMDiagnosticsResponse) -> None:
@@ -324,11 +510,35 @@ def _ensure_pm_can_start(diagnostics: PMDiagnosticsResponse) -> None:
     )
 
 
-def _ensure_director_handoff_llm_ready(request: Request) -> None:
+def _with_workspace_evidence(payload: dict[str, Any], workspace: str) -> dict[str, Any]:
+    """Attach the workspace used by guarded desktop lifecycle calls."""
+    result = dict(payload)
+    result.setdefault("workspace", workspace)
+    return result
+
+
+def _ensure_snapshot_workspace(request: Request, snapshot: Any, run_id: str, workspace: str) -> None:
+    """Hide orchestration runs that do not belong to the requested desktop workspace."""
+
+    if not str(workspace or "").strip():
+        return
+    settings = request.app.state.app_state.settings
+    resolved_workspace = requested_or_active_workspace(settings, workspace)
+    if not workspace_values_match(getattr(snapshot, "workspace", ""), resolved_workspace):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run not found: {run_id}",
+        )
+
+
+def _ensure_director_handoff_llm_ready(request: Request, workspace: str = "") -> None:
     """Ensure Director runtime LLM is ready before PM auto-dispatch is allowed."""
 
     state = getattr(request.app.state, "app_state", None) or request.app.state
-    ensure_required_roles_ready(state, default_roles=["director"], force_first="director")
+    gate_state: Any = state
+    if str(workspace or "").strip():
+        gate_state = SimpleNamespace(settings=settings_with_workspace_override(state.settings, workspace))
+    ensure_required_roles_ready(gate_state, default_roles=["director"], force_first="director")
 
 
 @router.post(
@@ -342,6 +552,7 @@ def _ensure_director_handoff_llm_ready(request: Request) -> None:
 )
 async def pm_run_once(
     request: Request,
+    workspace: str = "",
     pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
     """Run PM once.
@@ -351,8 +562,9 @@ async def pm_run_once(
         ServiceUnavailableError: If backend is not available
         ProcessError: If process fails to start
     """
-    _ensure_pm_can_start(_build_pm_diagnostics_for_request(request))
-    return await pm_service.run_once()
+    diagnostics = _build_pm_diagnostics_for_request(request, workspace_override=workspace)
+    _ensure_pm_can_start(diagnostics)
+    return _with_workspace_evidence(await pm_service.run_once(), diagnostics.workspace.workspace)
 
 
 @router.post(
@@ -367,6 +579,7 @@ async def pm_run_once(
 async def pm_start(
     request: Request,
     resume: bool = False,
+    workspace: str = "",
     pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
     """Start PM in loop mode.
@@ -381,8 +594,9 @@ async def pm_start(
         ServiceUnavailableError: If backend is not available
         ProcessError: If process fails to start
     """
-    _ensure_pm_can_start(_build_pm_diagnostics_for_request(request))
-    return await pm_service.start_loop(resume=resume)
+    diagnostics = _build_pm_diagnostics_for_request(request, workspace_override=workspace)
+    _ensure_pm_can_start(diagnostics)
+    return _with_workspace_evidence(await pm_service.start_loop(resume=resume), diagnostics.workspace.workspace)
 
 
 @router.post(
@@ -397,6 +611,7 @@ async def pm_start(
 async def pm_start_loop(
     request: Request,
     resume: bool = False,
+    workspace: str = "",
     pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
     """Start PM in loop mode (deprecated — use /v2/pm/start).
@@ -409,14 +624,17 @@ async def pm_start_loop(
         DeprecationWarning,
         stacklevel=2,
     )
-    _ensure_pm_can_start(_build_pm_diagnostics_for_request(request))
-    return await pm_service.start_loop(resume=resume)
+    diagnostics = _build_pm_diagnostics_for_request(request, workspace_override=workspace)
+    _ensure_pm_can_start(diagnostics)
+    return _with_workspace_evidence(await pm_service.start_loop(resume=resume), diagnostics.workspace.workspace)
 
 
 @router.post("/stop", dependencies=[Depends(require_auth)])
 async def pm_stop(
+    request: Request,
     graceful: bool = True,
     graceful_timeout: float = 5.0,
+    workspace: str = "",
     pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
     """Stop PM process with graceful shutdown support.
@@ -425,10 +643,12 @@ async def pm_stop(
         graceful: Whether to attempt graceful shutdown first (via stop flag)
         graceful_timeout: Seconds to wait for graceful shutdown
     """
-    return await pm_service.stop(
+    resolved_workspace = _workspace_value(request.app.state.app_state.settings, workspace)
+    result = await pm_service.stop(
         graceful=graceful,
         graceful_timeout=graceful_timeout,
     )
+    return _with_workspace_evidence(result, resolved_workspace)
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
@@ -489,9 +709,15 @@ async def pm_run_orchestration(
 
         settings = request.app.state.app_state.settings
         workspace = requested_or_active_workspace(settings, payload.workspace)
-        _ensure_pm_can_start(_build_pm_diagnostics_for_request(request, workspace_override=workspace))
+        _ensure_pm_can_start(
+            _build_pm_diagnostics_for_request(
+                request,
+                workspace_override=workspace,
+                allow_inline_directive=bool(payload.directive.strip()),
+            )
+        )
         if payload.run_director:
-            _ensure_director_handoff_llm_ready(request)
+            _ensure_director_handoff_llm_ready(request, workspace)
 
         service = OrchestrationCommandService(settings)
 
@@ -530,7 +756,11 @@ async def pm_run_orchestration(
 
 
 @router.get("/runs/{run_id}", response_model=PMOrchestrationResponse, dependencies=[Depends(require_auth)])
-async def pm_get_orchestration(run_id: str) -> PMOrchestrationResponse:
+async def pm_get_orchestration(
+    request: Request,
+    run_id: str,
+    workspace: str = "",
+) -> PMOrchestrationResponse:
     """查询 PM 编排运行状态"""
     try:
         service = await get_orchestration_service()
@@ -542,6 +772,7 @@ async def pm_get_orchestration(run_id: str) -> PMOrchestrationResponse:
                 detail=f"Run not found: {run_id}",
             )
 
+        _ensure_snapshot_workspace(request, snapshot, run_id, workspace)
         return _pm_orchestration_response(snapshot)
 
     except HTTPException:
@@ -557,7 +788,11 @@ async def pm_get_orchestration(run_id: str) -> PMOrchestrationResponse:
 
 
 @router.post("/runs/{run_id}/cancel", response_model=PMOrchestrationResponse, dependencies=[Depends(require_auth)])
-async def pm_cancel_orchestration(run_id: str) -> PMOrchestrationResponse:
+async def pm_cancel_orchestration(
+    request: Request,
+    run_id: str,
+    workspace: str = "",
+) -> PMOrchestrationResponse:
     """Cancel a PM orchestration run and return the resulting snapshot."""
     try:
         service = await get_orchestration_service()
@@ -569,6 +804,7 @@ async def pm_cancel_orchestration(run_id: str) -> PMOrchestrationResponse:
                 detail=f"Run not found: {run_id}",
             )
 
+        _ensure_snapshot_workspace(request, snapshot, run_id, workspace)
         if _pm_snapshot_status(snapshot).lower() not in _TERMINAL_ORCHESTRATION_STATUSES:
             snapshot = await service.cancel_run(run_id)
 
@@ -593,13 +829,18 @@ async def pm_cancel_orchestration(run_id: str) -> PMOrchestrationResponse:
 
 @router.get("/llm-events", dependencies=[Depends(require_auth)])
 async def get_pm_llm_events(
+    request: Request,
     run_id: str | None = None,
     task_id: str | None = None,
     limit: int = 100,
+    workspace: str = "",
 ) -> dict[str, Any]:
     """获取 PM 的 LLM 调用事件历史"""
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role="pm", limit=limit)
+    resolved_workspace = _workspace_value(request.app.state.app_state.settings, workspace)
+    if workspace.strip():
+        events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     stats = {
         "total": len(events),
@@ -614,6 +855,7 @@ async def get_pm_llm_events(
     return {
         "run_id": run_id,
         "task_id": task_id,
+        "workspace": resolved_workspace,
         "events": [e.to_dict() for e in events],
         "count": len(events),
         "stats": stats,

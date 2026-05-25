@@ -7,7 +7,9 @@ LLM provider and storage dependencies.
 
 from __future__ import annotations
 
+from asyncio import Queue
 from collections.abc import AsyncIterator
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -178,6 +180,113 @@ async def test_role_chat_status_configured(client: AsyncClient) -> None:
         assert data["role_config"]["provider_id"] == "openai"
         assert data["role_config"]["model"] == "gpt-4"
         assert data["provider_type"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_role_chat_status_accepts_workspace_query_override(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Role chat readiness should read LLM state from the requested desktop workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Stale"
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.role_chat.load_llm_test_index",
+            return_value={"roles": {"pm": {"ready": True}}},
+        ) as mock_index,
+        patch(
+            "polaris.delivery.http.routers.role_chat.llm_config.load_llm_config",
+            return_value={
+                "roles": {
+                    "pm": {"provider_id": "openai", "model": "gpt-4", "profile": "default"},
+                },
+                "providers": {
+                    "openai": {"type": "openai"},
+                },
+            },
+        ) as mock_config,
+    ):
+        response = await client.get(
+            "/v2/role/pm/chat/status",
+            params={"workspace": "C:/Temp/Product"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ready"] is True
+    assert data["workspace"] == "C:/Temp/Product"
+    mock_index.assert_called_once_with("C:/Temp/Product")
+    assert mock_config.call_args.args[0] == "C:/Temp/Product"
+    assert str(mock_settings.workspace) == "C:/Repo/Polaris"
+
+
+@pytest.mark.asyncio
+async def test_role_chat_generation_uses_requested_workspace(client: AsyncClient, mock_settings: Settings) -> None:
+    """Non-streaming role chat should pin readiness and generation to the requested workspace."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Stale"
+
+    with (
+        patch("polaris.delivery.http.routers.role_chat.get_registered_roles", return_value=["pm"]),
+        patch("polaris.delivery.http.routers.role_chat.ensure_required_roles_ready") as mock_ready,
+        patch(
+            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            new_callable=AsyncMock,
+            return_value={"response": "plan ready", "role": "pm"},
+        ) as mock_generate,
+    ):
+        response = await client.post(
+            "/v2/role/pm/chat",
+            params={"workspace": "C:/Temp/Product"},
+            json={"message": "Create plan", "context": {"task_count": 3}},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["workspace"] == "C:/Temp/Product"
+    assert data["response"] == "plan ready"
+    ready_state = mock_ready.call_args.args[0]
+    assert str(ready_state.settings.workspace).replace("\\", "/") == "C:/Temp/Product"
+    generate_args = mock_generate.await_args
+    assert generate_args is not None
+    assert generate_args.kwargs["workspace"] == "C:/Temp/Product"
+    assert str(generate_args.kwargs["settings"].workspace).replace("\\", "/") == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
+async def test_role_chat_stream_uses_context_workspace(client: AsyncClient, mock_settings: Settings) -> None:
+    """Streaming role chat should use context.workspace when the query is omitted."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Temp/Stale"
+
+    async def _stream_response(**kwargs: object) -> None:
+        queue = cast(Queue[dict[str, Any]], kwargs["output_queue"])
+        await queue.put({"type": "complete", "data": {"content": "done"}})
+
+    with (
+        patch("polaris.delivery.http.routers.role_chat.get_registered_roles", return_value=["director"]),
+        patch("polaris.delivery.http.routers.role_chat.ensure_required_roles_ready") as mock_ready,
+        patch(
+            "polaris.delivery.http.routers.role_chat.generate_role_response_streaming",
+            new_callable=AsyncMock,
+            side_effect=_stream_response,
+        ) as mock_stream,
+    ):
+        response = await client.post(
+            "/v2/role/director/chat/stream",
+            json={"message": "Run task", "context": {"workspace": "C:/Temp/Product"}},
+        )
+
+    assert response.status_code == 200
+    assert "event: complete" in response.text
+    ready_state = mock_ready.call_args.args[0]
+    assert str(ready_state.settings.workspace).replace("\\", "/") == "C:/Temp/Product"
+    stream_args = mock_stream.await_args
+    assert stream_args is not None
+    assert stream_args.kwargs["workspace"] == "C:/Temp/Product"
+    assert str(stream_args.kwargs["settings"].workspace).replace("\\", "/") == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio
@@ -428,6 +537,46 @@ async def test_role_llm_events_returns_role_scoped_kernel_events(client: AsyncCl
 
 
 @pytest.mark.asyncio
+async def test_role_llm_events_filters_requested_workspace(client: AsyncClient) -> None:
+    """Role LLM events should not mix events from another desktop workspace."""
+    matching_event = MagicMock()
+    matching_event.event_type = "llm_call_start"
+    matching_event.metadata = {"workspace": "C:/Temp/Product"}
+    matching_event.to_dict.return_value = {
+        "event_type": "llm_call_start",
+        "role": "pm",
+        "run_id": "run-1",
+        "task_id": "PM-1",
+        "workspace": "C:/Temp/Product",
+    }
+    other_event = MagicMock()
+    other_event.event_type = "llm_call_start"
+    other_event.metadata = {"workspace": "D:/Other/Product"}
+    other_event.to_dict.return_value = {
+        "event_type": "llm_call_start",
+        "role": "pm",
+        "run_id": "run-1",
+        "task_id": "PM-1",
+        "workspace": "D:/Other/Product",
+    }
+
+    with patch(
+        "polaris.delivery.http.routers.role_chat.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [matching_event, other_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get("/v2/role/pm/llm-events?run_id=run-1&workspace=C:/Temp/Product")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["workspace"] == "C:/Temp/Product"
+    assert data["events"] == [matching_event.to_dict.return_value]
+    assert data["stats"]["total"] == 1
+
+
+@pytest.mark.asyncio
 async def test_role_all_llm_events_returns_filtered_kernel_events(client: AsyncClient) -> None:
     """All-role LLM events should expose shared emitter events and counts."""
     mock_event = MagicMock()
@@ -459,6 +608,44 @@ async def test_role_all_llm_events_returns_filtered_kernel_events(client: AsyncC
         role="director",
         limit=10,
     )
+
+
+@pytest.mark.asyncio
+async def test_role_all_llm_events_filters_requested_workspace(client: AsyncClient) -> None:
+    """All-role LLM events should support workspace-scoped desktop diagnostics."""
+    matching_event = MagicMock()
+    matching_event.event_type = "llm_call_end"
+    matching_event.metadata = {"extra_fields": {"workspace": "C:/Temp/Product"}}
+    matching_event.to_dict.return_value = {
+        "event_type": "llm_call_end",
+        "role": "director",
+        "run_id": "run-2",
+        "workspace": "C:/Temp/Product",
+    }
+    other_event = MagicMock()
+    other_event.event_type = "llm_call_end"
+    other_event.metadata = {"extra_fields": {"workspace": "D:/Other/Product"}}
+    other_event.to_dict.return_value = {
+        "event_type": "llm_call_end",
+        "role": "director",
+        "run_id": "run-2",
+        "workspace": "D:/Other/Product",
+    }
+
+    with patch(
+        "polaris.delivery.http.routers.role_chat.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [matching_event, other_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get("/v2/role/llm-events?role=director&workspace=C:/Temp/Product")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["workspace"] == "C:/Temp/Product"
+    assert data["events"] == [matching_event.to_dict.return_value]
+    assert data["count"] == 1
 
 
 @pytest.mark.asyncio

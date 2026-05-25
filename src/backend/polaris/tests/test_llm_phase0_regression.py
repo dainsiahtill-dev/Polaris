@@ -130,6 +130,143 @@ class TestLLMStatusLastUpdated:
                 except (TypeError, ValueError) as e:
                     pytest.fail(f"last_updated is not valid ISO format: {e}")
 
+    def test_status_last_updated_uses_latest_readiness_index_timestamp(self, tmp_path):
+        """A fresh passed role test must advance the top-level status clock."""
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        config_path = tmp_path / "llm.json"
+        config_path.write_text("{}", encoding="utf-8")
+        old_epoch = 1_700_000_000
+        os.utime(config_path, (old_epoch, old_epoch))
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = str(tmp_path)
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        index_timestamp = "2026-03-22T10:15:30+00:00"
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "openai_compat-1": {"type": "openai_compat"},
+            },
+            "roles": {
+                "pm": {"provider_id": "openai_compat-1", "model": "Qwen3-Max"},
+            },
+            "policies": {
+                "required_ready_roles": ["pm"],
+            },
+        }
+        index_payload = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "openai_compat-1",
+                    "model": "qwen3-max",
+                    "timestamp": index_timestamp,
+                },
+            },
+            "providers": {},
+            "last_update": "2026-03-22T10:15:29+00:00",
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={"lastUpdated": None},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value=str(tmp_path / "cache"),
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.llm_config_path",
+                return_value=str(config_path),
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["state"] == "READY"
+        assert response["blocked_roles"] == []
+        assert response["last_updated"] == index_timestamp
+
+    def test_status_last_updated_uses_latest_interview_timestamp(self, tmp_path):
+        """A fresh interview report must be visible to stale-response guards."""
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        config_path = tmp_path / "llm.json"
+        config_path.write_text("{}", encoding="utf-8")
+        old_epoch = 1_700_000_000
+        os.utime(config_path, (old_epoch, old_epoch))
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = str(tmp_path)
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        interview_timestamp = "2026-03-22T11:00:00+00:00"
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "openai_compat-1": {"type": "openai_compat"},
+            },
+            "roles": {
+                "pm": {"provider_id": "openai_compat-1", "model": "Qwen3-Max"},
+            },
+            "policies": {
+                "required_ready_roles": ["pm"],
+            },
+        }
+        index_payload = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "openai_compat-1",
+                    "model": "qwen3-max",
+                    "timestamp": "2026-03-22T10:15:30+00:00",
+                },
+            },
+            "providers": {},
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={"lastUpdated": interview_timestamp},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value=str(tmp_path / "cache"),
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.llm_config_path",
+                return_value=str(config_path),
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["state"] == "READY"
+        assert response["blocked_roles"] == []
+        assert response["last_updated"] == interview_timestamp
+
 
 class TestRoleRuntimeSupportConsistency:
     """Keep llm/status and director runtime gate aligned on provider support."""

@@ -1,0 +1,39 @@
+id: vc-20260525-chief-engineer-bulk-blueprint-handoff
+date: "2026-05-25"
+scope:
+  - src/backend/polaris/delivery/http/v2/chief_engineer.py
+  - src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+  - src/frontend/src/services/chiefEngineerService.ts
+  - src/frontend/src/services/__tests__/chiefEngineerService.test.ts
+  - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx
+  - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx
+classification: one_off
+assumptions:
+  - id: reuse-ce-contract
+    statement: Bulk generation should reuse the existing Chief Engineer blueprint public command contract.
+    evidence: POST /v2/chief-engineer/blueprints/bulk calls generate_task_blueprint per task.
+  - id: same-readiness-gate
+    statement: Bulk generation must fail closed behind the Chief Engineer LLM readiness gate.
+    evidence: Router test covers RUNTIME_ROLES_NOT_READY before any command invocation.
+verification_plan:
+  - command: pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -q
+  - command: npm run test -- ChiefEngineerWorkspace chiefEngineerService
+  - command: ruff check src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py --fix
+  - command: ruff format src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+  - command: mypy src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+status: passed
+evidence:
+  - command: .\.venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -q
+    result: 29 passed
+  - command: npm run test -- ChiefEngineerWorkspace chiefEngineerService
+    result: 35 passed
+  - command: .\.venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py --fix
+    result: passed
+  - command: .\.venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+    result: 2 files left unchanged
+  - command: .\.venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+    result: Success, no issues found
+  - command: npm run typecheck
+    result: passed
+  - command: npm run lint
+    result: passed

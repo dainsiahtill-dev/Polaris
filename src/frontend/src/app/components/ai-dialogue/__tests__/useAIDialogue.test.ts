@@ -53,6 +53,12 @@ function findApiCall(path: string): [string, RequestInit | undefined] {
   return call as [string, RequestInit | undefined];
 }
 
+const productWorkspaceQuery = 'workspace=C%3A%2FTemp%2FProduct';
+const directorStatusPath = `/v2/role/director/chat/status?${productWorkspaceQuery}`;
+const directorStreamPath = `/v2/role/director/chat/stream?${productWorkspaceQuery}`;
+const pmStatusPath = `/v2/role/pm/chat/status?${productWorkspaceQuery}`;
+const pmStreamPath = `/v2/role/pm/chat/stream?${productWorkspaceQuery}`;
+
 describe('useAIDialogue RoleSession bridge', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -60,7 +66,7 @@ describe('useAIDialogue RoleSession bridge', () => {
 
   it('creates, attaches, and streams through a RoleSession when desktop task context exists', async () => {
     apiFetchMock.mockImplementation((path: string) => {
-      if (path === '/v2/role/director/chat/status') {
+      if (path === directorStatusPath) {
         return Promise.resolve(jsonResponse({ ready: true, configured: true, role: 'director' }));
       }
       if (path === '/v2/roles/sessions') {
@@ -127,7 +133,7 @@ describe('useAIDialogue RoleSession bridge', () => {
       },
     });
     expect(apiFetchMock).not.toHaveBeenCalledWith(
-      '/v2/role/director/chat/stream',
+      directorStreamPath,
       expect.anything(),
     );
     expect(result.current.messages.some((message) => message.content === 'session answer')).toBe(true);
@@ -135,10 +141,10 @@ describe('useAIDialogue RoleSession bridge', () => {
 
   it('falls back to legacy role chat streaming before a RoleSession exists', async () => {
     apiFetchMock.mockImplementation((path: string) => {
-      if (path === '/v2/role/pm/chat/status') {
+      if (path === pmStatusPath) {
         return Promise.resolve(jsonResponse({ ready: true, configured: true, role: 'pm' }));
       }
-      if (path === '/v2/role/pm/chat/stream') {
+      if (path === pmStreamPath) {
         return Promise.resolve(streamResponse('event: complete\ndata: {"content":"pm answer"}\n\n'));
       }
       return Promise.resolve(jsonResponse({ ok: true }));
@@ -162,12 +168,12 @@ describe('useAIDialogue RoleSession bridge', () => {
       await result.current.handleSend();
     });
 
-    const [, streamInit] = findApiCall('/v2/role/pm/chat/stream');
+    const [, streamInit] = findApiCall(pmStreamPath);
     const payload = JSON.parse(String(streamInit?.body));
     expect(payload).toMatchObject({
       message: 'Plan the work',
     });
-    expect(payload.context).toMatchObject({ history: [] });
+    expect(payload.context).toMatchObject({ workspace: 'C:/Temp/Product', history: [] });
     expect(payload.context).toHaveProperty('conversation_id', null);
     expect(result.current.messages.some((message) => message.content === 'pm answer')).toBe(true);
   });

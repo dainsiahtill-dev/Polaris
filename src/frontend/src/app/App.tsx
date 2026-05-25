@@ -38,10 +38,10 @@ import { RuntimeTransportProvider } from '@/runtime/transport';
 import { useLiveTaskQueues } from './hooks/useLiveTaskQueues';
 import { useUsageStats } from './hooks/useUsageStats';
 import { useFactory } from '@/hooks/useFactory';
-import { getLatestExecutionActivityLog } from '@/app/utils/appRuntime';
+import { getLatestExecutionActivityLog, readEngineRoleDetail } from '@/app/utils/appRuntime';
 import { isLancedbExplicitlyBlocked } from '@/app/utils/lancedbGate';
 import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
-import { isRoleLlmBlocked, useLlmRuntimeGate } from './hooks/useLlmRuntimeGate';
+import { useLlmRuntimeGate } from './hooks/useLlmRuntimeGate';
 
 // Lazy load pages
 
@@ -286,7 +286,7 @@ function AppContent() {
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
   const {
     llmRuntimeState,
-    llmDirectorBlockedReason,
+    getLlmRoleBlockedReason,
     handleLlmStatusChange,
   } = useLlmRuntimeGate({
     workspace,
@@ -440,12 +440,17 @@ function AppContent() {
 
     const detailLines: string[] = [];
     if (phase) detailLines.push(`阶段: ${phase}`);
+    if (errorCode) detailLines.push(`错误码: ${errorCode}`);
 
     const roles = engineStatus.roles && typeof engineStatus.roles === 'object'
       ? engineStatus.roles
       : null;
-    const directorDetail = String(roles?.Director?.detail || '').trim();
-    const qaDetail = String(roles?.QA?.detail || '').trim();
+    const pmDetail = readEngineRoleDetail(roles, ['PM']);
+    const chiefEngineerDetail = readEngineRoleDetail(roles, ['ChiefEngineer', 'Chief Engineer', 'chief_engineer']);
+    const directorDetail = readEngineRoleDetail(roles, ['Director']);
+    const qaDetail = readEngineRoleDetail(roles, ['QA']);
+    if (pmDetail) detailLines.push(`PM: ${pmDetail}`);
+    if (chiefEngineerDetail) detailLines.push(`Chief Engineer: ${chiefEngineerDetail}`);
     if (directorDetail) detailLines.push(`Director: ${directorDetail}`);
     if (qaDetail) detailLines.push(`QA: ${qaDetail}`);
 
@@ -558,18 +563,15 @@ function AppContent() {
   const agentsRequired = Boolean(snapshot?.agents_review?.needs_review);
   const agentsDraftReady = Boolean(snapshot?.agents_review?.draft_path);
   const agentsDraftFailed = agentsReview.draftFailed;
-  const llmDirectorBlocked = Boolean(llmDirectorBlockedReason);
   const rawPmRunning = Boolean(pmStatus?.running);
   const effectivePmRunning = resolveEffectivePmRunning(pmStatus, activeRuntimeIssue);
   const effectiveCurrentPhase = resolveEffectivePhase(currentPhase, effectivePmRunning, activeRuntimeIssue);
-  const llmPmBlocked = isRoleLlmBlocked(llmRuntimeState, 'pm');
   const docsStartBlockedReason = docsMissing ? 'docs/ 初始化未完成' : '';
   const lancedbStartBlockedReason = lancedbBlocked
     ? String(lancedbStatus?.error || '').trim() || 'LanceDB 不可用'
     : '';
-  const pmLlmBlockedReason = llmPmBlocked
-    ? 'LLM 就绪检查未通过：PM 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。'
-    : '';
+  const pmLlmBlockedReason = getLlmRoleBlockedReason('pm', 'PM');
+  const directorLlmBlockedReason = getLlmRoleBlockedReason('director', 'Director');
   const pmStartBlockedReason = docsStartBlockedReason || lancedbStartBlockedReason || pmLlmBlockedReason;
   const directorAgentsBlockedReason = agentsRequired && agentsDraftFailed
     ? 'AGENTS 草稿生成失败'
@@ -580,7 +582,7 @@ function AppContent() {
     docsStartBlockedReason ||
     lancedbStartBlockedReason ||
     directorAgentsBlockedReason ||
-    (llmDirectorBlocked ? llmDirectorBlockedReason : '');
+    directorLlmBlockedReason;
   const runOnceBlockedReason = rawPmRunning
     ? 'PM 正在运行'
     : directorRunning

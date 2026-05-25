@@ -311,21 +311,27 @@ class TestPMManagementRouter:
             data = response.json()
             assert data["initialized"] is True
 
-    def test_list_tasks_requires_auth(self) -> None:
-        """GET /pm/tasks should require authentication."""
+    @pytest.mark.parametrize("path", ["/pm/tasks", "/pm/v2/pm/tasks", "/v2/pm/tasks"])
+    def test_list_tasks_requires_auth_before_pm_adapter_access(self, path: str) -> None:
+        """PM task list aliases should reject unauthenticated requests before touching the PM adapter."""
         app = _build_minimal_app()
         app.include_router(pm_management_router.router)
+        app.include_router(pm_management_router.v2_router)
         # Override auth so it raises 401
         app.dependency_overrides[require_auth] = lambda: (_ for _ in ()).throw(
             HTTPException(status_code=401, detail="unauthorized")
         )
 
         client = TestClient(app)
-        response = client.get("/pm/tasks")
+        with patch(
+            "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+            side_effect=AssertionError("PM adapter must not be constructed before auth"),
+        ) as mock_adapter:
+            response = client.get(path)
 
-        # The endpoint may throw ImportError from ScriptsPMAdapter before auth check
-        # So we just verify it doesn't return 200
-        assert response.status_code != 200 or "error" in response.text
+        assert response.status_code == 401
+        assert response.json()["detail"] == "unauthorized"
+        mock_adapter.assert_not_called()
 
     def test_list_tasks_uninitialized_returns_400(self) -> None:
         """GET /pm/tasks should return 400 when PM not initialized."""

@@ -64,4 +64,35 @@ def settings_with_workspace_override(settings: Any, requested: Any = "") -> Any:
     return cloned
 
 
-__all__ = ["active_workspace_value", "requested_or_active_workspace", "settings_with_workspace_override"]
+def comparable_workspace_value(value: Any) -> str:
+    """Normalize a workspace value for equality checks without changing API payloads."""
+
+    text = _workspace_text(value)
+    if not text:
+        return ""
+    normalized = text.replace("\\", "/").rstrip("/")
+    if normalized in {".", "./"}:
+        return "."
+    try:
+        return str(Path(text).expanduser().resolve()).replace("\\", "/").rstrip("/")
+    except (OSError, RuntimeError, ValueError):
+        return normalized
+
+
+def workspace_values_match(left: Any, right: Any) -> bool:
+    """Return whether two workspace tokens identify the same workspace."""
+
+    left_value = comparable_workspace_value(left)
+    right_value = comparable_workspace_value(right)
+    if not left_value or not right_value:
+        return False
+    return left_value.casefold() == right_value.casefold()
+
+
+__all__ = [
+    "active_workspace_value",
+    "comparable_workspace_value",
+    "requested_or_active_workspace",
+    "settings_with_workspace_override",
+    "workspace_values_match",
+]

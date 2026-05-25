@@ -6,6 +6,7 @@ Uses FastAPI's native Depends pattern integrated with DI container.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -18,7 +19,11 @@ from polaris.cells.director.execution.public import rebind_director_service
 from polaris.cells.director.execution.public.service import DirectorService
 from polaris.cells.orchestration.pm_planning.public.service import PMService
 from polaris.delivery.http.auth.roles import UserRole
-from polaris.delivery.http.workspace import active_workspace_value
+from polaris.delivery.http.workspace import (
+    active_workspace_value,
+    requested_or_active_workspace,
+    workspace_values_match,
+)
 from polaris.domain.services.background_task import BackgroundTaskService
 from polaris.infrastructure.di.container import get_container
 from polaris.kernelone.auth_context import SimpleAuthContext
@@ -28,8 +33,12 @@ logger = logging.getLogger(__name__)
 
 def _append_debug(event: str, payload: dict[str, object]) -> None:
     """Best-effort backend debug event sink for stall diagnosis."""
+    log_target = str(os.environ.get("KERNELONE_BACKEND_DEBUG_LOG", "") or "").strip()
+    if not log_target:
+        return
+
     try:
-        log_path = Path(os.environ.get("KERNELONE_BACKEND_DEBUG_LOG", "C:/Temp/hp_backend_debug.jsonl"))
+        log_path = Path(log_target)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "ts": time.time(),
@@ -38,8 +47,8 @@ def _append_debug(event: str, payload: dict[str, object]) -> None:
         }
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except (RuntimeError, ValueError):
-        logger.warning("Failed to write debug event to log file")
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Failed to write debug event to log file: %s", exc, exc_info=True)
         return
 
 
@@ -69,6 +78,7 @@ async def get_director_service(request: Request) -> DirectorService:
     """Get Director service instance from DI container."""
     start = time.perf_counter()
     requested_workspace = ""
+    requested_query_workspace = str(request.query_params.get("workspace", "") or "").strip()
     rebind_needed = False
     container = await get_container()
     service = await container.resolve_async(DirectorService)
@@ -76,24 +86,34 @@ async def get_director_service(request: Request) -> DirectorService:
     app_state = getattr(request.app.state, "app_state", None)
     state_settings = getattr(app_state, "settings", None)
     app_settings = getattr(request.app.state, "settings", None)
-    requested_workspace = active_workspace_value(state_settings) or active_workspace_value(app_settings)
+    settings_source = state_settings or app_settings
+    requested_workspace = requested_or_active_workspace(settings_source, requested_query_workspace)
     if requested_workspace:
         current_workspace = str(getattr(service.config, "workspace", "") or "").strip()
-        try:
-            normalized_requested = str(Path(requested_workspace).resolve())
-            normalized_current = str(Path(current_workspace).resolve()) if current_workspace else ""
-        except (RuntimeError, ValueError):
-            normalized_requested = requested_workspace
-            normalized_current = current_workspace
-        if normalized_requested and normalized_requested != normalized_current:
+        has_settings_registration = getattr(container, "has_registration", None)
+        can_rebind = False
+        if callable(has_settings_registration):
+            try:
+                registration_result = has_settings_registration(Settings)
+                if inspect.isawaitable(registration_result):
+                    registration_result = await registration_result
+                can_rebind = registration_result is True
+            except (RuntimeError, TypeError, ValueError):
+                can_rebind = False
+        if can_rebind and requested_workspace and not workspace_values_match(requested_workspace, current_workspace):
             rebind_needed = True
-            service = await rebind_director_service(normalized_requested)
+            try:
+                target_workspace = str(Path(requested_workspace).resolve())
+            except (OSError, RuntimeError, ValueError):
+                target_workspace = requested_workspace
+            service = await rebind_director_service(target_workspace)
 
     _append_debug(
         "dependency.get_director_service",
         {
             "duration_ms": round((time.perf_counter() - start) * 1000, 2),
             "requested_workspace": requested_workspace,
+            "query_workspace": requested_query_workspace,
             "service_workspace": str(getattr(getattr(service, "config", None), "workspace", "")),
             "rebind": rebind_needed,
         },

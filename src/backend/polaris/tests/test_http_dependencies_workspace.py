@@ -5,12 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from polaris.delivery.http.dependencies import get_director_service, get_workspace
+from polaris.delivery.http.dependencies import _append_debug, get_director_service, get_workspace
 
 
 @pytest.mark.asyncio
 async def test_get_workspace_prefers_app_state_settings(tmp_path) -> None:
     request = SimpleNamespace(
+        query_params={},
         app=SimpleNamespace(
             state=SimpleNamespace(
                 app_state=SimpleNamespace(
@@ -18,7 +19,7 @@ async def test_get_workspace_prefers_app_state_settings(tmp_path) -> None:
                 ),
                 settings=SimpleNamespace(workspace=str(tmp_path / "from_app")),
             )
-        )
+        ),
     )
 
     resolved = await get_workspace(request)
@@ -99,6 +100,7 @@ async def test_get_director_service_prefers_active_workspace_path(tmp_path) -> N
     active_workspace = str((tmp_path / "active_project").resolve())
     stale_workspace = str((tmp_path / "stale_repo").resolve())
     request = SimpleNamespace(
+        query_params={},
         app=SimpleNamespace(
             state=SimpleNamespace(
                 app_state=SimpleNamespace(
@@ -109,7 +111,7 @@ async def test_get_director_service_prefers_active_workspace_path(tmp_path) -> N
                 ),
                 settings=SimpleNamespace(workspace=""),
             )
-        )
+        ),
     )
     mock_service = MagicMock()
     mock_service.config.workspace = active_workspace
@@ -130,3 +132,26 @@ async def test_get_director_service_prefers_active_workspace_path(tmp_path) -> N
 
     assert result is mock_service
     mock_rebind.assert_not_awaited()
+
+
+def test_dependency_debug_append_is_disabled_without_explicit_log_path() -> None:
+    """Director dependency resolution should not write debug files unless explicitly enabled."""
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("polaris.delivery.http.dependencies.Path.open") as mock_open,
+    ):
+        _append_debug("dependency.get_director_service", {"rebind": False})
+
+    mock_open.assert_not_called()
+
+
+def test_dependency_debug_append_ignores_debug_log_failure() -> None:
+    """Optional dependency debug evidence must not break desktop API calls."""
+    with (
+        patch.dict("os.environ", {"KERNELONE_BACKEND_DEBUG_LOG": "C:/Temp/dependency-debug.jsonl"}),
+        patch("polaris.delivery.http.dependencies.Path.open", side_effect=OSError("debug log locked")),
+        patch("polaris.delivery.http.dependencies.logger.debug") as mock_debug,
+    ):
+        _append_debug("dependency.get_director_service", {"rebind": False})
+
+    mock_debug.assert_called_once()

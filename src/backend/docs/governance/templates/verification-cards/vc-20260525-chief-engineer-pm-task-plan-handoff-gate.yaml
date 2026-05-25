@@ -1,0 +1,41 @@
+id: vc-20260525-chief-engineer-pm-task-plan-handoff-gate
+title: Chief Engineer PM task plan handoff gate
+date: 2026-05-25
+scope:
+  - src/backend/polaris/delivery/http/v2/chief_engineer.py
+  - src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+  - src/frontend/src/services/chiefEngineerService.ts
+  - src/frontend/src/services/__tests__/chiefEngineerService.test.ts
+  - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.tsx
+  - src/frontend/src/app/components/chief-engineer/ChiefEngineerWorkspace.test.tsx
+change:
+  summary: >
+    Added PM task plan evidence to Chief Engineer diagnostics and blocked Director
+    handoff when the PM task plan is missing, invalid, unreadable, or empty.
+  root_cause: >
+    Previous diagnostics could use stale persisted blueprint records without an
+    auditable PM task plan, allowing Chief Engineer to appear handoff-ready even
+    when task coverage could not be proven.
+evidence:
+  tests:
+    - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py -q
+      result: PASS
+      observed: 30 passed
+    - command: npm run test -- ChiefEngineerWorkspace chiefEngineerService
+      result: PASS
+      observed: 36 passed
+  quality_gates:
+    - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py --fix
+      result: PASS
+    - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+      result: PASS
+    - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/v2/chief_engineer.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+      result: PASS
+      observed: "Success: no issues found in 2 source files"
+    - command: npm run typecheck
+      result: PASS
+    - command: npm run lint
+      result: PASS
+risk_notes:
+  - Full PM/ChiefEngineer/Director desktop completion remains broader than this card.
+  - This card verifies the CE handoff gate contract and targeted desktop behavior, not a full Electron visual pass.

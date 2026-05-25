@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -27,7 +28,12 @@ from polaris.delivery.http.schemas import (
     RoleListResponse,
     RoleLLMEventsResponse,
 )
-from polaris.delivery.http.workspace import active_workspace_value
+from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
+from polaris.delivery.http.workspace import (
+    active_workspace_value,
+    requested_or_active_workspace,
+    settings_with_workspace_override,
+)
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
@@ -69,10 +75,30 @@ def _workspace_value(settings: Any) -> str:
     return active_workspace_value(settings)
 
 
+def _context_workspace(payload: dict[str, Any]) -> str:
+    """Read an explicit workspace from a role-chat payload context."""
+    context = payload.get("context")
+    if not isinstance(context, dict):
+        return ""
+    workspace = context.get("workspace")
+    return workspace.strip() if isinstance(workspace, str) else ""
+
+
+def _workspace_for_role_request(settings: Any, requested: str = "", payload: dict[str, Any] | None = None) -> str:
+    """Resolve workspace from query/body context before falling back to active desktop state."""
+    return requested_or_active_workspace(settings, requested or _context_workspace(payload or {}))
+
+
+def _state_for_workspace(state: Any, workspace: str) -> Any:
+    """Return a lightweight state pinned to the resolved role-chat workspace."""
+    return SimpleNamespace(settings=settings_with_workspace_override(state.settings, workspace))
+
+
 @router.get("/v2/role/{role}/chat/status", dependencies=[Depends(require_auth)], response_model=RoleChatStatusResponse)
 async def role_chat_status(
     request: Request,
     role: str,
+    workspace: str = "",
 ) -> dict[str, Any]:
     """Get LLM configuration readiness for a specific role.
 
@@ -80,7 +106,8 @@ async def role_chat_status(
         Ready state, provider info, and debug details.
     """
     state = get_state(request)
-    workspace = _workspace_value(state.settings)
+    workspace = _workspace_for_role_request(state.settings, workspace)
+    scoped_state = _state_for_workspace(state, workspace)
 
     try:
         cache_root = build_cache_root(
@@ -98,7 +125,7 @@ async def role_chat_status(
         config = await _load_llm_config_async(
             workspace,
             cache_root,
-            state.settings,
+            scoped_state.settings,
         )
 
         roles_raw = config.get("roles")
@@ -111,6 +138,7 @@ async def role_chat_status(
             return {
                 "ready": False,
                 "configured": False,
+                "workspace": workspace,
                 "error": "Role not configured",
                 "debug": {
                     "roles_keys": list(roles.keys()) if roles else None,
@@ -125,6 +153,7 @@ async def role_chat_status(
             return {
                 "ready": False,
                 "configured": False,
+                "workspace": workspace,
                 "error": "Role provider or model not set",
                 "debug": {
                     "role_config": role_config,
@@ -138,6 +167,7 @@ async def role_chat_status(
             return {
                 "ready": False,
                 "configured": False,
+                "workspace": workspace,
                 "error": "Provider not found",
                 "debug": {
                     "role_config": role_config,
@@ -150,6 +180,7 @@ async def role_chat_status(
             "configured": True,
             "llm_test_ready": llm_test_ready,
             "role": role,
+            "workspace": workspace,
             "role_config": {
                 "provider_id": provider_id,
                 "model": model,
@@ -170,6 +201,7 @@ async def role_chat_status(
             "configured": False,
             "llm_test_ready": False,
             "role": role,
+            "workspace": workspace,
             "code": getattr(exc, "code", "internal_error"),
             "message": "Status check failed",
             "details": {
@@ -194,10 +226,12 @@ async def list_supported_roles() -> dict[str, Any]:
 
 @router.get("/v2/role/{role}/llm-events", dependencies=[Depends(require_auth)], response_model=RoleLLMEventsResponse)
 async def get_role_llm_events(
+    request: Request,
     role: str,
     run_id: str | None = None,
     task_id: str | None = None,
     limit: int = 100,
+    workspace: str = "",
 ) -> dict[str, Any]:
     """Get LLM call events for a specific role.
 
@@ -206,6 +240,10 @@ async def get_role_llm_events(
     """
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
+    state = get_state(request)
+    resolved_workspace = requested_or_active_workspace(state.settings, workspace)
+    if workspace.strip():
+        events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     # 分类统计
     stats = {
@@ -222,6 +260,7 @@ async def get_role_llm_events(
         "role": role,
         "run_id": run_id,
         "task_id": task_id,
+        "workspace": resolved_workspace,
         "events": [e.to_dict() for e in events],
         "stats": stats,
     }
@@ -229,18 +268,25 @@ async def get_role_llm_events(
 
 @router.get("/v2/role/llm-events", dependencies=[Depends(require_auth)], response_model=AllLLMEventsResponse)
 async def get_all_llm_events(
+    request: Request,
     run_id: str | None = None,
     task_id: str | None = None,
     role: str | None = None,
     limit: int = 100,
+    workspace: str = "",
 ) -> dict[str, Any]:
     """Get LLM call events across all roles."""
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
+    state = get_state(request)
+    resolved_workspace = requested_or_active_workspace(state.settings, workspace)
+    if workspace.strip():
+        events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     return {
         "events": [e.to_dict() for e in events],
         "count": len(events),
+        "workspace": resolved_workspace,
     }
 
 
@@ -291,6 +337,7 @@ async def role_chat(
     request: Request,
     role: str,
     payload: dict[str, Any],
+    workspace: str = "",
 ) -> dict[str, Any]:
     """Chat with a registered LLM role (non-streaming).
 
@@ -298,7 +345,8 @@ async def role_chat(
         Response, thinking trace, and model metadata.
     """
     state = get_state(request)
-    workspace = _workspace_value(state.settings)
+    workspace = _workspace_for_role_request(state.settings, workspace, payload)
+    scoped_state = _state_for_workspace(state, workspace)
 
     _validate_role(role)
 
@@ -311,7 +359,7 @@ async def role_chat(
         )
 
     try:
-        ensure_required_roles_ready(state, default_roles=[role])
+        ensure_required_roles_ready(scoped_state, default_roles=[role])
     except StructuredHTTPException:
         raise
     except (RuntimeError, ValueError) as exc:
@@ -324,12 +372,12 @@ async def role_chat(
     try:
         result = await generate_role_response(
             workspace=workspace,
-            settings=state.settings,
+            settings=scoped_state.settings,
             role=role,
             message=message,
             context=payload.get("context"),
         )
-        return {"ok": True, **result}
+        return {"ok": True, "workspace": workspace, **result}
     except (RuntimeError, ValueError) as exc:
         raise StructuredHTTPException(
             status_code=500,
@@ -343,6 +391,7 @@ async def role_chat_stream(
     request: Request,
     role: str,
     payload: dict[str, Any],
+    workspace: str = "",
 ) -> Any:
     """Chat with a registered LLM role (streaming SSE).
 
@@ -355,7 +404,8 @@ async def role_chat_stream(
     )
 
     state = get_state(request)
-    workspace = _workspace_value(state.settings)
+    workspace = _workspace_for_role_request(state.settings, workspace, payload)
+    scoped_state = _state_for_workspace(state, workspace)
 
     _validate_role(role)
 
@@ -364,7 +414,7 @@ async def role_chat_stream(
         return create_sse_response(_error_sse_generator("message is required"))
 
     try:
-        ensure_required_roles_ready(state, default_roles=[role])
+        ensure_required_roles_ready(scoped_state, default_roles=[role])
     except StructuredHTTPException as exc:
         return create_sse_response(_error_sse_generator(str(exc.structured_message)))
     except (RuntimeError, ValueError):
@@ -374,7 +424,7 @@ async def role_chat_stream(
         """运行角色对话并输出到队列"""
         await generate_role_response_streaming(
             workspace=workspace,
-            settings=state.settings,
+            settings=scoped_state.settings,
             role=role,
             message=message,
             output_queue=queue,

@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { PMDocumentPanel } from './PMDocumentPanel';
 
+const workspace = 'C:/Temp/SimpleGame';
+
 const documentServiceMock = vi.hoisted(() => ({
   list: vi.fn(),
   get: vi.fn(),
@@ -46,7 +48,7 @@ describe('PMDocumentPanel', () => {
 
     render(
       <PMDocumentPanel
-        workspace="C:/Temp/SimpleGame"
+        workspace={workspace}
         selectedPath={null}
         onDocumentSelect={vi.fn()}
       />,
@@ -81,7 +83,7 @@ describe('PMDocumentPanel', () => {
 
     render(
       <PMDocumentPanel
-        workspace="C:/Temp/SimpleGame"
+        workspace={workspace}
         selectedPath={null}
         onDocumentSelect={vi.fn()}
       />,
@@ -92,7 +94,7 @@ describe('PMDocumentPanel', () => {
 
     fireEvent.change(screen.getByPlaceholderText('搜索文档...'), { target: { value: 'plan' } });
 
-    await waitFor(() => expect(documentServiceMock.search).toHaveBeenCalledWith('plan', 20));
+    await waitFor(() => expect(documentServiceMock.search).toHaveBeenCalledWith('plan', 20, workspace));
     expect(await screen.findByTestId('pm-document-search-empty')).toHaveTextContent('后端未返回匹配文档');
     expect(screen.queryByTestId('pm-document-search-error')).not.toBeInTheDocument();
   });
@@ -150,7 +152,7 @@ describe('PMDocumentPanel', () => {
 
     render(
       <PMDocumentPanel
-        workspace="C:/Temp/SimpleGame"
+        workspace={workspace}
         selectedPath={null}
         onDocumentSelect={onDocumentSelect}
       />,
@@ -159,7 +161,7 @@ describe('PMDocumentPanel', () => {
     const documentEntry = await screen.findByText('plan.md');
     fireEvent.click(documentEntry);
 
-    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath));
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, null, workspace));
     expect(onDocumentSelect).toHaveBeenCalledWith(documentPath);
     expect(await screen.findByText('Real Plan')).toBeInTheDocument();
     expect(screen.getByTestId('pm-document-provenance')).toHaveTextContent(
@@ -175,6 +177,7 @@ describe('PMDocumentPanel', () => {
         documentPath,
         '# Updated Plan',
         'Updated from PM document workspace',
+        workspace,
       );
     });
     expect(toastMock.success).toHaveBeenCalledWith('文件已保存');
@@ -231,7 +234,7 @@ describe('PMDocumentPanel', () => {
 
     render(
       <PMDocumentPanel
-        workspace="C:/Temp/SimpleGame"
+        workspace={workspace}
         selectedPath={null}
         onDocumentSelect={onDocumentSelect}
       />,
@@ -239,14 +242,14 @@ describe('PMDocumentPanel', () => {
 
     fireEvent.change(screen.getByPlaceholderText('搜索文档...'), { target: { value: 'quality' } });
 
-    await waitFor(() => expect(documentServiceMock.search).toHaveBeenCalledWith('quality', 20));
+    await waitFor(() => expect(documentServiceMock.search).toHaveBeenCalledWith('quality', 20, workspace));
     expect(await screen.findByTestId('pm-document-search-results')).toHaveTextContent(
       'quality gate passed with backend evidence',
     );
 
     fireEvent.click(screen.getByTestId('pm-document-search-result'));
 
-    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath));
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, null, workspace));
     expect(onDocumentSelect).toHaveBeenCalledWith(documentPath);
     expect(await screen.findByText('Quality Gate Evidence')).toBeInTheDocument();
   });
@@ -318,7 +321,7 @@ describe('PMDocumentPanel', () => {
 
     render(
       <PMDocumentPanel
-        workspace="C:/Temp/SimpleGame"
+        workspace={workspace}
         selectedPath={null}
         onDocumentSelect={vi.fn()}
       />,
@@ -326,12 +329,12 @@ describe('PMDocumentPanel', () => {
 
     fireEvent.click(await screen.findByText('plan.md'));
 
-    await waitFor(() => expect(documentServiceMock.versions).toHaveBeenCalledWith(documentPath));
+    await waitFor(() => expect(documentServiceMock.versions).toHaveBeenCalledWith(documentPath, workspace));
     expect(await screen.findByTestId('pm-document-version-list')).toHaveTextContent('Added QA criteria');
 
     fireEvent.click(screen.getByText('比较最新'));
 
-    await waitFor(() => expect(documentServiceMock.compare).toHaveBeenCalledWith(documentPath, '1', '2'));
+    await waitFor(() => expect(documentServiceMock.compare).toHaveBeenCalledWith(documentPath, '1', '2', workspace));
     expect(await screen.findByTestId('pm-document-diff')).toHaveTextContent('+ Added QA criteria');
   });
 
@@ -389,7 +392,7 @@ describe('PMDocumentPanel', () => {
 
     render(
       <PMDocumentPanel
-        workspace="C:/Temp/SimpleGame"
+        workspace={workspace}
         selectedPath={null}
         onDocumentSelect={vi.fn()}
       />,
@@ -412,7 +415,7 @@ describe('PMDocumentPanel', () => {
 
     fireEvent.click((await screen.findAllByTestId('pm-document-version-open'))[1]);
 
-    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, '1'));
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, '1', workspace));
     expect(await screen.findByText('Historical Plan')).toBeInTheDocument();
     expect(screen.getByTestId('pm-document-version-read-evidence')).toHaveTextContent('version=1');
     expect(screen.getByRole('button', { name: /编辑/ })).toBeDisabled();
@@ -431,7 +434,7 @@ describe('PMDocumentPanel', () => {
 
     fireEvent.click(screen.getByTestId('pm-document-current-version'));
 
-    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, null));
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, null, workspace));
     expect(await screen.findByText('Current Plan')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /编辑/ })).not.toBeDisabled();
   });
@@ -484,14 +487,14 @@ describe('PMDocumentPanel', () => {
 
     render(
       <PMDocumentPanel
-        workspace="C:/Temp/SimpleGame"
+        workspace={workspace}
         selectedPath={null}
         onDocumentSelect={vi.fn()}
       />,
     );
 
     fireEvent.click(await screen.findByText('obsolete.md'));
-    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath));
+    await waitFor(() => expect(documentServiceMock.get).toHaveBeenCalledWith(documentPath, null, workspace));
 
     fireEvent.click(screen.getByTestId('pm-document-delete-toggle'));
 
@@ -503,7 +506,7 @@ describe('PMDocumentPanel', () => {
 
     fireEvent.click(screen.getByTestId('pm-document-delete-submit'));
 
-    await waitFor(() => expect(documentServiceMock.delete).toHaveBeenCalledWith(documentPath, false));
+    await waitFor(() => expect(documentServiceMock.delete).toHaveBeenCalledWith(documentPath, false, workspace));
     expect(toastMock.success).toHaveBeenCalledWith('PM 文档记录已删除');
     await waitFor(() => expect(documentServiceMock.list).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('选择文档以查看')).toBeInTheDocument();

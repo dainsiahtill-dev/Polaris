@@ -22,6 +22,10 @@ import {
   type PmOrchestrationRunResponse,
   type RunPmPayload,
 } from '@/services/pmService';
+import {
+  getChiefEngineerDiagnostics,
+  type ChiefEngineerDiagnosticsResponse,
+} from '@/services/chiefEngineerService';
 
 interface PMWorkbenchPanelProps {
   pmRunning?: boolean;
@@ -64,6 +68,12 @@ interface DirectorHandoffDiagnosticsState {
   error: string | null;
 }
 
+interface ChiefEngineerHandoffDiagnosticsState {
+  loading: boolean;
+  data: ChiefEngineerDiagnosticsResponse | null;
+  error: string | null;
+}
+
 const TERMINAL_PM_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
 const RUN_EVIDENCE_REFRESH_INTERVAL_MS = 3000;
 
@@ -97,6 +107,46 @@ function directorHandoffLlmLabel(state: DirectorHandoffDiagnosticsState): string
   if (state.error) return 'error';
   if (!state.data?.llm) return 'unknown';
   return state.data.llm.ok ? 'ready' : state.data.llm.state || 'blocked';
+}
+
+function chiefEngineerHandoffBlockReason(state: ChiefEngineerHandoffDiagnosticsState): string {
+  if (state.loading) {
+    return 'Chief Engineer 蓝图诊断读取中';
+  }
+  if (state.error) {
+    return `Chief Engineer 蓝图诊断不可用：${state.error}`;
+  }
+  if (!state.data?.blueprints) {
+    return 'Chief Engineer 蓝图诊断不可用';
+  }
+  const blockers = state.data.handoff_blockers?.filter(Boolean) || [];
+  const blueprints = state.data.blueprints;
+  if (state.data.can_handoff === false || blockers.length > 0 || !blueprints.director_handoff_ready) {
+    const missingCount = blueprints.missing_task_ids?.length || Math.max(0, blueprints.planned_tasks - blueprints.covered_tasks);
+    if (missingCount > 0) {
+      return `Chief Engineer 蓝图覆盖不足：缺少 ${missingCount} 个 PM 任务`;
+    }
+    if (blockers.length > 0) {
+      return `Chief Engineer 交接未就绪：${blockers.join(', ')}`;
+    }
+    return 'Chief Engineer 蓝图交接未就绪';
+  }
+  return '';
+}
+
+function chiefEngineerHandoffLabel(state: ChiefEngineerHandoffDiagnosticsState): string {
+  if (state.loading) return 'checking';
+  if (state.error) return 'error';
+  if (!state.data?.blueprints) return 'unknown';
+  const blockers = state.data.handoff_blockers?.filter(Boolean) || [];
+  const blueprints = state.data.blueprints;
+  if (state.data.can_handoff !== false && blockers.length === 0 && blueprints.director_handoff_ready) {
+    return 'ready';
+  }
+  const missingCount = blueprints.missing_task_ids?.length
+    || Math.max(0, blueprints.planned_tasks - blueprints.covered_tasks);
+  if (missingCount > 0) return `missing ${missingCount}`;
+  return blueprints.status || 'blocked';
 }
 
 /**
@@ -143,6 +193,11 @@ export function PMWorkbenchPanel({
     data: null,
     error: null,
   });
+  const [chiefEngineerHandoffDiagnostics, setChiefEngineerHandoffDiagnostics] = useState<ChiefEngineerHandoffDiagnosticsState>({
+    loading: false,
+    data: null,
+    error: null,
+  });
   const {
     isExportingFactory,
     factoryRunEvidence,
@@ -178,9 +233,10 @@ export function PMWorkbenchPanel({
     void loadSessions();
   }, [loadSessions]);
 
-  const loadDirectorHandoffDiagnostics = useCallback(async () => {
+  const loadHandoffDiagnostics = useCallback(async () => {
     if (!workspace) {
       setDirectorHandoffDiagnostics({ loading: false, data: null, error: null });
+      setChiefEngineerHandoffDiagnostics({ loading: false, data: null, error: null });
       return;
     }
     setDirectorHandoffDiagnostics((current) => ({
@@ -188,22 +244,45 @@ export function PMWorkbenchPanel({
       loading: true,
       error: null,
     }));
+    setChiefEngineerHandoffDiagnostics((current) => ({
+      ...current,
+      loading: true,
+      error: null,
+    }));
     try {
-      const result = await getDirectorDiagnostics(workspace);
-      if (result.ok && result.data) {
-        setDirectorHandoffDiagnostics({ loading: false, data: result.data, error: null });
-        return;
+      const [directorResult, chiefEngineerResult] = await Promise.all([
+        getDirectorDiagnostics(workspace),
+        getChiefEngineerDiagnostics(workspace),
+      ]);
+      if (directorResult.ok && directorResult.data) {
+        setDirectorHandoffDiagnostics({ loading: false, data: directorResult.data, error: null });
+      } else {
+        setDirectorHandoffDiagnostics({
+          loading: false,
+          data: null,
+          error: directorResult.error || 'Director diagnostics unavailable',
+        });
       }
-      setDirectorHandoffDiagnostics({
-        loading: false,
-        data: null,
-        error: result.error || 'Director diagnostics unavailable',
-      });
+      if (chiefEngineerResult.ok && chiefEngineerResult.data) {
+        setChiefEngineerHandoffDiagnostics({ loading: false, data: chiefEngineerResult.data, error: null });
+      } else {
+        setChiefEngineerHandoffDiagnostics({
+          loading: false,
+          data: null,
+          error: chiefEngineerResult.error || 'Chief Engineer diagnostics unavailable',
+        });
+      }
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'handoff diagnostics unavailable';
       setDirectorHandoffDiagnostics({
         loading: false,
         data: null,
-        error: error instanceof Error ? error.message : 'Director diagnostics unavailable',
+        error: message,
+      });
+      setChiefEngineerHandoffDiagnostics({
+        loading: false,
+        data: null,
+        error: message,
       });
     }
   }, [workspace]);
@@ -212,8 +291,8 @@ export function PMWorkbenchPanel({
     if (!shouldRunDirector) {
       return;
     }
-    void loadDirectorHandoffDiagnostics();
-  }, [loadDirectorHandoffDiagnostics, shouldRunDirector]);
+    void loadHandoffDiagnostics();
+  }, [loadHandoffDiagnostics, shouldRunDirector]);
 
   const selectableSessions = useMemo(() => {
     if (!sessionId || sessions.some((session) => session.id === sessionId)) {
@@ -248,7 +327,7 @@ export function PMWorkbenchPanel({
     }
 
     try {
-      const runResult = await getPmRun(runId);
+      const runResult = await getPmRun(runId, workspace);
       if (runResult.ok && runResult.data) {
         setWorkflowRunEvidence({
           runId,
@@ -272,7 +351,7 @@ export function PMWorkbenchPanel({
         error: err instanceof Error ? err.message : 'PM run detail unavailable',
       });
     }
-  }, []);
+  }, [workspace]);
 
   const handleRefreshPmRun = useCallback(() => {
     const runId = String(workflowRunEvidence.runId || '').trim();
@@ -295,7 +374,7 @@ export function PMWorkbenchPanel({
     });
 
     try {
-      const result = await cancelPmRun(runId);
+      const result = await cancelPmRun(runId, workspace);
       if (result.ok && result.data) {
         const status = String(result.data.status || 'unknown').trim() || 'unknown';
         setWorkflowRunEvidence({
@@ -337,7 +416,7 @@ export function PMWorkbenchPanel({
         description: error,
       });
     }
-  }, [workflowRunEvidence.runId]);
+  }, [workflowRunEvidence.runId, workspace]);
 
   const handleNewSession = async () => {
     try {
@@ -409,12 +488,15 @@ export function PMWorkbenchPanel({
       });
       return;
     }
-    const directorBlockReason = shouldRunDirector
-      ? directorHandoffLlmBlockReason(directorHandoffDiagnostics)
+    const handoffBlockReason = shouldRunDirector
+      ? [
+        directorHandoffLlmBlockReason(directorHandoffDiagnostics),
+        chiefEngineerHandoffBlockReason(chiefEngineerHandoffDiagnostics),
+      ].find(Boolean) || ''
       : '';
-    if (directorBlockReason) {
+    if (handoffBlockReason) {
       toast.error('PM 编排启动失败', {
-        description: directorBlockReason,
+        description: handoffBlockReason,
       });
       return;
     }
@@ -489,10 +571,15 @@ export function PMWorkbenchPanel({
     && !workflowRunCancelEvidence.loading
     && !workflowRunEvidence.error
     && !isTerminalPmRunStatus(workflowRunEvidence.data?.status);
-  const directorHandoffBlockReason = shouldRunDirector
-    ? directorHandoffLlmBlockReason(directorHandoffDiagnostics)
+  const roleHandoffBlockReason = shouldRunDirector
+    ? [
+      directorHandoffLlmBlockReason(directorHandoffDiagnostics),
+      chiefEngineerHandoffBlockReason(chiefEngineerHandoffDiagnostics),
+    ].find(Boolean) || ''
     : '';
   const directorHandoffLlmState = directorHandoffLlmLabel(directorHandoffDiagnostics);
+  const chiefEngineerHandoffState = chiefEngineerHandoffLabel(chiefEngineerHandoffDiagnostics);
+  const handoffDiagnosticsLoading = directorHandoffDiagnostics.loading || chiefEngineerHandoffDiagnostics.loading;
 
   useEffect(() => {
     const runId = String(workflowRunEvidence.runId || '').trim();
@@ -611,36 +698,41 @@ export function PMWorkbenchPanel({
           <div
             data-testid="pm-workbench-director-readiness"
             className="flex h-8 items-center gap-1.5 rounded border border-amber-500/15 bg-slate-950/70 px-2 text-[11px] text-amber-100"
-            title={directorHandoffBlockReason || 'Director LLM ready'}
+            title={roleHandoffBlockReason || 'Director handoff ready'}
           >
-            {directorHandoffDiagnostics.loading ? (
+            {handoffDiagnosticsLoading ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-300" />
-            ) : directorHandoffBlockReason ? (
+            ) : roleHandoffBlockReason ? (
               <AlertTriangle className="h-3.5 w-3.5 text-red-300" />
             ) : (
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
             )}
             <span className="font-mono text-[10px] text-amber-200/80">director-llm</span>
-            <span className={directorHandoffBlockReason ? 'text-red-200' : 'text-emerald-200'}>
+            <span className={directorHandoffLlmBlockReason(directorHandoffDiagnostics) ? 'text-red-200' : 'text-emerald-200'}>
               {directorHandoffLlmState}
+            </span>
+            <span className="mx-1 h-3 w-px bg-amber-500/20" aria-hidden="true" />
+            <span className="font-mono text-[10px] text-amber-200/80">ce-blueprint</span>
+            <span className={chiefEngineerHandoffBlockReason(chiefEngineerHandoffDiagnostics) ? 'text-red-200' : 'text-emerald-200'}>
+              {chiefEngineerHandoffState}
             </span>
             <button
               type="button"
-              onClick={loadDirectorHandoffDiagnostics}
-              disabled={directorHandoffDiagnostics.loading}
+              onClick={loadHandoffDiagnostics}
+              disabled={handoffDiagnosticsLoading}
               data-testid="pm-workbench-director-readiness-refresh"
-              title="刷新 Director LLM readiness"
+              title="刷新 Director 交接 readiness"
               className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded text-amber-200/70 hover:bg-amber-500/10 hover:text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <RefreshCw className={`h-3 w-3 ${directorHandoffDiagnostics.loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-3 w-3 ${handoffDiagnosticsLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         ) : null}
         <button
           type="button"
           onClick={handleRunPMOrchestration}
-          disabled={!workspace || isLaunchingOrchestration || Boolean(directorHandoffBlockReason)}
-          title={directorHandoffBlockReason || undefined}
+          disabled={!workspace || isLaunchingOrchestration || Boolean(roleHandoffBlockReason)}
+          title={roleHandoffBlockReason || undefined}
           data-testid="pm-workbench-run-pm"
           className="inline-flex h-8 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2.5 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -658,6 +750,7 @@ export function PMWorkbenchPanel({
           tone="amber"
           testId="pm-workbench-run-evidence"
           endpoint={`/v2/pm/runs/${workflowRunEvidence.runId}`}
+          workspace={workspace}
           loading={workflowRunEvidence.loading}
           error={workflowRunEvidence.error}
           status={workflowRunEvidence.data?.status}

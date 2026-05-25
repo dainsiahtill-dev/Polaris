@@ -43,6 +43,11 @@ import type {
   RoleChatRole,
 } from '@/services/api.types';
 
+function workspaceFromContext(context?: Record<string, unknown>): string {
+  const workspace = context?.workspace;
+  return typeof workspace === 'string' ? workspace.trim() : '';
+}
+
 // ============================================================================
 // useRoleChat
 // ============================================================================
@@ -56,7 +61,7 @@ export interface UseRoleChatResult {
   reset: () => void;
 }
 
-export function useRoleChat(role: RoleChatRole): UseRoleChatResult {
+export function useRoleChat(role: RoleChatRole, workspace = ''): UseRoleChatResult {
   const [response, setResponse] = useState('');
   const [thinking, setThinking] = useState('');
   const [loading, setLoading] = useState(false);
@@ -70,7 +75,11 @@ export function useRoleChat(role: RoleChatRole): UseRoleChatResult {
       setThinking('');
       try {
         const request: RoleChatRequest = { message, context };
-        const result: ApiResult<RoleChatResponse> = await roleChatService.chat(role, request);
+        const result: ApiResult<RoleChatResponse> = await roleChatService.chat(
+          role,
+          request,
+          workspace || workspaceFromContext(context)
+        );
         if (result.ok && result.data) {
           setResponse(result.data.response);
           setThinking(result.data.thinking ?? '');
@@ -83,7 +92,7 @@ export function useRoleChat(role: RoleChatRole): UseRoleChatResult {
         setLoading(false);
       }
     },
-    [role]
+    [role, workspace]
   );
 
   const reset = useCallback(() => {
@@ -106,7 +115,7 @@ export interface UseRoleChatStatusResult {
   refresh: () => Promise<void>;
 }
 
-export function useRoleChatStatus(role: RoleChatRole): UseRoleChatStatusResult {
+export function useRoleChatStatus(role: RoleChatRole, workspace = ''): UseRoleChatStatusResult {
   const [status, setStatus] = useState<RoleChatStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -115,7 +124,7 @@ export function useRoleChatStatus(role: RoleChatRole): UseRoleChatStatusResult {
     setLoading(true);
     setError('');
     try {
-      const result = await roleChatService.getStatus(role);
+      const result = await roleChatService.getStatus(role, workspace);
       if (result.ok && result.data) {
         setStatus(result.data);
       } else {
@@ -128,7 +137,7 @@ export function useRoleChatStatus(role: RoleChatRole): UseRoleChatStatusResult {
     } finally {
       setLoading(false);
     }
-  }, [role]);
+  }, [role, workspace]);
 
   useEffect(() => {
     refresh();

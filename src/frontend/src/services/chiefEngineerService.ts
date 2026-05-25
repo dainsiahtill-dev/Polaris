@@ -33,6 +33,9 @@ export interface ChiefEngineerDiagnosticsBlueprintStatus {
   ok: boolean;
   status: string;
   source: string;
+  plan_status: string;
+  plan_path: string | null;
+  plan_error: string | null;
   total: number;
   loadable: number;
   invalid_payloads: number;
@@ -66,6 +69,11 @@ export interface GenerateChiefEngineerBlueprintPayload {
   context?: Record<string, unknown>;
 }
 
+export interface BulkGenerateChiefEngineerBlueprintPayload {
+  tasks: GenerateChiefEngineerBlueprintPayload[];
+  stop_on_error?: boolean;
+}
+
 export interface ChiefEngineerTaskBlueprintResultResponse {
   ok: boolean;
   task_id: string;
@@ -78,6 +86,22 @@ export interface ChiefEngineerTaskBlueprintResultResponse {
   recommendations: string[];
   risks: string[];
   blueprint: Record<string, unknown>;
+}
+
+export interface ChiefEngineerBulkBlueprintError {
+  task_id: string;
+  code: string;
+  message: string;
+}
+
+export interface ChiefEngineerBulkGenerateBlueprintResponse {
+  ok: boolean;
+  workspace: string;
+  total: number;
+  generated: number;
+  failed: number;
+  results: ChiefEngineerTaskBlueprintResultResponse[];
+  errors: ChiefEngineerBulkBlueprintError[];
 }
 
 export interface ChiefEngineerBlueprintDeleteResponse {
@@ -114,6 +138,17 @@ export async function generateChiefEngineerBlueprint(
     `/v2/chief-engineer/blueprints${workspaceQuerySuffix(workspace)}`,
     payload,
     'Failed to generate Chief Engineer blueprint',
+  );
+}
+
+export async function bulkGenerateChiefEngineerBlueprints(
+  payload: BulkGenerateChiefEngineerBlueprintPayload,
+  workspace = '',
+): Promise<ApiResult<ChiefEngineerBulkGenerateBlueprintResponse>> {
+  return apiPost<ChiefEngineerBulkGenerateBlueprintResponse>(
+    `/v2/chief-engineer/blueprints/bulk${workspaceQuerySuffix(workspace)}`,
+    payload,
+    'Failed to bulk generate Chief Engineer blueprints',
   );
 }
 

@@ -98,6 +98,49 @@ describe('useProcessOperations', () => {
     });
   });
 
+  describe('workspace-bound lifecycle calls', () => {
+    it('passes the active workspace to PM and Director process controls', async () => {
+      const { result } = renderHook(() => useProcessOperations({ workspace: 'C:/Temp/Product' }));
+
+      await act(async () => {
+        await result.current.startPmLoop();
+        await result.current.stopPm();
+        await result.current.runPmOnce();
+        await result.current.startDirector();
+        await result.current.stopDirector();
+      });
+
+      expect(mockStartPm).toHaveBeenCalledWith(false, 'C:/Temp/Product');
+      expect(mockStopPm).toHaveBeenCalledWith('C:/Temp/Product');
+      expect(mockRunPmOnce).toHaveBeenCalledWith('C:/Temp/Product');
+      expect(mockStartDirector).toHaveBeenCalledWith('C:/Temp/Product');
+      expect(mockStopDirector).toHaveBeenCalledWith('C:/Temp/Product');
+    });
+
+    it('passes the active workspace when seeding Director tasks from PM contracts', async () => {
+      const tasks = [
+        {
+          id: 'task-workspace',
+          title: 'Workspace Task',
+          status: 'pending',
+          priority: 1,
+          acceptance_criteria: ['task passes'],
+        },
+      ];
+      const { result } = renderHook(() => useProcessOperations({ workspace: 'C:/Temp/Product' }));
+
+      await act(async () => {
+        await result.current.startDirector(undefined, tasks);
+      });
+
+      expect(mockListDirectorTasks).toHaveBeenCalledWith('local', 'C:/Temp/Product');
+      expect(mockCreateDirectorTask).toHaveBeenCalledWith(expect.objectContaining({
+        subject: 'Workspace Task',
+      }), 'C:/Temp/Product');
+      expect(mockStartDirector).toHaveBeenCalledWith('C:/Temp/Product');
+    });
+  });
+
   describe('startPmLoop', () => {
     it('starts PM loop successfully', async () => {
       const { result } = renderHook(() => useProcessOperations());
@@ -108,7 +151,7 @@ describe('useProcessOperations', () => {
       });
 
       expect(successResult).toBe(true);
-      expect(mockStartPm).toHaveBeenCalledWith(false);
+      expect(mockStartPm).toHaveBeenCalledWith(false, '');
       expect(toast.success).toHaveBeenCalledWith('PM started');
       expect(result.current.isStartingPM).toBe(false);
     });
@@ -162,7 +205,7 @@ describe('useProcessOperations', () => {
       });
 
       expect(toast.loading).toHaveBeenCalledWith('Resuming PM...', expect.any(Object));
-      expect(mockStartPm).toHaveBeenCalledWith(true);
+      expect(mockStartPm).toHaveBeenCalledWith(true, '');
       expect(toast.success).toHaveBeenCalledWith('PM resumed');
     });
 
@@ -201,7 +244,7 @@ describe('useProcessOperations', () => {
         expect(success).toBe(true);
       });
 
-      expect(mockStopPm).toHaveBeenCalledWith();
+      expect(mockStopPm).toHaveBeenCalledWith('');
     });
 
     it('returns false on failure', async () => {
@@ -262,7 +305,7 @@ describe('useProcessOperations', () => {
         expect(success).toBe(true);
       });
 
-      expect(mockRunPmOnce).toHaveBeenCalledWith();
+      expect(mockRunPmOnce).toHaveBeenCalledWith('');
       expect(toast.success).toHaveBeenCalledWith('PM run once started');
     });
 
@@ -309,7 +352,7 @@ describe('useProcessOperations', () => {
         expect(success).toBe(true);
       });
 
-      expect(mockStartDirector).toHaveBeenCalledWith();
+      expect(mockStartDirector).toHaveBeenCalledWith('');
       expect(toast.success).toHaveBeenCalledWith('Director started');
     });
 
@@ -446,7 +489,7 @@ describe('useProcessOperations', () => {
         expect(success).toBe(true);
       });
 
-      expect(mockStopDirector).toHaveBeenCalledWith();
+      expect(mockStopDirector).toHaveBeenCalledWith('');
     });
 
     it('returns false on failure', async () => {

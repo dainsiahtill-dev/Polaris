@@ -589,10 +589,67 @@ describe('FactoryWorkspace', () => {
     );
 
     expect(screen.getByText('失败信息')).toBeInTheDocument();
-    expect(screen.getByText('quality gate failed')).toBeInTheDocument();
+    expect(screen.getAllByText('quality gate failed').length).toBeGreaterThan(0);
     expect(screen.getByText(/Inspect the QA report/)).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('quality gate failed');
     expect(screen.getByRole('button', { name: '启动' })).toBeInTheDocument();
+  });
+
+  it('separates PM root cause from Director and QA cascade blockers', () => {
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        currentRun={{
+          run_id: 'run-pm-failed',
+          phase: 'failed',
+          status: 'failed',
+          current_stage: 'pm_planning',
+          last_successful_stage: null,
+          progress: 20,
+          roles: {
+            pm: {
+              role: 'pm',
+              status: 'failed',
+              detail: 'PM iteration failed: task contract validation failed',
+              current_task: 'pm_planning',
+              progress: 20,
+            },
+            director: {
+              role: 'director',
+              status: 'blocked',
+              detail: 'Director dispatch skipped because PM iteration failed',
+              current_task: '',
+              progress: 0,
+            },
+            qa: {
+              role: 'qa',
+              status: 'blocked',
+              detail: 'QA blocked because PM iteration failed',
+              current_task: '',
+              progress: 0,
+            },
+          },
+          gates: [],
+          created_at: '2026-05-25T00:00:00Z',
+          failure: {
+            failure_type: 'deterministic',
+            code: 'PM_ITERATION_FAILED',
+            detail: 'Director: Director dispatch skipped because PM iteration failed QA: QA blocked because PM iteration failed',
+            phase: 'failed',
+            recoverable: true,
+          },
+        }}
+        events={[]}
+      />
+    );
+
+    const brief = screen.getByTestId('factory-failure-brief');
+    expect(brief).toHaveTextContent('PM 阶段失败');
+    expect(brief).toHaveTextContent('根因 PM');
+    expect(brief).toHaveTextContent('PM_ITERATION_FAILED');
+    expect(brief).toHaveTextContent('2 个级联阻塞');
+    expect(brief).toHaveTextContent('Director dispatch skipped because PM iteration failed');
+    expect(brief).toHaveTextContent('QA blocked because PM iteration failed');
   });
 
   it('treats canceled, blocked and timeout run states as terminal restartable states', () => {

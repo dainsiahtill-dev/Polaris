@@ -32,12 +32,14 @@ function findApiCall(path: string): [string, RequestInit | undefined] {
   return call as [string, RequestInit | undefined];
 }
 
+const productWorkspaceQuery = 'workspace=C%3A%2FTemp%2FProduct';
+
 describe('AIDialoguePanel RoleSession visibility', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     let sessionIndex = 0;
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === '/v2/role/pm/chat/status') {
+      if (path === `/v2/role/pm/chat/status?${productWorkspaceQuery}`) {
         return Promise.resolve(jsonResponse({ ready: true, configured: true, role: 'pm' }));
       }
       if (path === '/v2/roles/capabilities/pm?host_kind=electron_workbench') {

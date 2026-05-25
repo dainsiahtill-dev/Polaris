@@ -48,7 +48,6 @@ import {
   Wrench,
   Database,
   Trash2,
-  XCircle,
   SlidersHorizontal,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
@@ -58,6 +57,7 @@ import { RealTimeFileDiff } from './RealTimeFileDiff';
 import { resolveDirectorOpenTarget } from './directorFileActions';
 import { TaskTraceTimeline } from '../common/TaskTraceTimeline';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
+import { RoleRunEvidenceStrip } from '@/app/components/common/RoleRunEvidenceStrip';
 import {
   DirectorTaskPanel as DirectorTaskPanelView,
   type DirectorTaskBackendDetailState,
@@ -134,6 +134,13 @@ interface DirectorWorkspaceProps {
   taskTraceMap?: TaskTraceMap;
 }
 
+function evidenceEndpoint(endpoint: string, workspace: string): string {
+  const value = String(workspace || '').trim();
+  if (!value) return endpoint;
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
+}
+
 interface DirectorTaskCancelState {
   taskId: string | null;
   loading: boolean;
@@ -176,6 +183,12 @@ interface DirectorDiagnosticsState {
 }
 
 const DIRECTOR_TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
+const DIRECTOR_RUN_EVIDENCE_REFRESH_INTERVAL_MS = 3000;
+
+interface LoadDirectorRunEvidenceOptions {
+  preserveData?: boolean;
+  preserveCancel?: boolean;
+}
 
 const isDirectorRunTerminal = (status?: string | null): boolean => {
   const token = String(status || '').trim().toLowerCase();
@@ -1034,6 +1047,7 @@ function DirectorKernelDiagnosticsStrip({
   error,
   onRefresh,
   onClearCache,
+  workspace,
 }: {
   cacheStats: RoleKernelCacheStats | null;
   llmEvents: RoleKernelLLMEventsResponse | null;
@@ -1043,6 +1057,7 @@ function DirectorKernelDiagnosticsStrip({
   error: string | null;
   onRefresh: () => void;
   onClearCache: () => void;
+  workspace: string;
 }) {
   return (
     <section
@@ -1093,7 +1108,7 @@ function DirectorKernelDiagnosticsStrip({
             <KernelStripMetric
               icon={<Brain className="h-3.5 w-3.5 text-indigo-300" />}
               label="LLM"
-              endpoint="/v2/director/llm-events?role=director&limit=5"
+              endpoint={evidenceEndpoint('/v2/director/llm-events?role=director&limit=5', workspace)}
               values={[
                 `events ${formatKernelNumber(llmEvents?.count ?? llmEvents?.events?.length)}`,
                 `last ${formatKernelEventType(llmEvents?.events?.[0])}`,
@@ -1150,6 +1165,7 @@ const DIRECTOR_EXECUTION_BLOCKER_LABELS: Record<string, string> = {
   director_no_tasks: '没有可执行的 Director 任务',
   director_no_ready_tasks: '没有 ready 任务，需先完成 PM/Chief Engineer 交接',
   director_ready_tasks_missing_blueprints: 'workflow 任务缺少 Chief Engineer 蓝图证据',
+  director_ready_tasks_invalid_blueprints: 'workflow 任务引用的 Chief Engineer 蓝图不可审计',
   director_workers_unavailable: 'Director worker 池不可用',
   director_no_workers: '没有可用 worker',
   director_no_idle_workers: '有 ready 任务但没有空闲 worker',
@@ -1192,12 +1208,14 @@ function DirectorReadinessDiagnosticsStrip({
   error,
   onRefresh,
   compact = false,
+  workspace,
 }: {
   diagnostics: DirectorDiagnosticsResponse | null;
   isLoading: boolean;
   error: string | null;
   onRefresh: () => void;
   compact?: boolean;
+  workspace: string;
 }) {
   const issues = diagnostics?.issues || [];
   const executionBlockers = directorExecutionBlockers(diagnostics);
@@ -1227,7 +1245,7 @@ function DirectorReadinessDiagnosticsStrip({
           交接诊断
         </div>
         <span className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-400">
-          /v2/director/diagnostics
+          {evidenceEndpoint('/v2/director/diagnostics', workspace)}
         </span>
 
         {isLoading ? (
@@ -1265,6 +1283,9 @@ function DirectorReadinessDiagnosticsStrip({
                 `ready ${diagnostics.tasks.ready_to_execute}/${diagnostics.tasks.total}`,
                 ...(diagnostics.tasks.missing_blueprint_task_ids?.length
                   ? [`missing BP ${diagnostics.tasks.missing_blueprint_task_ids.length}`]
+                  : []),
+                ...(diagnostics.tasks.invalid_blueprint_task_ids?.length
+                  ? [`invalid BP ${diagnostics.tasks.invalid_blueprint_task_ids.length}`]
                   : []),
                 `blocked ${diagnostics.tasks.blocked}`,
                 `running ${diagnostics.tasks.running}`,
@@ -1546,7 +1567,7 @@ export function DirectorWorkspace({
       const [cacheResult, tokenResult, llmResult] = await Promise.all([
         getRoleKernelCacheStats('director'),
         getRoleKernelTokenBudgetStats('director'),
-        getRoleKernelLLMEvents('director', { role: 'director', limit: 5 }),
+        getRoleKernelLLMEvents('director', { role: 'director', limit: 5, workspace }),
       ]);
       const errors: string[] = [];
 
@@ -1814,7 +1835,7 @@ export function DirectorWorkspace({
     }));
 
     const loadTaskLLMEvents = async () => {
-      const result = await getDirectorTaskKernelLLMEvents(taskId, { limit: 25 });
+      const result = await getDirectorTaskKernelLLMEvents(taskId, { limit: 25, workspace });
       if (cancelled) {
         return;
       }
@@ -2139,7 +2160,7 @@ export function DirectorWorkspace({
     setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] 创建 Director 任务: ${subject}\n`);
 
     try {
-      const result = await createDirectorTask(payload);
+      const result = await createDirectorTask(payload, workspace);
       if (!result.ok || !result.data) {
         setTaskCreateState({
           loading: false,
@@ -2201,7 +2222,7 @@ export function DirectorWorkspace({
     setTerminalOutput((prev) => `${prev}[${startedAt}] 请求取消 Director 任务: ${normalizedTaskId}\n`);
 
     try {
-      const result = await cancelDirectorTask(normalizedTaskId);
+      const result = await cancelDirectorTask(normalizedTaskId, workspace);
       if (!result.ok || !result.data) {
         const error = result.error || 'Director task cancel failed';
         setTaskCancelState({
@@ -2249,27 +2270,32 @@ export function DirectorWorkspace({
     }
   }, [directorRunning, workspace]);
 
-  const loadDirectorRunEvidence = useCallback(async (runId: string) => {
+  const loadDirectorRunEvidence = useCallback(async (
+    runId: string,
+    options: LoadDirectorRunEvidenceOptions = {},
+  ) => {
     const normalizedRunId = String(runId || '').trim();
     if (!normalizedRunId) {
       return;
     }
 
-    setDirectorRunEvidence({
+    setDirectorRunEvidence((current) => ({
       runId: normalizedRunId,
       loading: true,
-      data: null,
+      data: options.preserveData && current.runId === normalizedRunId ? current.data : null,
       error: null,
-    });
-    setDirectorRunCancelState({
-      runId: normalizedRunId,
-      loading: false,
-      message: null,
-      error: null,
-    });
+    }));
+    if (!options.preserveCancel) {
+      setDirectorRunCancelState({
+        runId: normalizedRunId,
+        loading: false,
+        message: null,
+        error: null,
+      });
+    }
 
     try {
-      const result = await getDirectorRun(normalizedRunId);
+      const result = await getDirectorRun(normalizedRunId, workspace);
       if (!result.ok || !result.data) {
         setDirectorRunEvidence({
           runId: normalizedRunId,
@@ -2294,7 +2320,7 @@ export function DirectorWorkspace({
         error: error instanceof Error ? error.message : 'Director run evidence unavailable',
       });
     }
-  }, []);
+  }, [workspace]);
 
   const handleCancelDirectorRun = useCallback(async () => {
     const normalizedRunId = String(directorRunEvidence.runId || '').trim();
@@ -2311,7 +2337,7 @@ export function DirectorWorkspace({
     setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] 请求取消 Director run: ${normalizedRunId}\n`);
 
     try {
-      const result = await cancelDirectorRun(normalizedRunId);
+      const result = await cancelDirectorRun(normalizedRunId, workspace);
       if (!result.ok || !result.data) {
         const error = result.error || 'Director run cancel failed';
         setDirectorRunCancelState({
@@ -2350,7 +2376,7 @@ export function DirectorWorkspace({
       });
       setTerminalOutput((prev) => `${prev}[${new Date().toLocaleTimeString()}] Director run 取消失败: ${message}\n`);
     }
-  }, [directorRunEvidence.runId]);
+  }, [directorRunEvidence.runId, workspace]);
 
   const toggleDirectorWithStatusEvidence = useCallback(async () => {
     setDirectorToggleStatusEvidence({
@@ -2514,12 +2540,40 @@ export function DirectorWorkspace({
   const pendingTasks = executionTasks.filter(t => t.status === 'pending').length;
   const totalTasks = executionTasks.length;
   const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const handleRefreshDirectorRun = useCallback(() => {
+    const normalizedRunId = String(directorRunEvidence.runId || '').trim();
+    if (!normalizedRunId) return;
+    void loadDirectorRunEvidence(normalizedRunId, {
+      preserveData: true,
+      preserveCancel: true,
+    });
+  }, [directorRunEvidence.runId, loadDirectorRunEvidence]);
+
   const directorRunCancelDisabled =
     !directorRunEvidence.runId ||
     directorRunEvidence.loading ||
     directorRunCancelState.loading ||
     isDirectorRunTerminal(directorRunEvidence.data?.status);
+  const directorRunAutoRefreshActive = Boolean(directorRunEvidence.runId)
+    && !directorRunEvidence.loading
+    && !directorRunCancelState.loading
+    && !directorRunEvidence.error
+    && !isDirectorRunTerminal(directorRunEvidence.data?.status);
   const shouldShowSideAIDialogue = showAIDialogue && activeView !== 'workbench' && activeView !== 'strategy';
+
+  useEffect(() => {
+    const normalizedRunId = String(directorRunEvidence.runId || '').trim();
+    if (!normalizedRunId || !directorRunAutoRefreshActive) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      void loadDirectorRunEvidence(normalizedRunId, {
+        preserveData: true,
+        preserveCancel: true,
+      });
+    }, DIRECTOR_RUN_EVIDENCE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [directorRunAutoRefreshActive, directorRunEvidence.runId, loadDirectorRunEvidence]);
 
   return (
     <div data-testid="director-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
@@ -2705,6 +2759,7 @@ export function DirectorWorkspace({
           error={kernelDiagnosticsError}
           onRefresh={() => void loadKernelDiagnostics()}
           onClearCache={() => void handleClearKernelCache()}
+          workspace={workspace}
         />
       )}
       <DirectorReadinessDiagnosticsStrip
@@ -2713,65 +2768,38 @@ export function DirectorWorkspace({
         error={directorDiagnostics.error}
         onRefresh={() => void loadDirectorDiagnostics()}
         compact={factoryMode}
+        workspace={workspace}
       />
       {directorRunEvidence.runId && (
-        <div
-          className="border-b border-white/10 bg-slate-950/70 px-4 py-2 text-xs text-slate-300"
-          data-testid="director-run-evidence"
-        >
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-medium text-slate-100">Director run evidence</span>
-            <span className="font-mono text-[11px] text-cyan-300">
-              /v2/director/runs/{directorRunEvidence.runId}
-            </span>
-            {directorRunEvidence.loading ? (
-              <span className="text-slate-400">正在读取运行快照...</span>
-            ) : directorRunEvidence.error ? (
-              <span className="text-rose-300">{directorRunEvidence.error}</span>
-            ) : directorRunEvidence.data ? (
-              <span className="text-emerald-300">
-                {directorRunEvidence.data.status || 'unknown'} · queued={directorRunEvidence.data.tasks_queued ?? 0}
-              </span>
-            ) : null}
-            {directorRunEvidence.data?.workspace ? (
-              <span className="truncate text-slate-400">{directorRunEvidence.data.workspace}</span>
-            ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                void handleCancelDirectorRun();
-              }}
-              data-testid="director-run-cancel"
-              disabled={directorRunCancelDisabled}
-              title="取消 Director run"
-              className="h-6 gap-1 px-2 text-[11px] text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 disabled:text-slate-500"
-            >
-              {directorRunCancelState.loading ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <XCircle className="h-3 w-3" />
-              )}
-              取消
-            </Button>
-            {directorRunCancelState.runId === directorRunEvidence.runId &&
-            (directorRunCancelState.loading || directorRunCancelState.message || directorRunCancelState.error) ? (
-              <span
-                className={cn(
-                  'font-mono text-[11px]',
-                  directorRunCancelState.error ? 'text-rose-300' : 'text-amber-300',
-                )}
-                data-testid="director-run-cancel-result"
-              >
-                /v2/director/runs/{directorRunEvidence.runId}/cancel ·{' '}
-                {directorRunCancelState.loading
-                  ? 'cancelling'
-                  : directorRunCancelState.error || directorRunCancelState.message}
-              </span>
-            ) : null}
-          </div>
-        </div>
+        <RoleRunEvidenceStrip
+          tone="cyan"
+          testId="director-run-evidence"
+          endpoint={`/v2/director/runs/${directorRunEvidence.runId}`}
+          workspace={workspace}
+          loading={directorRunEvidence.loading}
+          error={directorRunEvidence.error}
+          status={directorRunEvidence.data?.status}
+          details={directorRunEvidence.data ? [`queued=${directorRunEvidence.data.tasks_queued ?? 0}`] : []}
+          message={directorRunEvidence.data?.message}
+          refreshTestId="director-run-refresh"
+          refreshDisabled={!directorRunEvidence.runId || directorRunEvidence.loading}
+          refreshLoading={directorRunEvidence.loading}
+          autoRefreshActive={directorRunAutoRefreshActive}
+          onRefresh={handleRefreshDirectorRun}
+          cancelTestId="director-run-cancel"
+          cancelDisabled={directorRunCancelDisabled}
+          cancelLoading={directorRunCancelState.loading}
+          onCancel={() => { void handleCancelDirectorRun(); }}
+          cancelResultTestId="director-run-cancel-result"
+          cancelResultEndpoint={`/v2/director/runs/${directorRunEvidence.runId}/cancel`}
+          cancelResultVisible={
+            directorRunCancelState.runId === directorRunEvidence.runId
+            && (directorRunCancelState.loading || Boolean(directorRunCancelState.message) || Boolean(directorRunCancelState.error))
+          }
+          cancelResultLoading={directorRunCancelState.loading}
+          cancelResultMessage={directorRunCancelState.message}
+          cancelResultError={directorRunCancelState.error}
+        />
       )}
       {directorToggleStatusEvidence.triggered && (
         <div
@@ -2780,7 +2808,9 @@ export function DirectorWorkspace({
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="font-medium text-slate-100">Director status evidence</span>
-            <span className="font-mono text-[11px] text-cyan-300">/v2/director/status?source=auto</span>
+            <span className="font-mono text-[11px] text-cyan-300">
+              {evidenceEndpoint('/v2/director/status?source=auto', workspace)}
+            </span>
             {directorToggleStatusEvidence.loading ? (
               <span className="text-slate-400">正在读取进程状态...</span>
             ) : directorToggleStatusEvidence.error ? (
@@ -2876,6 +2906,7 @@ export function DirectorWorkspace({
                   taskBackendDetail={taskBackendDetail}
                   taskLLMEvents={taskLLMEvents}
                   executionDisabledReason={executionDisabledReason}
+                  workspace={workspace}
                 />
               )}
               {activeView === 'activity' && (

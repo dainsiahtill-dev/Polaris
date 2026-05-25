@@ -72,6 +72,18 @@ export function isRoleLlmBlocked(state: LlmRuntimeGateState, role: string): bool
   );
 }
 
+export function getRoleLlmBlockedReason(
+  state: LlmRuntimeGateState,
+  role: string,
+  roleDisplayName?: string,
+): string {
+  if (!isRoleLlmBlocked(state, role)) {
+    return '';
+  }
+  const displayName = String(roleDisplayName || role || '当前角色').trim() || '当前角色';
+  return `LLM 就绪检查未通过：${displayName} 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。`;
+}
+
 export function useLlmRuntimeGate({
   workspace,
   live,
@@ -118,6 +130,12 @@ export function useLlmRuntimeGate({
     clearLlmRuntimeState();
   }, [applyLlmStatusPayload, clearLlmRuntimeState]);
 
+  const getLlmRoleBlockedReason = useCallback(
+    (role: string, roleDisplayName?: string) =>
+      getRoleLlmBlockedReason(llmRuntimeState, role, roleDisplayName),
+    [llmRuntimeState],
+  );
+
   useEffect(() => {
     if (!workspace) {
       clearLlmRuntimeState();
@@ -150,7 +168,7 @@ export function useLlmRuntimeGate({
 
   return {
     llmRuntimeState,
-    llmDirectorBlockedReason: isRoleLlmBlocked(llmRuntimeState, 'director') ? 'LLM 就绪检查未通过' : '',
+    getLlmRoleBlockedReason,
     handleLlmStatusChange,
     refreshLlmGate,
   };

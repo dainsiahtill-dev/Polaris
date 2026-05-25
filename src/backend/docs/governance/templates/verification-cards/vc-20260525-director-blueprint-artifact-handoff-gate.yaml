@@ -1,0 +1,59 @@
+id: vc-20260525-director-blueprint-artifact-handoff-gate
+title: Director blueprint artifact handoff gate
+date: 2026-05-25
+scope:
+  - src/backend/polaris/delivery/http/v2/director.py
+  - src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py
+  - src/frontend/src/services/pmService.ts
+  - src/frontend/src/services/__tests__/pmService.test.ts
+  - src/frontend/src/app/components/director/DirectorWorkspace.tsx
+  - src/frontend/src/app/components/director/__tests__/DirectorWorkspace.capabilities.test.tsx
+change:
+  summary: >
+    Director readiness diagnostics validate workflow task blueprint references
+    against readable Chief Engineer artifacts before allowing execution.
+  root_cause: >
+    Previous diagnostics trusted blueprint metadata strings as handoff proof,
+    so stale or fabricated workflow rows could appear executable without an
+    auditable Chief Engineer artifact.
+assumptions:
+  - Workflow Director rows represent PM/Chief Engineer handoff tasks and must be
+    validated against blueprint artifacts.
+  - Local Director queue rows may still be manually created tasks and are not
+    forced through the PM/Chief Engineer artifact gate.
+  - Runtime aggregate blueprints can prove task coverage through task_id,
+    pm_task_id, task_update_map, or task_updates.
+premortem:
+  - The highest-risk mistake is rejecting valid aggregate Chief Engineer
+    blueprint files that cover tasks through task_update_map rather than a
+    top-level task_id.
+  - The second highest-risk mistake is accepting absolute paths outside the
+    active workspace/runtime cache.
+verification:
+  tests:
+    - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py -q
+      result: PASS
+      observed: 70 passed
+    - command: npm run test -- DirectorWorkspace.capabilities pmService
+      result: PASS
+      observed: 124 passed
+  quality_gates:
+    - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py --fix
+      result: PASS
+      observed: "1 issue fixed, 0 remaining"
+    - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py
+      result: PASS
+      observed: "2 files left unchanged"
+    - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/v2/director.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_director_router.py
+      result: PASS
+      observed: "Success: no issues found in 2 source files"
+    - command: npm run typecheck
+      result: PASS
+    - command: npm run lint
+      result: PASS
+    - command: git diff --check
+      result: PASS
+      observed: "Only line-ending warnings; no whitespace errors"
+risk_notes:
+  - Full PM/ChiefEngineer/Director desktop completion remains broader than this
+    targeted Director handoff gate.

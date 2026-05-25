@@ -694,6 +694,59 @@ async def test_v2_search_documents(client: AsyncClient) -> None:
         mock_pm.search_documents.assert_called_once_with(query="hello", limit=10)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "shape"),
+    [
+        ("/v2/pm/documents", "document_list"),
+        ("/v2/pm/documents/docs/readme.md", "document_detail"),
+        ("/v2/pm/documents/docs/readme.md/versions", "document_versions"),
+        ("/v2/pm/documents/docs/readme.md/compare?old_version=1&new_version=2", "document_diff"),
+        ("/v2/pm/search/documents?q=readme", "document_search"),
+    ],
+)
+async def test_v2_pm_document_read_routes_return_idle_projection_when_pm_adapter_get_pm_fails(
+    client: AsyncClient,
+    path: str,
+    shape: str,
+) -> None:
+    """Desktop PM document read surfaces should not 500 when the legacy adapter is unavailable."""
+    mock_pm = _mock_pm_adapter()
+    mock_pm.is_initialized.side_effect = ImportError("get_pm function not found in pm_integration module")
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ):
+        response = await client.get(path)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reason"] == "PM_RUNTIME_UNAVAILABLE"
+    assert "get_pm function not found" in data["error"]
+
+    if shape == "document_list":
+        assert data["documents"] == []
+        assert data["items"] == []
+        assert data["total"] == 0
+    elif shape == "document_detail":
+        assert data["path"] == "docs/readme.md"
+        assert data["current_version"] == ""
+        assert data["content"] is None
+    elif shape == "document_versions":
+        assert data["path"] == "docs/readme.md"
+        assert data["versions"] == []
+    elif shape == "document_diff":
+        assert data["path"] == "docs/readme.md"
+        assert data["old_version"] == "1"
+        assert data["new_version"] == "2"
+        assert data["diff_text"] == ""
+    elif shape == "document_search":
+        assert data["query"] == "readme"
+        assert data["results"] == []
+        assert data["count"] == 0
+
+
 # ---------------------------------------------------------------------------
 # Tasks
 # ---------------------------------------------------------------------------
@@ -767,6 +820,88 @@ async def test_v2_list_tasks_returns_idle_projection_when_pm_runtime_import_fail
     assert data["initialized"] is False
     assert data["reason"] == "PM_RUNTIME_UNAVAILABLE"
     assert "get_pm function not found" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_v2_list_tasks_returns_idle_projection_when_pm_adapter_get_pm_fails(
+    client: AsyncClient,
+) -> None:
+    """The desktop PM task list must not 500 when adapter.get_pm fails during initialization checks."""
+    mock_pm = _mock_pm_adapter()
+    mock_pm.is_initialized.side_effect = ImportError("get_pm function not found in pm_integration module")
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ):
+        response = await client.get("/v2/pm/tasks")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["tasks"] == []
+    assert data["items"] == []
+    assert data["reason"] == "PM_RUNTIME_UNAVAILABLE"
+    assert "get_pm function not found" in data["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "shape"),
+    [
+        ("/v2/pm/tasks/PM-1", "task_detail"),
+        ("/v2/pm/tasks/PM-1/assignments", "task_assignments"),
+        ("/v2/pm/search/tasks?q=quality", "task_search"),
+        ("/v2/pm/requirements", "requirement_list"),
+        ("/v2/pm/requirements/REQ-1", "requirement_detail"),
+        ("/pm/v2/pm/status", "status"),
+        ("/pm/v2/pm/health", "health"),
+    ],
+)
+async def test_v2_pm_read_routes_return_idle_projection_when_pm_adapter_get_pm_fails(
+    client: AsyncClient,
+    path: str,
+    shape: str,
+) -> None:
+    """Desktop PM read surfaces should degrade consistently when the legacy adapter is unavailable."""
+    mock_pm = _mock_pm_adapter()
+    mock_pm.is_initialized.side_effect = ImportError("get_pm function not found in pm_integration module")
+
+    with patch(
+        "polaris.delivery.http.routers.pm_management.ScriptsPMAdapter",
+        return_value=mock_pm,
+    ):
+        response = await client.get(path)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reason"] == "PM_RUNTIME_UNAVAILABLE"
+    assert "get_pm function not found" in data["error"]
+
+    if shape == "task_detail":
+        assert data["id"] == "PM-1"
+        assert data["initialized"] is False
+    elif shape == "task_assignments":
+        assert data["task_id"] == "PM-1"
+        assert data["assignments"] == []
+        assert data["count"] == 0
+    elif shape == "task_search":
+        assert data["query"] == "quality"
+        assert data["results"] == []
+        assert data["count"] == 0
+    elif shape == "requirement_list":
+        assert data["requirements"] == []
+        assert data["items"] == []
+        assert data["total"] == 0
+    elif shape == "requirement_detail":
+        assert data["id"] == "REQ-1"
+        assert data["initialized"] is False
+    elif shape == "status":
+        assert data["initialized"] is False
+        assert data["workspace"] == "."
+    elif shape == "health":
+        assert data["overall"] == "unavailable"
+        assert data["components"]["pm_runtime"] == "unavailable"
 
 
 @pytest.mark.asyncio
@@ -1294,7 +1429,7 @@ async def test_v2_search_documents_not_initialized(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_get_health_not_initialized(client: AsyncClient) -> None:
-    """GET /pm/v2/pm/health should 400 when PM not initialized."""
+    """GET /pm/v2/pm/health should return a degraded desktop projection when PM is idle."""
     mock_pm = _mock_pm_adapter(initialized=False)
 
     with patch(
@@ -1302,5 +1437,8 @@ async def test_v2_get_health_not_initialized(client: AsyncClient) -> None:
         return_value=mock_pm,
     ):
         response = await client.get("/pm/v2/pm/health")
-        assert response.status_code == 400
-        assert "PM_NOT_INITIALIZED" in response.json()["error"]["code"]
+        assert response.status_code == 200
+        data = response.json()
+        assert data["overall"] == "unavailable"
+        assert data["components"]["pm_runtime"] == "unavailable"
+        assert data["reason"] == "PM_NOT_INITIALIZED"

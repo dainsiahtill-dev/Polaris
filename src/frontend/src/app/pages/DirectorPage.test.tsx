@@ -4,6 +4,8 @@ import { DirectorPage } from './DirectorPage';
 
 const directorWorkspaceProps = vi.hoisted(() => vi.fn());
 const runtimeOverlayProps = vi.hoisted(() => vi.fn());
+const DIRECTOR_LLM_BLOCKED_REASON =
+  'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。';
 
 vi.mock('@/app/components/director', () => ({
   DirectorWorkspace: (props: Record<string, unknown>) => {
@@ -192,7 +194,7 @@ describe('DirectorPage', () => {
     );
 
     expect(directorWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
-      startBlockedReason: 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
+      startBlockedReason: DIRECTOR_LLM_BLOCKED_REASON,
     }));
   });
 

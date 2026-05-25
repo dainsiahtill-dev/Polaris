@@ -13,11 +13,13 @@ import time
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 # Phase 6: 统一编排集成
+from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     OrchestrationError,
     get_orchestration_service,
@@ -26,6 +28,7 @@ from polaris.cells.roles.kernel.public.service import (
     get_global_emitter,
     get_global_token_budget,
 )
+from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path
 from polaris.cells.runtime.projection.public.role_contracts import RoleTaskContractV1
 from polaris.cells.runtime.projection.public.service import (
     RuntimeProjectionService,
@@ -43,10 +46,12 @@ from polaris.delivery.http.dependencies import (
 )
 from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
 from polaris.delivery.http.schemas.common import RoleCapabilitiesResponse
+from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
 from polaris.delivery.http.workspace import (
     active_workspace_value,
     requested_or_active_workspace,
     settings_with_workspace_override,
+    workspace_values_match,
 )
 from polaris.domain.entities import TaskPriority
 from polaris.kernelone._runtime_config import resolve_env_str
@@ -80,8 +85,12 @@ router = APIRouter(prefix="/director", tags=["Director v2"])
 
 
 def _append_debug(event: str, payload: dict[str, Any]) -> None:
+    log_target = str(os.environ.get("KERNELONE_BACKEND_DEBUG_LOG", "") or "").strip()
+    if not log_target:
+        return
+
     try:
-        log_path = Path(os.environ.get("KERNELONE_BACKEND_DEBUG_LOG", "C:/Temp/hp_backend_debug.jsonl"))
+        log_path = Path(log_target)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "ts": time.time(),
@@ -222,6 +231,19 @@ def _cancel_failure_detail(result: Any) -> str:
 def _workspace_from_request(request: Request, workspace: str | None = None) -> str:
     state = getattr(request.app.state, "app_state", None) or request.app.state
     return requested_or_active_workspace(state.settings, workspace or "")
+
+
+def _ensure_snapshot_workspace(request: Request, snapshot: Any, run_id: str, workspace: str) -> None:
+    """Hide orchestration runs that do not belong to the requested desktop workspace."""
+
+    if not str(workspace or "").strip():
+        return
+    resolved_workspace = _workspace_from_request(request, workspace)
+    if not workspace_values_match(getattr(snapshot, "workspace", ""), resolved_workspace):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run not found: {run_id}",
+        )
 
 
 async def _projected_task_response(request: Request, task_id: str, workspace: str | None = None) -> TaskResponse | None:
@@ -635,6 +657,7 @@ class DirectorDiagnosticsTaskSection(BaseModel):
     ready_task_ids: list[str] = Field(default_factory=list)
     blueprint_ready_task_ids: list[str] = Field(default_factory=list)
     missing_blueprint_task_ids: list[str] = Field(default_factory=list)
+    invalid_blueprint_task_ids: list[str] = Field(default_factory=list)
     blocked_task_ids: list[str] = Field(default_factory=list)
     running_task_ids: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -684,7 +707,157 @@ class DirectorDiagnosticsResponse(BaseModel):
     execution_blockers: list[str] = Field(default_factory=list)
 
 
-def _task_diagnostics_from_rows(rows: list[dict[str, Any]], source: str) -> DirectorDiagnosticsTaskSection:
+def _path_is_within(target: Path, root: str | Path | None) -> bool:
+    root_text = str(root or "").strip()
+    if not root_text:
+        return False
+    try:
+        resolved_root = Path(root_text).resolve()
+        resolved_target = target.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return resolved_target == resolved_root or resolved_root in resolved_target.parents
+
+
+def _blueprint_reference_values(details: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(details.get("blueprint_id") or "").strip(),
+        str(details.get("blueprint_path") or "").strip(),
+        str(details.get("runtime_blueprint_path") or "").strip(),
+    )
+
+
+def _task_identity_tokens(task_id: str, details: dict[str, Any]) -> set[str]:
+    tokens = {
+        str(task_id or "").strip(),
+        str(details.get("pm_task_id") or "").strip(),
+    }
+    return {token for token in tokens if token}
+
+
+def _payload_task_identity_values(payload: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    for key in ("task_id", "pm_task_id", "id", "source_task_id", "external_task_id"):
+        token = str(payload.get(key) or "").strip()
+        if token:
+            values.add(token)
+
+    context = _as_dict(payload.get("context"))
+    for key in ("task_id", "pm_task_id", "id", "source_task_id", "external_task_id"):
+        token = str(context.get(key) or "").strip()
+        if token:
+            values.add(token)
+
+    task_update_map = payload.get("task_update_map")
+    if isinstance(task_update_map, dict):
+        for key, item in task_update_map.items():
+            token = str(key or "").strip()
+            if token:
+                values.add(token)
+            if isinstance(item, dict):
+                values.update(_payload_task_identity_values(item))
+
+    task_updates = payload.get("task_updates")
+    if isinstance(task_updates, list):
+        for item in task_updates:
+            if isinstance(item, dict):
+                values.update(_payload_task_identity_values(item))
+
+    return values
+
+
+def _blueprint_payload_matches_task(payload: dict[str, Any], identities: set[str]) -> bool:
+    if not identities:
+        return False
+    if bool(payload.get("hard_failure")):
+        return False
+    status_token = str(payload.get("status") or "").strip().lower()
+    if status_token in {"failed", "failure", "error", "rejected", "blocked"}:
+        return False
+    return bool(_payload_task_identity_values(payload) & identities)
+
+
+def _load_blueprint_payload_by_id(workspace: str, blueprint_id: str) -> dict[str, Any] | None:
+    if not blueprint_id:
+        return None
+    try:
+        payload = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        logger.debug("Director blueprint persistence probe failed for blueprint_id=%s", blueprint_id, exc_info=True)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _resolve_blueprint_path(workspace: str, cache_root: str, value: str) -> Path | None:
+    token = str(value or "").strip()
+    if not token:
+        return None
+
+    try:
+        raw_path = Path(token)
+        if raw_path.is_absolute():
+            resolved = raw_path.resolve()
+        else:
+            normalized = token.replace("\\", "/")
+            if normalized == "runtime" or normalized.startswith("runtime/"):
+                resolved = Path(resolve_artifact_path(workspace, cache_root, normalized)).resolve()
+            else:
+                resolved = (Path(workspace) / token).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    if _path_is_within(resolved, workspace) or _path_is_within(resolved, cache_root):
+        return resolved
+    return None
+
+
+def _load_blueprint_payload_by_path(workspace: str, cache_root: str, path_value: str) -> dict[str, Any] | None:
+    path = _resolve_blueprint_path(workspace, cache_root, path_value)
+    if path is None or not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        logger.debug("Director blueprint path probe failed for path=%s", path, exc_info=True)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _blueprint_artifact_state(
+    *,
+    workspace: str,
+    cache_root: str,
+    task_id: str,
+    details: dict[str, Any],
+) -> Literal["valid", "missing", "invalid"]:
+    blueprint_id, blueprint_path, runtime_blueprint_path = _blueprint_reference_values(details)
+    if not any((blueprint_id, blueprint_path, runtime_blueprint_path)):
+        return "missing"
+
+    identities = _task_identity_tokens(task_id, details)
+    payloads: list[dict[str, Any]] = []
+    id_payload = _load_blueprint_payload_by_id(workspace, blueprint_id)
+    if id_payload is not None:
+        payloads.append(id_payload)
+
+    for path_value in (runtime_blueprint_path, blueprint_path):
+        path_payload = _load_blueprint_payload_by_path(workspace, cache_root, path_value)
+        if path_payload is not None:
+            payloads.append(path_payload)
+
+    if any(_blueprint_payload_matches_task(payload, identities) for payload in payloads):
+        return "valid"
+    return "invalid"
+
+
+def _task_diagnostics_from_rows(
+    rows: list[dict[str, Any]],
+    source: str,
+    *,
+    workspace: str = "",
+    cache_root: str = "",
+) -> DirectorDiagnosticsTaskSection:
     pending = 0
     claimed = 0
     running = 0
@@ -695,6 +868,7 @@ def _task_diagnostics_from_rows(rows: list[dict[str, Any]], source: str) -> Dire
     ready_task_ids: list[str] = []
     blueprint_ready_task_ids: list[str] = []
     missing_blueprint_task_ids: list[str] = []
+    invalid_blueprint_task_ids: list[str] = []
     blocked_task_ids: list[str] = []
     running_task_ids: list[str] = []
     requires_blueprint_evidence = source == "workflow"
@@ -704,20 +878,27 @@ def _task_diagnostics_from_rows(rows: list[dict[str, Any]], source: str) -> Dire
         details = _task_details(row)
         status_token = str(details["status"])
         dependencies = details["dependencies"]
-        has_blueprint_evidence = bool(
-            str(details.get("blueprint_id") or "").strip()
-            or str(details.get("blueprint_path") or "").strip()
-            or str(details.get("runtime_blueprint_path") or "").strip()
+        blueprint_state = (
+            _blueprint_artifact_state(
+                workspace=workspace,
+                cache_root=cache_root,
+                task_id=task_id,
+                details=details,
+            )
+            if requires_blueprint_evidence and task_id
+            else "valid"
         )
 
         if status_token == "PENDING":
             pending += 1
             if not dependencies and task_id:
-                if requires_blueprint_evidence and not has_blueprint_evidence:
+                if blueprint_state == "missing":
                     missing_blueprint_task_ids.append(task_id)
+                elif blueprint_state == "invalid":
+                    invalid_blueprint_task_ids.append(task_id)
                 else:
                     ready_task_ids.append(task_id)
-                    if has_blueprint_evidence:
+                    if requires_blueprint_evidence:
                         blueprint_ready_task_ids.append(task_id)
         elif status_token == "CLAIMED":
             claimed += 1
@@ -757,6 +938,7 @@ def _task_diagnostics_from_rows(rows: list[dict[str, Any]], source: str) -> Dire
         ready_task_ids=ready_task_ids,
         blueprint_ready_task_ids=blueprint_ready_task_ids,
         missing_blueprint_task_ids=missing_blueprint_task_ids,
+        invalid_blueprint_task_ids=invalid_blueprint_task_ids,
         blocked_task_ids=blocked_task_ids,
         running_task_ids=running_task_ids,
     )
@@ -964,9 +1146,19 @@ def _director_diagnostic_issues(
         issues.append("director_tasks_unavailable")
     if task_section.total == 0:
         issues.append("director_no_tasks")
-    elif task_section.missing_blueprint_task_ids:
-        issues.append("director_ready_tasks_missing_blueprints")
-    elif task_section.ready_to_execute == 0 and task_section.running == 0 and not status_section.running:
+    else:
+        if task_section.missing_blueprint_task_ids:
+            issues.append("director_ready_tasks_missing_blueprints")
+        if task_section.invalid_blueprint_task_ids:
+            issues.append("director_ready_tasks_invalid_blueprints")
+    if (
+        task_section.total > 0
+        and not task_section.missing_blueprint_task_ids
+        and not task_section.invalid_blueprint_task_ids
+        and task_section.ready_to_execute == 0
+        and task_section.running == 0
+        and not status_section.running
+    ):
         issues.append("director_no_ready_tasks")
     if task_section.blocked > 0:
         issues.append("director_tasks_blocked")
@@ -1004,16 +1196,22 @@ def _director_execution_blockers(
         blockers.append("director_tasks_unavailable")
     if task_section.total == 0:
         blockers.append("director_no_tasks")
-    elif task_section.missing_blueprint_task_ids:
-        blockers.append("director_ready_tasks_missing_blueprints")
-    elif task_section.ready_to_execute == 0:
+    else:
+        if task_section.missing_blueprint_task_ids:
+            blockers.append("director_ready_tasks_missing_blueprints")
+        if task_section.invalid_blueprint_task_ids:
+            blockers.append("director_ready_tasks_invalid_blueprints")
+    if (
+        task_section.total > 0
+        and not task_section.missing_blueprint_task_ids
+        and not task_section.invalid_blueprint_task_ids
+        and task_section.ready_to_execute == 0
+    ):
         blockers.append("director_no_ready_tasks")
 
     if worker_section.error:
         blockers.append("director_workers_unavailable")
-    elif worker_section.total == 0:
-        blockers.append("director_no_workers")
-    elif task_section.ready_to_execute > 0 and worker_section.idle == 0:
+    elif worker_section.total > 0 and task_section.ready_to_execute > 0 and worker_section.idle == 0:
         blockers.append("director_no_idle_workers")
     return blockers
 
@@ -1074,9 +1272,16 @@ async def _build_director_diagnostics(
                 error=str(exc),
             )
         else:
-            task_section = _task_diagnostics_from_rows(task_rows, task_source)
+            task_section = _task_diagnostics_from_rows(task_rows, task_source, workspace=workspace, cache_root="")
     else:
-        task_section = _task_diagnostics_from_rows(task_rows, task_source)
+        ramdisk_root = str(getattr(settings, "ramdisk_root", "") or resolve_env_str("ramdisk_root") or "").strip()
+        cache_root = build_cache_root(ramdisk_root, workspace)
+        task_section = _task_diagnostics_from_rows(
+            task_rows,
+            task_source,
+            workspace=workspace,
+            cache_root=cache_root,
+        )
 
     try:
         workers = await service.list_workers()
@@ -1136,11 +1341,14 @@ def _ensure_director_can_execute(diagnostics: DirectorDiagnosticsResponse) -> No
     )
 
 
-def _ensure_director_lifecycle_can_start(request: Request) -> None:
+def _ensure_director_lifecycle_can_start(request: Request, workspace: str = "") -> None:
     """Ensure the Director role LLM runtime is ready before service startup."""
 
     state = getattr(request.app.state, "app_state", None) or request.app.state
-    ensure_required_roles_ready(state, default_roles=["director"], force_first="director")
+    gate_state: Any = state
+    if str(workspace or "").strip():
+        gate_state = SimpleNamespace(settings=settings_with_workspace_override(state.settings, workspace))
+    ensure_required_roles_ready(gate_state, default_roles=["director"], force_first="director")
 
 
 def _parse_task_priority(value: str) -> TaskPriority:
@@ -1170,21 +1378,24 @@ def _parse_task_priority(value: str) -> TaskPriority:
 @router.post("/start", dependencies=[Depends(require_auth)])
 async def start_director(
     request: Request,
+    workspace: str = "",
 ) -> dict[str, Any]:
     """Start the Director service."""
-    _ensure_director_lifecycle_can_start(request)
+    _ensure_director_lifecycle_can_start(request, workspace)
     service = await get_director_service_dep(request)
     await service.start()
-    return {"ok": True, "state": service.state.name}
+    return {"ok": True, "state": service.state.name, "workspace": _workspace_from_request(request, workspace)}
 
 
 @router.post("/stop", dependencies=[Depends(require_auth)])
 async def stop_director(
+    request: Request,
+    workspace: str = "",
     service: DirectorService = Depends(get_director_service_dep),
 ) -> dict[str, Any]:
     """Stop the Director service."""
     await service.stop()
-    return {"ok": True, "state": service.state.name}
+    return {"ok": True, "state": service.state.name, "workspace": _workspace_from_request(request, workspace)}
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
@@ -1252,12 +1463,18 @@ async def get_director_diagnostics(
 
 @router.post("/tasks", response_model=TaskResponse, dependencies=[Depends(require_auth)])
 async def create_task(
+    http_request: Request,
     request: TaskCreateRequest,
+    workspace: str = "",
     service: DirectorService = Depends(get_director_service_dep),
 ) -> TaskResponse:
     """Create and submit a new task."""
     priority = _parse_task_priority(request.priority)
     blocked_by: list[int | str] = list(request.blocked_by)
+    resolved_workspace = _workspace_from_request(http_request, workspace)
+    metadata = dict(request.metadata)
+    metadata.setdefault("workspace", resolved_workspace)
+    metadata.setdefault("director_workspace", resolved_workspace)
 
     task = await service.submit_task(
         subject=request.subject,
@@ -1266,10 +1483,15 @@ async def create_task(
         priority=priority,
         blocked_by=blocked_by,
         timeout_seconds=request.timeout_seconds,
-        metadata=request.metadata,
+        metadata=metadata,
     )
 
-    return _task_response_from_row(_task_row_from_object(task))
+    row = _task_row_from_object(task)
+    task_metadata = _as_dict(row.get("metadata"))
+    task_metadata.setdefault("workspace", resolved_workspace)
+    task_metadata.setdefault("director_workspace", resolved_workspace)
+    row["metadata"] = task_metadata
+    return _task_response_from_row(row)
 
 
 @router.get("/tasks", dependencies=[Depends(require_auth)])
@@ -1349,7 +1571,9 @@ async def get_task(
 
 @router.post("/tasks/{task_id}/cancel", dependencies=[Depends(require_auth)])
 async def cancel_task(
+    request: Request,
     task_id: str,
+    workspace: str = "",
     service: DirectorService = Depends(get_director_service_dep),
 ) -> dict[str, Any]:
     """Cancel a task."""
@@ -1359,6 +1583,7 @@ async def cancel_task(
     if payload is None:
         raise HTTPException(status_code=400, detail=_cancel_failure_detail(result))
 
+    payload.setdefault("workspace", _workspace_from_request(request, workspace))
     return payload
 
 
@@ -1403,13 +1628,18 @@ async def get_worker(
 
 @router.get("/tasks/{task_id}/llm-events", dependencies=[Depends(require_auth)])
 async def get_task_llm_events(
+    request: Request,
     task_id: str,
     run_id: str | None = None,
     limit: int = 100,
+    workspace: str = "",
 ) -> dict[str, Any]:
     """获取任务的 LLM 调用事件历史"""
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, limit=limit)
+    resolved_workspace = _workspace_from_request(request, workspace)
+    if workspace.strip():
+        events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     # 分类统计
     stats = {
@@ -1426,6 +1656,7 @@ async def get_task_llm_events(
     return {
         "task_id": task_id,
         "run_id": run_id,
+        "workspace": resolved_workspace,
         "events": [e.to_dict() for e in events],
         "stats": stats,
     }
@@ -1433,18 +1664,24 @@ async def get_task_llm_events(
 
 @router.get("/llm-events", dependencies=[Depends(require_auth)])
 async def get_llm_events(
+    request: Request,
     run_id: str | None = None,
     task_id: str | None = None,
     role: str | None = None,
     limit: int = 100,
+    workspace: str = "",
 ) -> dict[str, Any]:
     """获取全局 LLM 调用事件历史（按角色/任务过滤）"""
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
+    resolved_workspace = _workspace_from_request(request, workspace)
+    if workspace.strip():
+        events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     return {
         "events": [e.to_dict() for e in events],
         "count": len(events),
+        "workspace": resolved_workspace,
     }
 
 
@@ -1550,7 +1787,11 @@ async def director_run_orchestration(
 
 
 @router.get("/runs/{run_id}", response_model=DirectorOrchestrationResponse, dependencies=[Depends(require_auth)])
-async def director_get_orchestration(run_id: str) -> DirectorOrchestrationResponse:
+async def director_get_orchestration(
+    request: Request,
+    run_id: str,
+    workspace: str = "",
+) -> DirectorOrchestrationResponse:
     """查询 Director 编排运行状态"""
     try:
         service = await get_orchestration_service()
@@ -1562,6 +1803,7 @@ async def director_get_orchestration(run_id: str) -> DirectorOrchestrationRespon
                 detail=f"Run not found: {run_id}",
             )
 
+        _ensure_snapshot_workspace(request, snapshot, run_id, workspace)
         return _director_orchestration_response(snapshot)
 
     except HTTPException:
@@ -1579,7 +1821,11 @@ async def director_get_orchestration(run_id: str) -> DirectorOrchestrationRespon
     response_model=DirectorOrchestrationResponse,
     dependencies=[Depends(require_auth)],
 )
-async def director_cancel_orchestration(run_id: str) -> DirectorOrchestrationResponse:
+async def director_cancel_orchestration(
+    request: Request,
+    run_id: str,
+    workspace: str = "",
+) -> DirectorOrchestrationResponse:
     """Cancel a Director orchestration run and return the resulting snapshot."""
     try:
         service = await get_orchestration_service()
@@ -1591,6 +1837,7 @@ async def director_cancel_orchestration(run_id: str) -> DirectorOrchestrationRes
                 detail=f"Run not found: {run_id}",
             )
 
+        _ensure_snapshot_workspace(request, snapshot, run_id, workspace)
         status_token = _director_snapshot_status(snapshot).lower()
         terminal_statuses = {"completed", "failed", "cancelled", "canceled", "blocked", "timeout"}
         if status_token not in terminal_statuses:

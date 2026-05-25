@@ -1,0 +1,35 @@
+id: vc-20260525-pm-failure-root-cause-desktop-detail
+date: "2026-05-25"
+scope:
+  - src/backend/polaris/delivery/cli/pm/orchestration_engine.py
+  - src/backend/polaris/tests/test_pm_zero_tasks_fallback.py
+  - src/frontend/src/app/App.tsx
+classification: one_off
+assumptions:
+  - id: reuse-existing-pm-evidence
+    statement: PM desktop failure detail should reuse existing PM engine evidence instead of introducing a parallel diagnostics source.
+    evidence: _build_pm_failure_detail reads terminal_error_code, terminal_error, last_pm_error_code, last_pm_error_detail, schema_warnings, and notes.
+  - id: preserve-engine-error-compatibility
+    statement: Existing engine phase error codes should remain stable while PM role detail becomes more precise.
+    evidence: engine.set_phase still uses PM_PLANNING_FAILED and PM_ITERATION_FAILED.
+verification_plan:
+  - command: .\.venv\Scripts\python.exe -m pytest src/backend/polaris/tests/test_pm_zero_tasks_fallback.py -q
+  - command: .\.venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/tests/test_pm_zero_tasks_fallback.py --fix
+  - command: .\.venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/tests/test_pm_zero_tasks_fallback.py
+  - command: .\.venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/tests/test_pm_zero_tasks_fallback.py
+  - command: npm run typecheck
+  - command: npm run lint
+status: passed
+evidence:
+  - command: .\.venv\Scripts\python.exe -m pytest src/backend/polaris/tests/test_pm_zero_tasks_fallback.py -q
+    result: 20 passed
+  - command: .\.venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/tests/test_pm_zero_tasks_fallback.py --fix
+    result: passed
+  - command: .\.venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/tests/test_pm_zero_tasks_fallback.py
+    result: 2 files left unchanged
+  - command: .\.venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/cli/pm/orchestration_engine.py src/backend/polaris/tests/test_pm_zero_tasks_fallback.py
+    result: Success, no issues found
+  - command: npm run typecheck
+    result: passed
+  - command: npm run lint
+    result: passed

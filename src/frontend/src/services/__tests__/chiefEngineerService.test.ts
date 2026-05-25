@@ -11,6 +11,7 @@ vi.mock('@/services/apiClient', () => ({
 }));
 
 import {
+  bulkGenerateChiefEngineerBlueprints,
   deleteChiefEngineerBlueprint,
   generateChiefEngineerBlueprint,
   getChiefEngineerDiagnostics,
@@ -56,6 +57,9 @@ describe('chiefEngineerService', () => {
           ok: true,
           status: 'ready',
           source: 'runtime/blueprints',
+          plan_status: 'ready',
+          plan_path: 'C:/Temp/Product/.polaris/runtime/tasks/plan.json',
+          plan_error: null,
           total: 1,
           loadable: 1,
           invalid_payloads: 0,
@@ -82,6 +86,7 @@ describe('chiefEngineerService', () => {
     expect(result.data?.llm.ok).toBe(true);
     expect(result.data?.can_generate).toBe(true);
     expect(result.data?.blueprints.director_handoff_ready).toBe(true);
+    expect(result.data?.blueprints.plan_status).toBe('ready');
     expect(result.data?.blueprints.covered_tasks).toBe(2);
   });
 
@@ -144,6 +149,52 @@ describe('chiefEngineerService', () => {
       payload,
       'Failed to generate Chief Engineer blueprint',
     );
+  });
+
+  it('bulk generates Chief Engineer blueprints through the v2 command route', async () => {
+    mockApiPost.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        workspace: 'C:/Temp/Product',
+        total: 2,
+        generated: 2,
+        failed: 0,
+        results: [
+          {
+            ok: true,
+            task_id: 'PM-1',
+            workspace: 'C:/Temp/Product',
+            status: 'generated',
+            blueprint_id: 'ce_PM-1',
+            blueprint_path: 'runtime/blueprints/ce_PM-1.json',
+            source: 'runtime/blueprints',
+            summary: 'Generated PM-1',
+            recommendations: [],
+            risks: [],
+            blueprint: { task_id: 'PM-1' },
+          },
+        ],
+        errors: [],
+      },
+    });
+
+    const payload = {
+      tasks: [
+        { task_id: 'PM-1', objective: 'Build PM handoff' },
+        { task_id: 'PM-2', objective: 'Build Director handoff' },
+      ],
+      stop_on_error: false,
+    };
+    const result = await bulkGenerateChiefEngineerBlueprints(payload, 'C:/Temp/Product');
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/blueprints/bulk?workspace=C%3A%2FTemp%2FProduct',
+      payload,
+      'Failed to bulk generate Chief Engineer blueprints',
+    );
+    expect(result.ok).toBe(true);
+    expect(result.data?.generated).toBe(2);
   });
 
   it('loads Chief Engineer blueprint status with encoded query params', async () => {

@@ -1,0 +1,46 @@
+id: vc-20260525-pm-planning-input-diagnostics-gate
+title: PM planning-input diagnostics gate
+date: 2026-05-25
+scope:
+  - src/backend/polaris/delivery/http/v2/pm.py
+  - src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py
+  - src/frontend/src/services/pmService.ts
+  - src/frontend/src/services/__tests__/pmService.test.ts
+  - src/frontend/src/app/components/pm/PMDiagnosticsPanel.tsx
+  - src/frontend/src/app/components/pm/PMDiagnosticsPanel.test.tsx
+  - src/frontend/src/app/components/pm/PMWorkspace.tsx
+  - src/frontend/src/app/components/pm/PMWorkspace.test.tsx
+change:
+  summary: >
+    Added PM startup diagnostics evidence for planning input and blocked PM desktop
+    start controls when no requirements or plan input exists.
+  root_cause: >
+    The previous diagnostics contract only checked infrastructure readiness, so a
+    workspace with docs/ but no planning material could appear startable and later
+    fail with zero PM tasks.
+evidence:
+  tests:
+    - command: .venv\Scripts\python.exe -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py -q
+      result: PASS
+      observed: 43 passed
+    - command: npm run test -- PMDiagnosticsPanel PMWorkspace pmService
+      result: PASS
+      observed: 119 passed
+  quality_gates:
+    - command: .venv\Scripts\python.exe -m ruff check src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py --fix
+      result: PASS
+    - command: .venv\Scripts\python.exe -m ruff format src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py
+      result: PASS
+    - command: .venv\Scripts\python.exe -m mypy src/backend/polaris/delivery/http/v2/pm.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_pm_router.py
+      result: PASS
+      observed: "Success: no issues found in 2 source files"
+    - command: npm run typecheck
+      result: PASS
+    - command: npm run lint
+      result: PASS
+    - command: git diff --check
+      result: PASS
+      observed: "Only line-ending warnings were reported."
+risk_notes:
+  - Full PM/ChiefEngineer/Director desktop completion remains broader than this card.
+  - A full Electron screenshot pass was not rerun for this incremental PM diagnostics gate.

@@ -122,6 +122,15 @@ interface PMRuntimeBanner {
   detail: string;
   severity: 'error' | 'warning';
   refs: string[];
+  code?: string;
+  rootCause?: PMRuntimeRoleLine | null;
+  cascades?: PMRuntimeRoleLine[];
+  startBlocker?: string;
+}
+
+interface PMRuntimeRoleLine {
+  role: string;
+  detail: string;
 }
 
 interface PMRunOnceStatusEvidence {
@@ -229,10 +238,18 @@ function formatPmTokenBudget(stats: RoleKernelTokenBudgetStats | null): string {
   ].filter(Boolean).join(' · ') || 'stats ready';
 }
 
+function evidenceEndpoint(endpoint: string, workspace = ''): string {
+  const value = String(workspace || '').trim();
+  if (!value) return endpoint;
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
+}
+
 function formatPmDiagnostics(diagnostics: PmStartupDiagnosticsResponse | null): string {
   if (!diagnostics) return 'unavailable';
   const llmState = diagnostics.llm?.state || (diagnostics.llm?.ok ? 'ready' : 'blocked');
   const workspaceState = diagnostics.workspace?.status || (diagnostics.workspace?.ok ? 'ready' : 'blocked');
+  const planningInputState = diagnostics.planning_input?.status || (diagnostics.planning_input?.ok ? 'ready' : 'missing');
   const blockedRoles = Array.isArray(diagnostics.llm?.blocked_roles) ? diagnostics.llm.blocked_roles : [];
   const issues = Array.isArray(diagnostics.issues) ? diagnostics.issues.length : 0;
   const startupBlockers = pmStartupBlockers(diagnostics).length;
@@ -241,6 +258,7 @@ function formatPmDiagnostics(diagnostics: PmStartupDiagnosticsResponse | null): 
     `llm=${llmState}`,
     blockedRoles.length > 0 ? `blocked=${blockedRoles.join(',')}` : '',
     `workspace=${workspaceState}`,
+    `input=${planningInputState}`,
     issues > 0 ? `issues=${issues}` : '',
   ].filter(Boolean).join(' · ');
 }
@@ -250,6 +268,9 @@ const PM_STARTUP_BLOCKER_LABELS: Record<string, string> = {
   llm_not_ready: 'PM LLM 未通过就绪检查',
   workspace_unavailable: '工作区不可用',
   workspace_docs_missing: 'docs/ 初始化未完成',
+  planning_input_missing: '缺少需求/计划输入',
+  planning_input_empty: '需求/计划输入为空',
+  planning_input_unreadable: '需求/计划输入无法读取',
 };
 
 const PM_HARD_BLOCKER_ISSUES = new Set(Object.keys(PM_STARTUP_BLOCKER_LABELS));
@@ -405,6 +426,48 @@ function mergePmTaskEvidenceRows(runtimeTasks: PmTask[], backendTasks: PmTask[])
   return Array.from(rows.values());
 }
 
+const PM_RUNTIME_ROLE_LABELS: Record<string, string> = {
+  pm: 'PM',
+  chiefengineer: 'Chief Engineer',
+  director: 'Director',
+  qa: 'QA',
+};
+
+function normalizeRuntimeRoleLabel(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function parseRuntimeRoleLine(line: string): PMRuntimeRoleLine | null {
+  const match = /^([A-Za-z][A-Za-z _-]{1,32}):\s*(.+)$/.exec(line.trim());
+  if (!match) return null;
+  const roleToken = normalizeRuntimeRoleLabel(match[1]);
+  const role = PM_RUNTIME_ROLE_LABELS[roleToken];
+  const detail = match[2].trim();
+  if (!role || !detail) return null;
+  return { role, detail };
+}
+
+function runtimeIssueLines(issue: PMRuntimeIssue | null | undefined): string[] {
+  return String(issue?.detail || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function splitPMRuntimeIssue(issue: PMRuntimeIssue | null | undefined): {
+  rootCause: PMRuntimeRoleLine | null;
+  cascades: PMRuntimeRoleLine[];
+  detail: string;
+} {
+  const lines = runtimeIssueLines(issue);
+  const roleLines = lines.map(parseRuntimeRoleLine).filter((line): line is PMRuntimeRoleLine => Boolean(line));
+  const rootCause = roleLines.find((line) => line.role === 'PM') ?? null;
+  const cascades = roleLines.filter((line) => line.role !== rootCause?.role);
+  const nonRoleLines = lines.filter((line) => !parseRuntimeRoleLine(line));
+  const detail = rootCause?.detail || nonRoleLines.join('\n') || String(issue?.detail || issue?.code || '').trim();
+  return { rootCause, cascades, detail };
+}
+
 function resolvePMRuntimeBanner({
   pmRunning,
   pmStartBlockedReason,
@@ -416,20 +479,25 @@ function resolvePMRuntimeBanner({
   runtimeIssue?: PMRuntimeIssue | null;
   pmTerminalStatus?: PMTerminalStatus | null;
 }): PMRuntimeBanner | null {
+  if (runtimeIssue && !pmRunning) {
+    const breakdown = splitPMRuntimeIssue(runtimeIssue);
+    return {
+      title: runtimeIssue.title || 'PM 运行已终止',
+      detail: breakdown.detail || runtimeIssue.code || 'PM 运行失败，请查看运行日志。',
+      severity: 'error',
+      refs: [],
+      code: runtimeIssue.code,
+      rootCause: breakdown.rootCause,
+      cascades: breakdown.cascades,
+      startBlocker: pmStartBlockedReason || '',
+    };
+  }
+
   if (!pmRunning && pmStartBlockedReason) {
     return {
       title: 'PM 启动被阻止',
       detail: pmStartBlockedReason,
       severity: 'warning',
-      refs: [],
-    };
-  }
-
-  if (runtimeIssue && !pmRunning) {
-    return {
-      title: runtimeIssue.title || 'PM 运行已终止',
-      detail: runtimeIssue.detail || runtimeIssue.code || 'PM 运行失败，请查看运行日志。',
-      severity: 'error',
       refs: [],
     };
   }
@@ -469,12 +537,14 @@ function PMBackendEvidenceStrip({
   cacheClearStatus,
   onRefresh,
   onClearCache,
+  workspace,
 }: {
   evidence: PMBackendEvidenceState;
   cacheClearing: boolean;
   cacheClearStatus: string;
   onRefresh: () => void;
   onClearCache: () => void;
+  workspace: string;
 }) {
   const llmEventCount = evidence.llmEvents?.count
     ?? (Array.isArray(evidence.llmEvents?.events) ? evidence.llmEvents.events.length : 0);
@@ -507,7 +577,9 @@ function PMBackendEvidenceStrip({
         <div className="flex min-w-0 items-center gap-2">
           <Activity className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           <span className="shrink-0 font-medium text-amber-100">Diagnostics</span>
-          <span className="shrink-0 font-mono text-[11px] text-amber-300">/v2/pm/diagnostics</span>
+          <span className="shrink-0 font-mono text-[11px] text-amber-300">
+            {evidenceEndpoint('/v2/pm/diagnostics', workspace)}
+          </span>
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
           ) : evidence.diagnosticsError ? (
@@ -522,7 +594,9 @@ function PMBackendEvidenceStrip({
         <div className="flex min-w-0 items-center gap-2">
           <Brain className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           <span className="shrink-0 font-medium text-amber-100">LLM events</span>
-          <span className="shrink-0 font-mono text-[11px] text-amber-300">/v2/pm/llm-events?role=pm&amp;limit=5</span>
+          <span className="shrink-0 font-mono text-[11px] text-amber-300">
+            {evidenceEndpoint('/v2/pm/llm-events?role=pm&limit=5', workspace)}
+          </span>
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
           ) : evidence.llmEventsError ? (
@@ -694,7 +768,7 @@ export function PMWorkspace({
         getPmStartupDiagnostics(workspace),
         getRoleKernelCacheStats('pm'),
         getRoleKernelTokenBudgetStats('pm'),
-        getRoleKernelLLMEvents('pm', { role: 'pm', limit: 5 }),
+        getRoleKernelLLMEvents('pm', { role: 'pm', limit: 5, workspace }),
       ]);
 
       setPmBackendEvidence({
@@ -1148,6 +1222,7 @@ export function PMWorkspace({
           cacheClearStatus={pmKernelCacheClearStatus}
           onRefresh={() => { void loadPmBackendEvidence(); }}
           onClearCache={() => { void handleClearPmKernelCache(); }}
+          workspace={workspace}
         />
       )}
 
@@ -1274,8 +1349,56 @@ export function PMWorkspace({
               pmRuntimeBanner.severity === 'error' ? "text-red-300" : "text-amber-300",
             )} />
             <div className="min-w-0 flex-1">
-              <div className="font-medium">{pmRuntimeBanner.title}</div>
-              <div className="mt-1 whitespace-pre-line text-xs opacity-85">{pmRuntimeBanner.detail}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{pmRuntimeBanner.title}</span>
+                {pmRuntimeBanner.code ? (
+                  <span
+                    data-testid="pm-runtime-error-code"
+                    className="rounded border border-red-400/25 bg-red-500/10 px-1.5 py-0.5 font-mono text-[10px] text-red-100/85"
+                  >
+                    {pmRuntimeBanner.code}
+                  </span>
+                ) : null}
+              </div>
+              {pmRuntimeBanner.rootCause ? (
+                <div
+                  data-testid="pm-runtime-root-cause"
+                  className="mt-2 rounded-md border border-red-400/20 bg-red-500/10 px-2.5 py-2 text-xs"
+                >
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-red-200/75">
+                    根因 · {pmRuntimeBanner.rootCause.role}
+                  </div>
+                  <div className="whitespace-pre-line text-red-50/90">{pmRuntimeBanner.rootCause.detail}</div>
+                </div>
+              ) : (
+                <div className="mt-1 whitespace-pre-line text-xs opacity-85">{pmRuntimeBanner.detail}</div>
+              )}
+              {pmRuntimeBanner.cascades && pmRuntimeBanner.cascades.length > 0 ? (
+                <div
+                  data-testid="pm-runtime-cascade"
+                  className="mt-2 rounded-md border border-amber-300/15 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-50/85"
+                >
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200/75">
+                    级联阻断
+                  </div>
+                  <div className="space-y-1">
+                    {pmRuntimeBanner.cascades.map((item) => (
+                      <div key={`${item.role}-${item.detail}`} className="grid gap-2 sm:grid-cols-[112px_minmax(0,1fr)]">
+                        <span className="font-medium text-amber-100">{item.role}</span>
+                        <span className="min-w-0 break-words">{item.detail}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {pmRuntimeBanner.startBlocker ? (
+                <div
+                  data-testid="pm-runtime-start-blocker"
+                  className="mt-2 rounded-md border border-white/10 bg-slate-950/35 px-2 py-1.5 text-[11px] text-slate-300"
+                >
+                  当前启动门禁: {pmRuntimeBanner.startBlocker}
+                </div>
+              ) : null}
               {pmRuntimeBanner.refs.length > 0 && (
                 <div className="mt-1.5 space-y-0.5 font-mono text-[10px] opacity-65">
                   {pmRuntimeBanner.refs.map((ref) => (

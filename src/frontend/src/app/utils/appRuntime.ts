@@ -96,6 +96,25 @@ export function getLatestExecutionActivityLog(entries: LogEntry[]): LogEntry | n
   return filtered[filtered.length - 1] ?? null;
 }
 
+export function normalizeEngineRoleName(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+export function readEngineRoleDetail(
+  roles: Record<string, { detail?: unknown }> | null | undefined,
+  names: string[],
+): string {
+  if (!roles) return '';
+  const targetNames = new Set(names.map(normalizeEngineRoleName));
+  for (const [roleName, roleStatus] of Object.entries(roles)) {
+    if (!targetNames.has(normalizeEngineRoleName(roleName))) {
+      continue;
+    }
+    return String(roleStatus?.detail || '').trim();
+  }
+  return '';
+}
+
 export function appendLiveContent(prev: string, incoming: string, maxLines = 2000) {
   const combined = prev ? `${prev}\n${incoming}` : incoming;
   const lines = combined.split('\n');

@@ -218,7 +218,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
         return false;
       }
 
-      const result = await startPm(resume);
+      const result = await startPm(resume, workspace);
 
       if (!result.ok) {
         toast.dismiss(startToastId);
@@ -245,14 +245,14 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     } finally {
       setField('isStartingPM', false);
     }
-  }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, setField]);
+  }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, setField, workspace]);
 
   const stopPmCallback = useCallback(async () => {
     setField('pmActionError', null);
     setField('isStoppingPM', true);
 
     try {
-      const result = await stopPm();
+      const result = await stopPm(workspace);
       if (!result.ok) {
         throw new Error(result.error || 'Failed to stop PM');
       }
@@ -266,7 +266,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     } finally {
       setField('isStoppingPM', false);
     }
-  }, [onStatusChange, setField]);
+  }, [onStatusChange, setField, workspace]);
 
   const togglePm = useCallback(async (isRunning: boolean) => {
     if (isRunning) {
@@ -291,7 +291,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
         return false;
       }
 
-      const result = await runPmOnce();
+      const result = await runPmOnce(workspace);
 
       if (!result.ok) {
         toast.dismiss(startToastId);
@@ -318,7 +318,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     } finally {
       setField('isStartingPM', false);
     }
-  }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, setField]);
+  }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, setField, workspace]);
 
   const seedDirectorQueueFromPmTasks = useCallback(async (tasks?: PmTask[]) => {
     let sourceTasks = Array.isArray(tasks)
@@ -353,7 +353,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
         continue;
       }
 
-      const result = await createDirectorTask(buildDirectorTaskPayload(task));
+      const result = await createDirectorTask(buildDirectorTaskPayload(task), workspace);
       if (!result.ok) {
         throw new Error(result.error || '同步 PM 任务到 Director 队列失败');
       }
@@ -395,7 +395,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
 
       await seedDirectorQueueFromPmTasks(tasks);
 
-      const result = await startDirector();
+      const result = await startDirector(workspace);
 
       if (!result.ok) {
         toast.dismiss(startToastId);
@@ -422,14 +422,23 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     } finally {
       setField('isStartingDirector', false);
     }
-  }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, seedDirectorQueueFromPmTasks, setField]);
+  }, [
+    lancedbBlocked,
+    lancedbBlockMessage,
+    handleProcessError,
+    onOpenLogs,
+    onStatusChange,
+    seedDirectorQueueFromPmTasks,
+    setField,
+    workspace,
+  ]);
 
   const stopDirectorCallback = useCallback(async () => {
     setField('directorActionError', null);
     setField('isStoppingDirector', true);
 
     try {
-      const result = await stopDirector();
+      const result = await stopDirector(workspace);
       if (!result.ok) {
         throw new Error(result.error || 'Failed to stop Director');
       }
@@ -443,7 +452,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
     } finally {
       setField('isStoppingDirector', false);
     }
-  }, [onStatusChange, setField]);
+  }, [onStatusChange, setField, workspace]);
 
   const toggleDirector = useCallback(async (
     isRunning: boolean,

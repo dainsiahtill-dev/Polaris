@@ -8,6 +8,7 @@ import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { DirectorWorkspace } from '@/app/components/director';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { Toaster } from '@/app/components/ui/sonner';
+import { getRoleLlmBlockedReason } from '@/app/hooks/useLlmRuntimeGate';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
@@ -104,14 +105,7 @@ function resolveDirectorStartBlockedReason({
       ? '需要先确认 AGENTS.md 后才能启动 Director。'
       : 'AGENTS.md 审核未完成，等待草稿生成或人工确认后才能启动 Director。';
   }
-  if (
-    llmRuntimeState.state === 'BLOCKED'
-    && llmRuntimeState.requiredRoles.includes('director')
-    && llmRuntimeState.blockedRoles.includes('director')
-  ) {
-    return 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。';
-  }
-  return '';
+  return getRoleLlmBlockedReason(llmRuntimeState, 'director', 'Director');
 }
 
 /**

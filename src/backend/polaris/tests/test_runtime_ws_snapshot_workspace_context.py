@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from polaris.bootstrap.config import Settings
 from polaris.cells.runtime.projection.internal.status_snapshot_builder import build_status_payload_sync
@@ -84,3 +85,64 @@ def test_status_payload_snapshot_uses_ws_workspace_context(tmp_path: Path) -> No
     tasks = snapshot.get("tasks")
     assert isinstance(tasks, list) and tasks
     assert str(tasks[0].get("id") or "").strip() == "task-target"
+
+
+def test_status_payload_llm_status_uses_ws_workspace_context(tmp_path: Path) -> None:
+    target_workspace = tmp_path / "target-workspace"
+    stale_workspace = tmp_path / "stale-workspace"
+    target_workspace.mkdir(parents=True, exist_ok=True)
+    stale_workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(
+        workspace=str(stale_workspace),
+        ramdisk_root=str(tmp_path / "runtime-root"),
+        json_log_path="runtime/events/pm.events.jsonl",
+    )
+    state = SimpleNamespace(settings=settings, last_pm_payload=None)
+
+    with (
+        patch(
+            "polaris.cells.runtime.projection.internal.status_snapshot_builder.build_llm_status",
+            return_value={"state": "READY", "blocked_roles": []},
+        ) as mock_llm_status,
+        patch(
+            "polaris.cells.runtime.projection.internal.status_snapshot_builder.build_snapshot",
+            return_value={"ok": True},
+        ),
+        patch(
+            "polaris.cells.runtime.projection.internal.status_snapshot_builder.build_resident_state",
+            return_value={},
+        ),
+        patch(
+            "polaris.cells.runtime.projection.internal.status_snapshot_builder.get_lancedb_status",
+            return_value={},
+        ),
+        patch(
+            "polaris.cells.runtime.projection.internal.status_snapshot_builder.build_memory_payload",
+            return_value=None,
+        ),
+        patch(
+            "polaris.cells.runtime.projection.internal.status_snapshot_builder.build_success_stats_payload",
+            return_value={},
+        ),
+        patch(
+            "polaris.cells.runtime.projection.internal.status_snapshot_builder._build_anthro_state",
+            return_value=None,
+        ),
+        patch(
+            "polaris.cells.runtime.projection.internal.status_snapshot_builder.map_engine_to_court_state",
+            return_value={},
+        ),
+    ):
+        payload = build_status_payload_sync(
+            state,
+            workspace=str(target_workspace),
+            cache_root=str(tmp_path / "cache-root"),
+            pm_status={"running": False},
+            director_status={"running": False},
+        )
+
+    called_settings = mock_llm_status.call_args.args[0]
+    assert str(called_settings.workspace) == str(target_workspace)
+    assert str(settings.workspace) == str(stale_workspace)
+    assert payload["llm_status"] == {"state": "READY", "blocked_roles": []}

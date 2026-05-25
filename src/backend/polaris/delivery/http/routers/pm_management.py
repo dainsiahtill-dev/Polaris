@@ -114,6 +114,34 @@ def _task_to_response(task: Any) -> dict[str, Any]:
     return task_dict
 
 
+def _document_to_response(document: Any) -> dict[str, Any]:
+    """Normalize PM document rows to the public document list schema."""
+    if isinstance(document, dict):
+        doc_dict = dict(document)
+    else:
+        doc_dict = {
+            "path": getattr(document, "path", ""),
+            "current_version": getattr(document, "current_version", ""),
+            "version_count": getattr(document, "version_count", 0),
+            "last_modified": getattr(document, "last_modified", ""),
+            "created_at": getattr(document, "created_at", ""),
+        }
+
+    version = str(doc_dict.get("current_version") or doc_dict.get("version") or "").strip()
+    doc_dict["path"] = str(doc_dict.get("path") or "").strip()
+    doc_dict["current_version"] = version
+    doc_dict["version_count"] = int(doc_dict.get("version_count") or (1 if version else 0))
+    doc_dict["last_modified"] = str(
+        doc_dict.get("last_modified")
+        or doc_dict.get("updated_at")
+        or doc_dict.get("modified_at")
+        or doc_dict.get("created_at")
+        or ""
+    )
+    doc_dict["created_at"] = str(doc_dict.get("created_at") or doc_dict["last_modified"] or "")
+    return doc_dict
+
+
 def _collection_total(result: dict[str, Any], items: list[Any]) -> int:
     """Resolve a stable total for desktop list responses."""
     pagination = result.get("pagination")
@@ -145,6 +173,20 @@ def _with_desktop_collection_aliases(
     response[collection_key] = items
     response["items"] = items
     response["total"] = _collection_total(response, items)
+    response.setdefault("pagination", {"total": response["total"], "limit": len(items), "offset": 0})
+    response.setdefault("ok", True)
+    return response
+
+
+def _with_document_collection_aliases(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize document list responses while preserving legacy fields."""
+    response = dict(result)
+    raw_documents = response.get("documents")
+    documents = [_document_to_response(item) for item in raw_documents] if isinstance(raw_documents, list) else []
+    response["documents"] = documents
+    response["items"] = documents
+    response["total"] = _collection_total(response, documents)
+    response.setdefault("pagination", {"total": response["total"], "limit": len(documents), "offset": 0})
     response.setdefault("ok", True)
     return response
 
@@ -195,14 +237,20 @@ def _empty_v2_task_list_response(
     )
 
 
-def _empty_v2_document_list_response(*, limit: int, offset: int, reason: str) -> dict[str, Any]:
+def _empty_v2_document_list_response(
+    *,
+    limit: int,
+    offset: int,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
     """Return an idle desktop document-list projection when PM has not started."""
-    return _empty_v2_collection_response("documents", limit=limit, offset=offset, reason=reason)
+    return _empty_v2_collection_response("documents", limit=limit, offset=offset, reason=reason, error=error)
 
 
-def _empty_v2_search_response(*, query: str, reason: str) -> dict[str, Any]:
+def _empty_v2_search_response(*, query: str, reason: str, error: str | None = None) -> dict[str, Any]:
     """Return an idle desktop search projection when PM has not started."""
-    return {
+    payload: dict[str, Any] = {
         "ok": True,
         "query": query,
         "results": [],
@@ -213,16 +261,199 @@ def _empty_v2_search_response(*, query: str, reason: str) -> dict[str, Any]:
         "state": "idle",
         "reason": reason,
     }
+    if error:
+        payload["error"] = error
+    return payload
 
 
-def _empty_v2_document_search_response(*, query: str, reason: str) -> dict[str, Any]:
+def _empty_v2_document_search_response(
+    *,
+    query: str,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
     """Return an idle desktop document-search projection when PM has not started."""
-    return _empty_v2_search_response(query=query, reason=reason)
+    return _empty_v2_search_response(query=query, reason=reason, error=error)
 
 
 def _empty_v2_task_search_response(*, query: str, reason: str) -> dict[str, Any]:
     """Return an idle desktop task-search projection when PM has not started."""
     return _empty_v2_search_response(query=query, reason=reason)
+
+
+def _empty_v2_task_detail_response(
+    *,
+    task_id: str,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Return an idle desktop task-detail projection for unavailable PM runtime."""
+    payload: dict[str, Any] = {
+        "ok": True,
+        "id": task_id,
+        "task_id": task_id,
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _empty_v2_document_detail_response(
+    *,
+    doc_path: str,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Return an idle desktop document-detail projection for unavailable PM runtime."""
+    payload: dict[str, Any] = {
+        "ok": True,
+        "path": doc_path,
+        "current_version": "",
+        "version_count": 0,
+        "last_modified": "",
+        "created_at": "",
+        "content": None,
+        "versions": [],
+        "analysis": {},
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _empty_v2_document_versions_response(
+    *,
+    doc_path: str,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Return an idle desktop document-versions projection for unavailable PM runtime."""
+    payload: dict[str, Any] = {
+        "ok": True,
+        "path": doc_path,
+        "versions": [],
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _empty_v2_document_diff_response(
+    *,
+    doc_path: str,
+    old_version: str,
+    new_version: str,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Return an idle desktop document-diff projection for unavailable PM runtime."""
+    payload: dict[str, Any] = {
+        "ok": True,
+        "path": doc_path,
+        "old_version": old_version,
+        "new_version": new_version,
+        "diff_text": "",
+        "changed_sections": [],
+        "added_requirements": [],
+        "removed_requirements": [],
+        "impact_score": 0.0,
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _empty_v2_task_assignments_response(
+    *,
+    task_id: str,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Return an idle desktop assignment projection for unavailable PM runtime."""
+    payload: dict[str, Any] = {
+        "ok": True,
+        "task_id": task_id,
+        "assignments": [],
+        "count": 0,
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _empty_v2_requirement_detail_response(
+    *,
+    req_id: str,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Return an idle desktop requirement-detail projection for unavailable PM runtime."""
+    payload: dict[str, Any] = {
+        "ok": True,
+        "id": req_id,
+        "requirement_id": req_id,
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _empty_v2_pm_status_response(
+    *,
+    request: Request,
+    workspace: str,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Return an idle desktop PM status projection for unavailable runtime."""
+    resolved_workspace = _workspace_from_request(request, workspace)
+    payload: dict[str, Any] = {
+        "initialized": False,
+        "workspace": resolved_workspace,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _empty_v2_pm_health_response(
+    *,
+    reason: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Return a degraded health projection for unavailable PM runtime."""
+    payload: dict[str, Any] = {
+        "overall": "unavailable",
+        "components": {"pm_runtime": "unavailable"},
+        "metrics": {},
+        "recommendations": ["Initialize or repair the PM runtime adapter before using PM desktop management."],
+        "initialized": False,
+        "state": "idle",
+        "reason": reason,
+    }
+    if error:
+        payload["error"] = error
+    return payload
 
 
 async def _get_pm_process_status() -> dict[str, Any]:
@@ -236,7 +467,7 @@ async def _get_pm_process_status() -> dict[str, Any]:
         pm_service = await container.resolve_async(PMService)
         status = pm_service.get_status()
         return dict(status) if isinstance(status, dict) else {}
-    except (KeyError, RuntimeError, ValueError):
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
         # Keep PM document/status compatibility available in lightweight tests
         # where the process service is not bootstrapped.
         return {}
@@ -338,7 +569,7 @@ def list_documents(
         raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
 
     result = pm.list_documents(doc_type=doc_type, pattern=pattern, limit=limit, offset=offset)
-    return result
+    return _with_document_collection_aliases(result)
 
 
 @router.post("/documents/{doc_path:path}", dependencies=[Depends(require_auth)], response_model=DocumentWriteResponse)
@@ -555,7 +786,7 @@ def list_tasks(
         raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
 
     result = pm.list_tasks(status=status, assignee=assignee, limit=limit, offset=offset)
-    return result
+    return _with_desktop_collection_aliases(result, "tasks", normalize_item=True)
 
 
 @router.get("/tasks/history", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
@@ -725,7 +956,7 @@ def list_requirements(
         raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
 
     result = pm.list_requirements(status=status, priority=priority, limit=limit, offset=offset)
-    return result
+    return _with_desktop_collection_aliases(result, "requirements")
 
 
 @router.get("/requirements/{req_id}", dependencies=[Depends(require_auth)], response_model=RequirementDetailResponse)
@@ -812,7 +1043,11 @@ def init_pm(
         return {"initialized": True, "message": "PM system already initialized", "workspace": workspace}
 
     result = pm.initialize(project_name=project_name or "Unnamed Project", description=description)
-    return result
+    response = dict(result) if isinstance(result, dict) else {"initialized": bool(result)}
+    response.setdefault("initialized", True)
+    response.setdefault("workspace", workspace)
+    response.setdefault("project_name", project_name or "Unnamed Project")
+    return response
 
 
 # --- V2 namespace aliases (backward-compatible) ---
@@ -835,7 +1070,14 @@ def v2_list_documents(
         if exc.code != "PM_NOT_INITIALIZED":
             raise
         return _empty_v2_document_list_response(limit=limit, offset=offset, reason=exc.code)
-    return _with_desktop_collection_aliases(result, "documents")
+    except ImportError as exc:
+        return _empty_v2_document_list_response(
+            limit=limit,
+            offset=offset,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
+    return _with_document_collection_aliases(result)
 
 
 @v2_router.get(
@@ -854,7 +1096,18 @@ def v2_get_document_versions(
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get all versions of a document."""
-    return get_document_versions(request, doc_path, workspace)
+    try:
+        return get_document_versions(request, doc_path, workspace)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_document_versions_response(doc_path=doc_path, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_document_versions_response(
+            doc_path=doc_path,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @v2_router.get(
@@ -875,7 +1128,25 @@ def v2_compare_document_versions(
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Compare two versions of a document."""
-    return compare_document_versions(request, doc_path, old_version, new_version, workspace)
+    try:
+        return compare_document_versions(request, doc_path, old_version, new_version, workspace)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_document_diff_response(
+            doc_path=doc_path,
+            old_version=old_version,
+            new_version=new_version,
+            reason=exc.code,
+        )
+    except ImportError as exc:
+        return _empty_v2_document_diff_response(
+            doc_path=doc_path,
+            old_version=old_version,
+            new_version=new_version,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @v2_router.get(
@@ -891,7 +1162,18 @@ def v2_get_document(
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get a single document with optional version."""
-    return get_document(request, doc_path, version, workspace)
+    try:
+        return get_document(request, doc_path, version, workspace)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_document_detail_response(doc_path=doc_path, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_document_detail_response(
+            doc_path=doc_path,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @v2_router.post(
@@ -941,6 +1223,12 @@ def v2_search_documents(
         if exc.code != "PM_NOT_INITIALIZED":
             raise
         return _empty_v2_document_search_response(query=q, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_document_search_response(
+            query=q,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @v2_router.get("/v2/pm/tasks", dependencies=[Depends(require_auth)], response_model=TaskListResponse)
@@ -1050,7 +1338,18 @@ def v2_get_task_assignments(
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get assignment history for a task."""
-    return get_task_assignments(request, task_id, limit, workspace)
+    try:
+        return get_task_assignments(request, task_id, limit, workspace)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_task_assignments_response(task_id=task_id, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_task_assignments_response(
+            task_id=task_id,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @v2_router.get("/v2/pm/tasks/{task_id}", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
@@ -1061,7 +1360,18 @@ def v2_get_task(
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get a specific task by ID."""
-    return get_task(request, task_id, workspace)
+    try:
+        return get_task(request, task_id, workspace)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_task_detail_response(task_id=task_id, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_task_detail_response(
+            task_id=task_id,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @v2_router.get("/v2/pm/search/tasks", dependencies=[Depends(require_auth)], response_model=TaskSearchResponse)
@@ -1079,6 +1389,10 @@ def v2_search_tasks(
         if exc.code != "PM_NOT_INITIALIZED":
             raise
         return _empty_v2_task_search_response(query=q, reason=exc.code)
+    except ImportError as exc:
+        payload = _empty_v2_task_search_response(query=q, reason="PM_RUNTIME_UNAVAILABLE")
+        payload["error"] = str(exc)
+        return payload
 
 
 @v2_router.get("/v2/pm/requirements", dependencies=[Depends(require_auth)], response_model=RequirementListResponse)
@@ -1098,6 +1412,14 @@ def v2_list_requirements(
         if exc.code != "PM_NOT_INITIALIZED":
             raise
         return _empty_v2_collection_response("requirements", limit=limit, offset=offset, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_collection_response(
+            "requirements",
+            limit=limit,
+            offset=offset,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
     return _with_desktop_collection_aliases(result, "requirements")
 
 
@@ -1113,7 +1435,18 @@ def v2_get_requirement(
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get a specific requirement by ID."""
-    return get_requirement(request, req_id, workspace)
+    try:
+        return get_requirement(request, req_id, workspace)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_requirement_detail_response(req_id=req_id, reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_requirement_detail_response(
+            req_id=req_id,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @router.get("/v2/pm/status", dependencies=[Depends(require_auth)], response_model=PMStatusResponse)
@@ -1122,7 +1455,15 @@ async def v2_get_pm_status(
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get PM system status for the workspace."""
-    return await get_pm_status(request, workspace)
+    try:
+        return await get_pm_status(request, workspace)
+    except ImportError as exc:
+        return _empty_v2_pm_status_response(
+            request=request,
+            workspace=workspace,
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @router.get("/v2/pm/health", dependencies=[Depends(require_auth)], response_model=PMHealthResponse)
@@ -1131,7 +1472,17 @@ def v2_get_pm_health(
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
     """Get project health analysis."""
-    return get_pm_health(request, workspace)
+    try:
+        return get_pm_health(request, workspace)
+    except StructuredHTTPException as exc:
+        if exc.code != "PM_NOT_INITIALIZED":
+            raise
+        return _empty_v2_pm_health_response(reason=exc.code)
+    except ImportError as exc:
+        return _empty_v2_pm_health_response(
+            reason="PM_RUNTIME_UNAVAILABLE",
+            error=str(exc),
+        )
 
 
 @router.post("/v2/pm/init", dependencies=[Depends(require_auth)], response_model=PMInitResponse)

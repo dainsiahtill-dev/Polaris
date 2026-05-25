@@ -23,6 +23,7 @@ import { cn } from '@/app/components/ui/utils';
 import { AIDialoguePanel } from '@/app/components/ai-dialogue';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
 import {
+  bulkGenerateChiefEngineerBlueprints,
   generateChiefEngineerBlueprint,
   deleteChiefEngineerBlueprint,
   getChiefEngineerDiagnostics,
@@ -53,6 +54,7 @@ import {
 import { ChiefEngineerWorkbenchPanel } from './ChiefEngineerWorkbenchPanel';
 import type {
   ChiefEngineerDiagnosticsResponse,
+  GenerateChiefEngineerBlueprintPayload,
   ChiefEngineerTaskBlueprintResultResponse,
 } from '@/services/chiefEngineerService';
 import type { EngineStatus } from '@/app/types/appContracts';
@@ -116,6 +118,20 @@ interface DirectorToggleStatusEvidence {
 
 function normalizeToken(value: unknown): string {
   return String(value || '').trim().toLowerCase();
+}
+
+function evidenceEndpoint(endpoint: string, workspace = ''): string {
+  const value = String(workspace || '').trim();
+  if (!value) return endpoint;
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
+}
+
+function blueprintStatusEvidenceEndpoint(taskId: string, workspace = ''): string {
+  const query = new URLSearchParams({ task_id: taskId });
+  const value = String(workspace || '').trim();
+  if (value) query.set('workspace', value);
+  return `/v2/chief-engineer/blueprints/status?${query.toString()}`;
 }
 
 function metadataOf(task: TaskEvidenceRow): Record<string, unknown> {
@@ -396,6 +412,8 @@ function diagnosticsTone(diagnostics: DiagnosticsResponse | null, error: string)
 const CHIEF_HANDOFF_BLOCKER_LABELS: Record<string, string> = {
   workspace_unavailable: '工作区不可用',
   blueprint_store_unreadable: '蓝图存储不可读',
+  blueprint_task_plan_unavailable: 'PM 任务计划不可读',
+  blueprint_task_plan_empty: 'PM 任务计划为空',
   blueprint_payload_invalid: '存在无效蓝图 payload',
   blueprint_coverage_incomplete: 'PM 任务蓝图覆盖不完整',
   blueprint_handoff_not_ready: '没有可交接的 Chief Engineer 蓝图',
@@ -479,6 +497,12 @@ function formatChiefHandoffBlockReason(diagnostics: DiagnosticsResponse | null):
     const missingCount = missingTaskIds.length || Math.max(0, planned - covered);
     return `诊断显示 ${missingCount || 1} 个 PM 任务缺少蓝图证据，不能启动 Director`;
   }
+  if (blockers.includes('blueprint_task_plan_unavailable')) {
+    return 'Chief Engineer 缺少可审计的 PM 任务计划，不能启动 Director';
+  }
+  if (blockers.includes('blueprint_task_plan_empty')) {
+    return 'PM 任务计划为空，Chief Engineer 没有可交接的任务';
+  }
   const primary = CHIEF_HANDOFF_BLOCKER_LABELS[blockers[0]] || blockers[0].replace(/_/g, ' ');
   const extraCount = blockers.length - 1;
   return `Chief Engineer 交接诊断未通过：${primary}${extraCount > 0 ? `，另有 ${extraCount} 项阻断` : ''}`;
@@ -502,6 +526,22 @@ function blueprintSummaryFromResult(
       ? rawRecord.updated_at.trim()
       : null,
     raw: rawRecord,
+  };
+}
+
+function blueprintPayloadFromTask(task: TaskEvidenceRow): GenerateChiefEngineerBlueprintPayload {
+  const taskId = taskHandoffId(task);
+  return {
+    task_id: taskId,
+    objective: taskObjective(task),
+    context: {
+      source: 'chief_engineer_desktop',
+      task_title: taskTitle(task),
+      goal: readString(task, ['goal']),
+      summary: readString(task, ['summary']),
+      acceptance: readTaskStringList(task, ['acceptance']),
+      target_files: readTaskStringList(task, ['target_files', 'scope_paths', 'files']),
+    },
   };
 }
 
@@ -548,6 +588,9 @@ export function ChiefEngineerWorkspace({
   const [blueprintDeleteEvidence, setBlueprintDeleteEvidence] = useState('');
   const [generatingTaskId, setGeneratingTaskId] = useState('');
   const [generateError, setGenerateError] = useState('');
+  const [bulkGeneratingBlueprints, setBulkGeneratingBlueprints] = useState(false);
+  const [bulkGenerateError, setBulkGenerateError] = useState('');
+  const [bulkGenerateEvidence, setBulkGenerateEvidence] = useState('');
   const [blueprintStatusChecks, setBlueprintStatusChecks] = useState<Record<string, BlueprintStatusCheckState>>({});
   const [backendDirectorTasks, setBackendDirectorTasks] = useState<DirectorFallbackTaskRow[]>([]);
   const [directorTaskApiError, setDirectorTaskApiError] = useState('');
@@ -624,7 +667,7 @@ export function ChiefEngineerWorkspace({
       try {
         const [capabilityResult, llmResult, cacheResult, tokenBudgetResult] = await Promise.all([
           getRoleCapabilities('chief_engineer', 'electron_workbench'),
-          getRoleKernelLLMEvents('chief_engineer', { limit: 5 }),
+          getRoleKernelLLMEvents('chief_engineer', { limit: 5, workspace }),
           getRoleKernelCacheStats('chief_engineer'),
           getRoleKernelTokenBudgetStats('chief_engineer'),
         ]);
@@ -902,12 +945,16 @@ export function ChiefEngineerWorkspace({
           : '启动 Director';
   const blueprintCoverageValue = !diagnostics
     ? 'checking'
-    : blueprintCoveragePlanned > 0
+    : diagnostics.blueprints.plan_status && diagnostics.blueprints.plan_status !== 'ready'
+      ? diagnostics.blueprints.plan_status
+      : blueprintCoveragePlanned > 0
       ? `${blueprintCoverageCovered}/${blueprintCoveragePlanned}`
       : 'no PM plan';
   const blueprintCoverageTone: DiagnosticTone = !diagnostics
     ? 'checking'
-    : blueprintCoveragePlanned > 0 && blueprintCoverageCovered === blueprintCoveragePlanned
+    : diagnostics.blueprints.plan_status === 'ready'
+      && blueprintCoveragePlanned > 0
+      && blueprintCoverageCovered === blueprintCoveragePlanned
       ? 'ready'
       : 'degraded';
   const handoffDiagnosticValue = !diagnostics
@@ -967,19 +1014,10 @@ export function ChiefEngineerWorkspace({
     }
     setGeneratingTaskId(taskId);
     setGenerateError('');
+    setBulkGenerateError('');
+    setBulkGenerateEvidence('');
     const result = await generateChiefEngineerBlueprint(
-      {
-        task_id: taskId,
-        objective: taskObjective(task),
-        context: {
-          source: 'chief_engineer_desktop',
-          task_title: taskTitle(task),
-          goal: readString(task, ['goal']),
-          summary: readString(task, ['summary']),
-          acceptance: readTaskStringList(task, ['acceptance']),
-          target_files: readTaskStringList(task, ['target_files', 'scope_paths', 'files']),
-        },
-      },
+      blueprintPayloadFromTask(task),
       workspace,
     );
     if (!result.ok || !result.data) {
@@ -1004,6 +1042,73 @@ export function ChiefEngineerWorkspace({
     }
     await refreshChiefEngineerDiagnostics();
     setGeneratingTaskId('');
+  };
+
+  const handleGenerateAllBlueprints = async () => {
+    if (missingBlueprintHandoffTasks.length === 0) {
+      return;
+    }
+    if (diagnosticsGenerateBlocked) {
+      setBulkGenerateError(diagnosticsGenerateBlockReason);
+      return;
+    }
+
+    setBulkGeneratingBlueprints(true);
+    setBulkGenerateError('');
+    setBulkGenerateEvidence('');
+    setGenerateError('');
+    const result = await bulkGenerateChiefEngineerBlueprints(
+      {
+        tasks: missingBlueprintHandoffTasks.map(blueprintPayloadFromTask),
+        stop_on_error: false,
+      },
+      workspace,
+    );
+    if (!result.ok || !result.data) {
+      setBulkGenerateError(result.error || '批量蓝图生成 API 暂不可用');
+      setBulkGeneratingBlueprints(false);
+      return;
+    }
+
+    const summaries = result.data.results
+      .map(blueprintSummaryFromResult)
+      .filter((item): item is RuntimeBlueprintSummary => Boolean(item));
+    if (summaries.length > 0) {
+      setRuntimeBlueprints((current) => {
+        const next = new Map<string, RuntimeBlueprintSummary>();
+        for (const item of summaries) {
+          next.set(item.blueprint_id, item);
+        }
+        for (const item of current) {
+          if (!next.has(item.blueprint_id)) {
+            next.set(item.blueprint_id, item);
+          }
+        }
+        return Array.from(next.values());
+      });
+      const first = summaries[0];
+      setSelectedBlueprintId(first.blueprint_id);
+      setBlueprintDetail({
+        blueprint_id: first.blueprint_id,
+        source: first.source,
+        blueprint: first.raw,
+      });
+      setBlueprintDetailError('');
+    }
+
+    if (result.data.failed > 0) {
+      const firstError = result.data.errors[0];
+      setBulkGenerateError(
+        firstError
+          ? `${firstError.task_id}: ${firstError.message}`
+          : `${result.data.failed} 个蓝图生成失败`,
+      );
+    }
+    setBulkGenerateEvidence(
+      `${evidenceEndpoint('/v2/chief-engineer/blueprints/bulk', workspace)} · generated ${result.data.generated}/${result.data.total}`,
+    );
+    await refreshChiefEngineerDiagnostics();
+    setBulkGeneratingBlueprints(false);
   };
 
   const handleCheckBlueprintStatus = async (task: TaskEvidenceRow) => {
@@ -1147,7 +1252,9 @@ export function ChiefEngineerWorkspace({
       setBlueprintDetail(null);
       setBlueprintDetailError('');
     }
-    setBlueprintDeleteEvidence(`/v2/chief-engineer/blueprints/${token} · deleted`);
+    setBlueprintDeleteEvidence(
+      `${evidenceEndpoint(`/v2/chief-engineer/blueprints/${encodeURIComponent(token)}`, workspace)} · deleted`,
+    );
     await refreshChiefEngineerDiagnostics();
     setDeletingBlueprintId('');
   };
@@ -1272,7 +1379,7 @@ export function ChiefEngineerWorkspace({
           <div className="flex min-w-0 items-center gap-2">
             <span className="shrink-0 font-medium text-cyan-100">LLM events</span>
             <span className="shrink-0 font-mono text-[11px] text-cyan-300">
-              /v2/chief-engineer/llm-events?limit=5
+              {evidenceEndpoint('/v2/chief-engineer/llm-events?limit=5', workspace)}
             </span>
             {chiefBackendEvidenceLoading ? (
               <span className="text-slate-400">读取中...</span>
@@ -1350,7 +1457,9 @@ export function ChiefEngineerWorkspace({
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
             <div className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 font-medium text-cyan-100">Director status</span>
-              <span className="shrink-0 font-mono text-[11px] text-cyan-300">/v2/director/status?source=auto</span>
+              <span className="shrink-0 font-mono text-[11px] text-cyan-300">
+                {evidenceEndpoint('/v2/director/status?source=auto', workspace)}
+              </span>
               {directorToggleStatusEvidence.loading ? (
                 <span className="text-slate-400">读取中...</span>
               ) : directorToggleStatusEvidence.error ? (
@@ -1511,17 +1620,34 @@ export function ChiefEngineerWorkspace({
               </div>
             ) : null}
 
-            {blueprintCandidateTasks.length > 0 ? (
+            {blueprintCandidateTasks.length > 0 || bulkGenerateError || bulkGenerateEvidence || bulkGeneratingBlueprints ? (
               <div data-testid="chief-engineer-blueprint-candidates" className="rounded-lg border border-cyan-500/20 bg-slate-950/45 p-3">
-                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-cyan-200">
-                  <FilePlus className="h-3.5 w-3.5" />
-                  待生成蓝图
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wider text-cyan-200">
+                    <FilePlus className="h-3.5 w-3.5" />
+                    待生成蓝图
+                    <span className="rounded border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100">
+                      {missingBlueprintHandoffTasks.length}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { void handleGenerateAllBlueprints(); }}
+                    disabled={bulkGeneratingBlueprints || diagnosticsGenerateBlocked || missingBlueprintHandoffTasks.length === 0}
+                    title={diagnosticsGenerateBlocked ? diagnosticsGenerateBlockReason : '为全部缺失任务批量生成 Chief Engineer 蓝图'}
+                    data-testid="chief-engineer-blueprint-generate-all"
+                    className="h-7 shrink-0 px-2 text-[10px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100 disabled:opacity-50"
+                  >
+                    {bulkGeneratingBlueprints ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <FilePlus className="mr-1 h-3 w-3" />}
+                    补齐全部
+                  </Button>
                 </div>
                 <div className="space-y-2">
                   {blueprintCandidateTasks.map((task) => {
                     const taskId = taskHandoffId(task);
                     const isGenerating = generatingTaskId === taskId;
-                    const generationDisabled = isGenerating || diagnosticsGenerateBlocked;
+                    const generationDisabled = isGenerating || bulkGeneratingBlueprints || diagnosticsGenerateBlocked;
                     const statusCheck = blueprintStatusChecks[taskId];
                     return (
                       <div key={taskId} className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-2">
@@ -1567,7 +1693,7 @@ export function ChiefEngineerWorkspace({
                             )}
                           >
                             <div className="mb-1 font-mono text-[10px] text-slate-500">
-                              /v2/chief-engineer/blueprints/status
+                              {blueprintStatusEvidenceEndpoint(taskId, workspace)}
                             </div>
                             {statusCheck.error ? (
                               <div>{statusCheck.error}</div>
@@ -1593,6 +1719,16 @@ export function ChiefEngineerWorkspace({
                 {generateError ? (
                   <div data-testid="chief-engineer-blueprint-generate-error" className="mt-2 rounded-md border border-red-500/25 bg-red-500/10 px-2 py-1.5 text-xs text-red-100">
                     {generateError}
+                  </div>
+                ) : null}
+                {bulkGenerateError ? (
+                  <div data-testid="chief-engineer-blueprint-bulk-error" className="mt-2 rounded-md border border-red-500/25 bg-red-500/10 px-2 py-1.5 text-xs text-red-100">
+                    {bulkGenerateError}
+                  </div>
+                ) : null}
+                {bulkGenerateEvidence ? (
+                  <div data-testid="chief-engineer-blueprint-bulk-evidence" className="mt-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1.5 font-mono text-[11px] text-emerald-100">
+                    {bulkGenerateEvidence}
                   </div>
                 ) : null}
               </div>

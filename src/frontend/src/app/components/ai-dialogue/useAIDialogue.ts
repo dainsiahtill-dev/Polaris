@@ -64,6 +64,15 @@ interface ChatStatus extends DialogueChatStatus {
   debug?: Record<string, unknown>;
 }
 
+function appendWorkspaceQuery(path: string, workspace?: string): string {
+  const value = String(workspace || '').trim();
+  if (!value) {
+    return path;
+  }
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}workspace=${encodeURIComponent(value)}`;
+}
+
 export type WorkflowExportTarget = 'pm' | 'director' | 'factory';
 
 export interface WorkflowExportStatus {
@@ -259,6 +268,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
   const getDefaultMemoryQuery = useCallback(() => String(
     attachedTaskId || attachedRunId || roleName || role,
   ).trim(), [attachedTaskId, attachedRunId, roleName, role]);
+  const dialogueWorkspace = String(workspace || (typeof context?.workspace === 'string' ? context.workspace : '') || '').trim();
 
   // 消息状态
   const [messages, setMessages] = useState<AIMessage[]>([
@@ -308,7 +318,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
   const checkStatus = useCallback(async () => {
     try {
       setStatusLoading(true);
-      const res = await apiFetch(`/v2/role/${role}/chat/status`);
+      const res = await apiFetch(appendWorkspaceQuery(`/v2/role/${role}/chat/status`, dialogueWorkspace));
 
       if (res.ok) {
         const status = await res.json() as ChatStatus;
@@ -340,7 +350,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
     } finally {
       setStatusLoading(false);
     }
-  }, [role]);
+  }, [role, dialogueWorkspace]);
 
   // 初始化时检查状态
   useEffect(() => {
@@ -639,10 +649,10 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
         .filter((m) => m.role !== 'system' && m.id !== userMessage.id)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      const runtimeContext = { ...context, history, conversation_id: conversationId };
+      const runtimeContext = { ...context, workspace: dialogueWorkspace || context?.workspace, history, conversation_id: conversationId };
       const streamPath = sessionId
         ? `/v2/roles/sessions/${encodeURIComponent(sessionId)}/messages/stream`
-        : `/v2/role/${role}/chat/stream`;
+        : appendWorkspaceQuery(`/v2/role/${role}/chat/stream`, dialogueWorkspace);
       const requestBody: Record<string, unknown> = sessionId
         ? {
           role: 'user',
@@ -726,7 +736,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
     } finally {
       setIsLoading(false);
     }
-  }, [inputValue, isLoading, isChatReady, isExplicitlyUnconfigured, chatStatus?.error, roleName, role, sessionId, context, conversationId, handleStreamEvent]);
+  }, [inputValue, isLoading, isChatReady, isExplicitlyUnconfigured, chatStatus?.error, roleName, role, sessionId, context, conversationId, dialogueWorkspace, handleStreamEvent]);
 
   // 键盘事件
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {

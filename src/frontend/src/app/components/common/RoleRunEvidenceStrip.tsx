@@ -7,6 +7,7 @@ interface RoleRunEvidenceStripProps {
   tone: RoleRunEvidenceTone;
   testId: string;
   endpoint: string;
+  workspace?: string | null;
   loading: boolean;
   error?: string | null;
   status?: string | null;
@@ -48,10 +49,20 @@ const TONE_CLASSES = {
   },
 } satisfies Record<RoleRunEvidenceTone, Record<string, string>>;
 
+export function roleRunEvidenceEndpoint(endpoint: string, workspace?: string | null): string {
+  const value = String(workspace || '').trim();
+  if (!value) {
+    return endpoint;
+  }
+  const separator = endpoint.includes('?') ? '&' : '?';
+  return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
+}
+
 export function RoleRunEvidenceStrip({
   tone,
   testId,
   endpoint,
+  workspace,
   loading,
   error,
   status,
@@ -75,6 +86,8 @@ export function RoleRunEvidenceStrip({
   cancelResultError,
 }: RoleRunEvidenceStripProps) {
   const styles = TONE_CLASSES[tone];
+  const visibleEndpoint = roleRunEvidenceEndpoint(endpoint, workspace);
+  const visibleCancelEndpoint = roleRunEvidenceEndpoint(cancelResultEndpoint, workspace);
   const snapshotParts = [status || 'unknown', ...details.filter(Boolean)];
   const hasSnapshot = Boolean(status) || details.filter(Boolean).length > 0;
   const statusText = loading
@@ -94,7 +107,7 @@ export function RoleRunEvidenceStrip({
       data-testid={testId}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <span className={cn('font-mono', styles.endpoint)}>{endpoint}</span>
+        <span className={cn('font-mono', styles.endpoint)}>{visibleEndpoint}</span>
         <span className={error ? 'text-rose-300' : 'text-slate-300'}>{statusText}</span>
         {!loading && !error && message ? (
           <span className="max-w-[360px] truncate text-slate-500" title={message}>
@@ -147,7 +160,7 @@ export function RoleRunEvidenceStrip({
             className={cancelResultError ? 'font-mono text-rose-300' : cn('font-mono', styles.result)}
             data-testid={cancelResultTestId}
           >
-            {cancelResultEndpoint} ·{' '}
+            {visibleCancelEndpoint} ·{' '}
             {cancelResultLoading ? 'cancelling' : cancelResultError || cancelResultMessage}
           </span>
         ) : null}

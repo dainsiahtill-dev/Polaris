@@ -150,4 +150,42 @@ describe('pmRequirementService', () => {
     expect(result.data?.total).toBe(1);
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/pm/requirements');
   });
+
+  it('passes explicit workspace when listing PM requirements', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          requirements: [],
+          items: [],
+          total: 0,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await pmRequirementService.list('C:/Temp/Product');
+
+    expect(result.ok).toBe(true);
+    expect(apiFetchMock).toHaveBeenCalledWith('/v2/pm/requirements?workspace=C%3A%2FTemp%2FProduct');
+  });
+
+  it('loads PM requirement detail with encoded id and workspace', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: 'REQ/1',
+          title: 'Workspace-specific requirement',
+          status: 'open',
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await pmRequirementService.get('REQ/1', 'C:/Temp/Product');
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.id).toBe('REQ/1');
+    expect(apiFetchMock).toHaveBeenCalledWith('/v2/pm/requirements/REQ%2F1?workspace=C%3A%2FTemp%2FProduct');
+  });
 });

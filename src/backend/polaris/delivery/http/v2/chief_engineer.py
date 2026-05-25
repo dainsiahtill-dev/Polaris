@@ -34,6 +34,7 @@ from polaris.delivery.http.routers._shared import (
     get_state,
     require_auth,
 )
+from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
 from polaris.delivery.http.workspace import active_workspace_value, settings_with_workspace_override
 from polaris.kernelone.storage import resolve_logical_path
 from pydantic import BaseModel, Field
@@ -65,6 +66,23 @@ class ChiefEngineerGenerateBlueprintRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class ChiefEngineerBulkBlueprintTaskRequest(BaseModel):
+    """One task entry in a Chief Engineer bulk blueprint generation request."""
+
+    task_id: str
+    objective: str
+    run_id: str | None = None
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChiefEngineerBulkGenerateBlueprintRequest(BaseModel):
+    """Bulk request for covering multiple PM/Director tasks with CE blueprints."""
+
+    tasks: list[ChiefEngineerBulkBlueprintTaskRequest] = Field(default_factory=list)
+    stop_on_error: bool = False
+
+
 class ChiefEngineerTaskBlueprintResultResponse(BaseModel):
     """Chief Engineer command/query result with persisted blueprint context."""
 
@@ -79,6 +97,26 @@ class ChiefEngineerTaskBlueprintResultResponse(BaseModel):
     recommendations: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     blueprint: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChiefEngineerBulkBlueprintError(BaseModel):
+    """Per-task failure captured during bulk blueprint generation."""
+
+    task_id: str
+    code: str
+    message: str
+
+
+class ChiefEngineerBulkGenerateBlueprintResponse(BaseModel):
+    """Bulk blueprint generation evidence for the Chief Engineer desktop."""
+
+    ok: bool
+    workspace: str
+    total: int
+    generated: int
+    failed: int
+    results: list[ChiefEngineerTaskBlueprintResultResponse] = Field(default_factory=list)
+    errors: list[ChiefEngineerBulkBlueprintError] = Field(default_factory=list)
 
 
 class ChiefEngineerBlueprintDeleteResponse(BaseModel):
@@ -121,6 +159,9 @@ class ChiefEngineerDiagnosticsBlueprintStatus(BaseModel):
     ok: bool
     status: str
     source: str = "runtime/blueprints"
+    plan_status: str = "unknown"
+    plan_path: str | None = None
+    plan_error: str | None = None
     total: int = 0
     loadable: int = 0
     invalid_payloads: int = 0
@@ -129,6 +170,15 @@ class ChiefEngineerDiagnosticsBlueprintStatus(BaseModel):
     missing_task_ids: list[str] = Field(default_factory=list)
     director_handoff_ready: bool = False
     latest_updated_at: str | None = None
+    error: str | None = None
+
+
+class ChiefEngineerPMTaskPlanProbe(BaseModel):
+    """Read-only PM task plan evidence for Chief Engineer handoff diagnostics."""
+
+    status: str
+    path: str | None = None
+    task_ids: list[str] | None = None
     error: str | None = None
 
 
@@ -198,7 +248,7 @@ def _task_id_from_plan_task(task: dict[str, Any], index: int) -> str:
     return f"task-{index}"
 
 
-def _load_pm_plan_task_ids(workspace: str, *, ramdisk_root: str = "") -> list[str] | None:
+def _load_pm_task_plan_probe(workspace: str, *, ramdisk_root: str = "") -> ChiefEngineerPMTaskPlanProbe:
     try:
         plan_path = Path(
             resolve_logical_path(
@@ -207,16 +257,48 @@ def _load_pm_plan_task_ids(workspace: str, *, ramdisk_root: str = "") -> list[st
                 ramdisk_root=ramdisk_root or None,
             )
         )
-    except (OSError, RuntimeError, ValueError):
-        return None
+    except (OSError, RuntimeError, ValueError) as exc:
+        return ChiefEngineerPMTaskPlanProbe(
+            status="unresolved",
+            error=f"{type(exc).__name__}: {exc}",
+        )
 
-    payload = _read_json_file(plan_path)
-    if payload is None:
-        return None
+    if not plan_path.is_file():
+        return ChiefEngineerPMTaskPlanProbe(
+            status="missing",
+            path=str(plan_path),
+            error="pm_task_plan_missing",
+        )
+
+    try:
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        return ChiefEngineerPMTaskPlanProbe(
+            status="unreadable",
+            path=str(plan_path),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    except json.JSONDecodeError as exc:
+        return ChiefEngineerPMTaskPlanProbe(
+            status="invalid",
+            path=str(plan_path),
+            error=f"JSONDecodeError: {exc.msg}",
+        )
+
+    if not isinstance(payload, dict):
+        return ChiefEngineerPMTaskPlanProbe(
+            status="invalid",
+            path=str(plan_path),
+            error="pm_task_plan_payload_not_object",
+        )
 
     raw_tasks = payload.get("tasks")
     if not isinstance(raw_tasks, list):
-        return []
+        return ChiefEngineerPMTaskPlanProbe(
+            status="invalid",
+            path=str(plan_path),
+            error="pm_task_plan_tasks_not_list",
+        )
 
     task_ids: list[str] = []
     seen: set[str] = set()
@@ -227,7 +309,11 @@ def _load_pm_plan_task_ids(workspace: str, *, ramdisk_root: str = "") -> list[st
         if task_id and task_id not in seen:
             seen.add(task_id)
             task_ids.append(task_id)
-    return task_ids
+    return ChiefEngineerPMTaskPlanProbe(
+        status="ready" if task_ids else "empty",
+        path=str(plan_path),
+        task_ids=task_ids,
+    )
 
 
 def _blueprint_task_id(payload: dict[str, Any]) -> str:
@@ -322,6 +408,22 @@ def _blueprint_result_response(result: TaskBlueprintResultV1) -> ChiefEngineerTa
     )
 
 
+def _generate_blueprint_for_task(
+    item: ChiefEngineerGenerateBlueprintRequest | ChiefEngineerBulkBlueprintTaskRequest,
+    *,
+    workspace: str,
+) -> TaskBlueprintResultV1:
+    command = GenerateTaskBlueprintCommandV1(
+        task_id=item.task_id,
+        workspace=workspace,
+        objective=item.objective,
+        run_id=item.run_id,
+        constraints=item.constraints,
+        context=item.context,
+    )
+    return generate_task_blueprint(command)
+
+
 def _workspace_value(settings: Any) -> str:
     return active_workspace_value(settings)
 
@@ -414,7 +516,7 @@ def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBluep
     try:
         persistence = BlueprintPersistence(workspace, ensure_directory=False)
         blueprint_ids = persistence.list_all()
-        planned_task_ids = _load_pm_plan_task_ids(
+        plan_probe = _load_pm_task_plan_probe(
             workspace,
             ramdisk_root=str(getattr(settings, "ramdisk_root", "") or "").strip(),
         )
@@ -448,18 +550,23 @@ def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBluep
     else:
         status = "empty"
 
-    if planned_task_ids is None:
+    planned_task_ids = plan_probe.task_ids
+    if plan_probe.status != "ready":
         missing_task_ids: list[str] = []
         covered_tasks = 0
-        director_handoff_ready = loadable > 0
+        director_handoff_ready = False
     else:
-        missing_task_ids = [task_id for task_id in planned_task_ids if task_id not in covered_task_ids]
-        covered_tasks = len(planned_task_ids) - len(missing_task_ids)
-        director_handoff_ready = bool(planned_task_ids) and not missing_task_ids and invalid_payloads == 0
+        ready_task_ids = planned_task_ids or []
+        missing_task_ids = [task_id for task_id in ready_task_ids if task_id not in covered_task_ids]
+        covered_tasks = len(ready_task_ids) - len(missing_task_ids)
+        director_handoff_ready = bool(ready_task_ids) and not missing_task_ids and invalid_payloads == 0
 
     return ChiefEngineerDiagnosticsBlueprintStatus(
-        ok=invalid_payloads == 0 and not missing_task_ids,
+        ok=plan_probe.status == "ready" and invalid_payloads == 0 and not missing_task_ids,
         status=status,
+        plan_status=plan_probe.status,
+        plan_path=plan_probe.path,
+        plan_error=plan_probe.error,
         total=len(blueprint_ids),
         loadable=loadable,
         invalid_payloads=invalid_payloads,
@@ -481,6 +588,10 @@ def _diagnostic_issues(
         issues.append("workspace_unavailable")
     if not llm.ok:
         issues.append("llm_not_ready")
+    if blueprints.plan_status in {"missing", "unresolved", "unreadable", "invalid"}:
+        issues.append("blueprint_task_plan_unavailable")
+    elif blueprints.plan_status == "empty":
+        issues.append("blueprint_task_plan_empty")
     if blueprints.status == "error":
         issues.append("blueprint_store_unreadable")
     if blueprints.invalid_payloads:
@@ -513,6 +624,10 @@ def _handoff_blockers(
     blockers: list[str] = []
     if not workspace.ok:
         blockers.append("workspace_unavailable")
+    if blueprints.plan_status in {"missing", "unresolved", "unreadable", "invalid"}:
+        blockers.append("blueprint_task_plan_unavailable")
+    elif blueprints.plan_status == "empty":
+        blockers.append("blueprint_task_plan_empty")
     if blueprints.status == "error":
         blockers.append("blueprint_store_unreadable")
     if blueprints.invalid_payloads:
@@ -567,9 +682,11 @@ def get_chief_engineer_diagnostics(request: Request, workspace: str = "") -> Chi
 
 @router.get("/chief-engineer/llm-events", dependencies=[Depends(require_auth)])
 async def get_chief_engineer_llm_events(
+    request: Request,
     run_id: str | None = None,
     task_id: str | None = None,
     limit: int = 100,
+    workspace: str = "",
 ) -> dict[str, Any]:
     """Return Chief Engineer LLM event history from the shared roles kernel."""
 
@@ -580,10 +697,14 @@ async def get_chief_engineer_llm_events(
         role="chief_engineer",
         limit=limit,
     )
+    resolved_workspace = _workspace_value(_settings_for_request(request, workspace))
+    if workspace.strip():
+        events = filter_llm_events_by_workspace(events, resolved_workspace)
     return {
         "run_id": run_id,
         "task_id": task_id,
         "role": "chief_engineer",
+        "workspace": resolved_workspace,
         "events": [event.to_dict() for event in events],
         "count": len(events),
         "stats": _llm_event_stats(events),
@@ -661,15 +782,7 @@ def generate_chief_engineer_blueprint(
     )
     target_workspace = _workspace_value(settings)
     try:
-        command = GenerateTaskBlueprintCommandV1(
-            task_id=payload.task_id,
-            workspace=target_workspace,
-            objective=payload.objective,
-            run_id=payload.run_id,
-            constraints=payload.constraints,
-            context=payload.context,
-        )
-        result = generate_task_blueprint(command)
+        result = _generate_blueprint_for_task(payload, workspace=target_workspace)
     except ValueError as exc:
         raise StructuredHTTPException(
             status_code=400,
@@ -677,6 +790,74 @@ def generate_chief_engineer_blueprint(
             message=str(exc),
         ) from exc
     return _blueprint_result_response(result)
+
+
+@router.post(
+    "/chief-engineer/blueprints/bulk",
+    dependencies=[Depends(require_auth)],
+    response_model=ChiefEngineerBulkGenerateBlueprintResponse,
+)
+def bulk_generate_chief_engineer_blueprints(
+    request: Request,
+    payload: ChiefEngineerBulkGenerateBlueprintRequest,
+    workspace: str = "",
+) -> ChiefEngineerBulkGenerateBlueprintResponse:
+    """Generate Chief Engineer blueprints for multiple tasks through the cell contract."""
+
+    if not payload.tasks:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="EMPTY_BLUEPRINT_BATCH",
+            message="at least one task is required",
+        )
+
+    settings = _settings_for_request(request, workspace)
+    ensure_required_roles_ready(
+        _state_for_settings(request, settings),
+        default_roles=["chief_engineer"],
+        force_first="chief_engineer",
+    )
+    target_workspace = _workspace_value(settings)
+    results: list[ChiefEngineerTaskBlueprintResultResponse] = []
+    errors: list[ChiefEngineerBulkBlueprintError] = []
+
+    for item in payload.tasks:
+        try:
+            result = _generate_blueprint_for_task(item, workspace=target_workspace)
+            result_response = _blueprint_result_response(result)
+            results.append(result_response)
+            if not result_response.ok:
+                errors.append(
+                    ChiefEngineerBulkBlueprintError(
+                        task_id=result_response.task_id,
+                        code="BLUEPRINT_GENERATION_FAILED",
+                        message=result_response.summary or result_response.status,
+                    )
+                )
+                if payload.stop_on_error:
+                    break
+        except ValueError as exc:
+            errors.append(
+                ChiefEngineerBulkBlueprintError(
+                    task_id=str(item.task_id or "").strip(),
+                    code="INVALID_BLUEPRINT_COMMAND",
+                    message=str(exc),
+                )
+            )
+            if payload.stop_on_error:
+                break
+
+    generated = sum(1 for item in results if item.ok and item.blueprint_id)
+    failed = len(errors)
+    return ChiefEngineerBulkGenerateBlueprintResponse(
+        ok=failed == 0 and generated == len(payload.tasks),
+        workspace=target_workspace,
+        total=len(payload.tasks),
+        generated=generated,
+        failed=failed,
+        results=results,
+        errors=errors,
+    )
 
 
 @router.get(

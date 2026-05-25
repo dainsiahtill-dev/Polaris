@@ -85,6 +85,18 @@ interface StreamEvent {
   };
 }
 
+function appendWorkspaceQuery(path: string, workspace?: string): string {
+  const value = String(workspace || '').trim();
+  if (!value) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}workspace=${encodeURIComponent(value)}`;
+}
+
+function workspaceFromContext(context?: Record<string, unknown>): string {
+  const workspace = context?.workspace;
+  return typeof workspace === 'string' ? workspace.trim() : '';
+}
+
 /**
  * 使用聊天流
  */
@@ -115,6 +127,7 @@ export function useChatStream(options: ChatStreamOptions): ChatStreamReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(initialConversationId ?? null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const dialogueWorkspace = workspace?.trim() || workspaceFromContext(context);
 
   // 保存消息时的防抖定时器
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -251,6 +264,7 @@ export function useChatStream(options: ChatStreamOptions): ChatStreamReturn {
         message: userMessage.content,
         context: {
           ...context,
+          ...(dialogueWorkspace ? { workspace: dialogueWorkspace } : {}),
           history,
           conversation_id: conversationId,
         },
@@ -260,7 +274,7 @@ export function useChatStream(options: ChatStreamOptions): ChatStreamReturn {
         requestBody.session_id = sessionId;
       }
 
-      const res = await apiFetch(`/v2/role/${role}/chat/stream`, {
+      const res = await apiFetch(appendWorkspaceQuery(`/v2/role/${role}/chat/stream`, dialogueWorkspace), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
@@ -350,7 +364,7 @@ export function useChatStream(options: ChatStreamOptions): ChatStreamReturn {
     roleName,
     role,
     sessionId,
-    workspace,
+    dialogueWorkspace,
     context,
     history,
     conversationId,

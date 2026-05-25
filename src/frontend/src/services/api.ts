@@ -105,13 +105,13 @@ export const settingsService = {
 };
 
 export const statusService = {
-  async getPm(): Promise<ApiResult<BackendStatus>> {
-    const res = await apiFetch('/v2/pm/status');
+  async getPm(workspace = ''): Promise<ApiResult<BackendStatus>> {
+    const res = await apiFetch(`/v2/pm/status${workspaceQuerySuffix(workspace)}`);
     return handleResponse(res, 'Failed to load PM status');
   },
 
-  async getDirector(): Promise<ApiResult<BackendStatus>> {
-    const res = await apiFetch('/v2/director/status');
+  async getDirector(workspace = ''): Promise<ApiResult<BackendStatus>> {
+    const res = await apiFetch(`/v2/director/status${workspaceQuerySuffix(workspace)}`);
     if (!res.ok) {
       return handleResponse(res, 'Failed to load Director status');
     }
@@ -123,10 +123,10 @@ export const statusService = {
     }
   },
 
-  async getAll(): Promise<{ pm: ApiResult<BackendStatus>; director: ApiResult<BackendStatus> }> {
+  async getAll(workspace = ''): Promise<{ pm: ApiResult<BackendStatus>; director: ApiResult<BackendStatus> }> {
     const [pmRes, directorRes] = await Promise.all([
-      apiFetch('/v2/pm/status'),
-      apiFetch('/v2/director/status'),
+      apiFetch(`/v2/pm/status${workspaceQuerySuffix(workspace)}`),
+      apiFetch(`/v2/director/status${workspaceQuerySuffix(workspace)}`),
     ]);
     let director: ApiResult<BackendStatus>;
     if (!directorRes.ok) {
@@ -147,29 +147,57 @@ export const statusService = {
 };
 
 export const processService = {
-  async startPm(resume = false): Promise<ApiResult<void>> {
-    const url = resume ? '/v2/pm/start?resume=true' : '/v2/pm/start';
+  async startPm(resume = false, workspace = ''): Promise<ApiResult<void>> {
+    const query = new URLSearchParams();
+    if (resume) {
+      query.set('resume', 'true');
+    }
+    if (workspace.trim()) {
+      query.set('workspace', workspace);
+    }
+    const suffix = query.toString();
+    const url = suffix ? `/v2/pm/start?${suffix}` : '/v2/pm/start';
     const res = await apiFetch(url, { method: 'POST' });
     return handleResponse(res, 'Failed to start PM');
   },
 
-  async stopPm(): Promise<ApiResult<void>> {
-    const res = await apiFetch('/v2/pm/stop', { method: 'POST' });
+  async stopPm(workspace = ''): Promise<ApiResult<void>> {
+    const query = new URLSearchParams();
+    if (workspace.trim()) {
+      query.set('workspace', workspace);
+    }
+    const suffix = query.toString();
+    const res = await apiFetch(`/v2/pm/stop${suffix ? `?${suffix}` : ''}`, { method: 'POST' });
     return handleResponse(res, 'Failed to stop PM');
   },
 
-  async runPmOnce(): Promise<ApiResult<void>> {
-    const res = await apiFetch('/v2/pm/run_once', { method: 'POST' });
+  async runPmOnce(workspace = ''): Promise<ApiResult<void>> {
+    const query = new URLSearchParams();
+    if (workspace.trim()) {
+      query.set('workspace', workspace);
+    }
+    const suffix = query.toString();
+    const res = await apiFetch(`/v2/pm/run_once${suffix ? `?${suffix}` : ''}`, { method: 'POST' });
     return handleResponse(res, 'PM run once failed');
   },
 
-  async startDirector(): Promise<ApiResult<void>> {
-    const res = await apiFetch('/v2/director/start', { method: 'POST' });
+  async startDirector(workspace = ''): Promise<ApiResult<void>> {
+    const query = new URLSearchParams();
+    if (workspace.trim()) {
+      query.set('workspace', workspace);
+    }
+    const suffix = query.toString();
+    const res = await apiFetch(`/v2/director/start${suffix ? `?${suffix}` : ''}`, { method: 'POST' });
     return handleResponse(res, 'Failed to start Director');
   },
 
-  async stopDirector(): Promise<ApiResult<void>> {
-    const res = await apiFetch('/v2/director/stop', { method: 'POST' });
+  async stopDirector(workspace = ''): Promise<ApiResult<void>> {
+    const query = new URLSearchParams();
+    if (workspace.trim()) {
+      query.set('workspace', workspace);
+    }
+    const suffix = query.toString();
+    const res = await apiFetch(`/v2/director/stop${suffix ? `?${suffix}` : ''}`, { method: 'POST' });
     return handleResponse(res, 'Failed to stop Director');
   },
 };
@@ -642,8 +670,8 @@ export const v2Services = {
 
 export const roleChatService = {
   /** POST /v2/role/{role}/chat — Non-streaming unified role chat */
-  async chat(role: RoleChatRole, request: import('./api.types').RoleChatRequest): Promise<ApiResult<import('./api.types').RoleChatResponse>> {
-    const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat`, {
+  async chat(role: RoleChatRole, request: import('./api.types').RoleChatRequest, workspace = ''): Promise<ApiResult<import('./api.types').RoleChatResponse>> {
+    const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat${workspaceQuerySuffix(workspace)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
@@ -652,8 +680,8 @@ export const roleChatService = {
   },
 
   /** POST /v2/role/{role}/chat/stream — Streaming unified role chat (returns raw Response for SSE handling) */
-  async chatStream(role: RoleChatRole, request: import('./api.types').RoleChatRequest, signal?: AbortSignal): Promise<Response> {
-    return apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/stream`, {
+  async chatStream(role: RoleChatRole, request: import('./api.types').RoleChatRequest, signal?: AbortSignal, workspace = ''): Promise<Response> {
+    return apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/stream${workspaceQuerySuffix(workspace)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
@@ -662,8 +690,8 @@ export const roleChatService = {
   },
 
   /** GET /v2/role/{role}/chat/status — Role chat readiness status */
-  async getStatus(role: RoleChatRole): Promise<ApiResult<import('./api.types').RoleChatStatusResponse>> {
-    const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/status`);
+  async getStatus(role: RoleChatRole, workspace = ''): Promise<ApiResult<import('./api.types').RoleChatStatusResponse>> {
+    const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/status${workspaceQuerySuffix(workspace)}`);
     return handleResponse(res, 'Failed to load role chat status');
   },
 };
@@ -783,14 +811,14 @@ export const pmTaskService = {
 
 export const pmRequirementService = {
   /** GET /v2/pm/requirements — List PM requirements */
-  async list(): Promise<ApiResult<import('./api.types').PmRequirementListResponse>> {
-    const res = await apiFetch('/v2/pm/requirements');
+  async list(workspace = ''): Promise<ApiResult<import('./api.types').PmRequirementListResponse>> {
+    const res = await apiFetch(`/v2/pm/requirements${workspaceQuerySuffix(workspace)}`);
     return handleResponse(res, 'Failed to list PM requirements');
   },
 
   /** GET /v2/pm/requirements/{id} — Get PM requirement detail */
-  async get(id: string): Promise<ApiResult<import('./api.types').PmRequirementDetailResponse>> {
-    const res = await apiFetch(`/v2/pm/requirements/${encodeURIComponent(id)}`);
+  async get(id: string, workspace = ''): Promise<ApiResult<import('./api.types').PmRequirementDetailResponse>> {
+    const res = await apiFetch(`/v2/pm/requirements/${encodeURIComponent(id)}${workspaceQuerySuffix(workspace)}`);
     return handleResponse(res, 'Failed to get PM requirement detail');
   },
 };
@@ -1123,20 +1151,23 @@ export const memoryV2Service = {
 
 export const roleLlmEventsV2Service = {
   /** GET /v2/role/{role}/llm-events — Role LLM events */
-  async getByRole(role: string, params?: { limit?: number; offset?: number }): Promise<ApiResult<import('./api.types').RoleLlmEventsV2Response>> {
+  async getByRole(role: string, params?: { limit?: number; offset?: number; workspace?: string }): Promise<ApiResult<import('./api.types').RoleLlmEventsV2Response>> {
     const searchParams = new URLSearchParams();
     if (params?.limit) searchParams.set('limit', String(params.limit));
     if (params?.offset) searchParams.set('offset', String(params.offset));
+    if (params?.workspace) searchParams.set('workspace', params.workspace);
     const query = searchParams.toString();
     const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/llm-events${query ? `?${query}` : ''}`);
     return handleResponse(res, 'Failed to load role LLM events');
   },
 
   /** GET /v2/role/llm-events — All LLM events */
-  async getAll(params?: { limit?: number; offset?: number }): Promise<ApiResult<import('./api.types').AllLlmEventsV2Response>> {
+  async getAll(params?: { limit?: number; offset?: number; role?: string; workspace?: string }): Promise<ApiResult<import('./api.types').AllLlmEventsV2Response>> {
     const searchParams = new URLSearchParams();
     if (params?.limit) searchParams.set('limit', String(params.limit));
     if (params?.offset) searchParams.set('offset', String(params.offset));
+    if (params?.role) searchParams.set('role', params.role);
+    if (params?.workspace) searchParams.set('workspace', params.workspace);
     const query = searchParams.toString();
     const res = await apiFetch(`/v2/role/llm-events${query ? `?${query}` : ''}`);
     return handleResponse(res, 'Failed to load LLM events');

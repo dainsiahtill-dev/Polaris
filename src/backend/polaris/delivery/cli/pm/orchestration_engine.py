@@ -329,6 +329,50 @@ def _append_unique_schema_warning(normalized: dict[str, Any], warning: str) -> N
     normalized["schema_warning_count"] = len(schema_warnings)
 
 
+def _compact_pm_failure_text(value: Any, *, max_chars: int = 260) -> str:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 3)].rstrip() + "..."
+
+
+def _first_schema_warning(normalized: dict[str, Any]) -> str:
+    raw_warnings = normalized.get("schema_warnings")
+    if not isinstance(raw_warnings, list):
+        return ""
+    for warning in raw_warnings:
+        text = _compact_pm_failure_text(warning)
+        if text:
+            return text
+    return ""
+
+
+def _build_pm_failure_detail(
+    *,
+    pm_state: dict[str, Any],
+    normalized: dict[str, Any],
+    fallback: str,
+) -> str:
+    """Build a concise desktop-facing PM failure detail from persisted evidence."""
+
+    code = _compact_pm_failure_text(
+        normalized.get("terminal_error_code") or pm_state.get("last_pm_error_code"),
+        max_chars=80,
+    )
+    detail = _compact_pm_failure_text(
+        normalized.get("terminal_error")
+        or pm_state.get("last_pm_error_detail")
+        or _first_schema_warning(normalized)
+        or normalized.get("notes")
+        or fallback
+    )
+    if code and detail:
+        return f"{code}: {detail}"
+    return detail or code or fallback
+
+
 def _mark_pm_invoke_terminal_failure(
     pm_state: dict[str, Any],
     normalized: dict[str, Any],
@@ -752,6 +796,8 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
                 "PM produced zero tasks while requirements are non-empty; "
                 "marking iteration as failed to avoid false PASS."
             )
+            normalized["terminal_error_code"] = "PM_EMPTY_TASKS_WITH_REQUIREMENTS"
+            normalized["terminal_error"] = warning
             _raw_schema = normalized.get("schema_warnings") if isinstance(normalized, dict) else None
             schema_warnings: list[str] = _raw_schema if isinstance(_raw_schema, list) else []
             schema_warnings.append(warning)
@@ -861,11 +907,16 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
             running=bool(getattr(args, "run_director", False)),
         )
     else:
+        pm_failure_detail = _build_pm_failure_detail(
+            pm_state=pm_state,
+            normalized=normalized,
+            fallback="PM planning output failed validation or invoke",
+        )
         engine.update_role_status(
             "PM",
             status="failed",
             running=False,
-            detail="PM planning output failed validation or invoke",
+            detail=pm_failure_detail,
         )
         engine.set_phase("failed", running=False, error="PM_PLANNING_FAILED")
 
@@ -1248,11 +1299,16 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
         )
         engine.set_phase("completed", running=False)
     else:
+        pm_failure_detail = _build_pm_failure_detail(
+            pm_state=pm_state,
+            normalized=normalized,
+            fallback="PM iteration failed",
+        )
         engine.update_role_status(
             "PM",
             status="failed",
             running=False,
-            detail="PM iteration failed",
+            detail=pm_failure_detail,
         )
         engine.set_phase("failed", running=False, error="PM_ITERATION_FAILED")
         if not isinstance(engine_dispatch, dict):

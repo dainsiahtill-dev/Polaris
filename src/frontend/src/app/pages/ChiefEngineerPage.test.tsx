@@ -4,6 +4,8 @@ import { ChiefEngineerPage } from './ChiefEngineerPage';
 
 const chiefEngineerWorkspaceProps = vi.hoisted(() => vi.fn());
 const runtimeOverlayProps = vi.hoisted(() => vi.fn());
+const DIRECTOR_LLM_BLOCKED_REASON =
+  'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。';
 
 vi.mock('@/app/components/chief-engineer', () => ({
   ChiefEngineerWorkspace: (props: {
@@ -213,7 +215,7 @@ describe('ChiefEngineerPage', () => {
     });
 
     expect(chiefEngineerWorkspaceProps).toHaveBeenCalledWith(expect.objectContaining({
-      directorStartBlockedReason: 'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试。',
+      directorStartBlockedReason: DIRECTOR_LLM_BLOCKED_REASON,
     }));
   });
 

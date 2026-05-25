@@ -57,6 +57,7 @@ export interface UseRoleChatReturn {
  */
 export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
   const { role, welcomeMessage = `${role} 已就绪`, context } = options;
+  const workspace = typeof context?.workspace === 'string' ? context.workspace.trim() : '';
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -76,7 +77,7 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
   const checkStatus = useCallback(async () => {
     try {
       setStatusLoading(true);
-      const result = await getRoleChatStatus(role);
+      const result = await getRoleChatStatus(role, workspace);
 
       if (result.ok && result.data) {
         setChatStatus(result.data);
@@ -95,7 +96,7 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
     } finally {
       setStatusLoading(false);
     }
-  }, [role]);
+  }, [role, workspace]);
 
   useEffect(() => {
     checkStatus();
@@ -146,7 +147,8 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
       const response = await sendRoleChatMessage(
         role,
         { message: userMessage.content, context },
-        abortControllerRef.current.signal
+        abortControllerRef.current.signal,
+        workspace
       );
 
       if (!response.ok) {
@@ -227,7 +229,7 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [inputValue, isLoading, chatStatus, role, context]);
+  }, [inputValue, isLoading, chatStatus, role, context, workspace]);
 
   // 清空消息
   const clearMessages = useCallback(() => {

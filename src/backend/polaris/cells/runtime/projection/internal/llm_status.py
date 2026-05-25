@@ -154,6 +154,74 @@ def _qa_enabled(settings: Settings) -> bool:
     return bool(getattr(settings, "qa_enabled", True))
 
 
+def _parse_status_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _iter_index_timestamps(index: Any) -> list[datetime]:
+    if not isinstance(index, dict):
+        return []
+
+    timestamps: list[datetime] = []
+    for key in ("last_update", "last_reconcile", "reset_at"):
+        parsed = _parse_status_timestamp(index.get(key))
+        if parsed is not None:
+            timestamps.append(parsed)
+
+    for section_name in ("roles", "providers"):
+        section = index.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for item in section.values():
+            if not isinstance(item, dict):
+                continue
+            parsed = _parse_status_timestamp(item.get("timestamp"))
+            if parsed is not None:
+                timestamps.append(parsed)
+
+    return timestamps
+
+
+def _latest_status_update(
+    *,
+    config_path: str,
+    index: Any,
+    interview_summary: dict[str, Any],
+) -> str | None:
+    candidates = _iter_index_timestamps(index)
+
+    interview_updated = _parse_status_timestamp(interview_summary.get("lastUpdated"))
+    if interview_updated is not None:
+        candidates.append(interview_updated)
+
+    if os.path.isfile(config_path):
+        try:
+            config_updated = datetime.fromtimestamp(os.path.getmtime(config_path), tz=timezone.utc)
+            candidates.append(config_updated)
+        except (OSError, RuntimeError, ValueError) as e:
+            logger.debug(f"Failed to get config mtime: {e}")
+
+    if not candidates:
+        return None
+    return max(candidates).isoformat()
+
+
 def build_llm_status(settings: Settings) -> dict[str, Any]:
     workspace = _active_workspace(settings)
     cache_root = build_cache_root(str(getattr(settings, "ramdisk_root", "") or ""), workspace)
@@ -230,14 +298,11 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
     interview_summary = load_interview_history_summary(settings)
 
     config_path = llm_config.llm_config_path(workspace, cache_root)
-    last_updated: str | None = None
-    if os.path.isfile(config_path):
-        try:
-            mtime = os.path.getmtime(config_path)
-            dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
-            last_updated = dt.isoformat()
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"Failed to get config mtime: {e}")
+    last_updated = _latest_status_update(
+        config_path=config_path,
+        index=index,
+        interview_summary=interview_summary,
+    )
 
     return {
         "roles": roles_status,

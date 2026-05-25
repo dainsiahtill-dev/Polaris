@@ -1,0 +1,28 @@
+id: vc-20260525-pm-workbench-chief-engineer-handoff-gate
+date: "2026-05-25"
+scope:
+  - src/frontend/src/app/App.tsx
+  - src/frontend/src/app/components/pm/PMWorkbenchPanel.tsx
+  - src/frontend/src/app/components/pm/PMWorkbenchPanel.test.tsx
+  - src/frontend/src/services/chiefEngineerService.ts
+  - src/frontend/src/services/__tests__/chiefEngineerService.test.ts
+classification: one_off
+assumptions:
+  - id: reuse-diagnostics-contracts
+    statement: PM Workbench should reuse existing Director and Chief Engineer desktop diagnostics instead of creating a parallel readiness endpoint.
+    evidence: PM Workbench calls getDirectorDiagnostics and getChiefEngineerDiagnostics before Director auto-dispatch.
+  - id: fail-closed-handoff
+    statement: Missing Chief Engineer blueprint coverage must block Director auto-dispatch from PM Workbench.
+    evidence: PMWorkbenchPanel test covers missing PM task blueprint coverage and verifies runPm is not called.
+verification_plan:
+  - command: npm run test -- PMWorkbenchPanel chiefEngineerService
+  - command: npm run typecheck
+  - command: npm run lint
+status: passed
+evidence:
+  - command: npm run test -- PMWorkbenchPanel chiefEngineerService
+    result: 20 passed
+  - command: npm run typecheck
+    result: passed
+  - command: npm run lint
+    result: passed

@@ -70,11 +70,21 @@ export interface ChatMessageRequest {
   context?: Record<string, unknown>;
 }
 
+function workspaceQuerySuffix(workspace = ''): string {
+  const value = String(workspace || '').trim();
+  return value ? `?workspace=${encodeURIComponent(value)}` : '';
+}
+
+function workspaceFromContext(context?: Record<string, unknown>): string {
+  const workspace = context?.workspace;
+  return typeof workspace === 'string' ? workspace.trim() : '';
+}
+
 /**
  * 获取角色对话状态
  */
-export async function getRoleChatStatus(role: RoleChatRole): Promise<ApiResult<ChatStatus>> {
-  return apiGet<ChatStatus>(`/v2/role/${role}/chat/status`, '获取对话状态失败');
+export async function getRoleChatStatus(role: RoleChatRole, workspace = ''): Promise<ApiResult<ChatStatus>> {
+  return apiGet<ChatStatus>(`/v2/role/${role}/chat/status${workspaceQuerySuffix(workspace)}`, '获取对话状态失败');
 }
 
 /**
@@ -84,9 +94,11 @@ export async function getRoleChatStatus(role: RoleChatRole): Promise<ApiResult<C
 export async function sendRoleChatMessage(
   role: RoleChatRole,
   request: ChatMessageRequest,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  workspace = ''
 ): Promise<Response> {
-  return apiFetch(`/v2/role/${role}/chat/stream`, {
+  const resolvedWorkspace = workspace || workspaceFromContext(request.context);
+  return apiFetch(`/v2/role/${role}/chat/stream${workspaceQuerySuffix(resolvedWorkspace)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),

@@ -12,6 +12,7 @@ for candidate in (BACKEND_ROOT,):
 from polaris.cells.orchestration.pm_planning.public.service import evaluate_pm_task_quality  # noqa: E402
 from polaris.delivery.cli.pm.orchestration_engine import (  # noqa: E402
     _apply_requirements_fallback_for_empty_tasks,
+    _build_pm_failure_detail,
     _downgrade_recovered_pm_invoke_error,
     _mark_pm_invoke_terminal_failure,
     _pm_invoke_failed,
@@ -396,6 +397,47 @@ def test_pm_invoke_failed_detects_state_error() -> None:
     normalized = {"tasks": [], "notes": ""}
 
     assert _pm_invoke_failed(pm_state, normalized) is True
+
+
+def test_pm_failure_detail_prefers_terminal_error_code_and_detail() -> None:
+    detail = _build_pm_failure_detail(
+        pm_state={},
+        normalized={
+            "terminal_error_code": "PM_EMPTY_TASKS_WITH_REQUIREMENTS",
+            "terminal_error": "PM produced zero tasks while requirements are non-empty.",
+            "schema_warnings": ["less specific warning"],
+        },
+        fallback="PM iteration failed",
+    )
+
+    assert detail == "PM_EMPTY_TASKS_WITH_REQUIREMENTS: PM produced zero tasks while requirements are non-empty."
+
+
+def test_pm_failure_detail_falls_back_to_pm_state_error() -> None:
+    detail = _build_pm_failure_detail(
+        pm_state={
+            "last_pm_error_code": "PM_LLM_INVOKE_FAILED",
+            "last_pm_error_detail": "provider model unsupported by token plan",
+        },
+        normalized={"tasks": [], "notes": "generic note"},
+        fallback="PM iteration failed",
+    )
+
+    assert detail == "PM_LLM_INVOKE_FAILED: provider model unsupported by token plan"
+
+
+def test_pm_failure_detail_uses_schema_warning_when_no_error_code() -> None:
+    detail = _build_pm_failure_detail(
+        pm_state={},
+        normalized={
+            "schema_warnings": [
+                "PM output rejected: task target_files must contain concrete file paths.",
+            ],
+        },
+        fallback="PM iteration failed",
+    )
+
+    assert detail == "PM output rejected: task target_files must contain concrete file paths."
 
 
 def test_pm_invoke_failed_detects_pipeline_fallback_payload() -> None:

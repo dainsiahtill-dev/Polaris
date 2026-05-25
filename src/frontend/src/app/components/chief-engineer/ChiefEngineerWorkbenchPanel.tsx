@@ -148,7 +148,7 @@ export function ChiefEngineerWorkbenchPanel({
     }
 
     try {
-      const result = await getDirectorRun(runId);
+      const result = await getDirectorRun(runId, workspace);
       if (result.ok && result.data) {
         setDirectorRunEvidence({
           runId,
@@ -172,7 +172,7 @@ export function ChiefEngineerWorkbenchPanel({
         error: err instanceof Error ? err.message : 'Director run detail unavailable',
       });
     }
-  }, []);
+  }, [workspace]);
 
   const handleRefreshDirectorRun = useCallback(() => {
     const runId = String(directorRunEvidence.runId || '').trim();
@@ -260,7 +260,7 @@ export function ChiefEngineerWorkbenchPanel({
     });
 
     try {
-      const result = await cancelDirectorRun(runId);
+      const result = await cancelDirectorRun(runId, workspace);
       if (result.ok && result.data) {
         const status = String(result.data.status || 'unknown').trim() || 'unknown';
         setDirectorRunEvidence({
@@ -302,7 +302,7 @@ export function ChiefEngineerWorkbenchPanel({
         description: error,
       });
     }
-  }, [directorRunEvidence.runId]);
+  }, [directorRunEvidence.runId, workspace]);
 
   const dialoguePanelProps: AIDialoguePanelProps = {
     dialogueRole: 'chief_engineer',
@@ -431,6 +431,7 @@ export function ChiefEngineerWorkbenchPanel({
           tone="cyan"
           testId="chief-engineer-workbench-run-evidence"
           endpoint={`/v2/director/runs/${directorRunEvidence.runId}`}
+          workspace={workspace}
           loading={directorRunEvidence.loading}
           error={directorRunEvidence.error}
           status={directorRunEvidence.data?.status}

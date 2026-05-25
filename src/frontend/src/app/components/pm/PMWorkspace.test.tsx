@@ -169,6 +169,7 @@ describe('PMWorkspace history panel', () => {
         started_at: 1779494400,
         mode: 'run_once',
         source: 'handle',
+        workspace: 'C:/Temp/Product',
       },
     });
     getRoleCapabilitiesMock.mockResolvedValue({
@@ -200,6 +201,15 @@ describe('PMWorkspace history panel', () => {
           status: 'ready',
           workspace: 'C:/Temp/Product',
           docs_present: true,
+        },
+        planning_input: {
+          ok: true,
+          status: 'ready',
+          source: 'workspace_requirements',
+          path: 'C:/Temp/Product/docs/product/requirements.md',
+          bytes: 128,
+          chars: 120,
+          checked_paths: ['C:/Temp/Product/docs/product/requirements.md'],
         },
         issues: [],
         startup_blockers: [],
@@ -264,14 +274,21 @@ describe('PMWorkspace history panel', () => {
     expect(getPmStartupDiagnosticsMock).toHaveBeenCalledTimes(1);
     expect(getRoleKernelCacheStatsMock).toHaveBeenCalledWith('pm');
     expect(getRoleKernelTokenBudgetStatsMock).toHaveBeenCalledWith('pm');
-    expect(getRoleKernelLLMEventsMock).toHaveBeenCalledWith('pm', { role: 'pm', limit: 5 });
+    expect(getRoleKernelLLMEventsMock).toHaveBeenCalledWith('pm', {
+      role: 'pm',
+      limit: 5,
+      workspace: 'C:/Temp/Product',
+    });
     expect(strip).toHaveTextContent('/v2/roles/capabilities/pm?host_kind=electron_workbench');
     expect(strip).toHaveTextContent('/v2/pm/diagnostics');
+    expect(strip).toHaveTextContent('/v2/pm/diagnostics?workspace=C%3A%2FTemp%2FProduct');
     expect(strip).toHaveTextContent('/v2/pm/cache-stats');
     expect(strip).toHaveTextContent('/v2/pm/token-budget-stats');
     expect(strip).toHaveTextContent('/v2/pm/llm-events?role=pm&limit=5');
+    expect(strip).toHaveTextContent('/v2/pm/llm-events?role=pm&limit=5&workspace=C%3A%2FTemp%2FProduct');
     expect(strip).toHaveTextContent('chat');
     expect(strip).toHaveTextContent('llm=ready');
+    expect(strip).toHaveTextContent('input=ready');
     expect(strip).toHaveTextContent('hits=2');
     expect(strip).toHaveTextContent('total=12000');
     expect(strip).toHaveTextContent('events=1');
@@ -593,6 +610,12 @@ describe('PMWorkspace history panel', () => {
           workspace: 'C:/Temp/Missing',
           docs_present: false,
         },
+        planning_input: {
+          ok: false,
+          status: 'workspace_missing',
+          checked_paths: [],
+          error: 'workspace_unavailable',
+        },
         issues: ['lancedb_unavailable', 'llm_not_ready', 'workspace_unavailable'],
         startup_blockers: ['lancedb_unavailable', 'llm_not_ready', 'workspace_unavailable'],
       },
@@ -625,6 +648,43 @@ describe('PMWorkspace history panel', () => {
     expect(onTogglePm).not.toHaveBeenCalled();
   });
 
+  it('shows PM runtime root cause separately from downstream cascade blockers', () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        pmStartBlockedReason="PM LLM blocked"
+        runtimeIssue={{
+          code: 'PM_ITERATION_FAILED',
+          title: 'Polaris 引擎执行失败',
+          detail: [
+            '阶段: failed',
+            'PM: PM iteration failed: task contract validation failed',
+            'Chief Engineer: ChiefEngineer skipped because PM iteration failed',
+            'Director: Director dispatch skipped because PM iteration failed',
+            'QA: QA blocked because PM iteration failed',
+          ].join('\n'),
+        }}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    const banner = screen.getByTestId('pm-runtime-terminal-banner');
+    expect(banner).toHaveTextContent('Polaris 引擎执行失败');
+    expect(screen.getByTestId('pm-runtime-error-code')).toHaveTextContent('PM_ITERATION_FAILED');
+    expect(screen.getByTestId('pm-runtime-root-cause')).toHaveTextContent('根因 · PM');
+    expect(screen.getByTestId('pm-runtime-root-cause')).toHaveTextContent('task contract validation failed');
+    const cascade = screen.getByTestId('pm-runtime-cascade');
+    expect(cascade).toHaveTextContent('Chief Engineer');
+    expect(cascade).toHaveTextContent('Director dispatch skipped because PM iteration failed');
+    expect(cascade).toHaveTextContent('QA blocked because PM iteration failed');
+    expect(screen.getByTestId('pm-runtime-start-blocker')).toHaveTextContent('当前启动门禁: PM LLM blocked');
+  });
+
   it('uses missing docs diagnostics to disable PM workspace start controls', async () => {
     const onRunPmOnce = vi.fn();
     const onTogglePm = vi.fn();
@@ -647,6 +707,12 @@ describe('PMWorkspace history panel', () => {
           status: 'ok',
           workspace: 'C:/Temp/Product',
           docs_present: false,
+        },
+        planning_input: {
+          ok: false,
+          status: 'docs_missing',
+          checked_paths: [],
+          error: 'workspace_docs_missing',
         },
         issues: ['workspace_docs_missing'],
         startup_blockers: ['workspace_docs_missing'],
@@ -672,6 +738,67 @@ describe('PMWorkspace history panel', () => {
     expect(toggle).toBeDisabled();
     expect(runOnce).toHaveAttribute('title', 'PM 启动诊断未通过：docs/ 初始化未完成');
     expect(toggle).toHaveAttribute('title', 'PM 启动诊断未通过：docs/ 初始化未完成');
+
+    fireEvent.click(runOnce);
+    fireEvent.click(toggle);
+    expect(onRunPmOnce).not.toHaveBeenCalled();
+    expect(onTogglePm).not.toHaveBeenCalled();
+  });
+
+  it('uses missing planning-input diagnostics to disable PM workspace start controls', async () => {
+    const onRunPmOnce = vi.fn();
+    const onTogglePm = vi.fn();
+    getPmStartupDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_start: false,
+        generated_at: '2026-05-23T00:00:00Z',
+        lancedb: { ok: true, state: 'ready' },
+        llm: {
+          ok: true,
+          state: 'ready',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['pm'],
+        },
+        workspace: {
+          ok: true,
+          status: 'ok',
+          workspace: 'C:/Temp/Product',
+          docs_present: true,
+        },
+        planning_input: {
+          ok: false,
+          status: 'missing',
+          checked_paths: ['C:/Temp/Product/docs/product/requirements.md'],
+          error: 'planning_input_missing',
+        },
+        issues: ['planning_input_missing'],
+        startup_blockers: ['planning_input_missing'],
+      },
+    });
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={onTogglePm}
+        onRunPmOnce={onRunPmOnce}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('pm-backend-evidence-strip')).toHaveTextContent('start=blocked'));
+    expect(screen.getByTestId('pm-backend-evidence-strip')).toHaveTextContent('input=missing');
+    const runOnce = screen.getByTestId('pm-workspace-run-once');
+    const toggle = screen.getByTestId('pm-workspace-toggle');
+    expect(runOnce).toBeDisabled();
+    expect(toggle).toBeDisabled();
+    expect(runOnce).toHaveAttribute('title', 'PM 启动诊断未通过：缺少需求/计划输入');
+    expect(toggle).toHaveAttribute('title', 'PM 启动诊断未通过：缺少需求/计划输入');
 
     fireEvent.click(runOnce);
     fireEvent.click(toggle);

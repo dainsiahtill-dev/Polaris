@@ -4,8 +4,12 @@ import asyncio
 import logging
 import os
 import time
+from contextlib import suppress
+from copy import copy
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 # NOTE: artifact_store imports are lazy (inside functions) to avoid a load-time circular
 # dependency: artifact_store.public.service → artifacts.py → projection.public.service
@@ -36,6 +40,45 @@ if TYPE_CHECKING:
     from polaris.cells.runtime.state_owner.public.service import AppState
 
 logger = logging.getLogger(__name__)
+
+
+def _settings_workspace_text(value: Any) -> str:
+    if isinstance(value, Mock):
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, os.PathLike):
+        try:
+            return os.fsdecode(value).strip()
+        except (TypeError, ValueError):
+            return ""
+    return ""
+
+
+def _active_settings_workspace(settings: Any) -> str:
+    for attr in ("workspace_path", "workspace"):
+        text = _settings_workspace_text(getattr(settings, attr, ""))
+        if text:
+            return text
+    return ""
+
+
+def _settings_for_status_workspace(settings: Any, workspace: str) -> Any:
+    workspace_text = _settings_workspace_text(workspace)
+    normalized = workspace_text.replace("\\", "/")
+    if not workspace_text or normalized in {".", "./"}:
+        return settings
+
+    if workspace_text == _active_settings_workspace(settings):
+        return settings
+
+    cloned = copy(settings)
+    with suppress(AttributeError, TypeError, ValueError):
+        cloned.workspace = Path(workspace_text)
+    if hasattr(cloned, "workspace_path"):
+        with suppress(AttributeError, TypeError, ValueError):
+            cloned.workspace_path = workspace_text
+    return cloned
 
 
 def build_pm_status(state: AppState) -> dict[str, Any]:
@@ -272,7 +315,7 @@ def build_status_payload_sync(
     )
     llm_status = None
     try:
-        llm_status = build_llm_status(state.settings)
+        llm_status = build_llm_status(_settings_for_status_workspace(state.settings, workspace))
     except (RuntimeError, ValueError) as exc:
         logger.warning(
             "build_status_payload_sync: build_llm_status failed: %s",
