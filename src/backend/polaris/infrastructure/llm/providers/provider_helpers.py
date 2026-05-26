@@ -800,15 +800,33 @@ def health_check_post(
     try:
         response = _blocking_http_post(url, headers, payload, timeout)
         latency_ms = int((time.time() - start) * 1000)
+        status_code = int(getattr(response, "status_code", 0) or 0)
 
-        if response.status_code == 401:
+        if status_code == 401:
             return HealthResult(
                 ok=False, latency_ms=latency_ms, error="Authentication failed: please check your API key"
             )
-        if response.status_code == 404:
+        if status_code == 404:
             return HealthResult(
                 ok=False, latency_ms=latency_ms, error="API endpoint not found: please check api_path configuration"
             )
+        if status_code == 429:
+            retry_after = ""
+            headers_value = getattr(response, "headers", None)
+            if headers_value is not None and hasattr(headers_value, "get"):
+                retry_after = str(headers_value.get("Retry-After") or "").strip()
+            message = "Rate limited by provider: HTTP 429 Too Many Requests"
+            if retry_after:
+                message = f"{message}; retry after {retry_after} seconds"
+            return HealthResult(ok=False, latency_ms=latency_ms, error=message)
+        if status_code >= 400:
+            response_text = str(getattr(response, "text", "") or "").strip().replace("\n", " ")
+            if response_text:
+                response_text = response_text[:300]
+            message = f"Provider health check failed: HTTP {status_code}"
+            if response_text:
+                message = f"{message}: {response_text}"
+            return HealthResult(ok=False, latency_ms=latency_ms, error=message)
 
         response.raise_for_status()
         return HealthResult(ok=True, latency_ms=latency_ms)
@@ -822,6 +840,12 @@ def health_check_post(
         return HealthResult(
             ok=False, latency_ms=latency_ms, error="Request timeout: the server took too long to respond"
         )
+    except requests.exceptions.HTTPError as exc:
+        latency_ms = int((time.time() - start) * 1000)
+        return HealthResult(ok=False, latency_ms=latency_ms, error=f"HTTP health check failed: {exc}")
+    except requests.exceptions.RequestException as exc:
+        latency_ms = int((time.time() - start) * 1000)
+        return HealthResult(ok=False, latency_ms=latency_ms, error=f"Provider request failed: {exc}")
     except (RuntimeError, ValueError) as exc:
         latency_ms = int((time.time() - start) * 1000)
         return HealthResult(ok=False, latency_ms=latency_ms, error=str(exc))

@@ -174,6 +174,24 @@ class TestKernelAuditRuntimeCreation:
         # This is expected behavior when the store doesn't wrap another store
         assert runtime.raw_store is None
 
+    def test_windows_key_permission_check_skips_posix_warning(
+        self,
+        runtime: KernelAuditRuntime,
+        temp_runtime_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Windows reports POSIX-like modes loosely; do not warn there."""
+        key_file = temp_runtime_root / ".polaris_audit_key"
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_bytes(b"test-key")
+
+        monkeypatch.setattr("polaris.kernelone.audit.runtime.sys.platform", "win32")
+
+        runtime._check_key_file_permissions(key_file)
+
+        assert "HMAC key file has loose permissions" not in caplog.text
+
 
 class TestKernelAuditRuntimeEmitEvent:
     """Test suite for emit_event method."""

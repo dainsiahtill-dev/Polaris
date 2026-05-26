@@ -3,6 +3,7 @@ from polaris.infrastructure.llm.providers.provider_helpers import (
     CircuitBreaker,
     close_stream_sessions,
     get_stream_session,
+    health_check_post,
     invoke_with_retry,
 )
 from polaris.kernelone.common.clock import MockClock
@@ -139,3 +140,57 @@ def test_stream_session_reuse_and_cleanup():
     import asyncio
 
     asyncio.run(_run())
+
+
+def test_health_check_post_returns_failed_result_on_rate_limit(monkeypatch):
+    class _Resp:
+        status_code = 429
+        text = "Too Many Requests"
+        headers = {"Retry-After": "30"}
+
+        @staticmethod
+        def raise_for_status() -> None:
+            raise requests.HTTPError("429 Client Error: Too Many Requests")
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+        lambda _url, _headers, _payload, _timeout: _Resp(),
+    )
+
+    result = health_check_post(
+        "https://example.com/v1/chat/completions",
+        {},
+        {"model": "demo"},
+        5,
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert "429" in result.error
+    assert "retry after 30 seconds" in result.error
+
+
+def test_health_check_post_catches_http_error_from_raise_for_status(monkeypatch):
+    class _Resp:
+        status_code = 0
+        text = ""
+
+        @staticmethod
+        def raise_for_status() -> None:
+            raise requests.HTTPError("429 Client Error: Too Many Requests")
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+        lambda _url, _headers, _payload, _timeout: _Resp(),
+    )
+
+    result = health_check_post(
+        "https://example.com/v1/chat/completions",
+        {},
+        {"model": "demo"},
+        5,
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert "429" in result.error

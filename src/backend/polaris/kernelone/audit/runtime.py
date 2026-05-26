@@ -186,6 +186,8 @@ class KernelAuditRuntime:
 
     def _check_key_file_permissions(self, key_file: Path) -> None:
         """Warn if key file has loose permissions (group/others have access)."""
+        if sys.platform == "win32":
+            return
         try:
             file_mode = stat.S_IMODE(key_file.stat().st_mode)
             if file_mode & (stat.S_IRWXG | stat.S_IRWXO):  # group or others have any permissions
