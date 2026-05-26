@@ -37,7 +37,8 @@ import logging
 import os
 import threading
 import time
-from contextlib import contextmanager
+import uuid
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -383,6 +384,8 @@ class TaskBoard:
         with self.transaction():
             self._cache.clear()
             for task_file in self.tasks_dir.glob("task_*.json"):
+                if task_file.name.endswith(".session.json"):
+                    continue
                 try:
                     logical = self._logical_path(task_file)
                     data = json.loads(self._kernel_fs.read_text(logical, encoding="utf-8"))
@@ -401,11 +404,30 @@ class TaskBoard:
         """Atomically save a task to disk (write-to-temp + os.replace)."""
         with self.transaction():
             task_path = self.tasks_dir / f"task_{task.id}.json"
-            tmp_path = task_path.with_suffix(".tmp")
+            tmp_path = self.tasks_dir / f".task_{task.id}.{uuid.uuid4().hex}.tmp"
             tmp_logical = self._logical_path(tmp_path)
             payload = json.dumps(task.to_dict(), indent=2, ensure_ascii=False) + "\n"
-            self._kernel_fs.write_text(tmp_logical, payload, encoding="utf-8")
-            os.replace(tmp_path, task_path)
+            try:
+                self._kernel_fs.write_text(tmp_logical, payload, encoding="utf-8")
+                self._replace_task_file(tmp_path, task_path)
+            finally:
+                with suppress(OSError):
+                    tmp_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _replace_task_file(tmp_path: Path, task_path: Path) -> None:
+        """Replace task JSON with short Windows retry for transient file locks."""
+        attempts = 8 if os.name == "nt" else 1
+        delay = 0.025
+        for attempt in range(attempts):
+            try:
+                os.replace(tmp_path, task_path)
+                return
+            except PermissionError:
+                if attempt >= attempts - 1:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.5)
 
     def _load_max_id(self) -> int:
         if not self._max_id_file.exists():

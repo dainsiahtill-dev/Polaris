@@ -469,6 +469,10 @@ def _required_ready_roles_for_stages(stages: list[str], *, qa_enabled: bool) -> 
         role = STAGE_TO_ROLE.get(str(stage or "").strip())
         if not role or role == "architect":
             continue
+        # Factory CE review uses the local chief_engineer.blueprint service; it
+        # must not be blocked by role-chat LLM readiness.
+        if role == "chief_engineer":
+            continue
         if role == "qa" and not qa_enabled:
             continue
         if role not in roles:
@@ -517,7 +521,9 @@ def _json_payload(data: Any) -> str:
 
 def _resolve_runtime_path(workspace: str, relative_path: str) -> Path:
     rel = str(relative_path or "").replace("\\", "/").strip().lstrip("/")
-    if rel.startswith(("tasks/", "dispatch/")):
+    if rel == "docs" or rel.startswith("docs/"):
+        rel = f"workspace/{rel}"
+    elif rel.startswith(("tasks/", "dispatch/")):
         rel = f"runtime/{rel}"
     resolved = resolve_logical_path(str(workspace), rel)
     return Path(resolved).resolve()

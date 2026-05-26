@@ -10,12 +10,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.storage import resolve_logical_path
+
 
 class BlueprintPersistence:
     """Atomic file-based persistence for blueprint JSON documents.
 
     Each blueprint is stored as an individual JSON file under
-    ``{workspace}/runtime/blueprints/{blueprint_id}.json``.
+    the KernelOne ``runtime/blueprints/{blueprint_id}.json`` storage domain.
     Writes are atomic (temp-file + replace) to avoid corruption.
     """
 
@@ -26,7 +28,7 @@ class BlueprintPersistence:
             workspace: Root workspace path.
             ensure_directory: Create the blueprint directory immediately when true.
         """
-        self._dir = Path(workspace) / "runtime" / "blueprints"
+        self._dir = Path(resolve_logical_path(workspace, "runtime/blueprints"))
         if ensure_directory:
             self._dir.mkdir(parents=True, exist_ok=True)
 

@@ -8,11 +8,13 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.internal.blueprint_persistence import (
     BlueprintPersistence,
 )
+from polaris.kernelone.storage import resolve_logical_path
 
 
 @pytest.fixture
@@ -29,6 +31,14 @@ class TestSaveAndLoad:
         persistence.save("bp1", data)
         loaded = persistence.load("bp1")
         assert loaded == data
+
+    def test_uses_kernelone_runtime_blueprint_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bp = BlueprintPersistence(workspace=tmpdir)
+            bp.save("bp1", {"x": 1})
+            expected = Path(resolve_logical_path(tmpdir, "runtime/blueprints/bp1.json"))
+            assert expected.is_file()
+            assert not (Path(tmpdir) / "runtime" / "blueprints" / "bp1.json").exists()
 
     def test_save_and_load_includes_status(self, persistence: BlueprintPersistence) -> None:
         data = {"blueprint_id": "bp1", "status": "approved", "version": 1}
@@ -59,14 +69,14 @@ class TestAtomicWrite:
             workspace = os.path.join(tmpdir, "nested", "workspace")
             bp = BlueprintPersistence(workspace=workspace)
             bp.save("bp1", {"x": 1})
-            assert os.path.isdir(os.path.join(workspace, "runtime", "blueprints"))
+            assert Path(resolve_logical_path(workspace, "runtime/blueprints")).is_dir()
 
     def test_can_skip_directory_creation_for_read_only_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = os.path.join(tmpdir, "nested", "workspace")
             bp = BlueprintPersistence(workspace=workspace, ensure_directory=False)
             assert bp.list_all() == []
-            assert not os.path.exists(os.path.join(workspace, "runtime", "blueprints"))
+            assert not Path(resolve_logical_path(workspace, "runtime/blueprints")).exists()
 
 
 class TestDelete:

@@ -1,11 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
+from polaris.cells.runtime.task_runtime.internal import task_board as task_board_module
 from polaris.cells.runtime.task_runtime.public.task_board_contract import (
     InvalidTaskStateTransitionError,
     TaskBoard,
     TaskStatus,
 )
+from polaris.kernelone.storage import resolve_runtime_path
 
 
 def test_task_board_concurrent_create_ids_are_unique(tmp_path) -> None:
@@ -19,6 +22,50 @@ def test_task_board_concurrent_create_ids_are_unique(tmp_path) -> None:
 
     assert len(ids) == 60
     assert len(set(ids)) == 60
+
+
+def test_task_board_save_retries_windows_permission_error_and_cleans_temp(tmp_path, monkeypatch) -> None:
+    board = TaskBoard(str(tmp_path))
+    task = board.create(subject="windows atomic save")
+    sources: list[Path] = []
+    calls = 0
+    original_replace = task_board_module.os.replace
+
+    def flaky_replace(src: object, dst: object) -> None:
+        nonlocal calls
+        sources.append(Path(str(src)))
+        calls += 1
+        if calls == 1:
+            raise PermissionError(5, "Access is denied", str(src))
+        original_replace(src, dst)
+
+    monkeypatch.setattr(task_board_module.os, "replace", flaky_replace)
+
+    updated = board.update_status(task.id, TaskStatus.IN_PROGRESS)
+
+    assert updated is not None
+    assert updated.status == TaskStatus.IN_PROGRESS
+    assert calls == 2
+    assert sources[0].name.startswith(f".task_{task.id}.")
+    assert sources[0].suffix == ".tmp"
+    tasks_dir = Path(resolve_runtime_path(str(tmp_path), "runtime/tasks"))
+    assert not (tasks_dir / f"task_{task.id}.tmp").exists()
+    assert not list(tasks_dir.glob(f".task_{task.id}.*.tmp"))
+
+
+def test_task_board_load_all_ignores_execution_session_files(tmp_path) -> None:
+    board = TaskBoard(str(tmp_path))
+    task = board.create(subject="load only task rows")
+    tasks_dir = Path(resolve_runtime_path(str(tmp_path), "runtime/tasks"))
+    (tasks_dir / f"task_{task.id}.session.json").write_text(
+        '{"session_id":"session-1","task_id":1}\n',
+        encoding="utf-8",
+    )
+
+    reloaded = TaskBoard(str(tmp_path))
+
+    assert reloaded.get(task.id) is not None
+    assert len(reloaded.list_all()) == 1
 
 
 def test_task_board_rejects_invalid_transition(tmp_path) -> None:

@@ -17,9 +17,12 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _apply_deterministic_typescript_reexport_repair,
     _build_existing_workspace_task_evidence,
     _director_direct_text_patch_only_enabled,
     _director_existing_scope_preflight_enabled,
+    _looks_like_typescript_reexport_failure,
+    _task_requires_fresh_materialization,
 )
 
 # ---------------------------------------------------------------------------
@@ -362,6 +365,78 @@ class TestExistingWorkspaceTaskEvidence:
         assert "package.json" in evidence["existing_paths"]
         assert "src/**/*.test.tsx" in evidence["existing_paths"]
         assert evidence["reason"] == "declared_scope_present"
+
+    def test_repair_tasks_require_fresh_materialization(self) -> None:
+        assert (
+            _task_requires_fresh_materialization(
+                {
+                    "subject": "Repair TypeScript failure",
+                    "metadata": {"acceptance": ["npm test returns PASS"]},
+                }
+            )
+            is True
+        )
+        assert _task_requires_fresh_materialization({"subject": "Create initial source files"}) is False
+
+
+class TestDeterministicTypescriptReexportRepair:
+    """Director can materialize a narrow TypeScript runtime re-export fix."""
+
+    def test_repairs_missing_runtime_reexport(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        type_dir = tmp_path / "src" / "types"
+        test_dir = type_dir / "__tests__"
+        test_dir.mkdir(parents=True)
+        (type_dir / "asset.ts").write_text(
+            "export enum AssetType {\n  garment = 'garment',\n}\n",
+            encoding="utf-8",
+        )
+        (type_dir / "generation.ts").write_text(
+            "import type { Asset } from './asset';\n"
+            "export enum TaskType {\n  garment_to_model = 'garment_to_model',\n}\n"
+            "export interface GenerationSpec {\n  input_assets: Asset[];\n}\n",
+            encoding="utf-8",
+        )
+        (test_dir / "spec.test.ts").write_text(
+            "import { GenerationSpec, TaskType, AssetType } from '../generation';\nconst type = AssetType.garment;\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_typescript_reexport_repair(
+            adapter,
+            task={
+                "subject": "Repair TypeScript npm test failure",
+                "description": (
+                    "Vitest reports Cannot read properties of undefined while importing AssetType from ../generation."
+                ),
+            },
+            task_id="task-1",
+        )
+
+        assert results and results[0]["success"] is True
+        generation_text = (type_dir / "generation.ts").read_text(encoding="utf-8")
+        assert "export { AssetType } from './asset';" in generation_text
+
+        second = _apply_deterministic_typescript_reexport_repair(
+            adapter,
+            task={
+                "subject": "Repair TypeScript npm test failure",
+                "description": "Cannot read properties of undefined for AssetType",
+            },
+            task_id="task-1",
+        )
+
+        assert second == []
+        updated_text = (type_dir / "generation.ts").read_text(encoding="utf-8")
+        assert updated_text.count("export { AssetType } from './asset';") == 1
+
+    def test_export_import_contract_fix_triggers_reexport_repair(self) -> None:
+        assert (
+            _looks_like_typescript_reexport_failure(
+                "Apply a minimal TypeScript export/import contract fix; npm test must pass."
+            )
+            is True
+        )
 
 
 # ---------------------------------------------------------------------------

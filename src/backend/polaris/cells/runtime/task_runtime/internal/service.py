@@ -57,7 +57,7 @@ class TaskRuntimeService:
     def board(self) -> TaskBoard:
         return self._board
 
-    def reset_records(self) -> dict[str, object]:
+    def reset_records(self, *, keep_plan: bool = False) -> dict[str, object]:
         """Clear canonical taskboard rows and execution sessions.
 
         This intentionally lives in the runtime.task_runtime cell because
@@ -72,6 +72,8 @@ class TaskRuntimeService:
             tasks_dir = self._board.tasks_dir
             tasks_dir.mkdir(parents=True, exist_ok=True)
             for child in sorted(tasks_dir.iterdir(), key=lambda item: str(item)):
+                if keep_plan and child.name == "plan.json":
+                    continue
                 try:
                     if child.is_dir():
                         shutil.rmtree(child)

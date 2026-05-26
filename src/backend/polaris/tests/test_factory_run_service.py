@@ -17,7 +17,8 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 )
 from polaris.cells.factory.pipeline.internal.factory_store import FactoryStore
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
-from polaris.kernelone.storage import resolve_runtime_path
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path
 
 
 class FakeStageExecutor:
@@ -641,6 +642,26 @@ class _CompletedCommandService:
         )
 
 
+class _CapturingCompletedCommandService(_CompletedCommandService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pm_calls: list[dict[str, object]] = []
+
+    async def execute_pm_run(self, workspace: str, run_type: str, options: dict) -> CommandResult:
+        self.pm_calls.append(
+            {
+                "workspace": workspace,
+                "run_type": run_type,
+                "options": dict(options),
+            }
+        )
+        return CommandResult(
+            run_id=f"pm-run-captured-{len(self.pm_calls)}",
+            status="running",
+            message="PM run started",
+        )
+
+
 class _NeverTerminalCommandService:
     def __init__(self) -> None:
         self.query_calls = 0
@@ -684,6 +705,65 @@ class _DirectorCompletedMetadataProgressService(_CompletedCommandService):
         )
 
 
+class _DirectorNoMaterializedChangesAfterProgressService(_CompletedCommandService):
+    async def query_run_status(self, run_id: str) -> CommandResult:
+        self.query_calls += 1
+        if self.query_calls <= 1:
+            return CommandResult(
+                run_id=run_id,
+                status="completed",
+                message="Run status: completed",
+                metadata={
+                    "task_count": 1,
+                    "task_status_counts": {"completed": 1},
+                    "failed_task_count": 0,
+                },
+            )
+        return CommandResult(
+            run_id=run_id,
+            status="failed",
+            message="Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes",
+            metadata={
+                "task_count": 1,
+                "task_status_counts": {"failed": 1},
+                "failed_task_count": 1,
+                "failed_tasks": [
+                    {
+                        "task_id": "task-0-director",
+                        "role_id": "director",
+                        "status": "failed",
+                        "error_category": "runtime",
+                        "error_message": "director_no_materialized_changes",
+                    }
+                ],
+            },
+        )
+
+
+class _DirectorNoMaterializedChangesOnlyService(_CompletedCommandService):
+    async def query_run_status(self, run_id: str) -> CommandResult:
+        self.query_calls += 1
+        return CommandResult(
+            run_id=run_id,
+            status="failed",
+            message="Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes",
+            metadata={
+                "task_count": 1,
+                "task_status_counts": {"failed": 1},
+                "failed_task_count": 1,
+                "failed_tasks": [
+                    {
+                        "task_id": "task-0-director",
+                        "role_id": "director",
+                        "status": "failed",
+                        "error_category": "runtime",
+                        "error_message": "director_no_materialized_changes",
+                    }
+                ],
+            },
+        )
+
+
 class _TestStageExecutor(OrchestrationStageExecutor):
     def __init__(self, workspace: Path, command_service: object) -> None:
         super().__init__(workspace)
@@ -691,6 +771,25 @@ class _TestStageExecutor(OrchestrationStageExecutor):
 
     def _build_orchestration_service(self, context: dict):
         return self._command_service
+
+
+class _WorkspaceValidationStageExecutor(_TestStageExecutor):
+    def __init__(self, workspace: Path, command_service: object, exit_codes: list[int]) -> None:
+        super().__init__(workspace, command_service)
+        self.exit_codes = list(exit_codes)
+        self.commands_seen: list[list[str]] = []
+
+    def _run_workspace_quality_command(self, command: list[str], timeout_seconds: float) -> dict[str, object]:
+        del timeout_seconds
+        self.commands_seen.append(list(command))
+        exit_code = self.exit_codes.pop(0) if self.exit_codes else 0
+        return {
+            "command": list(command),
+            "exit_code": exit_code,
+            "passed": exit_code == 0,
+            "stdout_tail": "ok" if exit_code == 0 else "",
+            "stderr_tail": "" if exit_code == 0 else "failed",
+        }
 
 
 class TestOrchestrationStageExecutor:
@@ -800,6 +899,112 @@ class TestOrchestrationStageExecutor:
         assert captured["timeout_seconds"] == 600
 
     @pytest.mark.asyncio
+    async def test_pm_stage_builds_directive_from_architect_artifacts(self, temp_workspace, monkeypatch):
+        command_service = _CapturingCompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_pm_directive_artifacts",
+            config=FactoryConfig(name="test-run", stages=["pm_planning"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        for rel_path, content in {
+            "docs/plan.md": "# Plan\n\nArchitect plan section " * 12,
+            "docs/architecture.md": "# Architecture\n\nArchitect architecture section " * 12,
+        }.items():
+            target = Path(resolve_logical_path(str(temp_workspace), f"workspace/{rel_path}"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+
+        monkeypatch.setattr(executor, "_validate_pm_plan_contract", lambda relative_path: None)
+        monkeypatch.setattr(executor, "_artifact_exists", lambda relative_path, min_chars=1: True)
+
+        result = await executor._execute_pm_planning(
+            run,
+            context={"directive": "Original user requirement\nsystem prompt should not pass through"},
+        )
+
+        assert result.status == "success"
+        assert command_service.pm_calls
+        options = command_service.pm_calls[0]["options"]
+        assert isinstance(options, dict)
+        directive = str(options.get("directive") or "")
+        assert "Architect Plan" in directive
+        assert "Architect Architecture" in directive
+        assert "Original Requirement Excerpt" in directive
+        assert "system prompt" not in directive.lower()
+
+    @pytest.mark.asyncio
+    async def test_pm_stage_recovers_timeout_with_deterministic_contracts(self, temp_workspace, monkeypatch):
+        command_service = _CapturingCompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_pm_timeout_recovery",
+            config=FactoryConfig(name="test-run", stages=["pm_planning"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        poll_calls = 0
+
+        async def _fake_poll(service, command_result, timeout_seconds, abort_checker):
+            nonlocal poll_calls
+            del service, timeout_seconds, abort_checker
+            poll_calls += 1
+            if poll_calls == 1:
+                return CommandResult(
+                    run_id=command_result.run_id,
+                    status="timeout",
+                    message="Run timed out after 600 seconds",
+                )
+            plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "TASK-1",
+                                "title": "实现可运行项目基础",
+                                "goal": "完成项目基础并可验证",
+                                "scope": "src",
+                                "steps": ["实现基础", "补充测试"],
+                                "acceptance": ["执行 `npm test` 返回 PASS"],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            return CommandResult(
+                run_id=command_result.run_id,
+                status="completed",
+                message="Run status: completed",
+            )
+
+        monkeypatch.setattr(executor, "_poll_run_completion", _fake_poll)
+
+        result = await executor._execute_pm_planning(run, context={"directive": "Plan implementation tasks"})
+
+        assert result.status == "success"
+        assert poll_calls == 2
+        assert len(command_service.pm_calls) == 2
+        second_options = command_service.pm_calls[1]["options"]
+        assert isinstance(second_options, dict)
+        metadata = second_options.get("metadata")
+        assert isinstance(metadata, dict)
+        assert metadata["deterministic_pm_contracts"] is True
+        assert "workspace/roles/pm/factory_test_pm_timeout_recovery/plan.json" in result.artifacts
+        signal_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/signals/pm_planning.signals.json"))
+        payload = json.loads(signal_path.read_text(encoding="utf-8"))
+        rows = payload.get("signals")
+        assert isinstance(rows, list)
+        assert any(
+            isinstance(item, dict) and item.get("code") == "pm.timeout_recovered_by_deterministic_contracts"
+            for item in rows
+        )
+
+    @pytest.mark.asyncio
     async def test_pm_stage_failure_output_includes_failed_task_details(self, temp_workspace):
         command_service = _DetailedFailureCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
@@ -881,6 +1086,9 @@ class TestOrchestrationStageExecutor:
         )
         plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
         plan_path.parent.mkdir(parents=True, exist_ok=True)
+        runtime = TaskRuntimeService(str(temp_workspace))
+        stale = runtime.create(subject="Stale task", description="completed in a previous run")
+        runtime.update(stale.id, status="completed", metadata={"previous_run": "old"})
         plan_path.write_text(
             """{
   "tasks": [
@@ -904,7 +1112,12 @@ class TestOrchestrationStageExecutor:
         )
 
         assert result.status == "success"
-        assert result.artifacts == ["tasks/plan.json"]
+        assert "tasks/plan.json" in result.artifacts
+        assert f"workspace/roles/pm/{run.id}/plan.json" in result.artifacts
+        assert "workspace/plans/latest.plan.json" in result.artifacts
+        mirrored_plan = Path(resolve_logical_path(str(temp_workspace), f"workspace/roles/pm/{run.id}/plan.json"))
+        assert json.loads(mirrored_plan.read_text(encoding="utf-8"))["tasks"][0]["id"] == "TASK-1"
+        assert TaskRuntimeService(str(temp_workspace)).get_task(stale.id) is None
 
     @pytest.mark.asyncio
     async def test_chief_engineer_stage_requires_pm_plan_artifact(self, temp_workspace):
@@ -957,6 +1170,8 @@ class TestOrchestrationStageExecutor:
         assert result.status == "success"
         assert any(path.startswith("runtime/blueprints/ce_TASK-1_") for path in result.artifacts)
         assert f"runtime/state/blueprints/{run.id}.review.json" in result.artifacts
+        assert f"workspace/roles/chief_engineer/{run.id}/review.json" in result.artifacts
+        assert "workspace/blueprints/latest.review.json" in result.artifacts
         review_path = Path(
             resolve_runtime_path(
                 str(temp_workspace),
@@ -966,6 +1181,12 @@ class TestOrchestrationStageExecutor:
         payload = json.loads(review_path.read_text(encoding="utf-8"))
         assert payload["generated_blueprints"] == 1
         assert payload["blueprints"][0]["task_id"] == "TASK-1"
+        blueprint_path = Path(resolve_runtime_path(str(temp_workspace), payload["blueprints"][0]["blueprint_path"]))
+        assert blueprint_path.is_file()
+        mirrored_review = Path(
+            resolve_logical_path(str(temp_workspace), f"workspace/roles/chief_engineer/{run.id}/review.json")
+        )
+        assert json.loads(mirrored_review.read_text(encoding="utf-8"))["generated_blueprints"] == 1
 
     @pytest.mark.asyncio
     async def test_director_stage_fails_when_plan_lineage_missing(self, temp_workspace):
@@ -1115,6 +1336,141 @@ class TestOrchestrationStageExecutor:
         assert "dispatch/log.json" in result.artifacts
 
     @pytest.mark.asyncio
+    async def test_director_stage_treats_no_materialized_changes_after_progress_as_idempotent(
+        self,
+        temp_workspace,
+    ):
+        command_service = _DirectorNoMaterializedChangesAfterProgressService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_director_idempotent_no_changes",
+            config=FactoryConfig(name="test-run", stages=["director_dispatch"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text(
+            """{
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "title": "实现账户实体",
+      "goal": "完成账单核心实体与校验",
+      "scope": "src/account",
+      "steps": ["实现实体", "补充测试"],
+      "acceptance": ["`pytest` 通过", "接口返回字段正确"]
+    }
+  ]
+}
+""",
+            encoding="utf-8",
+        )
+        task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
+        task_path.parent.mkdir(parents=True, exist_ok=True)
+        task_path.write_text(
+            """{
+  "id": 1,
+  "subject": "实现账户实体",
+  "description": "实现与测试",
+  "status": "pending",
+  "created_at": 1735689600.0,
+  "updated_at": 1735689600.0,
+  "blocked_by": [],
+  "blocks": [],
+  "owner": "",
+  "assignee": "",
+  "tags": [],
+  "priority": 1,
+  "estimated_hours": 2.0,
+  "result_summary": "",
+  "metadata": {}
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            context={"director_max_rounds": 2},
+        )
+
+        assert result.status == "success"
+        assert "error_code=none" in str(result.output)
+        signal_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/signals/director_dispatch.signals.json"))
+        payload = json.loads(signal_path.read_text(encoding="utf-8"))
+        rows = payload.get("signals") if isinstance(payload, dict) else []
+        assert any(
+            isinstance(item, dict) and item.get("code") == "director.idempotent_no_materialized_changes"
+            for item in rows
+        )
+
+    @pytest.mark.asyncio
+    async def test_director_stage_does_not_treat_first_no_materialized_failure_as_idempotent(
+        self,
+        temp_workspace,
+    ):
+        command_service = _DirectorNoMaterializedChangesOnlyService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_director_first_no_changes_fails",
+            config=FactoryConfig(name="test-run", stages=["director_dispatch"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text(
+            """{
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "title": "修复前端测试失败",
+      "goal": "修复 Vitest TypeScript failure",
+      "scope": "src/types/generation.ts",
+      "steps": ["Apply minimal fix"],
+      "acceptance": ["npm test returns PASS"]
+    }
+  ]
+}
+""",
+            encoding="utf-8",
+        )
+        task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
+        task_path.parent.mkdir(parents=True, exist_ok=True)
+        task_path.write_text(
+            """{
+  "id": 1,
+  "subject": "修复前端测试失败",
+  "description": "修复 Vitest TypeScript failure",
+  "status": "pending",
+  "created_at": 1735689600.0,
+  "updated_at": 1735689600.0,
+  "blocked_by": [],
+  "blocks": [],
+  "owner": "",
+  "assignee": "",
+  "tags": [],
+  "priority": 1,
+  "estimated_hours": 2.0,
+  "result_summary": "",
+  "metadata": {}
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            context={"director_max_rounds": 2},
+        )
+
+        assert result.status == "failed"
+        assert "error_code=director.run_status_non_success" in str(result.output)
+
+    @pytest.mark.asyncio
     async def test_quality_gate_uses_report_verdict(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
@@ -1143,7 +1499,83 @@ class TestOrchestrationStageExecutor:
 
         assert result.status == "failed"
         assert "qa_passed=False" in str(result.output)
-        assert result.artifacts == ["runtime/qa/report.json"]
+        assert "runtime/qa/report.json" in result.artifacts
+        assert f"workspace/roles/qa/{run.id}/report.json" in result.artifacts
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_runs_workspace_node_scripts(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[0, 0])
+        run = FactoryRun(
+            id="factory_test_quality_gate_workspace_checks",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        package_path = temp_workspace / "package.json"
+        package_path.write_text(
+            json.dumps({"scripts": {"test": "vitest --run", "build": "vite build"}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps({"passed": True, "score": 92, "critical_issue_count": 0}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
+
+        assert result.status == "success"
+        assert executor.commands_seen == [["npm", "test"], ["npm", "run", "build"]]
+        assert "workspace_checks_passed=True" in str(result.output)
+        assert "runtime/qa/workspace-validation.json" in result.artifacts
+
+    def test_workspace_quality_command_resolves_windows_cmd_shims(self, temp_workspace, monkeypatch):
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        monkeypatch.setattr(
+            "polaris.cells.factory.pipeline.internal.factory_run_service.shutil.which",
+            lambda value: "C:/node/npm.cmd" if value == "npm.cmd" else None,
+        )
+        monkeypatch.setattr(
+            "polaris.cells.factory.pipeline.internal.factory_run_service.os.name",
+            "nt",
+        )
+
+        resolved = executor._resolve_workspace_quality_command(["npm", "test"])
+
+        assert resolved == ["C:/node/npm.cmd", "test"]
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_fails_on_workspace_node_script_failure(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[1])
+        run = FactoryRun(
+            id="factory_test_quality_gate_workspace_failure",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        (temp_workspace / "package.json").write_text(
+            json.dumps({"scripts": {"test": "vitest --run"}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps({"passed": True, "score": 95, "critical_issue_count": 0}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
+
+        assert result.status == "failed"
+        assert "workspace_checks_passed=False" in str(result.output)
+        validation_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/workspace-validation.json"))
+        payload = json.loads(validation_path.read_text(encoding="utf-8"))
+        assert payload["passed"] is False
+        assert payload["commands"][0]["exit_code"] == 1
 
     @pytest.mark.asyncio
     async def test_default_stage_handler(self, temp_workspace):

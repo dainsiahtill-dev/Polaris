@@ -6,6 +6,10 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import re
+import shutil
+import subprocess
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -56,6 +60,15 @@ SUPPORTED_FACTORY_STAGES = {
 }
 
 DEFAULT_STAGE_HEARTBEAT_INTERVAL_SECONDS = 15.0
+_PM_DIRECTIVE_MAX_CHARS = 18_000
+_PM_ORIGINAL_DIRECTIVE_MAX_CHARS = 8_000
+_PM_ARCHITECT_DOC_MAX_CHARS = 5_000
+_WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS = 8_000
+_WORKSPACE_VALIDATION_TIMEOUT_SECONDS = 240
+_PM_DIRECTIVE_META_LINE_PATTERN = re.compile(
+    r"(提示词|system prompt|角色设定|no yapping|<thinking>|<tool_call>|tool_call)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -200,6 +213,143 @@ class OrchestrationStageExecutor:
         self._write_json_artifact(target_rel, payload)
         return target_rel
 
+    def _copy_text_artifact(self, source_relative_path: str, target_relative_path: str) -> str:
+        source = self._artifact_path(source_relative_path)
+        if not source.exists() or not source.is_file():
+            return ""
+        content = source.read_text(encoding="utf-8")
+        self._write_text_artifact(target_relative_path, content)
+        return str(target_relative_path or "").replace("\\", "/").strip().lstrip("/")
+
+    def _copy_text_artifact_if_present(
+        self,
+        source_relative_path: str,
+        target_relative_path: str,
+        *,
+        min_chars: int = 1,
+    ) -> str:
+        if not self._artifact_exists(source_relative_path, min_chars=min_chars):
+            return ""
+        try:
+            return self._copy_text_artifact(source_relative_path, target_relative_path)
+        except (OSError, UnicodeDecodeError):
+            logger.debug(
+                "Failed to mirror factory artifact: source=%s target=%s",
+                source_relative_path,
+                target_relative_path,
+            )
+            return ""
+
+    def _read_text_artifact(self, relative_path: str, *, min_chars: int = 1) -> str:
+        target = self._artifact_path(relative_path)
+        if not target.exists() or not target.is_file():
+            return ""
+        try:
+            text = target.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return ""
+        if len(text) < min_chars:
+            return ""
+        return text
+
+    @staticmethod
+    def _extend_artifacts(artifacts: list[str], *paths: str) -> None:
+        seen = set(artifacts)
+        for path in paths:
+            normalized = str(path or "").replace("\\", "/").strip().lstrip("/")
+            if not normalized or normalized in seen:
+                continue
+            artifacts.append(normalized)
+            seen.add(normalized)
+
+    def _mirror_docs_artifacts(self, run_id: str, artifacts: list[str]) -> None:
+        role_root = f"workspace/roles/architect/{run_id}"
+        for source_rel, filename in (
+            ("docs/plan.md", "plan.md"),
+            ("docs/architecture.md", "architecture.md"),
+        ):
+            mirrored = self._copy_text_artifact_if_present(
+                source_rel,
+                f"{role_root}/{filename}",
+                min_chars=1,
+            )
+            self._extend_artifacts(artifacts, mirrored)
+
+    def _mirror_pm_plan_artifacts(self, run_id: str, artifacts: list[str]) -> None:
+        mirrors = (
+            f"workspace/roles/pm/{run_id}/plan.json",
+            f"workspace/plans/{run_id}.plan.json",
+            "workspace/plans/latest.plan.json",
+        )
+        copied = [
+            self._copy_text_artifact_if_present("tasks/plan.json", target_rel, min_chars=1) for target_rel in mirrors
+        ]
+        self._extend_artifacts(artifacts, *copied)
+
+    def _mirror_chief_engineer_artifacts(
+        self,
+        run_id: str,
+        blueprint_rows: list[dict[str, Any]],
+        review_artifact: str,
+        artifacts: list[str],
+    ) -> None:
+        review_mirrors = (
+            f"workspace/roles/chief_engineer/{run_id}/review.json",
+            f"workspace/blueprints/{run_id}.review.json",
+            "workspace/blueprints/latest.review.json",
+        )
+        copied_review = [
+            self._copy_text_artifact_if_present(review_artifact, target_rel, min_chars=1)
+            for target_rel in review_mirrors
+            if review_artifact
+        ]
+        self._extend_artifacts(artifacts, *copied_review)
+
+        copied_blueprints: list[str] = []
+        for row in blueprint_rows:
+            source_rel = str(row.get("blueprint_path") or "").strip()
+            blueprint_id = str(row.get("blueprint_id") or Path(source_rel).stem).strip()
+            if not source_rel or not blueprint_id:
+                continue
+            copied_blueprints.append(
+                self._copy_text_artifact_if_present(
+                    source_rel,
+                    f"workspace/roles/chief_engineer/{run_id}/blueprints/{blueprint_id}.json",
+                    min_chars=1,
+                )
+            )
+            copied_blueprints.append(
+                self._copy_text_artifact_if_present(
+                    source_rel,
+                    f"workspace/blueprints/{blueprint_id}.json",
+                    min_chars=1,
+                )
+            )
+        self._extend_artifacts(artifacts, *copied_blueprints)
+
+    def _mirror_director_artifacts(self, run_id: str, artifacts: list[str]) -> None:
+        mirrors = (
+            f"workspace/roles/director/{run_id}/dispatch.log.json",
+            f"workspace/dispatch/{run_id}.log.json",
+            "workspace/dispatch/latest.log.json",
+        )
+        copied = [
+            self._copy_text_artifact_if_present("dispatch/log.json", target_rel, min_chars=1) for target_rel in mirrors
+        ]
+        self._extend_artifacts(artifacts, *copied)
+
+    def _mirror_quality_gate_artifacts(self, run_id: str, artifacts: list[str]) -> None:
+        mirrors = (
+            f"workspace/roles/qa/{run_id}/report.json",
+            f"workspace/qa/{run_id}.report.json",
+            "workspace/qa/latest.report.json",
+        )
+        copied = [
+            self._copy_text_artifact_if_present("runtime/qa/report.json", target_rel, min_chars=1)
+            for target_rel in mirrors
+        ]
+        self._extend_artifacts(artifacts, *copied)
+
     @staticmethod
     async def _wait_for_artifact_file(
         target: Path,
@@ -332,6 +482,59 @@ class OrchestrationStageExecutor:
         if not isinstance(tasks, list):
             return []
         return [item for item in tasks if isinstance(item, dict)]
+
+    @staticmethod
+    def _compact_text_for_prompt(text: str, *, max_chars: int) -> str:
+        normalized = str(text or "").strip()
+        if len(normalized) <= max_chars:
+            return normalized
+        head_chars = max(max_chars * 2 // 3, 1)
+        tail_chars = max(max_chars - head_chars, 1)
+        omitted = len(normalized) - head_chars - tail_chars
+        return (
+            normalized[:head_chars].rstrip()
+            + f"\n\n[... omitted {omitted} chars for PM planning context ...]\n\n"
+            + normalized[-tail_chars:].lstrip()
+        )
+
+    @staticmethod
+    def _strip_prompt_meta_lines(text: str) -> str:
+        lines = [
+            line for line in str(text or "").splitlines() if not _PM_DIRECTIVE_META_LINE_PATTERN.search(str(line or ""))
+        ]
+        return "\n".join(lines).strip()
+
+    def _build_pm_planning_directive(self, raw_directive: Any) -> str:
+        user_directive = self._strip_prompt_meta_lines(str(raw_directive or "").strip())
+        sections = [
+            "请基于 Architect 阶段产物生成 PM 执行任务合同。任务必须覆盖需求、实现、验证、QA 闭环；"
+            "每个任务必须包含 goal、scope、steps、acceptance、depends_on，并能交给 Director 直接执行。"
+        ]
+        for rel_path, label in (
+            ("docs/plan.md", "Architect Plan"),
+            ("docs/architecture.md", "Architect Architecture"),
+            ("docs/design.md", "Architect Design"),
+        ):
+            doc_text = self._read_text_artifact(rel_path, min_chars=120)
+            if not doc_text:
+                continue
+            sections.extend(
+                [
+                    "",
+                    f"## {label}",
+                    self._compact_text_for_prompt(doc_text, max_chars=_PM_ARCHITECT_DOC_MAX_CHARS),
+                ]
+            )
+        if user_directive:
+            sections.extend(
+                [
+                    "",
+                    "## Original Requirement Excerpt",
+                    self._compact_text_for_prompt(user_directive, max_chars=_PM_ORIGINAL_DIRECTIVE_MAX_CHARS),
+                ]
+            )
+        compacted = "\n".join(sections).strip()
+        return self._compact_text_for_prompt(compacted, max_chars=_PM_DIRECTIVE_MAX_CHARS)
 
     def _build_director_task_filter(self, tasks: list[dict[str, Any]]) -> str:
         if not tasks:
@@ -553,6 +756,7 @@ class OrchestrationStageExecutor:
         for candidate in ("docs/plan.md", "docs/architecture.md"):
             if self._artifact_exists(candidate, min_chars=1):
                 artifacts.append(candidate)
+        self._mirror_docs_artifacts(run.id, artifacts)
         if stage_signals:
             artifacts.append(
                 self._write_stage_signal_artifact(
@@ -573,13 +777,17 @@ class OrchestrationStageExecutor:
     async def _execute_pm_planning(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing PM planning for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
+        planning_directive = self._build_pm_planning_directive(
+            context.get("directive", "Plan implementation tasks"),
+        )
+        reset_summary = TaskRuntimeService(str(self.workspace)).reset_records(keep_plan=True)
 
         service = self._build_orchestration_service(context)
         command_result = await service.execute_pm_run(
             workspace=str(self.workspace),
             run_type="pm",
             options={
-                "directive": context.get("directive", "Plan implementation tasks"),
+                "directive": planning_directive,
                 "run_director": False,
             },
         )
@@ -597,7 +805,37 @@ class OrchestrationStageExecutor:
                 artifacts=[],
             )
 
-        stage_signals: list[dict[str, Any]] = []
+        stage_signals: list[dict[str, Any]] = [
+            {
+                "code": "pm.task_runtime_reset",
+                "severity": "info",
+                "detail": "Cleared stale executable task records before materializing the current PM plan.",
+                "cleared_count": int(reset_summary.get("cleared_count") or 0),
+                "failed_count": int(reset_summary.get("failed_count") or 0),
+            }
+        ]
+        if str(final_result.status or "").strip().lower() == "timeout" and not self._artifact_exists(
+            "tasks/plan.json", min_chars=1
+        ):
+            recovery_result = await self._run_pm_planning_deterministic_recovery(
+                service=service,
+                planning_directive=planning_directive,
+                context=context,
+                abort_checker=abort_checker,
+            )
+            if recovery_result.status in {"completed", "success"} or self._artifact_exists(
+                "tasks/plan.json", min_chars=1
+            ):
+                stage_signals.append(
+                    {
+                        "code": "pm.timeout_recovered_by_deterministic_contracts",
+                        "severity": "warning",
+                        "detail": str(final_result.message or "").strip() or "PM LLM planning timed out",
+                        "recovery_status": str(recovery_result.status or "").strip(),
+                    }
+                )
+                final_result = recovery_result
+
         if final_result.status not in {"completed", "success"}:
             stage_signals.append(
                 {
@@ -619,6 +857,7 @@ class OrchestrationStageExecutor:
         artifacts: list[str] = []
         if self._artifact_exists("tasks/plan.json", min_chars=1):
             artifacts.append("tasks/plan.json")
+            self._mirror_pm_plan_artifacts(run.id, artifacts)
         if stage_signals:
             artifacts.append(
                 self._write_stage_signal_artifact(
@@ -651,6 +890,35 @@ class OrchestrationStageExecutor:
                 f"error_code={error_code or 'none'}; root_cause_hint={root_cause_hint or 'none'}"
             ),
             artifacts=artifacts,
+        )
+
+    async def _run_pm_planning_deterministic_recovery(
+        self,
+        *,
+        service: Any,
+        planning_directive: str,
+        context: dict[str, Any],
+        abort_checker: Callable[[], Awaitable[str | None]] | None,
+    ) -> CommandResult:
+        recovery_timeout = int(context.get("pm_recovery_timeout", 120))
+        command_result = await service.execute_pm_run(
+            workspace=str(self.workspace),
+            run_type="pm",
+            options={
+                "directive": planning_directive,
+                "run_director": False,
+                "metadata": {
+                    "deterministic_pm_contracts": True,
+                    "factory_recovery": "pm_timeout_without_plan",
+                    "timeout_seconds": recovery_timeout,
+                },
+            },
+        )
+        return await self._poll_run_completion(
+            service,
+            command_result,
+            timeout_seconds=recovery_timeout,
+            abort_checker=abort_checker,
         )
 
     async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
@@ -753,6 +1021,7 @@ class OrchestrationStageExecutor:
         artifacts = [row["blueprint_path"] for row in blueprint_rows if row.get("blueprint_path")]
         if review_artifact:
             artifacts.append(review_artifact)
+        self._mirror_chief_engineer_artifacts(run.id, blueprint_rows, review_artifact, artifacts)
         if stage_signal_path:
             artifacts.append(stage_signal_path)
 
@@ -883,6 +1152,35 @@ class OrchestrationStageExecutor:
                 attempts.append(attempt_entry)
 
                 if polled_result.status not in {"completed", "success"}:
+                    prior_successful_progress = any(
+                        str(item.get("status") or "").strip().lower() in {"completed", "success"}
+                        and bool(item.get("progress_made"))
+                        for item in attempts[:-1]
+                        if isinstance(item, dict)
+                    )
+                    if self._is_director_no_materialized_changes(polled_result) and (prior_successful_progress):
+                        stage_signals.append(
+                            {
+                                "code": "director.idempotent_no_materialized_changes",
+                                "severity": "info",
+                                "detail": (
+                                    "Director reported no materialized changes after prior execution evidence; "
+                                    "treating dispatch as idempotent and allowing QA to decide final quality"
+                                ),
+                                "upstream_status": str(polled_result.status or "").strip(),
+                                "round": round_index,
+                            }
+                        )
+                        final_result = CommandResult(
+                            run_id=str(polled_result.run_id or command_result.run_id or ""),
+                            status="completed",
+                            message=(
+                                "Director made no further materialized changes after prior evidence; "
+                                "dispatch treated as idempotent"
+                            ),
+                            metadata=metadata_payload,
+                        )
+                        break
                     stage_signals.append(
                         {
                             "code": "director.run_status_non_success",
@@ -1040,6 +1338,7 @@ class OrchestrationStageExecutor:
         }
         self._write_json_artifact("dispatch/log.json", dispatch_payload)
         artifacts = ["dispatch/log.json"]
+        self._mirror_director_artifacts(run.id, artifacts)
         if stage_signal_path:
             artifacts.append(stage_signal_path)
         if stage_status == "cancelled":
@@ -1060,6 +1359,202 @@ class OrchestrationStageExecutor:
             ),
             artifacts=artifacts,
         )
+
+    @staticmethod
+    def _is_director_no_materialized_changes(result: CommandResult) -> bool:
+        if str(result.status or "").strip().lower() not in {"failed", "error"}:
+            return False
+        message = str(result.message or "").strip().lower()
+        if "director_no_materialized_changes" in message:
+            return True
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        failed_tasks = metadata.get("failed_tasks")
+        if isinstance(failed_tasks, list):
+            for item in failed_tasks:
+                if not isinstance(item, dict):
+                    continue
+                if "director_no_materialized_changes" in str(item.get("error_message") or "").lower():
+                    return True
+        return False
+
+    @staticmethod
+    def _bool_from_context_or_env(
+        context: dict[str, Any],
+        *keys: str,
+        env_var: str = "",
+        default: bool = True,
+    ) -> bool:
+        raw: Any = None
+        for key in keys:
+            if key in context:
+                raw = context.get(key)
+                break
+        if raw is None and env_var:
+            raw = os.environ.get(env_var)
+        if raw is None:
+            return default
+        if isinstance(raw, bool):
+            return raw
+        token = str(raw).strip().lower()
+        if token in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if token in {"0", "false", "no", "off", "disabled"}:
+            return False
+        return default
+
+    def _load_package_scripts(self) -> dict[str, str]:
+        package_path = (self.workspace / "package.json").resolve()
+        if not package_path.exists() or not package_path.is_file():
+            return {}
+        try:
+            payload = json.loads(package_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        scripts = payload.get("scripts")
+        if not isinstance(scripts, dict):
+            return {}
+        return {str(key): str(value) for key, value in scripts.items() if key and value}
+
+    def _workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
+        if not self._bool_from_context_or_env(
+            context,
+            "workspace_validation",
+            "qa_workspace_validation",
+            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION",
+            default=True,
+        ):
+            return []
+
+        configured = context.get("quality_commands") or context.get("workspace_quality_commands")
+        if isinstance(configured, list):
+            commands: list[list[str]] = []
+            for item in configured:
+                if isinstance(item, list) and all(isinstance(part, str) and part.strip() for part in item):
+                    commands.append([part.strip() for part in item])
+                elif isinstance(item, str) and item.strip():
+                    commands.append([part for part in item.strip().split(" ") if part])
+            return commands
+
+        scripts = self._load_package_scripts()
+        commands = []
+        if "test" in scripts:
+            commands.append(["npm", "test"])
+        if "build" in scripts:
+            commands.append(["npm", "run", "build"])
+        return commands
+
+    @staticmethod
+    def _trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS) -> str:
+        body = str(text or "")
+        if len(body) <= limit:
+            return body
+        return body[-limit:]
+
+    def _run_workspace_quality_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
+        started_at = datetime.now(timezone.utc).isoformat()
+        resolved_command = self._resolve_workspace_quality_command(command)
+        if not resolved_command:
+            executable = command[0] if command else ""
+            return {
+                "command": command,
+                "started_at": started_at,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "exit_code": None,
+                "passed": False,
+                "error": f"executable not found: {executable}",
+                "stdout_tail": "",
+                "stderr_tail": "",
+            }
+        try:
+            completed = subprocess.run(
+                resolved_command,
+                cwd=str(self.workspace),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
+                env={**os.environ, "CI": os.environ.get("CI", "1")},
+                check=False,
+            )
+            stdout = self._trim_command_output(completed.stdout)
+            stderr = self._trim_command_output(completed.stderr)
+            return {
+                "command": command,
+                "started_at": started_at,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "exit_code": int(completed.returncode),
+                "passed": int(completed.returncode) == 0,
+                "stdout_tail": stdout,
+                "stderr_tail": stderr,
+            }
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "command": command,
+                "started_at": started_at,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "exit_code": None,
+                "passed": False,
+                "error": f"timeout after {float(timeout_seconds):.1f}s",
+                "stdout_tail": self._trim_command_output(str(exc.stdout or "")),
+                "stderr_tail": self._trim_command_output(str(exc.stderr or "")),
+            }
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "command": command,
+                "started_at": started_at,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "exit_code": None,
+                "passed": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "stdout_tail": "",
+                "stderr_tail": "",
+            }
+
+    @staticmethod
+    def _resolve_workspace_quality_command(command: list[str]) -> list[str]:
+        if not command:
+            return []
+        executable = str(command[0] or "").strip()
+        if not executable:
+            return []
+        resolved = shutil.which(executable)
+        if resolved is None and os.name == "nt":
+            for suffix in (".cmd", ".exe", ".bat"):
+                resolved = shutil.which(f"{executable}{suffix}")
+                if resolved:
+                    break
+        if not resolved:
+            return []
+        return [resolved, *command[1:]]
+
+    async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
+        commands = self._workspace_quality_commands(context)
+        if not commands:
+            return True, ""
+
+        timeout_seconds = float(
+            context.get("workspace_validation_timeout_seconds") or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
+        )
+        results: list[dict[str, Any]] = []
+        for command in commands:
+            result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
+            results.append(result)
+
+        payload = {
+            "schema_version": "factory.workspace_quality_checks.v1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source": "factory_stage_executor",
+            "factory_run_id": run.id,
+            "workspace": str(self.workspace),
+            "passed": all(bool(item.get("passed")) for item in results),
+            "commands": results,
+        }
+        artifact = "runtime/qa/workspace-validation.json"
+        self._write_json_artifact(artifact, payload)
+        return bool(payload["passed"]), artifact
 
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing quality gate for run %s", run.id)
@@ -1114,13 +1609,21 @@ class OrchestrationStageExecutor:
         qa_passed = bool(qa_payload.get("passed"))
         qa_score = int(qa_payload.get("score") or 0)
         qa_critical = int(qa_payload.get("critical_issue_count") or 0)
-        is_success = final_result.status in {"completed", "success"} and qa_passed
-        output_suffix = f"qa_passed={qa_passed}; qa_score={qa_score}; qa_critical={qa_critical}"
+        workspace_checks_passed, workspace_checks_artifact = await self._run_workspace_quality_checks(run, context)
+        is_success = final_result.status in {"completed", "success"} and qa_passed and workspace_checks_passed
+        output_suffix = (
+            f"qa_passed={qa_passed}; qa_score={qa_score}; qa_critical={qa_critical}; "
+            f"workspace_checks_passed={workspace_checks_passed}"
+        )
+        artifacts = ["runtime/qa/report.json"]
+        if workspace_checks_artifact:
+            artifacts.append(workspace_checks_artifact)
+        self._mirror_quality_gate_artifacts(run.id, artifacts)
         return StageResult(
             stage="quality_gate",
             status="success" if is_success else "failed",
             output=(f"Quality gate {final_result.status}: {final_result.message or 'N/A'}; {output_suffix}"),
-            artifacts=["runtime/qa/report.json"],
+            artifacts=artifacts,
         )
 
     def _build_orchestration_service(self, context: dict[str, Any]) -> Any:

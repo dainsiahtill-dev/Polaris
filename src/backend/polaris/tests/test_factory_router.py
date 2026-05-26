@@ -45,6 +45,13 @@ def test_orchestration_stage_executor_maps_docs_artifacts_to_workspace_prefix(tm
     assert resolved == expected
 
 
+def test_factory_router_resolves_docs_stage_artifacts_from_workspace_layer(tmp_path: Path) -> None:
+    resolved = factory_router_module._resolve_runtime_path(str(tmp_path), "docs/plan.md")
+    expected = Path(resolve_logical_path(str(tmp_path), "workspace/docs/plan.md")).resolve()
+
+    assert resolved == expected
+
+
 class LoopingStageExecutor:
     """Executor that emits changing PM plans to validate factory loop convergence."""
 
@@ -292,6 +299,15 @@ def test_start_from_pm_builds_pm_chief_engineer_director_chain(
         "director_dispatch",
         "quality_gate",
     ]
+
+
+def test_factory_readiness_roles_skip_local_chief_engineer_stage() -> None:
+    roles = factory_router_module._required_ready_roles_for_stages(
+        ["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+        qa_enabled=True,
+    )
+
+    assert roles == ["pm", "director", "qa"]
 
 
 def test_factory_role_projection_marks_chief_engineer_stage_running() -> None:

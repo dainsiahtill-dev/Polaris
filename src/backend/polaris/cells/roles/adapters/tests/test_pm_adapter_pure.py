@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
@@ -59,6 +60,15 @@ class TestBuildPmMessage:
         assert "projection_generate" in msg
         assert "s1" in msg
 
+    def test_compacts_oversized_directive_for_prompt_budget(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = "A" * 12_000 + "middle" + "Z" * 12_000
+        msg = adapter._build_pm_message([], directive)
+        assert len(msg) < 21_000
+        assert "omitted" in msg
+        assert "AAAA" in msg
+        assert "ZZZZ" in msg
+
 
 class TestBuildPmRetryMessage:
     def test_includes_quality_issues(self, tmp_path: Any) -> None:
@@ -69,11 +79,80 @@ class TestBuildPmRetryMessage:
         assert "weak_scope" in msg
         assert "至少 3 个任务" in msg
 
+
+class TestPlanArtifactSanitization:
+    def test_write_plan_artifact_redacts_prompt_leakage_terms(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        contracts = adapter._synthesize_task_contracts_from_directive(
+            directive=(
+                "you are the role planner\n"
+                "system prompt: no yapping\n"
+                "Build React Electron desktop workbench with /workbench/model /workbench/scene /workbench/batch"
+            )
+        )
+
+        path = adapter._write_plan_artifact(
+            directive="you are the role planner\nsystem prompt: no yapping",
+            task_contracts=contracts,
+            quality={"score": 90, "critical_issues": [], "summary": "ok"},
+            quality_signals=[
+                {"code": "pm.test", "severity": "info", "detail": "role chain detail and <tool_call> marker"}
+            ],
+        )
+
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        serialized = json.dumps(payload, ensure_ascii=False).lower()
+        for token in ("you are", "role", "system prompt", "no yapping", "<thinking>", "<tool_call>"):
+            assert token not in serialized
+        assert payload["directive"].startswith("[redacted planning context")
+        assert payload["tasks"]
+
+
+class TestFrontendTestRepairContracts:
+    def test_synthesizes_focused_frontend_test_repair_contracts(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        contracts = adapter._synthesize_task_contracts_from_directive(
+            directive=(
+                "Fix npm test failure in Vitest TypeScript test: "
+                "src/types/__tests__/spec.test.ts imports AssetType from ../generation, "
+                "AssetType is declared in src/types/asset.ts"
+            )
+        )
+
+        assert [item["id"] for item in contracts] == ["TASK-1", "TASK-2"]
+        assert "Vitest" in contracts[0]["acceptance"][0]
+        assert "src/types/__tests__/spec.test.ts" in contracts[0]["scope"]
+        assert "src/types/generation.ts" in contracts[0]["scope_paths"]
+        assert "AssetType" in contracts[1]["description"]
+        assert any("npm test returns PASS" in item for item in contracts[1]["acceptance"])
+
     def test_no_critical_issues_fallback(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         quality = {"score": 50, "critical_issues": [], "warnings": []}
         msg = adapter._build_pm_retry_message(directive="Fix it", quality=quality, previous_output="old")
         assert "无关键问题信息" in msg
+
+    def test_compacts_oversized_retry_directive(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        quality = {"score": 50, "critical_issues": [], "warnings": []}
+        directive = "A" * 8_000 + "Z" * 8_000
+        msg = adapter._build_pm_retry_message(directive=directive, quality=quality, previous_output="old")
+        assert len(msg) < 8_000
+        assert "omitted" in msg
+
+
+class TestDeterministicContractsFlag:
+    def test_accepts_nested_metadata_flag(self) -> None:
+        assert PMAdapter._deterministic_pm_contracts_enabled(
+            input_data={"metadata": {"deterministic_pm_contracts": True}},
+            context={},
+        )
+
+    def test_context_flag_still_supported(self) -> None:
+        assert PMAdapter._deterministic_pm_contracts_enabled(
+            input_data={},
+            context={"deterministic_pm_contracts": "yes"},
+        )
 
 
 # ---------------------------------------------------------------------------

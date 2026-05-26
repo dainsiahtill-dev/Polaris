@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs.text_ops import write_text_atomic
+
 from .helpers import (
     _DEFAULT_TASK_LEASE_TTL_SECONDS,
     _TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS,
@@ -401,11 +403,16 @@ async def _execute_standard_llm_flow(
 ) -> dict[str, Any]:
     """执行标准 LLM 流程"""
     message = adapter._build_director_message(task)
+    requires_fresh_materialization = _task_requires_fresh_materialization(task)
     preflight_existing_contract_evidence = _build_existing_workspace_task_evidence(
         task=task,
         current_files=baseline_files,
     )
-    if _director_existing_scope_preflight_enabled(context) and bool(preflight_existing_contract_evidence.get("ok")):
+    if (
+        _director_existing_scope_preflight_enabled(context)
+        and not requires_fresh_materialization
+        and bool(preflight_existing_contract_evidence.get("ok"))
+    ):
         completion_metadata: dict[str, Any] = {
             "adapter_result": {
                 "tools_executed": 0,
@@ -522,13 +529,30 @@ async def _execute_standard_llm_flow(
         ]
         all_affected_files = sorted(set(new_files + modified_files))
 
+    if not has_successful_write_tool(tool_results) or not all_affected_files:
+        deterministic_tool_results = _apply_deterministic_typescript_reexport_repair(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+        if deterministic_tool_results:
+            tool_results.extend(deterministic_tool_results)
+            current_files = adapter._state_tracker.collect_workspace_code_files()
+            new_files = sorted(set(current_files.keys()) - set(baseline_files.keys()))
+            modified_files = [
+                rel_path
+                for rel_path, fingerprint in current_files.items()
+                if rel_path in baseline_files and baseline_files[rel_path] != fingerprint
+            ]
+            all_affected_files = sorted(set(new_files + modified_files))
+
     existing_contract_evidence = _build_existing_workspace_task_evidence(
         task=task,
         current_files=current_files,
     )
 
-    if (not has_successful_write_tool(tool_results) or not all_affected_files) and not bool(
-        existing_contract_evidence.get("ok")
+    if (not has_successful_write_tool(tool_results) or not all_affected_files) and (
+        requires_fresh_materialization or not bool(existing_contract_evidence.get("ok"))
     ):
         error = "director_no_materialized_changes"
         completion_metadata = {
@@ -565,14 +589,19 @@ async def _execute_standard_llm_flow(
                 {
                     "code": error,
                     "severity": "error",
-                    "detail": "Director returned no successful write tool result or no workspace file changes.",
+                    "detail": (
+                        "Director returned no successful write tool result or no workspace file changes; "
+                        "fresh materialization is required for repair/update tasks."
+                        if requires_fresh_materialization
+                        else "Director returned no successful write tool result or no workspace file changes."
+                    ),
                 }
             ],
             "qa_required_for_final_verdict": True,
             "artifacts": [],
         }
 
-    if not all_affected_files and bool(existing_contract_evidence.get("ok")):
+    if not all_affected_files and bool(existing_contract_evidence.get("ok")) and not requires_fresh_materialization:
         completion_metadata = {
             "adapter_result": {
                 "tools_executed": len(tool_results),
@@ -649,6 +678,282 @@ async def _execute_standard_llm_flow(
         "qa_required_for_final_verdict": True,
         "artifacts": [],
     }
+
+
+_TS_NAMED_IMPORT_RE = re.compile(
+    r"import\s*\{(?P<symbols>[^}]+)\}\s*from\s*['\"](?P<module>\.{1,2}/[^'\"]+)['\"]",
+    re.DOTALL,
+)
+_TS_RUNTIME_EXPORT_TEMPLATE = r"(?:export\s+)?(?:enum|class|const|let|var|function)\s+{symbol}\b"
+
+
+def _apply_deterministic_typescript_reexport_repair(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+) -> list[dict[str, Any]]:
+    """Repair a narrow TypeScript runtime re-export miss without target-specific code.
+
+    This covers a common Director failure mode: tests import a runtime symbol from
+    a barrel/module file, but that module only exposes type contracts while the
+    symbol is exported by a sibling module. The repair only appends an explicit
+    `export { Symbol } from './source';` when the source file has a runtime export.
+    """
+    task_text = _task_text_blob(task)
+    if not _looks_like_typescript_reexport_failure(task_text):
+        return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    for importer in _iter_typescript_files(workspace_path):
+        try:
+            importer_text = importer.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for match in _TS_NAMED_IMPORT_RE.finditer(importer_text):
+            module_path = _resolve_relative_ts_module(importer, match.group("module"), workspace_path)
+            if module_path is None:
+                continue
+            try:
+                module_text = module_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for symbol in _parse_named_import_symbols(match.group("symbols")):
+                if _typescript_module_runtime_exports_symbol(module_text, symbol):
+                    continue
+                source_path = _find_typescript_runtime_symbol_source(
+                    workspace_path=workspace_path,
+                    module_path=module_path,
+                    module_text=module_text,
+                    symbol=symbol,
+                )
+                if source_path is None:
+                    continue
+                export_line = _build_typescript_reexport_line(
+                    module_path=module_path, source_path=source_path, symbol=symbol
+                )
+                if export_line in module_text:
+                    continue
+                new_text = module_text.rstrip() + "\n" + export_line + "\n"
+                write_text_atomic(str(module_path), new_text, encoding="utf-8")
+                rel_module = module_path.relative_to(workspace_path).as_posix()
+                with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                    adapter._update_task_progress(task_id, "executing", current_file=rel_module)
+                return [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "ok": True,
+                            "source_tool": "deterministic_typescript_reexport_repair",
+                            "file": rel_module,
+                            "symbol": symbol,
+                            "reexport": export_line,
+                        },
+                    }
+                ]
+    return []
+
+
+def _task_text_blob(task: dict[str, Any]) -> str:
+    rows: list[str] = []
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    for record in (task, metadata):
+        if not isinstance(record, dict):
+            continue
+        for key in ("subject", "title", "description", "goal", "scope", "steps", "acceptance"):
+            value = record.get(key)
+            if isinstance(value, list):
+                rows.extend(str(item) for item in value)
+            elif value is not None:
+                rows.append(str(value))
+    return "\n".join(rows)
+
+
+def _looks_like_typescript_reexport_failure(text: str) -> bool:
+    token = str(text or "").lower()
+    if not any(hint in token for hint in ("typescript", ".ts", ".tsx", "vitest", "npm test")):
+        return False
+    return any(
+        hint in token
+        for hint in (
+            "cannot read properties of undefined",
+            "undefined",
+            "missing export",
+            "re-export",
+            "reexport",
+            "import/export",
+            "export/import",
+            "contract fix",
+        )
+    )
+
+
+def _task_requires_fresh_materialization(task: dict[str, Any]) -> bool:
+    """Return true when an existing file scope is not enough evidence.
+
+    Repair and verification tasks are about changing or validating observed
+    behavior. They must not be completed only because their scope files exist.
+    """
+    token = _task_text_blob(task).lower()
+    if not token:
+        return False
+    fresh_hints = (
+        "repair",
+        "fix",
+        "failure",
+        "failing",
+        "bug",
+        "regression",
+        "update",
+        "modify",
+        "change",
+        "smallest code change",
+        "minimal",
+        "npm test",
+        "vitest",
+        "pytest",
+        "测试失败",
+        "修复",
+        "更新",
+        "修改",
+        "失败",
+        "最小变更",
+    )
+    return any(hint in token for hint in fresh_hints)
+
+
+def _iter_typescript_files(workspace_path: Path) -> list[Path]:
+    ignored = {".git", ".polaris", "node_modules", "dist", "build", ".vite", ".pytest_cache"}
+    results: list[Path] = []
+    for path in workspace_path.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in {".ts", ".tsx"}:
+            continue
+        rel = path.relative_to(workspace_path)
+        if any(part in ignored for part in rel.parts):
+            continue
+        results.append(path)
+    return sorted(results, key=lambda item: item.as_posix())
+
+
+def _resolve_relative_ts_module(importer: Path, module_ref: str, workspace_path: Path) -> Path | None:
+    if not str(module_ref or "").startswith("."):
+        return None
+    base = (importer.parent / module_ref).resolve()
+    candidates: list[Path] = []
+    if base.suffix:
+        candidates.append(base)
+    else:
+        candidates.extend(
+            [
+                base.with_suffix(".ts"),
+                base.with_suffix(".tsx"),
+                base / "index.ts",
+                base / "index.tsx",
+            ]
+        )
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if not _path_inside_workspace(resolved, workspace_path):
+            continue
+        if resolved.exists() and resolved.is_file():
+            return resolved
+    return None
+
+
+def _parse_named_import_symbols(symbols_text: str) -> list[str]:
+    symbols: list[str] = []
+    for raw in str(symbols_text or "").replace("\n", " ").split(","):
+        token = raw.strip()
+        if token.startswith("type "):
+            token = token[5:].strip()
+        token = re.split(r"\s+as\s+", token, maxsplit=1)[0].strip()
+        if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", token):
+            symbols.append(token)
+    return _dedupe_preserve_order(symbols)
+
+
+def _typescript_module_runtime_exports_symbol(module_text: str, symbol: str) -> bool:
+    escaped = re.escape(symbol)
+    if re.search(_TS_RUNTIME_EXPORT_TEMPLATE.format(symbol=escaped), module_text):
+        return True
+    export_block_re = re.compile(r"export\s*\{(?P<symbols>[^}]+)\}", re.DOTALL)
+    for match in export_block_re.finditer(module_text):
+        if symbol in _parse_named_import_symbols(match.group("symbols")):
+            return True
+    return False
+
+
+def _find_typescript_runtime_symbol_source(
+    *,
+    workspace_path: Path,
+    module_path: Path,
+    module_text: str,
+    symbol: str,
+) -> Path | None:
+    candidates: list[Path] = []
+    for module_ref in _extract_relative_import_refs(module_text):
+        candidate = _resolve_relative_ts_module(module_path, module_ref, workspace_path)
+        if candidate is not None and candidate != module_path:
+            candidates.append(candidate)
+    candidates.extend(
+        path
+        for path in sorted(module_path.parent.glob("*.ts"))
+        if path != module_path and path.name != module_path.name and not path.name.endswith(".test.ts")
+    )
+    candidates.extend(
+        path
+        for path in sorted(module_path.parent.glob("*.tsx"))
+        if path != module_path and path.name != module_path.name and not path.name.endswith(".test.tsx")
+    )
+    for candidate in _dedupe_paths(candidates):
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _typescript_file_declares_runtime_export(text, symbol):
+            return candidate
+    return None
+
+
+def _extract_relative_import_refs(text: str) -> list[str]:
+    refs: list[str] = []
+    for match in re.finditer(r"from\s*['\"](?P<module>\.{1,2}/[^'\"]+)['\"]", str(text or "")):
+        refs.append(match.group("module"))
+    for match in re.finditer(r"import\s*['\"](?P<module>\.{1,2}/[^'\"]+)['\"]", str(text or "")):
+        refs.append(match.group("module"))
+    return _dedupe_preserve_order(refs)
+
+
+def _typescript_file_declares_runtime_export(text: str, symbol: str) -> bool:
+    escaped = re.escape(symbol)
+    return bool(re.search(_TS_RUNTIME_EXPORT_TEMPLATE.format(symbol=escaped), text))
+
+
+def _build_typescript_reexport_line(*, module_path: Path, source_path: Path, symbol: str) -> str:
+    relative = os.path.relpath(source_path.with_suffix(""), module_path.parent).replace("\\", "/")
+    if not relative.startswith("."):
+        relative = f"./{relative}"
+    return f"export {{ {symbol} }} from '{relative}';"
+
+
+def _path_inside_workspace(path: Path, workspace_path: Path) -> bool:
+    return path == workspace_path or workspace_path in path.parents
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    rows: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        token = path.resolve().as_posix()
+        if token in seen:
+            continue
+        seen.add(token)
+        rows.append(path)
+    return rows
 
 
 def _director_direct_text_patch_only_enabled(context: dict[str, Any]) -> bool:

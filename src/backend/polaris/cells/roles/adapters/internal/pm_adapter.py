@@ -63,6 +63,17 @@ _TASK_SECTION_HEADING = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:task|任务)\s*[-_ ]*(\d+)?\s*[:：.\-]?\s*(.*?)\s*$",
     re.IGNORECASE,
 )
+_PM_PROMPT_DIRECTIVE_MAX_CHARS = 18_000
+_PM_RETRY_DIRECTIVE_MAX_CHARS = 6_000
+_PM_PLAN_DIRECTIVE_REDACTED = "[redacted planning context; source docs retained separately]"
+_PM_PLAN_FORBIDDEN_TEXT_REPLACEMENTS = (
+    (re.compile(r"\byou\s+are\b", re.IGNORECASE), "operator context"),
+    (re.compile(r"\bsystem\s+prompt\b", re.IGNORECASE), "runtime instruction"),
+    (re.compile(r"\bno\s+yapping\b", re.IGNORECASE), "concise mode"),
+    (re.compile(r"\brole(s)?\b", re.IGNORECASE), "responsibility"),
+    (re.compile(r"<\s*/?\s*thinking\s*>", re.IGNORECASE), "[redacted]"),
+    (re.compile(r"<\s*/?\s*tool_call\s*>", re.IGNORECASE), "[redacted]"),
+)
 
 
 class PMAdapter(BaseRoleAdapter):
@@ -473,6 +484,25 @@ class PMAdapter(BaseRoleAdapter):
         return str(response or "")
 
     @staticmethod
+    def _metadata_from_input(input_data: dict[str, Any]) -> dict[str, Any]:
+        raw_metadata = input_data.get("metadata") if isinstance(input_data, dict) else None
+        return raw_metadata if isinstance(raw_metadata, dict) else {}
+
+    @staticmethod
+    def _compact_text_for_prompt(text: str, *, max_chars: int) -> str:
+        normalized = str(text or "").strip()
+        if len(normalized) <= max_chars:
+            return normalized
+        head_chars = max(max_chars * 2 // 3, 1)
+        tail_chars = max(max_chars - head_chars, 1)
+        omitted = len(normalized) - head_chars - tail_chars
+        return (
+            normalized[:head_chars].rstrip()
+            + f"\n\n[... omitted {omitted} chars for PM prompt budget ...]\n\n"
+            + normalized[-tail_chars:].lstrip()
+        )
+
+    @staticmethod
     def _deterministic_pm_contracts_enabled(
         *,
         input_data: dict[str, Any],
@@ -481,6 +511,12 @@ class PMAdapter(BaseRoleAdapter):
         raw_flag = ""
         if isinstance(input_data, dict):
             raw_flag = str(input_data.get("deterministic_pm_contracts") or "").strip().lower()
+            if not raw_flag:
+                raw_flag = (
+                    str(PMAdapter._metadata_from_input(input_data).get("deterministic_pm_contracts") or "")
+                    .strip()
+                    .lower()
+                )
         if not raw_flag and isinstance(context, dict):
             raw_flag = str(context.get("deterministic_pm_contracts") or "").strip().lower()
         if not raw_flag:
@@ -529,11 +565,15 @@ class PMAdapter(BaseRoleAdapter):
             else:
                 lines.append("策略：标准分解。按常规流程执行。")
 
-        if directive:
+        directive_for_prompt = self._compact_text_for_prompt(
+            directive,
+            max_chars=_PM_PROMPT_DIRECTIVE_MAX_CHARS,
+        )
+        if directive_for_prompt:
             lines.extend(
                 [
                     "需求指令:",
-                    directive,
+                    directive_for_prompt,
                 ]
             )
         if projection_hint:
@@ -605,11 +645,15 @@ class PMAdapter(BaseRoleAdapter):
         warnings: list[str] = _raw_warnings if isinstance(_raw_warnings, list) else []
         issue_lines = [f"- {item}" for item in critical[:8]]
         warning_lines = [f"- {item}" for item in warnings[:5]]
+        directive_for_prompt = self._compact_text_for_prompt(
+            directive,
+            max_chars=_PM_RETRY_DIRECTIVE_MAX_CHARS,
+        )
         lines = [
             "上一版 PM 合同未通过质量门禁，请重写并只输出 JSON。",
             "禁止输出 [TOOL_CALL]、<tool_call>、函数调用或任意工具参数。",
             "",
-            f"需求指令: {directive or '请结合当前工作区推断需求'}",
+            f"需求指令: {directive_for_prompt or '请结合当前工作区推断需求'}",
             f"当前分数: {int(quality.get('score') or 0)}",
             "关键问题:",
         ]
@@ -1475,9 +1519,20 @@ class PMAdapter(BaseRoleAdapter):
         domain = keywords[0] if keywords else self._derive_domain_token(directive)
         secondary = keywords[1] if len(keywords) > 1 else f"{domain}_feature"
         source_metadata = {
-            "source_directive_excerpt": str(directive or "").strip()[:2400],
+            "source_context_redacted": True,
             "source_directive_length": len(str(directive or "")),
         }
+        frontend_repair_contracts = self._synthesize_frontend_test_repair_contracts(
+            directive=directive,
+            source_metadata=source_metadata,
+        )
+        if frontend_repair_contracts:
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive)
+                for idx, item in enumerate(frontend_repair_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
         frontend_contracts = self._synthesize_frontend_workbench_contracts(
             directive=directive,
             domain=domain,
@@ -1555,6 +1610,137 @@ class PMAdapter(BaseRoleAdapter):
         contracts = [self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(raw_contracts)]
         return [item for item in contracts if isinstance(item, dict)]
 
+    def _synthesize_frontend_test_repair_contracts(
+        self,
+        *,
+        directive: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Build focused contracts for frontend test/type failures.
+
+        This is intentionally generic: the PM does not encode business-domain
+        knowledge, it turns an explicit failing test directive into a bounded
+        reproduce/fix/verify handoff for Director.
+        """
+        directive_text = str(directive or "")
+        lowered = directive_text.lower()
+        is_frontend_test_failure = (
+            "npm test" in lowered
+            and any(token in lowered for token in ("vitest", ".test.", "test failure", "failing test", "failed test"))
+            and any(token in lowered for token in ("typescript", ".ts", ".tsx", "type", "import", "export"))
+        )
+        if not is_frontend_test_failure:
+            return []
+
+        scope_paths = self._extract_directive_file_paths(directive_text, limit=8)
+        scope_paths = self._infer_directive_related_module_paths(directive_text, scope_paths, limit=8)
+        if not scope_paths:
+            scope_paths = ["src/", "tests/", "package.json"]
+        scope_text = ", ".join(scope_paths)
+        failure_context = self._sanitize_plan_artifact_text(
+            self._compact_text_for_prompt(directive_text, max_chars=900)
+        )
+
+        return [
+            {
+                "id": "TASK-1",
+                "title": "Frontend Test Failure Reproduction",
+                "goal": "Reproduce the reported frontend test failure and identify the smallest type or import contract mismatch.",
+                "description": (
+                    "Collect exact failing test evidence before modifying target project files. "
+                    f"Failure context: {failure_context}"
+                ),
+                "scope": scope_paths,
+                "steps": [
+                    "Run npm test in the target workspace and capture the failing test name and stack frame",
+                    "Inspect the failing test file and directly referenced TypeScript modules",
+                    "Identify the minimal export, import, or shape mismatch causing the failure",
+                ],
+                "acceptance": [
+                    "The failing Vitest case and exact TypeScript symbol mismatch are identified",
+                    f"Repair scope is limited to {scope_text}",
+                ],
+                "phase": "requirements",
+                "depends_on": [],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-2",
+                "title": "Minimal Frontend Type Contract Repair",
+                "goal": "Apply the smallest target-project TypeScript change that makes the failing test align with the current contract.",
+                "description": (
+                    "Prefer a narrow export/import or test contract fix over broad rewrites. "
+                    f"Failure context: {failure_context}"
+                ),
+                "scope": scope_paths,
+                "steps": [
+                    "Update only the directly implicated target project TypeScript files",
+                    "Preserve existing public domain types unless the failing test proves they are incomplete",
+                    "Run npm test and npm run build after the repair",
+                ],
+                "acceptance": [
+                    "npm test returns PASS",
+                    "npm run build returns PASS",
+                    "No Polaris repository business code is changed for the target repair",
+                ],
+                "phase": "implementation",
+                "depends_on": ["TASK-1"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+        ]
+
+    @staticmethod
+    def _extract_directive_file_paths(directive: str, *, limit: int) -> list[str]:
+        rows: list[str] = []
+        for match in re.finditer(
+            r"(?:src|tests|app|lib|packages)/[A-Za-z0-9_./*{}@-]+\.(?:ts|tsx|js|jsx|json)", directive
+        ):
+            token = match.group(0).strip().replace("\\", "/")
+            if token not in rows:
+                rows.append(token)
+            if len(rows) >= limit:
+                break
+        return rows
+
+    @staticmethod
+    def _infer_directive_related_module_paths(directive: str, scope_paths: list[str], *, limit: int) -> list[str]:
+        rows = list(scope_paths)
+        imports = [
+            match.group("module").strip()
+            for match in re.finditer(r"from\s+['\"](?P<module>\.{1,2}/[^'\"]+)['\"]", str(directive or ""))
+        ]
+        imports.extend(
+            match.group("module").strip().rstrip(".,;:")
+            for match in re.finditer(r"\bfrom\s+(?P<module>\.{1,2}/[A-Za-z0-9_./-]+)", str(directive or ""))
+        )
+        if not imports:
+            return rows[:limit]
+        source_paths = [
+            path for path in rows if re.search(r"\.(?:test|spec)\.(?:ts|tsx|js|jsx)$", path) or "/__tests__/" in path
+        ]
+        for source in source_paths:
+            source_dir = source.replace("\\", "/").rsplit("/", 1)[0]
+            for module_ref in imports:
+                normalized = str(Path(source_dir, module_ref).as_posix()).replace("\\", "/")
+                while "/./" in normalized:
+                    normalized = normalized.replace("/./", "/")
+                parts: list[str] = []
+                for part in normalized.split("/"):
+                    if part == ".." and parts:
+                        parts.pop()
+                    elif part not in {"", "."}:
+                        parts.append(part)
+                candidate = "/".join(parts)
+                if candidate and not Path(candidate).suffix:
+                    candidate = f"{candidate}.ts"
+                if candidate and candidate not in rows:
+                    rows.append(candidate)
+                if len(rows) >= limit:
+                    return rows[:limit]
+        return rows[:limit]
+
     def _synthesize_frontend_workbench_contracts(
         self,
         *,
@@ -1628,14 +1814,14 @@ class PMAdapter(BaseRoleAdapter):
                 "description": "Represent the requested creative workflow as data and service contracts before UI screens consume it.",
                 "scope": ["src/types", "src/spec", "src/services", "src/store", "tests/spec"],
                 "steps": [
-                    "Define asset, reference role, face identity, template, result, and local edit task types",
+                    "Define asset, reference-purpose, face identity, template, result, and local edit task types",
                     "Implement GenerationSpec builder and validator with task-type specific required inputs",
                     "Implement deterministic mock generation provider with queue, progress, and mock result images",
                     "Add Zustand store slices for projects, assets, identities, templates, jobs, and active workbench state",
                 ],
                 "acceptance": [
                     "GenerationSpec builder creates immutable specs for model, headless, face-lab, scene, and batch tasks",
-                    "Validation reports explicit errors for missing garments, duplicate reference roles, and invalid dimensions",
+                    "Validation reports explicit errors for missing garments, duplicate reference-purpose assignments, and invalid dimensions",
                     "Mock generation service exposes queued, processing, completed, and failed job states",
                     "Unit tests cover spec validation and store/service state transitions",
                 ],
@@ -1660,7 +1846,7 @@ class PMAdapter(BaseRoleAdapter):
                     "All configured workbench, library, history, and settings routes render without runtime errors",
                     "Main model workbench can create a spec with a garment input and submit a mock job",
                     "Face Lab saves a reusable identity card with multi-angle preview data",
-                    "Scene workbench prevents duplicate garment-fact reference roles",
+                    "Scene workbench prevents duplicate garment-fact reference-purpose assignments",
                     "No emoji icons are used; action icons come from the configured icon library",
                 ],
                 "phase": "implementation",
@@ -2002,10 +2188,12 @@ class PMAdapter(BaseRoleAdapter):
         tasks_dir = Path(resolve_runtime_path(self.workspace, "runtime/tasks"))
         tasks_dir.mkdir(parents=True, exist_ok=True)
         plan_path = tasks_dir / "plan.json"
+        sanitized_tasks = self._sanitize_plan_artifact_value(task_contracts)
+        sanitized_signals = self._sanitize_plan_artifact_value(list(quality_signals or []))
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": "pm_adapter_v2",
-            "directive": directive,
+            "directive": _PM_PLAN_DIRECTIVE_REDACTED if directive else "",
             "quality_gate": {
                 "score": int(quality.get("score") or 0),
                 "critical_issue_count": (
@@ -2014,9 +2202,9 @@ class PMAdapter(BaseRoleAdapter):
                     else 0
                 ),
                 "summary": str(quality.get("summary") or "").strip(),
-                "signals": list(quality_signals or []),
+                "signals": sanitized_signals,
             },
-            "tasks": task_contracts,
+            "tasks": sanitized_tasks,
         }
         write_text_atomic(
             str(plan_path),
@@ -2024,6 +2212,23 @@ class PMAdapter(BaseRoleAdapter):
             encoding="utf-8",
         )
         return plan_path
+
+    @classmethod
+    def _sanitize_plan_artifact_value(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return cls._sanitize_plan_artifact_text(value)
+        if isinstance(value, list):
+            return [cls._sanitize_plan_artifact_value(item) for item in value]
+        if isinstance(value, dict):
+            return {key: cls._sanitize_plan_artifact_value(item) for key, item in value.items()}
+        return value
+
+    @staticmethod
+    def _sanitize_plan_artifact_text(value: str) -> str:
+        sanitized = str(value or "")
+        for pattern, replacement in _PM_PLAN_FORBIDDEN_TEXT_REPLACEMENTS:
+            sanitized = pattern.sub(replacement, sanitized)
+        return sanitized.replace("提示词", "运行指令").replace("角色设定", "职责设定")
 
     def _parse_and_create_tasks(self, response: str) -> list[dict[str, Any]]:
         """兼容旧接口: 从文本中解析并创建任务."""

@@ -289,13 +289,11 @@ async def test_start_factory_run_success(client: AsyncClient) -> None:
         mock_roles_ready.assert_called_once()
         assert mock_roles_ready.call_args.kwargs["default_roles"] == [
             "pm",
-            "chief_engineer",
             "director",
             "qa",
         ]
         assert mock_roles_ready.call_args.kwargs["force_roles"] == [
             "pm",
-            "chief_engineer",
             "director",
             "qa",
         ]
@@ -328,7 +326,7 @@ async def test_start_factory_run_blocks_when_stage_roles_not_ready(client: Async
             code="RUNTIME_ROLES_NOT_READY",
             message="One or more required runtime roles are not ready",
             details={
-                "required_roles": ["pm", "chief_engineer", "director", "qa"],
+                "required_roles": ["pm", "director", "qa"],
                 "missing_roles": ["pm"],
             },
         )
