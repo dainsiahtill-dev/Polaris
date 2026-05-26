@@ -1,0 +1,125 @@
+import type { LLMStatusRole, ProviderConfig } from './types';
+
+export interface BlockedRoleDiagnostic {
+  roleId: string;
+  roleLabel: string;
+  providerId: string;
+  providerName: string;
+  configuredModel: string;
+  testedProviderId: string;
+  testedProviderName: string;
+  testedModel: string;
+  issue: string;
+  issueLabel: string;
+  ready: boolean;
+  runtimeSupported: boolean;
+}
+
+export interface BuildBlockedRoleDiagnosticsInput {
+  blockedRoles?: string[];
+  unsupportedRoles?: string[];
+  roles?: Record<string, LLMStatusRole>;
+  providers?: Record<string, ProviderConfig>;
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  architect: 'Architect',
+  chief_engineer: 'Chief Engineer',
+  director: 'Director',
+  docs: 'Architect',
+  pm: 'PM',
+  qa: 'QA',
+};
+
+const ISSUE_LABELS: Record<string, string> = {
+  model_mismatch: '最近通过测试的模型不是当前绑定模型',
+  provider_mismatch: '最近通过测试的 Provider 不是当前绑定 Provider',
+  role_readiness_missing: '该角色还没有通过必需的深度测试',
+  runtime_unsupported: '当前 Provider 类型不支持该角色运行时',
+  tested_model_missing: '测试记录缺少模型身份，无法确认通过对象',
+  unassigned_provider: '该角色未绑定 Provider',
+};
+
+function normalizeRoleId(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function readText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function roleLabel(roleId: string): string {
+  return ROLE_LABELS[roleId] || roleId;
+}
+
+function providerName(providerId: string, providers: Record<string, ProviderConfig>): string {
+  if (!providerId) return '未绑定 Provider';
+  const provider = providers[providerId];
+  return readText(provider?.name) || providerId;
+}
+
+function modelName(role: LLMStatusRole | undefined, provider: ProviderConfig | undefined): string {
+  return readText(role?.model) || readText(provider?.model) || readText(provider?.default_model) || '未绑定模型';
+}
+
+function issueLabel(issue: string): string {
+  return ISSUE_LABELS[issue] || issue || '未获得具体失败原因';
+}
+
+export function buildBlockedRoleDiagnostics({
+  blockedRoles = [],
+  unsupportedRoles = [],
+  roles = {},
+  providers = {},
+}: BuildBlockedRoleDiagnosticsInput): BlockedRoleDiagnostic[] {
+  const orderedRoles = [...blockedRoles, ...unsupportedRoles];
+  const seen = new Set<string>();
+  const unsupportedRoleSet = new Set(unsupportedRoles.map(normalizeRoleId));
+
+  return orderedRoles
+    .map(normalizeRoleId)
+    .filter((roleId) => {
+      if (!roleId || seen.has(roleId)) return false;
+      seen.add(roleId);
+      return true;
+    })
+    .map((roleId) => {
+      const role = roles[roleId] || (roleId === 'architect' ? roles.docs : undefined);
+      const providerId = readText(role?.provider_id);
+      const provider = providerId ? providers[providerId] : undefined;
+      const testedProviderId = readText(role?.tested_provider_id);
+      const runtimeSupported = role?.runtime_supported !== false && !unsupportedRoleSet.has(roleId);
+      const readinessIssue =
+        readText(role?.readiness_issue)
+        || (!runtimeSupported ? 'runtime_unsupported' : '')
+        || (!providerId ? 'unassigned_provider' : '')
+        || 'role_readiness_missing';
+
+      return {
+        roleId,
+        roleLabel: roleLabel(roleId),
+        providerId,
+        providerName: providerName(providerId, providers),
+        configuredModel: modelName(role, provider),
+        testedProviderId,
+        testedProviderName: providerName(testedProviderId, providers),
+        testedModel: readText(role?.tested_model),
+        issue: readinessIssue,
+        issueLabel: issueLabel(readinessIssue),
+        ready: Boolean(role?.ready),
+        runtimeSupported,
+      };
+    });
+}
+
+export function formatBlockedRoleTitle(detail: BlockedRoleDiagnostic): string {
+  const tested =
+    detail.testedProviderId || detail.testedModel
+      ? `最近通过: ${detail.testedProviderName}/${detail.testedModel || '未知模型'}`
+      : '最近通过: 无记录';
+  return [
+    `${detail.roleLabel}: ${detail.providerName}/${detail.configuredModel}`,
+    detail.issueLabel,
+    tested,
+  ].join(' | ');
+}

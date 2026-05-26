@@ -229,6 +229,10 @@ export interface LLMStatusRole {
   timestamp?: string | null;
   suites?: Record<string, unknown> | null;
   runtime_supported?: boolean;
+  readiness_issue?: string;
+  readiness_source?: string;
+  tested_provider_id?: string;
+  tested_model?: string;
 }
 
 // LLM Status Provider (Rich)

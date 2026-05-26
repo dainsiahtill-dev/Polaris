@@ -33,6 +33,11 @@ import { useProviderRegistry } from './ProviderRegistry';
 import { LLMVisualEditor } from './visual/LLMVisualEditor';
 import { resolveModelName, validateModelName, getModelResolutionLog, type ModelResolutionContext } from './utils';
 import type { VisualGraphConfig, VisualGraphStatus } from './visual/types/visual';
+import {
+  buildBlockedRoleDiagnostics,
+  formatBlockedRoleTitle,
+  type BlockedRoleDiagnostic,
+} from './readinessDiagnostics';
 
 import { 
   InterviewHall, 
@@ -223,16 +228,21 @@ function TabNavigation({
   globalReadiness,
   blockedRoles,
   unsupportedRoles,
+  blockedRoleDiagnostics,
 }: { 
   globalReadiness: { state: string; color: string },
   blockedRoles: string[],
   unsupportedRoles: string[],
+  blockedRoleDiagnostics: BlockedRoleDiagnostic[],
 }) {
   const { state, switchTab } = useProviderContext();
   const { activeTab } = state;
   const hasBlock = globalReadiness.state === 'BLOCKED';
+  const blockedRoleLabels = blockedRoleDiagnostics.length
+    ? blockedRoleDiagnostics.map((item) => item.roleLabel)
+    : blockedRoles;
   const tips: string[] = [];
-  if (blockedRoles.length) tips.push(`未通过测试: ${blockedRoles.join(', ')}`);
+  if (blockedRoleLabels.length) tips.push(`未通过测试: ${blockedRoleLabels.join(', ')}`);
   if (unsupportedRoles.length) tips.push(`运行时不支持: ${unsupportedRoles.join(', ')}`);
   const tipText = tips.length ? tips.join(' | ') : '请完成必需的 LLM 测试';
 
@@ -279,6 +289,49 @@ function TabNavigation({
           ) : null}
         </div>
       </div>
+      {hasBlock && blockedRoleDiagnostics.length > 0 ? (
+        <div className="mt-4 border-t border-white/10 pt-3" data-testid="llm-readiness-diagnostics">
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
+            <AlertTriangle className="size-3.5 text-amber-300" />
+            <span>阻塞诊断</span>
+          </div>
+          <div className="divide-y divide-white/10 overflow-hidden rounded-lg border border-white/10 bg-black/25">
+            {blockedRoleDiagnostics.map((detail) => (
+              <div
+                key={detail.roleId}
+                className="grid gap-2 px-3 py-2 text-[11px] md:grid-cols-[112px_minmax(0,1fr)_minmax(180px,0.8fr)]"
+                title={formatBlockedRoleTitle(detail)}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="rounded border border-amber-400/30 bg-amber-500/10 px-2 py-1 font-semibold text-amber-200">
+                    {detail.roleLabel}
+                  </span>
+                  <span className={`h-2 w-2 rounded-full ${detail.runtimeSupported ? 'bg-amber-300' : 'bg-red-400'}`} />
+                </div>
+                <div className="min-w-0 text-text-muted">
+                  <div className="truncate text-text-main">
+                    Provider: <span className="font-semibold text-cyan-100">{detail.providerName}</span>
+                    {detail.providerId && detail.providerName !== detail.providerId ? (
+                      <span className="ml-1 text-text-dim">({detail.providerId})</span>
+                    ) : null}
+                  </div>
+                  <div className="truncate">
+                    Model: <span className="text-emerald-100">{detail.configuredModel}</span>
+                  </div>
+                </div>
+                <div className="min-w-0 text-amber-100">
+                  <div className="truncate">原因: {detail.issueLabel}</div>
+                  <div className="truncate text-text-dim">
+                    最近通过: {detail.testedProviderId || detail.testedModel
+                      ? `${detail.testedProviderName}/${detail.testedModel || '未知模型'}`
+                      : '无记录'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -563,6 +616,15 @@ function LLMSettingsTabInner({
   }, [llmStatus]);
   const blockedRoles = useMemo(() => llmStatus?.blocked_roles || [], [llmStatus]);
   const unsupportedRoles = useMemo(() => llmStatus?.unsupported_roles || [], [llmStatus]);
+  const blockedRoleDiagnostics = useMemo(
+    () => buildBlockedRoleDiagnostics({
+      blockedRoles,
+      unsupportedRoles,
+      roles: llmStatus?.roles || {},
+      providers: llmConfig?.providers || {},
+    }),
+    [blockedRoles, llmConfig?.providers, llmStatus?.roles, unsupportedRoles]
+  );
 
   // Visual config
   const visualConfig = useMemo(() => {
@@ -696,6 +758,7 @@ function LLMSettingsTabInner({
         globalReadiness={globalReadiness}
         blockedRoles={blockedRoles}
         unsupportedRoles={unsupportedRoles}
+        blockedRoleDiagnostics={blockedRoleDiagnostics}
       />
 
       {(llmError || providersError) && (
