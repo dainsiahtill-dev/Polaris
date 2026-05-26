@@ -196,6 +196,10 @@ class TestRuntimeRouter:
                 return_value={"records_reset": 5},
             ),
             patch(
+                "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
+                return_value={},
+            ),
+            patch(
                 "polaris.delivery.http.routers.runtime.build_director_runtime_status",
                 return_value={"running": False},
             ),
@@ -246,6 +250,10 @@ class TestRuntimeRouter:
             patch(
                 "polaris.delivery.http.routers.runtime.reset_runtime_records",
                 return_value={"records_reset": 0},
+            ),
+            patch(
+                "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
+                return_value={},
             ),
             patch(
                 "polaris.delivery.http.routers.runtime.build_director_runtime_status",
@@ -300,6 +308,10 @@ class TestRuntimeRouter:
             patch(
                 "polaris.delivery.http.routers.runtime.reset_runtime_records",
                 return_value={"records_reset": 0},
+            ),
+            patch(
+                "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
+                return_value={},
             ),
             patch(
                 "polaris.delivery.http.routers.runtime.build_director_runtime_status",

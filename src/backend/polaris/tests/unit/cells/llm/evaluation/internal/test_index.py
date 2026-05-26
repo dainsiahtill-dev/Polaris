@@ -75,6 +75,12 @@ class TestResolveIndexPaths:
         paths = _resolve_index_paths("/tmp/ws")
         assert len(paths) == len(set(paths))
 
+    def test_explicit_workspace_does_not_include_global_index(self, tmp_path) -> None:
+        workspace = tmp_path / "workspace"
+        paths = _resolve_index_paths(str(workspace))
+        assert len(paths) == 1
+        assert paths[0].endswith(str(workspace / ".polaris" / "llm_test_index.json"))
+
 
 class TestLoadIndexFile:
     """Tests for _load_index_file function."""
@@ -231,6 +237,36 @@ class TestLoadLlmTestIndex:
         result = load_llm_test_index(str(tmp_path))
         assert result.get("custom") is True
 
+    def test_explicit_workspace_ignores_global_stale_index(self, tmp_path) -> None:
+        workspace = tmp_path / "workspace"
+        global_index = tmp_path / "global" / "llm_test_index.json"
+        global_index.parent.mkdir(parents=True)
+        global_index.write_text(
+            json.dumps(
+                {
+                    "roles": {
+                        "pm": {
+                            "ready": True,
+                            "grade": "PASS",
+                            "provider_id": "ollama",
+                            "model": "llama3",
+                        },
+                    },
+                    "providers": {},
+                    "version": "2.0",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch(
+            "polaris.cells.llm.evaluation.internal.index.resolve_global_path",
+            return_value=str(global_index),
+        ):
+            result = load_llm_test_index(str(workspace))
+
+        assert result["roles"] == {}
+
 
 class TestResetLlmTestIndex:
     """Tests for reset_llm_test_index function."""
@@ -315,3 +351,52 @@ class TestUpdateIndexWithReport:
         assert "pm" in index["roles"]
         assert "ollama" in index["providers"]
         assert index["last_update"] is not None
+
+    def test_update_does_not_seed_workspace_from_global_stale_index(self, tmp_path) -> None:
+        workspace = tmp_path / "workspace"
+        global_index = tmp_path / "global" / "llm_test_index.json"
+        global_index.parent.mkdir(parents=True)
+        global_index.write_text(
+            json.dumps(
+                {
+                    "roles": {
+                        "pm": {
+                            "ready": True,
+                            "grade": "PASS",
+                            "provider_id": "ollama",
+                            "model": "llama3",
+                        },
+                    },
+                    "providers": {
+                        "ollama": {
+                            "ready": True,
+                            "grade": "PASS",
+                            "model": "llama3",
+                            "role": "pm",
+                        },
+                    },
+                    "version": "2.0",
+                }
+            ),
+            encoding="utf-8",
+        )
+        report = {
+            "role": "director",
+            "provider_id": "anthropic_compat-1",
+            "model": "kimi-for-coding",
+            "final": {"ready": True, "grade": "PASS"},
+            "test_run_id": "r2",
+            "timestamp": "2026-05-25T00:00:00+00:00",
+            "suites": {},
+        }
+
+        with patch(
+            "polaris.cells.llm.evaluation.internal.index.resolve_global_path",
+            return_value=str(global_index),
+        ):
+            update_index_with_report(str(workspace), report)
+            index = load_llm_test_index(str(workspace))
+
+        assert "pm" not in index["roles"]
+        assert "ollama" not in index["providers"]
+        assert "director" in index["roles"]

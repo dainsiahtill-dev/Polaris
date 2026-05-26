@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
 from polaris.kernelone.storage import resolve_runtime_path
 
 
@@ -42,6 +42,34 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     rows = service.list_task_rows()
     assert len(rows) == 1
     assert rows[0]["id"] == created.id
+
+
+def test_task_runtime_reset_records_clears_rows_sessions_and_events(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(subject="reset stale taskboard rows", metadata={"scope": "src/App.tsx"})
+    claim = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-reset",
+        selection_source="unit",
+        external_task_id="task-reset",
+    )
+    assert claim["success"] is True
+
+    taskboard_event_path = Path(resolve_runtime_path(str(workspace), "runtime/events/taskboard.terminal.events.jsonl"))
+    taskboard_event_path.parent.mkdir(parents=True, exist_ok=True)
+    taskboard_event_path.write_text('{"event_type":"completed"}\n', encoding="utf-8")
+
+    result = reset_runtime_task_records(str(workspace))
+
+    assert result["failed_count"] == 0
+    assert TaskRuntimeService(str(workspace)).list_task_rows() == []
+    assert not any(Path(resolve_runtime_path(str(workspace), "runtime/tasks")).iterdir())
+    assert not taskboard_event_path.exists()
 
 
 def test_task_runtime_service_materializes_legacy_task_and_claims_it(tmp_path: Path) -> None:

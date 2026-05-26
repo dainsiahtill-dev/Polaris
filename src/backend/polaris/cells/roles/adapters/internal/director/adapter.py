@@ -322,9 +322,68 @@ class DirectorAdapter(BaseRoleAdapter):
             }
             if not is_empty_role_response(fallback):
                 return fallback
-            fallback["error"] = str(fallback.get("error") or "director_empty_role_response")
-            return fallback
+            try:
+                return await self._invoke_direct_runtime_provider(message)
+            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                fallback["error"] = str(fallback.get("error") or f"director_empty_role_response:{exc}")
+                return fallback
         return primary
+
+    async def _invoke_direct_runtime_provider(
+        self,
+        message: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Call the configured Director provider without the chat/tool kernel wrapper."""
+        return await asyncio.to_thread(
+            self._invoke_direct_runtime_provider_sync,
+            message,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _invoke_direct_runtime_provider_sync(
+        self,
+        message: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        from polaris.infrastructure.llm.provider_runtime_adapter import AppLLMRuntimeAdapter
+        from polaris.kernelone.llm.runtime import invoke_role_runtime_provider
+
+        settings = get_settings_safe()
+        configured_timeout = int(getattr(settings, "llm_timeout", 0) or 0) or int(_DEFAULT_LLM_CALL_TIMEOUT_SECONDS)
+        if timeout_seconds is not None:
+            configured_timeout = max(1, int(float(timeout_seconds)))
+        result = invoke_role_runtime_provider(
+            role=self.role_id,
+            workspace=self.workspace,
+            prompt=message,
+            fallback_model="",
+            timeout=configured_timeout,
+            adapter=AppLLMRuntimeAdapter(),
+            blocked_provider_types={
+                "",
+                "codex",
+                "codex_cli",
+                "codex_sdk",
+            },
+        )
+        if not result.attempted or not result.ok:
+            error_message = str(result.error or "").strip() or "runtime_provider_unavailable"
+            if not result.attempted:
+                raise RuntimeError(f"Director runtime provider binding is not configured: {error_message}")
+            raise RuntimeError(f"Director runtime provider invocation failed: {error_message}")
+
+        output = str(result.output or "")
+        return {
+            "content": output,
+            "response": output,
+            "success": True,
+            "role": self.role_id,
+            "model": result.model,
+            "provider": result.provider_id,
+        }
 
     async def _invoke_role_dialogue_with_timeout(
         self,
@@ -355,6 +414,13 @@ class DirectorAdapter(BaseRoleAdapter):
                 "success": False,
                 "error": f"director_{stage_label}_llm_timeout",
                 "raw_response": {"error": "timeout", "timeout": True},
+            }
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "content": "",
+                "success": False,
+                "error": f"director_{stage_label}_llm_error:{exc}",
+                "raw_response": {"error": str(exc), "exception_type": type(exc).__name__},
             }
 
     # -------------------------------------------------------------------------
@@ -449,29 +515,75 @@ class DirectorAdapter(BaseRoleAdapter):
     # Director Message Building
     # -------------------------------------------------------------------------
 
-    def _build_director_message(self, task: dict[str, Any]) -> str:
+    def _build_director_message(self, task: dict[str, Any], *, text_patch_mode: bool = False) -> str:
         """构建 Director 角色消息"""
         subject = task.get("subject", "")
         description = DirectorStateTracker.sanitize_task_description(str(task.get("description") or ""))
+        raw_metadata = task.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        goal = str(metadata.get("goal") or task.get("goal") or "").strip()
+        scope = metadata.get("scope", task.get("scope", ""))
+        steps = metadata.get("steps") if isinstance(metadata.get("steps"), list) else task.get("steps")
+        acceptance = (
+            metadata.get("acceptance") if isinstance(metadata.get("acceptance"), list) else task.get("acceptance")
+        )
+
+        def _stringify_list(value: Any) -> list[str]:
+            if isinstance(value, list):
+                return [str(item or "").strip() for item in value if str(item or "").strip()]
+            token = str(value or "").strip()
+            if not token:
+                return []
+            return [part.strip() for part in token.split(",") if part.strip()] or [token]
+
+        scope_items = _stringify_list(scope)
+        step_items = _stringify_list(steps)
+        acceptance_items = _stringify_list(acceptance)
 
         lines = [
             f"任务: {subject}",
             "",
             f"描述: {description}" if description else "",
             "",
-            "请执行此任务，并优先输出 PATCH_FILE 格式补丁。",
-            "禁止输出 TODO/FIXME/NotImplemented 等占位实现。",
+            f"目标: {goal}" if goal else "",
+            f"范围: {', '.join(scope_items)}" if scope_items else "",
             "",
-            "PATCH_FILE: path/to/file.py",
-            "<<<<<<< SEARCH",
-            "原有代码片段",
-            "=======",
-            "新代码片段",
-            ">>>>>>> REPLACE",
-            "END PATCH_FILE",
+            "执行步骤:",
+            *[f"- {item}" for item in step_items],
+            "",
+            "验收标准:",
+            *[f"- {item}" for item in acceptance_items],
+            "",
+            "禁止输出 TODO/FIXME/NotImplemented 等占位实现。",
+            "不得把示例路径当成目标文件；必须使用任务范围中的真实相对路径。",
+            "",
         ]
+        if text_patch_mode:
+            lines.extend(
+                [
+                    "当前运行时要求纯文本补丁。只输出可解析的文件块，不要解释。",
+                    "创建或替换文件时使用如下格式，每个文件一个块:",
+                    "relative/path.ext",
+                    "```language",
+                    "完整文件内容",
+                    "```",
+                    "修改已有文件时也可以使用 PATCH_FILE，但 PATCH_FILE 后必须是真实相对路径。",
+                    "不要输出任何占位路径。",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "请通过运行时正式写入工具完成修改；若只能返回文本，输出可解析的文件块。",
+                    "文本文件块格式:",
+                    "relative/path.ext",
+                    "```language",
+                    "完整文件内容",
+                    "```",
+                ]
+            )
 
-        return "\n".join(lines)
+        return "\n".join(line for line in lines if line != "")
 
     # -------------------------------------------------------------------------
     # Progress Update Methods (matching base class signatures)

@@ -2,6 +2,7 @@
 
 Covers:
 - resolve_llm_call_timeout_seconds
+- extract_kernel_tool_results
 - _normalize_tool_arguments
 - _extract_markdown_file_blocks
 """
@@ -70,6 +71,51 @@ class TestResolveLlmCallTimeoutSeconds:
     def test_clamped_to_minimum(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 0.01})
         assert result == 0.1
+
+
+class TestResolveDirectFallbackTimeoutSeconds:
+    """direct text fallback must stay within the primary Director budget."""
+
+    def test_default_caps_long_primary_budget(self) -> None:
+        result = DirectorPatchExecutor.resolve_direct_fallback_timeout_seconds(None, 600.0)
+        assert result == 90.0
+
+    def test_default_honors_short_primary_budget(self) -> None:
+        result = DirectorPatchExecutor.resolve_direct_fallback_timeout_seconds(None, 12.0)
+        assert result == 12.0
+
+    def test_context_override_is_bounded_by_primary(self) -> None:
+        result = DirectorPatchExecutor.resolve_direct_fallback_timeout_seconds(
+            {"direct_fallback_timeout_seconds": 45.0},
+            30.0,
+        )
+        assert result == 30.0
+
+    def test_env_override(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("KERNELONE_DIRECTOR_DIRECT_FALLBACK_TIMEOUT_SECONDS", "25")
+        result = DirectorPatchExecutor.resolve_direct_fallback_timeout_seconds(None, 600.0)
+        assert result == 25.0
+
+
+# ---------------------------------------------------------------------------
+# Kernel Tool Results
+# ---------------------------------------------------------------------------
+
+
+class TestExtractKernelToolResults:
+    def test_delegates_to_normalizer(self) -> None:
+        result = DirectorPatchExecutor.extract_kernel_tool_results(
+            {
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "package.json"},
+                    }
+                ]
+            }
+        )
+        assert result == [{"tool": "write_file", "success": True, "result": {"path": "package.json"}, "error": None}]
 
 
 # ---------------------------------------------------------------------------
@@ -197,3 +243,26 @@ class TestExtractMarkdownFileBlocks:
         result = DirectorPatchExecutor._extract_markdown_file_blocks(text)
         assert len(result) == 1
         assert result[0]["replace"] == "line1\nline2\nline3"
+
+
+class TestValidateRelativePatchPath:
+    """Generated patch paths must be workspace-relative file paths."""
+
+    def test_allows_normal_relative_paths(self) -> None:
+        assert DirectorPatchExecutor._validate_relative_patch_path("src/App.tsx") is None
+        assert DirectorPatchExecutor._validate_relative_patch_path("README.md") is None
+
+    def test_rejects_prose_heading_path(self) -> None:
+        error = DirectorPatchExecutor._validate_relative_patch_path("distributable application:")
+        assert error is not None
+        assert "Invalid patch path" in error
+
+    def test_rejects_absolute_windows_path(self) -> None:
+        error = DirectorPatchExecutor._validate_relative_patch_path("C:/Users/example/file.ts")
+        assert error is not None
+        assert "Absolute patch paths" in error
+
+    def test_rejects_parent_traversal(self) -> None:
+        error = DirectorPatchExecutor._validate_relative_patch_path("../outside.ts")
+        assert error is not None
+        assert "Unsafe patch path" in error

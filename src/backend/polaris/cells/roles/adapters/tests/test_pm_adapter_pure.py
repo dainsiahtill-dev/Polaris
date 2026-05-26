@@ -107,6 +107,10 @@ class TestExtractJsonPayload:
         assert adapter._extract_json_payload("") is None
         assert adapter._extract_json_payload("   ") is None
 
+    def test_invalid_python_literal_returns_none(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        assert adapter._extract_json_payload("- 建立记账模型: 定义交易实体与校验") is None
+
 
 # ---------------------------------------------------------------------------
 # Task extraction from payload
@@ -383,11 +387,27 @@ class TestApplyMetaPlanningHints:
 
     def test_injects_before_tasks_section(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        msg = 'Header\n"tasks": [\ncontent'
+        msg = 'Header\n"tasks": [\n    {\n      "id": "TASK-1"\n    }\n  ]'
         analysis = {"recommended_strategy": "deep_decomposition", "estimated_task_count": 5}
         result = adapter._apply_meta_planning_hints(msg, analysis)
         assert "Meta-Planning" in result
         assert "deep_decomposition" in result
+        assert result.index("Meta-Planning") < result.index('"tasks": [')
+        array_prefix = result.split('"tasks": [', 1)[1].split("{", 1)[0]
+        assert "Meta-Planning" not in array_prefix
+
+    def test_injects_before_json_format_section(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = 'Header\n请仅输出 JSON，格式如下：\n{\n  "tasks": [\n    {}\n  ]\n}'
+        analysis = {"recommended_strategy": "minimal_decomposition", "estimated_task_count": 2}
+        result = adapter._apply_meta_planning_hints(msg, analysis)
+        assert result.index("Meta-Planning") < result.index("请仅输出 JSON")
+
+    def test_existing_meta_planning_returns_unchanged(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = '[Meta-Planning] Complexity: high.\n请仅输出 JSON，格式如下：\n{\n  "tasks": []\n}'
+        analysis = {"recommended_strategy": "deep_decomposition", "estimated_task_count": 6}
+        assert adapter._apply_meta_planning_hints(msg, analysis) == msg
 
     def test_no_tasks_section_returns_unchanged(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

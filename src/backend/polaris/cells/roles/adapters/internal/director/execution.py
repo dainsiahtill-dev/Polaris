@@ -15,6 +15,7 @@ from polaris.kernelone.fs.text_ops import write_text_atomic
 
 from .execution_tools import DirectorToolExecutor
 from .helpers import (
+    extract_kernel_tool_results,
     looks_like_protocol_patch_response,
 )
 
@@ -58,9 +59,40 @@ class DirectorPatchExecutor:
             return max(0.1, min(value, 900.0))
         return _DEFAULT_LLM_CALL_TIMEOUT_SECONDS
 
+    @staticmethod
+    def resolve_direct_fallback_timeout_seconds(
+        context: dict[str, Any] | None,
+        primary_timeout_seconds: float,
+    ) -> float:
+        """Resolve bounded timeout for direct text-patch fallback calls."""
+        raw_candidates: list[Any] = []
+        if isinstance(context, dict):
+            raw_candidates.append(context.get("direct_fallback_timeout_seconds"))
+            raw_candidates.append(context.get("director_direct_fallback_timeout_seconds"))
+        raw_candidates.append(os.environ.get("KERNELONE_DIRECTOR_DIRECT_FALLBACK_TIMEOUT_SECONDS"))
+
+        primary_timeout = max(0.1, float(primary_timeout_seconds or 0.0))
+        for raw in raw_candidates:
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value <= 0:
+                continue
+            return max(0.1, min(value, primary_timeout, 300.0))
+
+        return max(0.1, min(primary_timeout, 90.0))
+
     # -------------------------------------------------------------------------
     # Tool Execution (delegated to DirectorToolExecutor)
     # -------------------------------------------------------------------------
+
+    @staticmethod
+    def extract_kernel_tool_results(role_response: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract normalized tool results from a role-kernel response."""
+        return extract_kernel_tool_results(role_response)
 
     async def execute_tools(
         self,
@@ -195,9 +227,17 @@ class DirectorPatchExecutor:
             if not file_path:
                 results.append({"tool": "patch_apply", "success": False, "error": "Missing file path"})
                 continue
+            path_error = self._validate_relative_patch_path(file_path)
+            if path_error:
+                results.append({"tool": "patch_apply", "success": False, "error": path_error})
+                continue
 
             update_task_progress_fn(task_id, "executing", current_file=file_path)
-            outcome = applier.apply(operation, str(workspace_path))
+            try:
+                outcome = applier.apply(operation, str(workspace_path))
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                results.append({"tool": "patch_apply", "success": False, "error": str(exc)})
+                continue
             if outcome.success:
                 edit_type = getattr(operation, "edit_type", None)
                 if edit_type == EditType.SEARCH_REPLACE:
@@ -245,6 +285,9 @@ class DirectorPatchExecutor:
         file_path = str(patch.get("file") or "").strip()
         if not file_path:
             return {"tool": "patch_apply", "success": False, "error": "Missing file path"}
+        path_error = self._validate_relative_patch_path(file_path)
+        if path_error:
+            return {"tool": "patch_apply", "success": False, "error": path_error}
         update_task_progress_fn(task_id, "executing", current_file=file_path)
         try:
             target = (workspace_path / file_path).resolve()
@@ -279,6 +322,25 @@ class DirectorPatchExecutor:
             }
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return {"tool": "patch_apply", "success": False, "error": str(exc)}
+
+    @staticmethod
+    def _validate_relative_patch_path(file_path: str) -> str | None:
+        """Return an error string when a generated patch path is unsafe."""
+        token = str(file_path or "").strip().replace("\\", "/")
+        if not token:
+            return "Missing file path"
+        if token.endswith(":"):
+            return f"Invalid patch path: {file_path}"
+        if any(ch in token for ch in ('"', "'", "`", "<", ">", "|", "\0")):
+            return f"Invalid patch path: {file_path}"
+        if re.search(r"^[a-zA-Z]:", token):
+            return f"Absolute patch paths are not allowed: {file_path}"
+        path = Path(token)
+        if path.is_absolute() or any(part == ".." for part in path.parts):
+            return f"Unsafe patch path: {file_path}"
+        if not Path(token).suffix and any(ch.isspace() for ch in token):
+            return f"Invalid patch path: {file_path}"
+        return None
 
     @staticmethod
     def _extract_markdown_file_blocks(text: str) -> list[dict[str, Any]]:

@@ -488,6 +488,15 @@ async def test_v2_runtime_reset_tasks_success(client: AsyncClient) -> None:
                 "failed_count": 0,
             },
         ) as mock_reset,
+        patch(
+            "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
+            return_value={
+                "cleared_paths": [],
+                "failed_paths": [],
+                "cleared_count": 0,
+                "failed_count": 0,
+            },
+        ) as mock_task_reset,
     ):
         response = await client.post("/v2/runtime/reset/tasks")
         assert response.status_code == 200
@@ -506,6 +515,7 @@ async def test_v2_runtime_reset_tasks_success(client: AsyncClient) -> None:
         mock_clear_stop.assert_called_once()
         mock_clear_director_stop.assert_called_once()
         mock_reset.assert_called_once()
+        mock_task_reset.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -563,6 +573,15 @@ async def test_v2_runtime_reset_tasks_no_services_running(client: AsyncClient) -
                 "failed_count": 0,
             },
         ),
+        patch(
+            "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
+            return_value={
+                "cleared_paths": [],
+                "failed_paths": [],
+                "cleared_count": 0,
+                "failed_count": 0,
+            },
+        ),
     ):
         response = await client.post("/v2/runtime/reset/tasks")
         assert response.status_code == 200
@@ -608,6 +627,15 @@ async def test_v2_runtime_reset_tasks_services_not_found(client: AsyncClient) ->
         ),
         patch(
             "polaris.delivery.http.routers.runtime.reset_runtime_records",
+            return_value={
+                "cleared_paths": [],
+                "failed_paths": [],
+                "cleared_count": 0,
+                "failed_count": 0,
+            },
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
             return_value={
                 "cleared_paths": [],
                 "failed_paths": [],
@@ -672,6 +700,15 @@ async def test_v2_runtime_reset_tasks_prefers_active_workspace_path(
                 "failed_count": 0,
             },
         ) as mock_reset,
+        patch(
+            "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
+            return_value={
+                "cleared_paths": [],
+                "failed_paths": [],
+                "cleared_count": 0,
+                "failed_count": 0,
+            },
+        ) as mock_task_reset,
     ):
         response = await client.post("/v2/runtime/reset/tasks")
 
@@ -682,3 +719,4 @@ async def test_v2_runtime_reset_tasks_prefers_active_workspace_path(
     mock_clear_stop.assert_called_once_with("C:/Temp/Product", "C:/Ram/runtime")
     mock_clear_director_stop.assert_called_once_with("C:/Temp/Product", "C:/Ram/runtime")
     mock_reset.assert_called_once_with("C:/Temp/Product", "C:/Ram/runtime")
+    mock_task_reset.assert_called_once_with("C:/Temp/Product")

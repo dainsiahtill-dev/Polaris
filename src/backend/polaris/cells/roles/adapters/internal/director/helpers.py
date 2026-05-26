@@ -173,6 +173,12 @@ _CODE_FILE_EXTENSIONS: set[str] = {
     ".html",
     ".css",
     ".scss",
+    ".json",
+    ".cjs",
+    ".mjs",
+    ".yaml",
+    ".yml",
+    ".toml",
     ".vue",
     ".svelte",
     ".md",
@@ -251,7 +257,15 @@ def is_timeout_failure(error_text: str) -> bool:
 
 def has_successful_write_tool(tool_results: list[dict[str, Any]]) -> bool:
     """Check if any tool result indicates a successful write operation."""
-    write_tools = {"write_file", "edit_file", "patch_apply"}
+    write_tools = {
+        "append_to_file",
+        "edit_blocks",
+        "edit_file",
+        "patch_apply",
+        "precision_edit",
+        "repo_apply_diff",
+        "write_file",
+    }
     for item in tool_results:
         if not isinstance(item, dict):
             continue

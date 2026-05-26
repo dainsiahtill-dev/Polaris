@@ -15,6 +15,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRunService,
     FactoryRunStatus,
+    OrchestrationStageExecutor,
     StageResult,
 )
 from polaris.cells.factory.pipeline.public.types import FactoryStartRequest
@@ -33,6 +34,15 @@ class FakeStageExecutor:
             output=f"{stage} completed",
             artifacts=[f"artifacts/{stage}.json"],
         )
+
+
+def test_orchestration_stage_executor_maps_docs_artifacts_to_workspace_prefix(tmp_path: Path) -> None:
+    executor = OrchestrationStageExecutor(tmp_path)
+
+    resolved = executor._artifact_path("docs/plan.md")
+    expected = Path(resolve_logical_path(str(tmp_path), "workspace/docs/plan.md")).resolve()
+
+    assert resolved == expected
 
 
 class LoopingStageExecutor:
@@ -126,6 +136,7 @@ def client(temp_workspace: Path, service: FactoryRunService, monkeypatch: pytest
     monkeypatch.setenv("KERNELONE_TOKEN", test_token)
     app = create_app(Settings(workspace=temp_workspace))
     monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+    monkeypatch.setattr(factory_router_module, "ensure_required_roles_ready", lambda *args, **kwargs: None)
 
     with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as test_client:
         yield test_client

@@ -67,7 +67,8 @@ class QAAdapter(BaseRoleAdapter):
 
         raw_content = ""
         try:
-            review_result = self._run_static_review(target)
+            run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
+            review_result = self._run_static_review(target, run_id=run_id)
             message = self._build_qa_message(review_type, target, review_result=review_result)
             settings = get_settings()
             response = await generate_role_response(
@@ -112,7 +113,8 @@ class QAAdapter(BaseRoleAdapter):
                 "content_length": len(raw_content),
             }
         except (RuntimeError, ValueError) as exc:
-            fallback_review = self._run_static_review(target)
+            run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
+            fallback_review = self._run_static_review(target, run_id=run_id)
             fallback_review["critical_issues"] = self._dedupe_list(
                 [*list(fallback_review.get("critical_issues") or []), "qa_runtime_exception"]
             )
@@ -296,7 +298,7 @@ class QAAdapter(BaseRoleAdapter):
     def _safe_int(value: Any, default: int = 0) -> int:
         try:
             return int(value)
-        except (RuntimeError, ValueError):
+        except (RuntimeError, TypeError, ValueError):
             return int(default)
 
     @staticmethod
@@ -314,7 +316,7 @@ class QAAdapter(BaseRoleAdapter):
             value = _DEFAULT_DIRECTOR_TASK_REWORK_MAX_RETRIES
         return max(1, min(value, 20))
 
-    def _run_static_review(self, target: str) -> dict[str, Any]:
+    def _run_static_review(self, target: str, *, run_id: str = "") -> dict[str, Any]:
         """Run deterministic workspace checks."""
         workspace = Path(self.workspace).resolve()
         code_file_count = 0
@@ -347,7 +349,7 @@ class QAAdapter(BaseRoleAdapter):
                 test_file_count += 1
 
             for pattern in _PLACEHOLDER_PATTERNS:
-                if pattern.search(content):
+                if _has_unfinished_placeholder_match(content, pattern):
                     placeholder_hits.append(f"{rel_path}:{pattern.pattern}")
                     break
 
@@ -378,7 +380,7 @@ class QAAdapter(BaseRoleAdapter):
             warnings.append("unreadable_code_files")
             evidence.extend([f"unreadable={item}" for item in unreadable_files[:8]])
 
-        runtime_signals = self._load_runtime_stage_signals()
+        runtime_signals = self._load_runtime_stage_signals(run_id=run_id)
         for signal in runtime_signals[:40]:
             code = str(signal.get("code") or "").strip() or "unknown_signal"
             severity = str(signal.get("severity") or "").strip().lower() or "unknown"
@@ -711,8 +713,9 @@ class QAAdapter(BaseRoleAdapter):
             unique.append(token)
         return unique[:12]
 
-    def _load_runtime_stage_signals(self) -> list[dict[str, Any]]:
+    def _load_runtime_stage_signals(self, *, run_id: str = "") -> list[dict[str, Any]]:
         signals: list[dict[str, Any]] = []
+        current_run_id = str(run_id or "").strip()
         signal_dir = Path(resolve_runtime_path(self.workspace, "runtime/signals"))
         if not signal_dir.exists() or not signal_dir.is_dir():
             return signals
@@ -727,9 +730,16 @@ class QAAdapter(BaseRoleAdapter):
             if not isinstance(rows, list):
                 continue
             payload_run_id = str(payload.get("run_id") or payload.get("factory_run_id") or "").strip()
+            if current_run_id and payload_run_id and payload_run_id != current_run_id:
+                continue
             for item in rows:
                 if not isinstance(item, dict):
                     continue
+                if current_run_id:
+                    row_current_run_id = str(item.get("run_id") or item.get("factory_run_id") or "").strip()
+                    row_effective_run_id = row_current_run_id or payload_run_id
+                    if row_effective_run_id and row_effective_run_id != current_run_id:
+                        continue
                 if payload_run_id:
                     row_run_id = str(item.get("run_id") or item.get("factory_run_id") or "").strip()
                     if row_run_id and row_run_id != payload_run_id:
@@ -1066,3 +1076,24 @@ class QAAdapter(BaseRoleAdapter):
                 "current_tests": current_test_count,
             },
         }
+
+
+def _has_unfinished_placeholder_match(content: str, pattern: re.Pattern[str]) -> bool:
+    """Return whether placeholder-like text indicates unfinished implementation.
+
+    A JSX/HTML ``placeholder=`` attribute is normal product UI copy, not an
+    unfinished-code marker. Other markers such as TODO/FIXME/stub remain strict.
+    """
+    if pattern.pattern != r"\bplaceholder\b":
+        return bool(pattern.search(content))
+
+    for match in pattern.finditer(content):
+        line_start = content.rfind("\n", 0, match.start()) + 1
+        line_end = content.find("\n", match.end())
+        if line_end < 0:
+            line_end = len(content)
+        line = content[line_start:line_end]
+        if re.search(r"\bplaceholder\s*=", line, flags=re.IGNORECASE):
+            continue
+        return True
+    return False

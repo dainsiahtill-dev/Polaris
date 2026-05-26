@@ -169,8 +169,8 @@ def _make_valid_arch_md() -> str:
 
 
 @pytest.mark.asyncio
-async def test_execute_blocks_empty_docs_and_avoids_overwrite(tmp_path, monkeypatch):
-    """Test execute when LLM returns TOOL_CALL (indicating role_tool_rounds_exhausted)."""
+async def test_execute_synthesizes_docs_when_tool_rounds_exhausted(tmp_path, monkeypatch):
+    """Test execute when LLM returns TOOL_CALL and force finalize stays weak."""
     adapter = ArchitectAdapter(workspace=str(tmp_path))
 
     mock_response = {
@@ -194,12 +194,11 @@ async def test_execute_blocks_empty_docs_and_avoids_overwrite(tmp_path, monkeypa
         context={},
     )
 
-    assert result.get("success") is False
-    assert str(result.get("error") or "").startswith("architect_docs_quality_failed")
-    assert result.get("error_code") == "architect_docs_quality_failed"
+    assert result.get("success") is True
+    assert "architect_docs_deterministic_fallback" in result.get("quality_signals", [])
 
     docs_root = resolve_workspace_persistent_path(str(tmp_path), "workspace/docs")
-    assert not (Path(docs_root) / "design.md").exists()
+    assert (Path(docs_root) / "design.md").exists()
 
 
 @pytest.mark.asyncio
@@ -248,8 +247,8 @@ async def test_execute_force_finalize_when_tool_rounds_exhausted(tmp_path, monke
 
 
 @pytest.mark.asyncio
-async def test_execute_blocks_truncated_json_docs_and_avoids_overwrite(tmp_path, monkeypatch):
-    """Test execute when LLM returns truncated JSON."""
+async def test_execute_synthesizes_docs_when_truncated_json_repair_stays_weak(tmp_path, monkeypatch):
+    """Test execute when LLM returns weak truncated JSON."""
     adapter = ArchitectAdapter(workspace=str(tmp_path))
 
     async def mock_generate_role_response(*, workspace, settings, role, message, context, validate_output, max_retries):
@@ -273,11 +272,10 @@ async def test_execute_blocks_truncated_json_docs_and_avoids_overwrite(tmp_path,
         context={},
     )
 
-    # Truncated JSON should fail quality check
-    assert result.get("success") is False
-    assert result.get("error_code") == "architect_docs_quality_failed"
+    assert result.get("success") is True
+    assert "architect_docs_deterministic_fallback" in result.get("quality_signals", [])
     docs_root = resolve_workspace_persistent_path(str(tmp_path), "workspace/docs")
-    assert not (Path(docs_root) / "plan.md").exists()
+    assert (Path(docs_root) / "plan.md").exists()
 
 
 @pytest.mark.asyncio

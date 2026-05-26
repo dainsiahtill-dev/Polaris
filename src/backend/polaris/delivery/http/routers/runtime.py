@@ -9,6 +9,7 @@ from polaris.cells.runtime.state_owner.public.service import (
     clear_runtime_scope,
     reset_runtime_records,
 )
+from polaris.cells.runtime.task_runtime.public.service import reset_runtime_task_records
 from polaris.cells.storage.layout.public import polaris_home
 from polaris.delivery.http.schemas.common import (
     RuntimeClearResponse,
@@ -37,6 +38,28 @@ from ._shared import active_workspace_value, get_state, require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _merge_reset_results(*results: dict[str, object]) -> dict[str, object]:
+    cleared_paths: list[str] = []
+    failed_paths: list[str] = []
+    for result in results:
+        raw_cleared = result.get("cleared_paths", [])
+        raw_failed = result.get("failed_paths", [])
+        if isinstance(raw_cleared, list):
+            cleared_paths.extend(str(path) for path in raw_cleared)
+        if isinstance(raw_failed, list):
+            failed_paths.extend(str(path) for path in raw_failed)
+
+    unique_cleared = sorted(set(cleared_paths))
+    unique_failed = sorted({path for path in failed_paths if path not in set(unique_cleared)})
+    return {
+        "cleared_paths": unique_cleared,
+        "failed_paths": unique_failed,
+        "cleared_count": len(unique_cleared),
+        "failed_count": len(unique_failed),
+    }
+
 
 _STORAGE_CLASSIFICATION: dict[str, dict[str, Any]] = {
     "global_config": {
@@ -345,7 +368,9 @@ async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
     clear_stop_flag(workspace, cache_root)
     clear_director_stop_flag(workspace, cache_root)
 
-    result = reset_runtime_records(workspace, cache_root)
+    state_reset_result = reset_runtime_records(workspace, cache_root)
+    task_runtime_reset_result = reset_runtime_task_records(workspace)
+    result = _merge_reset_results(state_reset_result, task_runtime_reset_result)
     state.last_pm_payload = None
 
     return {
@@ -355,6 +380,8 @@ async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
         "director_running": director_running,
         "director_external_pid": director_external_pid,
         "director_external_terminated": director_external_terminated,
+        "state_reset": state_reset_result,
+        "task_runtime_reset": task_runtime_reset_result,
         **result,
     }
 

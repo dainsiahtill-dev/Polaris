@@ -222,10 +222,7 @@ def _resolve_index_paths(workspace: Any) -> list[str]:
     if workspace_path is None:
         workspace_path = os.environ.get("KERNELONE_WORKSPACE", "").strip() or None
     if workspace_path:
-        candidates = [
-            _workspace_index_path(workspace_path),
-            _global_index_path(workspace_path),
-        ]
+        candidates = [_workspace_index_path(workspace_path)]
     else:
         candidates = [
             _global_index_path(workspace_path),

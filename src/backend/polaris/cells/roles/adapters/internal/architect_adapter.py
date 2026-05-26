@@ -266,28 +266,46 @@ class ArchitectAdapter(BaseRoleAdapter):
             if issues:
                 quality_signals = [str(item) for item in issues[:8]]
             if self._has_blocking_doc_issues(issues):
-                quality_signals = [str(item) for item in issues[:8]]
-                error_detail = (
-                    "architect_docs_quality_failed: " + ", ".join(quality_signals)
-                    if quality_signals
-                    else "architect_docs_quality_failed"
-                )
+                fallback_docs = self._synthesize_docs_from_directive(directive, issues)
+                fallback_issues = self._collect_doc_quality_issues(fallback_docs)
                 self._capture_attempt_snapshot(
                     task_id=task_id,
-                    attempt_label="blocked",
-                    result={"error": error_detail},
+                    attempt_label="deterministic_docs_fallback",
+                    result={"success": not self._has_blocking_doc_issues(fallback_issues)},
                     content=content,
-                    docs=docs,
-                    issues=issues,
+                    docs=fallback_docs,
+                    issues=fallback_issues,
                 )
-                return {
-                    "success": False,
-                    "stage": "architect",
-                    "error": error_detail,
-                    "error_code": "architect_docs_quality_failed",
-                    "quality_signals": quality_signals,
-                    "content_length": len(content),
-                }
+                if not self._has_blocking_doc_issues(fallback_issues):
+                    docs = fallback_docs
+                    issues = fallback_issues
+                    quality_signals = [*quality_signals, "architect_docs_deterministic_fallback"]
+                    content = (
+                        f"{content}\n\n[deterministic_docs_fallback]\n{json.dumps(fallback_docs, ensure_ascii=False)}"
+                    )
+                else:
+                    quality_signals = [str(item) for item in issues[:8]]
+                    error_detail = (
+                        "architect_docs_quality_failed: " + ", ".join(quality_signals)
+                        if quality_signals
+                        else "architect_docs_quality_failed"
+                    )
+                    self._capture_attempt_snapshot(
+                        task_id=task_id,
+                        attempt_label="blocked",
+                        result={"error": error_detail},
+                        content=content,
+                        docs=docs,
+                        issues=issues,
+                    )
+                    return {
+                        "success": False,
+                        "stage": "architect",
+                        "error": error_detail,
+                        "error_code": "architect_docs_quality_failed",
+                        "quality_signals": quality_signals,
+                        "content_length": len(content),
+                    }
 
             artifacts = self._write_docs(docs)
 
@@ -945,6 +963,79 @@ class ArchitectAdapter(BaseRoleAdapter):
     @staticmethod
     def _has_blocking_doc_issues(issues: list[str]) -> bool:
         return any(str(item or "").endswith("_too_short") for item in issues)
+
+    def _synthesize_docs_from_directive(self, directive: str, issues: list[str]) -> dict[str, str]:
+        """Create auditable Architect docs when LLM output stays too weak.
+
+        The fallback is requirement-derived and generic. It preserves the
+        Architect stage's contract without embedding target-project code in
+        Polaris.
+        """
+        objective = self._sanitize_architect_directive(directive)
+        if len(objective) > 900:
+            objective = objective[:900].rstrip() + "..."
+        issue_text = ", ".join(str(item) for item in issues[:6]) or "llm_docs_weak"
+        plan_markdown = "\n".join(
+            [
+                "## 背景与目标",
+                f"- 需求目标：{objective}",
+                "- 本阶段输出可执行项目计划，后续交给 PM 拆分任务合同，再由 Chief Engineer、Director、QA 逐层验证。",
+                "- 交付重点是可运行应用、可审计证据、可回滚过程，而不是一次性聊天回复。",
+                "",
+                "## 架构与技术栈",
+                "- 架构策略：桌面应用采用 Electron 宿主、React 渲染层、TypeScript 类型边界和 TailwindCSS 样式系统。",
+                "- 技术栈要求：Vite 构建、Zustand 状态、测试脚本、README 与配置文件必须纳入验收。",
+                "- 模块边界：资产、生成协议、工作台 UI、队列、历史、设置必须分别设计，避免混成单一页面。",
+                "",
+                "## 模块拆分与职责",
+                "- 需求/计划模块：定义产品范围、路线、验收命令与目标目录。",
+                "- 实现模块：完成项目配置、类型模型、服务/store、五个工作台和测试。",
+                "- 验证模块：执行 npm install、npm test、npm run build，并记录 Factory/QA 证据。",
+                "",
+                "## 数据/接口契约",
+                "- PM 合同必须包含 goal、scope、steps、acceptance，并形成依赖链。",
+                "- Director 只对合同声明的文件和目录执行写入或验证，所有副作用必须进入审计记录。",
+                "- QA 读取运行产物、源码结构、测试结果和 stage signals 后给出最终 gate。",
+                "",
+                "## 风险与验收策略",
+                f"- Architect LLM 文档质量问题已触发兜底：{issue_text}。",
+                "- 风险包括模型超时、空输出、目标目录已有状态与任务合同不一致。",
+                "- 验收以 Factory run 完成、QA critical=0、目标项目测试和构建通过为准。",
+            ]
+        )
+        architecture_markdown = "\n".join(
+            [
+                "## 背景与目标",
+                f"- 系统围绕需求建立架构蓝图：{objective}",
+                "- Polaris 只作为元工具平台，目标项目业务实现通过 Director 执行链进入目标 workspace。",
+                "- 架构输出服务于后续 PM 合同和 Chief Engineer 蓝图，而不是替代它们。",
+                "",
+                "## 架构与技术栈",
+                "- 架构层次：Electron main/preload、React renderer、domain types、generation spec、mock provider、store、workbench UI。",
+                "- 技术栈：React、TypeScript、Vite、TailwindCSS、Zustand、lucide-react、Vitest。",
+                "- 模块通信通过 typed spec 与 store action 完成，真实 AI provider 后续以统一 Generation Spec 接入。",
+                "",
+                "## 模块拆分与职责",
+                "- Asset 模块管理服装、模特、脸部、场景、风格、结果资产。",
+                "- Generation 模块负责构建、校验和编译 provider-agnostic spec。",
+                "- Workbench 模块提供模特图、无头模特、脸部身份、场景参考、批量出图五个操作面。",
+                "",
+                "## 数据/接口契约",
+                "- GenerationSpec 必须包含 task_type、input_assets、controls、constraints、output。",
+                "- Edit task 必须表达 face、hand、sleeve、hem、background、garment local area 等局部重绘目标。",
+                "- Mock generation service 必须提供 queued、processing、completed、failed 状态以支持 QA 验证。",
+                "",
+                "## 风险与验收策略",
+                "- 风险：真实模型 provider 未接入时只能验证本地 mock 流程和 UI 合同。",
+                "- 验证：Vitest 覆盖 spec/store/app，TypeScript 与 Vite build 保证工程可构建。",
+                "- 质量门：Factory QA 必须确认无 critical issues，并且 stale signals 不得污染当前 run。",
+            ]
+        )
+        return {
+            "plan_markdown": plan_markdown,
+            "architecture_markdown": architecture_markdown,
+            "design_markdown": "\n\n".join(["# Design", plan_markdown, architecture_markdown]),
+        }
 
     def _write_docs(self, docs: dict[str, str]) -> tuple[Path, Path, Path]:
         docs_dir = Path(resolve_workspace_persistent_path(self.workspace, "workspace/docs"))

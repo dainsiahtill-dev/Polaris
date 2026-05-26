@@ -14,7 +14,13 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _build_existing_workspace_task_evidence,
+    _director_direct_text_patch_only_enabled,
+    _director_existing_scope_preflight_enabled,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -153,7 +159,7 @@ class TestBuildDirectorMessage:
         adapter = _make_adapter(tmp_path)
         msg = adapter._build_director_message({"subject": "Fix login", "description": "Bug in auth"})
         assert "任务: Fix login" in msg
-        assert "PATCH_FILE" in msg
+        assert "文本文件块格式" in msg
 
     def test_sanitizes_description(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -166,6 +172,196 @@ class TestBuildDirectorMessage:
         # The line "描述: " with empty content should still appear because implementation
         # does not filter it out; we just assert no crash.
         assert "任务: T" in msg
+
+    def test_uses_real_scope_instead_of_placeholder_path(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_director_message(
+            {
+                "subject": "Scaffold app",
+                "metadata": {
+                    "goal": "Create a Vite app",
+                    "scope": "package.json, src/main.tsx",
+                    "steps": ["Create package manifest"],
+                    "acceptance": ["npm test passes"],
+                },
+            }
+        )
+        assert "范围: package.json, src/main.tsx" in msg
+        assert "- Create package manifest" in msg
+        assert "- npm test passes" in msg
+        assert "path/to/file.py" not in msg
+
+
+class TestDirectorFailureClosure:
+    """Runtime failures must fail the claimed task instead of leaving it running."""
+
+    def test_direct_text_patch_flag_resolves_from_context(self, tmp_path: Any) -> None:
+        del tmp_path
+        assert _director_direct_text_patch_only_enabled({"director_direct_text_patch_only": "true"}) is True
+        assert _director_direct_text_patch_only_enabled({"director_direct_text_patch_only": "0"}) is False
+
+    def test_existing_scope_preflight_defaults_enabled_and_can_disable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("KERNELONE_DIRECTOR_EXISTING_SCOPE_PREFLIGHT", raising=False)
+        assert _director_existing_scope_preflight_enabled({}) is True
+        assert _director_existing_scope_preflight_enabled({"director_existing_scope_preflight": "off"}) is False
+
+    @pytest.mark.asyncio
+    async def test_role_dialogue_runtime_error_returns_failed_payload(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+
+        async def _boom_dialogue(message: str, *, context: dict[str, Any] | None) -> dict[str, Any]:
+            del message, context
+            raise RuntimeError("kernel contract retry failed")
+
+        adapter._invoke_role_dialogue = _boom_dialogue  # type: ignore[method-assign]
+
+        result = await adapter._invoke_role_dialogue_with_timeout(
+            "write files",
+            context={},
+            timeout_seconds=1.0,
+            stage_label="unit",
+        )
+
+        assert result["success"] is False
+        assert "kernel contract retry failed" in str(result.get("error") or "")
+
+    @pytest.mark.asyncio
+    async def test_execute_fails_claimed_task_on_unhandled_runtime_error(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="实现核心模块",
+            description="创建文件",
+            metadata={"scope": "src/core.ts", "steps": ["写入核心文件"]},
+        )
+
+        async def _boom_call(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise RuntimeError("director kernel exploded")
+
+        adapter._invoke_role_dialogue_with_timeout = _boom_call  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-fail-closed"},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "director.runtime.exception"
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        assert str(updated.get("status") or "").lower() == "failed"
+
+    def test_text_patch_mode_requests_parseable_file_blocks(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_director_message({"subject": "T"}, text_patch_mode=True)
+        assert "当前运行时要求纯文本补丁" in msg
+        assert "relative/path.ext" in msg
+        assert "path/to/file.py" not in msg
+
+
+# ---------------------------------------------------------------------------
+# Existing workspace evidence
+# ---------------------------------------------------------------------------
+
+
+class TestExistingWorkspaceTaskEvidence:
+    """Director can verify already-materialized task scope without fresh diffs."""
+
+    def test_declared_scope_present(self) -> None:
+        task = {
+            "scope": [
+                "package.json",
+                "src/types",
+                "src/spec",
+                "src/services",
+                "src/store",
+            ]
+        }
+        current_files = {
+            "package.json": "1",
+            "src/types/domain.ts": "1",
+            "src/spec/generationSpec.ts": "1",
+            "src/services/mockGenerationService.ts": "1",
+            "src/store/useStudioStore.ts": "1",
+        }
+
+        evidence = _build_existing_workspace_task_evidence(task=task, current_files=current_files)
+
+        assert evidence["ok"] is True
+        assert evidence["reason"] == "declared_scope_present"
+        assert "src/spec" in evidence["existing_paths"]
+
+    def test_missing_or_weak_scope_is_not_enough(self) -> None:
+        task = {"scope": ["src/workbench", "src/library", "src/layouts", "src/components"]}
+        current_files = {"src/components/StudioShell.tsx": "1"}
+
+        evidence = _build_existing_workspace_task_evidence(task=task, current_files=current_files)
+
+        assert evidence["ok"] is False
+        assert evidence["reason"] == "declared_scope_incomplete"
+
+    def test_no_scope_paths_is_not_evidence(self) -> None:
+        evidence = _build_existing_workspace_task_evidence(
+            task={"goal": "Implement a UI"},
+            current_files={"src/App.tsx": "1"},
+        )
+
+        assert evidence["ok"] is False
+        assert evidence["reason"] == "no_declared_scope_paths"
+
+    def test_glob_scope_paths_match_workspace_files(self) -> None:
+        task = {
+            "metadata": {
+                "scope": [
+                    "src/**/*.test.ts",
+                    "src/**/*.test.tsx",
+                    "README.md",
+                    "tests",
+                ]
+            }
+        }
+        current_files = {
+            "src/spec/generationSpec.test.ts": "1",
+            "src/App.test.tsx": "1",
+            "README.md": "1",
+        }
+
+        evidence = _build_existing_workspace_task_evidence(task=task, current_files=current_files)
+
+        assert evidence["ok"] is True
+        assert "src/**/*.test.ts" in evidence["existing_paths"]
+        assert "README.md" in evidence["existing_paths"]
+
+    def test_materialized_orchestration_scope_markers_are_evidence(self) -> None:
+        task = {
+            "subject": (
+                "Execute PM tasks strictly in order:\n"
+                "- Project Foundation [scope: package.json, tsconfig.json, vite.config.ts, tailwind.config.js]\n"
+                "- Domain Layer [scope: src/types, src/spec, src/services, src/store]\n"
+                "- Delivery Verification [scope: tests, src/**/*.test.tsx, README.md]"
+            )
+        }
+        current_files = {
+            "package.json": "1",
+            "tsconfig.json": "1",
+            "vite.config.ts": "1",
+            "tailwind.config.js": "1",
+            "src/types/domain.ts": "1",
+            "src/spec/generationSpec.ts": "1",
+            "src/services/mockGenerationService.ts": "1",
+            "src/store/useStudioStore.ts": "1",
+            "src/App.test.tsx": "1",
+            "tests/routes/WorkbenchRoute.test.tsx": "1",
+            "README.md": "1",
+        }
+
+        evidence = _build_existing_workspace_task_evidence(task=task, current_files=current_files)
+
+        assert evidence["ok"] is True
+        assert "package.json" in evidence["existing_paths"]
+        assert "src/**/*.test.tsx" in evidence["existing_paths"]
+        assert evidence["reason"] == "declared_scope_present"
 
 
 # ---------------------------------------------------------------------------

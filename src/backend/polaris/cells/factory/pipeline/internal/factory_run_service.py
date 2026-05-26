@@ -162,7 +162,9 @@ class OrchestrationStageExecutor:
 
     def _artifact_path(self, relative_path: str) -> Path:
         rel = str(relative_path or "").replace("\\", "/").strip().lstrip("/")
-        if rel.startswith(("tasks/", "dispatch/")):
+        if rel == "docs" or rel.startswith("docs/"):
+            rel = f"workspace/{rel}"
+        elif rel.startswith(("tasks/", "dispatch/")):
             rel = f"runtime/{rel}"
         # 使用逻辑路径解析：workspace/* -> runtime/workspace/*, runtime/* -> runtime/...
         resolved = resolve_logical_path(str(self.workspace), rel)
@@ -927,7 +929,6 @@ class OrchestrationStageExecutor:
                             "round": round_index,
                         }
                     )
-                    break
 
                 if idle_rounds > idle_budget:
                     stage_signals.append(

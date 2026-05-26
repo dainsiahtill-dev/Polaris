@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import threading
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
@@ -10,6 +12,7 @@ from polaris.cells.events.fact_stream.public.service import append_fact_event
 from polaris.cells.runtime.task_runtime.internal.task_board import Task, TaskBoard, TaskStatus
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.registry import get_default_adapter
+from polaris.kernelone.storage import resolve_runtime_path
 
 from .execution_session import (
     TaskExecutionSession,
@@ -53,6 +56,55 @@ class TaskRuntimeService:
     @property
     def board(self) -> TaskBoard:
         return self._board
+
+    def reset_records(self) -> dict[str, object]:
+        """Clear canonical taskboard rows and execution sessions.
+
+        This intentionally lives in the runtime.task_runtime cell because
+        ``runtime/tasks/*`` is task-runtime-owned state. Delivery-level reset
+        orchestration may call this public capability, but other cells must not
+        delete these files directly.
+        """
+        cleared_paths: list[str] = []
+        failed_paths: list[str] = []
+
+        with self._board.transaction():
+            tasks_dir = self._board.tasks_dir
+            tasks_dir.mkdir(parents=True, exist_ok=True)
+            for child in sorted(tasks_dir.iterdir(), key=lambda item: str(item)):
+                try:
+                    if child.is_dir():
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
+                    cleared_paths.append(str(child))
+                except OSError as exc:
+                    logger.warning("Failed to reset task runtime path %s: %s", child, exc)
+                    failed_paths.append(str(child))
+
+            self._board._cache.clear()
+            with self._session_locks_meta:
+                self._session_locks.clear()
+
+        taskboard_event_path = Path(
+            resolve_runtime_path(self._workspace, "runtime/events/taskboard.terminal.events.jsonl")
+        )
+        if taskboard_event_path.is_file():
+            try:
+                taskboard_event_path.unlink()
+                cleared_paths.append(str(taskboard_event_path))
+            except OSError as exc:
+                logger.warning("Failed to reset taskboard event path %s: %s", taskboard_event_path, exc)
+                failed_paths.append(str(taskboard_event_path))
+
+        unique_cleared = sorted(set(cleared_paths))
+        unique_failed = sorted({path for path in failed_paths if path not in set(unique_cleared)})
+        return {
+            "cleared_paths": unique_cleared,
+            "failed_paths": unique_failed,
+            "cleared_count": len(unique_cleared),
+            "failed_count": len(unique_failed),
+        }
 
     def __getattr__(self, name: str) -> Any:
         """Temporary compatibility proxy for ongoing migration call-sites."""
@@ -863,4 +915,9 @@ class TaskRuntimeService:
         return metadata
 
 
-__all__ = ["TaskRuntimeService"]
+def reset_runtime_task_records(workspace: str) -> dict[str, object]:
+    """Clear runtime taskboard state through the owning cell service."""
+    return TaskRuntimeService(workspace).reset_records()
+
+
+__all__ = ["TaskRuntimeService", "reset_runtime_task_records"]

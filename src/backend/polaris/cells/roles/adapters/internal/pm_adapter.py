@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
+import os
 import re
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -192,22 +194,6 @@ class PMAdapter(BaseRoleAdapter):
             if directive_analysis:
                 message = self._apply_meta_planning_hints(message, directive_analysis)
 
-            settings = get_settings()
-            response = await generate_role_response(
-                workspace=self.workspace,
-                settings=settings,
-                role=self.role_id,
-                message=message,
-                context=None,
-                validate_output=False,
-                max_retries=1,
-            )
-            raw_output = str(response.get("response") or "") if isinstance(response, dict) else str(response or "")
-            contracts = self._extract_task_contracts(
-                raw_output,
-                directive=directive,
-                projection_hint=projection_hint,
-            )
             normalized_contracts: list[dict[str, Any]] = []
             quality: dict[str, Any] = {
                 "ok": False,
@@ -216,37 +202,54 @@ class PMAdapter(BaseRoleAdapter):
                 "warnings": [],
                 "summary": "pm_contracts_missing_on_first_attempt",
             }
-            if contracts:
-                normalized_contracts, quality = self._evaluate_contract_quality(contracts)
-            else:
+            raw_output = ""
+            using_deterministic_contracts = False
+
+            if self._deterministic_pm_contracts_enabled(input_data=input_data, context=context):
+                using_deterministic_contracts = True
+                contracts = self._synthesize_task_contracts_from_directive(
+                    directive=directive,
+                    projection_hint=projection_hint,
+                )
+                raw_output = json.dumps({"tasks": contracts}, ensure_ascii=False, indent=2)
                 quality_signals.append(
                     {
-                        "code": "pm.contracts.unparseable_first_attempt",
+                        "code": "pm.contracts.deterministic_fallback",
                         "severity": "warning",
-                        "detail": "PM first attempt returned no parseable task contracts",
+                        "detail": "PM LLM invocation bypassed by deterministic planning fallback",
                     }
                 )
+                normalized_contracts, quality = self._evaluate_contract_quality(contracts)
+            else:
+                response = await self._call_role_llm(message, context={"mode": "pm_task_contract"})
+                raw_output = self._response_text(response)
+                contracts = self._extract_task_contracts(
+                    raw_output,
+                    directive=directive,
+                    projection_hint=projection_hint,
+                )
+                if contracts:
+                    normalized_contracts, quality = self._evaluate_contract_quality(contracts)
+                else:
+                    quality_signals.append(
+                        {
+                            "code": "pm.contracts.unparseable_first_attempt",
+                            "severity": "warning",
+                            "detail": "PM first attempt returned no parseable task contracts",
+                        }
+                    )
 
-            if (not contracts) or (not quality.get("ok", False) or int(quality.get("score") or 0) < 80):
+            if not using_deterministic_contracts and (
+                (not contracts) or (not quality.get("ok", False) or int(quality.get("score") or 0) < 80)
+            ):
                 retry_prompt = self._build_pm_retry_message(
                     directive=directive,
                     quality=quality,
                     previous_output=raw_output,
                     projection_hint=projection_hint,
                 )
-                settings = get_settings()
-                response = await generate_role_response(
-                    workspace=self.workspace,
-                    settings=settings,
-                    role=self.role_id,
-                    message=retry_prompt,
-                    context=None,
-                    validate_output=False,
-                    max_retries=1,
-                )
-                retry_output = (
-                    str(response.get("response") or "") if isinstance(response, dict) else str(response or "")
-                )
+                response = await self._call_role_llm(retry_prompt, context={"mode": "pm_task_contract_retry"})
+                retry_output = self._response_text(response)
                 contracts = self._extract_task_contracts(
                     retry_output,
                     directive=directive,
@@ -417,6 +420,72 @@ class PMAdapter(BaseRoleAdapter):
                 "artifacts": error_artifacts,
                 "error": str(e),
             }
+
+    async def _call_role_llm(self, message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call PM planning through the direct runtime provider path.
+
+        PM task contracts are data, not chat/tool turns. The role chat kernel
+        can wrap responses with Thinking/Action sections, which breaks the
+        contract parser before it sees a JSON object.
+        """
+        del context
+        return await asyncio.to_thread(self._call_role_llm_sync, message)
+
+    def _call_role_llm_sync(self, message: str) -> dict[str, Any]:
+        from polaris.infrastructure.llm.provider_runtime_adapter import AppLLMRuntimeAdapter
+        from polaris.kernelone.llm.runtime import invoke_role_runtime_provider
+
+        timeout = int(getattr(get_settings(), "llm_timeout", 0) or 0) or 360
+        result = invoke_role_runtime_provider(
+            role=self.role_id,
+            workspace=self.workspace,
+            prompt=message,
+            fallback_model="",
+            timeout=timeout,
+            adapter=AppLLMRuntimeAdapter(),
+            blocked_provider_types={
+                "",
+                "codex",
+                "codex_cli",
+                "codex_sdk",
+            },
+        )
+        if not result.attempted or not result.ok:
+            error_message = str(result.error or "").strip() or "runtime_provider_unavailable"
+            if not result.attempted:
+                raise RuntimeError(f"PM runtime provider binding is not configured: {error_message}")
+            raise RuntimeError(f"PM runtime provider invocation failed: {error_message}")
+
+        output = str(result.output or "")
+        return {
+            "content": output,
+            "response": output,
+            "success": True,
+            "role": self.role_id,
+            "model": result.model,
+            "provider": result.provider_id,
+        }
+
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        if isinstance(response, dict):
+            return str(response.get("response") or response.get("content") or "")
+        return str(response or "")
+
+    @staticmethod
+    def _deterministic_pm_contracts_enabled(
+        *,
+        input_data: dict[str, Any],
+        context: dict[str, Any],
+    ) -> bool:
+        raw_flag = ""
+        if isinstance(input_data, dict):
+            raw_flag = str(input_data.get("deterministic_pm_contracts") or "").strip().lower()
+        if not raw_flag and isinstance(context, dict):
+            raw_flag = str(context.get("deterministic_pm_contracts") or "").strip().lower()
+        if not raw_flag:
+            raw_flag = str(os.environ.get("POLARIS_PM_DETERMINISTIC_CONTRACTS", "")).strip().lower()
+        return raw_flag in {"1", "true", "yes", "on"}
 
     def _build_pm_message(
         self,
@@ -705,7 +774,7 @@ class PMAdapter(BaseRoleAdapter):
                     return parsed
                 try:
                     parsed = ast.literal_eval(candidate)
-                except (RuntimeError, ValueError):
+                except (RuntimeError, SyntaxError, ValueError):
                     parsed = None
                 if isinstance(parsed, (dict, list)):
                     return parsed
@@ -1117,6 +1186,9 @@ class PMAdapter(BaseRoleAdapter):
         if not directive_analysis:
             return message
 
+        if "[Meta-Planning]" in message or "[Meta-Planning Hint]" in message:
+            return message
+
         strategy = directive_analysis.get("recommended_strategy", "standard_decomposition")
         estimated = directive_analysis.get("estimated_task_count", 3)
 
@@ -1144,10 +1216,23 @@ class PMAdapter(BaseRoleAdapter):
                     "Technical directive detected. Ensure acceptance criteria include verifiable build/test outcomes."
                 )
 
-        # Inject before the JSON format section
-        if '"tasks": [' in message:
-            parts = message.split('"tasks": [')
-            return parts[0] + '"tasks": [' + "\n".join(meta_hint_lines) + "\n" + parts[1]
+        meta_hint = "\n".join(meta_hint_lines).strip()
+
+        # Inject before the JSON format section. The previous implementation
+        # inserted hint text inside the example "tasks" array, producing an
+        # invalid JSON-shaped example for PM planning.
+        json_marker = "请仅输出 JSON"
+        if json_marker in message:
+            return message.replace(json_marker, f"{meta_hint}\n\n{json_marker}", 1)
+
+        tasks_marker = '"tasks": ['
+        if tasks_marker in message:
+            index = message.find(tasks_marker)
+            prefix = message[:index].rstrip()
+            suffix = message[index:]
+            if prefix:
+                return f"{prefix}\n\n{meta_hint}\n\n{suffix}"
+            return f"{meta_hint}\n\n{suffix}"
 
         return message
 
@@ -1389,6 +1474,20 @@ class PMAdapter(BaseRoleAdapter):
         keywords = self._extract_domain_keywords(directive, limit=4)
         domain = keywords[0] if keywords else self._derive_domain_token(directive)
         secondary = keywords[1] if len(keywords) > 1 else f"{domain}_feature"
+        source_metadata = {
+            "source_directive_excerpt": str(directive or "").strip()[:2400],
+            "source_directive_length": len(str(directive or "")),
+        }
+        frontend_contracts = self._synthesize_frontend_workbench_contracts(
+            directive=directive,
+            domain=domain,
+            source_metadata=source_metadata,
+        )
+        if frontend_contracts:
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(frontend_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
 
         raw_contracts: list[dict[str, Any]] = [
             {
@@ -1409,6 +1508,7 @@ class PMAdapter(BaseRoleAdapter):
                 "phase": "requirements",
                 "depends_on": [],
                 "assigned_to": "Director",
+                "metadata": dict(source_metadata),
             },
             {
                 "id": "TASK-2",
@@ -1428,6 +1528,7 @@ class PMAdapter(BaseRoleAdapter):
                 "phase": "implementation",
                 "depends_on": ["TASK-1"],
                 "assigned_to": "Director",
+                "metadata": dict(source_metadata),
             },
             {
                 "id": "TASK-3",
@@ -1447,11 +1548,150 @@ class PMAdapter(BaseRoleAdapter):
                 "phase": "verification",
                 "depends_on": ["TASK-2"],
                 "assigned_to": "Director",
+                "metadata": dict(source_metadata),
             },
         ]
 
         contracts = [self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(raw_contracts)]
         return [item for item in contracts if isinstance(item, dict)]
+
+    def _synthesize_frontend_workbench_contracts(
+        self,
+        *,
+        directive: str,
+        domain: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Build execution-ready contracts for desktop/frontend workbench directives."""
+        text = str(directive or "").lower()
+        frontend_hits = sum(
+            1
+            for token in (
+                "react",
+                "electron",
+                "vite",
+                "tailwind",
+                "typescript",
+                "zustand",
+                "workbench",
+                "desktop",
+            )
+            if token in text
+        )
+        route_hits = re.findall(r"/(?:workbench|library|history|settings)/[a-z0-9-]+", str(directive or ""))
+        if frontend_hits < 3 and len(route_hits) < 3:
+            return []
+
+        route_summary = ", ".join(sorted(set(route_hits))[:12])
+        if not route_summary:
+            route_summary = "/workbench/*, /library/*, /history/jobs, /settings/models"
+
+        return [
+            {
+                "id": "TASK-1",
+                "title": "Project Foundation & Toolchain Setup",
+                "goal": "Create a runnable desktop frontend project scaffold with strict TypeScript, Electron, Vite, TailwindCSS, and test tooling.",
+                "description": "Establish buildable project foundations before domain UI work begins.",
+                "scope": [
+                    "package.json",
+                    "tsconfig.json",
+                    "vite.config.ts",
+                    "tailwind.config.js",
+                    "postcss.config.js",
+                    "electron/main.ts",
+                    "electron/preload.ts",
+                    "src/main.tsx",
+                    "src/index.css",
+                    "README.md",
+                ],
+                "steps": [
+                    "Create package scripts for dev, test, build, and Electron build flows",
+                    "Configure strict TypeScript, Vite React, TailwindCSS, and Electron preload/main entries",
+                    "Create renderer entrypoint and base CSS tokens for the workbench UI",
+                    "Document UTF-8 run, test, and build commands in README",
+                ],
+                "acceptance": [
+                    "npm install completes without dependency resolution errors",
+                    "npm test runs at least one passing Vitest test",
+                    "npm run build succeeds and emits production renderer assets",
+                    "Project contains non-empty Electron, Vite, Tailwind, TypeScript, and README files",
+                ],
+                "phase": "requirements",
+                "depends_on": [],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-2",
+                "title": "Asset Model & Generation Spec Layer",
+                "goal": "Implement typed asset entities, provider-agnostic generation specs, local edit tasks, and a mock generation service.",
+                "description": "Represent the requested creative workflow as data and service contracts before UI screens consume it.",
+                "scope": ["src/types", "src/spec", "src/services", "src/store", "tests/spec"],
+                "steps": [
+                    "Define asset, reference role, face identity, template, result, and local edit task types",
+                    "Implement GenerationSpec builder and validator with task-type specific required inputs",
+                    "Implement deterministic mock generation provider with queue, progress, and mock result images",
+                    "Add Zustand store slices for projects, assets, identities, templates, jobs, and active workbench state",
+                ],
+                "acceptance": [
+                    "GenerationSpec builder creates immutable specs for model, headless, face-lab, scene, and batch tasks",
+                    "Validation reports explicit errors for missing garments, duplicate reference roles, and invalid dimensions",
+                    "Mock generation service exposes queued, processing, completed, and failed job states",
+                    "Unit tests cover spec validation and store/service state transitions",
+                ],
+                "phase": "implementation",
+                "depends_on": ["TASK-1"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-3",
+                "title": "Workbench Screens & Layered UI Implementation",
+                "goal": "Build the route-driven creative workbench UI with layered asset rail, canvas, parameter panel, and queue/history strip.",
+                "description": f"Implement task-type-driven routes and controls: {route_summary}.",
+                "scope": ["src/App.tsx", "src/layouts", "src/workbench", "src/components", "src/library"],
+                "steps": [
+                    "Implement app routing, navigation rail, workbench shell, responsive panels, and route fallback",
+                    "Build model, headless, face-lab, scene/reference, and batch workbench screens with functional controls",
+                    "Build library/history/settings screens for assets, model identities, templates, jobs, and model settings",
+                    "Wire submit actions to GenerationSpec builder, store state, and mock generation queue",
+                ],
+                "acceptance": [
+                    "All configured workbench, library, history, and settings routes render without runtime errors",
+                    "Main model workbench can create a spec with a garment input and submit a mock job",
+                    "Face Lab saves a reusable identity card with multi-angle preview data",
+                    "Scene workbench prevents duplicate garment-fact reference roles",
+                    "No emoji icons are used; action icons come from the configured icon library",
+                ],
+                "phase": "implementation",
+                "depends_on": ["TASK-2"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-4",
+                "title": "Delivery Tests, Build Verification & Documentation",
+                "goal": "Validate the desktop workbench end to end and record reproducible delivery evidence.",
+                "description": "Add tests and verification scripts for the generated project baseline.",
+                "scope": ["tests", "src/**/*.test.ts", "src/**/*.test.tsx", "README.md", "vitest.config.ts"],
+                "steps": [
+                    "Add unit tests for GenerationSpec, validation rules, store actions, and batch CSV parsing",
+                    "Add route smoke tests for the main workbench and library/settings screens",
+                    "Run npm test and npm run build and capture expected commands in README",
+                    "Ensure the project meets file count, line count, module, config, and test acceptance targets",
+                ],
+                "acceptance": [
+                    "npm test returns PASS",
+                    "npm run build returns PASS",
+                    "At least 10 source/config/test files and 500+ lines exist",
+                    "README explains project purpose, install, dev, test, and build commands in UTF-8 text",
+                ],
+                "phase": "verification",
+                "depends_on": ["TASK-3"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+        ]
 
     def _evaluate_contract_quality(
         self,

@@ -7,7 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fnmatch
 import logging
+import os
+import re
+from pathlib import Path
 from typing import Any
 
 from .helpers import (
@@ -192,20 +196,48 @@ async def execute_director_task(
         decision_signals: list[dict[str, Any]] = []
 
         # 执行流程...
-        return await _execute_standard_llm_flow(
-            adapter,
-            task,
-            target_task_id,
-            run_id,
-            context,
-            execution_backend_request,
-            board_claim_applied,
-            task_claim_session_id,
-            llm_call_timeout,
-            decision_signals,
-            baseline_files,
-            selected_subject,
-        )
+        try:
+            return await _execute_standard_llm_flow(
+                adapter,
+                task,
+                target_task_id,
+                run_id,
+                context,
+                execution_backend_request,
+                board_claim_applied,
+                task_claim_session_id,
+                llm_call_timeout,
+                decision_signals,
+                baseline_files,
+                selected_subject,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            error = f"director_runtime_exception:{exc}"
+            if board_claim_applied and task_claim_session_id:
+                adapter.task_runtime.fail_execution(
+                    target_task_id,
+                    session_id=task_claim_session_id,
+                    error=error,
+                    metadata={"adapter_phase": "failed", "exception_type": type(exc).__name__},
+                )
+            adapter._update_task_progress(target_task_id, "failed")
+            return {
+                "success": False,
+                "task_id": target_task_id,
+                "error": error,
+                "error_code": "director.runtime.exception",
+                "failure_stage": "director_execution",
+                "root_cause_hint": str(exc),
+                "decision_signals": [
+                    {
+                        "code": "director.runtime.exception",
+                        "severity": "error",
+                        "detail": str(exc),
+                    }
+                ],
+                "qa_required_for_final_verdict": True,
+                "artifacts": [],
+            }
 
     except asyncio.CancelledError:
         if board_claim_applied and task_claim_session_id:
@@ -368,15 +400,69 @@ async def _execute_standard_llm_flow(
     selected_subject: str,
 ) -> dict[str, Any]:
     """执行标准 LLM 流程"""
-    # 此处实现完整的 LLM 调用和工具执行逻辑
-    # 由于代码太长，这里简化实现
     message = adapter._build_director_message(task)
-    result = await adapter._invoke_role_dialogue_with_timeout(
-        message,
-        context=None,
-        timeout_seconds=llm_call_timeout,
-        stage_label="first_call",
+    preflight_existing_contract_evidence = _build_existing_workspace_task_evidence(
+        task=task,
+        current_files=baseline_files,
     )
+    if _director_existing_scope_preflight_enabled(context) and bool(preflight_existing_contract_evidence.get("ok")):
+        completion_metadata: dict[str, Any] = {
+            "adapter_result": {
+                "tools_executed": 0,
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": [],
+                "new_file_count": 0,
+                "modified_files": [],
+                "modified_file_count": 0,
+                "materialization_mode": "preflight_verified_existing_workspace_scope",
+                "existing_contract_evidence": preflight_existing_contract_evidence,
+            }
+        }
+        if board_claim_applied and task_claim_session_id:
+            adapter.task_runtime.complete_execution(
+                target_task_id,
+                session_id=task_claim_session_id,
+                result_summary=(
+                    "preflight_verified_existing_workspace_scope="
+                    f"{len(preflight_existing_contract_evidence.get('existing_paths') or [])}"
+                ),
+                metadata=completion_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "completed")
+        decision_signals.append(
+            {
+                "code": "director.existing_workspace_scope_preflight_verified",
+                "severity": "info",
+                "detail": "Declared task scope already exists in workspace before Director writes.",
+            }
+        )
+        return {
+            "success": True,
+            "task_id": target_task_id,
+            "tools_executed": 0,
+            "tool_results": [],
+            "decision_signals": decision_signals,
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": "preflight_verified_existing_workspace_scope",
+            "existing_contract_evidence": preflight_existing_contract_evidence,
+        }
+
+    if _director_direct_text_patch_only_enabled(context):
+        result = {
+            "content": "",
+            "success": False,
+            "error": "director_direct_text_patch_only",
+            "raw_response": {"direct_text_patch_only": True},
+        }
+    else:
+        result = await adapter._invoke_role_dialogue_with_timeout(
+            message,
+            context=None,
+            timeout_seconds=llm_call_timeout,
+            stage_label="first_call",
+        )
     content = result.get("content", "")
 
     # 执行工具
@@ -398,6 +484,138 @@ async def _execute_standard_llm_flow(
     ]
 
     all_affected_files = sorted(set(new_files + modified_files))
+    if not has_successful_write_tool(tool_results) or not all_affected_files:
+        direct_message = adapter._build_director_message(task, text_patch_mode=True)
+        direct_timeout = adapter._execution.resolve_direct_fallback_timeout_seconds(context, llm_call_timeout)
+        try:
+            direct_result = await asyncio.wait_for(
+                adapter._invoke_direct_runtime_provider(direct_message, timeout_seconds=direct_timeout),
+                timeout=max(0.1, direct_timeout + 1.0),
+            )
+        except asyncio.TimeoutError:
+            direct_result = {"content": "", "error": "director_direct_patch_fallback_llm_timeout"}
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            direct_result = {"content": "", "error": f"director_direct_patch_fallback_failed:{exc}"}
+        direct_content = str(direct_result.get("content") or direct_result.get("response") or "")
+        direct_tool_results = await adapter._execution.execute_tools(
+            direct_content, target_task_id, adapter._update_task_progress
+        )
+        adapter._state_tracker.append_debug_event(
+            target_task_id,
+            "direct_patch_fallback_result",
+            {
+                "timeout_seconds": direct_timeout,
+                "content_length": len(direct_content),
+                "error": str(direct_result.get("error") or "").strip(),
+                "tool_results": len(direct_tool_results),
+            },
+        )
+        if direct_tool_results:
+            tool_results.extend(direct_tool_results)
+
+        current_files = adapter._state_tracker.collect_workspace_code_files()
+        new_files = sorted(set(current_files.keys()) - set(baseline_files.keys()))
+        modified_files = [
+            rel_path
+            for rel_path, fingerprint in current_files.items()
+            if rel_path in baseline_files and baseline_files[rel_path] != fingerprint
+        ]
+        all_affected_files = sorted(set(new_files + modified_files))
+
+    existing_contract_evidence = _build_existing_workspace_task_evidence(
+        task=task,
+        current_files=current_files,
+    )
+
+    if (not has_successful_write_tool(tool_results) or not all_affected_files) and not bool(
+        existing_contract_evidence.get("ok")
+    ):
+        error = "director_no_materialized_changes"
+        completion_metadata = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": new_files[:20],
+                "new_file_count": len(new_files),
+                "modified_files": modified_files[:20],
+                "modified_file_count": len(modified_files),
+                "materialization_error": error,
+                "existing_contract_evidence": existing_contract_evidence,
+            }
+        }
+        if board_claim_applied and task_claim_session_id:
+            adapter.task_runtime.fail_execution(
+                target_task_id,
+                session_id=task_claim_session_id,
+                error=error,
+                metadata=completion_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "failed")
+        return {
+            "success": False,
+            "task_id": target_task_id,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "error": error,
+            "error_code": error,
+            "failure_stage": "director_materialization",
+            "root_cause_hint": "no_write_tools_or_no_changed_files",
+            "decision_signals": [
+                {
+                    "code": error,
+                    "severity": "error",
+                    "detail": "Director returned no successful write tool result or no workspace file changes.",
+                }
+            ],
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+        }
+
+    if not all_affected_files and bool(existing_contract_evidence.get("ok")):
+        completion_metadata = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": [],
+                "new_file_count": 0,
+                "modified_files": [],
+                "modified_file_count": 0,
+                "materialization_mode": "verified_existing_workspace_scope",
+                "existing_contract_evidence": existing_contract_evidence,
+            }
+        }
+        if board_claim_applied and task_claim_session_id:
+            adapter.task_runtime.complete_execution(
+                target_task_id,
+                session_id=task_claim_session_id,
+                result_summary=(
+                    "verified_existing_workspace_scope="
+                    f"{len(existing_contract_evidence.get('existing_paths') or [])}; "
+                    f"tools_executed={len(tool_results)}"
+                ),
+                metadata=completion_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "completed")
+        decision_signals.append(
+            {
+                "code": "director.existing_workspace_scope_verified",
+                "severity": "info",
+                "detail": "No fresh file diff was required because declared task scope already exists in workspace.",
+            }
+        )
+        return {
+            "success": True,
+            "task_id": target_task_id,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "decision_signals": decision_signals,
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": "verified_existing_workspace_scope",
+            "existing_contract_evidence": existing_contract_evidence,
+        }
 
     # 返回结果
     completion_metadata = {
@@ -431,3 +649,200 @@ async def _execute_standard_llm_flow(
         "qa_required_for_final_verdict": True,
         "artifacts": [],
     }
+
+
+def _director_direct_text_patch_only_enabled(context: dict[str, Any]) -> bool:
+    """Return whether Director should bypass role-kernel tool mode for text patches."""
+    raw = ""
+    if isinstance(context, dict):
+        raw = str(context.get("director_direct_text_patch_only") or "").strip().lower()
+    if not raw:
+        raw = str(os.environ.get("KERNELONE_DIRECTOR_DIRECT_TEXT_PATCH_ONLY", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _director_existing_scope_preflight_enabled(context: dict[str, Any]) -> bool:
+    """Return whether Director may complete task scope that already exists.
+
+    The default is enabled because QA remains the final semantic gate; this only
+    avoids expensive LLM/tool calls for already-materialized declared paths.
+    """
+    raw = ""
+    if isinstance(context, dict):
+        raw = str(context.get("director_existing_scope_preflight") or "").strip().lower()
+    if not raw:
+        raw = str(os.environ.get("KERNELONE_DIRECTOR_EXISTING_SCOPE_PREFLIGHT", "")).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _build_existing_workspace_task_evidence(
+    *,
+    task: dict[str, Any],
+    current_files: dict[str, str],
+) -> dict[str, Any]:
+    """Build generic evidence that a task's declared scope is already present.
+
+    This is intentionally scope-driven, not domain-driven: Polaris may verify an
+    already-materialized task only when the PM contract names concrete files or
+    directories that can be observed in the workspace. QA remains the final
+    semantic gate.
+    """
+    path_candidates = _extract_task_path_candidates(task)
+    if not path_candidates:
+        return {
+            "ok": False,
+            "reason": "no_declared_scope_paths",
+            "candidate_paths": [],
+            "existing_paths": [],
+            "missing_paths": [],
+        }
+
+    current = {str(path or "").replace("\\", "/").strip().lstrip("/") for path in current_files if str(path).strip()}
+    existing: list[str] = []
+    missing: list[str] = []
+    for candidate in path_candidates:
+        normalized = _normalize_declared_task_path(candidate)
+        if not normalized:
+            continue
+        if _path_candidate_exists_in_file_set(normalized, current):
+            existing.append(normalized)
+        else:
+            missing.append(normalized)
+
+    existing = _dedupe_preserve_order(existing)
+    missing = [item for item in _dedupe_preserve_order(missing) if item not in set(existing)]
+    candidate_count = len(existing) + len(missing)
+    existing_count = len(existing)
+    coverage = existing_count / max(candidate_count, 1)
+    minimum_existing = min(3, max(1, candidate_count))
+    ok = existing_count >= minimum_existing and (coverage >= 0.5 or existing_count >= 5)
+    return {
+        "ok": ok,
+        "reason": "declared_scope_present" if ok else "declared_scope_incomplete",
+        "candidate_paths": _dedupe_preserve_order([*existing, *missing])[:40],
+        "existing_paths": existing[:40],
+        "missing_paths": missing[:40],
+        "coverage": round(coverage, 3),
+    }
+
+
+def _extract_task_path_candidates(task: dict[str, Any]) -> list[str]:
+    """Extract path-like values from PM/Director task contracts."""
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    sources: list[Any] = []
+    for record in (task, metadata):
+        if not isinstance(record, dict):
+            continue
+        for key in (
+            "scope",
+            "scope_paths",
+            "target_files",
+            "files",
+            "file_paths",
+            "paths",
+            "artifacts",
+        ):
+            sources.append(record.get(key))
+        for key in ("subject", "description", "goal"):
+            value = record.get(key)
+            if isinstance(value, str):
+                sources.extend(_extract_scope_markers_from_text(value))
+
+    candidates: list[str] = []
+    for value in sources:
+        candidates.extend(_coerce_path_candidate_list(value))
+    return _dedupe_preserve_order([candidate for candidate in candidates if _looks_like_task_path_candidate(candidate)])
+
+
+_BRACKETED_SCOPE_RE = re.compile(r"\[(?:scope|范围)\s*[:：]\s*(?P<value>[^\]]+)\]", re.IGNORECASE)
+_LINE_SCOPE_RE = re.compile(r"(?im)^\s*(?:scope|范围)\s*[:：]\s*(?P<value>.+?)\s*$")
+
+
+def _extract_scope_markers_from_text(value: str) -> list[str]:
+    """Extract scope values embedded in orchestration task prose."""
+    text = str(value or "")
+    rows = [match.group("value").strip() for match in _BRACKETED_SCOPE_RE.finditer(text)]
+    rows.extend(match.group("value").strip() for match in _LINE_SCOPE_RE.finditer(text))
+    return [row for row in rows if row]
+
+
+def _coerce_path_candidate_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        rows: list[str] = []
+        for item in value:
+            rows.extend(_coerce_path_candidate_list(item))
+        return rows
+    if isinstance(value, dict):
+        rows = []
+        for key in ("path", "file", "name", "target"):
+            item = value.get(key)
+            if isinstance(item, str):
+                rows.append(item)
+        return rows
+    if isinstance(value, str):
+        return [part.strip() for part in value.replace(";", "\n").replace(",", "\n").splitlines() if part.strip()]
+    return []
+
+
+def _looks_like_task_path_candidate(value: str) -> bool:
+    token = _normalize_declared_task_path(value)
+    if not token or token.startswith("-"):
+        return False
+    if any(ch in token for ch in ("<", ">", "|")):
+        return False
+    if token in {".", "./"}:
+        return False
+    if any(ch in token for ch in ("*", "?")):
+        return "/" in token
+    if "/" in token:
+        return True
+    return bool(Path(token).suffix)
+
+
+def _normalize_declared_task_path(value: str) -> str:
+    token = str(value or "").strip().strip("'\"`")
+    token = token.replace("\\", "/").strip().lstrip("./")
+    while token.endswith((".", ":", "，", "。", "；", ";", ",")):
+        token = token[:-1].strip()
+    if not token:
+        return ""
+    parts = [part for part in token.split("/") if part not in {"", "."}]
+    if any(part == ".." for part in parts):
+        return ""
+    return "/".join(parts)
+
+
+def _path_candidate_exists_in_file_set(candidate: str, current_files: set[str]) -> bool:
+    candidate = candidate.rstrip("/")
+    if not candidate:
+        return False
+    if any(ch in candidate for ch in ("*", "?")):
+        return any(_glob_path_matches(path, candidate) for path in current_files)
+    if candidate in current_files:
+        return True
+    directory_prefix = f"{candidate}/"
+    if any(path.startswith(directory_prefix) for path in current_files):
+        return True
+    # Small tolerance for PM contracts that use singular/plural workbench dirs.
+    return any(path.startswith(candidate) and "/" in path[len(candidate) :] for path in current_files)
+
+
+def _glob_path_matches(path: str, pattern: str) -> bool:
+    if fnmatch.fnmatch(path, pattern):
+        return True
+    if "/**/" not in pattern:
+        return False
+    shallow_pattern = pattern.replace("/**/", "/")
+    return fnmatch.fnmatch(path, shallow_pattern)
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = str(value or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        rows.append(token)
+    return rows

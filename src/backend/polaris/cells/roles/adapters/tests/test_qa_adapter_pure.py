@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter
@@ -78,6 +79,11 @@ class TestSafeInt:
         assert adapter._safe_int("abc") == 0
         assert adapter._safe_int("abc", default=3) == 3
 
+    def test_none_returns_default(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        assert adapter._safe_int(None) == 0
+        assert adapter._safe_int(None, default=4) == 4
+
 
 class TestResolveReworkRetryBudget:
     def test_default(self, tmp_path: Any) -> None:
@@ -93,6 +99,85 @@ class TestResolveReworkRetryBudget:
         assert QAAdapter._resolve_rework_retry_budget() == 20
         monkeypatch.setenv("KERNELONE_DIRECTOR_TASK_REWORK_MAX_RETRIES", "0")
         assert QAAdapter._resolve_rework_retry_budget() == 1
+
+
+class TestRuntimeStageSignals:
+    def test_filters_stale_run_signals(self, tmp_path: Any, monkeypatch: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        signal_dir = tmp_path / "runtime" / "signals"
+        signal_dir.mkdir(parents=True)
+        (signal_dir / "director_dispatch.signals.json").write_text(
+            json.dumps(
+                {
+                    "factory_run_id": "old-run",
+                    "signals": [
+                        {
+                            "factory_run_id": "old-run",
+                            "severity": "error",
+                            "code": "director.run_status_non_success",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (signal_dir / "quality_gate.signals.json").write_text(
+            json.dumps(
+                {
+                    "factory_run_id": "current-run",
+                    "signals": [
+                        {
+                            "factory_run_id": "current-run",
+                            "severity": "info",
+                            "code": "qa.ready",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        def _fake_runtime_path(_workspace: str, _relative: str) -> Any:
+            return signal_dir
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.qa_adapter.resolve_runtime_path",
+            _fake_runtime_path,
+        )
+
+        signals = adapter._load_runtime_stage_signals(run_id="current-run")
+        assert [signal["code"] for signal in signals] == ["qa.ready"]
+
+
+class TestStaticReview:
+    def test_jsx_placeholder_attribute_is_not_unfinished_content(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        src = tmp_path / "src"
+        src.mkdir(parents=True)
+        (src / "Library.tsx").write_text(
+            'export function Library() { return <input placeholder="Search templates..." />; }\n',
+            encoding="utf-8",
+        )
+        (src / "Library.test.tsx").write_text("test('renders', () => expect(true).toBe(true));\n", encoding="utf-8")
+
+        review = adapter._run_static_review("Fashion Gen Studio")
+
+        assert "placeholder_content_detected" not in review["critical_issues"]
+        assert review["verdict"] == "PASS"
+
+    def test_todo_still_counts_as_unfinished_content(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        src = tmp_path / "src"
+        src.mkdir(parents=True)
+        (src / "App.tsx").write_text(
+            "// TODO wire the real workbench\nexport function App() { return null; }\n", encoding="utf-8"
+        )
+
+        review = adapter._run_static_review("Fashion Gen Studio")
+
+        assert "placeholder_content_detected" in review["critical_issues"]
 
 
 # ---------------------------------------------------------------------------

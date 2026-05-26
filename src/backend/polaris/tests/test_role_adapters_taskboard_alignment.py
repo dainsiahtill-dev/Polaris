@@ -16,6 +16,7 @@ from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapt
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter
 from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.storage.paths import resolve_signal_path
 
 
 def test_pm_adapter_fallback_domain_prefers_workspace_slug_over_directive_noise(tmp_path: Path) -> None:
@@ -287,7 +288,7 @@ async def test_pm_adapter_pm_stage_creates_tasks_with_current_taskboard_api(tmp_
     assert any(
         str(item).replace("\\", "/").endswith("runtime/signals/pm_planning.pm.signals.json") for item in artifacts
     )
-    pm_signal_file = Path(resolve_runtime_path(str(tmp_path), "runtime/signals/pm_planning.pm.signals.json"))
+    pm_signal_file = resolve_signal_path(str(tmp_path), "pm", "pm_planning")
     payload = json.loads(pm_signal_file.read_text(encoding="utf-8"))
     rows = payload.get("signals") if isinstance(payload, dict) else []
     assert isinstance(rows, list)
@@ -352,6 +353,33 @@ async def test_pm_adapter_runtime_exception_is_fail_closed(tmp_path: Path) -> No
     assert result["success"] is False
     assert result.get("director_dispatched") is False
     assert "llm kernel offline" in str(result.get("error") or "")
+
+
+@pytest.mark.asyncio
+async def test_pm_adapter_deterministic_contracts_bypass_llm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    adapter = PMAdapter(workspace=str(tmp_path))
+    monkeypatch.setenv("POLARIS_PM_DETERMINISTIC_CONTRACTS", "1")
+
+    async def _boom_call_role_llm(message: str, context=None):
+        del message, context
+        raise AssertionError("LLM should be bypassed")
+
+    adapter._call_role_llm = _boom_call_role_llm  # type: ignore[method-assign]
+
+    result = await adapter.execute(
+        task_id="task-deterministic-pm",
+        input_data={"stage": "pm", "input": "Build a React desktop workbench with tests"},
+        context={"run_director": True},
+    )
+
+    assert result["success"] is True
+    assert int(result.get("tasks_created") or 0) >= 3
+    signal_path = resolve_signal_path(str(tmp_path), "pm", "pm_planning")
+    payload = json.loads(signal_path.read_text(encoding="utf-8"))
+    rows = payload.get("signals") if isinstance(payload, dict) else []
+    assert any(
+        isinstance(item, dict) and str(item.get("code") or "") == "pm.contracts.deterministic_fallback" for item in rows
+    )
 
 
 def test_pm_adapter_extracts_embedded_json_contracts(tmp_path: Path) -> None:
@@ -459,6 +487,28 @@ def test_pm_adapter_synthesized_contracts_are_execution_ready(tmp_path: Path) ->
     normalized, quality = adapter._evaluate_contract_quality(contracts)
 
     assert len(normalized) >= 3
+    assert quality.get("score", 0) >= 80
+    assert not quality.get("critical_issues")
+
+
+def test_pm_adapter_synthesizes_frontend_workbench_contracts(tmp_path: Path) -> None:
+    adapter = PMAdapter(workspace=str(tmp_path / "fashion-gen-studio"))
+
+    contracts = adapter._synthesize_task_contracts_from_directive(
+        directive=(
+            "Build an Electron React TypeScript Vite Tailwind desktop workbench. "
+            "Routes: /workbench/model /workbench/headless /workbench/face-lab "
+            "/workbench/scene /workbench/batch /library/assets /settings/models. "
+            "Use Zustand and Vitest."
+        ),
+    )
+    normalized, quality = adapter._evaluate_contract_quality(contracts)
+
+    assert len(normalized) >= 4
+    titles = [str(item.get("title") or "") for item in normalized]
+    assert any("Toolchain" in title for title in titles)
+    assert any("Generation Spec" in title for title in titles)
+    assert any("Workbench" in title for title in titles)
     assert quality.get("score", 0) >= 80
     assert not quality.get("critical_issues")
 
@@ -1489,7 +1539,7 @@ def test_director_taskboard_snapshot_includes_rework_and_exhausted_states(tmp_pa
 
 def test_qa_adapter_filters_stale_stage_signals_by_run_id(tmp_path: Path) -> None:
     adapter = QAAdapter(workspace=str(tmp_path))
-    signal_path = Path(resolve_runtime_path(str(tmp_path), "runtime/signals/pm_planning.pm.signals.json"))
+    signal_path = resolve_signal_path(str(tmp_path), "pm", "pm_planning")
     signal_path.parent.mkdir(parents=True, exist_ok=True)
     signal_path.write_text(
         json.dumps(
