@@ -250,6 +250,36 @@ def _convert_tool_choice_to_anthropic(tool_choice: Any) -> dict[str, Any] | None
     return {"type": "tool", "name": str(tool_choice)}
 
 
+def _supports_tool_choice(config: dict[str, Any], model: str) -> bool:
+    """Return whether this Anthropic-compatible endpoint accepts tool_choice.
+
+    Some Anthropic-compatible endpoints expose native tools but reject the
+    `tool_choice` field for reasoning/thinking models. DeepSeek's Anthropic
+    endpoint currently returns HTTP 400 ("Thinking mode does not support this
+    tool_choice") in that case. Omitting the field preserves tool availability
+    while letting the provider use its default auto-selection behavior.
+    """
+
+    raw_flag = config.get("disable_tool_choice")
+    if isinstance(raw_flag, bool):
+        return not raw_flag
+    if raw_flag is not None:
+        flag = str(raw_flag).strip().lower()
+        if flag in {"1", "true", "yes", "on", "disabled", "disable"}:
+            return False
+
+    token = " ".join(
+        [
+            str(config.get("base_url") or ""),
+            str(config.get("api_path") or ""),
+            str(config.get("name") or ""),
+            str(config.get("provider_id") or ""),
+            str(model or ""),
+        ]
+    ).lower()
+    return "deepseek" not in token
+
+
 def _inject_api_key(config: dict[str, Any], api_key: str | None) -> dict[str, Any]:
     if not api_key:
         return config
@@ -419,9 +449,10 @@ class AnthropicCompatProvider(BaseProvider):
         anthropic_tools = _convert_tools_to_anthropic(config.get("tools"))
         if anthropic_tools:
             payload["tools"] = anthropic_tools
-            tool_choice = _convert_tool_choice_to_anthropic(config.get("tool_choice"))
-            if isinstance(tool_choice, dict) and tool_choice:
-                payload["tool_choice"] = tool_choice
+            if _supports_tool_choice(config, model):
+                tool_choice = _convert_tool_choice_to_anthropic(config.get("tool_choice"))
+                if isinstance(tool_choice, dict) and tool_choice:
+                    payload["tool_choice"] = tool_choice
         # FIXED: Prefer adapter-provided system prompt from config['system']
         system_prompt = config.get("system") or config.get("system_prompt")
         if system_prompt:
@@ -513,9 +544,10 @@ class AnthropicCompatProvider(BaseProvider):
         anthropic_tools = _convert_tools_to_anthropic(config.get("tools"))
         if anthropic_tools:
             payload["tools"] = anthropic_tools
-            tool_choice = _convert_tool_choice_to_anthropic(config.get("tool_choice"))
-            if isinstance(tool_choice, dict) and tool_choice:
-                payload["tool_choice"] = tool_choice
+            if _supports_tool_choice(config, model):
+                tool_choice = _convert_tool_choice_to_anthropic(config.get("tool_choice"))
+                if isinstance(tool_choice, dict) and tool_choice:
+                    payload["tool_choice"] = tool_choice
         if system_prompt:
             payload["system"] = str(system_prompt)
 

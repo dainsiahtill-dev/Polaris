@@ -29,6 +29,7 @@ from polaris.cells.llm.provider_runtime.internal.runtime_support import (
     get_role_runtime_provider_kind,
     is_codex_provider,
     is_role_runtime_supported,
+    role_runtime_support_issue,
 )
 from polaris.cells.llm.provider_runtime.public.contracts import (
     ILlmProviderRuntimeService,
@@ -130,12 +131,14 @@ def query_role_provider_support(
     cfg = dict(provider_cfg or {})
     supported = is_role_runtime_supported(query.role, provider_id, cfg)
     kind = get_role_runtime_provider_kind(query.role, provider_id, cfg)
+    issue = role_runtime_support_issue(query.role, provider_id, cfg)
     return {
         "workspace": query.workspace,
         "role": query.role,
         "provider_id": provider_id,
         "provider_kind": kind,
         "supported": bool(supported),
+        "issue": issue,
     }
 
 
@@ -183,6 +186,7 @@ __all__ = [
     "normalize_provider_type",
     "query_role_provider_support",
     "resolve_provider_api_key",
+    "role_runtime_support_issue",
     "run_provider_action",
     "split_lines",
     "truncate_text",

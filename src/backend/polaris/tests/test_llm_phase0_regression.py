@@ -9,7 +9,7 @@ Tests for:
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -144,7 +144,7 @@ class TestLLMStatusLastUpdated:
         mock_settings.ramdisk_root = None
         mock_settings.qa_enabled = True
 
-        index_timestamp = "2026-03-22T10:15:30+00:00"
+        index_timestamp = datetime.now(timezone.utc).isoformat()
         config_payload = {
             "schema_version": 1,
             "providers": {
@@ -168,7 +168,7 @@ class TestLLMStatusLastUpdated:
                 },
             },
             "providers": {},
-            "last_update": "2026-03-22T10:15:29+00:00",
+            "last_update": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
         }
 
         with (
@@ -213,7 +213,8 @@ class TestLLMStatusLastUpdated:
         mock_settings.ramdisk_root = None
         mock_settings.qa_enabled = True
 
-        interview_timestamp = "2026-03-22T11:00:00+00:00"
+        index_timestamp = datetime.now(timezone.utc).isoformat()
+        interview_timestamp = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
         config_payload = {
             "schema_version": 1,
             "providers": {
@@ -233,7 +234,7 @@ class TestLLMStatusLastUpdated:
                     "grade": "PASS",
                     "provider_id": "openai_compat-1",
                     "model": "qwen3-max",
-                    "timestamp": "2026-03-22T10:15:30+00:00",
+                    "timestamp": index_timestamp,
                 },
             },
             "providers": {},
@@ -282,10 +283,10 @@ class TestRoleRuntimeSupportConsistency:
         config_payload = {
             "schema_version": 1,
             "providers": {
-                "codex_cli": {"type": "codex_cli"},
+                "codex_cli": {"type": "codex_cli", "codex_exec": {"sandbox": "workspace-write"}},
             },
             "roles": {
-                "director": {"provider_id": "codex_cli", "model": "gpt-5.2-codex"},
+                "director": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"},
             },
             "policies": {
                 "required_ready_roles": ["director"],
@@ -313,7 +314,67 @@ class TestRoleRuntimeSupportConsistency:
             response = build_llm_status(mock_settings)
 
         assert response["roles"]["director"]["runtime_supported"] is True
+        assert response["roles"]["director"]["runtime_issue"] == ""
         assert "director" not in response["unsupported_roles"]
+
+    def test_llm_status_marks_director_codex_read_only_sandbox_as_unsupported(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        now = datetime.now(timezone.utc).isoformat()
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "codex_cli": {"type": "codex_cli", "codex_exec": {"sandbox": "read-only"}},
+            },
+            "roles": {
+                "director": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"},
+            },
+            "policies": {
+                "required_ready_roles": ["director"],
+            },
+        }
+        index_payload = {
+            "roles": {
+                "director": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "codex_cli",
+                    "model": "gpt-5.3-codex",
+                    "timestamp": now,
+                }
+            },
+            "providers": {},
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["roles"]["director"]["ready"] is True
+        assert response["roles"]["director"]["runtime_supported"] is False
+        assert response["roles"]["director"]["runtime_issue"] == "director_codex_read_only_sandbox"
+        assert response["unsupported_roles"] == ["director"]
 
     def test_llm_status_blocks_stale_role_model_readiness(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
@@ -378,6 +439,207 @@ class TestRoleRuntimeSupportConsistency:
         assert response["roles"]["pm"]["readiness_issue"] == "model_mismatch"
         assert response["roles"]["pm"]["tested_model"] == "MiniMax-M2.5"
         assert response["blocked_roles"] == ["pm"]
+        assert response["state"] == "BLOCKED"
+
+    def test_llm_status_blocks_expired_readiness_timestamp(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "qwen-main": {"type": "openai_compat", "name": "Qwen Production"},
+            },
+            "roles": {
+                "pm": {"provider_id": "qwen-main", "model": "Qwen3-Max"},
+            },
+            "policies": {
+                "required_ready_roles": ["pm"],
+            },
+        }
+        index_payload = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "qwen-main",
+                    "model": "Qwen3-Max",
+                    "timestamp": "2000-01-01T00:00:00+00:00",
+                },
+            },
+            "providers": {},
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["roles"]["pm"]["ready"] is False
+        assert response["roles"]["pm"]["readiness_issue"] == "readiness_stale"
+        assert response["roles"]["pm"]["tested_provider_id"] == "qwen-main"
+        assert response["roles"]["pm"]["tested_model"] == "Qwen3-Max"
+        assert response["roles"]["pm"]["tested_timestamp"] == "2000-01-01T00:00:00+00:00"
+        assert response["blocked_roles"] == ["pm"]
+        assert response["state"] == "BLOCKED"
+
+    def test_llm_status_preserves_role_specific_stale_issue_over_provider_role_mismatch(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "deepseek-main": {"type": "anthropic_compat", "name": "DeepSeek Main"},
+            },
+            "roles": {
+                "architect": {"provider_id": "deepseek-main", "model": "deepseek-v4-pro"},
+            },
+            "policies": {
+                "required_ready_roles": ["architect"],
+            },
+        }
+        index_payload = {
+            "roles": {
+                "architect": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "deepseek-main",
+                    "model": "deepseek-v4-pro",
+                    "timestamp": "2000-01-01T00:00:00+00:00",
+                },
+            },
+            "providers": {
+                "deepseek-main": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "deepseek-main",
+                    "model": "deepseek-v4-pro",
+                    "role": "qa",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        architect = response["roles"]["architect"]
+        assert architect["ready"] is False
+        assert architect["readiness_issue"] == "readiness_stale"
+        assert architect["readiness_source"] == "role_index"
+        assert architect["tested_provider_id"] == "deepseek-main"
+        assert architect["tested_model"] == "deepseek-v4-pro"
+        assert architect["tested_timestamp"] == "2000-01-01T00:00:00+00:00"
+        assert response["blocked_roles"] == ["architect"]
+        assert response["state"] == "BLOCKED"
+
+    def test_llm_status_reports_failed_role_readiness_with_provider_model_and_timestamp(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        tested_at = datetime.now(timezone.utc).isoformat()
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "codex_cli": {"type": "codex_cli", "name": "Codex CLI"},
+            },
+            "roles": {
+                "director": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"},
+            },
+            "policies": {
+                "required_ready_roles": ["director"],
+            },
+        }
+        index_payload = {
+            "roles": {
+                "director": {
+                    "ready": False,
+                    "grade": "FAIL",
+                    "provider_id": "codex_cli",
+                    "model": "gpt-5.3-codex",
+                    "timestamp": tested_at,
+                    "suites": {
+                        "connectivity": {"ok": True},
+                        "response": {"ok": False},
+                    },
+                },
+            },
+            "providers": {},
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        director = response["roles"]["director"]
+        assert director["ready"] is False
+        assert director["readiness_issue"] == "readiness_failed"
+        assert director["readiness_source"] == "role_index"
+        assert director["tested_provider_id"] == "codex_cli"
+        assert director["tested_model"] == "gpt-5.3-codex"
+        assert director["tested_timestamp"] == tested_at
+        assert response["blocked_roles"] == ["director"]
         assert response["state"] == "BLOCKED"
 
     def test_llm_status_allows_case_only_model_readiness_match(self):
@@ -568,6 +830,144 @@ class TestRoleRuntimeSupportConsistency:
         assert response["unsupported_roles"] == []
         assert response["state"] == "READY"
 
+    def test_llm_status_blocks_factory_when_director_runtime_cannot_enforce_tool_choice(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "deepseek-anthropic": {
+                    "type": "anthropic_compat",
+                    "base_url": "https://api.deepseek.com/anthropic",
+                    "model": "deepseek-v4-pro",
+                },
+            },
+            "roles": {
+                "architect": {"provider_id": "deepseek-anthropic", "model": "deepseek-v4-pro"},
+                "pm": {"provider_id": "deepseek-anthropic", "model": "deepseek-v4-pro"},
+                "director": {"provider_id": "deepseek-anthropic", "model": "deepseek-v4-pro"},
+                "qa": {"provider_id": "deepseek-anthropic", "model": "deepseek-v4-pro"},
+            },
+            "policies": {
+                "required_ready_roles": ["pm", "director", "qa"],
+            },
+        }
+        now = datetime.now(timezone.utc).isoformat()
+        index_payload = {
+            "roles": {
+                role: {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "deepseek-anthropic",
+                    "model": "deepseek-v4-pro",
+                    "timestamp": now,
+                }
+                for role in ("architect", "pm", "director", "qa")
+            },
+            "providers": {},
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["roles"]["director"]["ready"] is True
+        assert response["roles"]["director"]["runtime_supported"] is False
+        assert response["unsupported_roles"] == ["director"]
+        assert response["factory_unsupported_roles"] == ["director"]
+        assert response["factory_state"] == "BLOCKED"
+        assert response["state"] == "BLOCKED"
+
+    def test_llm_status_blocks_unverified_minimax_director_runtime(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "minimax-1": {
+                    "type": "minimax",
+                    "base_url": "https://api.minimaxi.com/v1",
+                    "model": "MiniMax-M2.7-highspeed",
+                },
+            },
+            "roles": {
+                "architect": {"provider_id": "minimax-1", "model": "MiniMax-M2.7-highspeed"},
+                "pm": {"provider_id": "minimax-1", "model": "MiniMax-M2.7-highspeed"},
+                "director": {"provider_id": "minimax-1", "model": "MiniMax-M2.7-highspeed"},
+                "qa": {"provider_id": "minimax-1", "model": "MiniMax-M2.7-highspeed"},
+            },
+            "policies": {
+                "required_ready_roles": ["pm", "director", "qa"],
+            },
+        }
+        now = datetime.now(timezone.utc).isoformat()
+        index_payload = {
+            "roles": {
+                role: {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "minimax-1",
+                    "model": "MiniMax-M2.7-highspeed",
+                    "timestamp": now,
+                }
+                for role in ("architect", "pm", "director", "qa")
+            },
+            "providers": {},
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["roles"]["director"]["ready"] is True
+        assert response["roles"]["director"]["runtime_supported"] is False
+        assert response["unsupported_roles"] == ["director"]
+        assert response["factory_unsupported_roles"] == ["director"]
+        assert response["factory_state"] == "BLOCKED"
+        assert response["state"] == "BLOCKED"
+
     def test_llm_status_defaults_qa_enabled_for_minimal_settings_objects(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 
@@ -697,13 +1097,13 @@ class TestRoleRuntimeSupportConsistency:
 
         base_index = {
             "roles": {
-                "director": {"ready": True, "provider_id": "codex_cli", "model": "gpt-5.2-codex"},
+                "director": {"ready": True, "provider_id": "codex_cli", "model": "gpt-5.3-codex"},
             }
         }
 
         codex_cfg = {
-            "providers": {"codex_cli": {"type": "codex_cli"}},
-            "roles": {"director": {"provider_id": "codex_cli", "model": "gpt-5.2-codex"}},
+            "providers": {"codex_cli": {"type": "codex_cli", "codex_exec": {"sandbox": "workspace-write"}}},
+            "roles": {"director": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"}},
         }
         generic_cfg = {
             "providers": {"openai_compat": {"type": "openai_compat"}},
@@ -728,6 +1128,36 @@ class TestRoleRuntimeSupportConsistency:
             patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=generic_index),
         ):
             _ensure_llm_ready(mock_state, "director")
+
+    def test_director_gate_blocks_codex_read_only_sandbox(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import _ensure_llm_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_state = AppState(settings=mock_settings)
+
+        index_payload = {
+            "roles": {
+                "director": {"ready": True, "provider_id": "codex_cli", "model": "gpt-5.3-codex"},
+            }
+        }
+        config_payload = {
+            "providers": {"codex_cli": {"type": "codex_cli", "codex_exec": {"sandbox": "read-only"}}},
+            "roles": {"director": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"}},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            pytest.raises(HTTPException) as exc,
+        ):
+            _ensure_llm_ready(mock_state, "director")
+
+        assert exc.value.status_code == 409
+        assert "director_codex_read_only_sandbox" in str(exc.value.detail)
 
     def test_pm_gate_allows_ready_role_without_provider_type_restriction(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
@@ -840,6 +1270,83 @@ class TestRoleRuntimeSupportConsistency:
         ):
             _ensure_llm_ready(mock_state, "pm")
 
+    def test_pm_gate_blocks_expired_readiness_timestamp(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import _ensure_llm_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_state = AppState(settings=mock_settings)
+
+        index_payload = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "provider_id": "openai_compat",
+                    "model": "Qwen3-Max",
+                    "timestamp": "2000-01-01T00:00:00+00:00",
+                },
+            }
+        }
+        config_payload = {
+            "providers": {"openai_compat": {"type": "openai_compat"}},
+            "roles": {"pm": {"provider_id": "openai_compat", "model": "Qwen3-Max"}},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            pytest.raises(HTTPException) as exc,
+        ):
+            _ensure_llm_ready(mock_state, "pm")
+
+        assert exc.value.status_code == 409
+        assert "stale" in str(exc.value.detail)
+        assert "openai_compat" in str(exc.value.detail)
+        assert "Qwen3-Max" in str(exc.value.detail)
+
+    def test_role_gate_reports_failed_readiness_for_current_provider_model(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import _ensure_llm_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_state = AppState(settings=mock_settings)
+
+        tested_at = datetime.now(timezone.utc).isoformat()
+        index_payload = {
+            "roles": {
+                "director": {
+                    "ready": False,
+                    "provider_id": "codex_cli",
+                    "model": "gpt-5.3-codex",
+                    "timestamp": tested_at,
+                },
+            }
+        }
+        config_payload = {
+            "providers": {"codex_cli": {"type": "codex_cli"}},
+            "roles": {"director": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"}},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            pytest.raises(HTTPException) as exc,
+        ):
+            _ensure_llm_ready(mock_state, "director")
+
+        assert exc.value.status_code == 409
+        detail = str(exc.value.detail)
+        assert "readiness failed" in detail
+        assert "codex_cli" in detail
+        assert "gpt-5.3-codex" in detail
+        assert tested_at in detail
+
     def test_role_gate_prefers_active_workspace_path_for_llm_config(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
         from polaris.delivery.http.routers._shared import _ensure_llm_ready
@@ -875,6 +1382,52 @@ class TestRoleRuntimeSupportConsistency:
         cache_root.assert_called_once_with("/tmp/ram", "/tmp/active_project")
         load_config.assert_called_once_with("/tmp/active_project", "/tmp/cache", settings=mock_settings)
         load_index.assert_called_once_with("/tmp/active_project")
+
+    def test_required_roles_live_check_blocks_current_provider_failure(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import ensure_required_roles_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+        mock_state = AppState(settings=mock_settings)
+
+        now = datetime.now(timezone.utc).isoformat()
+        index_payload = {
+            "roles": {
+                "qa": {
+                    "ready": True,
+                    "provider_id": "anthropic_compat-1",
+                    "model": "kimi-for-coding",
+                    "timestamp": now,
+                },
+            }
+        }
+        config_payload = {
+            "providers": {"anthropic_compat-1": {"type": "anthropic_compat"}},
+            "roles": {"qa": {"provider_id": "anthropic_compat-1", "model": "kimi-for-coding"}},
+            "policies": {"required_ready_roles": ["qa"]},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            patch(
+                "polaris.delivery.http.routers._shared.run_connectivity_suite_sync",
+                return_value={"ok": False, "error": "circuit_open:45s_remaining"},
+            ) as live_check,
+            pytest.raises(HTTPException) as exc,
+        ):
+            ensure_required_roles_ready(mock_state, default_roles=["qa"], force_roles=["qa"], live_check=True)
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "RUNTIME_ROLES_NOT_READY"
+        assert exc.value.detail["details"]["missing_roles"] == ["qa"]
+        assert "live LLM connectivity failed" in exc.value.detail["details"]["role_issues"]["qa"]
+        assert "circuit_open" in exc.value.detail["details"]["role_issues"]["qa"]
+        live_check.assert_called_once()
 
     def test_llm_status_prefers_active_workspace_path_for_readiness(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
@@ -943,6 +1496,81 @@ class TestRoleRuntimeSupportConsistency:
         assert response["state"] == "READY"
         assert response["blocked_roles"] == []
         assert response["roles"]["pm"]["ready"] is True
+
+    def test_llm_status_exposes_full_factory_readiness_separately_from_policy_readiness(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/factory_project"
+        mock_settings.ramdisk_root = "/tmp/ram"
+        mock_settings.qa_enabled = True
+
+        now = datetime.now(timezone.utc).isoformat()
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "deepseek": {"type": "anthropic_compat"},
+                "kimi": {"type": "anthropic_compat"},
+            },
+            "roles": {
+                "architect": {"provider_id": "kimi", "model": "kimi-for-coding"},
+                "pm": {"provider_id": "deepseek", "model": "deepseek-v4-pro"},
+                "director": {"provider_id": "deepseek", "model": "deepseek-v4-pro"},
+                "qa": {"provider_id": "kimi", "model": "kimi-for-coding"},
+            },
+            "policies": {"required_ready_roles": ["pm", "director", "qa"]},
+        }
+        index_payload = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "provider_id": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "timestamp": now,
+                },
+                "director": {
+                    "ready": True,
+                    "provider_id": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "timestamp": now,
+                },
+                "qa": {
+                    "ready": True,
+                    "provider_id": "kimi",
+                    "model": "kimi-for-coding",
+                    "timestamp": now,
+                },
+            },
+            "providers": {},
+        }
+
+        with (
+            patch("polaris.cells.runtime.projection.internal.llm_status.build_cache_root", return_value="/tmp/cache"),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.llm_config_path",
+                return_value="/tmp/cache/llm_config.json",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        assert response["state"] == "READY"
+        assert response["blocked_roles"] == []
+        assert response["factory_required_roles"] == ["architect", "pm", "director", "qa"]
+        assert response["factory_state"] == "BLOCKED"
+        assert response["factory_blocked_roles"] == ["architect"]
+        assert response["roles"]["architect"]["readiness_issue"] == "role_readiness_missing"
 
     def test_required_ready_roles_prefers_active_workspace_path_for_policy(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
@@ -1045,6 +1673,7 @@ class TestRoleRuntimeSupportConsistency:
 
         assert exc.value.status_code == 409
         assert "qa" in exc.value.detail["details"]["missing_roles"]
+        assert "qa" in exc.value.detail["details"]["role_issues"]
 
     def test_pm_gate_blocks_stale_ready_model(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
@@ -1228,6 +1857,30 @@ class TestLLMConfigLoadPreservesUserFields:
         assert after == before, "load_llm_config must not rewrite user config file"
         assert isinstance(loaded.get("roleAssignments"), list)
         assert loaded["roleAssignments"][0]["providerId"] == "minimax"
+
+    def test_load_llm_config_accepts_utf8_bom_file_without_default_fallback(self, mock_workspace):
+        from polaris.kernelone.llm.config_store import llm_config_path, load_llm_config
+
+        path = llm_config_path(mock_workspace, mock_workspace)
+        payload = {
+            "schema_version": 2,
+            "providers": {
+                "codex_cli": {"type": "codex_cli", "codex_exec": {"sandbox": "workspace-write"}},
+            },
+            "roles": {
+                "director": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"},
+            },
+        }
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8-sig") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+        loaded = load_llm_config(mock_workspace, mock_workspace)
+
+        assert loaded["roles"]["director"]["provider_id"] == "codex_cli"
+        assert loaded["roles"]["director"]["model"] == "gpt-5.3-codex"
+        assert loaded["providers"]["codex_cli"]["codex_exec"]["sandbox"] == "workspace-write"
 
 
 if __name__ == "__main__":

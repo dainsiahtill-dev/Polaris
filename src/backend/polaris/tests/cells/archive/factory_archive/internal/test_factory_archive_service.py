@@ -67,18 +67,13 @@ class TestFactoryArchiveServiceInit:
         """Service sets history_root and workspace_persistent_root from roots."""
         service = _make_service(tmp_path)
         assert str(service.history_root) == FakeStorageRoots(tmp_path).history_root
-        assert (
-            str(service.workspace_persistent_root)
-            == FakeStorageRoots(tmp_path).workspace_persistent_root
-        )
+        assert str(service.workspace_persistent_root) == FakeStorageRoots(tmp_path).workspace_persistent_root
 
 
 class TestArchiveFactoryRun:
     """Test suite for archive_factory_run method."""
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_archive_factory_run_success(
         self,
         mock_repo_cls: MagicMock,
@@ -106,9 +101,7 @@ class TestArchiveFactoryRun:
         assert manifest.target_path == f"factory{os.sep}{run_id}"
         mock_repo_cls.return_value.append_factory_entry.assert_called_once()
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_archive_factory_run_missing_source_returns_empty_manifest(
         self,
         mock_repo_cls: MagicMock,
@@ -143,9 +136,7 @@ class TestArchiveFactoryRun:
         with pytest.raises(ValueError, match="factory_run_id is required"):
             service.archive_factory_run(factory_run_id="   ")
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_archive_factory_run_custom_reason(
         self,
         mock_repo_cls: MagicMock,
@@ -166,9 +157,7 @@ class TestArchiveFactoryRun:
 
         assert manifest.reason == "integration_test"
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_archive_factory_run_default_source_dir(
         self,
         mock_repo_cls: MagicMock,
@@ -186,9 +175,7 @@ class TestArchiveFactoryRun:
         assert manifest.id == run_id
         assert manifest.file_count == 1  # data.json only
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_archive_factory_run_overwrites_existing(
         self,
         mock_repo_cls: MagicMock,
@@ -217,9 +204,42 @@ class TestArchiveFactoryRun:
         assert target_file.read_text(encoding="utf-8") == "version2"
         assert manifest.file_count == 1
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
+    def test_archive_factory_run_copies_when_directory_replace_remains_denied(
+        self,
+        mock_repo_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Permanent Windows directory replace denial falls back to copytree."""
+        service = _make_service(tmp_path)
+        run_id = "factory-copy-fallback"
+        source_dir = tmp_path / ".polaris" / "factory" / run_id
+        source_dir.mkdir(parents=True)
+        (source_dir / "config.json").write_text('{"name": "test"}', encoding="utf-8")
+        calls = 0
+
+        def always_denied_replace(src: object, dst: object) -> None:
+            nonlocal calls
+            calls += 1
+            raise PermissionError(5, "Access is denied", str(src))
+
+        with patch(
+            "polaris.cells.archive.factory_archive.internal.factory_archive_service.os.replace",
+            side_effect=always_denied_replace,
+        ):
+            manifest = service.archive_factory_run(
+                factory_run_id=run_id,
+                source_factory_dir=str(source_dir),
+                reason="failed",
+            )
+
+        assert manifest.id == run_id
+        assert calls >= 2
+        assert (service.history_root / "factory" / run_id / "config.json").is_file()
+        assert not list((service.history_root / "factory").glob(f".{run_id}.*.tmp"))
+        mock_repo_cls.return_value.append_factory_entry.assert_called_once()
+
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_archive_factory_run_calculates_checksums(
         self,
         mock_repo_cls: MagicMock,
@@ -241,9 +261,7 @@ class TestArchiveFactoryRun:
         assert manifest.content_hash != ""
         assert len(manifest.content_hash) == 64  # SHA256 hex length
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_archive_factory_run_manifest_persisted(
         self,
         mock_repo_cls: MagicMock,
@@ -267,9 +285,7 @@ class TestArchiveFactoryRun:
         assert payload["id"] == run_id
         assert payload["scope"] == "factory_run"
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_archive_factory_run_empty_reason_defaults_to_completed(
         self,
         mock_repo_cls: MagicMock,
@@ -373,9 +389,7 @@ class TestGetManifest:
 class TestListFactoryRuns:
     """Test suite for list_factory_runs method."""
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_list_factory_runs_default(
         self,
         mock_repo_cls: MagicMock,
@@ -391,9 +405,7 @@ class TestListFactoryRuns:
         assert result == []
         mock_repo.read_factory_index.assert_called_once_with(limit=50, offset=0)
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_list_factory_runs_with_limit_offset(
         self,
         mock_repo_cls: MagicMock,
@@ -408,9 +420,7 @@ class TestListFactoryRuns:
 
         mock_repo.read_factory_index.assert_called_once_with(limit=10, offset=5)
 
-    @patch(
-        "polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository"
-    )
+    @patch("polaris.cells.archive.factory_archive.internal.factory_archive_service.HistoryManifestRepository")
     def test_list_factory_runs_negative_values_clamped(
         self,
         mock_repo_cls: MagicMock,

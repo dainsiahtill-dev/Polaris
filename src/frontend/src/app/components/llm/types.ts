@@ -229,10 +229,12 @@ export interface LLMStatusRole {
   timestamp?: string | null;
   suites?: Record<string, unknown> | null;
   runtime_supported?: boolean;
+  runtime_issue?: string;
   readiness_issue?: string;
   readiness_source?: string;
   tested_provider_id?: string;
   tested_model?: string;
+  tested_timestamp?: string | null;
 }
 
 // LLM Status Provider (Rich)
@@ -252,6 +254,10 @@ export interface LLMStatus {
   required_ready_roles: string[];
   blocked_roles: string[];
   unsupported_roles: string[];
+  factory_state?: string;
+  factory_required_roles?: string[];
+  factory_blocked_roles?: string[];
+  factory_unsupported_roles?: string[];
   roles: Record<string, LLMStatusRole>;
   providers?: Record<string, LLMStatusProvider>;
   last_updated?: string | null;

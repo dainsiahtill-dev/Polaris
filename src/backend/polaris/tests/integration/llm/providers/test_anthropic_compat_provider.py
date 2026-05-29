@@ -157,6 +157,109 @@ class TestAnthropicCompatProviderToolConversion:
         assert _convert_tool_choice_to_anthropic("none") is None
         assert _convert_tool_choice_to_anthropic("") is None
 
+    def test_invoke_sends_tool_choice_for_standard_anthropic_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicCompatProvider()
+        config = {
+            **anthropic_compat_config,
+            "tools": [{"name": "edit_file", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "edit_file"},
+        }
+        result = provider.invoke("Edit", "claude-3-5-sonnet", config)
+
+        assert result.ok is True
+        assert captured["payload"]["tool_choice"] == {"type": "tool", "name": "edit_file"}
+
+    def test_invoke_omits_tool_choice_for_deepseek_anthropic_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicCompatProvider()
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.deepseek.com/anthropic",
+            "tools": [{"name": "edit_file", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "edit_file"},
+        }
+        result = provider.invoke("Edit", "deepseek-v4-pro", config)
+
+        assert result.ok is True
+        assert "tools" in captured["payload"]
+        assert "tool_choice" not in captured["payload"]
+
+    def test_invoke_omits_tool_choice_when_config_disables_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicCompatProvider()
+        config = {
+            **anthropic_compat_config,
+            "disable_tool_choice": True,
+            "tools": [{"name": "edit_file", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "edit_file"},
+        }
+        result = provider.invoke("Edit", "claude-3-5-sonnet", config)
+
+        assert result.ok is True
+        assert "tools" in captured["payload"]
+        assert "tool_choice" not in captured["payload"]
+
 
 class TestAnthropicCompatProviderEdgeCases:
     """Tests for edge cases and boundary conditions."""

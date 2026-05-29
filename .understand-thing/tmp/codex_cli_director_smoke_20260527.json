@@ -1,0 +1,54 @@
+{
+  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\.understand-thing\\tmp\\codex_director_smoke_workspace",
+  "model": "gpt-5.3-codex",
+  "blocked_path": {
+    "attempted": false,
+    "ok": false,
+    "output": "",
+    "provider_id": "codex_cli",
+    "provider_type": "codex_cli",
+    "model": "gpt-5.3-codex",
+    "latency_ms": 0,
+    "error": "provider_type_blocked_or_missing",
+    "usage": null
+  },
+  "unblocked_path": {
+    "attempted": true,
+    "ok": true,
+    "output": "src/smoke.txt\n```txt\ncodex-director-smoke\n```\n\n<!-- Usage: 13990 input, 182 output, 8064 cached -->",
+    "provider_id": "codex_cli",
+    "provider_type": "codex_cli",
+    "model": "gpt-5.3-codex",
+    "latency_ms": 10861,
+    "error": "",
+    "usage": {
+      "cached_tokens": 0,
+      "prompt_tokens": 45,
+      "completion_tokens": 24,
+      "total_tokens": 69,
+      "estimated": true,
+      "prompt_chars": 181,
+      "completion_chars": 99
+    },
+    "output_preview": "src/smoke.txt\n```txt\ncodex-director-smoke\n```\n\n<!-- Usage: 13990 input, 182 output, 8064 cached -->",
+    "output_length": 99
+  },
+  "director_patch_apply": {
+    "tool_results": [
+      {
+        "tool": "patch_apply",
+        "success": true,
+        "result": {
+          "ok": true,
+          "source_tool": "write_file",
+          "file": "src/smoke.txt",
+          "bytes_written": 21,
+          "changed": true
+        }
+      }
+    ],
+    "file_exists": true,
+    "file_content": "codex-director-smoke\n"
+  },
+  "pass": true
+}

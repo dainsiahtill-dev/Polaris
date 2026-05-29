@@ -1,0 +1,92 @@
+{
+  "run_id": "factory_303e2413e517",
+  "updated_at": "2026-05-26T23:13:43.274448+00:00",
+  "latest": {
+    "run_id": "factory_303e2413e517",
+    "phase": "failed",
+    "status": "failed",
+    "current_stage": "director_dispatch",
+    "last_successful_stage": "chief_engineer_review",
+    "progress": 60.0,
+    "roles": {
+      "pm": {
+        "role": "pm",
+        "status": "completed",
+        "detail": null,
+        "current_task": null,
+        "progress": 100.0
+      },
+      "architect": {
+        "role": "architect",
+        "status": "completed",
+        "detail": null,
+        "current_task": null,
+        "progress": 100.0
+      },
+      "chief_engineer": {
+        "role": "chief_engineer",
+        "status": "completed",
+        "detail": null,
+        "current_task": null,
+        "progress": 100.0
+      },
+      "director": {
+        "role": "director",
+        "status": "failed",
+        "detail": "Director dispatch failed: Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes; signals=1; error_code=director.run_status_non_success; root_cause_hint=Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes",
+        "current_task": "director_dispatch",
+        "progress": 100.0
+      },
+      "qa": {
+        "role": "qa",
+        "status": "idle",
+        "detail": null,
+        "current_task": null,
+        "progress": 0.0
+      }
+    },
+    "gates": [],
+    "failure": {
+      "failure_type": "deterministic",
+      "code": "FACTORY_RUN_EXCEPTION",
+      "detail": "Director dispatch failed: Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes; signals=1; error_code=director.run_status_non_success; root_cause_hint=Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes",
+      "phase": "failed",
+      "timestamp": "2026-05-26T23:13:42.535681Z",
+      "recoverable": false,
+      "suggested_action": null,
+      "hops": []
+    },
+    "created_at": "2026-05-26T23:06:12.429356Z",
+    "started_at": "2026-05-26T23:06:12.462301Z",
+    "updated_at": "2026-05-26T23:13:42.584007Z",
+    "completed_at": "2026-05-26T23:13:42.584007Z",
+    "summary_md": "# Factory Run Summary\n\n- Run ID: `factory_303e2413e517`\n- Status: `FAIL`\n- Workspace: `C:\\Users\\dains\\Documents\\GitLab\\fashion-gen-studio`\n- Start From: `architect`\n- Loop Enabled: `False`\n- Loop Cycles Executed: `0`\n- Loop Stop Reason: `n/a`\n- Stages Completed: `docs_generation, pm_planning, chief_engineer_review`\n- Stages Failed: `director_dispatch`\n\n## Failure\n\n- Stage: `director_dispatch`\n- Code: `FACTORY_RUN_EXCEPTION`\n- Detail: Director dispatch failed: Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes; signals=1; error_code=director.run_status_non_success; root_cause_hint=Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes",
+    "metadata": {
+      "current_stage": "director_dispatch",
+      "last_stage": "director_dispatch",
+      "last_successful_stage": "chief_engineer_review",
+      "last_failed_stage": "director_dispatch",
+      "factory_start_request": {
+        "workspace": "C:\\Users\\dains\\Documents\\GitLab\\fashion-gen-studio",
+        "start_from": "architect",
+        "directive": "Strictly follow the FashionGen Studio project document under .polaris/docs, use the Polaris workflow Architect -> PM -> ChiefEngineer -> Director -> QA, and continue closing the real production gaps for the apparel AI desktop tool.",
+        "run_director": true,
+        "director_iterations": 0,
+        "loop": false,
+        "input_source": "docs"
+      },
+      "loop_requested": false,
+      "loop_enabled": false,
+      "current_stage_started_at": "2026-05-26T23:10:10.820041+00:00",
+      "last_stage_heartbeat_at": "2026-05-26T23:13:41.236799+00:00",
+      "current_stage_completed_at": "2026-05-26T23:13:42.499382+00:00",
+      "failure": {
+        "stage": "director_dispatch",
+        "code": "FACTORY_RUN_EXCEPTION",
+        "detail": "Director dispatch failed: Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes; signals=1; error_code=director.run_status_non_success; root_cause_hint=Run status: failed | failed_task=task-0-director (director) | error=director_no_materialized_changes",
+        "timestamp": "2026-05-26T23:13:42.535681+00:00"
+      }
+    }
+  },
+  "terminal": true
+}

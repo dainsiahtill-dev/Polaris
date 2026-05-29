@@ -1,0 +1,76 @@
+card_id: "vc-20260528-director-patch-output-safety"
+bug_summary: >
+  Director direct text-patch fallback accepted malformed LLM output that mixed
+  PATCH_FILE protocol wording with fenced unified-diff markdown, allowing the
+  malformed protocol marker to become a workspace file path and corrupt target
+  project files.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/cells/roles/adapters/internal/director/execution.py"
+  method: "DirectorPatchExecutor._validate_relative_patch_path / _extract_markdown_file_blocks"
+  symptom: "A response shaped like `PATCH_FILE src/main/providers.ts` plus a ```diff block could be treated as materialized file output."
+
+assumptions:
+  - id: "A1"
+    statement: "Director fallback must treat provider text as untrusted and reject protocol markers that are not valid relative file paths."
+    status: verified_true
+    evidence: >
+      _validate_relative_patch_path now rejects PATCH_FILE and END PATCH_FILE
+      tokens before any write path is applied.
+  - id: "A2"
+    statement: "Markdown file blocks are only safe when their content is complete final file text, not a unified diff."
+    status: verified_true
+    evidence: >
+      _extract_markdown_file_blocks now skips protocol-like content and unified
+      diff content, including blocks starting with @@, ---/+++, or diff --git.
+  - id: "A3"
+    statement: "PM verification tasks should not inherit QA rework metadata that forces fresh code materialization."
+    status: verified_true
+    evidence: >
+      Placeholder repair contract synthesis now attaches qa_rework_reason only
+      to the implementation task; the verification task is marked
+      qa_rework_verification_only.
+
+pre_mortem:
+  failure_point: >
+    If only the prompt wording is tightened but parser validation remains
+    permissive, the next model/provider can still emit malformed patch text and
+    cause workspace corruption.
+  risk_zone:
+    - "polaris/cells/roles/adapters/internal/director/execution.py"
+    - "polaris/cells/roles/adapters/internal/director/adapter.py"
+    - "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    - "polaris/cells/roles/adapters/internal/pm_adapter.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/adapters/tests/test_director_patch_executor_pure.py"
+      description: "Reject malformed PATCH_FILE marker paths and skip fenced unified diff markdown blocks."
+      expected: "No patch block is extracted and path validation returns an invalid-path error."
+      status: passed
+    - file: "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py"
+      description: "Placeholder repair PM contracts split implementation QA rework from verification."
+      expected: "TASK-2 has qa_rework_verification_only and no qa_rework_reason."
+      status: passed
+    - file: "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      description: "Verification-only tasks do not require fresh materialization."
+      expected: "_task_requires_fresh_materialization returns False for verification-only repair checks."
+      status: passed
+  commands:
+    - "python -m ruff check src/backend/polaris/cells/roles/adapters/internal/director/execution.py src/backend/polaris/cells/roles/adapters/internal/director/adapter.py src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/internal/pm_adapter.py src/backend/polaris/cells/roles/adapters/tests/test_director_patch_executor_pure.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py src/backend/polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py --fix"
+    - "python -m ruff format src/backend/polaris/cells/roles/adapters/internal/director/execution.py src/backend/polaris/cells/roles/adapters/internal/director/adapter.py src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/internal/pm_adapter.py src/backend/polaris/cells/roles/adapters/tests/test_director_patch_executor_pure.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py src/backend/polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py"
+    - "python -m mypy src/backend/polaris/cells/roles/adapters/internal/director/execution.py src/backend/polaris/cells/roles/adapters/internal/director/adapter.py src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/internal/pm_adapter.py src/backend/polaris/cells/roles/adapters/tests/test_director_patch_executor_pure.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py src/backend/polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py"
+    - "python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_patch_executor_pure.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py src/backend/polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py -q"
+
+verification_results:
+  ruff_check: "passed"
+  ruff_format: "passed"
+  mypy: "passed"
+  pytest: "168 passed"
+
+expected_outcome: >
+  Malformed PATCH_FILE/diff fallback output is rejected before workspace writes,
+  and QA repair verification tasks can complete without creating artificial file
+  changes.

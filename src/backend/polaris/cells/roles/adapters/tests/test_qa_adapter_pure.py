@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter
+from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter, _extract_qa_rework_evidence
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,6 +83,25 @@ class TestSafeInt:
         adapter = _make_adapter(tmp_path)
         assert adapter._safe_int(None) == 0
         assert adapter._safe_int(None, default=4) == 4
+
+
+class TestExtractQaReworkEvidence:
+    def test_filters_metrics_and_keeps_actionable_paths(self) -> None:
+        result = _extract_qa_rework_evidence(
+            {
+                "evidence": [
+                    "code_file_count=71",
+                    "src/backend/fashiongen_worker.py:\\bplaceholder\\b",
+                    "llm_excerpt=blocked",
+                    "src/main/providers.ts:\\bplaceholder\\b",
+                ]
+            }
+        )
+
+        assert result == [
+            "src/backend/fashiongen_worker.py:\\bplaceholder\\b",
+            "src/main/providers.ts:\\bplaceholder\\b",
+        ]
 
 
 class TestResolveReworkRetryBudget:
@@ -178,6 +197,62 @@ class TestStaticReview:
         review = adapter._run_static_review("Fashion Gen Studio")
 
         assert "placeholder_content_detected" in review["critical_issues"]
+
+    def test_targeted_repair_does_not_fail_on_out_of_scope_placeholder(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        src = tmp_path / "src"
+        tests = tmp_path / "tests"
+        src.mkdir(parents=True)
+        tests.mkdir(parents=True)
+        (src / "legacy.ts").write_text("export const value = 'placeholder';\n", encoding="utf-8")
+        (tests / "GenerationSpec.test.ts").write_text(
+            "test('generation spec', () => expect(true).toBe(true));\n",
+            encoding="utf-8",
+        )
+
+        review = adapter._run_static_review("Fix npm test failure in tests/GenerationSpec.test.ts")
+
+        assert "placeholder_content_detected" not in review["critical_issues"]
+        assert "out_of_scope_placeholder_content_detected" in review["warnings"]
+        assert review["verdict"] == "PASS"
+
+    def test_project_quality_gate_does_not_scope_limit_placeholder_scan(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        src = tmp_path / "src"
+        tests = tmp_path / "tests"
+        src.mkdir(parents=True)
+        tests.mkdir(parents=True)
+        (src / "legacy.ts").write_text("export const value = 'placeholder';\n", encoding="utf-8")
+        (src / "assets.ts").write_text("export const assetPath = 'src/assets/catalog.ts';\n", encoding="utf-8")
+        (tests / "GenerationSpec.test.ts").write_text(
+            "test('generation spec', () => expect(true).toBe(true));\n",
+            encoding="utf-8",
+        )
+
+        review = adapter._run_static_review(
+            "FashionGenStudio final project quality gate. Reference paths include src/assets/catalog.ts. "
+            "The product requirement includes batch failure retry and 失败重试 features."
+        )
+
+        assert "placeholder_content_detected" in review["critical_issues"]
+        assert "out_of_scope_placeholder_content_detected" not in review["warnings"]
+
+    def test_generated_runtime_outputs_are_ignored_for_placeholder_scan(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        src = tmp_path / "src"
+        dist = tmp_path / "dist"
+        runtime = tmp_path / "runtime"
+        src.mkdir(parents=True)
+        dist.mkdir(parents=True)
+        runtime.mkdir(parents=True)
+        (src / "App.test.ts").write_text("test('ok', () => expect(true).toBe(true));\n", encoding="utf-8")
+        (dist / "bundle.js").write_text("const label = 'placeholder';\n", encoding="utf-8")
+        (runtime / "request.json").write_text('{"prompt":"placeholder"}\n', encoding="utf-8")
+
+        review = adapter._run_static_review("Project quality gate")
+
+        assert "placeholder_content_detected" not in review["critical_issues"]
+        assert "out_of_scope_placeholder_content_detected" not in review["warnings"]
 
 
 # ---------------------------------------------------------------------------

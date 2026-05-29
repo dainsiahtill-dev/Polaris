@@ -1,0 +1,177 @@
+{
+  "status": "FAIL",
+  "generated_at": "2026-05-27T05:48:00+08:00",
+  "objective": "Evaluate whether Polaris can reliably complete FashionGenStudio through the strict Polaris workflow and identify real gaps.",
+  "scope": {
+    "polaris_workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris",
+    "target_workspace": "C:\\Users\\dains\\Documents\\GitLab\\fashion-gen-studio",
+    "global_polaris_config": "C:\\Users\\dains\\.polaris",
+    "llm_config_source": "C:\\Users\\dains\\.polaris\\config\\llm\\llm_config.json",
+    "target_project_evidence": "C:\\Users\\dains\\Documents\\GitLab\\fashion-gen-studio\\.polaris"
+  },
+  "configuration_findings": {
+    "appdata_policy": "AppData/Electron userData is runtime shell/cache state only, not Polaris global configuration.",
+    "global_llm_roles": {
+      "pm": "DeepSeekV4-Pro / deepseek-v4-pro",
+      "director": "DeepSeekV4-Pro / deepseek-v4-pro",
+      "architect": "Kimi Coding / kimi-for-coding",
+      "qa": "Kimi Coding / kimi-for-coding",
+      "chief_engineer": "Kimi Coding / kimi-for-coding"
+    },
+    "known_provider_risk": "Kimi-k2.6/Kimi Coding quota is expired or unreliable per user report, so roles bound to Kimi cannot be trusted for live unattended factory execution."
+  },
+  "polaris_runtime_status": {
+    "policy_state": "READY",
+    "policy_required_roles": [
+      "pm",
+      "director",
+      "qa"
+    ],
+    "factory_state": "BLOCKED",
+    "factory_required_roles": [
+      "architect",
+      "pm",
+      "director",
+      "qa"
+    ],
+    "factory_blocked_roles": [
+      "architect"
+    ],
+    "blocking_evidence": {
+      "architect": "readiness_issue=provider_role_mismatch from build_llm_status(Settings(workspace=fashion-gen-studio))",
+      "qa": "non-live status is ready, but QA is bound to Kimi and previous factory QA reports show qa_llm_judgement_unavailable"
+    }
+  },
+  "polaris_defects_fixed_or_hardened_in_worktree": [
+    {
+      "area": "Factory Director completion",
+      "finding": "Factory could report success even when Director TaskBoard convergence was incomplete.",
+      "fix": "Director convergence is now a hard gate; default director_iterations=0 means auto-converge.",
+      "evidence": "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py"
+    },
+    {
+      "area": "LLM readiness diagnostics",
+      "finding": "UI and runtime state did not clearly distinguish current provider/model/role readiness and factory-only blocked roles.",
+      "fix": "Readiness freshness/provider-role checks and UI factory-state display were added.",
+      "evidence": "src/backend/polaris/cells/runtime/projection/internal/llm_status.py; src/frontend/src/app/components/llm/LLMSettingsTab.tsx"
+    },
+    {
+      "area": "Provider HTTP failures",
+      "finding": "429 Too Many Requests could escape as an unhandled health-check exception.",
+      "fix": "Provider health checks normalize HTTP/rate-limit failures into HealthResult-style diagnostics.",
+      "evidence": "src/backend/polaris/tests/integration/llm/providers/test_openai_compat_provider.py"
+    },
+    {
+      "area": "Factory QA gate",
+      "finding": "QA reports with qa_llm_judgement_unavailable could still be treated as passed.",
+      "fix": "Factory QA now fails by default when semantic LLM judgement is unavailable.",
+      "evidence": "src/backend/polaris/tests/test_factory_run_service.py"
+    },
+    {
+      "area": "Full workflow role coverage",
+      "finding": "Factory readiness did not require Architect for docs_generation/full-chain workflow.",
+      "fix": "Factory full-chain readiness includes architect, pm, director, qa.",
+      "evidence": "src/backend/polaris/delivery/http/routers/factory.py"
+    }
+  ],
+  "polaris_validation": {
+    "backend_ruff": "PASS: python -m ruff check ... --fix",
+    "backend_format": "PASS: python -m ruff format ...",
+    "backend_mypy": "PASS: Success: no issues found in 10 source files",
+    "backend_pytest": "PASS: 261 passed, 2 dependency warnings",
+    "frontend_tests": "PASS: 8 passed",
+    "frontend_typecheck": "PASS",
+    "frontend_lint": "PASS",
+    "frontend_build": "PASS with existing chunk-size warning"
+  },
+  "target_project_status": {
+    "git_modified_files": [
+      "src/main/providers.ts",
+      "src/main/runtimeStore.ts",
+      "src/spec/generationSpec.ts",
+      "src/store/useStudioStore.ts"
+    ],
+    "documents": {
+      "source_doc": ".polaris/docs/FashionGen_Studio_服装电商AI生图工作台项目文档.md",
+      "pm_plan": ".polaris/plans/fashiongen-studio-implementation-plan.md",
+      "chief_engineer_blueprint": ".polaris/blueprints/fashiongen-studio-project-blueprint.md",
+      "implementation_status": ".polaris/docs/implementation-status.md",
+      "old_gap_audit": ".polaris/evidence/project-gap-audit-20260527.md"
+    },
+    "validation": {
+      "npm_test": "PASS: 8 files, 31 tests",
+      "npm_lint": "PASS: tsc --noEmit",
+      "npm_build": "PASS: renderer and electron build",
+      "diff_check": "PASS: no whitespace errors; CRLF warnings only"
+    }
+  },
+  "target_implemented_capabilities": [
+    "React/Vite/TypeScript renderer",
+    "Electron main/preload shell",
+    "Five primary workbench routes plus library/history/settings",
+    "Generation Spec builder, validation, and prompt compiler",
+    "Zustand workflow state for assets, identities, templates, jobs, batch rows, constraints, and local edit context",
+    "Electron IPC for generation start/submit/cancel, settings, asset import, snapshot, export, and Codex diagnostics",
+    "Local runtime folders under Electron userData or configured runtimeRoot",
+    "Project manifest persistence for runtime assets and jobs",
+    "Original image copy on import and thumbnail generation attempt through nativeImage",
+    "Mock provider and Codex CLI provider using result-manifest.json contract",
+    "Local export bundle with manifest.json"
+  ],
+  "target_unfinished_or_unproven_capabilities": [
+    {
+      "requirement": "True photoreal apparel image generation",
+      "status": "NOT_PROVEN",
+      "reason": "Codex CLI is only an execution wrapper. It can fall back to SVG diagnostic outputs and does not guarantee GPT Image, Flux, ComfyUI, or another real raster model."
+    },
+    {
+      "requirement": "Garment consistency control",
+      "status": "PARTIAL",
+      "reason": "Constraints are encoded in Generation Spec and prompt text, but there is no visual/OCR/segmentation QA to verify collar, sleeve, hem, logo, pattern, color, or fabric preservation."
+    },
+    {
+      "requirement": "Reusable face identity asset system",
+      "status": "PARTIAL",
+      "reason": "Face identity UI/state exists, but runtime persistence currently persists assets and jobs only, not durable identity/template libraries."
+    },
+    {
+      "requirement": "Scene/reference-driven generation",
+      "status": "PARTIAL",
+      "reason": "Reference role separation exists in spec, but real scene generation quality is provider-dependent and unverified."
+    },
+    {
+      "requirement": "Local edit/inpainting",
+      "status": "PARTIAL",
+      "reason": "Local edit task and mask bounds exist, but there is no real mask drawing canvas, mask image payload, or inpaint provider."
+    },
+    {
+      "requirement": "Batch production",
+      "status": "PARTIAL",
+      "reason": "Batch rows and export UI exist, but the implementation does not yet run one durable provider job per garment row with retry and per-row result artifacts."
+    },
+    {
+      "requirement": "Unattended Polaris full workflow",
+      "status": "BLOCKED",
+      "reason": "Factory full-chain readiness is blocked by architect readiness, and Kimi-bound roles are not reliable with the current quota state."
+    },
+    {
+      "requirement": "End-to-end visual/runtime QA",
+      "status": "MISSING",
+      "reason": "Tests pass for current code shape, but there is no Electron E2E or visual test proving upload -> generate -> preview -> edit -> export on real images."
+    }
+  ],
+  "technical_director_assessment": {
+    "can_polaris_currently_prove_full_unattended_completion": false,
+    "can_target_currently_be_called_fully_complete": false,
+    "target_current_grade": "Runnable V0/V1 prototype with meaningful local runtime foundation, not production-complete commercial AI apparel studio.",
+    "estimated_completion": "About 55-65% for a desktop prototype; much lower for production-grade AI generation quality and unattended factory proof."
+  },
+  "next_required_actions": [
+    "Rebind architect and qa away from expired Kimi in C:\\Users\\dains\\.polaris\\config\\llm, then rerun role tests.",
+    "Rerun strict Polaris full chain: Architect docs -> PM plan -> ChiefEngineer blueprint -> Director implementation -> QA semantic gate.",
+    "Add durable persistence for identities/templates/projects, not only assets/jobs.",
+    "Replace Codex CLI fallback/SVG path with at least one real image provider contract and integration test using sample images.",
+    "Add garment-consistency QA checks and result artifact validation before accepting Factory completion.",
+    "Add Electron E2E proving import, generation, preview, cancel, history, and export with runtime files."
+  ]
+}

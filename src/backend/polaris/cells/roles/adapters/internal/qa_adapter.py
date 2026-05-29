@@ -22,7 +22,20 @@ from polaris.kernelone.storage import resolve_runtime_path
 from .base import BaseRoleAdapter
 
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java", ".rs", ".json", ".yaml", ".yml"}
-_IGNORE_ROOTS = {".polaris", ".git", "node_modules", "__pycache__", ".venv", "venv"}
+_IGNORE_ROOTS = {
+    ".git",
+    ".polaris",
+    ".venv",
+    ".vite",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "dist-electron",
+    "node_modules",
+    "runtime",
+    "venv",
+}
 _PLACEHOLDER_PATTERNS = (
     re.compile(r"\bTODO\b", re.IGNORECASE),
     re.compile(r"\bFIXME\b", re.IGNORECASE),
@@ -171,6 +184,7 @@ class QAAdapter(BaseRoleAdapter):
         last_reason = (
             str((review_result.get("critical_issues") or ["qa_failed"])[0]).strip() if not passed else "qa_passed"
         )
+        rework_evidence = _extract_qa_rework_evidence(review_result)
 
         summary = {
             "evaluated": 0,
@@ -235,6 +249,7 @@ class QAAdapter(BaseRoleAdapter):
             if not passed:
                 merged_adapter_result["qa_rework_reason"] = last_reason
                 merged_adapter_result["qa_rework_exhausted"] = exhausted
+                merged_adapter_result["qa_rework_evidence"] = rework_evidence
 
             metadata_update: dict[str, Any] = {
                 "adapter_result": merged_adapter_result,
@@ -242,6 +257,7 @@ class QAAdapter(BaseRoleAdapter):
                 "qa_rework_max_retries": max_retries,
                 "qa_rework_requested": False if passed else not exhausted,
                 "qa_rework_reason": last_reason,
+                "qa_rework_evidence": rework_evidence,
                 "qa_rework_exhausted": exhausted,
                 "qa_last_reviewed_at": now_iso,
                 "qa_last_verdict": "PASS" if passed else "FAIL",
@@ -323,9 +339,13 @@ class QAAdapter(BaseRoleAdapter):
         total_lines = 0
         test_file_count = 0
         placeholder_hits: list[str] = []
+        out_of_scope_placeholder_hits: list[str] = []
         unreadable_files: list[str] = []
         domain_tokens = self._extract_domain_tokens(target)
         domain_hit = False
+        scope_paths = (
+            _extract_target_scope_paths(target) if _target_allows_scope_limited_placeholder_scan(target) else set()
+        )
 
         for path in workspace.rglob("*"):
             if not path.is_file():
@@ -350,7 +370,11 @@ class QAAdapter(BaseRoleAdapter):
 
             for pattern in _PLACEHOLDER_PATTERNS:
                 if _has_unfinished_placeholder_match(content, pattern):
-                    placeholder_hits.append(f"{rel_path}:{pattern.pattern}")
+                    hit = f"{rel_path}:{pattern.pattern}"
+                    if not scope_paths or _path_is_in_target_scope(rel_path, scope_paths):
+                        placeholder_hits.append(hit)
+                    else:
+                        out_of_scope_placeholder_hits.append(hit)
                     break
 
             if domain_tokens and not domain_hit:
@@ -371,6 +395,9 @@ class QAAdapter(BaseRoleAdapter):
         if placeholder_hits:
             critical_issues.append("placeholder_content_detected")
             evidence.extend(placeholder_hits[:8])
+        elif out_of_scope_placeholder_hits:
+            warnings.append("out_of_scope_placeholder_content_detected")
+            evidence.extend(out_of_scope_placeholder_hits[:4])
         if test_file_count < 1:
             warnings.append("tests_not_detected")
         if domain_tokens and not domain_hit:
@@ -1097,3 +1124,79 @@ def _has_unfinished_placeholder_match(content: str, pattern: re.Pattern[str]) ->
             continue
         return True
     return False
+
+
+def _extract_target_scope_paths(target: str) -> set[str]:
+    """Extract explicit file or directory scopes from a QA target string."""
+    token = str(target or "")
+    if not token:
+        return set()
+    matches = re.findall(
+        r"(?<![\w.-])([A-Za-z0-9_./\\-]+\.(?:py|js|ts|tsx|jsx|json|ya?ml|md)|[A-Za-z0-9_./\\-]+/)",
+        token,
+        flags=re.IGNORECASE,
+    )
+    scopes: set[str] = set()
+    for match in matches:
+        normalized = match.replace("\\", "/").strip().strip(".,;:()[]{}<>\"'")
+        normalized = re.sub(r"/+", "/", normalized).strip("/")
+        if not normalized or normalized.startswith(("http:/", "https:/")):
+            continue
+        scopes.add(normalized)
+    return scopes
+
+
+def _target_allows_scope_limited_placeholder_scan(target: str) -> bool:
+    """Only narrow placeholder checks for explicit repair/failure targets.
+
+    Full project requirements often mention paths as examples. Treating those as
+    QA scope would hide unrelated unfinished source markers during final gates.
+    """
+    lowered = str(target or "").lower()
+    if not lowered:
+        return False
+    return any(
+        token in lowered
+        for token in (
+            "placeholder_content_detected",
+            "qa_rework",
+            "fix ",
+            "fix:",
+            "repair",
+            "rework",
+            "返工",
+            "修复",
+        )
+    )
+
+
+def _path_is_in_target_scope(rel_path: str, scope_paths: set[str]) -> bool:
+    normalized = str(rel_path or "").replace("\\", "/").strip("/")
+    if not normalized:
+        return False
+    for scope in scope_paths:
+        clean_scope = str(scope or "").replace("\\", "/").strip("/")
+        if not clean_scope:
+            continue
+        if clean_scope.endswith("/"):
+            if normalized.startswith(clean_scope):
+                return True
+            continue
+        if normalized == clean_scope or normalized.startswith(f"{clean_scope}/"):
+            return True
+    return False
+
+
+def _extract_qa_rework_evidence(review_result: dict[str, Any]) -> list[str]:
+    evidence = review_result.get("evidence") if isinstance(review_result, dict) else None
+    if not isinstance(evidence, list):
+        return []
+    results: list[str] = []
+    for item in evidence:
+        text = str(item or "").strip()
+        if not text or text.startswith(("code_file_count=", "code_line_count=", "test_file_count=", "llm_excerpt=")):
+            continue
+        results.append(text)
+        if len(results) >= 12:
+            break
+    return results

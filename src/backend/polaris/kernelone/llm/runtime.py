@@ -339,6 +339,9 @@ def invoke_role_runtime_provider(
     invoke_cfg["timeout"] = effective_timeout
     invoke_cfg["streaming"] = False
     invoke_cfg["stream"] = False
+    workspace_dir = str(workspace or "").strip()
+    if workspace_dir:
+        invoke_cfg["working_dir"] = workspace_dir
     invoke_cfg = resolve_provider_api_key(
         provider_id,
         resolved_type,

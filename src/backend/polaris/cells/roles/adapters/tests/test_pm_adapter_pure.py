@@ -109,11 +109,47 @@ class TestPlanArtifactSanitization:
 
 
 class TestFrontendTestRepairContracts:
+    def test_synthesizes_placeholder_repair_before_generic_frontend_plan(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        contracts = adapter._synthesize_task_contracts_from_directive(
+            directive=(
+                "Fix the full-project QA blocker in FashionGenStudio.\n"
+                "qa_rework_reason: placeholder_content_detected\n"
+                "Evidence:\n"
+                "- src/backend/fashiongen_worker.py:\\bplaceholder\\b\n"
+                "- src/main/providers.ts:\\bplaceholder\\b\n"
+                "- malformed artifact directory: PATCH_FILE src/\n"
+                "Run npm test and npm run build."
+            )
+        )
+
+        assert [item["id"] for item in contracts] == ["TASK-1", "TASK-2"]
+        assert "QA Placeholder Evidence Repair" in contracts[0]["title"]
+        assert contracts[0]["scope_paths"] == ["src/backend/fashiongen_worker.py", "src/main/providers.ts"]
+        assert "placeholder_content_detected" in contracts[0]["metadata"]["qa_rework_reason"]
+        assert contracts[0]["metadata"]["cleanup_paths"] == ["PATCH_FILE src/"]
+        assert any("PATCH_FILE src/" in step for step in contracts[0]["steps"])
+        assert "qa_rework_reason" not in contracts[1]["metadata"]
+        assert contracts[1]["metadata"]["qa_rework_verification_only"] is True
+        assert "npm test returns PASS" in contracts[1]["acceptance"]
+
+    def test_plain_placeholder_directive_synthesizes_repair_contracts(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        contracts = adapter._synthesize_task_contracts_from_directive(
+            directive=(
+                "Fix placeholder marker in src/main/providers.ts. Keep provider API behavior stable and run npm test."
+            )
+        )
+
+        assert [item["id"] for item in contracts] == ["TASK-1", "TASK-2"]
+        assert contracts[0]["scope_paths"] == ["src/main/providers.ts"]
+        assert contracts[0]["target_files"] == ["src/main/providers.ts"]
+
     def test_synthesizes_focused_frontend_test_repair_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         contracts = adapter._synthesize_task_contracts_from_directive(
             directive=(
-                "Fix npm test failure in Vitest TypeScript test: "
+                "Fix npm test fails in Vitest TypeScript test: "
                 "src/types/__tests__/spec.test.ts imports AssetType from ../generation, "
                 "AssetType is declared in src/types/asset.ts"
             )
@@ -125,6 +161,18 @@ class TestFrontendTestRepairContracts:
         assert "src/types/generation.ts" in contracts[0]["scope_paths"]
         assert "AssetType" in contracts[1]["description"]
         assert any("npm test returns PASS" in item for item in contracts[1]["acceptance"])
+
+    def test_project_delivery_verification_does_not_trigger_repair_contracts(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        contracts = adapter._synthesize_frontend_test_repair_contracts(
+            directive=(
+                "FashionGenStudio full delivery. Final npm test and npm run build must pass. "
+                "The project includes TypeScript workbenches and src/**/*.test.ts coverage."
+            ),
+            source_metadata={},
+        )
+
+        assert contracts == []
 
     def test_no_critical_issues_fallback(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -333,6 +381,29 @@ class TestNormalizeTaskContract:
         raw = {"title": "T", "execution_backend": "projection_generate"}
         result = adapter._normalize_task_contract(raw, 1, "")
         assert result["metadata"]["execution_backend"] == "projection_generate"
+
+    def test_natural_language_scope_is_not_promoted_to_target_files(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "title": "实现素材管理与本地存储",
+            "scope_paths": ["backend 素材 API 路由、数据库模型、文件存储；frontend 素材面板组件、拖拽上传交互"],
+        }
+
+        result = adapter._normalize_task_contract(raw, 2, "")
+
+        assert result["scope_paths"] == ["src/", "tests/"]
+        assert result["target_files"] == ["src/", "tests/"]
+
+    def test_keeps_concrete_relative_scope_paths(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "title": "Implement asset storage",
+            "scope_paths": ["src/store", "src/spec/generationSpec.ts", "package.json"],
+        }
+
+        result = adapter._normalize_task_contract(raw, 1, "")
+
+        assert result["scope_paths"] == ["src/store", "src/spec/generationSpec.ts", "package.json"]
 
 
 # ---------------------------------------------------------------------------

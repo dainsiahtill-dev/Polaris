@@ -1,0 +1,282 @@
+{
+  "run_id": "factory_88ee29c35d17",
+  "status": "failed",
+  "phase": "failed",
+  "progress": 0.0,
+  "current_stage": "director_dispatch",
+  "last_successful_stage": null,
+  "gates": [],
+  "failure": {
+    "failure_type": "deterministic",
+    "code": "FACTORY_RUN_EXCEPTION",
+    "detail": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 3, 'ready': 3, 'in_progress': 0, 'completed': 2, 'failed': 2, 'blocked': 0}",
+    "phase": "failed",
+    "timestamp": "2026-05-26T22:19:49.283723Z",
+    "recoverable": false,
+    "suggested_action": null,
+    "hops": []
+  },
+  "events_tail": [
+    {
+      "type": "started",
+      "message": "Run started",
+      "timestamp": "2026-05-26T22:14:48.960540+00:00",
+      "event_id": "evt_64bce905a0df"
+    },
+    {
+      "type": "stage_started",
+      "stage": "director_dispatch",
+      "message": "Started stage director_dispatch",
+      "timestamp": "2026-05-26T22:14:49.043023+00:00",
+      "event_id": "evt_258883b2a207"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:15:04.071671+00:00",
+      "event_id": "evt_1ffe96664fb4"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:15:19.087377+00:00",
+      "event_id": "evt_0479e89bd2d0"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:15:34.118714+00:00",
+      "event_id": "evt_5bb25d414c83"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:15:49.137394+00:00",
+      "event_id": "evt_3f3d900601a2"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:16:04.169787+00:00",
+      "event_id": "evt_ded9991e1b8c"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:16:19.202140+00:00",
+      "event_id": "evt_65286d71fc4b"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:16:34.302196+00:00",
+      "event_id": "evt_d104fae07606"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:16:49.317413+00:00",
+      "event_id": "evt_4816515d1d65"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:17:04.336512+00:00",
+      "event_id": "evt_0f4fb133f685"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:17:19.355536+00:00",
+      "event_id": "evt_c295613a0a3e"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:17:34.384624+00:00",
+      "event_id": "evt_96c3ab3552fe"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:17:49.404227+00:00",
+      "event_id": "evt_bf71f8ca9fbe"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:18:04.432345+00:00",
+      "event_id": "evt_db407d304188"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:18:19.450922+00:00",
+      "event_id": "evt_4fdb3034ed7e"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:18:34.467563+00:00",
+      "event_id": "evt_f7764415b382"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:18:49.502544+00:00",
+      "event_id": "evt_ac7a2bc1a7d5"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:19:04.519015+00:00",
+      "event_id": "evt_482681174da0"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:19:19.535416+00:00",
+      "event_id": "evt_0ed77839ea14"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:19:34.553294+00:00",
+      "event_id": "evt_a718b33d29c5"
+    },
+    {
+      "type": "stage_completed",
+      "stage": "director_dispatch",
+      "message": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 3, 'ready': 3, 'in_progress': 0, 'completed': 2, 'failed': 2, 'blocked': 0}",
+      "result": {
+        "stage": "director_dispatch",
+        "status": "failed",
+        "output": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 3, 'ready': 3, 'in_progress': 0, 'completed': 2, 'failed': 2, 'blocked': 0}",
+        "artifacts": [
+          "dispatch/log.json",
+          "workspace/roles/director/factory_88ee29c35d17/dispatch.log.json",
+          "workspace/dispatch/factory_88ee29c35d17.log.json",
+          "workspace/dispatch/latest.log.json",
+          "runtime/signals/director_dispatch.signals.json"
+        ],
+        "started_at": "2026-05-26T22:14:49.043023+00:00",
+        "completed_at": "2026-05-26T22:19:49.226844+00:00"
+      },
+      "timestamp": "2026-05-26T22:19:49.226844+00:00",
+      "event_id": "evt_1cd92b9a751a"
+    },
+    {
+      "type": "error",
+      "stage": "director_dispatch",
+      "message": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 3, 'ready': 3, 'in_progress': 0, 'completed': 2, 'failed': 2, 'blocked': 0}",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\delivery\\http\\routers\\factory.py\", line 1125, in _execute_run_with_service\n    completed = await _execute_stage_sequence(execution_stages)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\delivery\\http\\routers\\factory.py\", line 997, in _execute_stage_sequence\n    raise RuntimeError(result.output or f\"Stage {stage_name} failed\")\nRuntimeError: Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 3, 'ready': 3, 'in_progress': 0, 'completed': 2, 'failed': 2, 'blocked': 0}\n",
+      "event_id": "evt_5ba99cf7e2cd",
+      "timestamp": "2026-05-26T22:19:49.308473+00:00"
+    },
+    {
+      "type": "failed",
+      "message": "Run failed",
+      "timestamp": "2026-05-26T22:19:49.323970+00:00",
+      "success": false,
+      "event_id": "evt_aecfcefc04a3"
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "log.json",
+      "path": "dispatch/log.json",
+      "size": 4680,
+      "task_id": null
+    },
+    {
+      "name": "dispatch.log.json",
+      "path": "workspace/roles/director/factory_88ee29c35d17/dispatch.log.json",
+      "size": 4680,
+      "task_id": null
+    },
+    {
+      "name": "factory_88ee29c35d17.log.json",
+      "path": "workspace/dispatch/factory_88ee29c35d17.log.json",
+      "size": 4680,
+      "task_id": null
+    },
+    {
+      "name": "latest.log.json",
+      "path": "workspace/dispatch/latest.log.json",
+      "size": 4680,
+      "task_id": null
+    },
+    {
+      "name": "director_dispatch.signals.json",
+      "path": "runtime/signals/director_dispatch.signals.json",
+      "size": 978,
+      "task_id": null
+    }
+  ],
+  "summary_md": "# Factory Run Summary\n\n- Run ID: `factory_88ee29c35d17`\n- Status: `FAIL`\n- Workspace: `C:\\Users\\dains\\Documents\\GitLab\\fashion-gen-studio`\n- Start From: `director`\n- Loop Enabled: `False`\n- Loop Cycles Executed: `0`\n- Loop Stop Reason: `n/a`\n- Stages Completed: `none`\n- Stages Failed: `director_dispatch`\n\n## Failure\n\n- Stage: `director_dispatch`\n- Code: `FACTORY_RUN_EXCEPTION`\n- Detail: Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 3, 'ready': 3, 'in_progress': 0, 'completed': 2, 'failed': 2, 'blocked': 0}",
+  "summary_json": {
+    "run_id": "factory_88ee29c35d17",
+    "status": "FAIL",
+    "workspace": "C:\\Users\\dains\\Documents\\GitLab\\fashion-gen-studio",
+    "start_from": "director",
+    "run_director": true,
+    "loop_enabled": false,
+    "stages_configured": [
+      "director_dispatch",
+      "quality_gate"
+    ],
+    "stages_completed": [],
+    "stages_failed": [
+      "director_dispatch"
+    ],
+    "loop_cycles_executed": 0,
+    "loop_stop_reason": null,
+    "docs_pipeline": {},
+    "loop_history": [],
+    "failure": {
+      "stage": "director_dispatch",
+      "code": "FACTORY_RUN_EXCEPTION",
+      "detail": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 3, 'ready': 3, 'in_progress': 0, 'completed': 2, 'failed': 2, 'blocked': 0}",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\delivery\\http\\routers\\factory.py\", line 1125, in _execute_run_with_service\n    completed = await _execute_stage_sequence(execution_stages)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\delivery\\http\\routers\\factory.py\", line 997, in _execute_stage_sequence\n    raise RuntimeError(result.output or f\"Stage {stage_name} failed\")\nRuntimeError: Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 3, 'ready': 3, 'in_progress': 0, 'completed': 2, 'failed': 2, 'blocked': 0}\n",
+      "timestamp": "2026-05-26T22:19:49.283723+00:00"
+    },
+    "generated_at": "2026-05-26T22:19:49.301133+00:00"
+  },
+  "generated_at": "2026-05-26T22:19:49.484773+00:00",
+  "evidence_counts": {
+    "events_total": 24,
+    "events_tail": 24,
+    "artifacts": 5,
+    "gates": 0,
+    "failures": 1,
+    "summary_md": 1,
+    "summary_json": 1,
+    "event_types": {
+      "started": 1,
+      "stage_started": 1,
+      "stage_heartbeat": 19,
+      "stage_completed": 1,
+      "error": 1,
+      "failed": 1
+    }
+  }
+}

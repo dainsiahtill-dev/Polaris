@@ -1271,7 +1271,7 @@ class TestOrchestrationStageExecutor:
         assert "dispatch/log.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_director_stage_accepts_metadata_execution_evidence_without_taskboard_progress(
+    async def test_director_stage_requires_taskboard_convergence_even_with_metadata_progress(
         self,
         temp_workspace,
     ):
@@ -1331,12 +1331,12 @@ class TestOrchestrationStageExecutor:
             context={"director_max_rounds": 2},
         )
 
-        assert result.status == "success"
-        assert "error_code=none" in str(result.output)
+        assert result.status == "failed"
+        assert "error_code=director.taskboard_not_converged" in str(result.output)
         assert "dispatch/log.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_director_stage_treats_no_materialized_changes_after_progress_as_idempotent(
+    async def test_director_stage_no_materialized_changes_still_requires_taskboard_convergence(
         self,
         temp_workspace,
     ):
@@ -1396,8 +1396,8 @@ class TestOrchestrationStageExecutor:
             context={"director_max_rounds": 2},
         )
 
-        assert result.status == "success"
-        assert "error_code=none" in str(result.output)
+        assert result.status == "failed"
+        assert "error_code=director.taskboard_not_converged" in str(result.output)
         signal_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/signals/director_dispatch.signals.json"))
         payload = json.loads(signal_path.read_text(encoding="utf-8"))
         rows = payload.get("signals") if isinstance(payload, dict) else []
@@ -1501,6 +1501,72 @@ class TestOrchestrationStageExecutor:
         assert "qa_passed=False" in str(result.output)
         assert "runtime/qa/report.json" in result.artifacts
         assert f"workspace/roles/qa/{run.id}/report.json" in result.artifacts
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_fails_when_llm_judgement_unavailable_by_default(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_quality_gate_llm_unavailable",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(
+                {
+                    "passed": True,
+                    "score": 96,
+                    "critical_issue_count": 0,
+                    "warnings": ["qa_llm_judgement_unavailable"],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
+
+        assert result.status == "failed"
+        assert "qa_llm_required=True" in str(result.output)
+        assert "qa_llm_judgement_ready=False" in str(result.output)
+        assert "qa_gate_blocker=qa_llm_judgement_unavailable" in str(result.output)
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_can_explicitly_allow_llm_judgement_fallback(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_quality_gate_llm_fallback",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(
+                {
+                    "passed": True,
+                    "score": 96,
+                    "critical_issue_count": 0,
+                    "warnings": ["qa_llm_judgement_unavailable"],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_quality_gate(
+            run,
+            context={"qa_target": "Quality gate", "qa_require_llm_judgement": False},
+        )
+
+        assert result.status == "success"
+        assert "qa_llm_required=False" in str(result.output)
+        assert "qa_llm_judgement_ready=False" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_runs_workspace_node_scripts(self, temp_workspace):

@@ -39,6 +39,30 @@ describe('apiClient', () => {
       );
     });
 
+    it('includes concrete provider readiness issues for blocked runtime roles', async () => {
+      const response = new Response(
+        JSON.stringify({
+          error: {
+            code: 'RUNTIME_ROLES_NOT_READY',
+            message: 'One or more required runtime roles are not ready',
+            details: {
+              required_roles: ['director'],
+              missing_roles: ['director'],
+              role_issues: {
+                director:
+                  'director LLM readiness for provider kimi-main model kimi-for-coding is stale (last tested at 2026-05-25T19:01:09+00:00); rerun LLM tests',
+              },
+            },
+          },
+        }),
+        { status: 409 }
+      );
+
+      await expect(extractErrorDetail(response, 'fallback')).resolves.toContain(
+        'director (director LLM readiness for provider kimi-main model kimi-for-coding is stale'
+      );
+    });
+
     it('falls back when the response body is not JSON', async () => {
       const response = new Response('not json', { status: 500 });
 

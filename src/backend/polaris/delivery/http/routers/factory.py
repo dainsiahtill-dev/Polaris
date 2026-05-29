@@ -200,8 +200,8 @@ def _coerce_director_iterations(value: Any) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        return 1
-    return max(1, min(parsed, 10))
+        return 0
+    return max(0, min(parsed, 10))
 
 
 def _coerce_optional_string(value: Any) -> str | None:
@@ -236,7 +236,7 @@ def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartR
         start_from=cast(FactoryStartFrom, start_from),
         directive=directive_value,
         run_director=bool(start_payload.get("run_director", "director_dispatch" in configured_stages)),
-        director_iterations=_coerce_director_iterations(start_payload.get("director_iterations", 1)),
+        director_iterations=_coerce_director_iterations(start_payload.get("director_iterations", 0)),
         loop=bool(start_payload.get("loop", run.metadata.get("loop_requested", False))),
         input_source=_coerce_optional_string(start_payload.get("input_source")),
     )
@@ -467,7 +467,7 @@ def _required_ready_roles_for_stages(stages: list[str], *, qa_enabled: bool) -> 
     roles: list[str] = []
     for stage in stages:
         role = STAGE_TO_ROLE.get(str(stage or "").strip())
-        if not role or role == "architect":
+        if not role:
             continue
         # Factory CE review uses the local chief_engineer.blueprint service; it
         # must not be blocked by role-chat LLM readiness.
@@ -488,10 +488,18 @@ def _ensure_factory_runtime_ready(state: AppState, stages: list[str]) -> None:
     roles = _required_ready_roles_for_stages(stages, qa_enabled=_settings_qa_enabled(state.settings))
     if not roles:
         return
+    live_check = os.environ.get("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+        "disabled",
+    }
     ensure_required_roles_ready(
         state,
         default_roles=roles,
         force_roles=roles,
+        live_check=live_check,
     )
 
 
@@ -508,7 +516,8 @@ def _build_stage_context(stage: str, payload: FactoryStartRequest, state: AppSta
         context["max_workers"] = getattr(
             state.settings, "director_max_parallel_tasks", DEFAULT_DIRECTOR_MAX_PARALLELISM
         )
-        context["director_max_rounds"] = int(payload.director_iterations)
+        if int(payload.director_iterations) > 0:
+            context["director_max_rounds"] = int(payload.director_iterations)
     if stage == "quality_gate":
         context["qa_target"] = payload.directive or "Quality gate"
     return context

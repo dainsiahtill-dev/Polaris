@@ -83,7 +83,7 @@ class DirectorPatchExecutor:
                 continue
             return max(0.1, min(value, primary_timeout, 300.0))
 
-        return max(0.1, min(primary_timeout, 90.0))
+        return max(0.1, min(primary_timeout, 240.0))
 
     # -------------------------------------------------------------------------
     # Tool Execution (delegated to DirectorToolExecutor)
@@ -329,6 +329,8 @@ class DirectorPatchExecutor:
         token = str(file_path or "").strip().replace("\\", "/")
         if not token:
             return "Missing file path"
+        if re.match(r"(?i)^(?:PATCH_FILE|END PATCH_FILE)(?:\s|:|$)", token):
+            return f"Invalid patch path: {file_path}"
         if token.endswith(":"):
             return f"Invalid patch path: {file_path}"
         if any(ch in token for ch in ('"', "'", "`", "<", ">", "|", "\0")):
@@ -341,6 +343,16 @@ class DirectorPatchExecutor:
         if not Path(token).suffix and any(ch.isspace() for ch in token):
             return f"Invalid patch path: {file_path}"
         return None
+
+    @staticmethod
+    def _looks_like_unified_diff_content(content: str) -> bool:
+        """Return true when markdown block content is a diff, not final file text."""
+        token = str(content or "").lstrip()
+        if not token:
+            return False
+        if token.startswith("@@") or token.startswith(("--- ", "+++ ", "diff --git ")):
+            return True
+        return bool(re.search(r"(?m)^@@\s", token) or re.search(r"(?m)^--- .*\n\+\+\+ ", token))
 
     @staticmethod
     def _extract_markdown_file_blocks(text: str) -> list[dict[str, Any]]:
@@ -359,7 +371,11 @@ class DirectorPatchExecutor:
             content = str(match.group(2) or "")
             if not file_path:
                 continue
+            if DirectorPatchExecutor._validate_relative_patch_path(file_path):
+                continue
             if looks_like_protocol_patch_response(content):
+                continue
+            if DirectorPatchExecutor._looks_like_unified_diff_content(content):
                 continue
             blocks.append(
                 {

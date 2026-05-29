@@ -27,6 +27,7 @@ export interface ApiErrorPayload {
 export interface ApiErrorStructuredDetails {
   required_roles?: string[];
   missing_roles?: string[];
+  role_issues?: Record<string, string>;
   [key: string]: unknown;
 }
 
@@ -459,6 +460,10 @@ export interface LLMStatusResponse {
   required_ready_roles: string[];
   blocked_roles: string[];
   unsupported_roles: string[];
+  factory_state?: string;
+  factory_required_roles?: string[];
+  factory_blocked_roles?: string[];
+  factory_unsupported_roles?: string[];
   roles: Record<string, {
     provider_id?: string;
     model?: string;
@@ -473,6 +478,7 @@ export interface LLMStatusResponse {
     readiness_source?: string;
     tested_provider_id?: string;
     tested_model?: string;
+    tested_timestamp?: string | null;
   }>;
   providers?: Record<string, {
     ready?: boolean | null;

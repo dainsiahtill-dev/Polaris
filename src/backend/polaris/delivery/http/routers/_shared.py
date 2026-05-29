@@ -4,8 +4,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastapi import HTTPException, Request
-from polaris.cells.llm.evaluation.public.service import load_llm_test_index
-from polaris.cells.llm.provider_runtime.public.service import is_role_runtime_supported
+from polaris.cells.llm.evaluation.public.service import (
+    load_llm_test_index,
+    readiness_freshness_issue,
+    run_connectivity_suite_sync,
+)
+from polaris.cells.llm.provider_runtime.public.service import role_runtime_support_issue
 from polaris.cells.runtime.state_owner.public.service import AppState
 from polaris.delivery.http.dependencies import require_auth as _canonical_require_auth
 from polaris.delivery.http.middleware.rbac import require_role as _require_role
@@ -64,6 +68,7 @@ def _readiness_candidate_issue(
     model: str,
     tested_provider_id: str,
     tested_model: str,
+    tested_timestamp: Any = None,
 ) -> str:
     if not provider_id or not model:
         return "LLM binding is incomplete"
@@ -73,7 +78,42 @@ def _readiness_candidate_issue(
         return "LLM readiness was not tested for the current model"
     if not model_identity_equal(tested_model, model):
         return f"LLM readiness was tested for model {tested_model}, not {model}"
+    freshness_issue = readiness_freshness_issue(tested_timestamp)
+    if freshness_issue == "readiness_stale":
+        return (
+            f"LLM readiness for provider {provider_id} model {model} is stale"
+            f" (last tested at {tested_timestamp}); rerun LLM tests"
+        )
+    if freshness_issue == "timestamp_invalid":
+        return (
+            f"LLM readiness for provider {provider_id} model {model} has an invalid"
+            f" timestamp ({tested_timestamp}); rerun LLM tests"
+        )
+    if freshness_issue == "timestamp_missing":
+        return f"LLM readiness for provider {provider_id} model {model} has no timestamp; rerun LLM tests"
     return ""
+
+
+def _readiness_failed_issue(
+    *,
+    provider_id: str,
+    model: str,
+    tested_provider_id: str,
+    tested_model: str,
+    tested_timestamp: Any = None,
+) -> str:
+    issue = _readiness_candidate_issue(
+        provider_id=provider_id,
+        model=model,
+        tested_provider_id=tested_provider_id,
+        tested_model=tested_model,
+        tested_timestamp=tested_timestamp,
+    )
+    if issue:
+        return issue
+    tested = f"provider {tested_provider_id or provider_id} model {tested_model or model}"
+    suffix = f" at {tested_timestamp}" if tested_timestamp else ""
+    return f"LLM readiness failed for {tested}{suffix}; rerun LLM tests"
 
 
 def _ensure_llm_ready(state: AppState, role: str) -> None:
@@ -96,12 +136,23 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
 
     provider_index = index.get("providers") if isinstance(index.get("providers"), dict) else {}
     provider_status = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
-    candidates: list[tuple[str, str]] = []
+    if isinstance(role_status, dict) and not bool(role_status.get("ready")):
+        issue = _readiness_failed_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=str(role_status.get("provider_id") or "").strip(),
+            tested_model=str(role_status.get("model") or "").strip(),
+            tested_timestamp=role_status.get("timestamp"),
+        )
+        raise HTTPException(status_code=409, detail=f"{role_key} {issue}")
+
+    candidates: list[tuple[str, str, Any]] = []
     if isinstance(role_status, dict) and bool(role_status.get("ready")):
         candidates.append(
             (
                 str(role_status.get("provider_id") or "").strip(),
                 str(role_status.get("model") or "").strip(),
+                role_status.get("timestamp"),
             )
         )
     if (
@@ -113,16 +164,18 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
             (
                 provider_id,
                 str(provider_status.get("model") or "").strip(),
+                provider_status.get("timestamp"),
             )
         )
 
     first_issue = f"{role_key} LLM not ready; run tests first"
-    for tested_provider_id, tested_model in candidates:
+    for tested_provider_id, tested_model, tested_timestamp in candidates:
         issue = _readiness_candidate_issue(
             provider_id=provider_id,
             model=model,
             tested_provider_id=tested_provider_id,
             tested_model=tested_model,
+            tested_timestamp=tested_timestamp,
         )
         if not issue:
             break
@@ -131,11 +184,53 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
         raise HTTPException(status_code=409, detail=first_issue)
 
     provider_cfg = providers.get(provider_id, {}) if isinstance(providers, dict) else {}
-    if not is_role_runtime_supported(role_key, provider_id, provider_cfg):
+    runtime_issue = role_runtime_support_issue(role_key, provider_id, provider_cfg)
+    if runtime_issue:
         raise HTTPException(
             status_code=409,
-            detail=f"{role_key} provider not supported for runtime",
+            detail=f"{role_key} provider not supported for runtime: {runtime_issue}",
         )
+
+
+def _role_binding_for_live_check(state: AppState, role: str) -> tuple[str, str, dict[str, Any]]:
+    role_key = _role_key(role)
+    workspace = _workspace_value(state.settings)
+    cache_root = build_cache_root(str(getattr(state.settings, "ramdisk_root", "") or ""), workspace)
+    config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
+    roles_cfg = config.get("roles") if isinstance(config.get("roles"), dict) else {}
+    role_cfg = roles_cfg.get(role_key, {}) if isinstance(roles_cfg, dict) else {}
+    if not isinstance(role_cfg, dict) or not role_cfg:
+        for key, value in roles_cfg.items():
+            if _role_key(key) == role_key and isinstance(value, dict):
+                role_cfg = value
+                break
+    providers = config.get("providers") if isinstance(config.get("providers"), dict) else {}
+    provider_id = str(role_cfg.get("provider_id") or "").strip() if isinstance(role_cfg, dict) else ""
+    model = str(role_cfg.get("model") or "").strip() if isinstance(role_cfg, dict) else ""
+    provider_cfg = providers.get(provider_id, {}) if isinstance(providers, dict) else {}
+    provider_payload = dict(provider_cfg) if isinstance(provider_cfg, dict) else {}
+    return provider_id, model, provider_payload
+
+
+def _sanitize_live_check_error(value: Any) -> str:
+    text = str(value or "").strip().replace("\r", " ").replace("\n", " ")
+    return text[:500] or "unknown live connectivity failure"
+
+
+def _ensure_llm_live_connectivity(state: AppState, role: str) -> None:
+    role_key = _role_key(role)
+    provider_id, model, provider_cfg = _role_binding_for_live_check(state, role_key)
+    if not provider_id or not model:
+        raise HTTPException(status_code=409, detail=f"{role_key} LLM binding is incomplete")
+
+    result = run_connectivity_suite_sync(provider_cfg, model)
+    if bool(result.get("ok")):
+        return
+    error = _sanitize_live_check_error(result.get("error"))
+    raise HTTPException(
+        status_code=409,
+        detail=f"{role_key} live LLM connectivity failed for provider {provider_id} model {model}: {error}",
+    )
 
 
 def required_ready_roles(
@@ -188,6 +283,7 @@ def ensure_required_roles_ready(
     default_roles: list[str] | None = None,
     force_first: str | None = None,
     force_roles: list[str] | None = None,
+    live_check: bool = False,
 ) -> None:
     """Raise 409 if any of the required roles fail the LLM-readiness check.
 
@@ -201,11 +297,15 @@ def ensure_required_roles_ready(
         force_roles=force_roles,
     )
     missing_roles: list[str] = []
+    role_issues: dict[str, str] = {}
     for role in roles:
         try:
             _ensure_llm_ready(state, role)
-        except HTTPException:
+            if live_check:
+                _ensure_llm_live_connectivity(state, role)
+        except HTTPException as exc:
             missing_roles.append(role)
+            role_issues[role] = str(exc.detail)
     if missing_roles:
         # Use structured_error_response for proper JSON formatting
         # HTTPException.detail expects a string, so we use JSONResponse instead
@@ -216,6 +316,7 @@ def ensure_required_roles_ready(
             details={
                 "required_roles": roles,
                 "missing_roles": missing_roles,
+                "role_issues": role_issues,
             },
         )
 

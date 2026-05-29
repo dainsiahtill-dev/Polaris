@@ -78,7 +78,7 @@ class TestResolveDirectFallbackTimeoutSeconds:
 
     def test_default_caps_long_primary_budget(self) -> None:
         result = DirectorPatchExecutor.resolve_direct_fallback_timeout_seconds(None, 600.0)
-        assert result == 90.0
+        assert result == 240.0
 
     def test_default_honors_short_primary_budget(self) -> None:
         result = DirectorPatchExecutor.resolve_direct_fallback_timeout_seconds(None, 12.0)
@@ -220,6 +220,16 @@ class TestExtractMarkdownFileBlocks:
         result = DirectorPatchExecutor._extract_markdown_file_blocks(text)
         assert result == []
 
+    def test_skips_patch_file_heading_with_diff_content(self) -> None:
+        text = "PATCH_FILE src/main/providers.ts\n```diff\n@@\n-old\n+new\n```"
+        result = DirectorPatchExecutor._extract_markdown_file_blocks(text)
+        assert result == []
+
+    def test_skips_unified_diff_content_for_real_path(self) -> None:
+        text = "src/main/providers.ts\n```diff\n@@\n-old\n+new\n```"
+        result = DirectorPatchExecutor._extract_markdown_file_blocks(text)
+        assert result == []
+
     def test_no_match_returns_empty(self) -> None:
         text = "Just some plain text without code blocks"
         result = DirectorPatchExecutor._extract_markdown_file_blocks(text)
@@ -254,6 +264,11 @@ class TestValidateRelativePatchPath:
 
     def test_rejects_prose_heading_path(self) -> None:
         error = DirectorPatchExecutor._validate_relative_patch_path("distributable application:")
+        assert error is not None
+        assert "Invalid patch path" in error
+
+    def test_rejects_patch_file_token_path(self) -> None:
+        error = DirectorPatchExecutor._validate_relative_patch_path("PATCH_FILE src/main/providers.ts")
         assert error is not None
         assert "Invalid patch path" in error
 

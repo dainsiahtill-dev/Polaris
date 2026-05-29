@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from polaris.cells.archive.factory_archive.public import service as factory_archive_public_service
 from polaris.cells.archive.factory_archive.public.service import (
     archive_factory_run,
     get_factory_manifest,
@@ -19,6 +20,7 @@ from polaris.cells.archive.task_snapshot_archive.public.service import (
     list_task_snapshots,
 )
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots as resolve_storage_roots
+from pytest import MonkeyPatch
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -95,3 +97,77 @@ def test_factory_archive_public_service_roundtrip(tmp_path: Path) -> None:
     loaded = get_factory_manifest(workspace, factory_run_id)
     assert loaded is not None
     assert loaded["id"] == factory_run_id
+
+
+def test_factory_archive_public_service_retries_transient_replace_permission_error(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    workspace = str(tmp_path)
+    roots = resolve_storage_roots(workspace)
+    factory_run_id = "factory-retry-001"
+    source_dir = Path(roots.workspace_persistent_root) / "factory" / factory_run_id
+    _write_json(source_dir / "config.json", {"name": "factory"})
+    calls = 0
+    sources: list[Path] = []
+    original_replace = factory_archive_public_service.os.replace
+
+    def flaky_replace(src: object, dst: object) -> None:
+        nonlocal calls
+        sources.append(Path(str(src)))
+        calls += 1
+        if calls == 1:
+            raise PermissionError(5, "Access is denied", str(src))
+        original_replace(src, dst)
+
+    monkeypatch.setattr(factory_archive_public_service.os, "replace", flaky_replace)
+
+    manifest = archive_factory_run(
+        workspace=workspace,
+        factory_run_id=factory_run_id,
+        source_factory_dir=str(source_dir),
+        reason="completed",
+    )
+
+    assert manifest["id"] == factory_run_id
+    assert calls >= 2
+    assert sources[0].name.startswith(f".{factory_run_id}.")
+    assert sources[0].name.endswith(".tmp")
+    history_factory_dir = Path(roots.history_root) / "factory"
+    assert not list(history_factory_dir.glob(f".{factory_run_id}.*.tmp"))
+
+
+def test_factory_archive_public_service_copies_when_directory_replace_remains_denied(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    workspace = str(tmp_path)
+    roots = resolve_storage_roots(workspace)
+    factory_run_id = "factory-retry-copy-001"
+    source_dir = Path(roots.workspace_persistent_root) / "factory" / factory_run_id
+    _write_json(source_dir / "config.json", {"name": "factory"})
+    calls = 0
+    original_replace = factory_archive_public_service.os.replace
+
+    def always_denied_replace(src: object, dst: object) -> None:
+        nonlocal calls
+        source_path = Path(str(src))
+        if source_path.name.startswith(f".{factory_run_id}.") and source_path.name.endswith(".tmp"):
+            calls += 1
+            raise PermissionError(5, "Access is denied", str(src))
+        original_replace(src, dst)
+
+    monkeypatch.setattr(factory_archive_public_service.os, "replace", always_denied_replace)
+
+    manifest = archive_factory_run(
+        workspace=workspace,
+        factory_run_id=factory_run_id,
+        source_factory_dir=str(source_dir),
+        reason="failed",
+    )
+
+    assert manifest["id"] == factory_run_id
+    assert calls >= 2
+    target_dir = Path(roots.history_root) / "factory" / factory_run_id
+    assert (target_dir / "config.json").is_file()
+    assert not list((Path(roots.history_root) / "factory").glob(f".{factory_run_id}.*.tmp"))

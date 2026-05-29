@@ -1,0 +1,680 @@
+{
+  "run_id": "factory_205a52514baa",
+  "status": "failed",
+  "phase": "failed",
+  "progress": 60.0,
+  "current_stage": "director_dispatch",
+  "last_successful_stage": "chief_engineer_review",
+  "gates": [],
+  "failure": {
+    "failure_type": "deterministic",
+    "code": "FACTORY_RUN_EXCEPTION",
+    "detail": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 5, 'ready': 5, 'in_progress': 0, 'completed': 1, 'failed': 1, 'blocked': 0}",
+    "phase": "failed",
+    "timestamp": "2026-05-26T22:08:39.580917Z",
+    "recoverable": false,
+    "suggested_action": null,
+    "hops": []
+  },
+  "events_tail": [
+    {
+      "type": "started",
+      "message": "Run started",
+      "timestamp": "2026-05-26T22:00:21.493731+00:00",
+      "event_id": "evt_242307da9727"
+    },
+    {
+      "type": "stage_started",
+      "stage": "docs_generation",
+      "message": "Started stage docs_generation",
+      "timestamp": "2026-05-26T22:00:21.547349+00:00",
+      "event_id": "evt_e4b4af933bf9"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "docs_generation",
+      "message": "Stage docs_generation is still running",
+      "timestamp": "2026-05-26T22:00:36.571621+00:00",
+      "event_id": "evt_8c59ad963353"
+    },
+    {
+      "type": "stage_completed",
+      "stage": "docs_generation",
+      "message": "Docs generation completed: Run status: completed; signals=0",
+      "result": {
+        "stage": "docs_generation",
+        "status": "success",
+        "output": "Docs generation completed: Run status: completed; signals=0",
+        "artifacts": [
+          "docs/plan.md",
+          "docs/architecture.md",
+          "workspace/roles/architect/factory_205a52514baa/plan.md",
+          "workspace/roles/architect/factory_205a52514baa/architecture.md"
+        ],
+        "started_at": "2026-05-26T22:00:21.547349+00:00",
+        "completed_at": "2026-05-26T22:00:45.765979+00:00"
+      },
+      "timestamp": "2026-05-26T22:00:45.765979+00:00",
+      "event_id": "evt_9bdb23bcc57c"
+    },
+    {
+      "type": "stage_started",
+      "stage": "pm_planning",
+      "message": "Started stage pm_planning",
+      "timestamp": "2026-05-26T22:00:45.808776+00:00",
+      "event_id": "evt_de4a1822f355"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:01:00.838963+00:00",
+      "event_id": "evt_5f3c4e4c9d1c"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:01:15.856992+00:00",
+      "event_id": "evt_bc7516c69297"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:01:30.874675+00:00",
+      "event_id": "evt_bb65ebe98bc6"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:01:45.891257+00:00",
+      "event_id": "evt_7b585d41333f"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:02:00.908266+00:00",
+      "event_id": "evt_7666b53a3975"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:02:15.921448+00:00",
+      "event_id": "evt_90ebce0e6bad"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:02:30.940258+00:00",
+      "event_id": "evt_59312a1360fc"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:02:45.957640+00:00",
+      "event_id": "evt_a15583fd6291"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:03:00.972127+00:00",
+      "event_id": "evt_16b3631cd1c2"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:03:15.988091+00:00",
+      "event_id": "evt_cc335e0b198e"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:03:31.008168+00:00",
+      "event_id": "evt_23c19c93a448"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:03:46.023227+00:00",
+      "event_id": "evt_b1edd6878e64"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:04:01.041322+00:00",
+      "event_id": "evt_75770f40441c"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:04:16.060544+00:00",
+      "event_id": "evt_96ce15808ec4"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:04:31.089466+00:00",
+      "event_id": "evt_d1e49366e515"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:04:46.105854+00:00",
+      "event_id": "evt_01be2dd0083f"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "pm_planning",
+      "message": "Stage pm_planning is still running",
+      "timestamp": "2026-05-26T22:05:01.139835+00:00",
+      "event_id": "evt_2625f071a5fa"
+    },
+    {
+      "type": "stage_completed",
+      "stage": "pm_planning",
+      "message": "PM planning completed: Run status: completed; signals=1; error_code=none; root_cause_hint=none",
+      "result": {
+        "stage": "pm_planning",
+        "status": "success",
+        "output": "PM planning completed: Run status: completed; signals=1; error_code=none; root_cause_hint=none",
+        "artifacts": [
+          "tasks/plan.json",
+          "workspace/roles/pm/factory_205a52514baa/plan.json",
+          "workspace/plans/factory_205a52514baa.plan.json",
+          "workspace/plans/latest.plan.json",
+          "runtime/signals/pm_planning.signals.json"
+        ],
+        "started_at": "2026-05-26T22:00:45.808776+00:00",
+        "completed_at": "2026-05-26T22:05:13.680171+00:00"
+      },
+      "timestamp": "2026-05-26T22:05:13.680171+00:00",
+      "event_id": "evt_15e0a9d6d8ea"
+    },
+    {
+      "type": "stage_started",
+      "stage": "chief_engineer_review",
+      "message": "Started stage chief_engineer_review",
+      "timestamp": "2026-05-26T22:05:13.725022+00:00",
+      "event_id": "evt_b62eb2bfa9af"
+    },
+    {
+      "type": "stage_completed",
+      "stage": "chief_engineer_review",
+      "message": "Chief Engineer review generated 7/7 blueprints; signals=0; error_code=none; root_cause_hint=none",
+      "result": {
+        "stage": "chief_engineer_review",
+        "status": "success",
+        "output": "Chief Engineer review generated 7/7 blueprints; signals=0; error_code=none; root_cause_hint=none",
+        "artifacts": [
+          "runtime/blueprints/ce_TASK-1_20260526220513734315.json",
+          "runtime/blueprints/ce_TASK-2_20260526220513735812.json",
+          "runtime/blueprints/ce_TASK-3_20260526220513737849.json",
+          "runtime/blueprints/ce_TASK-4_20260526220513740659.json",
+          "runtime/blueprints/ce_TASK-5_20260526220513742727.json",
+          "runtime/blueprints/ce_TASK-6_20260526220513744475.json",
+          "runtime/blueprints/ce_TASK-7_20260526220513746182.json",
+          "runtime/state/blueprints/factory_205a52514baa.review.json",
+          "workspace/roles/chief_engineer/factory_205a52514baa/review.json",
+          "workspace/blueprints/factory_205a52514baa.review.json",
+          "workspace/blueprints/latest.review.json",
+          "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-1_20260526220513734315.json",
+          "workspace/blueprints/ce_TASK-1_20260526220513734315.json",
+          "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-2_20260526220513735812.json",
+          "workspace/blueprints/ce_TASK-2_20260526220513735812.json",
+          "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-3_20260526220513737849.json",
+          "workspace/blueprints/ce_TASK-3_20260526220513737849.json",
+          "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-4_20260526220513740659.json",
+          "workspace/blueprints/ce_TASK-4_20260526220513740659.json",
+          "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-5_20260526220513742727.json",
+          "workspace/blueprints/ce_TASK-5_20260526220513742727.json",
+          "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-6_20260526220513744475.json",
+          "workspace/blueprints/ce_TASK-6_20260526220513744475.json",
+          "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-7_20260526220513746182.json",
+          "workspace/blueprints/ce_TASK-7_20260526220513746182.json"
+        ],
+        "started_at": "2026-05-26T22:05:13.725022+00:00",
+        "completed_at": "2026-05-26T22:05:13.864143+00:00"
+      },
+      "timestamp": "2026-05-26T22:05:13.864143+00:00",
+      "event_id": "evt_40319996c160"
+    },
+    {
+      "type": "stage_started",
+      "stage": "director_dispatch",
+      "message": "Started stage director_dispatch",
+      "timestamp": "2026-05-26T22:05:13.940468+00:00",
+      "event_id": "evt_0f30ee7ee13c"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:05:29.038540+00:00",
+      "event_id": "evt_f19cdaa10413"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:05:44.054146+00:00",
+      "event_id": "evt_43fb86442651"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:05:59.087470+00:00",
+      "event_id": "evt_2cbd742b47c0"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:06:14.106605+00:00",
+      "event_id": "evt_576ac6de9e58"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:06:29.122993+00:00",
+      "event_id": "evt_2e4c06a20cf2"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:06:44.137649+00:00",
+      "event_id": "evt_56aae33bb0f4"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:06:59.153878+00:00",
+      "event_id": "evt_1d5f67b76520"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:07:14.189068+00:00",
+      "event_id": "evt_d195b8910085"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:07:29.222110+00:00",
+      "event_id": "evt_bfb15f161887"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:07:44.256380+00:00",
+      "event_id": "evt_f4671acd2beb"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:07:59.288405+00:00",
+      "event_id": "evt_f822cc3b6092"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:08:14.306209+00:00",
+      "event_id": "evt_7968176035e7"
+    },
+    {
+      "type": "stage_heartbeat",
+      "stage": "director_dispatch",
+      "message": "Stage director_dispatch is still running",
+      "timestamp": "2026-05-26T22:08:29.323170+00:00",
+      "event_id": "evt_79b20f301b5e"
+    },
+    {
+      "type": "stage_completed",
+      "stage": "director_dispatch",
+      "message": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 5, 'ready': 5, 'in_progress': 0, 'completed': 1, 'failed': 1, 'blocked': 0}",
+      "result": {
+        "stage": "director_dispatch",
+        "status": "failed",
+        "output": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 5, 'ready': 5, 'in_progress': 0, 'completed': 1, 'failed': 1, 'blocked': 0}",
+        "artifacts": [
+          "dispatch/log.json",
+          "workspace/roles/director/factory_205a52514baa/dispatch.log.json",
+          "workspace/dispatch/factory_205a52514baa.log.json",
+          "workspace/dispatch/latest.log.json",
+          "runtime/signals/director_dispatch.signals.json"
+        ],
+        "started_at": "2026-05-26T22:05:13.940468+00:00",
+        "completed_at": "2026-05-26T22:08:39.547421+00:00"
+      },
+      "timestamp": "2026-05-26T22:08:39.547421+00:00",
+      "event_id": "evt_5c8da7e0eed2"
+    },
+    {
+      "type": "error",
+      "stage": "director_dispatch",
+      "message": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 5, 'ready': 5, 'in_progress': 0, 'completed': 1, 'failed': 1, 'blocked': 0}",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\delivery\\http\\routers\\factory.py\", line 1125, in _execute_run_with_service\n    completed = await _execute_stage_sequence(execution_stages)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\delivery\\http\\routers\\factory.py\", line 997, in _execute_stage_sequence\n    raise RuntimeError(result.output or f\"Stage {stage_name} failed\")\nRuntimeError: Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 5, 'ready': 5, 'in_progress': 0, 'completed': 1, 'failed': 1, 'blocked': 0}\n",
+      "event_id": "evt_4936fe243e41",
+      "timestamp": "2026-05-26T22:08:39.618162+00:00"
+    },
+    {
+      "type": "failed",
+      "message": "Run failed",
+      "timestamp": "2026-05-26T22:08:39.640165+00:00",
+      "success": false,
+      "event_id": "evt_4e3b76c767f2"
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "plan.md",
+      "path": "docs/plan.md",
+      "size": 1981,
+      "task_id": null
+    },
+    {
+      "name": "architecture.md",
+      "path": "docs/architecture.md",
+      "size": 1872,
+      "task_id": null
+    },
+    {
+      "name": "plan.md",
+      "path": "workspace/roles/architect/factory_205a52514baa/plan.md",
+      "size": 2009,
+      "task_id": null
+    },
+    {
+      "name": "architecture.md",
+      "path": "workspace/roles/architect/factory_205a52514baa/architecture.md",
+      "size": 1900,
+      "task_id": null
+    },
+    {
+      "name": "plan.json",
+      "path": "tasks/plan.json",
+      "size": 24744,
+      "task_id": null
+    },
+    {
+      "name": "plan.json",
+      "path": "workspace/roles/pm/factory_205a52514baa/plan.json",
+      "size": 25095,
+      "task_id": null
+    },
+    {
+      "name": "factory_205a52514baa.plan.json",
+      "path": "workspace/plans/factory_205a52514baa.plan.json",
+      "size": 25095,
+      "task_id": null
+    },
+    {
+      "name": "latest.plan.json",
+      "path": "workspace/plans/latest.plan.json",
+      "size": 25095,
+      "task_id": null
+    },
+    {
+      "name": "pm_planning.signals.json",
+      "path": "runtime/signals/pm_planning.signals.json",
+      "size": 427,
+      "task_id": null
+    },
+    {
+      "name": "ce_TASK-1_20260526220513734315.json",
+      "path": "runtime/blueprints/ce_TASK-1_20260526220513734315.json",
+      "size": 6066,
+      "task_id": "TASK-1"
+    },
+    {
+      "name": "ce_TASK-2_20260526220513735812.json",
+      "path": "runtime/blueprints/ce_TASK-2_20260526220513735812.json",
+      "size": 6789,
+      "task_id": "TASK-2"
+    },
+    {
+      "name": "ce_TASK-3_20260526220513737849.json",
+      "path": "runtime/blueprints/ce_TASK-3_20260526220513737849.json",
+      "size": 6201,
+      "task_id": "TASK-3"
+    },
+    {
+      "name": "ce_TASK-4_20260526220513740659.json",
+      "path": "runtime/blueprints/ce_TASK-4_20260526220513740659.json",
+      "size": 7644,
+      "task_id": "TASK-4"
+    },
+    {
+      "name": "ce_TASK-5_20260526220513742727.json",
+      "path": "runtime/blueprints/ce_TASK-5_20260526220513742727.json",
+      "size": 7397,
+      "task_id": "TASK-5"
+    },
+    {
+      "name": "ce_TASK-6_20260526220513744475.json",
+      "path": "runtime/blueprints/ce_TASK-6_20260526220513744475.json",
+      "size": 5658,
+      "task_id": "TASK-6"
+    },
+    {
+      "name": "ce_TASK-7_20260526220513746182.json",
+      "path": "runtime/blueprints/ce_TASK-7_20260526220513746182.json",
+      "size": 5337,
+      "task_id": "TASK-7"
+    },
+    {
+      "name": "factory_205a52514baa.review.json",
+      "path": "runtime/state/blueprints/factory_205a52514baa.review.json",
+      "size": 4558,
+      "task_id": null
+    },
+    {
+      "name": "review.json",
+      "path": "workspace/roles/chief_engineer/factory_205a52514baa/review.json",
+      "size": 4558,
+      "task_id": null
+    },
+    {
+      "name": "factory_205a52514baa.review.json",
+      "path": "workspace/blueprints/factory_205a52514baa.review.json",
+      "size": 4558,
+      "task_id": null
+    },
+    {
+      "name": "latest.review.json",
+      "path": "workspace/blueprints/latest.review.json",
+      "size": 4558,
+      "task_id": null
+    },
+    {
+      "name": "ce_TASK-1_20260526220513734315.json",
+      "path": "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-1_20260526220513734315.json",
+      "size": 6066,
+      "task_id": "TASK-1"
+    },
+    {
+      "name": "ce_TASK-1_20260526220513734315.json",
+      "path": "workspace/blueprints/ce_TASK-1_20260526220513734315.json",
+      "size": 6066,
+      "task_id": "TASK-1"
+    },
+    {
+      "name": "ce_TASK-2_20260526220513735812.json",
+      "path": "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-2_20260526220513735812.json",
+      "size": 6789,
+      "task_id": "TASK-2"
+    },
+    {
+      "name": "ce_TASK-2_20260526220513735812.json",
+      "path": "workspace/blueprints/ce_TASK-2_20260526220513735812.json",
+      "size": 6789,
+      "task_id": "TASK-2"
+    },
+    {
+      "name": "ce_TASK-3_20260526220513737849.json",
+      "path": "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-3_20260526220513737849.json",
+      "size": 6201,
+      "task_id": "TASK-3"
+    },
+    {
+      "name": "ce_TASK-3_20260526220513737849.json",
+      "path": "workspace/blueprints/ce_TASK-3_20260526220513737849.json",
+      "size": 6201,
+      "task_id": "TASK-3"
+    },
+    {
+      "name": "ce_TASK-4_20260526220513740659.json",
+      "path": "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-4_20260526220513740659.json",
+      "size": 7644,
+      "task_id": "TASK-4"
+    },
+    {
+      "name": "ce_TASK-4_20260526220513740659.json",
+      "path": "workspace/blueprints/ce_TASK-4_20260526220513740659.json",
+      "size": 7644,
+      "task_id": "TASK-4"
+    },
+    {
+      "name": "ce_TASK-5_20260526220513742727.json",
+      "path": "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-5_20260526220513742727.json",
+      "size": 7397,
+      "task_id": "TASK-5"
+    },
+    {
+      "name": "ce_TASK-5_20260526220513742727.json",
+      "path": "workspace/blueprints/ce_TASK-5_20260526220513742727.json",
+      "size": 7397,
+      "task_id": "TASK-5"
+    },
+    {
+      "name": "ce_TASK-6_20260526220513744475.json",
+      "path": "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-6_20260526220513744475.json",
+      "size": 5658,
+      "task_id": "TASK-6"
+    },
+    {
+      "name": "ce_TASK-6_20260526220513744475.json",
+      "path": "workspace/blueprints/ce_TASK-6_20260526220513744475.json",
+      "size": 5658,
+      "task_id": "TASK-6"
+    },
+    {
+      "name": "ce_TASK-7_20260526220513746182.json",
+      "path": "workspace/roles/chief_engineer/factory_205a52514baa/blueprints/ce_TASK-7_20260526220513746182.json",
+      "size": 5337,
+      "task_id": "TASK-7"
+    },
+    {
+      "name": "ce_TASK-7_20260526220513746182.json",
+      "path": "workspace/blueprints/ce_TASK-7_20260526220513746182.json",
+      "size": 5337,
+      "task_id": "TASK-7"
+    },
+    {
+      "name": "log.json",
+      "path": "dispatch/log.json",
+      "size": 4680,
+      "task_id": null
+    },
+    {
+      "name": "dispatch.log.json",
+      "path": "workspace/roles/director/factory_205a52514baa/dispatch.log.json",
+      "size": 4680,
+      "task_id": null
+    },
+    {
+      "name": "factory_205a52514baa.log.json",
+      "path": "workspace/dispatch/factory_205a52514baa.log.json",
+      "size": 4680,
+      "task_id": null
+    },
+    {
+      "name": "latest.log.json",
+      "path": "workspace/dispatch/latest.log.json",
+      "size": 4680,
+      "task_id": null
+    },
+    {
+      "name": "director_dispatch.signals.json",
+      "path": "runtime/signals/director_dispatch.signals.json",
+      "size": 978,
+      "task_id": null
+    }
+  ],
+  "summary_md": "# Factory Run Summary\n\n- Run ID: `factory_205a52514baa`\n- Status: `FAIL`\n- Workspace: `C:\\Users\\dains\\Documents\\GitLab\\fashion-gen-studio`\n- Start From: `architect`\n- Loop Enabled: `False`\n- Loop Cycles Executed: `0`\n- Loop Stop Reason: `n/a`\n- Stages Completed: `docs_generation, pm_planning, chief_engineer_review`\n- Stages Failed: `director_dispatch`\n\n## Failure\n\n- Stage: `director_dispatch`\n- Code: `FACTORY_RUN_EXCEPTION`\n- Detail: Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 5, 'ready': 5, 'in_progress': 0, 'completed': 1, 'failed': 1, 'blocked': 0}",
+  "summary_json": {
+    "run_id": "factory_205a52514baa",
+    "status": "FAIL",
+    "workspace": "C:\\Users\\dains\\Documents\\GitLab\\fashion-gen-studio",
+    "start_from": "architect",
+    "run_director": true,
+    "loop_enabled": false,
+    "stages_configured": [
+      "docs_generation",
+      "pm_planning",
+      "chief_engineer_review",
+      "director_dispatch",
+      "quality_gate"
+    ],
+    "stages_completed": [
+      "docs_generation",
+      "pm_planning",
+      "chief_engineer_review"
+    ],
+    "stages_failed": [
+      "director_dispatch"
+    ],
+    "loop_cycles_executed": 0,
+    "loop_stop_reason": null,
+    "docs_pipeline": {},
+    "loop_history": [],
+    "failure": {
+      "stage": "director_dispatch",
+      "code": "FACTORY_RUN_EXCEPTION",
+      "detail": "Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 5, 'ready': 5, 'in_progress': 0, 'completed': 1, 'failed': 1, 'blocked': 0}",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\delivery\\http\\routers\\factory.py\", line 1125, in _execute_run_with_service\n    completed = await _execute_stage_sequence(execution_stages)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend\\polaris\\delivery\\http\\routers\\factory.py\", line 997, in _execute_stage_sequence\n    raise RuntimeError(result.output or f\"Stage {stage_name} failed\")\nRuntimeError: Director dispatch completed: Director made no further materialized changes after prior evidence; dispatch treated as idempotent; signals=3; error_code=director.taskboard_not_converged; root_cause_hint=TaskBoard not converged after dispatch rounds; final_stats={'total': 7, 'pending': 5, 'ready': 5, 'in_progress': 0, 'completed': 1, 'failed': 1, 'blocked': 0}\n",
+      "timestamp": "2026-05-26T22:08:39.580917+00:00"
+    },
+    "generated_at": "2026-05-26T22:08:39.608306+00:00"
+  },
+  "generated_at": "2026-05-26T22:08:42.460707+00:00",
+  "evidence_counts": {
+    "events_total": 42,
+    "events_tail": 42,
+    "artifacts": 39,
+    "gates": 0,
+    "failures": 1,
+    "summary_md": 1,
+    "summary_json": 1,
+    "event_types": {
+      "started": 1,
+      "stage_started": 4,
+      "stage_heartbeat": 31,
+      "stage_completed": 4,
+      "error": 1,
+      "failed": 1
+    }
+  }
+}

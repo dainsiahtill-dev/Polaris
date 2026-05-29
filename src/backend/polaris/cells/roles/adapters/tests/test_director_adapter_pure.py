@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -194,6 +195,26 @@ class TestBuildDirectorMessage:
         assert "- npm test passes" in msg
         assert "path/to/file.py" not in msg
 
+    def test_includes_qa_rework_evidence(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_director_message(
+            {
+                "subject": "Fix QA findings",
+                "metadata": {
+                    "qa_rework_reason": "placeholder_content_detected",
+                    "qa_rework_evidence": [
+                        "src/backend/fashiongen_worker.py:\\bplaceholder\\b",
+                        "src/main/providers.ts:\\bplaceholder\\b",
+                    ],
+                },
+            }
+        )
+
+        assert "QA 返工要求" in msg
+        assert "placeholder_content_detected" in msg
+        assert "src/backend/fashiongen_worker.py" in msg
+        assert "src/main/providers.ts" in msg
+
 
 class TestDirectorFailureClosure:
     """Runtime failures must fail the claimed task instead of leaving it running."""
@@ -254,6 +275,56 @@ class TestDirectorFailureClosure:
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
         assert str(updated.get("status") or "").lower() == "failed"
+
+    @pytest.mark.asyncio
+    async def test_execute_accepts_workspace_diff_without_write_tool_marker(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Repair failing TypeScript test",
+            description="Apply the smallest code change and verify npm test behavior.",
+            metadata={
+                "scope": "src/types/domain.ts",
+                "steps": ["Update the domain type contract"],
+                "acceptance": ["The TypeScript test failure is repaired"],
+            },
+        )
+
+        async def _mutating_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target = tmp_path / "src" / "types" / "domain.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("export type DomainState = 'ready';\n", encoding="utf-8")
+            return {"content": "Applied directly by runtime provider.", "success": True}
+
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("direct fallback should not run after workspace diff evidence")
+
+        adapter._invoke_role_dialogue_with_timeout = _mutating_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-diff-evidence"},
+        )
+
+        assert result["success"] is True
+        assert result["materialization_mode"] == "workspace_diff_without_write_tool"
+        assert any(
+            signal.get("code") == "director.workspace_diff_without_write_tool"
+            for signal in result.get("decision_signals", [])
+            if isinstance(signal, dict)
+        )
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        assert str(updated.get("status") or "").lower() == "completed"
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("new_file_count") == 1
+        assert adapter_result.get("write_tool_evidence") is False
 
     def test_text_patch_mode_requests_parseable_file_blocks(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -366,6 +437,43 @@ class TestExistingWorkspaceTaskEvidence:
         assert "src/**/*.test.tsx" in evidence["existing_paths"]
         assert evidence["reason"] == "declared_scope_present"
 
+    def test_scope_label_prefixes_do_not_pollute_path_candidates(self) -> None:
+        task = {"metadata": {"scope": "Root configuration files: package.json, tsconfig.json, postcss.config.js"}}
+        current_files = {
+            "package.json": "1",
+            "tsconfig.json": "1",
+            "postcss.config.js": "1",
+        }
+
+        evidence = _build_existing_workspace_task_evidence(task=task, current_files=current_files)
+
+        assert evidence["ok"] is True
+        assert "package.json" in evidence["existing_paths"]
+        assert all("Root configuration files" not in item for item in evidence["candidate_paths"])
+
+    def test_workspace_basename_prefix_is_not_treated_as_nested_scope(self) -> None:
+        task = {
+            "metadata": {
+                "scope": "fashion-gen-studio/package.json, fashion-gen-studio/src/, vite.config.ts",
+            }
+        }
+        current_files = {
+            "package.json": "1",
+            "src/App.tsx": "1",
+            "vite.config.ts": "1",
+        }
+
+        evidence = _build_existing_workspace_task_evidence(
+            task=task,
+            current_files=current_files,
+            workspace_name="fashion-gen-studio",
+        )
+
+        assert evidence["ok"] is True
+        assert "package.json" in evidence["existing_paths"]
+        assert "src" in evidence["existing_paths"]
+        assert "fashion-gen-studio/package.json" not in evidence["missing_paths"]
+
     def test_repair_tasks_require_fresh_materialization(self) -> None:
         assert (
             _task_requires_fresh_materialization(
@@ -377,6 +485,46 @@ class TestExistingWorkspaceTaskEvidence:
             is True
         )
         assert _task_requires_fresh_materialization({"subject": "Create initial source files"}) is False
+        assert (
+            _task_requires_fresh_materialization(
+                {
+                    "subject": "QA Placeholder Repair Verification",
+                    "phase": "verification",
+                    "metadata": {"qa_rework_verification_only": True},
+                }
+            )
+            is False
+        )
+        assert (
+            _task_requires_fresh_materialization(
+                {
+                    "subject": "Frontend Test Failure Reproduction",
+                    "description": "Fix npm test failure with the smallest target-project change after evidence is collected.",
+                    "metadata": {
+                        "phase": "requirements",
+                        "steps": ["Run npm test", "Identify failing assertion"],
+                        "acceptance": ["The failing Vitest case is identified"],
+                    },
+                }
+            )
+            is False
+        )
+        assert (
+            _task_requires_fresh_materialization(
+                {
+                    "subject": "Requirements task reopened by QA",
+                    "metadata": {
+                        "phase": "requirements",
+                        "qa_rework_requested": True,
+                        "adapter_result": {
+                            "qa_passed": False,
+                            "qa_rework_reason": "placeholder_content_detected",
+                        },
+                    },
+                }
+            )
+            is True
+        )
 
 
 class TestDeterministicTypescriptReexportRepair:
@@ -544,6 +692,49 @@ class TestDirectorAdapterIdentity:
         assert "execute_task" in caps
         assert "sequential_execution" in caps
         assert "adaptive_strategy_selection" in caps
+
+
+class TestDirectorRuntimeFallback:
+    def test_direct_runtime_provider_allows_codex_cli(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        captured: dict[str, object] = {}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.adapter.get_settings_safe",
+            lambda: SimpleNamespace(llm_timeout=5),
+        )
+
+        def _fake_invoke_role_runtime_provider(**kwargs: Any) -> SimpleNamespace:
+            captured["blocked_provider_types"] = tuple(kwargs.get("blocked_provider_types") or ())
+            return SimpleNamespace(
+                attempted=True,
+                ok=True,
+                output="src/smoke.txt\n```txt\nok\n```",
+                provider_id="codex_cli",
+                provider_type="codex_cli",
+                model="gpt-5.3-codex",
+                latency_ms=1,
+                error="",
+                usage=None,
+            )
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
+            _fake_invoke_role_runtime_provider,
+        )
+
+        result = adapter._invoke_direct_runtime_provider_sync("write a file", timeout_seconds=3)
+
+        blocked = captured["blocked_provider_types"]
+        assert isinstance(blocked, tuple)
+        assert "codex_cli" not in blocked
+        assert "codex_sdk" not in blocked
+        assert result["provider"] == "codex_cli"
+        assert result["model"] == "gpt-5.3-codex"
 
 
 # ---------------------------------------------------------------------------

@@ -44,19 +44,44 @@ def _run_cli(
     start = time.time()
     # 默认超时300秒（5分钟），防止进程无限挂起
     effective_timeout = timeout if timeout and timeout > 0 else 300
-    result = subprocess.run(
+    process = subprocess.Popen(
         cmd,
-        input=input_text,
+        stdin=subprocess.PIPE if input_text is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        capture_output=True,
         cwd=cwd or None,
         env=build_utf8_env(env),
-        timeout=effective_timeout,
     )
+    try:
+        stdout, stderr = process.communicate(input=input_text, timeout=effective_timeout)
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree(process)
+        with contextlib.suppress(RuntimeError, ValueError, subprocess.TimeoutExpired):
+            process.communicate(timeout=5)
+        raise
     latency_ms = int((time.time() - start) * 1000)
-    return result.returncode, result.stdout or "", result.stderr or "", latency_ms
+    return process.returncode or 0, stdout or "", stderr or "", latency_ms
+
+
+def _terminate_process_tree(process: subprocess.Popen) -> None:
+    pid = process.pid
+    if not pid:
+        return
+    if os.name == "nt":
+        with contextlib.suppress(OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        return
+    with contextlib.suppress(OSError):
+        process.kill()
 
 
 def _run_cli_streaming(

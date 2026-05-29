@@ -352,7 +352,7 @@ class TestOpenAICompatProviderExceptions:
         openai_compat_config: dict[str, Any],
     ) -> None:
         """invoke_stream uses native SSE when get_stream_session is mocked."""
-        from tests.integration.llm.providers.conftest import _make_mock_stream_session
+        from polaris.tests.integration.llm.providers.conftest import _make_mock_stream_session
 
         async def _mock_get_stream_session(*_args: Any, **_kwargs: Any) -> Any:
             return _make_mock_stream_session(

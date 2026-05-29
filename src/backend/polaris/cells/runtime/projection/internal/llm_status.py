@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
 
-from polaris.cells.llm.evaluation.public.service import load_llm_test_index
-from polaris.cells.llm.provider_runtime.public.service import is_role_runtime_supported
+from polaris.cells.llm.evaluation.public.service import load_llm_test_index, readiness_freshness_issue
+from polaris.cells.llm.provider_runtime.public.service import role_runtime_support_issue
 from polaris.cells.runtime.projection.internal.io_helpers import build_cache_root
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.model_identity import model_identity_equal
@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from polaris.bootstrap.config import Settings
+
+FACTORY_REQUIRED_ROLE_ORDER = ("architect", "pm", "director", "qa")
 
 
 def load_interview_history_summary(settings: Settings) -> dict[str, Any]:
@@ -244,7 +246,8 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         role_key = _role_key(role)
         test_info = _lookup_role_status(index, role_key) if isinstance(index, dict) else None
         provider_test_info = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
-        runtime_supported = _runtime_supported(role, provider_id, provider_cfg)
+        runtime_issue = _runtime_issue(role, provider_id, provider_cfg)
+        runtime_supported = not runtime_issue
         binding_readiness = _binding_readiness(
             role=role_key,
             provider_id=provider_id,
@@ -262,10 +265,12 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
             "timestamp": test_info.get("timestamp") if isinstance(test_info, dict) else None,
             "suites": test_info.get("suites") if isinstance(test_info, dict) else None,
             "runtime_supported": runtime_supported,
+            "runtime_issue": runtime_issue,
             "readiness_issue": binding_readiness["issue"],
             "readiness_source": binding_readiness["source"],
             "tested_provider_id": binding_readiness["tested_provider_id"],
             "tested_model": binding_readiness["tested_model"],
+            "tested_timestamp": binding_readiness["tested_timestamp"],
         }
 
     for provider_id, provider_cfg in providers_cfg.items():
@@ -290,10 +295,16 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
 
     blocked = [r for r in required if not roles_status.get(r, {}).get("ready")]
     unsupported = [r for r in required if not roles_status.get(r, {}).get("runtime_supported")]
+    factory_required = [role for role in FACTORY_REQUIRED_ROLE_ORDER if role != "qa" or _qa_enabled(settings)]
+    factory_blocked = [r for r in factory_required if not roles_status.get(r, {}).get("ready")]
+    factory_unsupported = [r for r in factory_required if not roles_status.get(r, {}).get("runtime_supported")]
 
     global_state = "READY"
     if blocked or unsupported:
         global_state = "BLOCKED"
+    factory_state = "READY"
+    if factory_blocked or factory_unsupported:
+        factory_state = "BLOCKED"
 
     interview_summary = load_interview_history_summary(settings)
 
@@ -310,14 +321,18 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         "required_ready_roles": required,
         "blocked_roles": blocked,
         "unsupported_roles": unsupported,
+        "factory_required_roles": factory_required,
+        "factory_blocked_roles": factory_blocked,
+        "factory_unsupported_roles": factory_unsupported,
+        "factory_state": factory_state,
         "state": global_state,
         "interviews": interview_summary,
         "last_updated": last_updated,
     }
 
 
-def _runtime_supported(role: str, provider_id: str | None, provider_cfg: dict[str, Any]) -> bool:
-    return is_role_runtime_supported(role, provider_id, provider_cfg)
+def _runtime_issue(role: str, provider_id: str | None, provider_cfg: dict[str, Any]) -> str:
+    return role_runtime_support_issue(role, provider_id, provider_cfg)
 
 
 def _binding_readiness(
@@ -328,63 +343,104 @@ def _binding_readiness(
     test_info: dict[str, Any] | None,
     provider_test_info: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    candidates: list[tuple[str, str, str]] = []
-    if isinstance(test_info, dict) and bool(test_info.get("ready")):
-        candidates.append(
-            (
-                "role_index",
-                str(test_info.get("provider_id") or "").strip(),
-                str(test_info.get("model") or "").strip(),
-            )
-        )
-
-    provider_ready = bool(provider_test_info.get("ready")) if isinstance(provider_test_info, dict) else False
-    if provider_ready and _provider_role_compatible(role, provider_test_info):
-        candidates.append(
-            (
-                "provider_index",
-                provider_id,
-                str((provider_test_info or {}).get("model") or "").strip(),
-            )
-        )
-
-    fallback_issue = "role_readiness_missing"
-    fallback_provider_id = ""
-    fallback_model = ""
-    fallback_source = ""
-    for source, tested_provider_id, tested_model in candidates:
+    if isinstance(test_info, dict):
+        tested_provider_id = str(test_info.get("provider_id") or "").strip()
+        tested_model = str(test_info.get("model") or "").strip()
+        tested_timestamp = test_info.get("timestamp")
         issue = _readiness_candidate_issue(
             provider_id=provider_id,
             model=model,
             tested_provider_id=tested_provider_id,
             tested_model=tested_model,
+            tested_timestamp=tested_timestamp,
+        )
+        if bool(test_info.get("ready")) and issue == "":
+            return {
+                "ready": True,
+                "issue": "",
+                "source": "role_index",
+                "tested_provider_id": tested_provider_id,
+                "tested_model": tested_model,
+                "tested_timestamp": tested_timestamp,
+            }
+        if not bool(test_info.get("ready")) and issue == "":
+            issue = "readiness_failed"
+        return {
+            "ready": False,
+            "issue": issue,
+            "source": "role_index",
+            "tested_provider_id": tested_provider_id,
+            "tested_model": tested_model,
+            "tested_timestamp": tested_timestamp,
+        }
+
+    provider_ready = bool(provider_test_info.get("ready")) if isinstance(provider_test_info, dict) else False
+    if provider_ready and _provider_role_compatible(role, provider_test_info):
+        tested_model = str((provider_test_info or {}).get("model") or "").strip()
+        tested_timestamp = (provider_test_info or {}).get("timestamp")
+        issue = _readiness_candidate_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=provider_id,
+            tested_model=tested_model,
+            tested_timestamp=tested_timestamp,
         )
         if issue == "":
             return {
                 "ready": True,
                 "issue": "",
-                "source": source,
-                "tested_provider_id": tested_provider_id,
+                "source": "provider_index",
+                "tested_provider_id": provider_id,
                 "tested_model": tested_model,
+                "tested_timestamp": tested_timestamp,
             }
-        if not fallback_source:
-            fallback_issue = issue
-            fallback_provider_id = tested_provider_id
-            fallback_model = tested_model
-            fallback_source = source
+        return {
+            "ready": False,
+            "issue": issue,
+            "source": "provider_index",
+            "tested_provider_id": provider_id,
+            "tested_model": tested_model,
+            "tested_timestamp": tested_timestamp,
+        }
 
-    if provider_ready and not _provider_role_compatible(role, provider_test_info):
-        fallback_issue = "provider_role_mismatch"
-        fallback_source = "provider_index"
-        fallback_provider_id = provider_id
-        fallback_model = str((provider_test_info or {}).get("model") or "").strip()
+    if isinstance(provider_test_info, dict) and _provider_role_compatible(role, provider_test_info):
+        tested_model = str(provider_test_info.get("model") or "").strip()
+        tested_timestamp = provider_test_info.get("timestamp")
+        issue = _readiness_candidate_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=provider_id,
+            tested_model=tested_model,
+            tested_timestamp=tested_timestamp,
+        )
+        if issue == "":
+            issue = "readiness_failed"
+        return {
+            "ready": False,
+            "issue": issue,
+            "source": "provider_index",
+            "tested_provider_id": provider_id,
+            "tested_model": tested_model,
+            "tested_timestamp": tested_timestamp,
+        }
+
+    if isinstance(provider_test_info, dict):
+        return {
+            "ready": False,
+            "issue": "provider_role_mismatch",
+            "source": "provider_index",
+            "tested_provider_id": provider_id,
+            "tested_model": str(provider_test_info.get("model") or "").strip(),
+            "tested_timestamp": provider_test_info.get("timestamp"),
+        }
 
     return {
         "ready": False,
-        "issue": fallback_issue,
-        "source": fallback_source,
-        "tested_provider_id": fallback_provider_id,
-        "tested_model": fallback_model,
+        "issue": "role_readiness_missing",
+        "source": "",
+        "tested_provider_id": "",
+        "tested_model": "",
+        "tested_timestamp": None,
     }
 
 
@@ -394,6 +450,7 @@ def _readiness_candidate_issue(
     model: str,
     tested_provider_id: str,
     tested_model: str,
+    tested_timestamp: Any = None,
 ) -> str:
     if not provider_id or not model:
         return "role_binding_missing"
@@ -403,4 +460,7 @@ def _readiness_candidate_issue(
         return "tested_model_missing"
     if not model_identity_equal(tested_model, model):
         return "model_mismatch"
+    freshness_issue = readiness_freshness_issue(tested_timestamp)
+    if freshness_issue:
+        return freshness_issue
     return ""

@@ -1,0 +1,36 @@
+﻿[LLMInvoker] MODULE LOADED: __name__=polaris.cells.roles.kernel.internal.llm_caller.invoker
+{
+  "role": "director",
+  "provider_id": "codex_cli",
+  "model": "gpt-5.3-codex",
+  "ready": true,
+  "grade": "PASS",
+  "run_id": "17a3d4d3",
+  "suites": {
+    "connectivity": {
+      "ok": true,
+      "status": "PASS",
+      "error": null
+    },
+    "response": {
+      "ok": true,
+      "status": "PASS",
+      "error": null
+    },
+    "qualification": {
+      "ok": true,
+      "status": "PASS",
+      "error": null
+    },
+    "thinking": {
+      "ok": true,
+      "status": "PASS",
+      "error": null
+    },
+    "interview": {
+      "ok": false,
+      "status": "FAIL",
+      "error": null
+    }
+  }
+}

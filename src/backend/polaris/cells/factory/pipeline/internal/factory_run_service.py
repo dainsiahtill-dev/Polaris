@@ -65,6 +65,7 @@ _PM_ORIGINAL_DIRECTIVE_MAX_CHARS = 8_000
 _PM_ARCHITECT_DOC_MAX_CHARS = 5_000
 _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS = 8_000
 _WORKSPACE_VALIDATION_TIMEOUT_SECONDS = 240
+_QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING = "qa_llm_judgement_unavailable"
 _PM_DIRECTIVE_META_LINE_PATTERN = re.compile(
     r"(提示词|system prompt|角色设定|no yapping|<thinking>|<tool_call>|tool_call)",
     re.IGNORECASE,
@@ -1135,8 +1136,6 @@ class OrchestrationStageExecutor:
                 after_stats = self._read_taskboard_stats()
                 metadata_payload = polled_result.metadata if isinstance(polled_result.metadata, dict) else {}
                 metadata_progress = self._metadata_indicates_execution(metadata_payload)
-                if metadata_progress:
-                    requires_taskboard_convergence = False
                 progress_made = self._has_director_progress(before_stats, after_stats) or metadata_progress
                 attempt_entry = {
                     "round": round_index,
@@ -1556,6 +1555,15 @@ class OrchestrationStageExecutor:
         self._write_json_artifact(artifact, payload)
         return bool(payload["passed"]), artifact
 
+    @staticmethod
+    def _qa_report_has_warning(payload: dict[str, Any], warning: str) -> bool:
+        warnings = payload.get("warnings")
+        if isinstance(warnings, list):
+            return any(str(item or "").strip() == warning for item in warnings)
+        if isinstance(warnings, str):
+            return any(part.strip() == warning for part in warnings.split(","))
+        return False
+
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing quality gate for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
@@ -1609,12 +1617,29 @@ class OrchestrationStageExecutor:
         qa_passed = bool(qa_payload.get("passed"))
         qa_score = int(qa_payload.get("score") or 0)
         qa_critical = int(qa_payload.get("critical_issue_count") or 0)
+        qa_llm_required = self._bool_from_context_or_env(
+            context,
+            "qa_require_llm_judgement",
+            "require_qa_llm_judgement",
+            "factory_require_qa_llm_judgement",
+            env_var="POLARIS_FACTORY_QA_REQUIRE_LLM_JUDGEMENT",
+            default=True,
+        )
+        qa_llm_judgement_ready = not self._qa_report_has_warning(qa_payload, _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING)
         workspace_checks_passed, workspace_checks_artifact = await self._run_workspace_quality_checks(run, context)
-        is_success = final_result.status in {"completed", "success"} and qa_passed and workspace_checks_passed
+        is_success = (
+            final_result.status in {"completed", "success"}
+            and qa_passed
+            and workspace_checks_passed
+            and (qa_llm_judgement_ready or not qa_llm_required)
+        )
         output_suffix = (
             f"qa_passed={qa_passed}; qa_score={qa_score}; qa_critical={qa_critical}; "
-            f"workspace_checks_passed={workspace_checks_passed}"
+            f"workspace_checks_passed={workspace_checks_passed}; "
+            f"qa_llm_required={qa_llm_required}; qa_llm_judgement_ready={qa_llm_judgement_ready}"
         )
+        if qa_llm_required and not qa_llm_judgement_ready:
+            output_suffix = f"{output_suffix}; qa_gate_blocker={_QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING}"
         artifacts = ["runtime/qa/report.json"]
         if workspace_checks_artifact:
             artifacts.append(workspace_checks_artifact)

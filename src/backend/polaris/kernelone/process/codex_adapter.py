@@ -259,7 +259,7 @@ def invoke_codex(
 ) -> str:
     del output_file  # unused; kept for API compatibility
     codex_path = ensure_codex_available()
-    codex_model = str(os.environ.get("KERNELONE_CODEX_MODEL") or "gpt-5.2-codex").strip() or "gpt-5.2-codex"
+    codex_model = str(os.environ.get("KERNELONE_CODEX_MODEL") or "gpt-5.3-codex").strip() or "gpt-5.3-codex"
     # fmt: off
     codex_sandbox = str(os.environ.get("KERNELONE_CODEX_SANDBOX") or "").strip() or "safe"
     # fmt: on

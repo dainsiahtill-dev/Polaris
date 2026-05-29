@@ -404,9 +404,12 @@ async def _execute_standard_llm_flow(
     """执行标准 LLM 流程"""
     message = adapter._build_director_message(task)
     requires_fresh_materialization = _task_requires_fresh_materialization(task)
+    workspace_name = Path(str(getattr(adapter, "workspace", "") or "")).resolve().name
+    direct_fallback_summary: dict[str, Any] | None = None
     preflight_existing_contract_evidence = _build_existing_workspace_task_evidence(
         task=task,
         current_files=baseline_files,
+        workspace_name=workspace_name,
     )
     if (
         _director_existing_scope_preflight_enabled(context)
@@ -491,7 +494,7 @@ async def _execute_standard_llm_flow(
     ]
 
     all_affected_files = sorted(set(new_files + modified_files))
-    if not has_successful_write_tool(tool_results) or not all_affected_files:
+    if not all_affected_files:
         direct_message = adapter._build_director_message(task, text_patch_mode=True)
         direct_timeout = adapter._execution.resolve_direct_fallback_timeout_seconds(context, llm_call_timeout)
         try:
@@ -507,15 +510,19 @@ async def _execute_standard_llm_flow(
         direct_tool_results = await adapter._execution.execute_tools(
             direct_content, target_task_id, adapter._update_task_progress
         )
+        direct_fallback_summary = {
+            "timeout_seconds": direct_timeout,
+            "content_length": len(direct_content),
+            "error": str(direct_result.get("error") or "").strip(),
+            "tool_results": len(direct_tool_results),
+            "provider": str(direct_result.get("provider") or "").strip(),
+            "model": str(direct_result.get("model") or "").strip(),
+            "success": bool(direct_result.get("success")),
+        }
         adapter._state_tracker.append_debug_event(
             target_task_id,
             "direct_patch_fallback_result",
-            {
-                "timeout_seconds": direct_timeout,
-                "content_length": len(direct_content),
-                "error": str(direct_result.get("error") or "").strip(),
-                "tool_results": len(direct_tool_results),
-            },
+            direct_fallback_summary,
         )
         if direct_tool_results:
             tool_results.extend(direct_tool_results)
@@ -529,7 +536,7 @@ async def _execute_standard_llm_flow(
         ]
         all_affected_files = sorted(set(new_files + modified_files))
 
-    if not has_successful_write_tool(tool_results) or not all_affected_files:
+    if not all_affected_files:
         deterministic_tool_results = _apply_deterministic_typescript_reexport_repair(
             adapter,
             task=task,
@@ -549,15 +556,16 @@ async def _execute_standard_llm_flow(
     existing_contract_evidence = _build_existing_workspace_task_evidence(
         task=task,
         current_files=current_files,
+        workspace_name=workspace_name,
     )
+    write_tool_evidence = has_successful_write_tool(tool_results)
 
-    if (not has_successful_write_tool(tool_results) or not all_affected_files) and (
-        requires_fresh_materialization or not bool(existing_contract_evidence.get("ok"))
-    ):
+    if not all_affected_files and (requires_fresh_materialization or not bool(existing_contract_evidence.get("ok"))):
         error = "director_no_materialized_changes"
         completion_metadata = {
             "adapter_result": {
                 "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
                 "qa_passed": None,
                 "qa_required_for_final_verdict": True,
                 "new_files": new_files[:20],
@@ -568,6 +576,8 @@ async def _execute_standard_llm_flow(
                 "existing_contract_evidence": existing_contract_evidence,
             }
         }
+        if direct_fallback_summary is not None:
+            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
         if board_claim_applied and task_claim_session_id:
             adapter.task_runtime.fail_execution(
                 target_task_id,
@@ -584,16 +594,16 @@ async def _execute_standard_llm_flow(
             "error": error,
             "error_code": error,
             "failure_stage": "director_materialization",
-            "root_cause_hint": "no_write_tools_or_no_changed_files",
+            "root_cause_hint": "no_changed_files",
             "decision_signals": [
                 {
                     "code": error,
                     "severity": "error",
                     "detail": (
-                        "Director returned no successful write tool result or no workspace file changes; "
+                        "Director returned no workspace file changes; "
                         "fresh materialization is required for repair/update tasks."
                         if requires_fresh_materialization
-                        else "Director returned no successful write tool result or no workspace file changes."
+                        else "Director returned no workspace file changes."
                     ),
                 }
             ],
@@ -605,6 +615,7 @@ async def _execute_standard_llm_flow(
         completion_metadata = {
             "adapter_result": {
                 "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
                 "qa_passed": None,
                 "qa_required_for_final_verdict": True,
                 "new_files": [],
@@ -646,18 +657,39 @@ async def _execute_standard_llm_flow(
             "existing_contract_evidence": existing_contract_evidence,
         }
 
+    materialization_mode = (
+        "write_tool_and_workspace_diff" if write_tool_evidence else "workspace_diff_without_write_tool"
+    )
+    if all_affected_files and not write_tool_evidence:
+        decision_signals.append(
+            {
+                "code": "director.workspace_diff_without_write_tool",
+                "severity": "info",
+                "detail": (
+                    "Workspace file changes were accepted as materialization evidence even though "
+                    "the provider did not return a normalized write-tool result."
+                ),
+                "new_file_count": len(new_files),
+                "modified_file_count": len(modified_files),
+            }
+        )
+
     # 返回结果
     completion_metadata = {
         "adapter_result": {
             "tools_executed": len(tool_results),
+            "write_tool_evidence": write_tool_evidence,
             "qa_passed": None,
             "qa_required_for_final_verdict": True,
             "new_files": new_files[:20],
             "new_file_count": len(new_files),
             "modified_files": modified_files[:20],
             "modified_file_count": len(modified_files),
+            "materialization_mode": materialization_mode,
         }
     }
+    if direct_fallback_summary is not None:
+        completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
 
     if board_claim_applied and task_claim_session_id:
         adapter.task_runtime.complete_execution(
@@ -677,6 +709,7 @@ async def _execute_standard_llm_flow(
         "decision_signals": decision_signals,
         "qa_required_for_final_verdict": True,
         "artifacts": [],
+        "materialization_mode": materialization_mode,
     }
 
 
@@ -760,7 +793,8 @@ def _apply_deterministic_typescript_reexport_repair(
 
 def _task_text_blob(task: dict[str, Any]) -> str:
     rows: list[str] = []
-    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    raw_metadata = task.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     for record in (task, metadata):
         if not isinstance(record, dict):
             continue
@@ -798,14 +832,29 @@ def _task_requires_fresh_materialization(task: dict[str, Any]) -> bool:
     Repair and verification tasks are about changing or validating observed
     behavior. They must not be completed only because their scope files exist.
     """
+    raw_metadata = task.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_adapter_result = metadata.get("adapter_result")
+    adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+    phase = str(task.get("phase") or metadata.get("phase") or "").strip().lower()
+    if phase in {"verification", "validation", "qa", "test"} and not bool(metadata.get("qa_rework_requested")):
+        return False
+
+    if bool(metadata.get("qa_rework_requested")) or (
+        str(adapter_result.get("qa_rework_reason") or metadata.get("qa_rework_reason") or "").strip()
+        and not bool(adapter_result.get("qa_passed"))
+    ):
+        return True
+
+    if phase in {"requirements", "analysis", "discovery", "investigation", "research"}:
+        return False
+
     token = _task_text_blob(task).lower()
     if not token:
         return False
     fresh_hints = (
         "repair",
         "fix",
-        "failure",
-        "failing",
         "bug",
         "regression",
         "update",
@@ -813,14 +862,10 @@ def _task_requires_fresh_materialization(task: dict[str, Any]) -> bool:
         "change",
         "smallest code change",
         "minimal",
-        "npm test",
-        "vitest",
-        "pytest",
         "测试失败",
         "修复",
         "更新",
         "修改",
-        "失败",
         "最小变更",
     )
     return any(hint in token for hint in fresh_hints)
@@ -984,6 +1029,7 @@ def _build_existing_workspace_task_evidence(
     *,
     task: dict[str, Any],
     current_files: dict[str, str],
+    workspace_name: str = "",
 ) -> dict[str, Any]:
     """Build generic evidence that a task's declared scope is already present.
 
@@ -1006,7 +1052,7 @@ def _build_existing_workspace_task_evidence(
     existing: list[str] = []
     missing: list[str] = []
     for candidate in path_candidates:
-        normalized = _normalize_declared_task_path(candidate)
+        normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
         if not normalized:
             continue
         if _path_candidate_exists_in_file_set(normalized, current):
@@ -1085,8 +1131,31 @@ def _coerce_path_candidate_list(value: Any) -> list[str]:
                 rows.append(item)
         return rows
     if isinstance(value, str):
-        return [part.strip() for part in value.replace(";", "\n").replace(",", "\n").splitlines() if part.strip()]
+        return [
+            _strip_path_candidate_label(part.strip())
+            for part in value.replace(";", "\n").replace(",", "\n").splitlines()
+            if part.strip()
+        ]
     return []
+
+
+def _strip_path_candidate_label(value: str) -> str:
+    """Strip human-readable scope labels from path candidate fragments."""
+    token = str(value or "").strip()
+    if not token or re.match(r"^[a-zA-Z]:[\\/]", token):
+        return token
+    separator = "：" if "：" in token else ":"
+    if separator not in token:
+        return token
+    prefix, suffix = token.split(separator, 1)
+    suffix = suffix.strip()
+    if not suffix:
+        return token
+    normalized_suffix = suffix.replace("\\", "/")
+    suffix_looks_like_path = "/" in normalized_suffix or bool(Path(normalized_suffix).suffix)
+    if suffix_looks_like_path and not _looks_like_task_path_candidate(prefix.strip()):
+        return suffix
+    return token
 
 
 def _looks_like_task_path_candidate(value: str) -> bool:
@@ -1104,7 +1173,7 @@ def _looks_like_task_path_candidate(value: str) -> bool:
     return bool(Path(token).suffix)
 
 
-def _normalize_declared_task_path(value: str) -> str:
+def _normalize_declared_task_path(value: str, *, workspace_name: str = "") -> str:
     token = str(value or "").strip().strip("'\"`")
     token = token.replace("\\", "/").strip().lstrip("./")
     while token.endswith((".", ":", "，", "。", "；", ";", ",")):
@@ -1114,6 +1183,9 @@ def _normalize_declared_task_path(value: str) -> str:
     parts = [part for part in token.split("/") if part not in {"", "."}]
     if any(part == ".." for part in parts):
         return ""
+    workspace_prefix = str(workspace_name or "").strip().lower()
+    if workspace_prefix and len(parts) > 1 and parts[0].lower() == workspace_prefix:
+        parts = parts[1:]
     return "/".join(parts)
 
 

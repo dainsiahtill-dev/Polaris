@@ -30,12 +30,80 @@ def get_role_runtime_provider_kind(
     return "generic"
 
 
+def _truthy_config_flag(provider_cfg: dict[str, Any], name: str) -> bool:
+    raw_flag = provider_cfg.get(name)
+    if isinstance(raw_flag, bool):
+        return raw_flag
+    if raw_flag is None:
+        return False
+    return str(raw_flag).strip().lower() in {"1", "true", "yes", "on", "enabled", "enable"}
+
+
+def _tool_choice_disabled(provider_cfg: dict[str, Any]) -> bool:
+    raw_flag = provider_cfg.get("disable_tool_choice")
+    if isinstance(raw_flag, bool):
+        return raw_flag
+    if raw_flag is not None:
+        token = str(raw_flag).strip().lower()
+        if token in {"1", "true", "yes", "on", "disabled", "disable"}:
+            return True
+
+    token = " ".join(
+        [
+            str(provider_cfg.get("base_url") or ""),
+            str(provider_cfg.get("api_path") or ""),
+            str(provider_cfg.get("name") or ""),
+            str(provider_cfg.get("model") or ""),
+        ]
+    ).lower()
+    return _normalize_provider_type(provider_cfg) == "anthropic_compat" and "deepseek" in token
+
+
+def _codex_exec_sandbox(provider_cfg: dict[str, Any]) -> str:
+    opts = provider_cfg.get("codex_exec")
+    if not isinstance(opts, dict):
+        return "read-only"
+    sandbox = str(opts.get("sandbox") or "").strip().lower()
+    return sandbox or "read-only"
+
+
+def role_runtime_support_issue(
+    role: str,
+    provider_id: str | None,
+    provider_cfg: dict[str, Any],
+) -> str:
+    role_key = str(role or "").strip().lower()
+    if role_key != "director":
+        return ""
+
+    if is_codex_provider(provider_id, provider_cfg):
+        sandbox = _codex_exec_sandbox(provider_cfg)
+        if sandbox == "read-only":
+            return "director_codex_read_only_sandbox"
+        if sandbox not in {"workspace-write", "danger-full-access"}:
+            return "director_codex_invalid_sandbox"
+
+    if _tool_choice_disabled(provider_cfg):
+        return "director_tool_choice_disabled"
+
+    provider_type = _normalize_provider_type(provider_cfg)
+    if provider_type == "minimax" and not _truthy_config_flag(provider_cfg, "director_tool_contract_supported"):
+        # MiniMax chat endpoints may be usable for planning roles, but current
+        # configured M2.x responses do not expose enforceable native tool_calls.
+        # Keep Director blocked unless an operator explicitly marks this
+        # provider/model as contract-verified after a tool-call probe.
+        return "director_minimax_tool_contract_unverified"
+
+    return ""
+
+
 def is_role_runtime_supported(
     role: str,
     provider_id: str | None,
     provider_cfg: dict[str, Any],
 ) -> bool:
-    # Runtime no longer restricts role/provider combinations by provider type.
-    # Any configured provider is considered supported for any role.
-    del role, provider_id, provider_cfg
-    return True
+    # Director's transaction kernel relies on enforceable native tool
+    # selection for materialized changes. Providers that reject tool_choice
+    # may still answer in natural language, but cannot be considered safe
+    # for unattended code execution.
+    return not bool(role_runtime_support_issue(role, provider_id, provider_cfg))

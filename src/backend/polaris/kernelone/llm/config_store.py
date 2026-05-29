@@ -704,7 +704,7 @@ def _load_json_payload(path: str) -> dict[str, Any]:
     if not os.path.isfile(path):
         return {}
     try:
-        with open(path, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8-sig") as handle:
             data = json.load(handle)
     except (json.JSONDecodeError, OSError):
         data = {}

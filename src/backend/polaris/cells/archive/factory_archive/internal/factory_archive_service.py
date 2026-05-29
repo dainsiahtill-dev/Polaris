@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,8 @@ from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.fs import KernelFileSystem
 
 logger = logging.getLogger(__name__)
+
+_WINDOWS_ARCHIVE_RETRY_DELAYS_SECONDS = (0.025, 0.05, 0.1, 0.2, 0.4)
 
 
 @dataclass
@@ -180,14 +183,51 @@ class FactoryArchiveService:
     @staticmethod
     def _copy_directory(source: Path, target: Path) -> None:
         if target.exists():
-            shutil.rmtree(target)
-        temp_target = target.parent / f"{target.name}.tmp"
+            FactoryArchiveService._remove_tree_with_retry(target)
+        temp_target = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
         try:
+            if temp_target.exists():
+                FactoryArchiveService._remove_tree_with_retry(temp_target)
             shutil.copytree(source, temp_target)
-            os.replace(temp_target, target)
+            FactoryArchiveService._replace_directory_with_retry(temp_target, target)
         finally:
             if temp_target.exists():
-                shutil.rmtree(temp_target, ignore_errors=True)
+                FactoryArchiveService._remove_tree_with_retry(temp_target, ignore_errors=True)
+
+    @staticmethod
+    def _replace_directory_with_retry(source: Path, target: Path) -> None:
+        attempts = len(_WINDOWS_ARCHIVE_RETRY_DELAYS_SECONDS) + 1
+        for attempt in range(attempts):
+            try:
+                os.replace(source, target)
+                return
+            except PermissionError:
+                if attempt >= attempts - 1:
+                    if target.exists():
+                        raise
+                    shutil.copytree(source, target)
+                    return
+                time.sleep(_WINDOWS_ARCHIVE_RETRY_DELAYS_SECONDS[attempt])
+
+    @staticmethod
+    def _remove_tree_with_retry(path: Path, *, ignore_errors: bool = False) -> None:
+        attempts = len(_WINDOWS_ARCHIVE_RETRY_DELAYS_SECONDS) + 1
+        for attempt in range(attempts):
+            try:
+                shutil.rmtree(path)
+                return
+            except FileNotFoundError:
+                return
+            except PermissionError:
+                if attempt >= attempts - 1:
+                    if ignore_errors:
+                        return
+                    raise
+                time.sleep(_WINDOWS_ARCHIVE_RETRY_DELAYS_SECONDS[attempt])
+            except OSError:
+                if not ignore_errors:
+                    raise
+                return
 
     def _calculate_checksums(self, directory: Path) -> tuple[int, int, str]:
         total_size = 0

@@ -301,6 +301,34 @@ def test_start_from_pm_builds_pm_chief_engineer_director_chain(
     ]
 
 
+def test_factory_director_context_defaults_to_auto_rounds() -> None:
+    payload = FactoryStartRequest(workspace="C:/tmp/workspace")
+    state = SimpleNamespace(
+        settings=SimpleNamespace(
+            director_execution_mode="parallel",
+            director_max_parallel_tasks=2,
+        )
+    )
+
+    context = factory_router_module._build_stage_context("director_dispatch", payload, state)
+
+    assert "director_max_rounds" not in context
+
+
+def test_factory_director_context_honors_explicit_round_cap() -> None:
+    payload = FactoryStartRequest(workspace="C:/tmp/workspace", director_iterations=4)
+    state = SimpleNamespace(
+        settings=SimpleNamespace(
+            director_execution_mode="parallel",
+            director_max_parallel_tasks=2,
+        )
+    )
+
+    context = factory_router_module._build_stage_context("director_dispatch", payload, state)
+
+    assert context["director_max_rounds"] == 4
+
+
 def test_factory_readiness_roles_skip_local_chief_engineer_stage() -> None:
     roles = factory_router_module._required_ready_roles_for_stages(
         ["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
@@ -308,6 +336,15 @@ def test_factory_readiness_roles_skip_local_chief_engineer_stage() -> None:
     )
 
     assert roles == ["pm", "director", "qa"]
+
+
+def test_factory_readiness_roles_include_architect_for_docs_generation() -> None:
+    roles = factory_router_module._required_ready_roles_for_stages(
+        ["docs_generation", "pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+        qa_enabled=True,
+    )
+
+    assert roles == ["architect", "pm", "director", "qa"]
 
 
 def test_factory_role_projection_marks_chief_engineer_stage_running() -> None:

@@ -297,8 +297,65 @@ async def test_start_factory_run_success(client: AsyncClient) -> None:
             "director",
             "qa",
         ]
+        assert mock_roles_ready.call_args.kwargs["live_check"] is True
         scheduled_coro = create_task_with_context_mock.call_args.args[0]
         assert scheduled_coro.cr_frame is None
+
+
+@pytest.mark.asyncio
+async def test_start_factory_run_from_architect_requires_architect_readiness(client: AsyncClient) -> None:
+    """Full factory runs must fail closed when Architect LLM readiness is blocked."""
+    run = _make_factory_run(run_id="factory_architect123", status="running")
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+        ) as mock_svc_cls,
+        patch(
+            "polaris.delivery.http.routers.factory.sync_process_settings_environment",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.save_persisted_settings",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.create_task_with_context",
+        ) as create_task_with_context_mock,
+        patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
+    ):
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.create_run = AsyncMock(return_value=run)
+        mock_svc.start_run = AsyncMock(return_value=run)
+
+        response = await client.post(
+            "/v2/factory/runs",
+            json={
+                "workspace": ".",
+                "start_from": "architect",
+                "directive": "Build the full FashionGenStudio workflow",
+                "run_director": True,
+                "director_iterations": 0,
+                "loop": False,
+            },
+        )
+
+    assert response.status_code == 200
+    mock_roles_ready.assert_called_once()
+    assert mock_roles_ready.call_args.kwargs["default_roles"] == [
+        "architect",
+        "pm",
+        "director",
+        "qa",
+    ]
+    assert mock_roles_ready.call_args.kwargs["force_roles"] == [
+        "architect",
+        "pm",
+        "director",
+        "qa",
+    ]
+    assert mock_roles_ready.call_args.kwargs["live_check"] is True
+    scheduled_coro = create_task_with_context_mock.call_args.args[0]
+    assert scheduled_coro.cr_frame is None
 
 
 @pytest.mark.asyncio

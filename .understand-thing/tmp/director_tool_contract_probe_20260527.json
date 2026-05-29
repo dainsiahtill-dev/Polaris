@@ -1,0 +1,90 @@
+﻿[
+  {
+    "provider_id": "minimax-1771264734939",
+    "provider_type": "minimax",
+    "model": "MiniMax-M2.7-highspeed",
+    "tool_choice_variant": "{'type': 'function', 'function': {'name': 'append_to_file'}}",
+    "http_status": 200,
+    "latency_ms": 478,
+    "ok": false,
+    "tool_marker_count": 0,
+    "tool_names": [],
+    "output_preview": "",
+    "top_level_keys": [
+      "base_resp",
+      "choices",
+      "created",
+      "id",
+      "input_sensitive",
+      "input_sensitive_type",
+      "model",
+      "object",
+      "output_sensitive",
+      "output_sensitive_int",
+      "output_sensitive_type",
+      "usage"
+    ]
+  },
+  {
+    "provider_id": "minimax-1771264734939",
+    "provider_type": "minimax",
+    "model": "MiniMax-M2.7-highspeed",
+    "tool_choice_variant": "required",
+    "http_status": 200,
+    "latency_ms": 446,
+    "ok": false,
+    "tool_marker_count": 0,
+    "tool_names": [],
+    "output_preview": "",
+    "top_level_keys": [
+      "base_resp",
+      "choices",
+      "created",
+      "id",
+      "input_sensitive",
+      "input_sensitive_type",
+      "model",
+      "object",
+      "output_sensitive",
+      "output_sensitive_int",
+      "output_sensitive_type",
+      "usage"
+    ]
+  },
+  {
+    "provider_id": "minimax-1771264734939",
+    "provider_type": "minimax",
+    "model": "MiniMax-M2.7-highspeed",
+    "tool_choice_variant": "auto",
+    "http_status": 200,
+    "latency_ms": 425,
+    "ok": false,
+    "tool_marker_count": 0,
+    "tool_names": [],
+    "output_preview": "",
+    "top_level_keys": [
+      "base_resp",
+      "choices",
+      "created",
+      "id",
+      "input_sensitive",
+      "input_sensitive_type",
+      "model",
+      "object",
+      "output_sensitive",
+      "output_sensitive_int",
+      "output_sensitive_type",
+      "usage"
+    ]
+  },
+  {
+    "provider_id": "openai_compat-1779538469833",
+    "provider_type": "openai_compat",
+    "model": "qwen3.7-max",
+    "tool_choice_variant": "{'type': 'function', 'function': {'name': 'append_to_file'}}",
+    "http_status": 429,
+    "latency_ms": 315,
+    "ok": false,
+    "error": "{\"error\":{\"message\":\"Your token-plan quota has been exhausted.\",\"id\":\"5faf4a34-e9db-49ca-b949-ea4362dc1d0a\",\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\"}}"
+  }
+]

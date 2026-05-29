@@ -90,7 +90,12 @@ class FactoryStartRequest(BaseModel):
     )
     directive: str | None = Field(default=None, description="用户指令/需求描述")
     run_director: bool = Field(default=True, description="是否运行 Director")
-    director_iterations: int = Field(default=1, ge=1, le=10, description="Director 迭代次数")
+    director_iterations: int = Field(
+        default=0,
+        ge=0,
+        le=10,
+        description="Director 迭代次数；0 表示由 Factory 按 TaskBoard 自动收敛",
+    )
     loop: bool = Field(default=False, description="是否循环运行")
     input_source: str | None = Field(default=None, description="输入来源: 'directive' | 'docs' | 'existing_project'")
 
@@ -227,7 +232,7 @@ class FactoryRun(BaseModel):
     directive: str | None = None
     input_source: str = "directive"
     run_director: bool = True
-    director_iterations: int = 1
+    director_iterations: int = 0
     loop: bool = False
 
     # 角色状态

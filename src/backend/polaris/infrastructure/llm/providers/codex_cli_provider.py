@@ -125,7 +125,7 @@ class CodexCLIProvider(BaseProvider):
             },
             "manual_models": [],
             "list_args": [],
-            "health_args": ["version"],
+            "health_args": ["--version"],
             "timeout": 60,
             "thinking_extraction": {
                 "enabled": True,
@@ -248,7 +248,8 @@ class CodexCLIProvider(BaseProvider):
             models=[
                 ModelInfo(id="gpt-5.1-codex-max", label="GPT-5.1 Codex Max (Experimental)"),
                 ModelInfo(id="gpt-4-codex", label="GPT-4 Codex (Common)"),
-                ModelInfo(id="gpt-5.2-codex", label="GPT-5.2 Codex (Latest)"),
+                ModelInfo(id="gpt-5.3-codex", label="GPT-5.3 Codex (Current)"),
+                ModelInfo(id="gpt-5.2-codex", label="GPT-5.2 Codex"),
                 ModelInfo(id="gpt-3.5-turbo", label="GPT-3.5 Turbo (Legacy)"),
             ],
             error=f"TUI_MODE: {tui_instructions['model_discovery']}. Enter models manually above or see TUI instructions.",
@@ -340,12 +341,13 @@ class CodexCLIProvider(BaseProvider):
 
         def run_without_pty(selected_args: list[str], use_prompt: bool) -> tuple[int, str, str, int]:
             """Standard subprocess execution"""
+            cli_timeout = normalize_timeout_seconds(config.get("timeout"), default=300)
             code, stdout, stderr, latency_ms = _run_cli(
                 resolved,
                 selected_args,
                 str(config.get("working_dir") or ""),
                 config.get("env") or {},
-                0,
+                cli_timeout,
                 prompt if use_prompt else None,
             )
 

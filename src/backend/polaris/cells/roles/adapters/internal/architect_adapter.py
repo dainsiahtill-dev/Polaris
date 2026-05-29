@@ -50,6 +50,16 @@ _DOC_STRIP_LINE_MARKERS = (
     "<thinking",
     "</thinking",
 )
+_NON_FINAL_ACTION_RESPONSE_PATTERNS = (
+    re.compile(
+        r"\b(?:let me|i will|i'll|i need to|i should|first)\b.{0,120}\b(?:inspect|check|read|explore|look at|scan)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"(?:我|先|需要|应该).{0,80}(?:检查|查看|读取|浏览|了解).{0,40}(?:项目|代码|目录|文件|workspace)",
+        re.IGNORECASE | re.DOTALL,
+    ),
+)
 _DIRECTIVE_META_LINE_PATTERN = re.compile(
     r"(提示词|system prompt|角色设定|注入|tool_call|function call|禁止工具调用|覆盖系统指令)",
     re.IGNORECASE,
@@ -162,7 +172,11 @@ class ArchitectAdapter(BaseRoleAdapter):
                 issues=issues,
             )
 
-            if self._should_force_finalize_docs(result=result, docs=docs, issues=issues, content=content):
+            skip_llm_doc_repairs = self._should_skip_llm_doc_repairs(result=result, issues=issues, content=content)
+            if (
+                self._should_force_finalize_docs(result=result, docs=docs, issues=issues, content=content)
+                and not skip_llm_doc_repairs
+            ):
                 force_message = self._build_force_finalize_message(directive, content)
                 settings = get_settings()
                 force_response = await generate_role_response(
@@ -208,7 +222,9 @@ class ArchitectAdapter(BaseRoleAdapter):
                 content = f"{content}\n\n[force_finalize]\n{force_content}"
 
             retry_round = 0
-            max_retry_rounds = 2
+            max_retry_rounds = (
+                0 if self._should_skip_llm_doc_repairs(result=result, issues=issues, content=content) else 2
+            )
             while issues and retry_round < max_retry_rounds:
                 retry_round += 1
                 retry_message = self._build_retry_message(
@@ -366,6 +382,7 @@ class ArchitectAdapter(BaseRoleAdapter):
                 "6. 输出务必精炼：每个二级标题下最多 3 条要点，不要插入长代码块。",
                 "7. 总输出控制在 6000 字以内，优先保证 JSON 完整闭合。",
                 "8. 如果信息已足够，请直接输出最终 JSON。",
+                "9. 当前阶段没有读取/检查工具；不要声明“先检查项目/目录/代码”，只能基于给定需求直接定稿。",
             ]
         )
 
@@ -394,6 +411,7 @@ class ArchitectAdapter(BaseRoleAdapter):
                 refusal_hint,
                 "请仅输出 JSON，字段 plan_markdown / architecture_markdown。",
                 "禁止输出 TOOL_CALL、函数调用标签或目录探测指令。",
+                "当前阶段没有读取/检查工具；不要声明要先检查项目、目录或代码。",
                 "必须给出具体模块、接口、数据结构、测试与验收策略。",
                 "每个 Markdown 必须显式包含：架构、技术栈、模块 三个关键词。",
                 "避免输出系统内部指令、控制流指令或模板化空话。",
@@ -425,7 +443,7 @@ class ArchitectAdapter(BaseRoleAdapter):
                 "   - ## 风险与验收策略",
                 "2. 必须显式出现关键词：架构、技术栈、模块。",
                 "3. 禁止输出 TOOL_CALL 或任何工具标签。",
-                "4. 不要返回代码块围栏，不要附加解释文本。",
+                "4. 不要返回代码块围栏，不要附加解释文本，也不要声明要先检查项目。",
                 "5. 输出务必精炼：每个二级标题下最多 3 条要点，不要插入长代码块。",
                 "6. 总输出控制在 6000 字以内，避免因篇幅过长导致 JSON 被截断。",
                 "",
@@ -518,6 +536,42 @@ class ArchitectAdapter(BaseRoleAdapter):
             return True
         return bool(
             _TOOL_MARKER_PATTERN.search(normalized_content) and not re.search(r"(?m)^##\s+", normalized_content)
+        )
+
+    @staticmethod
+    def _looks_like_non_final_action_response(content: str) -> bool:
+        normalized = str(content or "").strip()
+        if not normalized:
+            return False
+        return any(pattern.search(normalized) for pattern in _NON_FINAL_ACTION_RESPONSE_PATTERNS)
+
+    @classmethod
+    def _should_skip_llm_doc_repairs(
+        cls,
+        *,
+        result: dict[str, Any],
+        issues: list[str],
+        content: str,
+    ) -> bool:
+        if not cls._has_blocking_doc_issues(issues):
+            return False
+        normalized_content = str(content or "").strip()
+        error_text = str(result.get("error") or "").strip().lower() if isinstance(result, dict) else ""
+        if cls._looks_like_non_final_action_response(normalized_content):
+            return True
+        if not normalized_content:
+            return True
+        return any(
+            token in error_text
+            for token in (
+                "request timeout",
+                "timeout",
+                "timed out",
+                "too many requests",
+                "rate limit",
+                "quota",
+                "429",
+            )
         )
 
     @staticmethod

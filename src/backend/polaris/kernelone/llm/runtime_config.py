@@ -112,7 +112,7 @@ class RuntimeConfigManager:
                 return dict(self._config_cache)
 
             try:
-                with open(config_path, encoding="utf-8") as handle:
+                with open(config_path, encoding="utf-8-sig") as handle:
                     loaded = json.load(handle)
             except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 logger.warning("[RuntimeConfig] Failed to load config: %s", exc)

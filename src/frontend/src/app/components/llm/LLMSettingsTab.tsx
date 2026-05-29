@@ -226,24 +226,34 @@ function resolveModelForSelection(
 
 function TabNavigation({ 
   globalReadiness,
+  factoryReadiness,
   blockedRoles,
   unsupportedRoles,
+  factoryBlockedRoles,
+  factoryUnsupportedRoles,
   blockedRoleDiagnostics,
 }: { 
   globalReadiness: { state: string; color: string },
+  factoryReadiness: { state: string; color: string },
   blockedRoles: string[],
   unsupportedRoles: string[],
+  factoryBlockedRoles: string[],
+  factoryUnsupportedRoles: string[],
   blockedRoleDiagnostics: BlockedRoleDiagnostic[],
 }) {
   const { state, switchTab } = useProviderContext();
   const { activeTab } = state;
-  const hasBlock = globalReadiness.state === 'BLOCKED';
+  const hasBlock = globalReadiness.state === 'BLOCKED' || factoryReadiness.state === 'BLOCKED';
+  const statusLabel = factoryReadiness.state === 'BLOCKED'
+    ? `${globalReadiness.state} · FACTORY BLOCKED`
+    : globalReadiness.state;
   const blockedRoleLabels = blockedRoleDiagnostics.length
-    ? blockedRoleDiagnostics.map((item) => item.roleLabel)
-    : blockedRoles;
+    ? blockedRoleDiagnostics.map((item) => `${item.roleLabel}(${item.providerName}/${item.configuredModel})`)
+    : [...blockedRoles, ...factoryBlockedRoles];
   const tips: string[] = [];
   if (blockedRoleLabels.length) tips.push(`未通过测试: ${blockedRoleLabels.join(', ')}`);
   if (unsupportedRoles.length) tips.push(`运行时不支持: ${unsupportedRoles.join(', ')}`);
+  if (factoryUnsupportedRoles.length) tips.push(`Factory 不支持: ${factoryUnsupportedRoles.join(', ')}`);
   const tipText = tips.length ? tips.join(' | ') : '请完成必需的 LLM 测试';
 
   return (
@@ -274,16 +284,16 @@ function TabNavigation({
         </div>
 
         <div className="flex items-center gap-2">
-          {globalReadiness.state === 'READY' ? (
+          {!hasBlock ? (
             <CheckCircle2 className="size-4 text-emerald-400" />
           ) : (
             <AlertTriangle className="size-4 text-yellow-400" />
           )}
           <span className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-white/10 bg-black/40">
-            {globalReadiness.state}
+            {statusLabel}
           </span>
           {hasBlock ? (
-            <span className="text-[10px] text-amber-300 border border-amber-400/30 bg-amber-500/10 rounded px-2 py-1" title={tipText}>
+            <span className="max-w-[760px] truncate text-[10px] text-amber-300 border border-amber-400/30 bg-amber-500/10 rounded px-2 py-1" title={tipText}>
               {tipText}
             </span>
           ) : null}
@@ -322,10 +332,13 @@ function TabNavigation({
                 <div className="min-w-0 text-amber-100">
                   <div className="truncate">原因: {detail.issueLabel}</div>
                   <div className="truncate text-text-dim">
-                    最近通过: {detail.testedProviderId || detail.testedModel
+                    最近测试: {detail.testedProviderId || detail.testedModel
                       ? `${detail.testedProviderName}/${detail.testedModel || '未知模型'}`
                       : '无记录'}
                   </div>
+                  {detail.testedTimestamp ? (
+                    <div className="truncate text-text-dim">测试时间: {detail.testedTimestamp}</div>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -614,16 +627,32 @@ function LLMSettingsTabInner({
     if (s === 'BLOCKED') return { state: 'BLOCKED', color: 'text-amber-400' };
     return { state: 'UNKNOWN', color: 'text-gray-400' };
   }, [llmStatus]);
+  const factoryReadiness = useMemo(() => {
+    const s = llmStatus?.factory_state || 'UNKNOWN';
+    if (s === 'READY') return { state: 'READY', color: 'text-emerald-400' };
+    if (s === 'BLOCKED') return { state: 'BLOCKED', color: 'text-amber-400' };
+    return { state: 'UNKNOWN', color: 'text-gray-400' };
+  }, [llmStatus]);
   const blockedRoles = useMemo(() => llmStatus?.blocked_roles || [], [llmStatus]);
   const unsupportedRoles = useMemo(() => llmStatus?.unsupported_roles || [], [llmStatus]);
+  const factoryBlockedRoles = useMemo(() => llmStatus?.factory_blocked_roles || [], [llmStatus]);
+  const factoryUnsupportedRoles = useMemo(() => llmStatus?.factory_unsupported_roles || [], [llmStatus]);
+  const displayedBlockedRoles = useMemo(
+    () => Array.from(new Set([...blockedRoles, ...factoryBlockedRoles])),
+    [blockedRoles, factoryBlockedRoles]
+  );
+  const displayedUnsupportedRoles = useMemo(
+    () => Array.from(new Set([...unsupportedRoles, ...factoryUnsupportedRoles])),
+    [unsupportedRoles, factoryUnsupportedRoles]
+  );
   const blockedRoleDiagnostics = useMemo(
     () => buildBlockedRoleDiagnostics({
-      blockedRoles,
-      unsupportedRoles,
+      blockedRoles: displayedBlockedRoles,
+      unsupportedRoles: displayedUnsupportedRoles,
       roles: llmStatus?.roles || {},
       providers: llmConfig?.providers || {},
     }),
-    [blockedRoles, llmConfig?.providers, llmStatus?.roles, unsupportedRoles]
+    [displayedBlockedRoles, displayedUnsupportedRoles, llmConfig?.providers, llmStatus?.roles]
   );
 
   // Visual config
@@ -756,8 +785,11 @@ function LLMSettingsTabInner({
     <div className="flex flex-col gap-6 h-full min-h-0">
       <TabNavigation
         globalReadiness={globalReadiness}
+        factoryReadiness={factoryReadiness}
         blockedRoles={blockedRoles}
         unsupportedRoles={unsupportedRoles}
+        factoryBlockedRoles={factoryBlockedRoles}
+        factoryUnsupportedRoles={factoryUnsupportedRoles}
         blockedRoleDiagnostics={blockedRoleDiagnostics}
       />
 

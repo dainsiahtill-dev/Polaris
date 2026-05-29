@@ -63,6 +63,46 @@ _TASK_SECTION_HEADING = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:task|任务)\s*[-_ ]*(\d+)?\s*[:：.\-]?\s*(.*?)\s*$",
     re.IGNORECASE,
 )
+_PM_SCOPE_PATH_ROOTS = {
+    "app",
+    "backend",
+    "components",
+    "docs",
+    "electron",
+    "frontend",
+    "lib",
+    "packages",
+    "scripts",
+    "src",
+    "tests",
+    "workspace",
+}
+_PM_SCOPE_PATH_FILENAMES = {
+    "package.json",
+    "README.md",
+    "tsconfig.json",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "tailwind.config.js",
+    "postcss.config.js",
+    "pyproject.toml",
+}
+_PM_SCOPE_PATH_SUFFIXES = {
+    ".css",
+    ".html",
+    ".js",
+    ".jsx",
+    ".json",
+    ".md",
+    ".mjs",
+    ".py",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".yaml",
+    ".yml",
+}
+_PM_NON_PATH_SCOPE_RE = re.compile(r"[\s,，、；;：:。]|[\u4e00-\u9fff]")
 _PM_PROMPT_DIRECTIVE_MAX_CHARS = 18_000
 _PM_RETRY_DIRECTIVE_MAX_CHARS = 6_000
 _PM_PLAN_DIRECTIVE_REDACTED = "[redacted planning context; source docs retained separately]"
@@ -302,6 +342,45 @@ class PMAdapter(BaseRoleAdapter):
                             "summary": "pm_contracts_unparseable_after_retry",
                         }
                 raw_output = f"{raw_output}\n\n[retry]\n{retry_output}"
+
+            if not using_deterministic_contracts and (
+                (not normalized_contracts) or (not quality.get("ok", False) or int(quality.get("score") or 0) < 80)
+            ):
+                synthesized_contracts = self._synthesize_task_contracts_from_directive(
+                    directive=directive,
+                    projection_hint=projection_hint,
+                )
+                if synthesized_contracts:
+                    synthesized_normalized, synthesized_quality = self._evaluate_contract_quality(synthesized_contracts)
+                    if (
+                        synthesized_normalized
+                        and synthesized_quality.get("ok", False)
+                        and int(synthesized_quality.get("score") or 0) >= 80
+                    ):
+                        normalized_contracts = synthesized_normalized
+                        quality = synthesized_quality
+                        quality_signals.append(
+                            {
+                                "code": "pm.contracts.synthetic_quality_recovery",
+                                "severity": "warning",
+                                "detail": (
+                                    "PM LLM contracts failed the execution-readiness gate; "
+                                    "recovered with deterministic directive-based contracts"
+                                ),
+                            }
+                        )
+                    else:
+                        critical_raw = synthesized_quality.get("critical_issues")
+                        quality_signals.append(
+                            {
+                                "code": "pm.contracts.synthetic_recovery_failed_quality",
+                                "severity": "error",
+                                "detail": str(synthesized_quality.get("summary") or "synthetic_quality_failed"),
+                                "critical_issues": [
+                                    str(item) for item in (critical_raw if isinstance(critical_raw, list) else [])[:8]
+                                ],
+                            }
+                        )
 
             score = int(quality.get("score") or 0)
             _raw_critical = quality.get("critical_issues") if isinstance(quality, dict) else None
@@ -607,7 +686,9 @@ class PMAdapter(BaseRoleAdapter):
                 '      "title": "任务标题",',
                 '      "goal": "该任务目标",',
                 '      "description": "执行背景与约束",',
-                '      "scope": "变更范围（文件/模块）",',
+                '      "scope": "变更范围摘要",',
+                '      "scope_paths": ["src/module", "tests/module"],',
+                '      "target_files": ["src/module/file.ts", "tests/module/file.test.ts"],',
                 '      "steps": ["步骤1", "步骤2"],',
                 '      "acceptance": ["可测验收1", "可测验收2"],',
                 '      "phase": "requirements|implementation|verification",',
@@ -627,6 +708,9 @@ class PMAdapter(BaseRoleAdapter):
                 "}",
                 "禁止返回 Markdown、解释文本、代码块或工具调用标签；仅返回一个 JSON 对象。",
                 "要求：至少 3 个任务，必须形成依赖链，验收标准必须可验证。",
+                "Director/ChiefEngineer 任务必须提供真实相对路径 scope_paths/target_files。",
+                "路径只能是仓库内相对文件或目录，例如 package.json、src/store、src/App.tsx、tests/spec。",
+                "禁止把自然语言描述写进 scope_paths/target_files，例如“backend API 路由、frontend 面板”。",
             ]
         )
         return "\n".join(lines)
@@ -667,6 +751,8 @@ class PMAdapter(BaseRoleAdapter):
                 "强制要求：",
                 "- 至少 3 个任务",
                 "- 每个任务必须含 goal/scope/steps/acceptance",
+                "- Director/ChiefEngineer 任务必须含真实相对路径 scope_paths/target_files",
+                "- scope_paths/target_files 禁止使用自然语言句子或中文模块描述",
                 "- steps 与 acceptance 必须为非空列表",
                 "- 必须有依赖关系（depends_on）",
                 "- 只能输出 JSON 对象，禁止任何额外文字与代码块",
@@ -980,6 +1066,7 @@ class PMAdapter(BaseRoleAdapter):
         if not scope_values:
             scope_values = raw.get("scope_paths") or raw.get("target_files")
         scope_items = self._normalize_list(scope_values)
+        scope_items = self._normalize_scope_path_list(scope_items)
         if not scope_items:
             scope_items = self._infer_scope_from_title(title)
         scope_text = ", ".join(scope_items[:4]) if scope_items else "src/"
@@ -1069,6 +1156,43 @@ class PMAdapter(BaseRoleAdapter):
                     items.append(token)
             return items
         return []
+
+    @classmethod
+    def _normalize_scope_path_list(cls, values: list[str]) -> list[str]:
+        rows: list[str] = []
+        for value in values:
+            token = cls._normalize_scope_path_token(value)
+            if token and token not in rows:
+                rows.append(token)
+        return rows
+
+    @classmethod
+    def _normalize_scope_path_token(cls, value: str) -> str:
+        raw = str(value or "").strip().strip("'\"").replace("\\", "/")
+        if not raw:
+            return ""
+        if raw.startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", raw):
+            return ""
+        if _PM_NON_PATH_SCOPE_RE.search(raw):
+            return ""
+
+        token = re.sub(r"/+", "/", raw.lstrip("./").strip("/"))
+        if not token or token in {".", "*", "**"}:
+            return ""
+        parts = [part for part in token.split("/") if part]
+        if any(part in {".", ".."} for part in parts):
+            return ""
+
+        filename = parts[-1]
+        if token in _PM_SCOPE_PATH_FILENAMES or filename in _PM_SCOPE_PATH_FILENAMES:
+            return token
+        if Path(filename).suffix.lower() in _PM_SCOPE_PATH_SUFFIXES:
+            return token
+        if parts[0] in _PM_SCOPE_PATH_ROOTS and (len(parts) > 1 or raw.endswith("/")):
+            return f"{token}/" if raw.endswith("/") else token
+        if token.rstrip("/") in _PM_SCOPE_PATH_ROOTS:
+            return f"{token.rstrip('/')}/"
+        return ""
 
     def _infer_scope_from_title(self, title: str) -> list[str]:
         keyword_tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", title.lower())
@@ -1522,6 +1646,17 @@ class PMAdapter(BaseRoleAdapter):
             "source_context_redacted": True,
             "source_directive_length": len(str(directive or "")),
         }
+        placeholder_repair_contracts = self._synthesize_placeholder_repair_contracts(
+            directive=directive,
+            source_metadata=source_metadata,
+        )
+        if placeholder_repair_contracts:
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive)
+                for idx, item in enumerate(placeholder_repair_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
         frontend_repair_contracts = self._synthesize_frontend_test_repair_contracts(
             directive=directive,
             source_metadata=source_metadata,
@@ -1610,6 +1745,104 @@ class PMAdapter(BaseRoleAdapter):
         contracts = [self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(raw_contracts)]
         return [item for item in contracts if isinstance(item, dict)]
 
+    def _synthesize_placeholder_repair_contracts(
+        self,
+        *,
+        directive: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        directive_text = str(directive or "")
+        lowered = directive_text.lower()
+        has_placeholder_signal = "placeholder_content_detected" in lowered or bool(
+            re.search(r"\bplaceholder\b", lowered)
+        )
+        if not has_placeholder_signal:
+            return []
+
+        scope_paths = self._extract_directive_file_paths(directive_text, limit=12)
+        source_scope_paths = [
+            path
+            for path in scope_paths
+            if path.startswith("src/") and not any(part in path for part in ("/__tests__/", ".test."))
+        ]
+        if not source_scope_paths:
+            return []
+
+        scope_text = ", ".join(source_scope_paths)
+        failure_context = self._sanitize_plan_artifact_text(
+            self._compact_text_for_prompt(directive_text, max_chars=900)
+        )
+        cleanup_paths = []
+        if re.search(r"(?i)(?:^|\s)PATCH_FILE\s+src[\\/]", directive_text):
+            cleanup_paths.append("PATCH_FILE src/")
+        repair_metadata = dict(source_metadata)
+        repair_metadata["qa_rework_reason"] = "placeholder_content_detected"
+        repair_metadata["qa_rework_evidence"] = [
+            line.strip()
+            for line in directive_text.splitlines()
+            if "placeholder" in line.lower() and any(path in line for path in source_scope_paths)
+        ][:12]
+        if cleanup_paths:
+            repair_metadata["cleanup_paths"] = cleanup_paths
+        verification_metadata = dict(source_metadata)
+        verification_metadata["qa_rework_verification_only"] = True
+
+        cleanup_steps = [
+            f"Remove malformed Director protocol artifact directory `{path}` if it exists" for path in cleanup_paths
+        ]
+        cleanup_acceptance = [
+            f"Malformed Director protocol artifact `{path}` no longer exists" for path in cleanup_paths
+        ]
+
+        return [
+            {
+                "id": "TASK-1",
+                "title": "QA Placeholder Evidence Repair",
+                "goal": "Remove unfinished placeholder markers from the concrete QA evidence files without changing public behavior.",
+                "description": f"QA evidence repair context: {failure_context}",
+                "scope": source_scope_paths,
+                "steps": [
+                    "Inspect each QA evidence file and locate unfinished TODO/FIXME/placeholder/stub markers",
+                    "Replace unfinished markers with concrete production-safe logic or neutral non-placeholder wording",
+                    "Restore any source file that was accidentally overwritten by protocol diff text before applying the wording repair",
+                    *cleanup_steps,
+                    "Preserve existing provider behavior, public API shapes, and tests",
+                ],
+                "acceptance": [
+                    f"No unfinished placeholder/stub marker remains in {scope_text}",
+                    "Evidence source files remain valid source code, not flattened text or unified diff fragments",
+                    *cleanup_acceptance,
+                    "Existing provider behavior and public API shapes are preserved",
+                    "No TODO, FIXME, NotImplemented, placeholder, or stub markers are introduced",
+                ],
+                "phase": "implementation",
+                "depends_on": [],
+                "assigned_to": "Director",
+                "metadata": repair_metadata,
+            },
+            {
+                "id": "TASK-2",
+                "title": "QA Placeholder Repair Verification",
+                "goal": "Verify the placeholder repair through project tests, build, and QA evidence scan.",
+                "description": f"Verify repaired files: {scope_text}.",
+                "scope": [*source_scope_paths, "package.json", "tests/"],
+                "steps": [
+                    "Run npm test in the target workspace",
+                    "Run npm run build in the target workspace",
+                    "Confirm QA no longer reports placeholder_content_detected for the evidence files",
+                ],
+                "acceptance": [
+                    "npm test returns PASS",
+                    "npm run build returns PASS",
+                    "placeholder_content_detected no longer references the evidence files",
+                ],
+                "phase": "verification",
+                "depends_on": ["TASK-1"],
+                "assigned_to": "Director",
+                "metadata": verification_metadata,
+            },
+        ]
+
     def _synthesize_frontend_test_repair_contracts(
         self,
         *,
@@ -1624,8 +1857,20 @@ class PMAdapter(BaseRoleAdapter):
         """
         directive_text = str(directive or "")
         lowered = directive_text.lower()
+        has_explicit_test_failure = bool(
+            re.search(
+                r"npm\s+test.{0,240}(?:fail|failed|failure|failing|typeerror|cannot read|报错|失败)",
+                lowered,
+                flags=re.DOTALL,
+            )
+            or re.search(
+                r"(?:fail|failed|failure|failing|typeerror|cannot read|报错|失败).{0,240}npm\s+test",
+                lowered,
+                flags=re.DOTALL,
+            )
+        )
         is_frontend_test_failure = (
-            "npm test" in lowered
+            has_explicit_test_failure
             and any(token in lowered for token in ("vitest", ".test.", "test failure", "failing test", "failed test"))
             and any(token in lowered for token in ("typescript", ".ts", ".tsx", "type", "import", "export"))
         )
@@ -1695,7 +1940,8 @@ class PMAdapter(BaseRoleAdapter):
     def _extract_directive_file_paths(directive: str, *, limit: int) -> list[str]:
         rows: list[str] = []
         for match in re.finditer(
-            r"(?:src|tests|app|lib|packages)/[A-Za-z0-9_./*{}@-]+\.(?:ts|tsx|js|jsx|json)", directive
+            r"(?:src|tests|app|lib|packages)/[A-Za-z0-9_./*{}@-]+\.(?:py|ts|tsx|js|jsx|json|ya?ml|md)",
+            directive,
         ):
             token = match.group(0).strip().replace("\\", "/")
             if token not in rows:

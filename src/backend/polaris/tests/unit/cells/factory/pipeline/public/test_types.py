@@ -100,15 +100,15 @@ class TestFactoryStartRequest:
         assert req.workspace == "/tmp/ws"
         assert req.start_from == "auto"
         assert req.run_director is True
-        assert req.director_iterations == 1
+        assert req.director_iterations == 0
 
     def test_directive_field(self) -> None:
         req = FactoryStartRequest(workspace="/tmp/ws", directive="Build a thing")
         assert req.directive == "Build a thing"
 
     def test_director_iterations_bounds(self) -> None:
-        with pytest.raises(ValidationError):
-            FactoryStartRequest(workspace="/tmp/ws", director_iterations=0)
+        req = FactoryStartRequest(workspace="/tmp/ws", director_iterations=0)
+        assert req.director_iterations == 0
         with pytest.raises(ValidationError):
             FactoryStartRequest(workspace="/tmp/ws", director_iterations=11)
 
@@ -213,7 +213,7 @@ class TestFactoryRun:
         assert run.start_from == "auto"
         assert run.input_source == "directive"
         assert run.run_director is True
-        assert run.director_iterations == 1
+        assert run.director_iterations == 0
         assert run.loop is False
         assert run.roles == {}
         assert run.gates == []

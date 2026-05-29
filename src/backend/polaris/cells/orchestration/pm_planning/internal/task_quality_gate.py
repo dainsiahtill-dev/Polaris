@@ -56,6 +56,46 @@ _PM_MEASURABLE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+)",
 )
 _PM_MEASURABLE_BACKTICK_RE = re.compile(r"`[^`]{2,}`")
+_PM_SCOPE_ROOTS = {
+    "app",
+    "backend",
+    "components",
+    "docs",
+    "electron",
+    "frontend",
+    "lib",
+    "packages",
+    "scripts",
+    "src",
+    "tests",
+    "workspace",
+}
+_PM_SCOPE_FILENAMES = {
+    "package.json",
+    "README.md",
+    "tsconfig.json",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "tailwind.config.js",
+    "postcss.config.js",
+    "pyproject.toml",
+}
+_PM_SCOPE_SUFFIXES = {
+    ".css",
+    ".html",
+    ".js",
+    ".jsx",
+    ".json",
+    ".md",
+    ".mjs",
+    ".py",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".yaml",
+    ".yml",
+}
+_PM_NON_PATH_TEXT_RE = re.compile(r"[\s,，、；;：:。]|[\u4e00-\u9fff]")
 
 
 def _strip_wrapping_quotes(token: str) -> str:
@@ -92,6 +132,32 @@ def _normalize_path(value: Any) -> str:
     token = token.lstrip("./").strip("/")
     token = re.sub(r"/+", "/", token)
     return token.lower()
+
+
+def _is_concrete_pm_scope_path(value: Any) -> bool:
+    raw = _strip_wrapping_quotes(str(value or "").strip()).replace("\\", "/")
+    if not raw:
+        return False
+    if raw.startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", raw):
+        return False
+    if _PM_NON_PATH_TEXT_RE.search(raw):
+        return False
+
+    token = re.sub(r"/+", "/", raw.lstrip("./").strip("/"))
+    if not token or token in {".", "*", "**"}:
+        return False
+    parts = [part for part in token.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        return False
+
+    filename = parts[-1]
+    if token in _PM_SCOPE_FILENAMES or filename in _PM_SCOPE_FILENAMES:
+        return True
+    if os.path.splitext(filename)[1].lower() in _PM_SCOPE_SUFFIXES:
+        return True
+    if parts[0] in _PM_SCOPE_ROOTS and (len(parts) > 1 or raw.endswith("/")):
+        return True
+    return token.rstrip("/") in _PM_SCOPE_ROOTS
 
 
 def _contains_prompt_leakage(text: str) -> bool:
@@ -212,11 +278,17 @@ def evaluate_pm_task_quality(
             task_paths = _normalize_path_list(task.get("scope_paths") or [])
             task_paths.extend(_normalize_path_list(task.get("target_files") or []))
             task_paths.extend(_normalize_path_list(task.get("context_files") or []))
+            concrete_task_paths = [path for path in task_paths if _is_concrete_pm_scope_path(path)]
+            non_path_entries = [path for path in task_paths if path not in concrete_task_paths]
             if not task_paths:
                 critical_issues.append(f"{task_id}: assignee {assigned_to} requires explicit scope")
+            elif not concrete_task_paths:
+                critical_issues.append(f"{task_id}: assignee {assigned_to} requires concrete relative scope paths")
+            elif non_path_entries:
+                warnings.append(f"{task_id}: non-path scope entries ignored ({', '.join(non_path_entries[:2])})")
             elif docs_enabled and active_doc:
                 out_of_scope: list[str] = []
-                for path in task_paths:
+                for path in concrete_task_paths:
                     normalized_path = _normalize_path(path)
                     if not normalized_path:
                         continue

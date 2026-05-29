@@ -10,11 +10,11 @@ for candidate in (BACKEND_ROOT, SCRIPTS_ROOT, CORE_ROOT):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 
-from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (  # noqa: E402
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality,
 )
-from polaris.cells.orchestration.pm_planning.public.pipeline import (
+from polaris.cells.orchestration.pm_planning.public.pipeline import (  # noqa: E402
     _should_promote_pm_quality_candidate as should_promote_pm_quality_candidate,
 )
 
@@ -109,6 +109,36 @@ def test_evaluate_pm_task_quality_rejects_docs_stage_without_section_intent() ->
     assert report["ok"] is False
     issues = "\n".join(report.get("critical_issues") or []).lower()
     assert "doc_sections" in issues
+
+
+def test_evaluate_pm_task_quality_rejects_natural_language_scope_paths() -> None:
+    payload = {
+        "tasks": [
+            {
+                "id": "PM-PATH-1",
+                "title": "Implement asset service layer",
+                "goal": "build asset import and local storage behavior with deterministic validation",
+                "assigned_to": "Director",
+                "scope_paths": ["backend asset API routes and frontend upload panel"],
+                "phase": "implementation",
+                "execution_checklist": [
+                    "Inspect existing app structure",
+                    "Implement bounded changes",
+                    "Run verification commands",
+                ],
+                "acceptance_criteria": [
+                    "Run `npm test` and verify the asset workflow test passes",
+                    "Run `npm run build` and verify the renderer compiles",
+                ],
+            }
+        ]
+    }
+
+    report = evaluate_pm_task_quality(payload, docs_stage={})
+
+    assert report["ok"] is False
+    issues = "\n".join(report.get("critical_issues") or []).lower()
+    assert "concrete relative scope paths" in issues
 
 
 def test_evaluate_pm_task_quality_accepts_specific_actionable_tasks() -> None:

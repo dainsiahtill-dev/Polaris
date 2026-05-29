@@ -1,0 +1,568 @@
+{
+  "batchIndex": 196,
+  "nodes": [
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/lexical_ranker.py",
+      "type": "code",
+      "summary": "词法排名引擎：基于 BM25 或 Tantivy 对候选文件进行词法相关性排序。支持两种后端（BM25 手写算法 / Tantivy 全文索引），apply_lexical_ranking 是核心入口，根据运行时配置选择后端。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/pattern_detector.py",
+      "type": "code",
+      "summary": "设计模式检测器：从索引符号中识别常见设计模式（单例/工厂/观察者/装饰器/建造者）。detect_patterns 为核心入口，每种模式有独立检测函数和置信度评分。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/planner.py",
+      "type": "code",
+      "summary": "查询规划器：normalize_task_tokens 规范化任务描述为搜索 token，build_candidate_files 合并索引文件与变更文件为候选集。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/project_stats.py",
+      "type": "code",
+      "summary": "项目统计与健康检查：get_project_stats 获取索引文件数/语言分布/符号类型统计，get_health_status 检查索引完整性、缓存状态和作业进度。JobManagerProtocol 定义作业管理接口。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/ranker.py",
+      "type": "code",
+      "summary": "文件评分器：score_file 为候选文件计算多维度相关性分数（符号匹配/引用命中/依赖关联/测试关联/关系图邻近度），综合生成带理由的评分结果。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/relation_query.py",
+      "type": "code",
+      "summary": "关系查询器：get_inheritance_tree 构建类继承树（含接口识别），get_file_dependencies 查询文件的导入/导出依赖关系图。用于理解代码结构关联。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/rule_compressor.py",
+      "type": "code",
+      "summary": "规则压缩器：compress_snippet_content 根据任务 token 优先级和压缩规则（去注释/去导入行）对代码片段进行压缩，在保持关键信息的同时减少 token 消耗。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/semantic_relations.py",
+      "type": "code",
+      "summary": "语义关系图构建：build_semantic_relation_graph 从符号/引用/依赖索引构建文件间语义关系图。collect_seed_files 从变更文件和提示收集种子文件，compute_relation_proximity 计算文件与种子集的邻近度分数。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/snippet_extractor.py",
+      "type": "code",
+      "summary": "代码片段提取器：extract_snippet 从源文件中提取与任务最相关的代码片段。_select_focus_symbol 选择焦点符号，_compute_line_window_from_symbol 计算行窗口范围，支持按符号和 token 匹配度选择。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/query/symbol_query.py",
+      "type": "code",
+      "summary": "符号查询引擎：search_symbols 搜索符号定义，get_symbol_details 获取符号详情含关系，build_call_graph 构建调用图，get_symbol_context 获取符号上下文（定义/使用/测试）。核心代码理解查询能力。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/schema/__init__.py",
+      "type": "code",
+      "summary": "Schema 子包入口，导入 contracts 模块中的契约验证函数。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/schema/",
+      "type": "module",
+      "summary": "Schema 子包：提供上下文包、验证摘要等数据结构的契约验证，确保数据格式合规。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/schema/contracts.py",
+      "type": "code",
+      "summary": "契约验证器：enforce_context_pack_contract/enforce_context_payload_contract/enforce_verify_summary_contract/enforce_verify_events_payload_contract 四个核心验证函数，基于 JSON Schema 对数据结构进行校验、修复和约束。支持 warn/strict/repair 三种约束模式。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/semantic_ranker.py",
+      "type": "code",
+      "summary": "语义排名引擎：probe_semantic_runtime 探测语义搜索运行时可用性，apply_semantic_ranking 在词法排序基础上叠加语义相关性调整。当前为 stub 实现，预留语义嵌入搜索能力。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/storage/__init__.py",
+      "type": "code",
+      "summary": "存储子包入口，导入 cache 和 index_cache 模块。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/storage/",
+      "type": "module",
+      "summary": "存储子包：提供项目哈希、路径管理、JSON/JSONL 读写和索引缓存等持久化能力。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/storage/cache.py",
+      "type": "code",
+      "summary": "项目缓存管理：project_hash 计算项目路径哈希，project_paths 构建项目缓存路径布局，ensure_project_dirs 创建目录结构，write_json/read_json/write_jsonl 提供基础读写操作。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "type": "code",
+      "summary": "索引缓存核心：load_index_rows 加载索引数据（含增量合并），write_jsonl_atomic 原子写入 JSONL，append_delta_ops 追加增量操作，load_grouped_rows_with_delta 分组加载含增量数据。使用 mmap 加速大文件读取。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/token_estimator.py",
+      "type": "code",
+      "summary": "Token 估算器：estimate_tokens_for_text 估算文本的 LLM token 数量，支持 tiktoken/auto/chars-per-token 三种后端；estimate_tokens_from_chars 按字符数估算。用于上下文预算控制。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/utils.py",
+      "type": "code",
+      "summary": "通用工具函数：utc_now_iso/utc_now 时间戳生成，normalize_path_str/normalize_path_abs 路径规范化，get_logger 创建带 ACCEL_DEBUG 环境变量控制的日志器。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/verify/__init__.py",
+      "type": "code",
+      "summary": "验证子包入口，导入 orchestrator 模块。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/verify/",
+      "type": "module",
+      "summary": "验证子包：编排代码验证流程（lint/typecheck/test），管理验证作业和回调，支持工作空间路由。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/verify/callbacks.py",
+      "type": "code",
+      "summary": "验证回调接口：VerifyStage 定义验证阶段枚举，VerifyProgressCallback 定义完整回调接口（启动/阶段变更/命令输出/完成等），NoOpCallback 为空实现。用于验证流程进度监控。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/verify/job_manager.py",
+      "type": "code",
+      "summary": "验证作业管理器：JobManager（单例）管理验证作业生命周期，create_job 创建作业，get_job/get_all_jobs 查询状态，cancel_job/cleanup_completed 清理作业。VerifyJob 记录作业状态、事件和进度。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "type": "code",
+      "summary": "验证编排辅助函数：23 个函数覆盖缓存管理（entry 加载/裁剪/原子写入）、结果规范化、失败分类、超时控制、命令进度追踪等。核心是 _start_command_tick_thread 启动心跳监控线程，_can_use_cached_entry 判断缓存可用性。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/verify/orchestrator.py",
+      "type": "code",
+      "summary": "验证编排器入口：从 orchestrator_helpers 导入 run_verify 函数并重新导出，保持模块层级一致性。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/verify/runners.py",
+      "type": "code",
+      "summary": "命令执行器：run_command 在子进程中执行验证命令（lint/typecheck/test），支持超时控制、取消事件、 Stall 检测和流式输出回调。_kill_process_tree 安全终止进程树。"
+    },
+    {
+      "id": "src/backend/polaris/infrastructure/accel/verify/sharding_workspace.py",
+      "type": "code",
+      "summary": "工作空间路由器：检测项目中的 Node/Python 工作空间（monorepo/pnpm workspace/virtualenv 等），将验证命令路由到正确的工作空间目录。_apply_workspace_routing 为核心入口，_rewrite_pytest_targets_for_workspace 重写 pytest 路径目标。"
+    }
+  ],
+  "edges": [
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/lexical_ranker.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/lexical_ranker.py",
+      "target": "src/backend/polaris/infrastructure/accel/config_runtime.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/pattern_detector.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/pattern_detector.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/pattern_detector.py",
+      "target": "src/backend/polaris/infrastructure/accel/utils.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/planner.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/project_stats.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/project_stats.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/project_stats.py",
+      "target": "src/backend/polaris/infrastructure/accel/polaris_paths.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/ranker.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/ranker.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/semantic_relations.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/relation_query.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/relation_query.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/relation_query.py",
+      "target": "src/backend/polaris/infrastructure/accel/utils.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/rule_compressor.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/semantic_relations.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/semantic_relations.py",
+      "target": "src/backend/polaris/infrastructure/accel/utils.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/snippet_extractor.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/symbol_query.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/symbol_query.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/symbol_query.py",
+      "target": "src/backend/polaris/infrastructure/accel/query/semantic_relations.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/query/symbol_query.py",
+      "target": "src/backend/polaris/infrastructure/accel/utils.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/schema/__init__.py",
+      "target": "src/backend/polaris/infrastructure/accel/schema/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/schema/__init__.py",
+      "target": "src/backend/polaris/infrastructure/accel/schema/contracts.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/schema/",
+      "target": "src/backend/polaris/infrastructure/accel/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/schema/contracts.py",
+      "target": "src/backend/polaris/infrastructure/accel/schema/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/schema/contracts.py",
+      "target": "src/backend/polaris/infrastructure/accel/config_runtime.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/schema/contracts.py",
+      "target": "src/backend/polaris/infrastructure/accel/utils.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/semantic_ranker.py",
+      "target": "src/backend/polaris/infrastructure/accel/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/semantic_ranker.py",
+      "target": "src/backend/polaris/infrastructure/accel/config_runtime.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/storage/__init__.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/storage/__init__.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/storage/__init__.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/storage/",
+      "target": "src/backend/polaris/infrastructure/accel/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/storage/cache.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/storage/cache.py",
+      "target": "src/backend/polaris/infrastructure/accel/polaris_paths.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "target": "src/backend/polaris/infrastructure/accel/utils.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/token_estimator.py",
+      "target": "src/backend/polaris/infrastructure/accel/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/utils.py",
+      "target": "src/backend/polaris/infrastructure/accel/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/__init__.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/__init__.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/orchestrator.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/",
+      "target": "src/backend/polaris/infrastructure/accel/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/callbacks.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/job_manager.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/callbacks.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/job_manager.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/config_runtime.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/utils.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/schema/contracts.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/index_cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "target": "src/backend/polaris/infrastructure/accel/polaris_paths.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/orchestrator.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/runners.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/sharding_workspace.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/",
+      "relation": "contains",
+      "direction": "down"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/sharding_workspace.py",
+      "target": "src/backend/polaris/infrastructure/accel/utils.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/sharding_workspace.py",
+      "target": "src/backend/polaris/infrastructure/accel/polaris_paths.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/sharding_workspace.py",
+      "target": "src/backend/polaris/infrastructure/accel/storage/cache.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/",
+      "target": "src/backend/polaris/domain/verification/",
+      "relation": "related",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/runners.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/orchestrator_helpers.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/runners.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/sharding_workspace.py",
+      "relation": "imports",
+      "direction": "right"
+    },
+    {
+      "source": "src/backend/polaris/infrastructure/accel/verify/runners.py",
+      "target": "src/backend/polaris/infrastructure/accel/verify/job_manager.py",
+      "relation": "imports",
+      "direction": "right"
+    }
+  ],
+  "validation": {
+    "nodeCount": 28,
+    "edgeCount": 65,
+    "errors": [
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/config_runtime.py",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/polaris_paths.py",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/query/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/config_runtime.py",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/config_runtime.py",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/polaris_paths.py",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/config_runtime.py",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/polaris_paths.py",
+      "Dangling edge target: src/backend/polaris/infrastructure/accel/polaris_paths.py",
+      "Dangling edge target: src/backend/polaris/domain/verification/"
+    ]
+  }
+}

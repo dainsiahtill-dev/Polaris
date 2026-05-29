@@ -47,6 +47,17 @@ function stringList(value: unknown): string[] {
   return value.map(item => String(item || '').trim()).filter(Boolean);
 }
 
+function stringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key.trim(), String(item || '').trim()] as const)
+      .filter(([key, item]) => Boolean(key) && Boolean(item))
+  );
+}
+
 function extractStructuredDetails(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -69,7 +80,14 @@ function appendRoleReadinessDetails(message: string, payload: unknown): string {
   }
   const missingRoles = stringList(details.missing_roles);
   if (missingRoles.length > 0) {
-    return `${message} · blocked: ${missingRoles.join(', ')}`;
+    const roleIssues = stringMap(details.role_issues);
+    const issueText = missingRoles
+      .map(role => {
+        const issue = roleIssues[role];
+        return issue ? `${role} (${issue})` : role;
+      })
+      .join(', ');
+    return `${message} · blocked: ${issueText}`;
   }
   const requiredRoles = stringList(details.required_roles);
   if (requiredRoles.length > 0) {

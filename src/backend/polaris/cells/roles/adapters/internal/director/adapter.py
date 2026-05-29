@@ -365,8 +365,6 @@ class DirectorAdapter(BaseRoleAdapter):
             blocked_provider_types={
                 "",
                 "codex",
-                "codex_cli",
-                "codex_sdk",
             },
         )
         if not result.attempted or not result.ok:
@@ -527,6 +525,10 @@ class DirectorAdapter(BaseRoleAdapter):
         acceptance = (
             metadata.get("acceptance") if isinstance(metadata.get("acceptance"), list) else task.get("acceptance")
         )
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        qa_rework_reason = str(metadata.get("qa_rework_reason") or adapter_result.get("qa_rework_reason") or "").strip()
+        qa_rework_evidence = metadata.get("qa_rework_evidence") or adapter_result.get("qa_rework_evidence")
 
         def _stringify_list(value: Any) -> list[str]:
             if isinstance(value, list):
@@ -539,6 +541,7 @@ class DirectorAdapter(BaseRoleAdapter):
         scope_items = _stringify_list(scope)
         step_items = _stringify_list(steps)
         acceptance_items = _stringify_list(acceptance)
+        qa_rework_items = _stringify_list(qa_rework_evidence)
 
         lines = [
             f"任务: {subject}",
@@ -554,6 +557,11 @@ class DirectorAdapter(BaseRoleAdapter):
             "验收标准:",
             *[f"- {item}" for item in acceptance_items],
             "",
+            "QA 返工要求:" if qa_rework_reason else "",
+            f"- 原因: {qa_rework_reason}" if qa_rework_reason else "",
+            *[f"- 证据: {item}" for item in qa_rework_items],
+            "必须修复 QA 证据中的真实文件并重新运行相关验证，不得仅确认既有 scope 存在。" if qa_rework_reason else "",
+            "",
             "禁止输出 TODO/FIXME/NotImplemented 等占位实现。",
             "不得把示例路径当成目标文件；必须使用任务范围中的真实相对路径。",
             "",
@@ -568,6 +576,8 @@ class DirectorAdapter(BaseRoleAdapter):
                     "完整文件内容",
                     "```",
                     "修改已有文件时也可以使用 PATCH_FILE，但 PATCH_FILE 后必须是真实相对路径。",
+                    "不要把 unified diff 或 ```diff 代码块当成文件内容输出；Markdown 文件块必须包含完整最终文件内容。",
+                    "不要输出 `PATCH_FILE path` 后再跟 ```diff 代码块；若使用 PATCH_FILE 协议，必须使用运行时可解析的正式协议格式。",
                     "不要输出任何占位路径。",
                 ]
             )

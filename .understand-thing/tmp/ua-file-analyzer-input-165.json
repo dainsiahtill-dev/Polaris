@@ -1,0 +1,182 @@
+{
+  "projectRoot": "C:/Users/dains/Documents/GitLab/polaris",
+  "batchFiles": [
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/handoff_handlers.py",
+      "language": "python",
+      "sizeLines": 480,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/intent_classifier.py",
+      "language": "python",
+      "sizeLines": 483,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/intent_embedding_router.py",
+      "language": "python",
+      "sizeLines": 219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/ledger.py",
+      "language": "python",
+      "sizeLines": 452,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/modification_contract.py",
+      "language": "python",
+      "sizeLines": 302,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/mutation_triggers.py",
+      "language": "python",
+      "sizeLines": 196,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/phase_manager.py",
+      "language": "python",
+      "sizeLines": 452,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/READ_STRATEGY_DESIGN.md",
+      "language": "markdown",
+      "sizeLines": 123,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/read_strategy.py",
+      "language": "python",
+      "sizeLines": 352,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/receipt_utils.py",
+      "language": "python",
+      "sizeLines": 170,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py",
+      "language": "python",
+      "sizeLines": 1037,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/slm_coprocessor.py",
+      "language": "python",
+      "sizeLines": 219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py",
+      "language": "python",
+      "sizeLines": 1284,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py",
+      "language": "python",
+      "sizeLines": 461,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_cognitive_gateway.py",
+      "language": "python",
+      "sizeLines": 641,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py",
+      "language": "python",
+      "sizeLines": 168,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_mutation_triggers.py",
+      "language": "python",
+      "sizeLines": 315,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_path_security.py",
+      "language": "python",
+      "sizeLines": 180,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_protocol_canonicalization.py",
+      "language": "python",
+      "sizeLines": 214,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_read_strategy.py",
+      "language": "python",
+      "sizeLines": 289,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_slm_coprocessor.py",
+      "language": "python",
+      "sizeLines": 181,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_snapshot_commit.py",
+      "language": "python",
+      "sizeLines": 151,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py",
+      "language": "python",
+      "sizeLines": 219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py",
+      "language": "python",
+      "sizeLines": 102,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_truthlog_recorder.py",
+      "language": "python",
+      "sizeLines": 127,
+      "fileCategory": "code"
+    }
+  ],
+  "batchImportData": {
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/handoff_handlers.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/intent_classifier.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/intent_embedding_router.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/ledger.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/modification_contract.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/mutation_triggers.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/phase_manager.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/READ_STRATEGY_DESIGN.md": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/read_strategy.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/receipt_utils.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/slm_coprocessor.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_cognitive_gateway.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_mutation_triggers.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_path_security.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_protocol_canonicalization.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_read_strategy.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_slm_coprocessor.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_snapshot_commit.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py": [],
+    "src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_truthlog_recorder.py": []
+  }
+}

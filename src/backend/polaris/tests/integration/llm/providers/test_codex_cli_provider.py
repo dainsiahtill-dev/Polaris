@@ -30,6 +30,7 @@ class TestCodexCLIProviderHappyPath:
         assert defaults["type"] == "codex_cli"
         assert defaults["command"] == "codex"
         assert defaults["codex_exec"]["json"] is True
+        assert defaults["health_args"] == ["--version"]
 
     def test_validate_config_valid(self, codex_cli_config: dict[str, Any]) -> None:
         result = CodexCLIProvider.validate_config(codex_cli_config)
@@ -77,6 +78,41 @@ class TestCodexCLIProviderHappyPath:
         assert "Hello!" in result.output
         assert result.error is None
         assert result.latency_ms == 42
+
+    def test_invoke_passes_configured_timeout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        codex_cli_config: dict[str, Any],
+    ) -> None:
+        observed: dict[str, int] = {}
+
+        def _mock_run_cli(
+            _command: str,
+            _args: list[str],
+            _cwd: str,
+            _env: dict[str, str] | None,
+            timeout: int,
+            _input_text: str | None,
+        ) -> tuple[int, str, str, int]:
+            observed["timeout"] = timeout
+            return 0, '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}', "", 9
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.codex_cli_provider._run_cli",
+            _mock_run_cli,
+        )
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.codex_cli_provider._resolve_command",
+            lambda _cmd: "/usr/bin/codex",
+        )
+
+        config = dict(codex_cli_config)
+        config["timeout"] = 17
+
+        result = CodexCLIProvider().invoke("Say hello", "gpt-4-codex", config)
+
+        assert result.ok is True
+        assert observed["timeout"] == 17
 
     def test_health_success(
         self,
@@ -144,6 +180,7 @@ class TestCodexCLIProviderHappyPath:
 
         assert result.ok is True
         assert len(result.models) >= 4
+        assert any(m.id == "gpt-5.3-codex" for m in result.models)
         assert any(m.id == "gpt-4-codex" for m in result.models)
 
 
