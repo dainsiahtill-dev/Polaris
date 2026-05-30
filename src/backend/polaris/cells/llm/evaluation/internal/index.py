@@ -351,6 +351,26 @@ def load_llm_test_index(workspace: Any = None) -> dict[str, Any]:
     return _new_index_payload()
 
 
+def load_llm_test_index_candidates(workspace: Any = None) -> list[dict[str, Any]]:
+    """Load all available LLM test indexes for a workspace.
+
+    The first item preserves the legacy lookup order returned by
+    :func:`load_llm_test_index`. Later items are fallback indexes, currently
+    including the global ``~/.polaris/config/llm`` index when a workspace-local
+    index exists.
+    """
+    paths = _resolve_index_paths(workspace)
+    payloads: list[dict[str, Any]] = []
+
+    with _index_read_lock(paths):
+        for path in paths:
+            payload = _load_index_file(path)
+            if payload is not None:
+                payloads.append(payload)
+
+    return payloads or [_new_index_payload()]
+
+
 def reset_llm_test_index(workspace: Any = None) -> None:
     """Reset LLM test index to empty state.
 
@@ -529,6 +549,7 @@ def update_index_with_report(
 __all__ = [
     "KernelFsReportsPort",
     "load_llm_test_index",
+    "load_llm_test_index_candidates",
     "reconcile_llm_test_index",
     "reset_llm_test_index",
     "set_reports_port",

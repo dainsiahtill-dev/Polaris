@@ -44,9 +44,12 @@ _ACTIVE_EXECUTION_STATUSES = {
     ExecutionProcessStatusV1.RUNNING,
 }
 _PM_PLANNING_TIMEOUT_ENV = "KERNELONE_PM_PLANNING_TIMEOUT_SECONDS"
+_PM_CODEX_MIN_PLANNING_TIMEOUT_ENV = "KERNELONE_PM_CODEX_MIN_TIMEOUT_SECONDS"
 _DEFAULT_PM_PLANNING_TIMEOUT_SECONDS = 60
+_DEFAULT_CODEX_PM_PLANNING_TIMEOUT_SECONDS = 360
 _MIN_PM_PLANNING_TIMEOUT_SECONDS = 5
 _MAX_PM_PLANNING_TIMEOUT_SECONDS = 600
+_CODEX_PROVIDER_IDS = {"codex", "codex_cli", "codex_sdk"}
 
 
 def _parse_positive_int(value: Any) -> int:
@@ -686,14 +689,36 @@ class PMService:
 
         settings_timeout = _parse_positive_int(getattr(self._settings, "timeout", 0))
         if settings_timeout > 0:
-            return _clamp_pm_planning_timeout(settings_timeout)
+            return self._apply_planning_timeout_floor(_clamp_pm_planning_timeout(settings_timeout))
 
         llm_config = getattr(self._settings, "llm", None)
         llm_timeout = _parse_positive_int(getattr(llm_config, "timeout", 0))
         if llm_timeout > 0:
-            return _clamp_pm_planning_timeout(min(llm_timeout, _DEFAULT_PM_PLANNING_TIMEOUT_SECONDS))
+            return self._apply_planning_timeout_floor(
+                _clamp_pm_planning_timeout(min(llm_timeout, _DEFAULT_PM_PLANNING_TIMEOUT_SECONDS))
+            )
 
-        return _DEFAULT_PM_PLANNING_TIMEOUT_SECONDS
+        return self._apply_planning_timeout_floor(_DEFAULT_PM_PLANNING_TIMEOUT_SECONDS)
+
+    def _apply_planning_timeout_floor(self, seconds: int) -> int:
+        if not self._pm_uses_codex_runtime():
+            return seconds
+        floor = _parse_positive_int(os.environ.get(_PM_CODEX_MIN_PLANNING_TIMEOUT_ENV))
+        if floor <= 0:
+            floor = _DEFAULT_CODEX_PM_PLANNING_TIMEOUT_SECONDS
+        return max(seconds, _clamp_pm_planning_timeout(floor))
+
+    def _pm_uses_codex_runtime(self) -> bool:
+        pm_model = self._resolve_pm_model_arg().lower()
+        if "codex" in pm_model:
+            return True
+
+        explicit_pm_model = _text_value(getattr(self._settings.pm, "model", ""))
+        if explicit_pm_model:
+            return False
+
+        provider_id = self._resolve_role_selection("pm").provider_id.lower()
+        return provider_id in _CODEX_PROVIDER_IDS
 
     async def _spawn_process(self, cmd: list[str], log_path: str) -> ProcessHandle:
         """Spawn PM process through runtime.execution_broker cell."""

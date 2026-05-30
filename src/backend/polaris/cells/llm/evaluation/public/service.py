@@ -21,6 +21,7 @@ from polaris.cells.llm.evaluation.internal.benchmark_models import (
 from polaris.cells.llm.evaluation.internal.deterministic_judge import judge_agentic_case
 from polaris.cells.llm.evaluation.internal.index import (
     load_llm_test_index,
+    load_llm_test_index_candidates,
     reconcile_llm_test_index,
     reset_llm_test_index,
     update_index_with_report,
@@ -81,6 +82,7 @@ __all__ = [
     "load_builtin_agentic_benchmark_cases",
     "load_builtin_tool_calling_matrix_cases",
     "load_llm_test_index",
+    "load_llm_test_index_candidates",
     "load_tool_calling_matrix_case",
     "parse_readiness_timestamp",
     "pull_baseline_library",

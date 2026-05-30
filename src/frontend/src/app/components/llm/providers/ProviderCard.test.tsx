@@ -53,4 +53,27 @@ describe('ProviderCard', () => {
     fireEvent.change(nameInput, { target: { value: '' } });
     expect(nameInput).toHaveValue('');
   });
+
+  it('keeps dense provider status controls readable with long names and models', () => {
+    const longProviderName = 'Qwen Production Provider With A Very Long Region And Billing Alias';
+    const longModelName = 'qwen3-max-preview-with-extended-tool-contract-and-long-routing-suffix';
+
+    const { container } = render(
+      <ProviderCardHarness
+        initialProvider={{
+          type: 'ollama',
+          name: longProviderName,
+          model: longModelName,
+          timeout: 60,
+        }}
+      />
+    );
+
+    const header = container.querySelector('[data-provider-id="ollama"] [data-testid^="provider-card-header-"]');
+    const actions = container.querySelector('[data-provider-id="ollama"] [data-testid^="provider-card-actions-"]');
+
+    expect(header).toHaveClass('min-w-0', 'flex-col', 'lg:flex-row');
+    expect(actions).toHaveClass('shrink-0', 'flex-wrap');
+    expect(screen.getByText(longModelName)).toHaveClass('truncate', 'sm:max-w-72');
+  });
 });

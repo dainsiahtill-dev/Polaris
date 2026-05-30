@@ -75,11 +75,17 @@ class TestResolveIndexPaths:
         paths = _resolve_index_paths("/tmp/ws")
         assert len(paths) == len(set(paths))
 
-    def test_explicit_workspace_does_not_include_global_index(self, tmp_path) -> None:
+    def test_explicit_workspace_includes_workspace_and_global_indexes(self, tmp_path) -> None:
         workspace = tmp_path / "workspace"
-        paths = _resolve_index_paths(str(workspace))
-        assert len(paths) == 1
+        global_index = tmp_path / "global" / "llm_test_index.json"
+        with patch(
+            "polaris.cells.llm.evaluation.internal.index.resolve_global_path",
+            return_value=str(global_index),
+        ):
+            paths = _resolve_index_paths(str(workspace))
+        assert len(paths) == 2
         assert paths[0].endswith(str(workspace / ".polaris" / "llm_test_index.json"))
+        assert paths[1].endswith(str(global_index))
 
 
 class TestLoadIndexFile:
@@ -237,7 +243,7 @@ class TestLoadLlmTestIndex:
         result = load_llm_test_index(str(tmp_path))
         assert result.get("custom") is True
 
-    def test_explicit_workspace_ignores_global_stale_index(self, tmp_path) -> None:
+    def test_explicit_workspace_falls_back_to_global_index_when_workspace_index_missing(self, tmp_path) -> None:
         workspace = tmp_path / "workspace"
         global_index = tmp_path / "global" / "llm_test_index.json"
         global_index.parent.mkdir(parents=True)
@@ -265,7 +271,7 @@ class TestLoadLlmTestIndex:
         ):
             result = load_llm_test_index(str(workspace))
 
-        assert result["roles"] == {}
+        assert result["roles"]["pm"]["provider_id"] == "ollama"
 
 
 class TestResetLlmTestIndex:
@@ -352,7 +358,7 @@ class TestUpdateIndexWithReport:
         assert "ollama" in index["providers"]
         assert index["last_update"] is not None
 
-    def test_update_does_not_seed_workspace_from_global_stale_index(self, tmp_path) -> None:
+    def test_update_preserves_global_entries_when_writing_workspace_report(self, tmp_path) -> None:
         workspace = tmp_path / "workspace"
         global_index = tmp_path / "global" / "llm_test_index.json"
         global_index.parent.mkdir(parents=True)
@@ -397,6 +403,6 @@ class TestUpdateIndexWithReport:
             update_index_with_report(str(workspace), report)
             index = load_llm_test_index(str(workspace))
 
-        assert "pm" not in index["roles"]
-        assert "ollama" not in index["providers"]
+        assert "pm" in index["roles"]
+        assert "ollama" in index["providers"]
         assert "director" in index["roles"]

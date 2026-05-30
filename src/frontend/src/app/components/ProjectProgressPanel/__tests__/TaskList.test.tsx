@@ -4,7 +4,7 @@ import { TaskList } from '../TaskList';
 import type { PmTask } from '@/types/task';
 
 describe('TaskList', () => {
-    const clampText = (text: string) => text;
+    const clampText = (text: unknown) => (typeof text === 'string' ? text : '');
     const taskKey = (task: PmTask) => task.id;
     const isTaskDone = () => false;
 

@@ -18,6 +18,7 @@ Coverage targets (Cell public API):
 
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,7 @@ from polaris.cells.storage.layout import (
     StorageLayoutErrorV1,
     StorageLayoutResultV1,
     default_polaris_cache_base,
+    load_persisted_settings,
     polaris_home,
     refresh_storage_layout,
     resolve_polaris_roots,
@@ -88,6 +90,29 @@ class TestResolveStorageLayoutQueryV1:
     def test_whitespace_only_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             ResolveStorageLayoutQueryV1(workspace="   ")
+
+
+class TestPersistedSettings:
+    def test_load_persisted_settings_accepts_utf8_bom(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        home = tmp_path / "home"
+        workspace = tmp_path / "workspace"
+        settings_path = home / "config" / "settings.json"
+        workspace.mkdir(parents=True)
+        settings_path.parent.mkdir(parents=True)
+        payload = {"workspace": str(workspace), "timeout": 60}
+        settings_path.write_text("\ufeff" + json.dumps(payload), encoding="utf-8")
+
+        monkeypatch.setenv("KERNELONE_HOME", str(home))
+        clear_storage_roots_cache()
+
+        loaded = load_persisted_settings("")
+
+        assert loaded["workspace"] == str(workspace)
+        assert loaded["timeout"] == 60
 
 
 class TestRefreshStorageLayoutCommandV1:
@@ -241,6 +266,25 @@ class TestPolarisHome:
         result = polaris_home()
         expected = os.path.abspath(os.path.expanduser("~/.polaris"))
         assert os.path.abspath(result) == expected
+
+    def test_polaris_home_ignores_appdata_by_default(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        user_home = tmp_path / "user-home"
+        user_home.mkdir()
+        appdata = tmp_path / "AppData" / "Roaming"
+        appdata.mkdir(parents=True)
+        monkeypatch.delenv("KERNELONE_HOME", raising=False)
+        monkeypatch.delenv("KERNELONE_ROOT", raising=False)
+        monkeypatch.setenv("APPDATA", str(appdata))
+        monkeypatch.setattr(
+            os.path,
+            "expanduser",
+            lambda value: str(user_home / ".polaris") if value == "~/.polaris" else value,
+        )
+
+        result = polaris_home()
+
+        assert os.path.abspath(result) == os.path.abspath(str(user_home / ".polaris"))
+        assert os.path.abspath(str(appdata)) not in os.path.abspath(result)
 
 
 # ─── default_polaris_cache_base() ─────────────────────────────────────────

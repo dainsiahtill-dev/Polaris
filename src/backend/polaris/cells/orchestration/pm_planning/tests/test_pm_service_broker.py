@@ -281,6 +281,34 @@ class TestPMServiceExecutionBroker:
 
         assert cmd[timeout_index] == "60"
 
+    def test_build_command_lifts_codex_pm_planning_timeout(
+        self,
+        mock_settings: MagicMock,
+    ) -> None:
+        """Codex PM planning needs a longer default SLA than HTTP health checks."""
+        mock_settings.pm.model = "gpt-5.3-codex"
+        service = PMService(settings=mock_settings)
+
+        cmd = service._build_command(loop_mode=False)
+        timeout_index = cmd.index("--timeout") + 1
+
+        assert cmd[timeout_index] == "360"
+
+    def test_build_command_pm_planning_timeout_env_overrides_codex_floor(
+        self,
+        mock_settings: MagicMock,
+    ) -> None:
+        """The explicit PM planning timeout env var remains the top-priority override."""
+        mock_settings.pm.model = "gpt-5.3-codex"
+
+        with patch.dict("os.environ", {"KERNELONE_PM_PLANNING_TIMEOUT_SECONDS": "17"}):
+            service = PMService(settings=mock_settings)
+
+            cmd = service._build_command(loop_mode=False)
+
+        timeout_index = cmd.index("--timeout") + 1
+        assert cmd[timeout_index] == "17"
+
     def test_build_command_prefers_explicit_pm_model(
         self,
         mock_settings: MagicMock,

@@ -21,8 +21,8 @@ const defaultProps = {
 };
 
 describe('LlmRuntimeOverlay', () => {
-  it('stays below modal dialogs so onboarding actions remain clickable', () => {
-    render(<LlmRuntimeOverlay {...defaultProps} />);
+  it('stays below modal dialogs so onboarding actions remain clickable when visible', () => {
+    render(<LlmRuntimeOverlay {...defaultProps} pmRunning={true} />);
 
     const overlay = screen.getByTestId('llm-runtime-overlay');
 
@@ -30,7 +30,13 @@ describe('LlmRuntimeOverlay', () => {
     expect(overlay).not.toHaveClass('z-[75]');
   });
 
-  it('does not render blocked roles when LLM status is idle/unknown', () => {
+  it('stays hidden during healthy idle state to reduce visual noise', () => {
+    render(<LlmRuntimeOverlay {...defaultProps} />);
+
+    expect(screen.queryByTestId('llm-runtime-overlay')).not.toBeInTheDocument();
+  });
+
+  it('does not render idle unknown status while the runtime is healthy and inactive', () => {
     render(
       <LlmRuntimeOverlay
         {...defaultProps}
@@ -40,7 +46,7 @@ describe('LlmRuntimeOverlay', () => {
       />
     );
 
-    expect(screen.getByText('LLM IDLE')).toBeInTheDocument();
+    expect(screen.queryByTestId('llm-runtime-overlay')).not.toBeInTheDocument();
     expect(screen.queryByText(/required:/)).not.toBeInTheDocument();
     expect(screen.queryByText(/blocked:/)).not.toBeInTheDocument();
   });
@@ -55,7 +61,7 @@ describe('LlmRuntimeOverlay', () => {
       />
     );
 
-    expect(screen.getByText('LLM IDLE')).toBeInTheDocument();
+    expect(screen.queryByTestId('llm-runtime-overlay')).not.toBeInTheDocument();
     expect(screen.queryByText('LLM BLOCKED')).not.toBeInTheDocument();
     expect(screen.queryByText('required: pm, director, qa')).not.toBeInTheDocument();
     expect(screen.queryByText('blocked: pm, director')).not.toBeInTheDocument();
@@ -94,6 +100,23 @@ describe('LlmRuntimeOverlay', () => {
     expect(screen.getByText('LLM Runtime')).toBeInTheDocument();
   });
 
+  it('keeps role workspace runtime details collapsed and above the assistant input area', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        activeView="pm"
+        pmRunning={true}
+        llmState="blocked"
+        llmRequiredRoles={['pm', 'director', 'qa']}
+        llmBlockedRoles={['pm']}
+      />
+    );
+
+    expect(screen.getByTestId('llm-runtime-overlay')).toHaveClass('bottom-28');
+    expect(screen.getByTestId('llm-runtime-overlay')).toHaveClass('sm:w-[360px]');
+    expect(screen.getByTestId('llm-runtime-overlay-details')).toHaveClass('grid-rows-[0fr]');
+  });
+
   it('treats Chief Engineer as a Factory runtime blocker', () => {
     render(
       <LlmRuntimeOverlay
@@ -121,7 +144,7 @@ describe('LlmRuntimeOverlay', () => {
       />
     );
 
-    expect(screen.getByText('LLM IDLE')).toBeInTheDocument();
+    expect(screen.queryByTestId('llm-runtime-overlay')).not.toBeInTheDocument();
     expect(screen.queryByText('LLM BLOCKED')).not.toBeInTheDocument();
     expect(screen.queryByText(/blocked: pm/)).not.toBeInTheDocument();
   });

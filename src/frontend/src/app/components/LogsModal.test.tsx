@@ -88,6 +88,19 @@ describe('LogsModal', () => {
       expect(screen.getByText('运行日志')).toBeInTheDocument();
     });
 
+    it('uses a bounded opaque shell for dense log content', async () => {
+      await renderOpenLogsModal({
+        banner: 'https://example.invalid/'.repeat(20),
+      });
+
+      expect(screen.getByTestId('logs-modal')).toHaveClass('bg-black/85');
+      expect(screen.getByTestId('logs-modal-panel')).toHaveClass('overflow-hidden');
+      expect(screen.getByTestId('logs-modal-panel')).toHaveClass('max-w-5xl');
+      expect(screen.getByTestId('logs-modal-source-row')).toHaveClass('min-w-0');
+      expect(screen.getByTestId('logs-modal-controls-row')).toHaveClass('flex-wrap');
+      expect(screen.getByText(/https:\/\/example.invalid/)).toHaveClass('min-w-0');
+    });
+
     it('returns null when isOpen is false', () => {
       const { container } = render(<LogsModal {...defaultProps} isOpen={false} />);
       expect(container.firstChild).toBeNull();

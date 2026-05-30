@@ -73,50 +73,62 @@ export function ProcessMonitorSidebar({
               <RefreshCw className="size-3 text-cyan-400/50 animate-spin ml-auto" />
             )}
         </div>
-        <div className="flex items-center px-1 pb-1 gap-1">
+        <div className="grid grid-cols-4 gap-1 px-1 pb-1">
             <button
                 onClick={() => setActiveTab('pm')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] uppercase font-bold tracking-wider rounded-t-mk transition-colors ${
+                data-testid="process-monitor-tab-pm"
+                aria-label="PM 日志"
+                title="PM 日志"
+                className={`flex h-8 min-w-0 items-center justify-center gap-1 py-1.5 text-[10px] uppercase font-bold tracking-wider rounded-t-mk transition-colors ${
                     activeTab === 'pm' 
                     ? 'bg-[var(--ink-indigo)] text-blue-400 border-t-2 border-blue-400' 
                     : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
                 }`}
             >
                 <Terminal className="size-3" />
-                PM Logs
+                <span className="whitespace-nowrap">PM</span>
             </button>
             <button
                 onClick={() => setActiveTab('director')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] uppercase font-bold tracking-wider rounded-t-mk transition-colors ${
+                data-testid="process-monitor-tab-director"
+                aria-label="Chief Engineer 日志"
+                title="Chief Engineer 日志"
+                className={`flex h-8 min-w-0 items-center justify-center gap-1 py-1.5 text-[10px] uppercase font-bold tracking-wider rounded-t-mk transition-colors ${
                     activeTab === 'director' 
                     ? 'bg-[var(--ink-indigo)] text-purple-400 border-t-2 border-purple-400' 
                     : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
                 }`}
             >
                 <Terminal className="size-3" />
-                Chief Engineer
+                <span className="whitespace-nowrap">CE</span>
             </button>
              <button
                 onClick={() => setActiveTab('files')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] uppercase font-bold tracking-wider rounded-t-mk transition-colors ${
+                data-testid="process-monitor-tab-files"
+                aria-label="Artifacts 文件"
+                title="Artifacts 文件"
+                className={`flex h-8 min-w-0 items-center justify-center gap-1 py-1.5 text-[10px] uppercase font-bold tracking-wider rounded-t-mk transition-colors ${
                     activeTab === 'files' 
                     ? 'bg-[var(--ink-indigo)] text-emerald-400 border-t-2 border-emerald-400' 
                     : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
                 }`}
             >
                 <Folder className="size-3" />
-                Artifacts
+                <span className="whitespace-nowrap">Files</span>
             </button>
              <button
                 onClick={() => setActiveTab('usage')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] uppercase font-bold tracking-wider rounded-t-mk transition-colors ${
+                data-testid="process-monitor-tab-usage"
+                aria-label="Usage 统计"
+                title="Usage 统计"
+                className={`flex h-8 min-w-0 items-center justify-center gap-1 py-1.5 text-[10px] uppercase font-bold tracking-wider rounded-t-mk transition-colors ${
                     activeTab === 'usage' 
                     ? 'bg-[var(--ink-indigo)] text-yellow-400 border-t-2 border-yellow-400' 
                     : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
                 }`}
             >
                 <PieChart className="size-3" />
-                Usage
+                <span className="whitespace-nowrap">Usage</span>
             </button>
         </div>
       </div>

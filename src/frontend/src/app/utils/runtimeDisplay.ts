@@ -17,7 +17,7 @@ export function cleanRuntimeDisplayText(value?: string | null): string | null {
   return text.replace(/\s+/g, ' ');
 }
 
-export function normalizeStartedAtSeconds(value?: number | string | null): number | null {
+export function normalizeStartedAtSeconds(value?: unknown): number | null {
   if (value === null || value === undefined || value === '') {
     return null;
   }
@@ -28,6 +28,10 @@ export function normalizeStartedAtSeconds(value?: number | string | null): numbe
     }
     const seconds = value > 1_000_000_000_000 ? value / 1000 : value;
     return seconds >= MIN_REASONABLE_EPOCH_SECONDS ? seconds : null;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
   }
 
   const trimmed = value.trim();

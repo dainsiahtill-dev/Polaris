@@ -25,6 +25,8 @@ CODE_WRITING_FORBIDDEN_WARNING = (
     "polaris.cells.director.execution.internal.code_generation_engine."
 )
 _RUNTIME_CODEGEN_ENV = "KERNELONE_DIRECTOR_RUNTIME_CODEGEN"
+_DEFAULT_LLM_TIMEOUT_MAX_SECONDS = 300
+_RUNTIME_CODEGEN_LLM_TIMEOUT_MAX_SECONDS = 900
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -76,7 +78,12 @@ class CodeGenerationEngine:
             timeout = int(default_timeout)
         if timeout <= 0:
             timeout = int(default_timeout)
-        return min(max(timeout, 15), 300)
+        timeout_max = (
+            _RUNTIME_CODEGEN_LLM_TIMEOUT_MAX_SECONDS
+            if self.runtime_codegen_enabled()
+            else _DEFAULT_LLM_TIMEOUT_MAX_SECONDS
+        )
+        return min(max(timeout, 15), timeout_max)
 
     def resolve_task_timeout_budget(self, task: Any, *, rounds: int) -> int:
         """Resolve total timeout budget for one task, not per round."""
@@ -426,7 +433,7 @@ class CodeGenerationEngine:
                 ValueError,
             ) as exc:
                 warnings.append(f"director_runtime_codegen_invoke_failed:{exc}")
-                continue
+                break
 
             response_text = self._extract_response_text(response)
             try:

@@ -122,6 +122,80 @@ def _normalize_path_list(value: Any) -> list[str]:
     return normalized
 
 
+def _normalize_dep_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        token = _normalize_text(item)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return normalized
+
+
+def _task_id_at_position(tasks: list[dict[str, Any]], position: int) -> str:
+    if position <= 0 or position > len(tasks):
+        return ""
+    return _normalize_text(tasks[position - 1].get("id"))
+
+
+def _resolve_dependency_ref(token: str, tasks: list[dict[str, Any]], known_ids: set[str]) -> str:
+    if token in known_ids:
+        return token
+    parts = token.split("-")
+    if len(parts) >= 3 and parts[0].upper() == "PM" and parts[-1].isdigit():
+        mapped = _task_id_at_position(tasks, int(parts[-1]))
+        if mapped:
+            return mapped
+    return token
+
+
+def _normalize_dependency_refs_in_place(tasks: list[dict[str, Any]]) -> int:
+    known_ids = {_normalize_text(task.get("id")) for task in tasks if _normalize_text(task.get("id"))}
+    normalized_count = 0
+    for task in tasks:
+        task_id = _normalize_text(task.get("id"))
+        raw_deps = task.get("depends_on")
+        target_key = "depends_on"
+        if not isinstance(raw_deps, list):
+            raw_deps = task.get("dependencies")
+            target_key = "dependencies"
+        deps = _normalize_dep_list(raw_deps)
+        if not deps:
+            continue
+        rewritten: list[str] = []
+        seen: set[str] = set()
+        for dep in deps:
+            resolved = _resolve_dependency_ref(dep, tasks, known_ids)
+            if not resolved or resolved == task_id or resolved in seen:
+                if resolved != dep:
+                    normalized_count += 1
+                continue
+            seen.add(resolved)
+            rewritten.append(resolved)
+            if resolved != dep:
+                normalized_count += 1
+        task[target_key] = rewritten
+    return normalized_count
+
+
+def _unknown_dependency_refs(tasks: list[dict[str, Any]]) -> list[str]:
+    known_ids = {_normalize_text(task.get("id")) for task in tasks if _normalize_text(task.get("id"))}
+    unknown: list[str] = []
+    for task in tasks:
+        task_id = _normalize_text(task.get("id"))
+        deps = task.get("depends_on")
+        if not isinstance(deps, list):
+            deps = task.get("dependencies")
+        for dep in _normalize_dep_list(deps):
+            if dep not in known_ids:
+                unknown.append(f"{task_id}: unknown dependency `{dep}`")
+    return unknown
+
+
 def _normalize_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
@@ -336,6 +410,7 @@ def evaluate_pm_task_quality(
         critical_issues.append("docs-stage tasks missing backlog traceability")
     if task_count >= 2:
         typed_tasks = [task for task in tasks if isinstance(task, dict)]
+        critical_issues.extend(_unknown_dependency_refs(typed_tasks))
         try:
             validate_dependency_dag(typed_tasks)
         except DependencyCycleError as exc:
@@ -388,6 +463,7 @@ def autofix_pm_contract_for_quality(
         "phases_added": 0,
         "checklists_added": 0,
         "deps_added": 0,
+        "deps_normalized": 0,
         "acceptance_added": 0,
         "descriptions_added": 0,
     }
@@ -396,6 +472,7 @@ def autofix_pm_contract_for_quality(
 
     verify_command = detect_integration_verify_command(workspace_full)
     normalized_tasks = [task for task in tasks if isinstance(task, dict)]
+    stats["deps_normalized"] += _normalize_dependency_refs_in_place(normalized_tasks)
     has_dependency = False
 
     for index, task in enumerate(normalized_tasks, start=1):
@@ -440,6 +517,12 @@ def autofix_pm_contract_for_quality(
             title = str(task.get("title") or "").strip()
             task["description"] = f"Execute {title} according to acceptance criteria"
             stats["descriptions_added"] += 1
+
+        deps = task.get("depends_on")
+        if not isinstance(deps, list):
+            deps = task.get("dependencies")
+        if _normalize_dep_list(deps):
+            has_dependency = True
 
     if len(normalized_tasks) > 1 and not has_dependency:
         prev_task_id = None

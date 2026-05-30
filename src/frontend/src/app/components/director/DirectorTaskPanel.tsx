@@ -279,6 +279,27 @@ function evidenceEndpoint(endpoint: string, workspace = ''): string {
   return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
 }
 
+function EndpointBadge({
+  endpoint,
+  method,
+  testId,
+}: {
+  endpoint: string;
+  method?: string;
+  testId?: string;
+}) {
+  return (
+    <span
+      className="shrink-0 rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] font-medium text-slate-500"
+      title={endpoint}
+      data-endpoint={endpoint}
+      data-testid={testId}
+    >
+      {method ? `${method} API` : 'API'}
+    </span>
+  );
+}
+
 function directorTaskEndpoint(taskId: string, suffix = '', workspace = '', query = ''): string {
   return evidenceEndpoint(`/v2/director/tasks/${encodeURIComponent(taskId)}${suffix}${query}`, workspace);
 }
@@ -570,9 +591,7 @@ export function DirectorTaskPanel({
               <FilePlus className="h-3.5 w-3.5 text-indigo-300" />
               创建 Director 任务
             </span>
-            <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
-              POST {taskCreateEndpoint}
-            </span>
+            <EndpointBadge endpoint={taskCreateEndpoint} method="POST" testId="director-task-create-endpoint" />
           </div>
           <div className="grid gap-2">
             <input
@@ -641,8 +660,9 @@ export function DirectorTaskPanel({
                   : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-100',
               )}
               data-testid="director-task-create-evidence"
+              data-endpoint={taskCreateEndpoint}
             >
-              <span className="font-mono text-[10px]">{taskCreateEndpoint}</span>
+              <EndpointBadge endpoint={taskCreateEndpoint} testId="director-task-create-evidence-endpoint" />
               <span className="mx-1.5 text-emerald-200/50">·</span>
               {isTaskCreating ? '正在提交 Director 任务...' : taskCreateError || taskCreateMessage}
             </div>
@@ -666,7 +686,7 @@ export function DirectorTaskPanel({
             </div>
           ) : workerRows.length === 0 ? (
             <div className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[11px] text-slate-500">
-              暂无 worker 记录；等待 `/v2/director/workers` 或实时流返回数据。
+              暂无 worker 记录；等待后端 worker 或实时流返回数据。
             </div>
           ) : (
             <div className="flex gap-2 overflow-x-auto">
@@ -704,9 +724,10 @@ export function DirectorTaskPanel({
                   <User className="h-3.5 w-3.5" />
                   Worker 详情
                 </span>
-                <span className="truncate rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
-                  /v2/director/workers/{workerBackendDetail.workerId}
-                </span>
+                <EndpointBadge
+                  endpoint={`/v2/director/workers/${workerBackendDetail.workerId}`}
+                  testId="director-worker-backend-detail-endpoint"
+                />
               </div>
               {workerBackendDetail.loading ? (
                 <div className="flex items-center gap-1.5 text-cyan-100">
@@ -866,9 +887,7 @@ export function DirectorTaskPanel({
                       <XCircle className="h-3.5 w-3.5" />
                       取消端点
                     </span>
-                    <span className="font-mono text-[10px] text-red-100/80">
-                      {selectedTaskCancelEndpoint}
-                    </span>
+                    <EndpointBadge endpoint={selectedTaskCancelEndpoint} testId="director-task-cancel-endpoint" />
                   </div>
                   {isTaskCancelling ? (
                     <div className="mt-1.5 flex items-center gap-1.5 text-red-50">
@@ -887,9 +906,7 @@ export function DirectorTaskPanel({
                     <Code2 className="h-3.5 w-3.5 text-cyan-300" />
                     <span>后端任务详情</span>
                   </div>
-                  <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-                    {selectedTaskDetailEndpoint}
-                  </span>
+                  <EndpointBadge endpoint={selectedTaskDetailEndpoint} testId="director-task-backend-detail-endpoint" />
                 </div>
                 {hasSelectedBackendDetail && taskBackendDetail?.loading ? (
                   <div className="flex items-center gap-2 rounded-md border border-cyan-500/20 bg-cyan-500/10 px-2 py-2 text-[11px] text-cyan-100">
@@ -917,7 +934,7 @@ export function DirectorTaskPanel({
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed border-white/10 px-2 py-3 text-[11px] text-slate-500">
-                    选择任务后读取 `{selectedTaskDetailEndpoint}` 的权威快照。
+                    选择任务后读取权威快照。
                   </div>
                 )}
               </section>
@@ -955,9 +972,7 @@ export function DirectorTaskPanel({
                     <Brain className="h-3.5 w-3.5 text-indigo-300" />
                     <span>LLM 调用证据</span>
                   </div>
-                  <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-                    {selectedTaskLLMEndpoint}
-                  </span>
+                  <EndpointBadge endpoint={selectedTaskLLMEndpoint} testId="director-task-llm-events-endpoint" />
                 </div>
                 <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
                   <ProvenanceChip label="Total" value={String(llmStatsTotal)} />

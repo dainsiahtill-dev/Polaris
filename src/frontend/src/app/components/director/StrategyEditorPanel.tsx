@@ -1,6 +1,6 @@
 /** StrategyEditorPanel - Director 执行策略编辑器 */
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import Editor from '@monaco-editor/react';
+import Editor, { loader } from '@monaco-editor/react';
 import {
   FileJson,
   CheckCircle2,
@@ -13,6 +13,43 @@ import {
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
+
+type MonacoWorkerEnvironment = {
+  getWorker: (_workerId: unknown, label: string) => Worker;
+};
+
+const monacoGlobal = globalThis as unknown as {
+  MonacoEnvironment?: MonacoWorkerEnvironment;
+};
+
+let localMonacoConfiguration: Promise<void> | null = null;
+
+function configureLocalMonaco(): Promise<void> {
+  if (import.meta.env.MODE === 'test') {
+    return Promise.resolve();
+  }
+  if (!localMonacoConfiguration) {
+    localMonacoConfiguration = Promise.all([
+      import('monaco-editor/esm/vs/editor/editor.api'),
+      import('monaco-editor/esm/vs/language/json/monaco.contribution'),
+      import('monaco-editor/esm/vs/editor/editor.worker?worker'),
+      import('monaco-editor/esm/vs/language/json/json.worker?worker'),
+    ]).then(([monacoModule, , editorWorkerModule, jsonWorkerModule]) => {
+      const EditorWorker = editorWorkerModule.default;
+      const JsonWorker = jsonWorkerModule.default;
+      monacoGlobal.MonacoEnvironment = {
+        getWorker(_workerId: unknown, label: string) {
+          if (label === 'json') {
+            return new JsonWorker();
+          }
+          return new EditorWorker();
+        },
+      };
+      loader.config({ monaco: monacoModule });
+    });
+  }
+  return localMonacoConfiguration;
+}
 
 export interface DirectorExecutionStrategy {
   name: string;
@@ -92,6 +129,8 @@ export function StrategyEditorPanel({
   const [isValid, setIsValid] = useState(true);
   const [isDirty, setIsDirty] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState('default');
+  const [isMonacoReady, setIsMonacoReady] = useState(import.meta.env.MODE === 'test');
+  const [monacoLoadFailed, setMonacoLoadFailed] = useState(false);
 
   const templates = useMemo(() => [
     { id: 'default', name: '标准并行', content: DEFAULT_STRATEGY },
@@ -146,6 +185,24 @@ export function StrategyEditorPanel({
     }
 
     return validationErrors;
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    configureLocalMonaco()
+      .then(() => {
+        if (mounted) {
+          setIsMonacoReady(true);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setMonacoLoadFailed(true);
+        }
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   function validateDirectorStrategy(obj: unknown): ValidationError[] {
@@ -447,14 +504,29 @@ export function StrategyEditorPanel({
       </div>
 
       <div className="flex-1 overflow-hidden">
-        <Editor
-          height="100%"
-          defaultLanguage="json"
-          value={content}
-          onChange={handleEditorChange}
-          theme="vs-dark"
-          options={editorOptions}
-        />
+        {isMonacoReady ? (
+          <Editor
+            height="100%"
+            defaultLanguage="json"
+            value={content}
+            onChange={handleEditorChange}
+            theme="vs-dark"
+            options={editorOptions}
+          />
+        ) : monacoLoadFailed ? (
+          <textarea
+            data-testid="strategy-json-editor-fallback"
+            className="h-full w-full resize-none bg-slate-950 p-4 font-mono text-[12px] leading-relaxed text-slate-200 outline-none"
+            value={content}
+            onChange={(event) => handleEditorChange(event.currentTarget.value)}
+            readOnly={readOnly}
+            spellCheck={false}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center bg-slate-950/70 text-xs text-slate-400">
+            正在加载本地策略编辑器...
+          </div>
+        )}
       </div>
 
       {errors.length > 0 && (

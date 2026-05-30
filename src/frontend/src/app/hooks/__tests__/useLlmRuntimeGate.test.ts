@@ -26,6 +26,7 @@ describe('useLlmRuntimeGate', () => {
       blockedRoles: ['pm', 'director'],
       requiredRoles: ['pm', 'director'],
       lastUpdated: '2026-05-24T00:00:00Z',
+      roleDetails: {},
     });
     expect(isRoleLlmBlocked(state, 'pm')).toBe(true);
     expect(isRoleLlmBlocked(state, 'qa')).toBe(false);
@@ -35,16 +36,58 @@ describe('useLlmRuntimeGate', () => {
     expect(getRoleLlmBlockedReason(state, 'qa', 'QA')).toBe('');
   });
 
+  it('includes configured and tested provider/model details in blocked role reasons', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'blocked',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+      last_updated: '2026-05-24T00:00:00Z',
+      roles: {
+        pm: {
+          provider_id: 'codex_cli',
+          model: 'gpt-5.3-codex',
+          ready: false,
+          runtime_supported: true,
+          readiness_issue: 'provider_mismatch',
+          tested_provider_id: 'anthropic_compat-1779808433822',
+          tested_model: 'deepseek-v4-pro',
+          tested_timestamp: '2026-05-23T23:59:00Z',
+        },
+      },
+    });
+
+    const reason = getRoleLlmBlockedReason(state, 'pm', 'PM');
+
+    expect(reason).toContain('PM 当前绑定 codex_cli / gpt-5.3-codex');
+    expect(reason).toContain('最近测试记录的 Provider 不是当前绑定 Provider');
+    expect(reason).toContain('anthropic_compat-1779808433822 / deepseek-v4-pro');
+    expect(reason).toContain('2026-05-23T23:59:00Z');
+  });
+
   it('applies incoming runtime llm status and exposes the Director blocked reason', () => {
     const refreshFetch = vi.fn().mockResolvedValue({
       state: 'BLOCKED',
       blocked_roles: ['director'],
       required_ready_roles: ['director'],
+      roles: {
+        director: {
+          provider_id: 'codex_cli',
+          model: 'gpt-5.3-codex',
+          readiness_issue: 'role_readiness_missing',
+        },
+      },
     });
     const initialStatus = llmStatus({
       state: 'BLOCKED',
       blocked_roles: ['director'],
       required_ready_roles: ['director'],
+      roles: {
+        director: {
+          provider_id: 'codex_cli',
+          model: 'gpt-5.3-codex',
+          readiness_issue: 'role_readiness_missing',
+        },
+      },
     });
     const { result } = renderHook(() => useLlmRuntimeGate({
       workspace: 'C:/Temp/Product',
@@ -55,8 +98,11 @@ describe('useLlmRuntimeGate', () => {
 
     expect(result.current.llmRuntimeState.state).toBe('BLOCKED');
     expect(result.current.llmRuntimeState.blockedRoles).toEqual(['director']);
-    expect(result.current.getLlmRoleBlockedReason('director', 'Director')).toBe(
-      'LLM 就绪检查未通过：Director 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。',
+    expect(result.current.getLlmRoleBlockedReason('director', 'Director')).toContain(
+      'Director 当前绑定 codex_cli / gpt-5.3-codex',
+    );
+    expect(result.current.getLlmRoleBlockedReason('director', 'Director')).toContain(
+      '该角色还没有通过必需的深度测试',
     );
     expect(result.current.getLlmRoleBlockedReason('pm', 'PM')).toBe('');
   });

@@ -171,7 +171,7 @@ export function TerminalPanel({
   if (!isVisible) return null;
 
   return (
-    <div className="flex flex-col h-full bg-[#0f1115] border-t border-white/10 relative">
+    <div data-testid="terminal-panel" className="flex flex-col h-full bg-[#0f1115] border-t border-white/10 relative">
       {/* Terminal Header / Toolbar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#181a1f] border-b border-white/5 select-none shrink-0">
         <div className="flex items-center gap-2">

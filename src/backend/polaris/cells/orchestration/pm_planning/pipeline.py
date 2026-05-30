@@ -301,7 +301,7 @@ def _build_pm_quality_retry_prompt(
     report_summary = str(quality_report.get("summary") or "").strip()
     critical = [str(item).strip() for item in (quality_report.get("critical_issues") or []) if str(item).strip()][:8]
     warnings = [str(item).strip() for item in (quality_report.get("warnings") or []) if str(item).strip()][:8]
-    preview_payload = {
+    preview_payload: dict[str, Any] = {
         "overall_goal": str(previous_payload.get("overall_goal") or "").strip(),
         "focus": str(previous_payload.get("focus") or "").strip(),
         "tasks": previous_payload.get("tasks") if isinstance(previous_payload.get("tasks"), list) else [],
@@ -476,7 +476,7 @@ def run_pm_planning_iteration(
     pm_invoke_port = get_pm_invoke_port()
 
     # Determine backend
-    backend = getattr(args, "pm_backend", "ollama")
+    backend = str(getattr(args, "_resolved_pm_backend_kind", "") or getattr(args, "pm_backend", "ollama"))
     backend_llm_cfg = getattr(args, "_backend_llm_cfg", None)
 
     backend_label = backend
@@ -644,7 +644,14 @@ def run_pm_planning_iteration(
         if (
             sum(
                 int(autofix_stats.get(key) or 0)
-                for key in ("phases_added", "checklists_added", "deps_added", "acceptance_added", "descriptions_added")
+                for key in (
+                    "phases_added",
+                    "checklists_added",
+                    "deps_added",
+                    "deps_normalized",
+                    "acceptance_added",
+                    "descriptions_added",
+                )
             )
             > 0
         ):

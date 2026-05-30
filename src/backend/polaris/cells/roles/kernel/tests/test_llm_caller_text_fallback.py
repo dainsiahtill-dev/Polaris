@@ -16,6 +16,7 @@ from typing import Any
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     _convert_json_to_tool_call,
     _extract_tool_calls_from_text,
+    _looks_like_file_or_patch_delivery,
     extract_native_tool_calls,
 )
 
@@ -197,6 +198,19 @@ class TestExtractToolCallsFromTextException:
 
         assert result == []
 
+    def test_fenced_package_json_is_not_tool_call(self) -> None:
+        """Exception: file delivery blocks containing package.json are not tools."""
+        text = """```file: package.json
+{
+  "name": "polaris-react-ts-skeleton",
+  "version": "0.1.0",
+  "private": true
+}
+```"""
+
+        assert _looks_like_file_or_patch_delivery(text) is True
+        assert _extract_tool_calls_from_text(text) == []
+
 
 class TestExtractToolCallsFromTextFormat:
     """Tests for output format compatibility."""
@@ -290,6 +304,24 @@ class TestExtractNativeToolCallsWithFallback:
             provider_id="openai",
             model="gpt-4",
             response_text=None,
+        )
+
+        assert calls == []
+        assert provider == "openai"
+
+    def test_file_delivery_response_text_no_fallback(self) -> None:
+        """Fenced file output must remain visible content, not a tool call."""
+        raw: dict[str, Any] = {}
+        calls, provider = extract_native_tool_calls(
+            raw,
+            provider_id="openai",
+            model="gpt-5.3-codex",
+            response_text="""```file: package.json
+{
+  "name": "polaris-frontend-skeleton",
+  "private": true
+}
+```""",
         )
 
         assert calls == []

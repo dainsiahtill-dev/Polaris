@@ -39,12 +39,30 @@ function workspaceQuerySuffix(workspace = ''): string {
   return workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
 }
 
+function extractApiErrorString(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim();
+  }
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const payload = value as Record<string, unknown>;
+  return (
+    extractApiErrorString(payload.message) ||
+    extractApiErrorString(payload.detail) ||
+    extractApiErrorString(payload.error) ||
+    extractApiErrorString(payload.reason) ||
+    extractApiErrorString(payload.code)
+  );
+}
+
 async function handleResponse<T>(res: Response, fallbackError: string): Promise<ApiResult<T>> {
   if (!res.ok) {
     let detail = fallbackError;
     try {
-      const payload = await res.json() as { detail?: string };
-      if (payload.detail) detail = payload.detail;
+      const payload = await res.json() as unknown;
+      detail = extractApiErrorString(payload) || fallbackError;
     } catch (err) {
       devLogger.warn('[api] Error parsing error response:', err);
     }

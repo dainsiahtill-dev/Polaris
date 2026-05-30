@@ -139,7 +139,8 @@ describe('PMTaskPanel', () => {
 
     await waitFor(() => expect(getPmTaskMock).toHaveBeenCalledWith('PM-1', 'C:/Temp/Product'));
     const backendDetail = await screen.findByTestId('pm-task-backend-detail');
-    expect(backendDetail).toHaveTextContent('/v2/pm/tasks/PM-1');
+    expect(backendDetail).not.toHaveTextContent('/v2/pm/tasks/PM-1');
+    expect(screen.getByTestId('pm-task-backend-detail-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/tasks/PM-1');
     expect(backendDetail).toHaveTextContent('Hydrated');
     expect(backendDetail).toHaveTextContent('pm_task_detail');
     expect(screen.getByText('后端完整任务详情')).toBeInTheDocument();
@@ -178,7 +179,8 @@ describe('PMTaskPanel', () => {
 
     await waitFor(() => expect(listPmTaskAssignmentsMock).toHaveBeenCalledWith('PM-1', 100, 'C:/Temp/Product'));
     const assignments = await screen.findByTestId('pm-task-assignments-panel');
-    expect(assignments).toHaveTextContent('/v2/pm/tasks/PM-1/assignments');
+    expect(assignments).not.toHaveTextContent('/v2/pm/tasks/PM-1/assignments');
+    expect(screen.getByTestId('pm-task-assignments-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/tasks/PM-1/assignments');
     expect(assignments).toHaveTextContent('Assignment Evidence');
     expect(screen.getByTestId('pm-task-assignment-count')).toHaveTextContent('1 records');
     expect(screen.getByTestId('pm-task-assignment-row')).toHaveTextContent('director-alpha');
@@ -288,7 +290,9 @@ describe('PMTaskPanel', () => {
       'C:/Temp/Product',
     ));
     const evidence = await screen.findByTestId('pm-task-create-evidence');
-    expect(evidence).toHaveTextContent('POST /v2/pm/tasks');
+    expect(evidence).not.toHaveTextContent('/v2/pm/tasks');
+    expect(screen.getByTestId('pm-task-create-evidence-endpoint')).toHaveTextContent('POST API');
+    expect(screen.getByTestId('pm-task-create-evidence-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/tasks');
     expect(evidence).toHaveTextContent('created · PM-created-1');
     expect(screen.getByText('返回任务详情')).toBeInTheDocument();
     expect(screen.getByTestId('pm-task-detail-provenance')).toHaveTextContent('pm_task_create');

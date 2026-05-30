@@ -183,24 +183,48 @@ export function RoleSessionEvidencePanel({ sessionId, tone }: RoleSessionEvidenc
 
   return (
     <section
-      className={cn('border-b px-4 py-2 text-[11px]', styles.border, styles.bg)}
+      className={cn('min-w-0 overflow-hidden border-b px-4 py-2 text-[11px]', styles.border, styles.bg)}
       data-testid="role-session-evidence-panel"
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-        <div className={cn('flex shrink-0 items-center gap-1.5 font-medium', styles.text)}>
-          <ShieldCheck className={cn('h-3.5 w-3.5', styles.accent)} />
-          RoleSession 证据
+      <div className="grid min-w-0 gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className={cn('flex shrink-0 items-center gap-1.5 font-medium', styles.text)}>
+            <ShieldCheck className={cn('h-3.5 w-3.5', styles.accent)} />
+            RoleSession 证据
+          </div>
+          <span
+            className="shrink-0 rounded border border-white/10 bg-slate-950/65 px-1.5 py-0.5 text-[9px] font-medium text-slate-500"
+            title={endpointBase}
+            data-endpoint={endpointBase}
+            data-testid="role-session-evidence-endpoint"
+          >
+            API
+          </span>
+          <button
+            type="button"
+            onClick={() => { void loadEvidence(); }}
+            disabled={!sessionId || state.loading}
+            title="刷新 RoleSession 证据"
+            data-testid="role-session-evidence-refresh"
+            className={cn(
+              'inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded text-slate-400 transition-colors disabled:cursor-not-allowed disabled:text-slate-600',
+              styles.hover,
+            )}
+          >
+            {state.loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+          </button>
         </div>
-        <span className="rounded border border-white/10 bg-slate-950/65 px-2 py-1 font-mono text-[10px] text-slate-400">
-          {endpointBase}
-        </span>
 
         {!sessionId ? (
           <span className="text-slate-500" data-testid="role-session-evidence-empty">
             等待会话
           </span>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <div className="grid min-w-0 grid-cols-1 gap-2">
             <EvidenceMetric
               icon={<MessageSquare className={cn('h-3.5 w-3.5', styles.accent)} />}
               endpoint={`${endpointBase}/messages`}
@@ -233,24 +257,6 @@ export function RoleSessionEvidencePanel({ sessionId, tone }: RoleSessionEvidenc
             />
           </div>
         )}
-
-        <button
-          type="button"
-          onClick={() => { void loadEvidence(); }}
-          disabled={!sessionId || state.loading}
-          title="刷新 RoleSession 证据"
-          data-testid="role-session-evidence-refresh"
-          className={cn(
-            'ml-auto inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded text-slate-400 transition-colors disabled:cursor-not-allowed disabled:text-slate-600',
-            styles.hover,
-          )}
-        >
-          {state.loading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5" />
-          )}
-        </button>
       </div>
     </section>
   );
@@ -280,10 +286,11 @@ function EvidenceMetric({
   return (
     <div
       className={cn(
-        'flex min-w-[190px] max-w-[280px] items-center gap-2 rounded border bg-slate-950/55 px-2 py-1',
+        'flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded border bg-slate-950/55 px-2 py-1',
         error ? 'border-rose-500/25 text-rose-200' : 'border-white/10',
       )}
       title={`${endpoint} · ${displayLatest}`}
+      data-endpoint={endpoint}
       data-testid={`role-session-evidence-${label}`}
     >
       {icon}

@@ -484,6 +484,53 @@ class TestAutofixPmContractForQuality:
         stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
         assert stats["deps_added"] == 1
 
+    def test_normalizes_pm_ordinal_dependency_refs(self) -> None:
+        payload = {
+            "tasks": [
+                {"id": "T01-mvp", "title": "First", "goal": "Goal1", "phase": "r"},
+                {
+                    "id": "T01-002",
+                    "title": "Second",
+                    "goal": "Goal2",
+                    "phase": "i",
+                    "dependencies": ["PM-0001-1", "T01-mvp"],
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+
+        assert stats["deps_normalized"] >= 1
+        assert payload["tasks"][1]["dependencies"] == ["T01-mvp"]
+
+    def test_unknown_dependencies_are_critical(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Implement foundation",
+                    "goal": "Implement the foundation module.",
+                    "phase": "r",
+                    "acceptance_criteria": ["Run `npm run build` exits 0"],
+                    "execution_checklist": ["Implement", "Verify"],
+                },
+                {
+                    "id": "T02",
+                    "title": "Implement dependent module",
+                    "goal": "Implement the dependent module.",
+                    "phase": "i",
+                    "dependencies": ["MISSING"],
+                    "acceptance_criteria": ["Run `npm run build` exits 0"],
+                    "execution_checklist": ["Implement", "Verify"],
+                },
+            ],
+        }
+
+        report = evaluate_pm_task_quality(payload)
+
+        assert report["ok"] is False
+        assert any("unknown dependency `MISSING`" in item for item in report["critical_issues"])
+
     def test_empty_tasks_returns_empty_stats(self) -> None:
         payload: dict[str, Any] = {"tasks": []}
         stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")

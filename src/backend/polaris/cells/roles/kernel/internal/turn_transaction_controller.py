@@ -1571,6 +1571,19 @@ class TurnTransactionController:
                 break
         _is_benchmark_single_batch = "[Benchmark Tool Contract]" in _latest_user_for_guard
         _is_super_readonly_stage = "[SUPER_MODE_READONLY_STAGE]" in _latest_user_for_guard
+        _latest_user_for_guard_lower = _latest_user_for_guard.lower()
+        _is_toolless_proposal_stage = (
+            "[mode:propose]" in _latest_user_for_guard_lower and "do not call tools" in _latest_user_for_guard_lower
+        )
+
+        if _is_toolless_proposal_stage:
+            proposal_guard = (
+                "SYSTEM CONSTRAINT (Proposal): Tool calls are disabled for this proposal turn. "
+                "Return only the requested parsable patch or fenced file sections. "
+                "Do not include progress notes, execution narration, or write-tool instructions."
+            )
+            messages.append({"role": "system", "content": proposal_guard, "metadata": {"plane": "control"}})
+            return messages
 
         if _is_super_readonly_stage:
             single_batch_guard = (

@@ -164,14 +164,14 @@ export function ProviderListManager({
 
       {/* Available Providers to Add */}
       <div className="rounded-2xl border border-white/10 bg-[rgba(35,25,14,0.45)] p-4">
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <div>
+        <div className="mb-3 flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
             <div className="text-xs font-semibold text-text-main">支持的提供商</div>
             <div className="text-[10px] text-text-dim">
               当前显示：{selectedMethod === 'sdk' ? 'SDK 方式' : selectedMethod === 'cli' ? '命令行方式' : 'HTTP API 方式'}
             </div>
           </div>
-          <div className="text-[10px] text-text-dim">选择后将自动创建配置并进入编辑模式。</div>
+          <div className="break-words text-[10px] text-text-dim">选择后将自动创建配置并进入编辑模式。</div>
         </div>
 
         {providerGroups.length === 0 ? (
@@ -188,18 +188,18 @@ export function ProviderListManager({
                       type="button"
                       onClick={() => handleAddProvider(provider.info.type)}
                       disabled={isSaving}
-                      className="text-left rounded-xl border border-white/10 bg-[rgba(35,25,14,0.3)] hover:border-white/30 transition-all disabled:opacity-60 p-3"
+                      className="min-w-0 rounded-xl border border-white/10 bg-[rgba(35,25,14,0.3)] p-3 text-left transition-all hover:border-white/30 disabled:opacity-60"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div className="text-xs font-semibold text-text-main">{provider.info.name}</div>
-                          <div className="text-[10px] text-text-dim">{provider.info.type}</div>
+                      <div className="flex min-w-0 items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-semibold text-text-main">{provider.info.name}</div>
+                          <div className="break-all text-[10px] text-text-dim">{provider.info.type}</div>
                         </div>
-                        <span className="text-[9px] px-2 py-0.5 rounded border border-white/10 bg-black/40">
+                        <span className="shrink-0 rounded border border-white/10 bg-black/40 px-2 py-0.5 text-[9px]">
                           {provider.info.cost_class}
                         </span>
                       </div>
-                      <div className="mt-2 text-[10px] text-text-dim line-clamp-2">
+                      <div className="mt-2 line-clamp-2 break-words text-[10px] text-text-dim">
                         {provider.info.description}
                       </div>
                       {provider.info.supported_features?.length ? (
@@ -224,8 +224,8 @@ export function ProviderListManager({
         )}
 
         {recommendedProvider && (
-          <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-[10px] text-emerald-100 flex flex-wrap items-center justify-between gap-2">
-            <div>
+          <div className="mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-[10px] text-emerald-100">
+            <div className="min-w-0 break-words">
               推荐提供商：<span className="font-semibold">{recommendedProvider.info.name}</span>
               <span className="text-emerald-200/70"> · {recommendedProvider.info.description}</span>
             </div>

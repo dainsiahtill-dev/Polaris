@@ -261,6 +261,30 @@ class TestModelCatalogResolve:
         # gpt-4o-mini starts with gpt-4, so prefix match should apply
         assert spec.max_context_tokens == 16000
 
+    def test_resolve_codex_cli_current_model_defaults(self) -> None:
+        catalog = ModelCatalog("/tmp/ws")
+
+        spec = catalog.resolve("codex_cli", "gpt-5.3-codex", provider_cfg={"type": "codex_cli"})
+
+        assert spec.max_context_tokens == 400_000
+        assert spec.max_output_tokens == 128_000
+        assert spec.supports_tools is True
+        assert spec.supports_json_schema is True
+        assert spec.supports_vision is True
+
+    def test_resolve_codex_cli_explicit_limits_override_defaults(self) -> None:
+        catalog = ModelCatalog("/tmp/ws")
+        provider_cfg = {
+            "type": "codex_cli",
+            "max_context_tokens": 64_000,
+            "max_output_tokens": 8_000,
+        }
+
+        spec = catalog.resolve("codex_cli", "gpt-5.3-codex", provider_cfg=provider_cfg)
+
+        assert spec.max_context_tokens == 64_000
+        assert spec.max_output_tokens == 8_000
+
 
 class TestModelCatalogLoadConfig:
     def test_load_provider_cfg(self) -> None:

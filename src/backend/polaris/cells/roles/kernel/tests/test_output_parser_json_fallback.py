@@ -292,6 +292,20 @@ class TestOutputParserJSONFallbackException:
         result = parser.parse_execution_tool_calls(content="..., ---, !!!")
         assert result == []
 
+    def test_fenced_file_delivery_returns_empty(self) -> None:
+        """Fenced full-file output is source delivery, not JSON tool text."""
+        parser = OutputParser()
+        content = """```file: package.json
+{
+  "name": "polaris-react-ts-skeleton",
+  "version": "0.1.0"
+}
+```"""
+
+        result = parser.parse_execution_tool_calls(content=content)
+
+        assert result == []
+
 
 class TestOutputParserJSONFallbackAllowedTools:
     """Tests for allowed_tool_names filtering."""

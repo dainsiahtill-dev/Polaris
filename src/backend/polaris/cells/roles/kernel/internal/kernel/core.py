@@ -305,6 +305,23 @@ class RoleExecutionKernel:
             or "require_no_tool_calls: true" in lowered
         )
 
+    @staticmethod
+    def _request_forces_no_transaction_tools(request: RoleTurnRequest) -> bool:
+        """Return True when this turn must be handled as text-only output."""
+        context_override = getattr(request, "context_override", None)
+        context = context_override if isinstance(context_override, dict) else {}
+        if bool(context.get("disable_internal_tool_rounds")):
+            return True
+        if str(context.get("delivery_mode") or "").strip().lower() == "propose_patch":
+            return True
+        forced_defs = context.get("_transaction_kernel_forced_tool_definitions")
+        forced_choice = str(context.get("_transaction_kernel_forced_tool_choice") or "").strip().lower()
+        if isinstance(forced_defs, list) and not forced_defs and forced_choice == "none":
+            return True
+
+        message = str(getattr(request, "message", "") or "").lower()
+        return "[mode:propose]" in message and "do not call tools" in message
+
     def _create_transaction_kernel(
         self,
         role: str,
@@ -973,7 +990,11 @@ class RoleExecutionKernel:
         projection_dict = {"system_hint": system_prompt, "turns": list(context_result.messages)}
         messages: list[dict[str, Any]] = ProjectionEngine().project(projection_dict, ReceiptStore())
 
-        tool_definitions = [] if self._benchmark_requires_no_tools(request) else build_native_tool_schemas(profile)
+        tool_definitions = (
+            []
+            if self._benchmark_requires_no_tools(request) or self._request_forces_no_transaction_tools(request)
+            else build_native_tool_schemas(profile)
+        )
 
         try:
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
@@ -1131,7 +1152,11 @@ class RoleExecutionKernel:
         projection_dict = {"system_hint": system_prompt, "turns": list(context_result.messages)}
         messages: list[dict[str, Any]] = ProjectionEngine().project(projection_dict, ReceiptStore())
 
-        tool_definitions = [] if self._benchmark_requires_no_tools(request) else build_native_tool_schemas(profile)
+        tool_definitions = (
+            []
+            if self._benchmark_requires_no_tools(request) or self._request_forces_no_transaction_tools(request)
+            else build_native_tool_schemas(profile)
+        )
 
         accumulated_content: list[str] = []
         accumulated_thinking: list[str] = []

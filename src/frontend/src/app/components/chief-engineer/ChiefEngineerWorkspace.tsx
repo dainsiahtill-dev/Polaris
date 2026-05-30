@@ -127,6 +127,25 @@ function evidenceEndpoint(endpoint: string, workspace = ''): string {
   return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
 }
 
+function EvidenceEndpointBadge({
+  endpoint,
+  testId,
+}: {
+  endpoint: string;
+  testId?: string;
+}) {
+  return (
+    <span
+      className="shrink-0 rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] font-medium text-slate-500"
+      title={endpoint}
+      data-endpoint={endpoint}
+      data-testid={testId}
+    >
+      API
+    </span>
+  );
+}
+
 function blueprintStatusEvidenceEndpoint(taskId: string, workspace = ''): string {
   const query = new URLSearchParams({ task_id: taskId });
   const value = String(workspace || '').trim();
@@ -1360,81 +1379,126 @@ export function ChiefEngineerWorkspace({
         className="border-b border-cyan-500/15 bg-slate-950/75 px-4 py-2 text-xs text-slate-300"
         data-testid="chief-engineer-backend-strip"
       >
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 font-medium text-cyan-100">Capabilities</span>
-            <span className="shrink-0 font-mono text-[11px] text-cyan-300">
-              /v2/roles/capabilities/chief_engineer?host_kind=electron_workbench
-            </span>
-            {chiefBackendEvidenceLoading ? (
-              <span className="text-slate-400">读取中...</span>
-            ) : chiefCapabilitiesError ? (
-              <span className="text-rose-300">{chiefCapabilitiesError}</span>
-            ) : (
-              <span className="truncate text-emerald-300">
-                {chiefCapabilities.length > 0 ? chiefCapabilities.slice(0, 5).join(', ') : 'none'}
+        <details className="group rounded-lg border border-cyan-500/15 bg-slate-900/35 px-3 py-2">
+          <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+            <div className="flex shrink-0 items-center gap-2 font-medium text-cyan-100">
+              <ShieldCheck className="h-3.5 w-3.5 text-cyan-300" />
+              Chief Engineer 后端状态
+            </div>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                {chiefBackendEvidenceLoading
+                  ? '能力读取中'
+                  : chiefCapabilitiesError
+                    ? '能力异常'
+                    : `能力 ${chiefCapabilities.length}`}
               </span>
-            )}
-          </div>
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 font-medium text-cyan-100">LLM events</span>
-            <span className="shrink-0 font-mono text-[11px] text-cyan-300">
-              {evidenceEndpoint('/v2/chief-engineer/llm-events?limit=5', workspace)}
-            </span>
-            {chiefBackendEvidenceLoading ? (
-              <span className="text-slate-400">读取中...</span>
-            ) : chiefLLMEventsError ? (
-              <span className="text-rose-300">{chiefLLMEventsError}</span>
-            ) : (
-              <span className="truncate text-emerald-300">
-                events={chiefLLMEventCount}
-                {latestChiefLLMEvent ? ` · ${formatChiefKernelEvent(latestChiefLLMEvent)}` : ''}
+              <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                LLM events={chiefBackendEvidenceLoading ? '...' : chiefLLMEventCount}
               </span>
-            )}
-          </div>
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 font-medium text-cyan-100">Kernel cache</span>
-            <span className="shrink-0 font-mono text-[11px] text-cyan-300">
-              /v2/chief-engineer/cache-stats
-            </span>
-            {chiefBackendEvidenceLoading ? (
-              <span className="text-slate-400">读取中...</span>
-            ) : chiefKernelCacheError ? (
-              <span className="text-rose-300">{chiefKernelCacheError}</span>
-            ) : (
-              <span className="truncate text-emerald-300">{formatChiefCacheStats(chiefKernelCacheStats)}</span>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => { void handleClearChiefKernelCache(); }}
-              disabled={chiefKernelCacheClearing}
-              data-testid="chief-engineer-kernel-cache-clear"
-              className="h-6 px-1.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100"
-            >
-              {chiefKernelCacheClearing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-              clear
-            </Button>
-            {chiefKernelCacheClearStatus ? (
-              <span data-testid="chief-engineer-kernel-cache-clear-result" className="truncate text-cyan-200">
-                /v2/chief-engineer/cache-clear · {chiefKernelCacheClearStatus}
+              <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                {chiefBackendEvidenceLoading
+                  ? '缓存读取中'
+                  : chiefKernelCacheError
+                    ? '缓存异常'
+                    : formatChiefCacheStats(chiefKernelCacheStats)}
               </span>
-            ) : null}
+              <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                {chiefBackendEvidenceLoading
+                  ? '预算读取中'
+                  : chiefKernelTokenBudgetError
+                    ? '预算异常'
+                    : formatChiefTokenBudget(chiefKernelTokenBudgetStats)}
+              </span>
+            </div>
+            <span className="shrink-0 text-[10px] text-slate-500 group-open:hidden">展开证据</span>
+            <span className="hidden shrink-0 text-[10px] text-cyan-300 group-open:inline">收起证据</span>
+          </summary>
+          <div className="mt-2 grid gap-2 border-t border-white/10 pt-2 lg:grid-cols-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="shrink-0 font-medium text-cyan-100">Capabilities</span>
+              <EvidenceEndpointBadge
+                endpoint="/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench"
+                testId="chief-engineer-capabilities-endpoint"
+              />
+              {chiefBackendEvidenceLoading ? (
+                <span className="text-slate-400">读取中...</span>
+              ) : chiefCapabilitiesError ? (
+                <span className="text-rose-300">{chiefCapabilitiesError}</span>
+              ) : (
+                <span className="truncate text-emerald-300">
+                  {chiefCapabilities.length > 0 ? chiefCapabilities.slice(0, 5).join(', ') : 'none'}
+                </span>
+              )}
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="shrink-0 font-medium text-cyan-100">LLM events</span>
+              <EvidenceEndpointBadge
+                endpoint={evidenceEndpoint('/v2/chief-engineer/llm-events?limit=5', workspace)}
+                testId="chief-engineer-llm-events-endpoint"
+              />
+              {chiefBackendEvidenceLoading ? (
+                <span className="text-slate-400">读取中...</span>
+              ) : chiefLLMEventsError ? (
+                <span className="text-rose-300">{chiefLLMEventsError}</span>
+              ) : (
+                <span className="truncate text-emerald-300">
+                  events={chiefLLMEventCount}
+                  {latestChiefLLMEvent ? ` · ${formatChiefKernelEvent(latestChiefLLMEvent)}` : ''}
+                </span>
+              )}
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="shrink-0 font-medium text-cyan-100">Kernel cache</span>
+              <EvidenceEndpointBadge
+                endpoint="/v2/chief-engineer/cache-stats"
+                testId="chief-engineer-cache-endpoint"
+              />
+              {chiefBackendEvidenceLoading ? (
+                <span className="text-slate-400">读取中...</span>
+              ) : chiefKernelCacheError ? (
+                <span className="text-rose-300">{chiefKernelCacheError}</span>
+              ) : (
+                <span className="truncate text-emerald-300">{formatChiefCacheStats(chiefKernelCacheStats)}</span>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { void handleClearChiefKernelCache(); }}
+                disabled={chiefKernelCacheClearing}
+                data-testid="chief-engineer-kernel-cache-clear"
+                className="h-6 px-1.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100"
+              >
+                {chiefKernelCacheClearing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                clear
+              </Button>
+              {chiefKernelCacheClearStatus ? (
+                <span
+                  data-testid="chief-engineer-kernel-cache-clear-result"
+                  data-endpoint="/v2/chief-engineer/cache-clear"
+                  title="/v2/chief-engineer/cache-clear"
+                  className="truncate text-cyan-200"
+                >
+                  {chiefKernelCacheClearStatus}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="shrink-0 font-medium text-cyan-100">Token budget</span>
+              <EvidenceEndpointBadge
+                endpoint="/v2/chief-engineer/token-budget-stats"
+                testId="chief-engineer-token-budget-endpoint"
+              />
+              {chiefBackendEvidenceLoading ? (
+                <span className="text-slate-400">读取中...</span>
+              ) : chiefKernelTokenBudgetError ? (
+                <span className="text-rose-300">{chiefKernelTokenBudgetError}</span>
+              ) : (
+                <span className="truncate text-emerald-300">{formatChiefTokenBudget(chiefKernelTokenBudgetStats)}</span>
+              )}
+            </div>
           </div>
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 font-medium text-cyan-100">Token budget</span>
-            <span className="shrink-0 font-mono text-[11px] text-cyan-300">
-              /v2/chief-engineer/token-budget-stats
-            </span>
-            {chiefBackendEvidenceLoading ? (
-              <span className="text-slate-400">读取中...</span>
-            ) : chiefKernelTokenBudgetError ? (
-              <span className="text-rose-300">{chiefKernelTokenBudgetError}</span>
-            ) : (
-              <span className="truncate text-emerald-300">{formatChiefTokenBudget(chiefKernelTokenBudgetStats)}</span>
-            )}
-          </div>
-        </div>
+        </details>
       </section>
 
       {startDirectorBlockedTitle ? (
@@ -1457,9 +1521,10 @@ export function ChiefEngineerWorkspace({
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
             <div className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 font-medium text-cyan-100">Director status</span>
-              <span className="shrink-0 font-mono text-[11px] text-cyan-300">
-                {evidenceEndpoint('/v2/director/status?source=auto', workspace)}
-              </span>
+              <EvidenceEndpointBadge
+                endpoint={evidenceEndpoint('/v2/director/status?source=auto', workspace)}
+                testId="chief-engineer-director-status-endpoint"
+              />
               {directorToggleStatusEvidence.loading ? (
                 <span className="text-slate-400">读取中...</span>
               ) : directorToggleStatusEvidence.error ? (
@@ -1692,8 +1757,11 @@ export function ChiefEngineerWorkspace({
                                 : 'border-cyan-500/20 bg-cyan-500/5 text-cyan-100',
                             )}
                           >
-                            <div className="mb-1 font-mono text-[10px] text-slate-500">
-                              {blueprintStatusEvidenceEndpoint(taskId, workspace)}
+                            <div className="mb-1 flex items-center">
+                              <EvidenceEndpointBadge
+                                endpoint={blueprintStatusEvidenceEndpoint(taskId, workspace)}
+                                testId={`chief-engineer-blueprint-status-endpoint-${taskId}`}
+                              />
                             </div>
                             {statusCheck.error ? (
                               <div>{statusCheck.error}</div>
@@ -1820,9 +1888,7 @@ export function ChiefEngineerWorkspace({
               Director 任务池
             </h3>
             <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-                /v2/director/tasks
-              </span>
+              <EvidenceEndpointBadge endpoint="/v2/director/tasks" testId="chief-engineer-director-task-pool-endpoint" />
               <span
                 data-testid="chief-engineer-director-task-source"
                 className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500"

@@ -44,6 +44,27 @@ interface FileNode {
   document?: PmDocumentInfo;
 }
 
+function EndpointBadge({
+  endpoint,
+  method,
+  testId,
+}: {
+  endpoint: string;
+  method?: string;
+  testId?: string;
+}) {
+  return (
+    <span
+      className="shrink-0 rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] font-medium text-slate-500"
+      title={endpoint}
+      data-endpoint={endpoint}
+      data-testid={testId}
+    >
+      {method ? `${method} API` : 'API'}
+    </span>
+  );
+}
+
 export function PMDocumentPanel({
   workspace,
   selectedPath,
@@ -372,7 +393,7 @@ export function PMDocumentPanel({
             {isSearchLoading ? (
               <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-2 py-2 text-[11px] text-slate-400">
                 <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-400" />
-                正在调用 /v2/pm/search/documents
+                正在调用后端文档搜索
               </div>
             ) : searchError ? (
               <div
@@ -415,7 +436,7 @@ export function PMDocumentPanel({
             <PanelMessage
               icon={<RefreshCw className="h-4 w-4 animate-spin text-amber-400" />}
               title="正在读取真实 PM 文档索引"
-              description="来源：/v2/pm/documents"
+              description="来源：PM 文档合同"
             />
           ) : filteredTree.length > 0 ? (
             filteredTree.map((node) => (
@@ -533,8 +554,12 @@ export function PMDocumentPanel({
                       <Trash2 className="h-3.5 w-3.5" />
                       PM document delete
                     </div>
-                    <div className="mt-1 truncate font-mono text-[10px] text-red-200/80" title={selectedFile.path}>
-                      DELETE /v2/pm/documents/{selectedFile.displayPath}
+                    <div className="mt-1 flex items-center">
+                      <EndpointBadge
+                        endpoint={`/v2/pm/documents/${selectedFile.displayPath}`}
+                        method="DELETE"
+                        testId="pm-document-delete-endpoint"
+                      />
                     </div>
                   </div>
                   <label className="flex cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1.5 text-[11px] text-slate-300">
@@ -946,9 +971,9 @@ function DocumentVersionPanel({
           {versionReadError ? (
             versionReadError
           ) : isVersionLoading ? (
-            '正在读取 /v2/pm/documents/{path}?version=...'
+            '正在读取历史版本'
           ) : (
-            `只读历史版本 · /v2/pm/documents/{path}?version=${selectedVersion}`
+            `只读历史版本 · version=${selectedVersion}`
           )}
         </div>
       ) : null}
@@ -956,7 +981,7 @@ function DocumentVersionPanel({
       {isLoading ? (
         <div className="flex items-center gap-2 text-[11px] text-slate-500">
           <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-400" />
-          正在读取 /v2/pm/documents/*/versions
+          正在读取文档历史版本
         </div>
       ) : error ? (
         <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-200">

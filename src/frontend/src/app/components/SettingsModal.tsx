@@ -1860,19 +1860,21 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
-      <div className="relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm">
+      <div className="relative isolate">
         <div
           data-settings-modal
-          className="bg-bg-panel/95 border border-white/10 rounded-xl w-full flex flex-col shadow-2xl shadow-purple-900/20 backdrop-filter backdrop-blur-xl max-w-none max-h-none relative overflow-hidden"
+          data-testid="settings-modal"
+          className="relative isolate flex w-full max-w-none max-h-none flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0f1018] shadow-2xl shadow-black/60"
           style={{
             width: settingsModalSize.width,
             height: settingsModalSize.height,
+            background: 'rgb(15, 16, 24)',
             userSelect: settingsModalResizing ? 'none' : undefined,
           }}
         >
           {/* 头部 */}
-          <div className="flex items-center justify-between p-4 border-b border-white/10">
+          <div className="flex items-center justify-between border-b border-white/10 bg-[#0f1018] p-4">
             <h2 className="text-lg font-heading font-bold text-text-main flex items-center gap-2">
               <span className="w-1 h-5 bg-accent rounded-full shadow-[0_0_8px_rgba(124,58,237,0.5)]"></span>
               系统配置
@@ -1886,7 +1888,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
           </div>
 
           {/* 内容 */}
-          <div className="flex-1 min-h-0 p-4 flex flex-col">
+          <div className="flex min-h-0 flex-1 flex-col bg-[#0f1018] p-4">
             {error ? (
               <div className="text-xs text-status-error bg-status-error/10 border border-status-error/20 rounded p-2 mb-4">
                 {error}
@@ -1905,8 +1907,8 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
               <TabsList className="bg-white/5 border border-white/5 p-1 rounded-lg flex-wrap shrink-0">
                 <TabsTrigger value="general" data-testid="settings-tab-general" className="data-[state=active]:bg-accent/20 data-[state=active]:text-accent text-text-muted hover:text-text-main">通用设置</TabsTrigger>
                 <TabsTrigger value="llm" data-testid="settings-tab-llm" className="data-[state=active]:bg-accent/20 data-[state=active]:text-accent text-text-muted hover:text-text-main">LLM 设置</TabsTrigger>
-                <TabsTrigger value="arsenal" className="text-cyan-400 data-[state=active]:text-cyan-300">军械库</TabsTrigger>
-                <TabsTrigger value="services" className="text-cyan-400 data-[state=active]:text-cyan-300">内务司</TabsTrigger>
+                <TabsTrigger value="arsenal" data-testid="settings-tab-arsenal" className="text-cyan-400 data-[state=active]:text-cyan-300">军械库</TabsTrigger>
+                <TabsTrigger value="services" data-testid="settings-tab-services" className="text-cyan-400 data-[state=active]:text-cyan-300">内务司</TabsTrigger>
               </TabsList>
 
               <TabsContent value="general" className="mt-6 space-y-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">
@@ -2522,7 +2524,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
           </div>
 
           {/* 底部按钮 */}
-          <div className="flex items-center justify-end gap-3 p-4 border-t border-white/10 bg-[rgba(35,25,14,0.55)] backdrop-blur-md">
+          <div className="flex items-center justify-end gap-3 border-t border-white/10 bg-[#17141f] p-4">
             <button
               onClick={onClose}
               className="px-4 py-2 text-xs text-text-dim hover:text-text-main hover:bg-white/5 rounded transition-colors"
@@ -2533,6 +2535,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
             <button
               onClick={handleSave}
               disabled={saving}
+              data-testid="settings-save"
               className="px-5 py-2 text-xs font-semibold bg-accent hover:bg-accent-hover text-white rounded shadow-lg shadow-accent/20 transition-all flex items-center gap-2 disabled:opacity-60 disabled:shadow-none"
             >
               <Save className="size-4" />

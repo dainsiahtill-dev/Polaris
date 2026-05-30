@@ -58,6 +58,22 @@ class TestSandboxValidatorProhibitsDangerousMode:
 class TestCodexAdapterSecureDefaults:
     """Tests verifying codex_adapter.py uses secure defaults."""
 
+    def test_codex_sandbox_safe_alias_maps_to_read_only(self) -> None:
+        """Logical 'safe' sandbox should be translated to a real Codex CLI mode."""
+        from polaris.kernelone.process.codex_adapter import (
+            _env_flag_value,
+            _env_value,
+            _normalize_codex_sandbox,
+        )
+
+        assert _normalize_codex_sandbox("safe") == "read-only"
+        assert _normalize_codex_sandbox("") == "read-only"
+        assert _normalize_codex_sandbox("workspace-write") == "workspace-write"
+        assert _env_value("KERNELONE_CODEX_SANDBOX", "", {"KERNELONE_CODEX_SANDBOX": "workspace-write"}) == (
+            "workspace-write"
+        )
+        assert _env_flag_value("KERNELONE_CODEX_SKIP_GIT_CHECK", "0", {"KERNELONE_CODEX_SKIP_GIT_CHECK": "1"}) is True
+
     def test_codex_sandbox_default_is_safe(self) -> None:
         """Codex sandbox should default to 'safe', not 'danger-full-access'."""
         import re
@@ -84,24 +100,19 @@ class TestCodexAdapterSecureDefaults:
 
     def test_codex_skip_git_check_default_is_false(self) -> None:
         """Codex skip git check should default to False (0), not True (1)."""
-        import re
+        from polaris.kernelone.process.codex_adapter import _env_flag_value
 
-        codex_adapter_path = (
-            "C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/process/codex_adapter.py"
-        )
+        assert _env_flag_value("KERNELONE_CODEX_SKIP_GIT_CHECK", "0", {}) is False
+        assert _env_flag_value("KERNELONE_CODEX_SKIP_GIT_CHECK", "1", {}) is True
 
-        with open(codex_adapter_path, encoding="utf-8") as f:
-            content = f.read()
+    def test_codex_output_last_message_flag_is_capability_gated(self) -> None:
+        """Output-last-message should be removed when an older Codex CLI lacks it."""
+        from polaris.kernelone.process.codex_adapter import _sanitize_args_by_caps
 
-        # Find the codex_skip_git_check line
-        git_check_pattern = r'codex_skip_git_check = _env_flag\([^,]+, os\.environ\.get\([^,]+, "([^"]+)"\)\)'
-        match = re.search(git_check_pattern, content)
+        args = ["exec", "--json", "--output-last-message", "runtime/results/pm_last.output.md"]
 
-        assert match is not None, "codex_skip_git_check configuration not found"
-
-        default_value = match.group(1)
-        assert default_value == "0", f"codex_skip_git_check should default to '0' (False), not '{default_value}'"
-        assert default_value != "1", "SECURITY VIOLATION: codex_skip_git_check should NOT default to '1' (True)"
+        assert _sanitize_args_by_caps(args, {"--json"}) == ["exec", "--json"]
+        assert _sanitize_args_by_caps(args, {"--json", "--output-last-message"}) == args
 
 
 class TestValidationErrorMessages:

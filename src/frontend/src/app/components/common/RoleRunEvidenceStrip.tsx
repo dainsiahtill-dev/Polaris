@@ -105,9 +105,17 @@ export function RoleRunEvidenceStrip({
         styles.border,
       )}
       data-testid={testId}
+      data-endpoint={visibleEndpoint}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <span className={cn('font-mono', styles.endpoint)}>{visibleEndpoint}</span>
+        <span
+          className={cn('rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] font-medium', styles.endpoint)}
+          title={visibleEndpoint}
+          data-testid={`${testId}-endpoint`}
+          data-endpoint={visibleEndpoint}
+        >
+          API
+        </span>
         <span className={error ? 'text-rose-300' : 'text-slate-300'}>{statusText}</span>
         {!loading && !error && message ? (
           <span className="max-w-[360px] truncate text-slate-500" title={message}>
@@ -157,10 +165,11 @@ export function RoleRunEvidenceStrip({
         </button>
         {cancelResultVisible ? (
           <span
-            className={cancelResultError ? 'font-mono text-rose-300' : cn('font-mono', styles.result)}
+            className={cancelResultError ? 'text-rose-300' : styles.result}
             data-testid={cancelResultTestId}
+            data-endpoint={visibleCancelEndpoint}
+            title={visibleCancelEndpoint}
           >
-            {visibleCancelEndpoint} ·{' '}
             {cancelResultLoading ? 'cancelling' : cancelResultError || cancelResultMessage}
           </span>
         ) : null}

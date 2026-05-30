@@ -31,6 +31,27 @@ def _env_flag(name: str, default: str = "") -> bool:
     return value in ("1", "true", "yes", "on")
 
 
+def _env_value(name: str, default: str = "", extra_env: dict[str, str] | None = None) -> str:
+    if isinstance(extra_env, dict):
+        override = str(extra_env.get(name) or "").strip()
+        if override:
+            return override
+    return str(os.environ.get(name, default) or default)
+
+
+def _env_flag_value(name: str, default: str = "", extra_env: dict[str, str] | None = None) -> bool:
+    return str(_env_value(name, default, extra_env)).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _normalize_codex_sandbox(value: str) -> str:
+    token = str(value or "").strip().lower()
+    if token in ("", "safe"):
+        return "read-only"
+    if token in ("read-only", "workspace-write", "danger-full-access"):
+        return token
+    return "read-only"
+
+
 def _decode_with_fallback(data: bytes) -> str:
     if not data:
         return ""
@@ -73,6 +94,20 @@ def _read_codex_output(path: str) -> str:
     except (RuntimeError, ValueError) as e:
         logger.debug(f"Failed to read file: {e}")
         return read_file_safe(path)
+
+
+def _prepare_codex_output_path(path: str) -> None:
+    target = str(path or "").strip()
+    if not target:
+        return
+    try:
+        parent = os.path.dirname(os.path.abspath(target))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        if os.path.exists(target):
+            os.remove(target)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.debug("Failed to prepare Codex output file %s: %s", target, exc)
 
 
 def _extract_codex_json_output(raw_output: str) -> str:
@@ -131,7 +166,11 @@ def _probe_codex_exec_capabilities(
         return set(cached)
     caps: set[str] = set()
     try:
-        help_cmd = build_codex_command(["exec", "--help"], codex_path)
+        help_args = ["exec"]
+        if _env_flag_value("KERNELONE_CODEX_SKIP_GIT_CHECK", "0", env):
+            help_args.append("--skip-git-repo-check")
+        help_args.append("--help")
+        help_cmd = build_codex_command(help_args, codex_path)
         proc = subprocess.run(
             help_cmd,
             cwd=workspace,
@@ -151,6 +190,7 @@ def _probe_codex_exec_capabilities(
             "--dangerously-bypass-approvals-and-sandbox",
             "--json",
             "--output-schema",
+            "--output-last-message",
             "--add-dir",
             "--profile",
         ):
@@ -184,6 +224,7 @@ def _sanitize_args_by_caps(args: list[str], caps: set[str]) -> list[str]:
         ("--full-auto", False),
         ("--dangerously-bypass-approvals-and-sandbox", False),
         ("--output-schema", True),
+        ("--output-last-message", True),
         ("--add-dir", True),
         ("--profile", True),
     )
@@ -257,21 +298,24 @@ def invoke_codex(
     usage_ctx: Union["UsageContext", Any] | None = None,
     events_path: str = "",
 ) -> str:
-    del output_file  # unused; kept for API compatibility
     codex_path = ensure_codex_available()
-    codex_model = str(os.environ.get("KERNELONE_CODEX_MODEL") or "gpt-5.3-codex").strip() or "gpt-5.3-codex"
+    codex_model = str(_env_value("KERNELONE_CODEX_MODEL", "gpt-5.3-codex", extra_env)).strip() or "gpt-5.3-codex"
     # fmt: off
-    codex_sandbox = str(os.environ.get("KERNELONE_CODEX_SANDBOX") or "").strip() or "safe"
+    codex_sandbox = str(_env_value("KERNELONE_CODEX_SANDBOX", "", extra_env)).strip() or "safe"
     # fmt: on
-    codex_color = str(os.environ.get("KERNELONE_CODEX_COLOR") or "never").strip() or "never"
-    codex_cd = str(os.environ.get("KERNELONE_CODEX_CD") or "").strip() or workspace
-    codex_approvals = str(os.environ.get("KERNELONE_CODEX_APPROVALS") or "").strip()
-    codex_output_schema = str(os.environ.get("KERNELONE_CODEX_OUTPUT_SCHEMA") or "").strip()
-    codex_add_dirs = str(os.environ.get("KERNELONE_CODEX_ADD_DIRS") or "").strip()
-    codex_config_overrides = str(os.environ.get("KERNELONE_CODEX_CONFIG") or "").strip()
-    codex_use_oss = _env_flag("KERNELONE_CODEX_OSS", os.environ.get("KERNELONE_CODEX_OSS", "0"))
+    codex_sandbox = _normalize_codex_sandbox(codex_sandbox)
+    codex_color = str(_env_value("KERNELONE_CODEX_COLOR", "never", extra_env)).strip() or "never"
+    codex_cd = str(_env_value("KERNELONE_CODEX_CD", "", extra_env)).strip() or workspace
+    codex_approvals = str(_env_value("KERNELONE_CODEX_APPROVALS", "", extra_env)).strip()
+    codex_output_schema = str(_env_value("KERNELONE_CODEX_OUTPUT_SCHEMA", "", extra_env)).strip()
+    codex_output_last_message = str(_env_value("KERNELONE_CODEX_OUTPUT_LAST_MESSAGE", "", extra_env)).strip()
+    if not codex_output_last_message:
+        codex_output_last_message = str(output_file or "").strip()
+    codex_add_dirs = str(_env_value("KERNELONE_CODEX_ADD_DIRS", "", extra_env)).strip()
+    codex_config_overrides = str(_env_value("KERNELONE_CODEX_CONFIG", "", extra_env)).strip()
+    codex_use_oss = _env_flag_value("KERNELONE_CODEX_OSS", "0", extra_env)
     # fmt: off
-    codex_skip_git_check = _env_flag("KERNELONE_CODEX_SKIP_GIT_CHECK", os.environ.get("KERNELONE_CODEX_SKIP_GIT_CHECK", "0"))
+    codex_skip_git_check = _env_flag_value("KERNELONE_CODEX_SKIP_GIT_CHECK", "0", extra_env)
     # fmt: on
 
     run_cwd = os.path.abspath(codex_cd or workspace)
@@ -289,6 +333,8 @@ def invoke_codex(
         args.append("--oss")
     if codex_output_schema:
         args += ["--output-schema", codex_output_schema]
+    if codex_output_last_message:
+        args += ["--output-last-message", codex_output_last_message]
     if codex_add_dirs:
         for entry in re.split(r"[;,]", codex_add_dirs):
             entry = entry.strip()
@@ -336,6 +382,7 @@ def invoke_codex(
     )
 
     def _run_once(run_prompt: str) -> str:
+        _prepare_codex_output_path(codex_output_last_message)
         base_cmd = build_codex_command(args, codex_path)
         # Pass prompt via stdin to avoid command-line length/quoting limits.
         # SECURITY: shell=False is mandatory in KernelOne (enforced by contract).
@@ -370,9 +417,11 @@ def invoke_codex(
         if not capture_stdout:
             return ""
 
-        output = stdout_text or ""
-        if output and "--json" in args:
-            output = _extract_codex_json_output(output)
+        stdout_output = stdout_text or ""
+        last_message = _read_codex_output(codex_output_last_message)
+        output = last_message or stdout_output
+        if stdout_output and not last_message and "--json" in args:
+            output = _extract_codex_json_output(stdout_output)
         if output and (show_output or not sys.stdout.isatty()):
             try:
                 sys.stdout.write(output)

@@ -663,6 +663,49 @@ async def test_pm_diagnostics_blocks_start_when_workspace_docs_missing(
 
 
 @pytest.mark.asyncio
+async def test_pm_diagnostics_accepts_workspace_persistent_docs(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """PM diagnostics should honor KernelOne workspace/docs storage layout."""
+    from polaris.kernelone.storage import resolve_workspace_persistent_path
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    persistent_requirements = Path(
+        resolve_workspace_persistent_path(str(workspace), "workspace/docs/product/requirements.md")
+    )
+    persistent_requirements.parent.mkdir(parents=True, exist_ok=True)
+    persistent_requirements.write_text("# Requirements\n\n- Build the product.\n", encoding="utf-8")
+    mock_settings.workspace = workspace
+    mock_settings.workspace_path = workspace
+
+    with (
+        patch("polaris.delivery.http.v2.pm.get_lancedb_status", return_value={"ok": True}),
+        patch(
+            "polaris.delivery.http.v2.pm.build_llm_status",
+            return_value={
+                "state": "READY",
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "required_ready_roles": ["pm"],
+            },
+        ),
+    ):
+        response = await client.get("/v2/pm/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["can_start"] is True
+    assert data["issues"] == []
+    assert data["startup_blockers"] == []
+    assert data["workspace"]["docs_present"] is True
+    assert Path(data["planning_input"]["path"]).resolve() == persistent_requirements.resolve()
+
+
+@pytest.mark.asyncio
 async def test_pm_diagnostics_blocks_start_when_planning_input_missing(
     client: AsyncClient,
     mock_settings: Settings,

@@ -154,7 +154,11 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
       limit: 5,
       offset: 0,
     });
-    expect(await screen.findByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/ce-session-1');
+    expect(await screen.findByTestId('role-session-evidence-panel')).not.toHaveTextContent('/v2/roles/sessions/ce-session-1');
+    expect(screen.getByTestId('role-session-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/sessions/ce-session-1',
+    );
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('assistant: Blueprint evidence ready');
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('8');
     expect(screen.getByTestId('role-session-evidence-artifacts')).toHaveTextContent('blueprint: ce-artifact-1');
@@ -188,8 +192,11 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
     });
     await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-from-ce', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('chief-engineer-workbench-run-evidence');
-    expect(evidence).toHaveTextContent('/v2/director/runs/director-run-from-ce');
-    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(evidence).not.toHaveTextContent('/v2/director/runs/director-run-from-ce');
+    expect(screen.getByTestId('chief-engineer-workbench-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-run-from-ce?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(evidence).toHaveTextContent('RUNNING · queued=2');
     expect(screen.getByTestId('chief-engineer-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
 
@@ -227,11 +234,18 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
 
     await waitFor(() => expect(pmServiceMocks.cancelDirectorRun).toHaveBeenCalledWith('director-run-from-ce', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('chief-engineer-workbench-run-evidence');
-    expect(evidence).toHaveTextContent('/v2/director/runs/director-run-from-ce');
+    expect(evidence).not.toHaveTextContent('/v2/director/runs/director-run-from-ce');
+    expect(screen.getByTestId('chief-engineer-workbench-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-run-from-ce?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(evidence).toHaveTextContent('CANCELLED · queued=2');
     const cancelEvidence = await screen.findByTestId('chief-engineer-workbench-run-cancel-result');
-    expect(cancelEvidence).toHaveTextContent('/v2/director/runs/director-run-from-ce/cancel');
-    expect(cancelEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(cancelEvidence).not.toHaveTextContent('/v2/director/runs/director-run-from-ce/cancel');
+    expect(cancelEvidence).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-run-from-ce/cancel?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(cancelEvidence).toHaveTextContent('取消运行已提交: CANCELLED');
     expect(toastMocks.success).toHaveBeenCalledWith('Director 编排取消已提交', {
       description: 'Run ID: director-run-from-ce',
@@ -264,7 +278,11 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
     });
     await waitFor(() => expect(factoryServiceMocks.getFactoryRun).toHaveBeenCalledWith('factory-run-from-ce'));
     const evidence = await screen.findByTestId('chief-engineer-workbench-factory-evidence');
-    expect(evidence).toHaveTextContent('/v2/factory/runs/factory-run-from-ce');
+    expect(evidence).not.toHaveTextContent('/v2/factory/runs/factory-run-from-ce');
+    expect(screen.getByTestId('chief-engineer-workbench-factory-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/factory/runs/factory-run-from-ce',
+    );
     expect(evidence).toHaveTextContent('running · phase=planning · progress=40%');
 
     fireEvent.click(screen.getByTestId('chief-engineer-workbench-factory-evidence-cancel'));

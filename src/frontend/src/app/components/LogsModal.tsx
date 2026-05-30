@@ -614,16 +614,25 @@ export function LogsModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-[#252526] border border-gray-700 rounded-lg w-full max-w-3xl max-h-[80vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <div className="flex items-center gap-2">
+    <div
+      data-testid="logs-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 backdrop-blur-[2px] sm:p-4"
+    >
+      <div
+        data-testid="logs-modal-panel"
+        className="flex min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-700 bg-[#252526] shadow-2xl shadow-black/50"
+        style={{ maxHeight: 'min(86vh, 760px)' }}
+      >
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-gray-700 p-4">
+          <div className="flex min-w-0 items-center gap-2">
             <FileText className="size-4 text-blue-400" />
-            <h2 className="text-lg font-semibold text-gray-200">运行日志</h2>
+            <h2 className="truncate text-lg font-semibold text-gray-200">运行日志</h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
               onClick={refresh}
+              data-testid="logs-modal-refresh"
+              aria-label="刷新运行日志"
               className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded transition-colors"
               disabled={loading}
             >
@@ -631,6 +640,8 @@ export function LogsModal({
             </button>
             <button
               onClick={onClose}
+              data-testid="logs-modal-close"
+              aria-label="关闭运行日志"
               className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded transition-colors"
             >
               <X className="size-4" />
@@ -639,9 +650,9 @@ export function LogsModal({
         </div>
 
         {bannerText ? (
-          <div className="mx-4 mt-3 max-h-40 overflow-auto rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200 whitespace-pre-wrap">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex-1">{bannerText}</div>
+          <div className="mx-4 mt-3 max-h-40 overflow-auto rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200 whitespace-pre-wrap break-words">
+            <div className="flex min-w-0 items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">{bannerText}</div>
               {onDismissBanner ? (
                 <button
                   onClick={onDismissBanner}
@@ -656,32 +667,37 @@ export function LogsModal({
         ) : null}
 
         <div className="px-4 pt-3">
-          <div className="flex items-center gap-2 overflow-x-auto pb-2">
-            {sources.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setActive(item.id)}
-                className={`px-3 py-1.5 text-sm rounded transition-colors whitespace-nowrap ${active === item.id
-                  ? 'bg-blue-500/20 text-blue-300'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                  }`}
-              >
-                {item.label}
-              </button>
-            ))}
-            <span className="ml-auto text-xs text-gray-500">更新时间: {mtime || '-'}</span>
-            <span className="text-xs text-gray-500 flex items-center gap-1">
-              <Activity className="size-3" />
-              {live ? '实时' : '离线'}
-            </span>
+          <div data-testid="logs-modal-source-row" className="flex min-w-0 flex-col gap-2 pb-2 xl:flex-row xl:items-center">
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+              {sources.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setActive(item.id)}
+                  className={`shrink-0 whitespace-nowrap rounded px-3 py-1.5 text-sm transition-colors ${active === item.id
+                    ? 'bg-blue-500/20 text-blue-300'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                    }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-gray-500">
+              <span className="break-all">更新时间: {mtime || '-'}</span>
+              <span className="flex items-center gap-1">
+                <Activity className="size-3" />
+                {live ? '实时' : '离线'}
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="px-4 pt-3 flex items-center gap-2">
-          <div className="flex items-center gap-1 rounded-md border border-gray-700 bg-gray-800/80 p-1">
+        <div data-testid="logs-modal-controls-row" className="flex min-w-0 flex-wrap items-center gap-2 px-4 pt-3">
+          <div className="flex shrink-0 items-center gap-1 rounded-md border border-gray-700 bg-gray-800/80 p-1">
             <button
               onClick={() => allowRaw && setViewMode('raw')}
               disabled={!allowRaw}
+              data-testid="logs-modal-view-raw"
               className={`px-2 py-1 text-xs rounded ${viewMode === 'raw' ? 'bg-blue-500/30 text-blue-200' : 'text-gray-400 hover:text-gray-200'
                 } ${!allowRaw ? 'opacity-40 cursor-not-allowed' : ''}`}
             >
@@ -690,6 +706,7 @@ export function LogsModal({
             <button
               onClick={() => allowSmart && setViewMode('smart')}
               disabled={!allowSmart}
+              data-testid="logs-modal-view-smart"
               className={`px-2 py-1 text-xs rounded ${viewMode === 'smart' ? 'bg-blue-500/30 text-blue-200' : 'text-gray-400 hover:text-gray-200'
                 } ${!allowSmart ? 'opacity-40 cursor-not-allowed' : ''}`}
             >
@@ -698,6 +715,7 @@ export function LogsModal({
             <button
               onClick={() => allowJson && setViewMode('json')}
               disabled={!allowJson}
+              data-testid="logs-modal-view-json"
               className={`px-2 py-1 text-xs rounded ${viewMode === 'json' ? 'bg-blue-500/30 text-blue-200' : 'text-gray-400 hover:text-gray-200'
                 } ${!allowJson ? 'opacity-40 cursor-not-allowed' : ''}`}
             >
@@ -708,7 +726,7 @@ export function LogsModal({
             <div className="ml-2 text-[10px] text-gray-500">{llmEvents.length} events</div>
           ) : viewMode === 'smart' && isCodexSmart ? (
             <>
-              <div className="ml-2 flex items-center gap-2 text-xs text-gray-400">
+              <div className="flex shrink-0 items-center gap-2 text-xs text-gray-400 sm:ml-2">
                 <span className="flex items-center gap-1">
                   <AlertTriangle className="size-3 text-red-300" />
                   {summary.errors}
@@ -723,7 +741,7 @@ export function LogsModal({
                 </span>
               </div>
               <select
-                className="ml-auto bg-gray-800 text-xs text-gray-300 border border-gray-700 rounded px-2 py-1"
+                className="min-w-24 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-300 sm:ml-auto"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value as typeof filter)}
               >
@@ -733,7 +751,7 @@ export function LogsModal({
                 <option value="tool">器用</option>
               </select>
               <input
-                className="bg-gray-800 text-xs text-gray-300 border border-gray-700 rounded px-2 py-1"
+                className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-300 sm:max-w-64"
                 placeholder="搜索..."
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -742,7 +760,7 @@ export function LogsModal({
           ) : null}
         </div>
 
-        <div className="flex-1 overflow-auto p-4">
+        <div data-testid="logs-modal-content" className="min-h-0 flex-1 overflow-auto p-4">
           {error ? (
             <div className="text-sm text-red-300">{error}</div>
           ) : viewMode === 'raw' ? (

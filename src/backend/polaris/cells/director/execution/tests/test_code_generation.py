@@ -54,6 +54,28 @@ class TestResolveLlmTimeout:
         with patch.dict(os.environ, {"KERNELONE_WORKER_LLM_TIMEOUT": "500"}):
             assert engine.resolve_llm_timeout(60) == 300
 
+    def test_resolve_llm_timeout_runtime_codegen_uses_larger_cap(self):
+        engine = CodeGenerationEngine("/tmp", Mock())
+        with patch.dict(
+            os.environ,
+            {
+                "KERNELONE_DIRECTOR_RUNTIME_CODEGEN": "1",
+                "KERNELONE_WORKER_LLM_TIMEOUT": "500",
+            },
+        ):
+            assert engine.resolve_llm_timeout(60) == 500
+
+    def test_resolve_llm_timeout_runtime_codegen_cap(self):
+        engine = CodeGenerationEngine("/tmp", Mock())
+        with patch.dict(
+            os.environ,
+            {
+                "KERNELONE_DIRECTOR_RUNTIME_CODEGEN": "1",
+                "KERNELONE_WORKER_LLM_TIMEOUT": "9999",
+            },
+        ):
+            assert engine.resolve_llm_timeout(60) == 900
+
 
 class TestResolveTaskTimeoutBudget:
     def test_resolve_task_timeout_budget_default(self):
@@ -253,6 +275,36 @@ class TestBlockedEntryPoints:
         assert files == []
         assert "director_runtime_codegen_empty_response" in warnings
         executor._apply_response_operations.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_runtime_codegen_provider_failure_does_not_retry(self, monkeypatch):
+        monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
+        engine = CodeGenerationEngine("/tmp", Mock())
+        calls = 0
+
+        async def failing_invoke(**_: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("websocket tls handshake failed")
+
+        monkeypatch.setattr(engine, "_invoke_director_role_response", failing_invoke)
+        task = Mock()
+        task.id = "task-1"
+
+        files, warnings = await engine.invoke_generation_with_retries(
+            task=task,
+            prompt="implement",
+            model="ignored",
+            per_call_timeout=60,
+            deadline_ts=9999999999,
+            round_label="r1",
+            round_files=["src/app.py"],
+            spin_tracker={},
+        )
+
+        assert files == []
+        assert calls == 1
+        assert any("director_runtime_codegen_invoke_failed" in item for item in warnings)
 
     @pytest.mark.asyncio
     async def test_runtime_codegen_invokes_director_in_proposal_mode(self, monkeypatch):

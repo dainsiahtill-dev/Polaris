@@ -38,7 +38,7 @@ def _polaris_metadata_dir_name() -> str:
 def polaris_home() -> str:
     """Return the Polaris home directory.
 
-    Resolution order: KERNELONE_HOME > APPDATA/.polaris (Windows, if exists) > ~/.polaris (backward compat)
+    Resolution order: KERNELONE_HOME > KERNELONE_ROOT/.polaris > ~/.polaris
 
     Must match Electron's resolvepolarisRoot() in config-paths.cjs so that
     both the Python backend and the Electron main process read/write the
@@ -54,20 +54,6 @@ def polaris_home() -> str:
     if root_override:
         root = os.path.abspath(os.path.expanduser(os.path.expandvars(root_override)))
         return os.path.join(root, ".polaris")
-
-    # Match Electron: on Windows, prefer APPDATA
-    if os.name == "nt":
-        appdata = str(os.environ.get("APPDATA") or "").strip()
-        if appdata:
-            appdata_home = os.path.abspath(os.path.join(appdata, ".polaris"))
-            # Backward compat: if settings exist at legacy ~/.polaris but not at
-            # APPDATA/.polaris, keep using legacy path to avoid losing user config.
-            legacy_home = os.path.abspath(os.path.expanduser("~/.polaris"))
-            legacy_settings = os.path.join(legacy_home, "config", "settings.json")
-            appdata_settings = os.path.join(appdata_home, "config", "settings.json")
-            if os.path.isfile(legacy_settings) and not os.path.isfile(appdata_settings):
-                return legacy_home
-            return appdata_home
 
     return os.path.abspath(os.path.expanduser("~/.polaris"))
 

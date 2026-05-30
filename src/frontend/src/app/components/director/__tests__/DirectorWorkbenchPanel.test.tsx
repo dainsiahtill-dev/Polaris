@@ -152,7 +152,11 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
       limit: 5,
       offset: 0,
     });
-    expect(await screen.findByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/director-session-1');
+    expect(await screen.findByTestId('role-session-evidence-panel')).not.toHaveTextContent('/v2/roles/sessions/director-session-1');
+    expect(screen.getByTestId('role-session-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/sessions/director-session-1',
+    );
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('assistant: Director patch evidence ready');
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('7');
     expect(screen.getByTestId('role-session-evidence-artifacts')).toHaveTextContent('patch: director-artifact-1');
@@ -184,8 +188,11 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
     });
     await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-1', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('director-workbench-run-evidence');
-    expect(evidence).toHaveTextContent('/v2/director/runs/director-run-1');
-    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(evidence).not.toHaveTextContent('/v2/director/runs/director-run-1');
+    expect(screen.getByTestId('director-workbench-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-run-1?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(evidence).toHaveTextContent('RUNNING · queued=5');
     expect(screen.getByTestId('director-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
 
@@ -223,11 +230,18 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
 
     await waitFor(() => expect(pmServiceMocks.cancelDirectorRun).toHaveBeenCalledWith('director-run-1', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('director-workbench-run-evidence');
-    expect(evidence).toHaveTextContent('/v2/director/runs/director-run-1');
+    expect(evidence).not.toHaveTextContent('/v2/director/runs/director-run-1');
+    expect(screen.getByTestId('director-workbench-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-run-1?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(evidence).toHaveTextContent('CANCELLED · queued=5');
     const cancelEvidence = await screen.findByTestId('director-workbench-run-cancel-result');
-    expect(cancelEvidence).toHaveTextContent('/v2/director/runs/director-run-1/cancel');
-    expect(cancelEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(cancelEvidence).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-run-1/cancel?workspace=C%3A%2FTemp%2FProduct',
+    );
+    expect(cancelEvidence).not.toHaveTextContent('/v2/director/runs/director-run-1/cancel');
     expect(cancelEvidence).toHaveTextContent('取消运行已提交: CANCELLED');
     expect(toastMocks.success).toHaveBeenCalledWith('Director 编排取消已提交', {
       description: 'Run ID: director-run-1',
@@ -260,7 +274,11 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
     });
     await waitFor(() => expect(factoryServiceMocks.getFactoryRun).toHaveBeenCalledWith('factory-run-from-director'));
     const evidence = await screen.findByTestId('director-workbench-factory-evidence');
-    expect(evidence).toHaveTextContent('/v2/factory/runs/factory-run-from-director');
+    expect(evidence).not.toHaveTextContent('/v2/factory/runs/factory-run-from-director');
+    expect(screen.getByTestId('director-workbench-factory-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/factory/runs/factory-run-from-director',
+    );
     expect(evidence).toHaveTextContent('running · phase=implementation · progress=65%');
 
     fireEvent.click(screen.getByTestId('director-workbench-factory-evidence-cancel'));

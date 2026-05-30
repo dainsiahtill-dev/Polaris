@@ -123,6 +123,25 @@ describe('pmTaskService', () => {
       body: JSON.stringify(payload),
     });
   });
+
+  it('surfaces structured PM task create errors from the backend', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: 'PM_NOT_INITIALIZED',
+            message: 'PM system not initialized',
+          },
+        }),
+        { status: 400 },
+      ),
+    );
+
+    const result = await pmTaskService.create({ subject: 'Blocked task' });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('PM system not initialized');
+  });
 });
 
 describe('pmRequirementService', () => {

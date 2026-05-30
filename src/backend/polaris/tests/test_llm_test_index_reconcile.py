@@ -283,6 +283,164 @@ def test_workspace_index_unblocks_pm_when_global_index_is_stale(tmp_path):
     assert status["roles"]["pm"]["readiness_source"] == "role_index"
 
 
+def test_global_index_unblocks_pm_when_workspace_index_is_stale(tmp_path):
+    workspace = tmp_path / "active-workspace"
+    workspace.mkdir()
+
+    workspace_index = {
+        "roles": {
+            "pm": {
+                "ready": True,
+                "grade": "PASS",
+                "provider_id": "kimi-old",
+                "model": "kimi-for-coding",
+            },
+        },
+        "providers": {
+            "kimi-old": {
+                "ready": True,
+                "grade": "PASS",
+                "model": "kimi-for-coding",
+                "role": "pm",
+            },
+        },
+        "version": "2.0",
+    }
+    global_index = {
+        "roles": {
+            "pm": {
+                "ready": True,
+                "grade": "PASS",
+                "provider_id": "codex_cli",
+                "model": "gpt-5.3-codex",
+            },
+        },
+        "providers": {
+            "codex_cli": {
+                "ready": True,
+                "grade": "PASS",
+                "model": "gpt-5.3-codex",
+                "role": "pm",
+            },
+        },
+        "version": "2.0",
+    }
+
+    workspace_path = workspace / ".polaris" / "llm_test_index.json"
+    workspace_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(workspace_path, "w", encoding="utf-8") as f:
+        json.dump(workspace_index, f)
+
+    global_path = _index_path(str(workspace))
+    os.makedirs(os.path.dirname(global_path), exist_ok=True)
+    with open(global_path, "w", encoding="utf-8") as f:
+        json.dump(global_index, f)
+
+    settings = MagicMock()
+    settings.workspace = str(workspace)
+    settings.workspace_path = str(workspace)
+    settings.ramdisk_root = ""
+    settings.qa_enabled = False
+    config_payload = {
+        "schema_version": 1,
+        "providers": {
+            "codex_cli": {"type": "codex_cli"},
+        },
+        "roles": {
+            "pm": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"},
+        },
+        "policies": {
+            "required_ready_roles": ["pm"],
+        },
+    }
+
+    with patch(
+        "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+        return_value=config_payload,
+    ):
+        status = build_llm_status(settings)
+
+    assert status["state"] == "READY"
+    assert status["blocked_roles"] == []
+    assert status["roles"]["pm"]["tested_provider_id"] == "codex_cli"
+    assert status["roles"]["pm"]["tested_model"] == "gpt-5.3-codex"
+
+
+def test_required_roles_gate_uses_global_candidate_when_workspace_index_is_stale(tmp_path):
+    from polaris.cells.runtime.state_owner.internal.state import AppState
+    from polaris.delivery.http.routers._shared import ensure_required_roles_ready
+
+    workspace = tmp_path / "active-workspace"
+    workspace.mkdir()
+
+    workspace_index = {
+        "roles": {
+            "pm": {
+                "ready": True,
+                "grade": "PASS",
+                "provider_id": "kimi-old",
+                "model": "kimi-for-coding",
+            },
+        },
+        "providers": {},
+        "version": "2.0",
+    }
+    global_index = {
+        "roles": {
+            "pm": {
+                "ready": True,
+                "grade": "PASS",
+                "provider_id": "codex_cli",
+                "model": "gpt-5.3-codex",
+            },
+        },
+        "providers": {
+            "codex_cli": {
+                "ready": True,
+                "grade": "PASS",
+                "model": "gpt-5.3-codex",
+                "role": "pm",
+            },
+        },
+        "version": "2.0",
+    }
+
+    workspace_path = workspace / ".polaris" / "llm_test_index.json"
+    workspace_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(workspace_path, "w", encoding="utf-8") as f:
+        json.dump(workspace_index, f)
+
+    global_path = _index_path(str(workspace))
+    os.makedirs(os.path.dirname(global_path), exist_ok=True)
+    with open(global_path, "w", encoding="utf-8") as f:
+        json.dump(global_index, f)
+
+    settings = MagicMock()
+    settings.workspace = str(workspace)
+    settings.workspace_path = str(workspace)
+    settings.ramdisk_root = ""
+    settings.qa_enabled = False
+    state = AppState(settings=settings)
+    config_payload = {
+        "schema_version": 1,
+        "providers": {
+            "codex_cli": {"type": "codex_cli"},
+        },
+        "roles": {
+            "pm": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"},
+        },
+        "policies": {
+            "required_ready_roles": ["pm"],
+        },
+    }
+
+    with (
+        patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+        patch("polaris.delivery.http.routers._shared.role_runtime_support_issue", return_value=""),
+    ):
+        ensure_required_roles_ready(state, default_roles=["pm"])
+
+
 def test_load_llm_test_index_uses_app_global_index_for_separate_workspace(tmp_path):
     workspace = str(tmp_path / "target-project")
     os.makedirs(workspace, exist_ok=True)

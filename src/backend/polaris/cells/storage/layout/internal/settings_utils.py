@@ -37,13 +37,8 @@ def get_polaris_root() -> str:
             return parent or trimmed
         return expanded
 
-    if os.name == "nt":
-        appdata = str(os.environ.get("APPDATA") or "").strip()
-        if appdata:
-            return _expand(appdata)
-
     xdg = str(os.environ.get("XDG_CONFIG_HOME") or "").strip()
-    if xdg:
+    if os.name != "nt" and xdg:
         return _expand(xdg)
 
     return _expand("~")
@@ -80,7 +75,7 @@ def _load_json_dict(path: str) -> dict[str, Any]:
     if not path or not os.path.isfile(path):
         return {}
     try:
-        with open(path, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8-sig") as handle:
             data = json.load(handle)
         return data if isinstance(data, dict) else {}
     except json.JSONDecodeError as exc:

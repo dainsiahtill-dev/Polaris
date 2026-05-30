@@ -261,11 +261,19 @@ describe('AIDialoguePanel RoleSession visibility', () => {
     );
 
     expect(screen.getByTestId('ai-role-session-strip')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId('ai-role-session-id')).toHaveTextContent('session-1'));
-    expect(screen.getByTestId('ai-role-session-attachment')).toHaveTextContent('Task PM-1');
-    await waitFor(() => expect(screen.getByTestId('ai-role-capability-chip')).toHaveTextContent('cap 3'));
+    await waitFor(() => expect(screen.getByTestId('ai-role-session-id')).toHaveTextContent('ID'));
+    expect(screen.getByTestId('ai-role-session-id')).toHaveAttribute('title', 'session-1');
+    expect(screen.getByTestId('ai-role-session-attachment')).toHaveTextContent('任务');
+    expect(screen.getByTestId('ai-role-session-attachment')).toHaveAttribute('title', 'PM-1');
+    await waitFor(() => expect(screen.getByTestId('ai-role-capability-chip')).toHaveTextContent('3项'));
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/capabilities/pm?host_kind=electron_workbench');
-    await waitFor(() => expect(screen.getByTestId('ai-role-session-detail-chip')).toHaveTextContent('active · 4 msg'));
+    await waitFor(() => expect(screen.getByTestId('ai-role-session-detail-chip')).toHaveTextContent('就绪'));
+    expect(screen.getByTestId('ai-role-session-message-chip')).toHaveTextContent('4');
+    expect(screen.getByTestId('ai-role-session-message-chip')).toHaveAttribute('title', 'messages=4');
+    expect(screen.getByTestId('ai-role-session-strip')).toHaveClass('overflow-hidden');
+    expect(screen.getByTestId('ai-role-session-status-row')).toHaveClass('flex-wrap', 'overflow-hidden');
+    expect(screen.getByTestId('ai-role-session-actions')).toHaveClass('flex-wrap', 'overflow-hidden', 'border-t');
+    expect(screen.getByTestId('ai-role-session-detail-chip')).toHaveClass('overflow-hidden', 'max-w-[8rem]');
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/sessions/session-1');
     expect(onSessionChange).toHaveBeenCalledWith('session-1');
 
@@ -344,8 +352,9 @@ describe('AIDialoguePanel RoleSession visibility', () => {
     await waitFor(() => expect(screen.getByTestId('ai-role-session-list-panel')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('ai-role-session-option-session-old'));
 
-    await waitFor(() => expect(screen.getByTestId('ai-role-session-id')).toHaveTextContent('session-old'));
-    await waitFor(() => expect(screen.getByTestId('ai-role-session-detail-chip')).toHaveTextContent('active · 2 msg'));
+    await waitFor(() => expect(screen.getByTestId('ai-role-session-id')).toHaveAttribute('title', 'session-old'));
+    await waitFor(() => expect(screen.getByTestId('ai-role-session-detail-chip')).toHaveTextContent('就绪'));
+    expect(screen.getByTestId('ai-role-session-message-chip')).toHaveTextContent('2');
     expect(screen.getByText('old answer')).toBeInTheDocument();
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/sessions/session-old/messages?limit=100&offset=0');
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/sessions/session-old');
@@ -353,7 +362,7 @@ describe('AIDialoguePanel RoleSession visibility', () => {
 
     fireEvent.click(screen.getByTestId('ai-role-session-new'));
 
-    await waitFor(() => expect(screen.getByTestId('ai-role-session-id')).toHaveTextContent('session-2'));
+    await waitFor(() => expect(screen.getByTestId('ai-role-session-id')).toHaveAttribute('title', 'session-2'));
     expect(onSessionChange).toHaveBeenCalledWith(null);
     expect(onSessionChange).toHaveBeenCalledWith('session-2');
     expect(apiFetchMock).toHaveBeenCalledWith(

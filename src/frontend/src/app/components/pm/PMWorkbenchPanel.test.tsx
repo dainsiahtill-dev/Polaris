@@ -269,7 +269,11 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
       limit: 5,
       offset: 0,
     });
-    expect(await screen.findByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/pm-session-1');
+    expect(await screen.findByTestId('role-session-evidence-panel')).not.toHaveTextContent('/v2/roles/sessions/pm-session-1');
+    expect(screen.getByTestId('role-session-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/sessions/pm-session-1',
+    );
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('assistant: PM contract evidence ready');
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('6');
     expect(screen.getByTestId('role-session-evidence-artifacts')).toHaveTextContent('directive: pm-artifact-1');
@@ -310,8 +314,11 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     });
     await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-1', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-workbench-run-evidence');
-    expect(evidence).toHaveTextContent('/v2/pm/runs/pm-run-1');
-    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(evidence).not.toHaveTextContent('/v2/pm/runs/pm-run-1');
+    expect(screen.getByTestId('pm-workbench-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/pm/runs/pm-run-1?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(evidence).toHaveTextContent('RUNNING · architect');
     expect(screen.getByTestId('pm-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
 
@@ -371,8 +378,11 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     });
     await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-direct', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-workbench-run-evidence');
-    expect(evidence).toHaveTextContent('/v2/pm/runs/pm-run-direct');
-    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(evidence).not.toHaveTextContent('/v2/pm/runs/pm-run-direct');
+    expect(screen.getByTestId('pm-workbench-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/pm/runs/pm-run-direct?workspace=C%3A%2FTemp%2FProduct',
+    );
   });
 
   it('blocks PM auto-dispatch when Director LLM readiness is blocked', async () => {
@@ -539,11 +549,18 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
 
     await waitFor(() => expect(pmServiceMocks.cancelPmRun).toHaveBeenCalledWith('pm-run-direct', 'C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-workbench-run-evidence');
-    expect(evidence).toHaveTextContent('/v2/pm/runs/pm-run-direct');
+    expect(evidence).not.toHaveTextContent('/v2/pm/runs/pm-run-direct');
+    expect(screen.getByTestId('pm-workbench-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/pm/runs/pm-run-direct?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(evidence).toHaveTextContent('CANCELLED · architect');
     const cancelEvidence = await screen.findByTestId('pm-workbench-run-cancel-result');
-    expect(cancelEvidence).toHaveTextContent('/v2/pm/runs/pm-run-direct/cancel');
-    expect(cancelEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(cancelEvidence).toHaveAttribute(
+      'data-endpoint',
+      '/v2/pm/runs/pm-run-direct/cancel?workspace=C%3A%2FTemp%2FProduct',
+    );
+    expect(cancelEvidence).not.toHaveTextContent('/v2/pm/runs/pm-run-direct/cancel');
     expect(cancelEvidence).toHaveTextContent('取消运行已提交: CANCELLED');
     expect(toastMocks.success).toHaveBeenCalledWith('PM 编排取消已提交', {
       description: 'Run ID: pm-run-direct',
@@ -574,14 +591,21 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     });
     await waitFor(() => expect(factoryServiceMocks.getFactoryRun).toHaveBeenCalledWith('factory-run-from-pm'));
     const evidence = await screen.findByTestId('pm-workbench-factory-evidence');
-    expect(evidence).toHaveTextContent('/v2/factory/runs/factory-run-from-pm');
+    expect(evidence).not.toHaveTextContent('/v2/factory/runs/factory-run-from-pm');
+    expect(screen.getByTestId('pm-workbench-factory-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/factory/runs/factory-run-from-pm',
+    );
     expect(evidence).toHaveTextContent('running · phase=planning · progress=25%');
 
     fireEvent.click(screen.getByTestId('pm-workbench-factory-evidence-cancel'));
 
     await waitFor(() => expect(factoryServiceMocks.stopFactoryRun).toHaveBeenCalledWith('factory-run-from-pm'));
     expect(evidence).toHaveTextContent('cancelled · phase=cancelled · progress=25%');
-    expect(screen.getByTestId('pm-workbench-factory-evidence-cancel-result')).toHaveTextContent('/v2/factory/runs/factory-run-from-pm/control');
+    expect(screen.getByTestId('pm-workbench-factory-evidence-cancel-result')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/factory/runs/factory-run-from-pm/control',
+    );
     expect(toastMocks.success).toHaveBeenCalledWith('Factory 流水线取消已提交', {
       description: 'Run ID: factory-run-from-pm',
     });

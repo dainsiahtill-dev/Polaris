@@ -59,25 +59,8 @@ function resolvepolarisRoot(env = process.env, platform = process.platform) {
     return path.dirname(expanded.replace(/[\\/]+$/, "")) || expanded;
   }
 
-  if (platform === "win32") {
-    const appData = String(env.APPDATA || "").trim();
-    if (appData) {
-      // Backward compat: if settings exist at legacy ~/.polaris but not at
-      // APPDATA/.polaris, keep using legacy path to match Python backend.
-      const userHome = resolveUserHome(env, platform);
-      const legacyHome = path.join(userHome, ".polaris");
-      const legacySettings = path.join(legacyHome, "config", "settings.json");
-      const appdataHome = path.join(appData, ".polaris");
-      const appdataSettings = path.join(appdataHome, "config", "settings.json");
-      if (fs.existsSync(legacySettings) && !fs.existsSync(appdataSettings)) {
-        return userHome;
-      }
-      return expandPath(appData);
-    }
-  }
-
   const xdg = String(env.XDG_CONFIG_HOME || "").trim();
-  if (xdg) {
+  if (platform !== "win32" && xdg) {
     return expandPath(xdg);
   }
 

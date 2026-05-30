@@ -68,6 +68,27 @@ interface PmTaskCreateEvidence {
   task: PmTask | null;
 }
 
+function EndpointBadge({
+  endpoint,
+  method,
+  testId,
+}: {
+  endpoint: string;
+  method?: string;
+  testId?: string;
+}) {
+  return (
+    <span
+      className="shrink-0 rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] font-medium text-slate-500"
+      title={endpoint}
+      data-endpoint={endpoint}
+      data-testid={testId}
+    >
+      {method ? `${method} API` : 'API'}
+    </span>
+  );
+}
+
 function taskRecord(task: PmTask): PmTask & Record<string, unknown> {
   return task as PmTask & Record<string, unknown>;
 }
@@ -740,9 +761,7 @@ export function PMTaskPanel({
                 <Plus className="h-3.5 w-3.5" />
                 PM Task Create
               </div>
-              <span className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1 font-mono text-[10px] text-amber-200">
-                POST /v2/pm/tasks
-              </span>
+              <EndpointBadge endpoint="/v2/pm/tasks" method="POST" testId="pm-task-create-endpoint" />
             </div>
             <div className="grid gap-2 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_130px_auto]">
               <Input
@@ -800,10 +819,11 @@ export function PMTaskPanel({
                 : 'border-amber-500/15 bg-slate-950/45 text-slate-300',
             )}
             data-testid="pm-task-create-evidence"
+            data-endpoint="/v2/pm/tasks"
           >
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <span className="font-semibold text-amber-100">PM task create</span>
-              <span className="font-mono text-[11px] text-amber-300">POST /v2/pm/tasks</span>
+              <EndpointBadge endpoint="/v2/pm/tasks" method="POST" testId="pm-task-create-evidence-endpoint" />
               {createEvidence.loading ? (
                 <span className="text-slate-400">正在创建...</span>
               ) : createEvidence.error ? (
@@ -1180,9 +1200,7 @@ function TaskDetailPanel({
               <FileCode className="h-3.5 w-3.5 text-cyan-300" />
               <span>后端任务详情</span>
             </div>
-            <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-              /v2/pm/tasks/{task.id}
-            </span>
+            <EndpointBadge endpoint={`/v2/pm/tasks/${task.id}`} testId="pm-task-backend-detail-endpoint" />
           </div>
           {detailEvidence?.loading ? (
             <div className="flex items-center gap-2 rounded-md border border-cyan-500/20 bg-cyan-500/10 px-2 py-2 text-[11px] text-cyan-100">
@@ -1217,9 +1235,7 @@ function TaskDetailPanel({
               <GitBranch className="h-3.5 w-3.5 text-purple-300" />
               <span>分配历史</span>
             </div>
-            <span className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-              /v2/pm/tasks/{task.id}/assignments
-            </span>
+            <EndpointBadge endpoint={`/v2/pm/tasks/${task.id}/assignments`} testId="pm-task-assignments-endpoint" />
           </div>
           {assignmentEvidence?.loading ? (
             <div className="flex items-center gap-2 rounded-md border border-purple-500/20 bg-purple-500/10 px-2 py-2 text-[11px] text-purple-100">

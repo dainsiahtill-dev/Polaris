@@ -144,6 +144,28 @@ describe('ContextSidebar', () => {
       const snapshotButton = screen.getByRole('button', { name: /快照/i });
       expect(snapshotButton).toHaveAttribute('title', '快照');
     });
+
+    it('keeps long snapshot metadata contained', () => {
+      render(
+        <ContextSidebar
+          {...baseProps}
+          activeTab="snapshot"
+          snapshotTimestamp="2026-05-30T12:00:00.000Z-long-runtime-token-without-natural-breaks"
+          snapshotFileStatus={[
+            'C:/Users/dains/Documents/GitLab/polaris/runtime/very-long-file-status-without-natural-breaks.md',
+          ]}
+          snapshotFilePaths={['a.md']}
+          snapshotDirectorState={{
+            phase: 'chief-engineer-blueprint-phase-with-a-very-long-token-that-must-wrap',
+            iteration: 7,
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId('snapshot-panel')).toHaveClass('overflow-hidden');
+      expect(screen.getByText(/时刻:/)).toHaveClass('break-all');
+      expect(screen.getByTestId('snapshot-panel-file-line')).toHaveClass('break-all');
+    });
   });
 
   describe('Memo Tab', () => {
@@ -152,6 +174,32 @@ describe('ContextSidebar', () => {
 
       const memoButton = screen.getByRole('button', { name: /备忘/i });
       expect(memoButton).toHaveAttribute('title', '备忘');
+    });
+
+    it('keeps long memo content inside the right-side panel', () => {
+      render(
+        <ContextSidebar
+          {...baseProps}
+          activeTab="memos"
+          memoItems={[
+            {
+              name: 'runtime-contract-with-long-name.md',
+              path: 'runtime/contracts/runtime-contract-with-long-name.md',
+              mtime: '2026-05-30T12:00:00Z',
+            },
+          ]}
+          memoSelected={{
+            name: 'runtime-contract-with-long-name.md',
+            path: 'runtime/contracts/runtime-contract-with-long-name.md',
+            mtime: '2026-05-30T12:00:00Z',
+          }}
+          memoContent={'C:/Users/dains/Documents/GitLab/polaris/'.repeat(20)}
+        />,
+      );
+
+      expect(screen.getByTestId('memo-panel')).toHaveClass('overflow-hidden');
+      expect(screen.getByTestId('memo-panel-body')).toHaveClass('min-w-0');
+      expect(screen.getByTestId('memo-panel-content')).toHaveClass('break-words');
     });
   });
 

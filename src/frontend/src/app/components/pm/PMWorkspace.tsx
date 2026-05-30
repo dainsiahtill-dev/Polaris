@@ -245,6 +245,25 @@ function evidenceEndpoint(endpoint: string, workspace = ''): string {
   return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
 }
 
+function EvidenceEndpointBadge({
+  endpoint,
+  testId,
+}: {
+  endpoint: string;
+  testId?: string;
+}) {
+  return (
+    <span
+      className="shrink-0 rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] font-medium text-slate-500"
+      title={endpoint}
+      data-endpoint={endpoint}
+      data-testid={testId}
+    >
+      API
+    </span>
+  );
+}
+
 function formatPmDiagnostics(diagnostics: PmStartupDiagnosticsResponse | null): string {
   if (!diagnostics) return 'unavailable';
   const llmState = diagnostics.llm?.state || (diagnostics.llm?.ok ? 'ready' : 'blocked');
@@ -549,20 +568,84 @@ function PMBackendEvidenceStrip({
   const llmEventCount = evidence.llmEvents?.count
     ?? (Array.isArray(evidence.llmEvents?.events) ? evidence.llmEvents.events.length : 0);
   const latestLLMEvent = evidence.llmEvents?.events?.[0] ?? null;
+  const diagnosticsLabel = formatPmDiagnostics(evidence.diagnostics);
+  const cacheLabel = formatPmCacheStats(evidence.cacheStats);
+  const tokenBudgetLabel = formatPmTokenBudget(evidence.tokenBudgetStats);
+  const hasError = Boolean(
+    evidence.capabilitiesError
+    || evidence.diagnosticsError
+    || evidence.llmEventsError
+    || evidence.cacheError
+    || evidence.tokenBudgetError,
+  );
+  const canStart = evidence.diagnostics?.can_start;
+  const summaryTone = evidence.loading
+    ? 'border-slate-500/20 bg-slate-500/10 text-slate-300'
+    : hasError
+      ? 'border-rose-400/25 bg-rose-500/10 text-rose-200'
+      : canStart === false
+        ? 'border-amber-400/25 bg-amber-500/10 text-amber-200'
+        : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200';
+  const summaryLabel = evidence.loading
+    ? '检查中'
+    : hasError
+      ? '需要查看'
+      : canStart === false
+        ? '门禁阻断'
+        : '就绪';
+  const capabilityLabel = evidence.loading
+    ? '能力 ...'
+    : evidence.capabilitiesError
+      ? '能力 ?'
+      : `能力 ${evidence.capabilities.length}`;
 
   return (
     <section
-      className="border-b border-amber-500/15 bg-slate-950/75 px-4 py-2 text-xs text-slate-300"
+      className="border-b border-white/10 bg-slate-950/60 px-4 py-2 text-xs text-slate-300"
       data-testid="pm-backend-evidence-strip"
       aria-label="PM backend evidence"
     >
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
-        <div className="flex min-w-0 items-center gap-2">
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-2 outline-none">
+          <Wrench className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+          <span className="shrink-0 font-medium text-slate-100">PM 后端状态</span>
+          <span className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[10px]', summaryTone)}>
+            {summaryLabel}
+          </span>
+          <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+            {capabilityLabel}
+          </span>
+          <span className="min-w-0 truncate rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400" title={diagnosticsLabel}>
+            {diagnosticsLabel}
+          </span>
+          <span className="hidden shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400 xl:inline-flex">
+            events={llmEventCount}
+          </span>
+          <span className="ml-auto shrink-0 text-[10px] text-slate-500 group-open:hidden">详情</span>
+          <span className="ml-auto hidden shrink-0 text-[10px] text-slate-500 group-open:inline">收起</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(event) => {
+              event.preventDefault();
+              onRefresh();
+            }}
+            disabled={evidence.loading || cacheClearing}
+            title="刷新 PM 后端状态"
+            className="h-7 w-7 shrink-0 text-slate-400 hover:bg-amber-500/10 hover:text-amber-300"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', evidence.loading && 'animate-spin')} />
+          </Button>
+        </summary>
+
+        <div className="mt-2 grid gap-2 rounded-lg border border-white/10 bg-slate-950/50 p-2 md:grid-cols-2 xl:grid-cols-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Wrench className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           <span className="shrink-0 font-medium text-amber-100">Capabilities</span>
-          <span className="shrink-0 font-mono text-[11px] text-amber-300">
-            /v2/roles/capabilities/pm?host_kind=electron_workbench
-          </span>
+          <EvidenceEndpointBadge
+            endpoint="/v2/roles/capabilities/pm?host_kind=electron_workbench"
+            testId="pm-capabilities-endpoint"
+          />
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
           ) : evidence.capabilitiesError ? (
@@ -574,29 +657,31 @@ function PMBackendEvidenceStrip({
           )}
         </div>
 
-        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Activity className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           <span className="shrink-0 font-medium text-amber-100">Diagnostics</span>
-          <span className="shrink-0 font-mono text-[11px] text-amber-300">
-            {evidenceEndpoint('/v2/pm/diagnostics', workspace)}
-          </span>
+          <EvidenceEndpointBadge
+            endpoint={evidenceEndpoint('/v2/pm/diagnostics', workspace)}
+            testId="pm-diagnostics-endpoint"
+          />
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
           ) : evidence.diagnosticsError ? (
             <span className="text-rose-300">{evidence.diagnosticsError}</span>
           ) : (
-            <span className="max-w-[320px] truncate text-emerald-300" title={formatPmDiagnostics(evidence.diagnostics)}>
-              {formatPmDiagnostics(evidence.diagnostics)}
+            <span className="max-w-[320px] truncate text-emerald-300" title={diagnosticsLabel}>
+              {diagnosticsLabel}
             </span>
           )}
         </div>
 
-        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Brain className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           <span className="shrink-0 font-medium text-amber-100">LLM events</span>
-          <span className="shrink-0 font-mono text-[11px] text-amber-300">
-            {evidenceEndpoint('/v2/pm/llm-events?role=pm&limit=5', workspace)}
-          </span>
+          <EvidenceEndpointBadge
+            endpoint={evidenceEndpoint('/v2/pm/llm-events?role=pm&limit=5', workspace)}
+            testId="pm-llm-events-endpoint"
+          />
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
           ) : evidence.llmEventsError ? (
@@ -608,16 +693,16 @@ function PMBackendEvidenceStrip({
           )}
         </div>
 
-        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Database className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           <span className="shrink-0 font-medium text-amber-100">Kernel cache</span>
-          <span className="shrink-0 font-mono text-[11px] text-amber-300">/v2/pm/cache-stats</span>
+          <EvidenceEndpointBadge endpoint="/v2/pm/cache-stats" testId="pm-cache-endpoint" />
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
           ) : evidence.cacheError ? (
             <span className="text-rose-300">{evidence.cacheError}</span>
           ) : (
-            <span className="max-w-[260px] truncate text-emerald-300">{formatPmCacheStats(evidence.cacheStats)}</span>
+            <span className="max-w-[260px] truncate text-emerald-300">{cacheLabel}</span>
           )}
           <Button
             variant="ghost"
@@ -635,36 +720,31 @@ function PMBackendEvidenceStrip({
             )}
           </Button>
           {cacheClearStatus ? (
-            <span data-testid="pm-kernel-cache-clear-result" className="truncate text-amber-200">
-              /v2/pm/cache-clear · {cacheClearStatus}
+            <span
+              data-testid="pm-kernel-cache-clear-result"
+              data-endpoint="/v2/pm/cache-clear"
+              title="/v2/pm/cache-clear"
+              className="truncate text-amber-200"
+            >
+              {cacheClearStatus}
             </span>
           ) : null}
         </div>
 
-        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Coins className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           <span className="shrink-0 font-medium text-amber-100">Token budget</span>
-          <span className="shrink-0 font-mono text-[11px] text-amber-300">/v2/pm/token-budget-stats</span>
+          <EvidenceEndpointBadge endpoint="/v2/pm/token-budget-stats" testId="pm-token-budget-endpoint" />
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
           ) : evidence.tokenBudgetError ? (
             <span className="text-rose-300">{evidence.tokenBudgetError}</span>
           ) : (
-            <span className="max-w-[260px] truncate text-emerald-300">{formatPmTokenBudget(evidence.tokenBudgetStats)}</span>
+            <span className="max-w-[260px] truncate text-emerald-300">{tokenBudgetLabel}</span>
           )}
         </div>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onRefresh}
-          disabled={evidence.loading || cacheClearing}
-          title="刷新 PM 后端证据"
-          className="ml-auto h-7 w-7 shrink-0 text-slate-400 hover:bg-amber-500/10 hover:text-amber-300"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', evidence.loading && 'animate-spin')} />
-        </Button>
-      </div>
+        </div>
+      </details>
     </section>
   );
 }
@@ -1228,12 +1308,34 @@ export function PMWorkspace({
 
       {runOnceStatusEvidence.triggered && (
         <section
-          className="border-b border-amber-500/15 bg-slate-950/75 px-4 py-2 text-xs text-slate-300"
+          className="border-b border-white/10 bg-slate-950/45 px-4 py-1.5 text-xs text-slate-300"
           data-testid="pm-run-once-status-evidence"
         >
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-medium text-amber-100">PM run_once status</span>
-            <span className="font-mono text-[11px] text-amber-300">/v2/pm/status</span>
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-2 outline-none">
+              <Clock className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <span className="font-medium text-slate-200">PM 运行快照</span>
+              {runOnceStatusEvidence.data ? (
+                <span className={cn(
+                  'rounded-full border px-2 py-0.5 text-[10px]',
+                  runOnceStatusEvidence.data.running
+                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
+                    : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
+                )}>
+                  {runOnceStatusEvidence.data.running ? 'running' : 'idle'}
+                </span>
+              ) : null}
+              <span className="min-w-0 truncate text-slate-500">
+                {runOnceStatusEvidence.loading
+                  ? '正在同步后端状态...'
+                  : runOnceStatusEvidence.error || runOnceStatusEvidence.data?.workspace || '等待状态'}
+              </span>
+              <span className="ml-auto text-[10px] text-slate-500 group-open:hidden">详情</span>
+              <span className="ml-auto hidden text-[10px] text-slate-500 group-open:inline">收起</span>
+            </summary>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-white/10 bg-slate-950/55 px-2 py-1.5">
+              <span className="font-medium text-amber-100">PM run_once status</span>
+              <EvidenceEndpointBadge endpoint="/v2/pm/status" testId="pm-run-once-status-endpoint" />
             {runOnceStatusEvidence.loading ? (
               <span className="text-slate-400">正在读取状态快照...</span>
             ) : runOnceStatusEvidence.error ? (
@@ -1264,18 +1366,41 @@ export function PMWorkspace({
                 ) : null}
               </>
             ) : null}
-          </div>
+            </div>
+          </details>
         </section>
       )}
 
       {toggleStatusEvidence.triggered && (
         <section
-          className="border-b border-amber-500/15 bg-slate-950/75 px-4 py-2 text-xs text-slate-300"
+          className="border-b border-white/10 bg-slate-950/45 px-4 py-1.5 text-xs text-slate-300"
           data-testid="pm-toggle-status-evidence"
         >
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-medium text-amber-100">PM toggle status</span>
-            <span className="font-mono text-[11px] text-amber-300">/v2/pm/status</span>
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-2 outline-none">
+              <Activity className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <span className="font-medium text-slate-200">PM 启停快照</span>
+              {toggleStatusEvidence.data ? (
+                <span className={cn(
+                  'rounded-full border px-2 py-0.5 text-[10px]',
+                  toggleStatusEvidence.data.running
+                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
+                    : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
+                )}>
+                  {toggleStatusEvidence.data.running ? 'running' : 'idle'}
+                </span>
+              ) : null}
+              <span className="min-w-0 truncate text-slate-500">
+                {toggleStatusEvidence.loading
+                  ? '正在同步后端状态...'
+                  : toggleStatusEvidence.error || toggleStatusEvidence.data?.workspace || '等待状态'}
+              </span>
+              <span className="ml-auto text-[10px] text-slate-500 group-open:hidden">详情</span>
+              <span className="ml-auto hidden text-[10px] text-slate-500 group-open:inline">收起</span>
+            </summary>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-white/10 bg-slate-950/55 px-2 py-1.5">
+              <span className="font-medium text-amber-100">PM toggle status</span>
+              <EvidenceEndpointBadge endpoint="/v2/pm/status" testId="pm-toggle-status-endpoint" />
             {toggleStatusEvidence.loading ? (
               <span className="text-slate-400">正在读取状态快照...</span>
             ) : toggleStatusEvidence.error ? (
@@ -1306,18 +1431,37 @@ export function PMWorkspace({
                 ) : null}
               </>
             ) : null}
-          </div>
+            </div>
+          </details>
         </section>
       )}
 
-      {(isLoadingBackendPmTasks || backendPmTaskError || backendPmTasks.length > 0) && (
+      {(backendPmTaskError || backendPmTasks.length > 0) && (
         <section
-          className="border-b border-amber-500/15 bg-slate-950/70 px-4 py-2 text-xs text-slate-300"
+          className="border-b border-white/10 bg-slate-950/45 px-4 py-1.5 text-xs text-slate-300"
           data-testid="pm-task-backend-evidence"
         >
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-medium text-amber-100">PM task list evidence</span>
-            <span className="font-mono text-[11px] text-amber-300">/v2/pm/tasks</span>
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-2 outline-none">
+              <ListTodo className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <span className="font-medium text-slate-200">任务合同来源</span>
+              <span className={cn(
+                'rounded-full border px-2 py-0.5 text-[10px]',
+                backendPmTaskError
+                  ? 'border-rose-500/25 bg-rose-500/10 text-rose-200'
+                  : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
+              )}>
+                {isLoadingBackendPmTasks ? '读取中' : backendPmTaskError ? '读取失败' : `backend ${backendPmTasks.length}`}
+              </span>
+              <span className="min-w-0 truncate text-slate-500">
+                runtime {tasks.length} · merged {pmTaskEvidenceRows.length}
+              </span>
+              <span className="ml-auto text-[10px] text-slate-500 group-open:hidden">详情</span>
+              <span className="ml-auto hidden text-[10px] text-slate-500 group-open:inline">收起</span>
+            </summary>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-white/10 bg-slate-950/55 px-2 py-1.5">
+              <span className="font-medium text-amber-100">PM task list evidence</span>
+              <EvidenceEndpointBadge endpoint="/v2/pm/tasks" testId="pm-task-list-evidence-endpoint" />
             {isLoadingBackendPmTasks ? (
               <span className="text-slate-400">正在读取任务合同...</span>
             ) : backendPmTaskError ? (
@@ -1329,7 +1473,8 @@ export function PMWorkspace({
                 <span className="text-slate-400">merged={pmTaskEvidenceRows.length}</span>
               </>
             )}
-          </div>
+            </div>
+          </details>
         </section>
       )}
 
@@ -1769,7 +1914,10 @@ function PMRequirementsPanel({ workspace }: { workspace: string }) {
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-slate-100">需求追踪</h2>
-          <p className="text-xs text-slate-500">来自 PM 需求合同接口 /v2/pm/requirements</p>
+          <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+            <span>来自 PM 需求合同接口</span>
+            <EvidenceEndpointBadge endpoint="/v2/pm/requirements" testId="pm-requirements-endpoint" />
+          </div>
         </div>
         <Button
           variant="ghost"
@@ -1793,7 +1941,7 @@ function PMRequirementsPanel({ workspace }: { workspace: string }) {
       <div className="grid min-h-0 flex-1 gap-3 overflow-hidden xl:grid-cols-[minmax(260px,0.42fr)_minmax(0,0.58fr)]">
         <section className="min-h-0 rounded-lg border border-white/10 bg-white/5">
           <div className="flex h-10 items-center justify-between border-b border-white/10 px-3 text-xs text-slate-400">
-            <span>/v2/pm/requirements</span>
+            <EvidenceEndpointBadge endpoint="/v2/pm/requirements" testId="pm-requirements-list-endpoint" />
             <span data-testid="pm-requirements-count" className="rounded border border-white/10 bg-slate-950/40 px-1.5 py-0.5 text-[10px] text-slate-300">
               {requirements.length}
             </span>
@@ -1845,7 +1993,7 @@ function PMRequirementsPanel({ workspace }: { workspace: string }) {
 
         <section className="min-h-0 overflow-hidden rounded-lg border border-white/10 bg-white/5">
           <div className="flex h-10 items-center justify-between border-b border-white/10 px-3 text-xs text-slate-400">
-            <span>{detailEndpoint}</span>
+            <EvidenceEndpointBadge endpoint={detailEndpoint} testId="pm-requirement-detail-endpoint" />
             {isLoadingRequirementDetail ? <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" /> : null}
           </div>
           {requirementDetailError ? (
@@ -1855,8 +2003,8 @@ function PMRequirementsPanel({ workspace }: { workspace: string }) {
           ) : null}
           {detailRequirement ? (
             <div data-testid="pm-requirement-detail" className="max-h-full space-y-3 overflow-auto p-3 text-xs text-slate-300">
-              <div className="rounded-md border border-white/5 bg-slate-950/35 px-2 py-1.5 font-mono text-[11px] text-slate-400">
-                {detailEndpoint}
+              <div className="rounded-md border border-white/5 bg-slate-950/35 px-2 py-1.5">
+                <EvidenceEndpointBadge endpoint={detailEndpoint} testId="pm-requirement-detail-body-endpoint" />
               </div>
               <div>
                 <div className="text-[10px] uppercase text-slate-500">Title</div>

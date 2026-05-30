@@ -579,6 +579,12 @@ function basename(path: string): string {
   return normalized.split('/').filter(Boolean).pop() || normalized || 'blueprint';
 }
 
+function workspaceLabel(workspace: string): string {
+  const normalized = String(workspace || '').replace(/\\/g, '/').trim();
+  if (!normalized) return '未设置工作区';
+  return normalized.split('/').filter(Boolean).pop() || normalized;
+}
+
 function artifactTaskIdFromName(value: string): string {
   const base = basename(value).replace(/\.[^.]+$/, '').trim();
   if (!base) return '';
@@ -942,6 +948,7 @@ export function FactoryWorkspace({
     [blueprintCoverage, blueprintEvidence.length, currentRun, directorWorkflowTasks, pmWorkflowTasks]
   );
   const activeLayerView = roleLayers.find((layer) => layer.id === activeLayer) || roleLayers[0];
+  const workspaceDisplay = workspaceLabel(workspace);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#070b14] text-slate-100">
@@ -966,7 +973,9 @@ export function FactoryWorkspace({
                 分层视图
               </span>
             </div>
-            <p className="truncate text-[11px] text-slate-500">{workspace || '未设置工作区'}</p>
+            <p data-testid="factory-workspace-label" className="truncate text-[11px] text-slate-500" title={workspace || workspaceDisplay}>
+              {workspaceDisplay}
+            </p>
           </div>
         </div>
 
@@ -1262,6 +1271,7 @@ function FactoryPmLayer({
     { label: '步骤', value: stats.withSteps },
     { label: '验收', value: stats.withAcceptance },
   ];
+  const workspaceDisplay = workspaceLabel(workspace);
 
   return (
     <div data-testid="factory-pm-layer" className="flex h-full flex-col overflow-hidden bg-[#070b14]">
@@ -1279,8 +1289,8 @@ function FactoryPmLayer({
           <span className={cn('rounded-md border px-2 py-1 text-[10px] tracking-wider', roleStatusTone(status))}>
             {roleStatusLabel(status)}
           </span>
-          <span className="max-w-[260px] truncate rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-400">
-            {workspace || 'workspace n/a'}
+          <span data-testid="factory-pm-workspace-label" className="max-w-[180px] truncate rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-400" title={workspace || workspaceDisplay}>
+            {workspaceDisplay}
           </span>
         </div>
       </header>
@@ -1467,6 +1477,7 @@ function FactoryDirectorLayer({
     .slice(0, 6);
   const status = roleStatus?.status || (stats.running > 0 ? 'running' : stats.total > 0 ? 'ready' : 'waiting');
   const deliveryReady = blueprintCoverage.required === 0 || blueprintCoverage.missing.length === 0;
+  const workspaceDisplay = workspaceLabel(workspace);
 
   useEffect(() => {
     if (!tasks.some((task) => task.id === selectedTaskId)) {
@@ -1490,8 +1501,8 @@ function FactoryDirectorLayer({
           <span className={cn('rounded-md border px-2 py-1 text-[10px] tracking-wider', roleStatusTone(status))}>
             {roleStatusLabel(status)}
           </span>
-          <span className="max-w-[260px] truncate rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-400">
-            {workspace || 'workspace n/a'}
+          <span data-testid="factory-director-workspace-label" className="max-w-[180px] truncate rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-400" title={workspace || workspaceDisplay}>
+            {workspaceDisplay}
           </span>
         </div>
       </header>
@@ -1753,6 +1764,7 @@ function FactoryChiefEngineerLayer({
     : handoffReady || directorStageActive
       ? 'text-emerald-200'
       : 'text-amber-200';
+  const workspaceDisplay = workspaceLabel(workspace);
 
   return (
     <div data-testid="factory-chief-layer" className="flex h-full flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/25">
@@ -1766,12 +1778,12 @@ function FactoryChiefEngineerLayer({
             <p className="text-[10px] uppercase tracking-wider text-cyan-400/70">Blueprint Handoff Layer</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <span className={cn('rounded-md border px-2 py-1 text-[10px] tracking-wider', roleStatusTone(status))}>
             {roleStatusLabel(status)}
           </span>
-          <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-400">
-            {workspace || 'workspace n/a'}
+          <span data-testid="factory-chief-workspace-label" className="max-w-[180px] truncate rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-slate-400" title={workspace || workspaceDisplay}>
+            {workspaceDisplay}
           </span>
         </div>
       </header>

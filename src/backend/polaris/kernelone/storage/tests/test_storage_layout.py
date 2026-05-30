@@ -10,6 +10,7 @@ from polaris.kernelone._runtime_config import (
 from polaris.kernelone.storage import (
     UNSUPPORTED_PATH_PREFIX,
     StorageLayout,
+    clear_storage_roots_cache,
     resolve_global_path,
     resolve_runtime_path,
     resolve_storage_roots,
@@ -112,6 +113,28 @@ def test_global_path_under_polaris_home(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     cfg = Path(resolve_global_path("config/settings.json"))
     assert cfg.as_posix().endswith("/hp-home/config/settings.json")
+
+
+def test_global_path_ignores_appdata_by_default_on_windows_like_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    user_home = tmp_path / "user-home"
+    user_home.mkdir()
+    appdata = tmp_path / "AppData" / "Roaming"
+    appdata.mkdir(parents=True)
+    monkeypatch.delenv("KERNELONE_HOME", raising=False)
+    monkeypatch.delenv("KERNELONE_ROOT", raising=False)
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("USERPROFILE", str(user_home))
+    monkeypatch.setattr(
+        os.path, "expanduser", lambda value: str(user_home / ".polaris") if value == "~/.polaris" else value
+    )
+    clear_storage_roots_cache()
+
+    cfg = Path(resolve_global_path("config/settings.json"))
+
+    assert cfg == user_home / ".polaris" / "config" / "settings.json"
+    assert appdata not in cfg.parents
 
 
 def test_runtime_path_is_outside_workspace_when_external_runtime(

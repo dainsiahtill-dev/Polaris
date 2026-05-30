@@ -8,8 +8,14 @@ interface TaskListProps {
     currentTaskKey?: string;
     taskKey: (task: PmTask) => string;
     isTaskDone: (task: PmTask) => boolean;
-    clampText: (text: string, maxLen: number) => string;
+    clampText: (text: unknown, maxLen: number) => string;
 }
+
+const toDisplayText = (value: unknown): string => {
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value).trim();
+    return '';
+};
 
 function TaskListComponent({
     tasks,
@@ -40,8 +46,10 @@ function TaskListComponent({
                     const key = taskKey(task);
                     const isCompleted = completedSet.has(key) || isTaskDone(task);
                     const isCurrent = currentTaskKey === key;
-                    const title = task.title || task.goal || task.id || `Task ${index + 1}`;
-                    const goal = task.goal && task.goal !== title ? task.goal : '';
+                    const idText = toDisplayText(task.id);
+                    const title = toDisplayText(task.title) || toDisplayText(task.goal) || idText || `Task ${index + 1}`;
+                    const goalText = toDisplayText(task.goal);
+                    const goal = goalText && goalText !== title ? goalText : '';
                     const acceptance = Array.isArray(task.acceptance)
                         ? task.acceptance
                             .map((item) => toAcceptanceText(item))
@@ -53,7 +61,7 @@ function TaskListComponent({
                         <div
                             key={`${key || title}-${index}`}
                             data-testid="project-task-item"
-                            data-task-id={task.id || ''}
+                            data-task-id={idText}
                             className={`rounded-xl border p-3 transition-all duration-300 ${isCurrent
                                 ? 'border-accent/50 bg-accent/5 shadow-[0_0_15px_rgba(124,58,237,0.1)]'
                                 : isCompleted
@@ -65,8 +73,8 @@ function TaskListComponent({
                                 <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-2 text-xs text-text-dim font-mono">
                                         <span>#{index + 1}</span>
-                                        {task.id ? (
-                                            <span className="rounded-full border border-white/10 px-2 py-0.5">ID: {task.id}</span>
+                                        {idText ? (
+                                            <span className="rounded-full border border-white/10 px-2 py-0.5">ID: {idText}</span>
                                         ) : null}
                                         {task.priority !== undefined ? (
                                             <span className="rounded-full border border-white/10 px-2 py-0.5">P{task.priority}</span>

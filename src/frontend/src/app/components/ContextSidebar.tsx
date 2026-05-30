@@ -99,12 +99,14 @@ export function ContextSidebar({
                     onClick={() => setActiveTab('dialogue')}
                     icon={<MessageSquare className="size-5" />}
                     label="Discussion"
+                    testId="context-tab-dialogue"
                 />
                 <TabButton
                     active={activeTab === 'memos'}
                     onClick={() => setActiveTab('memos')}
                     icon={<FileText className="size-5" />}
                     label="备忘"
+                    testId="context-tab-memos"
                 />
                 {settingsShowMemory && (
                     <TabButton
@@ -112,6 +114,7 @@ export function ContextSidebar({
                         onClick={() => setActiveTab('memory')}
                         icon={showCognition ? <Brain className="size-5" /> : <Database className="size-5" />}
                         label="忆库"
+                        testId="context-tab-memory"
                     />
                 )}
                 <TabButton
@@ -119,12 +122,14 @@ export function ContextSidebar({
                     onClick={() => setActiveTab('snapshot')}
                     icon={<Camera className="size-5" />}
                     label="快照"
+                    testId="context-tab-snapshot"
                 />
                 <TabButton
                     active={activeTab === 'agi'}
                     onClick={() => setActiveTab('agi')}
                     icon={<Bot className="size-5" />}
                     label="AGI"
+                    testId="context-tab-agi"
                 />
             </div>
 
@@ -328,10 +333,11 @@ function AgiMetric({ label, value }: { label: string; value: string }) {
     );
 }
 
-function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+function TabButton({ active, onClick, icon, label, testId }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; testId?: string }) {
     return (
         <button
             onClick={onClick}
+            data-testid={testId}
             className={`group relative flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-500 ${active ? 'bg-white/10 text-accent shadow-[0_0_20px_rgba(139,92,246,0.3)] border border-white/10' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
             title={label}
         >

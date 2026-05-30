@@ -237,13 +237,18 @@ describe('PMDiagnosticsPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /LLM 缓存与预算/ }));
     const kernel = await screen.findByTestId('pm-kernel-diagnostics');
-    expect(kernel).toHaveTextContent('/v2/pm/cache-stats');
+    expect(kernel).not.toHaveTextContent('/v2/pm/cache-stats');
+    expect(screen.getByTestId('pm-kernel-cache-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/cache-stats');
     expect(kernel).toHaveTextContent('80.00%');
-    expect(kernel).toHaveTextContent('/v2/pm/token-budget-stats');
+    expect(kernel).not.toHaveTextContent('/v2/pm/token-budget-stats');
+    expect(screen.getByTestId('pm-kernel-token-budget-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/token-budget-stats');
     expect(kernel).toHaveTextContent('11,500');
     const llmEvents = screen.getByTestId('pm-llm-events-diagnostics');
-    expect(llmEvents).toHaveTextContent('/v2/pm/llm-events?limit=5');
-    expect(llmEvents).toHaveTextContent('/v2/pm/llm-events?limit=5&workspace=C%3A%2FTemp%2FProduct');
+    expect(llmEvents).not.toHaveTextContent('/v2/pm/llm-events?limit=5');
+    expect(screen.getByTestId('pm-llm-events-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/pm/llm-events?limit=5&workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(llmEvents).toHaveTextContent('llm call start');
     expect(llmEvents).toHaveTextContent('gpt-test');
 
@@ -259,11 +264,17 @@ describe('PMDiagnosticsPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /PM 管理状态/ }));
     const management = await screen.findByTestId('pm-management-diagnostics');
-    expect(management).toHaveTextContent('/pm/v2/pm/status');
-    expect(management).toHaveTextContent('/pm/v2/pm/status?workspace=C%3A%2FTemp%2FProduct');
+    expect(management).not.toHaveTextContent('/pm/v2/pm/status');
+    expect(screen.getByTestId('pm-management-status-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/pm/v2/pm/status?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(management).toHaveTextContent('Product');
-    expect(management).toHaveTextContent('/pm/v2/pm/health');
-    expect(management).toHaveTextContent('/pm/v2/pm/health?workspace=C%3A%2FTemp%2FProduct');
+    expect(management).not.toHaveTextContent('/pm/v2/pm/health');
+    expect(screen.getByTestId('pm-management-health-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/pm/v2/pm/health?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(management).toHaveTextContent('healthy');
     expect(management).toHaveTextContent('docs · ok');
   });
@@ -318,8 +329,12 @@ describe('PMDiagnosticsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /PM 管理状态/ }));
 
     const initPanel = await screen.findByTestId('pm-management-init-panel');
-    expect(initPanel).toHaveTextContent('POST /pm/v2/pm/init');
-    expect(initPanel).toHaveTextContent('POST /pm/v2/pm/init?workspace=C%3A%2FTemp%2FProduct');
+    expect(initPanel).not.toHaveTextContent('/pm/v2/pm/init');
+    expect(screen.getByTestId('pm-management-init-endpoint')).toHaveTextContent('POST API');
+    expect(screen.getByTestId('pm-management-init-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/pm/v2/pm/init?workspace=C%3A%2FTemp%2FProduct',
+    );
     fireEvent.change(screen.getByTestId('pm-management-init-project'), {
       target: { value: 'Recovered Project' },
     });

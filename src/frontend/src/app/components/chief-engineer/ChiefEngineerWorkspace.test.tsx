@@ -312,18 +312,26 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByTestId('chief-engineer-workspace')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-dialogue')).toBeInTheDocument();
     const backendStrip = screen.getByTestId('chief-engineer-backend-strip');
-    expect(backendStrip).toHaveTextContent('/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench');
+    expect(backendStrip).not.toHaveTextContent('/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench');
+    expect(screen.getByTestId('chief-engineer-capabilities-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench',
+    );
     expect(backendStrip).toHaveTextContent('read_files, write_blueprint');
-    expect(backendStrip).toHaveTextContent('/v2/chief-engineer/llm-events?limit=5');
-    expect(backendStrip).toHaveTextContent('/v2/chief-engineer/llm-events?limit=5&workspace=C%3A%2FTemp%2FProduct');
+    expect(screen.getByTestId('chief-engineer-llm-events-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/chief-engineer/llm-events?limit=5&workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(backendStrip).toHaveTextContent('events=1 · llm_call_start · gpt-test · 321 tokens');
-    expect(backendStrip).toHaveTextContent('/v2/chief-engineer/cache-stats');
+    expect(screen.getByTestId('chief-engineer-cache-endpoint')).toHaveAttribute('data-endpoint', '/v2/chief-engineer/cache-stats');
     expect(backendStrip).toHaveTextContent('hits=4 · misses=1 · size=5 · hit=80%');
-    expect(backendStrip).toHaveTextContent('/v2/chief-engineer/token-budget-stats');
+    expect(screen.getByTestId('chief-engineer-token-budget-endpoint')).toHaveAttribute('data-endpoint', '/v2/chief-engineer/token-budget-stats');
     expect(backendStrip).toHaveTextContent('total=12000 · available=6000 · used=2048');
     fireEvent.click(screen.getByTestId('chief-engineer-kernel-cache-clear'));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/v2/chief-engineer/cache-clear', { method: 'POST' }));
-    expect(await screen.findByTestId('chief-engineer-kernel-cache-clear-result')).toHaveTextContent('/v2/chief-engineer/cache-clear · Cache cleared');
+    const clearResult = await screen.findByTestId('chief-engineer-kernel-cache-clear-result');
+    expect(clearResult).toHaveAttribute('data-endpoint', '/v2/chief-engineer/cache-clear');
+    expect(clearResult).toHaveTextContent('Cache cleared');
     expect(screen.getByTestId('chief-engineer-diagnostics-status')).toHaveTextContent('degraded');
     expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('ready · Qwen3-Max');
     expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('0/0');
@@ -371,7 +379,8 @@ describe('ChiefEngineerWorkspace', () => {
 
     const exportButton = await screen.findByTestId('ai-role-session-export');
     await waitFor(() => expect(exportButton).not.toBeDisabled());
-    expect(exportButton).toHaveTextContent('导出 Director');
+    expect(exportButton).toHaveAttribute('aria-label', '导出当前 RoleSession 到 director 工作流');
+    expect(exportButton).toHaveAttribute('title', '导出当前 RoleSession 到 director 工作流');
 
     fireEvent.click(exportButton);
 
@@ -1080,8 +1089,11 @@ describe('ChiefEngineerWorkspace', () => {
     await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/status?source=auto')));
     const statusEvidence = await screen.findByTestId('chief-engineer-director-status-evidence');
-    expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto');
-    expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct');
+    expect(statusEvidence).not.toHaveTextContent('/v2/director/status?source=auto');
+    expect(screen.getByTestId('chief-engineer-director-status-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(statusEvidence).toHaveTextContent('running');
     expect(statusEvidence).toHaveTextContent('pid=7242');
     expect(statusEvidence).toHaveTextContent('mode=desktop_service');
@@ -1772,7 +1784,8 @@ describe('ChiefEngineerWorkspace', () => {
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto')));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=local')));
     const pool = await screen.findByTestId('chief-engineer-director-task-pool');
-    expect(pool).toHaveTextContent('/v2/director/tasks');
+    expect(pool).not.toHaveTextContent('/v2/director/tasks');
+    expect(screen.getByTestId('chief-engineer-director-task-pool-endpoint')).toHaveAttribute('data-endpoint', '/v2/director/tasks');
     expect(screen.getByTestId('chief-engineer-director-task-source')).toHaveTextContent('backend fallback');
 
     expect(within(pool).getByText('未领取').parentElement).toHaveTextContent('1');

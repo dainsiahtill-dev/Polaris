@@ -248,18 +248,22 @@ function TabNavigation({
     ? `${globalReadiness.state} · FACTORY BLOCKED`
     : globalReadiness.state;
   const blockedRoleLabels = blockedRoleDiagnostics.length
-    ? blockedRoleDiagnostics.map((item) => `${item.roleLabel}(${item.providerName}/${item.configuredModel})`)
+    ? blockedRoleDiagnostics.map((item) => item.roleLabel)
     : [...blockedRoles, ...factoryBlockedRoles];
+  const blockedRoleDetailTitle = blockedRoleDiagnostics.length
+    ? blockedRoleDiagnostics.map(formatBlockedRoleTitle).join('\n')
+    : blockedRoleLabels.join(', ');
   const tips: string[] = [];
-  if (blockedRoleLabels.length) tips.push(`未通过测试: ${blockedRoleLabels.join(', ')}`);
+  if (blockedRoleLabels.length) tips.push(`未通过深度测试: ${blockedRoleLabels.join(', ')}`);
   if (unsupportedRoles.length) tips.push(`运行时不支持: ${unsupportedRoles.join(', ')}`);
   if (factoryUnsupportedRoles.length) tips.push(`Factory 不支持: ${factoryUnsupportedRoles.join(', ')}`);
   const tipText = tips.length ? tips.join(' | ') : '请完成必需的 LLM 测试';
+  const tipTitle = blockedRoleDetailTitle || tipText;
 
   return (
     <div className="rounded-2xl border border-cyan-500/20 bg-[radial-gradient(circle_at_top,_rgba(14,116,144,0.22),_transparent_60%)] p-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button
             onClick={() => switchTab('config')}
             className={`px-4 py-2 text-[11px] font-semibold uppercase tracking-wider rounded-lg border transition-all ${
@@ -283,7 +287,7 @@ function TabNavigation({
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div data-testid="llm-readiness-summary" className="flex min-w-0 flex-wrap items-center justify-start gap-2 xl:justify-end">
           {!hasBlock ? (
             <CheckCircle2 className="size-4 text-emerald-400" />
           ) : (
@@ -293,7 +297,7 @@ function TabNavigation({
             {statusLabel}
           </span>
           {hasBlock ? (
-            <span className="max-w-[760px] truncate text-[10px] text-amber-300 border border-amber-400/30 bg-amber-500/10 rounded px-2 py-1" title={tipText}>
+            <span className="min-w-0 max-w-full break-words rounded border border-amber-400/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300" title={tipTitle}>
               {tipText}
             </span>
           ) : null}
@@ -309,7 +313,8 @@ function TabNavigation({
             {blockedRoleDiagnostics.map((detail) => (
               <div
                 key={detail.roleId}
-                className="grid gap-2 px-3 py-2 text-[11px] md:grid-cols-[112px_minmax(0,1fr)_minmax(180px,0.8fr)]"
+                data-testid="llm-readiness-diagnostic-row"
+                className="grid min-w-0 gap-2 px-3 py-2 text-[11px] md:grid-cols-[112px_minmax(0,1fr)_minmax(180px,0.8fr)]"
                 title={formatBlockedRoleTitle(detail)}
               >
                 <div className="flex min-w-0 items-center gap-2">
@@ -319,25 +324,25 @@ function TabNavigation({
                   <span className={`h-2 w-2 rounded-full ${detail.runtimeSupported ? 'bg-amber-300' : 'bg-red-400'}`} />
                 </div>
                 <div className="min-w-0 text-text-muted">
-                  <div className="truncate text-text-main">
+                  <div data-testid="llm-readiness-diagnostic-provider" className="break-words text-text-main">
                     Provider: <span className="font-semibold text-cyan-100">{detail.providerName}</span>
                     {detail.providerId && detail.providerName !== detail.providerId ? (
                       <span className="ml-1 text-text-dim">({detail.providerId})</span>
                     ) : null}
                   </div>
-                  <div className="truncate">
+                  <div data-testid="llm-readiness-diagnostic-model" className="break-words">
                     Model: <span className="text-emerald-100">{detail.configuredModel}</span>
                   </div>
                 </div>
                 <div className="min-w-0 text-amber-100">
-                  <div className="truncate">原因: {detail.issueLabel}</div>
-                  <div className="truncate text-text-dim">
+                  <div data-testid="llm-readiness-diagnostic-reason" className="break-words">原因: {detail.issueLabel}</div>
+                  <div data-testid="llm-readiness-diagnostic-tested" className="break-words text-text-dim">
                     最近测试: {detail.testedProviderId || detail.testedModel
                       ? `${detail.testedProviderName}/${detail.testedModel || '未知模型'}`
                       : '无记录'}
                   </div>
                   {detail.testedTimestamp ? (
-                    <div className="truncate text-text-dim">测试时间: {detail.testedTimestamp}</div>
+                    <div className="break-all text-text-dim">测试时间: {detail.testedTimestamp}</div>
                   ) : null}
                 </div>
               </div>

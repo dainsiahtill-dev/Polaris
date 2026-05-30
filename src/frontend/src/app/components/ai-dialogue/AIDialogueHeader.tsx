@@ -4,13 +4,11 @@
  * 显示角色图标、名称、状态和操作按钮
  */
 
-import { useState, useCallback } from 'react';
 import {
   Sparkles,
   History,
   RefreshCw,
   MoreHorizontal,
-  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
@@ -65,15 +63,15 @@ export function AIDialogueHeader({
   onToggleHistory,
 }: AIDialogueHeaderProps) {
   return (
-    <div className="h-14 flex items-center justify-between px-4 border-b border-white/10 bg-gradient-to-r from-slate-900 to-slate-950">
+    <div className="flex h-14 min-w-0 items-center justify-between gap-3 border-b border-white/10 bg-gradient-to-r from-slate-900 to-slate-950 px-4">
       {/* 左侧：角色信息 */}
-      <div className="flex items-center gap-2">
-        <div className={cn("w-7 h-7 rounded-lg bg-gradient-to-br flex items-center justify-center", theme.gradient)}>
+      <div className="flex min-w-0 items-center gap-2">
+        <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br", theme.gradient)}>
           <Sparkles className="w-3.5 h-3.5 text-white" />
         </div>
-        <div>
-          <h3 className="text-sm font-medium text-slate-200">AI 助手</h3>
-          <p className="text-[10px] text-slate-500">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-medium text-slate-200">AI 助手</h3>
+          <p className="truncate text-[10px] text-slate-500">
             {isChatReady
               ? `${configuredProviderLabel} · ${configuredModelLabel}`
               : statusKind === 'unconfigured'
@@ -86,7 +84,7 @@ export function AIDialogueHeader({
       </div>
 
       {/* 右侧：操作按钮 */}
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         {statusDisplay}
         <Button
           variant="ghost"
@@ -116,6 +114,8 @@ export function AIDialogueHeader({
           variant="ghost"
           size="icon"
           className="h-7 w-7 text-slate-400 hover:text-slate-200"
+          aria-label="更多对话操作"
+          title="更多对话操作"
         >
           <MoreHorizontal className="w-3.5 h-3.5" />
         </Button>

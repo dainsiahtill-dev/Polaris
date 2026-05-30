@@ -40,7 +40,11 @@ describe('RoleSessionEvidencePanel', () => {
     render(<RoleSessionEvidencePanel sessionId={null} tone="amber" />);
 
     expect(screen.getByTestId('role-session-evidence-empty')).toHaveTextContent('等待会话');
-    expect(screen.getByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/{session_id}');
+    expect(screen.getByTestId('role-session-evidence-panel')).not.toHaveTextContent('/v2/roles/sessions/{session_id}');
+    expect(screen.getByTestId('role-session-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/sessions/{session_id}',
+    );
     expect(roleSessionMocks.listRoleSessionMessageEvidence).not.toHaveBeenCalled();
   });
 
@@ -56,7 +60,15 @@ describe('RoleSessionEvidencePanel', () => {
       limit: 5,
       offset: 0,
     });
-    expect(screen.getByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/role-session-1');
+    expect(screen.getByTestId('role-session-evidence-panel')).not.toHaveTextContent('/v2/roles/sessions/role-session-1');
+    expect(screen.getByTestId('role-session-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/sessions/role-session-1',
+    );
+    expect(screen.getByTestId('role-session-evidence-messages')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/sessions/role-session-1/messages',
+    );
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('assistant: Evidence message');
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('9');
     expect(screen.getByTestId('role-session-evidence-messages')).toHaveTextContent('预览 1');
@@ -77,7 +89,11 @@ describe('RoleSessionEvidencePanel', () => {
 
     const messageError = await screen.findByTestId('role-session-evidence-messages-error');
     expect(messageError).toHaveTextContent('messages offline');
-    expect(screen.getByTestId('role-session-evidence-panel')).toHaveTextContent('/v2/roles/sessions/role-session-2');
+    expect(screen.getByTestId('role-session-evidence-panel')).not.toHaveTextContent('/v2/roles/sessions/role-session-2');
+    expect(screen.getByTestId('role-session-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/sessions/role-session-2',
+    );
     expect(screen.getByTestId('role-session-evidence-artifacts')).toHaveTextContent('directive: artifact-1');
     expect(screen.getByTestId('role-session-evidence-audit')).toHaveTextContent('session_exported');
   });

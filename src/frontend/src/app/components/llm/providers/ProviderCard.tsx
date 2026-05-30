@@ -210,15 +210,15 @@ export const ProviderCard = memo(function ProviderCard({
       data-provider-connectivity-status={connectivityStatus}
     >
       {/* Compact View */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <CyberpunkGlitchText 
+      <div data-testid={`provider-card-header-${providerSlug}`} className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+          <CyberpunkGlitchText
             text={provider.name || providerInfo?.name || providerId} 
             status={connectivityStatus}
-            className="text-sm font-semibold"
+            className="min-w-0 truncate text-sm font-semibold"
           />
-          <div className="flex items-center gap-2 text-[10px] text-text-dim">
-            <span className="font-mono">{provider.model || '默认'}</span>
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-text-dim">
+            <span className="min-w-0 max-w-full truncate font-mono sm:max-w-72">{provider.model || '默认'}</span>
             <span className={`${
               costClass.toLowerCase() === 'local' 
                 ? 'text-green-400' 
@@ -231,15 +231,15 @@ export const ProviderCard = memo(function ProviderCard({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div data-testid={`provider-card-actions-${providerSlug}`} className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
           {/* Connectivity Status Badge */}
-          <div className={`flex items-center gap-1.5 px-2 py-1 rounded border ${statusStyles.border} bg-white/5`}>
+          <div className={`flex shrink-0 items-center gap-1.5 rounded border px-2 py-1 ${statusStyles.border} bg-white/5`}>
             <CyberpunkGlitchText text={connectivityLabel} status={connectivityStatus} className="text-[10px]" />
           </div>
 
           {/* Readiness Status Badge */}
           <div
-            className="flex items-center gap-1.5 px-2 py-1 rounded border border-white/10 bg-white/5"
+            className="flex shrink-0 items-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 py-1"
             title={`就绪状态（综合套件）${providerReadiness?.grade ? `: ${providerReadiness.grade}` : ''}`}
           >
             {readinessStatus === 'passed' ? (
@@ -253,7 +253,7 @@ export const ProviderCard = memo(function ProviderCard({
           </div>
 
           {/* Deep Test Status Badge */}
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded border border-white/10 bg-white/5">
+          <div className="flex shrink-0 items-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 py-1">
             {providerInterview ? (
               providerInterview.status === 'passed' ? (
                 <UserCheck className="size-3 text-emerald-400" />
@@ -318,7 +318,7 @@ export const ProviderCard = memo(function ProviderCard({
       {isExpanded && !isEditing && (
         <div className="mt-4 pt-4 border-t border-white/10 space-y-4">
           {/* Three-column info cards */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div className="flex items-center gap-2 px-3 py-2 rounded border border-white/10 bg-white/5">
               <Zap className="size-3.5 text-amber-400" />
               <div className="flex-1 min-w-0">
@@ -367,10 +367,10 @@ export const ProviderCard = memo(function ProviderCard({
                   {new Date(providerInterview.timestamp).toLocaleString()}
                 </span>
               </div>
-              <div className="text-[10px] text-text-muted">
+              <div className="break-words text-[10px] text-text-muted">
                 角色: <span className="text-text-main">{getRoleDisplayName(providerInterview.role)}</span>
                 {' · '}
-                模型: <span className="text-text-main font-mono">{providerInterview.model}</span>
+                模型: <span className="font-mono text-text-main">{providerInterview.model}</span>
               </div>
             </div>
           )}

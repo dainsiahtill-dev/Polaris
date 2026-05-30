@@ -526,6 +526,8 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
     )
 
     backend, backend_llm_cfg = resolve_pm_backend_kind(requested_backend, role_state)
+    args._resolved_pm_backend_kind = backend
+    args._backend_llm_cfg = backend_llm_cfg
     ensure_pm_backend_available(backend)
 
     _provider_id = backend_llm_cfg.provider_id if backend_llm_cfg else ""

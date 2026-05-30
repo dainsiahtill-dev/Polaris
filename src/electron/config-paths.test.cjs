@@ -16,14 +16,14 @@ const {
   shouldEnableSelfUpgradeMode,
 } = require("./config-paths.cjs");
 
-test("resolvepolarisRoot prefers APPDATA on Windows when no overrides exist", () => {
+test("resolvepolarisRoot prefers user home on Windows when no overrides exist", () => {
   const env = {
     APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
     USERPROFILE: "C:\\Users\\tester",
   };
 
   const result = resolvepolarisRoot(env, "win32");
-  assert.equal(result, path.resolve("C:\\Users\\tester\\AppData\\Roaming"));
+  assert.equal(result, path.resolve("C:\\Users\\tester"));
 });
 
 test("resolvepolarisRoot trims KERNELONE_HOME when it already points at .polaris", () => {
@@ -56,10 +56,10 @@ test("getGlobalSettingsPath matches backend-style root resolution", () => {
   const home = resolvepolarisHome(env, "win32");
   const settingsPath = getGlobalSettingsPath(env, "win32");
 
-  assert.equal(home, path.resolve("C:\\Users\\tester\\AppData\\Roaming\\.polaris"));
+  assert.equal(home, path.resolve("C:\\Users\\tester\\.polaris"));
   assert.equal(
     settingsPath,
-    path.resolve("C:\\Users\\tester\\AppData\\Roaming\\.polaris\\config\\settings.json"),
+    path.resolve("C:\\Users\\tester\\.polaris\\config\\settings.json"),
   );
 });
 
@@ -73,7 +73,7 @@ test("getDesktopBackendInfoPath stores backend bridge state under Polaris runtim
 
   assert.equal(
     backendInfoPath,
-    path.resolve("C:\\Users\\tester\\AppData\\Roaming\\.polaris\\runtime\\desktop-backend.json"),
+    path.resolve("C:\\Users\\tester\\.polaris\\runtime\\desktop-backend.json"),
   );
 });
 

@@ -27,4 +27,9 @@ describe('runtimeDisplay', () => {
   it('rejects accidental 1970 timestamps that create huge active durations', () => {
     expect(normalizeStartedAtSeconds(1771594)).toBeNull();
   });
+
+  it('ignores malformed structured timestamp payloads instead of throwing', () => {
+    expect(normalizeStartedAtSeconds({ seconds: 1771594105 })).toBeNull();
+    expect(normalizeStartedAtSeconds(['2026-02-20T13:28:25Z'])).toBeNull();
+  });
 });

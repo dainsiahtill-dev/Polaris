@@ -13,6 +13,7 @@ export type TestEnvironment = {
   isolatedE2EHome: string;
   isolatedRuntimeRoot: string;
   isolatedWorkspace: string;
+  settingsHome: string;
   useRealSettings: boolean;
 };
 
@@ -321,12 +322,19 @@ export const test = base.extend<Fixtures>({
     const isolatedRuntimeRoot = createIsolatedRuntimeRoot();
     const isolatedWorkspace = createIsolatedWorkspace();
     const useRealSettings = process.env.KERNELONE_E2E_USE_REAL_SETTINGS === "1";
+    const realSettingsHome = String(process.env.KERNELONE_E2E_HOME || process.env.KERNELONE_HOME || "").trim();
+    const settingsHome = useRealSettings
+      ? realSettingsHome
+        ? path.resolve(realSettingsHome)
+        : path.join(os.homedir(), ".polaris")
+      : isolatedE2EHome;
 
     try {
       await use({
         isolatedE2EHome,
         isolatedRuntimeRoot,
         isolatedWorkspace,
+        settingsHome,
         useRealSettings,
       });
     } finally {

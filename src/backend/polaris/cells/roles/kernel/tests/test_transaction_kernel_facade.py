@@ -907,6 +907,37 @@ def test_build_decision_messages_omits_task_contract_for_read_only_request() -> 
     assert not any("TASK CONTRACT (single-batch planning)" in text for text in system_messages)
 
 
+def test_build_decision_messages_omits_write_contract_for_toolless_proposal() -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "[mode:propose] Non-interactive batch worker. Return only fenced "
+                "file sections for: src/app.py. The first non-whitespace text "
+                "must be ```file:. No progress notes. Do not call tools."
+            ),
+        }
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "edit_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+    messages = controller._build_decision_messages(context, tool_definitions)
+
+    system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
+    assert any("SYSTEM CONSTRAINT (Proposal)" in text for text in system_messages)
+    assert not any("SYSTEM CONSTRAINT (Execution)" in text for text in system_messages)
+    assert not any("TASK CONTRACT (single-batch planning)" in text for text in system_messages)
+    assert not any("This request requires mutation." in text for text in system_messages)
+    assert not any("write/edit tools" in text for text in system_messages)
+
+
 def test_build_decision_messages_omits_mutation_contract_for_super_readonly_stage() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

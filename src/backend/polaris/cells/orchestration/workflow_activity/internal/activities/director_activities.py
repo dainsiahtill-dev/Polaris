@@ -33,6 +33,8 @@ _PHASE_NAME_MAP = {
     "verification": TaskPhase.VERIFICATION,
     "report": TaskPhase.COMPLETED,
 }
+_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS = 930
+_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS = 900
 
 
 def _normalize_dict(value: Any) -> dict[str, Any]:
@@ -45,6 +47,16 @@ def _normalize_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _coerce_timeout_seconds(value: Any, *, default: int, maximum: int) -> int:
+    try:
+        timeout = int(value) if value is not None else int(default)
+    except (TypeError, ValueError):
+        timeout = int(default)
+    if timeout <= 0:
+        timeout = int(default)
+    return max(30, min(timeout, maximum))
 
 
 def _phase_from_name(name: str) -> TaskPhase | None:
@@ -161,14 +173,22 @@ def _run_director_execution(
     result_path = os.path.join(task_root, "director.result.json")
     log_path = os.path.join(task_root, "director.log")
 
-    timeout = director_config.get("timeout", 300)
-    if not isinstance(timeout, (int, float)) or timeout <= 0:
-        timeout = 300
-    timeout = max(30, min(int(timeout), 600))
+    process_timeout = _coerce_timeout_seconds(
+        director_config.get("timeout"),
+        default=300,
+        maximum=_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS,
+    )
+    task_timeout = _coerce_timeout_seconds(
+        director_config.get("task_timeout") or director_config.get("task_timeout_seconds"),
+        default=max(process_timeout - 30, 30),
+        maximum=_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS,
+    )
+    timeout = max(process_timeout, min(task_timeout + 30, _DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS))
 
     config = {
         "script": str(director_config.get("script") or "src/backend/polaris/delivery/cli/loop-director.py"),
         "timeout": timeout,
+        "task_timeout": task_timeout,
         "model": str(director_config.get("model") or "").strip(),
         "prompt_profile": str(director_config.get("prompt_profile") or "").strip(),
         "director_result_path": result_path,

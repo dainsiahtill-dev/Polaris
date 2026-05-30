@@ -35,13 +35,19 @@ describe('RoleRunEvidenceStrip', () => {
     );
 
     const evidence = screen.getByTestId('run-evidence');
-    expect(evidence).toHaveTextContent('/v2/director/runs/run-1');
-    expect(evidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(evidence).not.toHaveTextContent('/v2/director/runs/run-1');
+    expect(screen.getByTestId('run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/run-1?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(evidence).toHaveTextContent('RUNNING · queued=3');
     expect(evidence).toHaveTextContent('Status: RUNNING');
     expect(screen.getByTestId('run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
-    expect(screen.getByTestId('run-cancel-result')).toHaveTextContent('/v2/director/runs/run-1/cancel');
-    expect(screen.getByTestId('run-cancel-result')).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(screen.getByTestId('run-cancel-result')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/run-1/cancel?workspace=C%3A%2FTemp%2FProduct',
+    );
+    expect(screen.getByTestId('run-cancel-result')).not.toHaveTextContent('/v2/director/runs/run-1/cancel');
 
     fireEvent.click(screen.getByTestId('run-refresh'));
     expect(onRefresh).toHaveBeenCalledTimes(1);
@@ -69,7 +75,8 @@ describe('RoleRunEvidenceStrip', () => {
     );
 
     expect(screen.getByTestId('run-evidence')).toHaveTextContent('run detail unavailable');
-    expect(screen.getByTestId('run-cancel-result')).toHaveTextContent('/v2/pm/runs/run-2/cancel · cancelling');
+    expect(screen.getByTestId('run-cancel-result')).toHaveAttribute('data-endpoint', '/v2/pm/runs/run-2/cancel');
+    expect(screen.getByTestId('run-cancel-result')).toHaveTextContent('cancelling');
     expect(screen.getByTestId('run-cancel')).toBeDisabled();
   });
 });

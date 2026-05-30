@@ -498,8 +498,11 @@ describe('PMDocumentPanel', () => {
 
     fireEvent.click(screen.getByTestId('pm-document-delete-toggle'));
 
-    expect(screen.getByTestId('pm-document-delete-panel')).toHaveTextContent(
-      'DELETE /v2/pm/documents/docs/product/obsolete.md',
+    expect(screen.getByTestId('pm-document-delete-panel')).not.toHaveTextContent('/v2/pm/documents/docs/product/obsolete.md');
+    expect(screen.getByTestId('pm-document-delete-endpoint')).toHaveTextContent('DELETE API');
+    expect(screen.getByTestId('pm-document-delete-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/pm/documents/docs/product/obsolete.md',
     );
     expect(screen.getByTestId('pm-document-delete-evidence')).toHaveTextContent('delete_file=false');
     expect(screen.getByTestId('pm-document-delete-delete-file')).not.toBeChecked();

@@ -114,7 +114,7 @@ export function ResidentWorkspace({
   };
 
   return (
-    <div className="flex h-full flex-col bg-slate-950 text-slate-100">
+    <div data-testid="resident-workspace" className="flex h-full flex-col bg-slate-950 text-slate-100">
       {/* Simplified Header */}
       <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
         <div className="flex items-center gap-3">
@@ -201,6 +201,7 @@ export function ResidentWorkspace({
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key as AgiTab)}
+              data-testid={`resident-tab-${tab.key}`}
               className={cn(
                 'px-4 py-2 text-sm font-medium transition-colors',
                 activeTab === tab.key

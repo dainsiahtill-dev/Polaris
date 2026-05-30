@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/api';
-import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/app/components/ui/drawer';
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from '@/app/components/ui/drawer';
 import {
   Activity,
   AlertTriangle,
@@ -386,14 +386,22 @@ function HistoryDrawerContent() {
 
 export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
   return (
-    <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-w-2xl h-full ml-auto bg-[var(--ink-indigo)] border-l border-gray-800">
-        <DrawerHeader className="border-b border-gray-800">
-          <DrawerTitle className="text-gray-200 flex items-center gap-2">
-            <History className="h-5 w-5 text-blue-400" />
-            案卷历史
-          </DrawerTitle>
-        </DrawerHeader>
+    <Drawer open={open} onOpenChange={onOpenChange} direction="right">
+      <DrawerContent
+        data-testid="history-drawer"
+        className="left-auto right-0 top-0 bottom-0 h-dvh border-l border-gray-800 bg-[var(--ink-indigo)] data-[state=open]:!transform-none data-[state=open]:!translate-x-0"
+        style={{
+          backgroundColor: 'rgb(18, 14, 42)',
+          boxSizing: 'border-box',
+          right: 0,
+          width: 'min(42rem, calc(100vw - 2rem))',
+          maxWidth: 'calc(100vw - 2rem)',
+        }}
+      >
+        <DrawerTitle className="sr-only">案卷历史</DrawerTitle>
+        <DrawerDescription className="sr-only">
+          查看 Factory 批次、任务路由、阻塞原因和缺陷回流记录。
+        </DrawerDescription>
         <div className="flex-1 overflow-hidden">
           <HistoryDrawerContent />
         </div>

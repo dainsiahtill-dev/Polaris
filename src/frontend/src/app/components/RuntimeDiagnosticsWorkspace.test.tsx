@@ -57,6 +57,8 @@ describe('RuntimeDiagnosticsWorkspace', () => {
     expect(screen.getByText('Rate limit')).toBeInTheDocument();
     expect(screen.getByText('WS LIVE')).toBeInTheDocument();
     expect(screen.getByText('NATS connected')).toBeInTheDocument();
+    expect(screen.getByTestId('runtime-diagnostics-workspace-label')).toHaveTextContent('Product');
+    expect(screen.getByTestId('runtime-diagnostics-workspace-label')).toHaveAttribute('title', 'C:/Temp/Product');
     expect(mockedApiFetchFresh).toHaveBeenCalledWith('/v2/runtime/diagnostics');
   });
 

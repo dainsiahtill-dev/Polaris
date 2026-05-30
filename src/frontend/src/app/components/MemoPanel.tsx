@@ -59,16 +59,16 @@ export function MemoPanel({
   }, [items, query]);
 
   return (
-    <div className="h-full bg-[var(--ink-indigo)] border-l border-gray-800 flex flex-col">
-      <div className="px-4 py-3 border-b border-gray-800 bg-[#252526] flex items-center justify-between">
-        <div className="flex items-center gap-2">
+    <div data-testid="memo-panel" className="flex h-full min-w-0 flex-col overflow-hidden border-l border-gray-800 bg-[var(--ink-indigo)]">
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-gray-800 bg-[#252526] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
           <FileText className="size-4 text-blue-400" />
-          <h2 className="text-sm font-semibold text-gray-300">PM Memos</h2>
+          <h2 className="truncate text-sm font-semibold text-gray-300">PM Memos</h2>
         </div>
-        <div className="flex items-center gap-3 text-xs text-gray-500">
-          <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-3 text-xs text-gray-500">
+          <div className="flex min-w-0 items-center gap-1">
             <Clock className="size-3" />
-            <span>{mtime || selected?.mtime || '-'}</span>
+            <span className="max-w-36 truncate">{mtime || selected?.mtime || '-'}</span>
           </div>
           <button
             type="button"
@@ -84,7 +84,7 @@ export function MemoPanel({
       </div>
 
       {collapsed ? null : (
-        <div className="p-3 border-b border-gray-800">
+        <div className="border-b border-gray-800 p-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 size-3.5 text-gray-500" />
             <input
@@ -99,8 +99,8 @@ export function MemoPanel({
       )}
 
       {collapsed ? null : (
-        <div className="flex-1 min-h-0 flex">
-          <div className="w-56 border-r border-gray-800 overflow-y-auto">
+        <div className="flex min-h-0 min-w-0 flex-1">
+          <div className="w-56 shrink-0 overflow-y-auto border-r border-gray-800">
             {filtered.length === 0 ? (
               <div className="p-3 text-xs text-gray-500">(暂无备忘录)</div>
             ) : (
@@ -110,7 +110,7 @@ export function MemoPanel({
                   <button
                     key={item.path}
                     onClick={() => onSelect(item)}
-                    className={`w-full text-left px-3 py-2 border-b border-gray-800/60 hover:bg-white/5 ${isActive ? 'bg-blue-500/10' : ''
+                    className={`w-full min-w-0 border-b border-gray-800/60 px-3 py-2 text-left hover:bg-white/5 ${isActive ? 'bg-blue-500/10' : ''
                       }`}
                   >
                     <div className="text-xs text-gray-300 truncate">{item.task_title || item.name}</div>
@@ -123,17 +123,17 @@ export function MemoPanel({
             )}
           </div>
 
-          <div className="flex-1 overflow-auto">
+          <div data-testid="memo-panel-body" className="min-w-0 flex-1 overflow-auto">
             {error ? (
-              <div className="p-4 text-sm text-red-300 flex items-center gap-2">
+              <div className="flex items-center gap-2 p-4 text-sm text-red-300">
                 <AlertCircle className="size-4" />
-                <span>{error}</span>
+                <span className="min-w-0 break-words">{error}</span>
               </div>
             ) : null}
             {loading ? (
               <div className="p-4 text-sm text-gray-300">加载中...</div>
             ) : (
-              <pre className="p-4 text-xs text-gray-300 font-mono leading-relaxed whitespace-pre-wrap">
+              <pre data-testid="memo-panel-content" className="whitespace-pre-wrap break-words p-4 font-mono text-xs leading-relaxed text-gray-300">
                 <code>{content || '(空)'}</code>
               </pre>
             )}

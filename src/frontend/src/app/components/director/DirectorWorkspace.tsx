@@ -141,6 +141,25 @@ function evidenceEndpoint(endpoint: string, workspace: string): string {
   return `${endpoint}${separator}workspace=${encodeURIComponent(value)}`;
 }
 
+function EvidenceEndpointBadge({
+  endpoint,
+  testId,
+}: {
+  endpoint: string;
+  testId?: string;
+}) {
+  return (
+    <span
+      className="shrink-0 rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] font-medium text-slate-500"
+      title={endpoint}
+      data-endpoint={endpoint}
+      data-testid={testId}
+    >
+      API
+    </span>
+  );
+}
+
 interface DirectorTaskCancelState {
   taskId: string | null;
   loading: boolean;
@@ -953,6 +972,7 @@ function DirectorCapabilityStrip({
 }) {
   const allCapabilities = new Set(hosts.flatMap((host) => host.capabilities));
   const deleteAllowed = allCapabilities.has('delete_files');
+  const capabilityCount = allCapabilities.size;
 
   return (
     <section
@@ -960,80 +980,89 @@ function DirectorCapabilityStrip({
       data-testid="director-capability-strip"
       aria-label="Director capability matrix"
     >
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
-          <Wrench className="h-3.5 w-3.5 text-indigo-300" />
-          能力矩阵
-        </div>
-        <span className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-400">
-          /v2/director/capabilities
-        </span>
-
-        {isLoading ? (
-          <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
-            正在读取 Director 能力
+      <details className="group rounded-lg border border-indigo-500/15 bg-slate-900/35 px-3 py-2">
+        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+          <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
+            <Wrench className="h-3.5 w-3.5 text-indigo-300" />
+            Director 能力
           </div>
-        ) : error ? (
-          <div
-            className="flex items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
-            data-testid="director-capability-error"
-          >
-            <AlertTriangle className="h-3.5 w-3.5" />
-            {error}
-          </div>
-        ) : hosts.length > 0 ? (
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto" data-testid="director-capability-hosts">
-            {hosts.map((host) => (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+              {isLoading ? '读取中' : error ? '能力异常' : `${hosts.length} host`}
+            </span>
+            {!isLoading && !error ? (
+              <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                {capabilityCount} capabilities
+              </span>
+            ) : null}
+            {!isLoading && !error ? (
               <div
-                key={host.hostKind}
-                className="flex shrink-0 items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1"
-                data-testid="director-capability-host"
+                className={cn(
+                  'flex shrink-0 items-center gap-1.5 rounded border px-2 py-0.5 text-[10px]',
+                  deleteAllowed
+                    ? 'border-red-500/25 bg-red-500/10 text-red-200'
+                    : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
+                )}
+                data-testid="director-delete-capability"
               >
-                <Brain className="h-3.5 w-3.5 text-cyan-300" />
-                <span className="text-[10px] font-medium text-slate-200">{host.hostKind}</span>
-                <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] text-indigo-200">
-                  {host.capabilities.length}
-                </span>
-                <div className="flex items-center gap-1">
-                  {host.capabilities.slice(0, 4).map((capability) => (
-                    <span
-                      key={`${host.hostKind}-${capability}`}
-                      className="rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] text-slate-300"
-                      title={capability}
-                    >
-                      {formatCapabilityLabel(capability)}
-                    </span>
-                  ))}
-                </div>
+                {deleteAllowed ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                delete_files {deleteAllowed ? 'allowed' : 'blocked'}
               </div>
-            ))}
+            ) : null}
           </div>
-        ) : (
-          <div className="text-[11px] text-slate-500" data-testid="director-capability-empty">
-            后端未返回能力矩阵
-          </div>
-        )}
+          <span className="shrink-0 text-[10px] text-slate-500 group-open:hidden">展开证据</span>
+          <span className="hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起证据</span>
+        </summary>
+        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
+          <EvidenceEndpointBadge endpoint="/v2/director/capabilities" testId="director-capability-endpoint" />
 
-        {!isLoading && !error ? (
-          <div
-            className={cn(
-              'ml-auto flex shrink-0 items-center gap-1.5 rounded border px-2 py-1 text-[10px]',
-              deleteAllowed
-                ? 'border-red-500/25 bg-red-500/10 text-red-200'
-                : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
-            )}
-            data-testid="director-delete-capability"
-          >
-            {deleteAllowed ? (
-              <AlertTriangle className="h-3 w-3" />
-            ) : (
-              <CheckCircle2 className="h-3 w-3" />
-            )}
-            delete_files {deleteAllowed ? 'allowed' : 'blocked'}
-          </div>
-        ) : null}
-      </div>
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+              正在读取 Director 能力
+            </div>
+          ) : error ? (
+            <div
+              className="flex items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
+              data-testid="director-capability-error"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {error}
+            </div>
+          ) : hosts.length > 0 ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto" data-testid="director-capability-hosts">
+              {hosts.map((host) => (
+                <div
+                  key={host.hostKind}
+                  className="flex shrink-0 items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1"
+                  data-testid="director-capability-host"
+                >
+                  <Brain className="h-3.5 w-3.5 text-cyan-300" />
+                  <span className="text-[10px] font-medium text-slate-200">{host.hostKind}</span>
+                  <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] text-indigo-200">
+                    {host.capabilities.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {host.capabilities.slice(0, 4).map((capability) => (
+                      <span
+                        key={`${host.hostKind}-${capability}`}
+                        className="rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] text-slate-300"
+                        title={capability}
+                      >
+                        {formatCapabilityLabel(capability)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-500" data-testid="director-capability-empty">
+              后端未返回能力矩阵
+            </div>
+          )}
+        </div>
+      </details>
     </section>
   );
 }
@@ -1059,94 +1088,122 @@ function DirectorKernelDiagnosticsStrip({
   onClearCache: () => void;
   workspace: string;
 }) {
+  const eventCount = llmEvents?.count ?? llmEvents?.events?.length;
+
   return (
     <section
       className="border-b border-white/10 bg-slate-950/45 px-4 py-2"
       data-testid="director-kernel-diagnostics-strip"
       aria-label="Director Kernel diagnostics"
     >
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
-          <BarChart3 className="h-3.5 w-3.5 text-indigo-300" />
-          Kernel 统计
-        </div>
-        {isLoading ? (
-          <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
-            正在读取缓存、预算与 LLM 事件
+      <details className="group rounded-lg border border-indigo-500/15 bg-slate-900/30 px-3 py-2">
+        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+          <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
+            <BarChart3 className="h-3.5 w-3.5 text-indigo-300" />
+            Kernel 统计
           </div>
-        ) : error ? (
-          <div
-            className="flex min-w-0 items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
-            data-testid="director-kernel-diagnostics-error"
-          >
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{error}</span>
-          </div>
-        ) : (
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
-            <KernelStripMetric
-              icon={<Database className="h-3.5 w-3.5 text-cyan-300" />}
-              label="缓存"
-              endpoint="/v2/director/cache-stats"
-              values={[
-                `hit ${formatKernelPercent(cacheStats?.hit_rate)}`,
-                `${formatKernelNumber(cacheStats?.size)} / ${formatKernelNumber(cacheStats?.max_size)}`,
-                cacheStats?.enabled === false ? 'disabled' : 'enabled',
-              ]}
-            />
-            <KernelStripMetric
-              icon={<Coins className="h-3.5 w-3.5 text-emerald-300" />}
-              label="预算"
-              endpoint="/v2/director/token-budget-stats"
-              values={[
-                `total ${formatKernelNumber(tokenBudgetStats?.total)}`,
-                `dialogue ${formatKernelNumber(tokenBudgetStats?.available_conversation)}`,
-                `margin ${formatKernelNumber(tokenBudgetStats?.safety_margin)}`,
-              ]}
-            />
-            <KernelStripMetric
-              icon={<Brain className="h-3.5 w-3.5 text-indigo-300" />}
-              label="LLM"
-              endpoint={evidenceEndpoint('/v2/director/llm-events?role=director&limit=5', workspace)}
-              values={[
-                `events ${formatKernelNumber(llmEvents?.count ?? llmEvents?.events?.length)}`,
-                `last ${formatKernelEventType(llmEvents?.events?.[0])}`,
-                `model ${formatKernelEventModel(llmEvents?.events?.[0])}`,
-                `err/retry ${formatKernelNumber(readKernelStatNumber(llmEvents?.stats, ['call_error', 'llm_error', 'errors']))}/${formatKernelNumber(readKernelStatNumber(llmEvents?.stats, ['call_retry', 'llm_retry', 'retries']))}`,
-              ]}
-            />
-          </div>
-        )}
-
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onRefresh}
-            disabled={isLoading || isClearing}
-            title="刷新 Kernel 统计"
-            className="h-7 w-7 text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10"
-          >
-            <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClearCache}
-            disabled={isLoading || isClearing}
-            title="清空 Director LLM 缓存"
-            data-testid="director-kernel-cache-clear"
-            className="h-7 w-7 text-slate-400 hover:text-red-300 hover:bg-red-500/10"
-          >
-            {isClearing ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            {isLoading ? (
+              <span className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                <Loader2 className="h-3 w-3 animate-spin text-indigo-300" />
+                读取中
+              </span>
+            ) : error ? (
+              <span className="rounded border border-red-500/25 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200">
+                统计异常
+              </span>
             ) : (
-              <Trash2 className="h-3.5 w-3.5" />
+              <>
+                <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                  cache hit {formatKernelPercent(cacheStats?.hit_rate)}
+                </span>
+                <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                  tokens {formatKernelNumber(tokenBudgetStats?.total)}
+                </span>
+                <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                  LLM events {formatKernelNumber(eventCount)}
+                </span>
+              </>
             )}
-          </Button>
+          </div>
+          <span className="shrink-0 text-[10px] text-slate-500 group-open:hidden">展开证据</span>
+          <span className="hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起证据</span>
+        </summary>
+        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+              正在读取缓存、预算与 LLM 事件
+            </div>
+          ) : error ? (
+            <div
+              className="flex min-w-0 items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
+              data-testid="director-kernel-diagnostics-error"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{error}</span>
+            </div>
+          ) : (
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+              <KernelStripMetric
+                icon={<Database className="h-3.5 w-3.5 text-cyan-300" />}
+                label="缓存"
+                endpoint="/v2/director/cache-stats"
+                values={[
+                  `hit ${formatKernelPercent(cacheStats?.hit_rate)}`,
+                  `${formatKernelNumber(cacheStats?.size)} / ${formatKernelNumber(cacheStats?.max_size)}`,
+                  cacheStats?.enabled === false ? 'disabled' : 'enabled',
+                ]}
+              />
+              <KernelStripMetric
+                icon={<Coins className="h-3.5 w-3.5 text-emerald-300" />}
+                label="预算"
+                endpoint="/v2/director/token-budget-stats"
+                values={[
+                  `total ${formatKernelNumber(tokenBudgetStats?.total)}`,
+                  `dialogue ${formatKernelNumber(tokenBudgetStats?.available_conversation)}`,
+                  `margin ${formatKernelNumber(tokenBudgetStats?.safety_margin)}`,
+                ]}
+              />
+              <KernelStripMetric
+                icon={<Brain className="h-3.5 w-3.5 text-indigo-300" />}
+                label="LLM"
+                endpoint={evidenceEndpoint('/v2/director/llm-events?role=director&limit=5', workspace)}
+                values={[
+                  `events ${formatKernelNumber(eventCount)}`,
+                  `last ${formatKernelEventType(llmEvents?.events?.[0])}`,
+                  `model ${formatKernelEventModel(llmEvents?.events?.[0])}`,
+                  `err/retry ${formatKernelNumber(readKernelStatNumber(llmEvents?.stats, ['call_error', 'llm_error', 'errors']))}/${formatKernelNumber(readKernelStatNumber(llmEvents?.stats, ['call_retry', 'llm_retry', 'retries']))}`,
+                ]}
+              />
+            </div>
+          )}
+
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onRefresh}
+              disabled={isLoading || isClearing}
+              title="刷新 Kernel 统计"
+              className="h-7 w-7 text-slate-400 hover:bg-indigo-500/10 hover:text-indigo-300"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClearCache}
+              disabled={isLoading || isClearing}
+              title="清空 Director LLM 缓存"
+              data-testid="director-kernel-cache-clear"
+              className="h-7 w-7 text-slate-400 hover:bg-red-500/10 hover:text-red-300"
+            >
+              {isClearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
         </div>
-      </div>
+      </details>
     </section>
   );
 }
@@ -1235,116 +1292,151 @@ function DirectorReadinessDiagnosticsStrip({
       data-testid="director-readiness-diagnostics"
       aria-label="Director readiness diagnostics"
     >
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
-          {blocked ? (
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
-          ) : (
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
-          )}
-          交接诊断
-        </div>
-        <span className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-400">
-          {evidenceEndpoint('/v2/director/diagnostics', workspace)}
-        </span>
+      <details className="group rounded-lg border border-indigo-500/15 bg-slate-900/35 px-3 py-2">
+        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+          <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
+            {blocked ? (
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+            )}
+            交接诊断
+          </div>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            {isLoading ? (
+              <span className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                <Loader2 className="h-3 w-3 animate-spin text-indigo-300" />
+                读取中
+              </span>
+            ) : error ? (
+              <span className="rounded border border-red-500/25 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200">
+                诊断异常
+              </span>
+            ) : diagnostics ? (
+              <>
+                <div
+                  className={cn(
+                    'flex shrink-0 items-center gap-1.5 rounded border px-2 py-0.5 text-[10px]',
+                    blocked
+                      ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+                      : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
+                  )}
+                  data-testid="director-readiness-state"
+                >
+                  {blocked ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                  {blocked ? 'blocked' : 'ready'}
+                </div>
+                <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                  ready {diagnostics.tasks.ready_to_execute}/{diagnostics.tasks.total}
+                </span>
+                <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                  worker {diagnostics.workers.idle}/{diagnostics.workers.total} idle
+                </span>
+                <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+                  LLM {llmValues[0]}
+                </span>
+              </>
+            ) : (
+              <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-400">
+                等待诊断快照
+              </span>
+            )}
+          </div>
+          <span className="shrink-0 text-[10px] text-slate-500 group-open:hidden">展开证据</span>
+          <span className="hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起证据</span>
+        </summary>
+        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
+          <EvidenceEndpointBadge
+            endpoint={evidenceEndpoint('/v2/director/diagnostics', workspace)}
+            testId="director-readiness-endpoint"
+          />
 
-        {isLoading ? (
-          <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
-            正在读取任务队列与 worker 状态
-          </div>
-        ) : error ? (
-          <div
-            className="flex min-w-0 items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
-            data-testid="director-readiness-error"
-          >
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{error}</span>
-          </div>
-        ) : diagnostics ? (
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
-            <div
-              className={cn(
-                'flex shrink-0 items-center gap-1.5 rounded border px-2 py-1 text-[10px]',
-                blocked
-                  ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
-                  : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
-              )}
-              data-testid="director-readiness-state"
-            >
-              {blocked ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
-              {blocked ? 'blocked' : 'ready'}
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+              正在读取任务队列与 worker 状态
             </div>
-            <KernelStripMetric
-              icon={<ListTodo className="h-3.5 w-3.5 text-cyan-300" />}
-              label="任务"
-              endpoint={diagnostics.tasks.source}
-              values={[
-                `ready ${diagnostics.tasks.ready_to_execute}/${diagnostics.tasks.total}`,
-                ...(diagnostics.tasks.missing_blueprint_task_ids?.length
-                  ? [`missing BP ${diagnostics.tasks.missing_blueprint_task_ids.length}`]
-                  : []),
-                ...(diagnostics.tasks.invalid_blueprint_task_ids?.length
-                  ? [`invalid BP ${diagnostics.tasks.invalid_blueprint_task_ids.length}`]
-                  : []),
-                `blocked ${diagnostics.tasks.blocked}`,
-                `running ${diagnostics.tasks.running}`,
-              ]}
-            />
-            <KernelStripMetric
-              icon={<Layers className="h-3.5 w-3.5 text-emerald-300" />}
-              label="Worker"
-              endpoint="pool"
-              values={[
-                `idle ${diagnostics.workers.idle}/${diagnostics.workers.total}`,
-                `busy ${diagnostics.workers.busy}`,
-                `bad ${diagnostics.workers.unhealthy}`,
-              ]}
-            />
-            <KernelStripMetric
-              icon={<Activity className="h-3.5 w-3.5 text-indigo-300" />}
-              label="状态"
-              endpoint={diagnostics.status.projection_source || 'projection'}
-              values={[
-                diagnostics.status.running ? 'running' : diagnostics.status.state.toLowerCase(),
-                `src ${diagnostics.status.source || 'none'}`,
-              ]}
-            />
-            <KernelStripMetric
-              icon={<Zap className="h-3.5 w-3.5 text-amber-300" />}
-              label="LLM"
-              endpoint="/v2/llm/status"
-              values={llmValues}
-            />
-            {visibleIssues.length > 0 ? (
-              <div className="flex shrink-0 items-center gap-1" data-testid="director-readiness-issues">
-                {visibleIssues.map((issue) => (
-                  <span
-                    key={issue}
-                    className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-200"
-                    title={issue}
-                  >
-                    {formatDirectorDiagnosticIssue(issue)}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div className="text-[11px] text-slate-500">等待 Director 诊断快照</div>
-        )}
+          ) : error ? (
+            <div
+              className="flex min-w-0 items-center gap-2 rounded border border-red-500/25 bg-red-500/10 px-2 py-1 text-[11px] text-red-200"
+              data-testid="director-readiness-error"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{error}</span>
+            </div>
+          ) : diagnostics ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+              <KernelStripMetric
+                icon={<ListTodo className="h-3.5 w-3.5 text-cyan-300" />}
+                label="任务"
+                endpoint={diagnostics.tasks.source}
+                values={[
+                  `ready ${diagnostics.tasks.ready_to_execute}/${diagnostics.tasks.total}`,
+                  ...(diagnostics.tasks.missing_blueprint_task_ids?.length
+                    ? [`missing BP ${diagnostics.tasks.missing_blueprint_task_ids.length}`]
+                    : []),
+                  ...(diagnostics.tasks.invalid_blueprint_task_ids?.length
+                    ? [`invalid BP ${diagnostics.tasks.invalid_blueprint_task_ids.length}`]
+                    : []),
+                  `blocked ${diagnostics.tasks.blocked}`,
+                  `running ${diagnostics.tasks.running}`,
+                ]}
+              />
+              <KernelStripMetric
+                icon={<Layers className="h-3.5 w-3.5 text-emerald-300" />}
+                label="Worker"
+                endpoint="pool"
+                values={[
+                  `idle ${diagnostics.workers.idle}/${diagnostics.workers.total}`,
+                  `busy ${diagnostics.workers.busy}`,
+                  `bad ${diagnostics.workers.unhealthy}`,
+                ]}
+              />
+              <KernelStripMetric
+                icon={<Activity className="h-3.5 w-3.5 text-indigo-300" />}
+                label="状态"
+                endpoint={diagnostics.status.projection_source || 'projection'}
+                values={[
+                  diagnostics.status.running ? 'running' : diagnostics.status.state.toLowerCase(),
+                  `src ${diagnostics.status.source || 'none'}`,
+                ]}
+              />
+              <KernelStripMetric
+                icon={<Zap className="h-3.5 w-3.5 text-amber-300" />}
+                label="LLM"
+                endpoint="/v2/llm/status"
+                values={llmValues}
+              />
+              {visibleIssues.length > 0 ? (
+                <div className="flex shrink-0 items-center gap-1" data-testid="director-readiness-issues">
+                  {visibleIssues.map((issue) => (
+                    <span
+                      key={issue}
+                      className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-200"
+                      title={issue}
+                    >
+                      {formatDirectorDiagnosticIssue(issue)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-500">等待 Director 诊断快照</div>
+          )}
 
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onRefresh}
-          disabled={isLoading}
-          title="刷新 Director 交接诊断"
-          className="ml-auto h-7 w-7 shrink-0 text-slate-400 hover:bg-indigo-500/10 hover:text-indigo-300"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
-        </Button>
-      </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onRefresh}
+            disabled={isLoading}
+            title="刷新 Director 交接诊断"
+            className="ml-auto h-7 w-7 shrink-0 text-slate-400 hover:bg-indigo-500/10 hover:text-indigo-300"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
+          </Button>
+        </div>
+      </details>
     </section>
   );
 }
@@ -1361,12 +1453,10 @@ function KernelStripMetric({
   values: string[];
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1">
+    <div className="flex min-w-[12rem] shrink-0 flex-wrap items-center gap-2 rounded-md border border-white/10 bg-white/[0.035] px-2 py-1">
       {icon}
       <span className="text-[10px] font-medium text-slate-200">{label}</span>
-      <span className="rounded border border-white/10 bg-slate-950/70 px-1.5 py-0.5 text-[9px] text-slate-500">
-        {endpoint}
-      </span>
+      <EvidenceEndpointBadge endpoint={endpoint} testId={`director-kernel-${label}-endpoint`} />
       <div className="flex items-center gap-1">
         {values.map((value) => (
           <span
@@ -2808,9 +2898,10 @@ export function DirectorWorkspace({
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="font-medium text-slate-100">Director status evidence</span>
-            <span className="font-mono text-[11px] text-cyan-300">
-              {evidenceEndpoint('/v2/director/status?source=auto', workspace)}
-            </span>
+            <EvidenceEndpointBadge
+              endpoint={evidenceEndpoint('/v2/director/status?source=auto', workspace)}
+              testId="director-toggle-status-endpoint"
+            />
             {directorToggleStatusEvidence.loading ? (
               <span className="text-slate-400">正在读取进程状态...</span>
             ) : directorToggleStatusEvidence.error ? (

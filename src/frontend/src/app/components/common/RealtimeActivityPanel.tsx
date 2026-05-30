@@ -196,10 +196,10 @@ export function RealtimeActivityPanel({
     <div className="h-full flex flex-col bg-slate-950">
       {/* Header - 状态指示器 */}
       <div className={cn(
-        'h-16 flex items-center justify-between px-4 border-b',
+        'flex h-16 items-center justify-between gap-3 border-b px-4',
         isRunning ? theme.border + ' ' + theme.bg : 'border-white/10'
       )}>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           {/* 脉冲动画状态灯 */}
           <div className="relative">
             <div className={cn(
@@ -214,26 +214,26 @@ export function RealtimeActivityPanel({
             )}
           </div>
 
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className={cn('text-sm font-semibold', isRunning ? theme.primaryColor : 'text-slate-400')}>
+              <span className={cn('truncate text-sm font-semibold', isRunning ? theme.primaryColor : 'text-slate-400')}>
                 {currentStatus.text}
               </span>
               {isRunning && (
                 <Loader2 className={cn('w-3.5 h-3.5 animate-spin', currentStatus.color)} />
               )}
             </div>
-            <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-              <Activity className="w-3 h-3" />
-              <span>实时活动</span>
+            <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-slate-500">
+              <Activity className="h-3 w-3 shrink-0" />
+              <span className="truncate">实时活动</span>
               <span className="text-slate-600">•</span>
-              <span>{allLogs.length} 条记录</span>
+              <span className="shrink-0">{allLogs.length} 条记录</span>
             </div>
           </div>
         </div>
 
         {/* 视图切换标签 */}
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-white/5 border border-white/10">
+        <div className="flex shrink-0 items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
           <ViewTab
             icon={<Brain className="w-3.5 h-3.5" />}
             label="思考"
@@ -316,15 +316,17 @@ function ViewTab({ icon, label, active, onClick, color }: ViewTabProps) {
     <button
       type="button"
       onClick={onClick}
+      aria-label={`查看${label}记录`}
+      title={`查看${label}记录`}
       className={cn(
-        'flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all',
+        'flex h-7 w-7 shrink-0 items-center justify-center rounded text-xs font-medium transition-colors',
         active
           ? VIEW_TAB_TONES[color]
           : 'text-slate-500 hover:text-slate-300'
       )}
     >
       {icon}
-      <span>{label}</span>
+      <span className="sr-only">{label}</span>
     </button>
   );
 }

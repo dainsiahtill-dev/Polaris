@@ -70,6 +70,27 @@ interface LlmRoleEvidenceRow {
   providerId: string;
 }
 
+function EndpointChip({
+  endpoint,
+  method,
+  testId,
+}: {
+  endpoint: string;
+  method?: string;
+  testId?: string;
+}) {
+  return (
+    <span
+      className="shrink-0 rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] font-medium text-slate-500"
+      title={endpoint}
+      data-testid={testId}
+      data-endpoint={endpoint}
+    >
+      {method ? `${method} API` : 'API'}
+    </span>
+  );
+}
+
 function evidenceEndpoint(endpoint: string, workspace = ''): string {
   const value = String(workspace || '').trim();
   if (!value) return endpoint;
@@ -601,6 +622,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                         <ManagementMetricBlock
                           label="状态"
                           endpoint={evidenceEndpoint('/pm/v2/pm/status', workspace)}
+                          endpointTestId="pm-management-status-endpoint"
                           rows={[
                             ['Initialized', String(managementStatus.status?.initialized ?? false)],
                             ['Workspace', managementStatus.status?.workspace || '-'],
@@ -611,6 +633,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                         <ManagementMetricBlock
                           label="健康"
                           endpoint={evidenceEndpoint('/pm/v2/pm/health', workspace)}
+                          endpointTestId="pm-management-health-endpoint"
                           rows={[
                             ['Overall', managementStatus.health?.overall || (managementStatus.status?.initialized ? 'unavailable' : 'not initialized')],
                             ['Components', String(Object.keys(managementStatus.health?.components || {}).length)],
@@ -646,9 +669,11 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                         >
                           <div className="mb-2 flex items-center justify-between gap-2 text-xs text-amber-100">
                             <span className="font-medium">PM 管理尚未初始化</span>
-                            <span className="rounded border border-amber-500/20 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[10px]">
-                              POST {evidenceEndpoint('/pm/v2/pm/init', workspace)}
-                            </span>
+                            <EndpointChip
+                              endpoint={evidenceEndpoint('/pm/v2/pm/init', workspace)}
+                              method="POST"
+                              testId="pm-management-init-endpoint"
+                            />
                           </div>
                           <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_auto]">
                             <input
@@ -725,6 +750,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                         icon={<Database className="h-3.5 w-3.5 text-cyan-300" />}
                         label="缓存"
                         endpoint="/v2/pm/cache-stats"
+                        endpointTestId="pm-kernel-cache-endpoint"
                         rows={[
                           ['状态', kernelStatus.cache?.enabled === false ? '关闭' : '开启'],
                           ['命中率', formatPercent(kernelStatus.cache?.hit_rate)],
@@ -736,6 +762,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                         icon={<Coins className="h-3.5 w-3.5 text-emerald-300" />}
                         label="Token 预算"
                         endpoint="/v2/pm/token-budget-stats"
+                        endpointTestId="pm-kernel-token-budget-endpoint"
                         rows={[
                           ['总量', formatNumber(kernelStatus.tokenBudget?.total)],
                           ['对话可用', formatNumber(kernelStatus.tokenBudget?.available_conversation)],
@@ -748,6 +775,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                         label="LLM 事件"
                         endpoint={evidenceEndpoint('/v2/pm/llm-events?limit=5', workspace)}
                         testId="pm-llm-events-diagnostics"
+                        endpointTestId="pm-llm-events-endpoint"
                         rows={[
                           ['事件数', formatNumber(kernelStatus.llmEvents?.count ?? kernelStatus.llmEvents?.events?.length)],
                           ['最近类型', formatKernelEventType(kernelStatus.llmEvents?.events?.[0])],
@@ -899,23 +927,23 @@ function KernelMetricBlock({
   endpoint,
   rows,
   testId,
+  endpointTestId,
 }: {
   icon: React.ReactNode;
   label: string;
   endpoint: string;
   rows: Array<[string, string]>;
   testId?: string;
+  endpointTestId?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] p-3" data-testid={testId}>
+    <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] p-3" data-testid={testId} data-endpoint={endpoint}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-200">
           {icon}
           <span className="truncate">{label}</span>
         </div>
-        <span className="shrink-0 rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-          {endpoint}
-        </span>
+        <EndpointChip endpoint={endpoint} testId={endpointTestId} />
       </div>
       <div className="space-y-1">
         {rows.map(([name, value]) => (
@@ -935,18 +963,18 @@ function ManagementMetricBlock({
   label,
   endpoint,
   rows,
+  endpointTestId,
 }: {
   label: string;
   endpoint: string;
   rows: Array<[string, string]>;
+  endpointTestId?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] p-3">
+    <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.035] p-3" data-endpoint={endpoint}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="truncate text-xs font-medium text-slate-200">{label}</span>
-        <span className="shrink-0 rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500">
-          {endpoint}
-        </span>
+        <EndpointChip endpoint={endpoint} testId={endpointTestId} />
       </div>
       <div className="space-y-1">
         {rows.map(([name, value]) => (

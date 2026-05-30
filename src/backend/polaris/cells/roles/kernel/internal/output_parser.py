@@ -176,7 +176,7 @@ class OutputParser:
         # Layer 2: Fallback to JSON tool call parsing
         # This handles cases where LLM returns tool calls as raw JSON text
         # instead of using native tool calling protocols
-        if not native_calls and content:
+        if not native_calls and content and not self._has_explicit_patch_markers(content):
             json_calls = self._parse_json_tool_calls(
                 content=content,
                 allowed_tool_names=allowed_tool_names,
@@ -392,6 +392,8 @@ class OutputParser:
         if re.search(r"(?:^|\n)\s*(?:file|create)\s*[:\s]+\S+", text, flags=re.IGNORECASE) and re.search(
             r"\n\s*end\s+(?:file|create)\s*(?:\n|$)", text, flags=re.IGNORECASE
         ):
+            return True
+        if re.search(r"(?:^|\n)\s*```\s*file\s*:\s*\S+", text, flags=re.IGNORECASE):
             return True
         # 兼容无 END 的简写，但必须以协议头开头，避免匹配到 [read_file] 内部参数行。
         return bool(re.match(r"^\s*(?:patch_file|file|create|delete(?:_file)?)\b", text, flags=re.IGNORECASE))

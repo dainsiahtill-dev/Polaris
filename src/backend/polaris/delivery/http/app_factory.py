@@ -154,6 +154,7 @@ def _register_routers(app: FastAPI) -> None:
         files,
         history,
         interview,
+        interventions,
         lancedb,
         llm,
         logs,
@@ -183,6 +184,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(pm_chat.router)
     app.include_router(llm.router)
     app.include_router(interview.router)
+    app.include_router(interventions.router)
     app.include_router(providers.router)
     app.include_router(tests.router)
     app.include_router(conversations.router)

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot, ClipboardList, Gauge } from 'lucide-react';
+import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot, ClipboardList, Gauge, ShieldAlert } from 'lucide-react';
 import { WindowControls } from './WindowControls';
 import { UsageHUD, type UsageStats } from './UsageHUD';
 import { UI_TERMS } from '@/app/constants/uiTerminology';
 import { MiniStatusBadge } from '@/app/components/ai-dialogue/ManusStyleStatusIndicator';
 import { cleanRuntimeDisplayText } from '@/app/utils/runtimeDisplay';
+import { workspaceLabel } from '@/app/utils/workspaceDisplay';
 import {
   getDirectorStatus,
   getPmStatus,
@@ -50,6 +51,7 @@ interface ControlPanelProps {
   onEnterFactoryMode?: () => void;
   onEnterAGIWorkspace?: () => void;
   onEnterRuntimeDiagnostics?: () => void;
+  onOpenIntervention?: () => void;
   workspaceError?: string | null;
   isStartingPM?: boolean;
   isStoppingPM?: boolean;
@@ -101,6 +103,22 @@ function processEvidenceText<T extends ProcessStatus>(
   return `${endpoint} · ${evidence.data.running ? 'running' : 'idle'} · pid=${pid}${mode}${source}${statusWorkspace}`;
 }
 
+function processEvidenceSummary<T extends ProcessStatus>(evidence: ProcessToggleEvidence<T>): string {
+  if (evidence.loading) {
+    return 'reading';
+  }
+  if (evidence.error) {
+    return evidence.error;
+  }
+  if (!evidence.data) {
+    return 'no status';
+  }
+  const pid = evidence.data.pid ?? 'none';
+  const mode = evidence.data.mode ? ` · mode=${evidence.data.mode}` : '';
+  const source = evidence.data.source ? ` · source=${evidence.data.source}` : '';
+  return `${evidence.data.running ? 'running' : 'idle'} · pid=${pid}${mode}${source}`;
+}
+
 export function ControlPanel({
   workspace,
   pmRunning,
@@ -131,6 +149,7 @@ export function ControlPanel({
   onEnterFactoryMode,
   onEnterAGIWorkspace,
   onEnterRuntimeDiagnostics,
+  onOpenIntervention,
   workspaceError,
   isStartingPM,
   isStoppingPM,
@@ -153,6 +172,7 @@ export function ControlPanel({
   isExecutingTool,
   currentToolName,
 }: ControlPanelProps) {
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [pmToggleEvidence, setPmToggleEvidence] = useState<ProcessToggleEvidence<PmStatus>>({
     triggered: false,
     loading: false,
@@ -193,6 +213,7 @@ export function ControlPanel({
         : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
   const displayCurrentTask = cleanRuntimeDisplayText(currentTask);
   const displayCurrentToolName = cleanRuntimeDisplayText(currentToolName);
+  const displayWorkspace = workspaceLabel(workspace, '');
   const healthTone = healthStatus === 'unhealthy'
     ? 'bg-status-error text-status-error'
     : healthStatus === 'healthy' || healthStatus === 'ok'
@@ -218,6 +239,17 @@ export function ControlPanel({
   };
 
   const statusInfo = getStatusIndicator();
+  const runMoreMenuAction = (action?: () => void | boolean | Promise<void | boolean>) => {
+    setMoreMenuOpen(false);
+    void action?.();
+  };
+  const openInterventionCenter = () => {
+    if (onOpenIntervention) {
+      onOpenIntervention();
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('open-intervention-center'));
+  };
 
   const handleTogglePm = async () => {
     setPmToggleEvidence({
@@ -375,6 +407,7 @@ export function ControlPanel({
           <div className="relative">
             <button
               onClick={onToggleArtifacts}
+              data-testid="control-panel-toggle-monitor"
               className={`p-2 rounded-lg transition-colors ${isArtifactsOpen
                   ? 'text-accent bg-accent/10 hover:bg-accent/20'
                   : 'text-text-muted hover:text-text-main hover:bg-white/5'
@@ -397,11 +430,11 @@ export function ControlPanel({
       </div>
 
       {/* Workspace */}
-      <div className="flex-1 max-w-lg mx-8 relative group">
+      <div className="flex-1 max-w-[26rem] mx-6 relative group">
         <div
           className={`no-drag flex items-center gap-2 bg-bg-panel/50 backdrop-blur-sm rounded-lg px-3 py-1.5 border transition-all duration-300 ${workspaceError ? 'border-status-error/60 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'border-white/10 group-hover:border-accent/30 group-hover:shadow-glow'
             }`}
-          title={workspaceError || undefined}
+          title={workspaceError || workspace || undefined}
         >
           {onPickWorkspace ? (
             <button
@@ -418,9 +451,12 @@ export function ControlPanel({
           )}
           <input
             type="text"
-            value={workspace}
+            data-testid="control-panel-workspace-label"
+            value={displayWorkspace}
             readOnly
-            className="flex-1 bg-transparent text-sm text-text-main outline-none font-sans placeholder:text-text-dim/50 cursor-default"
+            title={workspace || undefined}
+            data-workspace-path={workspace || undefined}
+            className="min-w-0 flex-1 bg-transparent text-sm text-text-main outline-none font-sans placeholder:text-text-dim/50 cursor-default"
             placeholder={`请点击左侧按钮选定${UI_TERMS.nouns.workspace}（Workspace）...`}
             aria-invalid={workspaceError ? true : undefined}
             aria-describedby={workspaceError ? 'workspace-error' : undefined}
@@ -471,6 +507,8 @@ export function ControlPanel({
             <span
               data-testid="control-panel-pm-toggle-evidence"
               title={processEvidenceText('/v2/pm/status', pmToggleEvidence)}
+              data-endpoint="/v2/pm/status"
+              data-evidence={processEvidenceText('/v2/pm/status', pmToggleEvidence)}
               className={`max-w-[170px] truncate rounded border px-1.5 py-0.5 font-mono text-[10px] ${pmToggleEvidence.error
                 ? 'border-status-error/30 bg-status-error/10 text-status-error'
                 : pmToggleEvidence.data?.running
@@ -478,7 +516,7 @@ export function ControlPanel({
                   : 'border-white/10 bg-white/5 text-text-muted'
                 }`}
             >
-              {processEvidenceText('/v2/pm/status', pmToggleEvidence)}
+              {processEvidenceSummary(pmToggleEvidence)}
             </span>
           ) : null}
           {onRunPmOnce ? (
@@ -536,6 +574,8 @@ export function ControlPanel({
             <span
               data-testid="control-panel-director-toggle-evidence"
               title={processEvidenceText('/v2/director/status?source=auto', directorToggleEvidence)}
+              data-endpoint="/v2/director/status?source=auto"
+              data-evidence={processEvidenceText('/v2/director/status?source=auto', directorToggleEvidence)}
               className={`max-w-[190px] truncate rounded border px-1.5 py-0.5 font-mono text-[10px] ${directorToggleEvidence.error
                 ? 'border-status-error/30 bg-status-error/10 text-status-error'
                 : directorToggleEvidence.data?.running
@@ -543,7 +583,7 @@ export function ControlPanel({
                   : 'border-white/10 bg-white/5 text-text-muted'
                 }`}
             >
-              {processEvidenceText('/v2/director/status?source=auto', directorToggleEvidence)}
+              {processEvidenceSummary(directorToggleEvidence)}
             </span>
           ) : null}
         </div>
@@ -552,6 +592,7 @@ export function ControlPanel({
         {onEnterFactoryMode && (
           <button
             onClick={onEnterFactoryMode}
+            data-testid="control-panel-enter-factory"
             className="no-drag p-1.5 rounded-md transition-all bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:shadow-[0_0_15px_rgba(16,185,129,0.4)]"
             title="Factory 模式 - 无人值守开发工厂"
           >
@@ -603,6 +644,7 @@ export function ControlPanel({
           <div className="w-px h-3 bg-white/10 mx-1" />
           <button
             onClick={onOpenLogs}
+            data-testid="control-panel-open-logs"
             className="flex items-center gap-1.5 text-text-dim hover:text-accent transition-colors"
             title="查看子进程与回执日志"
           >
@@ -667,10 +709,11 @@ export function ControlPanel({
 
         <div className="w-px h-6 bg-white/10 mx-1" />
 
-        <DropdownMenu>
+        <DropdownMenu open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
           <DropdownMenuTrigger asChild>
             <button
               className="btn-icon"
+              data-testid="control-panel-more-menu"
               title="更多功能"
             >
               <MoreHorizontal className="size-4" />
@@ -678,54 +721,54 @@ export function ControlPanel({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             {onEnterPMWorkspace && (
-              <DropdownMenuItem data-testid="enter-pm-workspace" onClick={onEnterPMWorkspace}>
+              <DropdownMenuItem data-testid="enter-pm-workspace" onClick={() => runMoreMenuAction(onEnterPMWorkspace)}>
                 <Crown className="size-4 mr-2" />
                 PM 工作区
               </DropdownMenuItem>
             )}
             {onEnterChiefEngineerWorkspace && (
-              <DropdownMenuItem data-testid="enter-chief-engineer-workspace" onClick={onEnterChiefEngineerWorkspace}>
+              <DropdownMenuItem data-testid="enter-chief-engineer-workspace" onClick={() => runMoreMenuAction(onEnterChiefEngineerWorkspace)}>
                 <ClipboardList className="size-4 mr-2" />
                 Chief Engineer 工作区
               </DropdownMenuItem>
             )}
             {onEnterDirectorWorkspace && (
-              <DropdownMenuItem data-testid="enter-director-workspace" onClick={onEnterDirectorWorkspace}>
+              <DropdownMenuItem data-testid="enter-director-workspace" onClick={() => runMoreMenuAction(onEnterDirectorWorkspace)}>
                 <Hammer className="size-4 mr-2" />
                 Director 工作区
               </DropdownMenuItem>
             )}
             {onEnterAGIWorkspace && (
-              <DropdownMenuItem onClick={onEnterAGIWorkspace}>
+              <DropdownMenuItem data-testid="enter-agi-workspace" onClick={() => runMoreMenuAction(onEnterAGIWorkspace)}>
                 <Bot className="size-4 mr-2" />
                 AGI 工作区
               </DropdownMenuItem>
             )}
             {onEnterRuntimeDiagnostics && (
-              <DropdownMenuItem data-testid="enter-runtime-diagnostics" onClick={onEnterRuntimeDiagnostics}>
+              <DropdownMenuItem data-testid="enter-runtime-diagnostics" onClick={() => runMoreMenuAction(onEnterRuntimeDiagnostics)}>
                 <Gauge className="size-4 mr-2" />
                 运行诊断
               </DropdownMenuItem>
             )}
             {showAgents && (
-              <DropdownMenuItem onClick={agentsReady ? onOpenAgentsReview : onGenerateAgentsDraft}>
+              <DropdownMenuItem data-testid={agentsReady ? 'open-agents-review-menu-item' : 'generate-agents-menu-item'} onClick={() => runMoreMenuAction(agentsReady ? onOpenAgentsReview : onGenerateAgentsDraft)}>
                 <FileText className="size-4 mr-2" />
                 {agentsReady ? 'AGENTS 审阅' : '生成 AGENTS'}
               </DropdownMenuItem>
             )}
             {onOpenBrain && (
-              <DropdownMenuItem onClick={onOpenBrain}>
+              <DropdownMenuItem data-testid="open-brain-menu-item" onClick={() => runMoreMenuAction(onOpenBrain)}>
                 <Brain className="size-4 mr-2" />
                 明镜台 (Brain)
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => window.dispatchEvent(new CustomEvent('open-intervention-center'))}>
+            <DropdownMenuItem data-testid="open-intervention-center-menu-item" onClick={() => runMoreMenuAction(openInterventionCenter)}>
               <ShieldAlert className="size-4 mr-2" />
               干预中心
             </DropdownMenuItem>
             {onStopOllama && (
-              <DropdownMenuItem onClick={onStopOllama} disabled={isStoppingOllama}>
+              <DropdownMenuItem onClick={() => runMoreMenuAction(onStopOllama)} disabled={isStoppingOllama}>
                 <Square className="size-4 mr-2" />
                 {isStoppingOllama ? '停用中...' : '停用 Ollama'}
               </DropdownMenuItem>
@@ -736,6 +779,8 @@ export function ControlPanel({
         <button
           className="btn-icon"
           onClick={onRefresh}
+          data-testid="control-panel-refresh"
+          title="刷新运行状态"
         >
           <RefreshCw className="size-4" />
         </button>
@@ -759,6 +804,7 @@ export function ControlPanel({
 
         <button
           onClick={onToggleTerminal}
+          data-testid="control-panel-toggle-terminal"
           className={`btn-icon group relative ${isTerminalOpen ? 'text-emerald-400 bg-emerald-400/10' : ''}`}
           title="Terminal (Ctrl + `)"
         >
@@ -768,27 +814,5 @@ export function ControlPanel({
         <div className="w-px h-6 bg-white/10 mx-1" />
       </div>
     </header>
-  );
-}
-
-// Helper icon component for ShieldAlert since it might not be imported
-function ShieldAlert({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-      <path d="M12 8v4" />
-      <path d="M12 16h.01" />
-    </svg>
   );
 }

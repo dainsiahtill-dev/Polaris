@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
 
-from polaris.cells.llm.evaluation.public.service import load_llm_test_index, readiness_freshness_issue
+from polaris.cells.llm.evaluation.public.service import (
+    load_llm_test_index,
+    load_llm_test_index_candidates,
+    readiness_freshness_issue,
+)
 from polaris.cells.llm.provider_runtime.public.service import role_runtime_support_issue
 from polaris.cells.runtime.projection.internal.io_helpers import build_cache_root
 from polaris.kernelone.llm import config_store as llm_config
@@ -144,6 +148,109 @@ def _provider_role_compatible(role: str, provider_test_info: dict[str, Any] | No
     return not tested_role or tested_role == _role_key(role)
 
 
+def _dedupe_index_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for index in candidates:
+        if not isinstance(index, dict):
+            continue
+        identity = id(index)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduped.append(index)
+    return deduped or [{}]
+
+
+def _provider_status_from_index(index: dict[str, Any], provider_id: str) -> dict[str, Any] | None:
+    provider_index = index.get("providers") if isinstance(index.get("providers"), dict) else {}
+    provider_status = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
+    return provider_status if isinstance(provider_status, dict) else None
+
+
+def _exact_role_status_matches_binding(role_status: dict[str, Any], provider_id: str, model: str) -> bool:
+    tested_provider_id = str(role_status.get("provider_id") or "").strip()
+    tested_model = str(role_status.get("model") or "").strip()
+    tested_timestamp = role_status.get("timestamp")
+    return (
+        _readiness_candidate_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=tested_provider_id,
+            tested_model=tested_model,
+            tested_timestamp=tested_timestamp,
+        )
+        == ""
+    )
+
+
+def _exact_provider_status_matches_binding(
+    *,
+    role: str,
+    provider_id: str,
+    model: str,
+    provider_status: dict[str, Any],
+) -> bool:
+    if not _provider_role_compatible(role, provider_status):
+        return False
+    tested_model = str(provider_status.get("model") or "").strip()
+    tested_timestamp = provider_status.get("timestamp")
+    return (
+        _readiness_candidate_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=provider_id,
+            tested_model=tested_model,
+            tested_timestamp=tested_timestamp,
+        )
+        == ""
+    )
+
+
+def _select_binding_status(
+    *,
+    indexes: list[dict[str, Any]],
+    role: str,
+    provider_id: str,
+    model: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    first_role_status: dict[str, Any] | None = None
+    first_provider_status: dict[str, Any] | None = None
+    first_exact_failed_role: dict[str, Any] | None = None
+    first_exact_failed_provider: dict[str, Any] | None = None
+
+    for index in indexes:
+        role_status = _lookup_role_status(index, role)
+        provider_status = _provider_status_from_index(index, provider_id)
+
+        if first_role_status is None and isinstance(role_status, dict):
+            first_role_status = role_status
+        if first_provider_status is None and isinstance(provider_status, dict):
+            first_provider_status = provider_status
+
+        if isinstance(role_status, dict) and _exact_role_status_matches_binding(role_status, provider_id, model):
+            if bool(role_status.get("ready")):
+                return role_status, provider_status
+            if first_exact_failed_role is None:
+                first_exact_failed_role = role_status
+                first_exact_failed_provider = provider_status
+
+        if isinstance(provider_status, dict) and _exact_provider_status_matches_binding(
+            role=role,
+            provider_id=provider_id,
+            model=model,
+            provider_status=provider_status,
+        ):
+            if bool(provider_status.get("ready")):
+                return None, provider_status
+            if first_exact_failed_provider is None:
+                first_exact_failed_provider = provider_status
+
+    if first_exact_failed_role is not None or first_exact_failed_provider is not None:
+        return first_exact_failed_role, first_exact_failed_provider
+    return first_role_status, first_provider_status
+
+
 def _active_workspace(settings: Settings) -> str:
     for attr in ("workspace_path", "workspace"):
         text = _workspace_text(getattr(settings, attr, ""))
@@ -229,6 +336,7 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
     cache_root = build_cache_root(str(getattr(settings, "ramdisk_root", "") or ""), workspace)
     config = llm_config.load_llm_config(workspace, cache_root, settings=settings)
     index = load_llm_test_index(workspace)
+    index_candidates = _dedupe_index_candidates([index, *load_llm_test_index_candidates(workspace)])
 
     roles_cfg = config.get("roles", {}) if isinstance(config.get("roles"), dict) else {}
     providers_cfg = config.get("providers", {}) if isinstance(config.get("providers"), dict) else {}
@@ -244,8 +352,12 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         model = str(role_cfg.get("model") or "").strip()
         provider_cfg = providers_cfg.get(provider_id, {}) if isinstance(providers_cfg, dict) else {}
         role_key = _role_key(role)
-        test_info = _lookup_role_status(index, role_key) if isinstance(index, dict) else None
-        provider_test_info = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
+        test_info, provider_test_info = _select_binding_status(
+            indexes=index_candidates,
+            role=role_key,
+            provider_id=provider_id,
+            model=model,
+        )
         runtime_issue = _runtime_issue(role, provider_id, provider_cfg)
         runtime_supported = not runtime_issue
         binding_readiness = _binding_readiness(

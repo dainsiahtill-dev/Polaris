@@ -247,13 +247,38 @@ def extract_native_tool_calls(
         return anthropic_calls, "anthropic"
 
     # Layer 3: Text format fallback
+    #
+    # The text fallback exists only for models that return explicit JSON tool
+    # calls as plain text. It must not inspect proposal/delivery payloads such
+    # as fenced full-file blocks, because real source files like package.json
+    # commonly contain a top-level "name" field that is not a tool name.
     if response_text:
+        if _looks_like_file_or_patch_delivery(response_text):
+            return [], provider_hint
         text_calls = _extract_tool_calls_from_text(response_text, provider_hint=provider_hint)
         if text_calls:
             logger.debug("[LLMCaller] Fallback: extracted %d tool calls from text", len(text_calls))
             return text_calls, "text_fallback"
 
     return [], provider_hint
+
+
+def _looks_like_file_or_patch_delivery(text: str) -> bool:
+    """Return True for source-code delivery formats that are not tool calls."""
+    token = str(text or "")
+    if not token.strip():
+        return False
+    lowered = token.lower()
+    if "patch_file:" in lowered or "delete_file:" in lowered:
+        return True
+    if "<<<<<<< search" in lowered and ">>>>>>> replace" in lowered:
+        return True
+    if re.search(r"(?:^|\n)\s*```\s*file\s*:\s*\S+", token, flags=re.IGNORECASE):
+        return True
+    return bool(
+        re.search(r"(?:^|\n)\s*(?:file|create)\s*[:\s]+\S+", token, flags=re.IGNORECASE)
+        and re.search(r"\n\s*end\s+(?:file|create)\s*(?:\n|$)", token, flags=re.IGNORECASE)
+    )
 
 
 def _extract_tool_calls_from_text(text: str, *, provider_hint: str = "auto") -> list[dict[str, Any]]:
@@ -267,6 +292,8 @@ def _extract_tool_calls_from_text(text: str, *, provider_hint: str = "auto") -> 
         List of tool calls in OpenAI-like format
     """
     if not text or not isinstance(text, str):
+        return []
+    if _looks_like_file_or_patch_delivery(text):
         return []
 
     # Simple regex for JSON tool call patterns

@@ -291,7 +291,8 @@ describe.sequential('Director capability desktop integration', () => {
     await waitFor(() => expect(serviceMocks.getDirectorCapabilities).toHaveBeenCalledTimes(1));
 
     const strip = await screen.findByTestId('director-capability-strip');
-    expect(strip).toHaveTextContent('/v2/director/capabilities');
+    expect(strip).not.toHaveTextContent('/v2/director/capabilities');
+    expect(screen.getByTestId('director-capability-endpoint')).toHaveAttribute('data-endpoint', '/v2/director/capabilities');
     expect(strip).toHaveTextContent('electron_workbench');
     expect(strip).toHaveTextContent('workflow');
     expect(strip).toHaveTextContent('execute commands');
@@ -358,8 +359,11 @@ describe.sequential('Director capability desktop integration', () => {
     await waitFor(() => expect(serviceMocks.getDirectorDiagnostics).toHaveBeenCalledTimes(1));
 
     const strip = await screen.findByTestId('director-readiness-diagnostics');
-    expect(strip).toHaveTextContent('/v2/director/diagnostics');
-    expect(strip).toHaveTextContent('/v2/director/diagnostics?workspace=C%3A%2FTemp%2FProduct');
+    expect(strip).not.toHaveTextContent('/v2/director/diagnostics');
+    expect(screen.getByTestId('director-readiness-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/diagnostics?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(screen.getByTestId('director-readiness-state')).toHaveTextContent('ready');
     expect(strip).toHaveTextContent('ready 1/2');
     expect(strip).toHaveTextContent('idle 1/1');
@@ -822,12 +826,15 @@ describe.sequential('Director capability desktop integration', () => {
     });
 
     const strip = await screen.findByTestId('director-kernel-diagnostics-strip');
-    expect(strip).toHaveTextContent('/v2/director/cache-stats');
+    expect(strip).not.toHaveTextContent('/v2/director/cache-stats');
+    expect(screen.getByTitle('/v2/director/cache-stats')).toHaveAttribute('data-endpoint', '/v2/director/cache-stats');
     expect(strip).toHaveTextContent('hit 80.00%');
-    expect(strip).toHaveTextContent('/v2/director/token-budget-stats');
+    expect(screen.getByTitle('/v2/director/token-budget-stats')).toHaveAttribute('data-endpoint', '/v2/director/token-budget-stats');
     expect(strip).toHaveTextContent('total 11,500');
-    expect(strip).toHaveTextContent('/v2/director/llm-events?role=director&limit=5');
-    expect(strip).toHaveTextContent('/v2/director/llm-events?role=director&limit=5&workspace=C%3A%2FTemp%2FProduct');
+    expect(screen.getByTitle('/v2/director/llm-events?role=director&limit=5&workspace=C%3A%2FTemp%2FProduct')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/llm-events?role=director&limit=5&workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(strip).toHaveTextContent('events 1');
     expect(strip).toHaveTextContent('last llm call start');
     expect(strip).toHaveTextContent('model gpt-test');
@@ -901,7 +908,11 @@ describe.sequential('Director capability desktop integration', () => {
     fireEvent.click(await screen.findByTestId('director-worker-item'));
     await waitFor(() => expect(serviceMocks.getDirectorWorker).toHaveBeenCalledWith('worker-backend-1', 'C:/Temp/Product'));
     const workerDetail = await screen.findByTestId('director-worker-backend-detail');
-    expect(workerDetail).toHaveTextContent('/v2/director/workers/worker-backend-1');
+    expect(workerDetail).not.toHaveTextContent('/v2/director/workers/worker-backend-1');
+    expect(screen.getByTestId('director-worker-backend-detail-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/workers/worker-backend-1',
+    );
     expect(workerDetail).toHaveTextContent('Backend Worker 1');
     expect(workerDetail).toHaveTextContent('director-task-1');
     expect(workerDetail).toHaveTextContent('Done');
@@ -984,12 +995,20 @@ describe.sequential('Director capability desktop integration', () => {
     ));
     await waitFor(() => expect(serviceMocks.getDirectorTask).toHaveBeenCalledWith('director-task-llm', 'C:/Temp/Product'));
     const backendDetail = await view.findByTestId('director-task-backend-detail');
-    expect(backendDetail).toHaveTextContent('/v2/director/tasks/director-task-llm');
+    expect(backendDetail).not.toHaveTextContent('/v2/director/tasks/director-task-llm');
+    expect(view.getByTestId('director-task-backend-detail-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/tasks/director-task-llm?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(backendDetail).toHaveTextContent('HIGH');
     expect(backendDetail).toHaveTextContent('worker-detail');
     expect(backendDetail).toHaveTextContent('验收项: 1');
     const llmPanel = await view.findByTestId('director-task-llm-events');
-    expect(llmPanel).toHaveTextContent('/v2/director/tasks/director-task-llm/llm-events');
+    expect(llmPanel).not.toHaveTextContent('/v2/director/tasks/director-task-llm/llm-events');
+    expect(view.getByTestId('director-task-llm-events-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/tasks/director-task-llm/llm-events?limit=25&workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(llmPanel).toHaveTextContent('llm call start');
     expect(llmPanel).toHaveTextContent('gpt-test');
   });
@@ -1030,7 +1049,11 @@ describe.sequential('Director capability desktop integration', () => {
 
     await waitFor(() => expect(serviceMocks.cancelDirectorTask).toHaveBeenCalledWith('director-task-cancel', 'C:/Temp/Product'));
     const cancelEvidence = view.getByTestId('director-task-cancel-evidence');
-    expect(cancelEvidence).toHaveTextContent('/v2/director/tasks/director-task-cancel/cancel');
+    expect(cancelEvidence).not.toHaveTextContent('/v2/director/tasks/director-task-cancel/cancel');
+    expect(view.getByTestId('director-task-cancel-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/tasks/director-task-cancel/cancel?workspace=C%3A%2FTemp%2FProduct',
+    );
     await waitFor(() => expect(cancelEvidence).toHaveTextContent('取消请求已提交: director-task-cancel (CANCELLED)'));
   });
 
@@ -1145,8 +1168,11 @@ describe.sequential('Director capability desktop integration', () => {
     }));
     await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-1', 'C:/Temp/Product'));
     const runEvidence = await screen.findByTestId('director-run-evidence');
-    expect(runEvidence).toHaveTextContent('/v2/director/runs/director-run-1');
-    expect(runEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(runEvidence).not.toHaveTextContent('/v2/director/runs/director-run-1');
+    expect(screen.getByTestId('director-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-run-1?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(runEvidence).toHaveTextContent('queued · queued=1');
     fireEvent.click(screen.getByTitle('终端'));
     expect(await screen.findByText(/Director run 已创建: director-run-1 queued=1/)).toBeInTheDocument();
@@ -1186,8 +1212,11 @@ describe.sequential('Director capability desktop integration', () => {
     expect(onToggleDirector).not.toHaveBeenCalled();
     await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-queue-run', 'C:/Temp/Product'));
     const runEvidence = await screen.findByTestId('director-run-evidence');
-    expect(runEvidence).toHaveTextContent('/v2/director/runs/director-queue-run');
-    expect(runEvidence).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(runEvidence).not.toHaveTextContent('/v2/director/runs/director-queue-run');
+    expect(screen.getByTestId('director-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-queue-run?workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(runEvidence).toHaveTextContent('queued · queued=2');
     expect(screen.getByTestId('director-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
 
@@ -1234,12 +1263,17 @@ describe.sequential('Director capability desktop integration', () => {
 
     await waitFor(() => expect(serviceMocks.cancelDirectorRun).toHaveBeenCalledWith('director-queue-run', 'C:/Temp/Product'));
     const runEvidence = await screen.findByTestId('director-run-evidence');
-    expect(runEvidence).toHaveTextContent('/v2/director/runs/director-queue-run');
-    expect(runEvidence).toHaveTextContent('CANCELLED · queued=2');
-    expect(screen.getByTestId('director-run-cancel-result')).toHaveTextContent(
-      '/v2/director/runs/director-queue-run/cancel',
+    expect(runEvidence).not.toHaveTextContent('/v2/director/runs/director-queue-run');
+    expect(screen.getByTestId('director-run-evidence-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-queue-run?workspace=C%3A%2FTemp%2FProduct',
     );
-    expect(screen.getByTestId('director-run-cancel-result')).toHaveTextContent('workspace=C%3A%2FTemp%2FProduct');
+    expect(runEvidence).toHaveTextContent('CANCELLED · queued=2');
+    expect(screen.getByTestId('director-run-cancel-result')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/runs/director-queue-run/cancel?workspace=C%3A%2FTemp%2FProduct',
+    );
+    expect(screen.getByTestId('director-run-cancel-result')).not.toHaveTextContent('/v2/director/runs/director-queue-run/cancel');
     expect(screen.getByTestId('director-run-cancel-result')).toHaveTextContent('取消运行已提交: CANCELLED');
   });
 
@@ -1278,8 +1312,11 @@ describe.sequential('Director capability desktop integration', () => {
     await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledWith('C:/Temp/Product'));
     expect(serviceMocks.runDirector).not.toHaveBeenCalled();
     const statusEvidence = await screen.findByTestId('director-toggle-status-evidence');
-    expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto');
-    expect(statusEvidence).toHaveTextContent('/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct');
+    expect(statusEvidence).not.toHaveTextContent('/v2/director/status?source=auto');
+    expect(screen.getByTestId('director-toggle-status-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(statusEvidence).toHaveTextContent('idle');
     expect(statusEvidence).toHaveTextContent('pid=none');
     expect(statusEvidence).toHaveTextContent('mode=desktop_service');

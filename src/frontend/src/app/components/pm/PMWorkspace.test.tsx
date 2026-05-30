@@ -279,13 +279,21 @@ describe('PMWorkspace history panel', () => {
       limit: 5,
       workspace: 'C:/Temp/Product',
     });
-    expect(strip).toHaveTextContent('/v2/roles/capabilities/pm?host_kind=electron_workbench');
-    expect(strip).toHaveTextContent('/v2/pm/diagnostics');
-    expect(strip).toHaveTextContent('/v2/pm/diagnostics?workspace=C%3A%2FTemp%2FProduct');
-    expect(strip).toHaveTextContent('/v2/pm/cache-stats');
-    expect(strip).toHaveTextContent('/v2/pm/token-budget-stats');
-    expect(strip).toHaveTextContent('/v2/pm/llm-events?role=pm&limit=5');
-    expect(strip).toHaveTextContent('/v2/pm/llm-events?role=pm&limit=5&workspace=C%3A%2FTemp%2FProduct');
+    expect(strip).not.toHaveTextContent('/v2/roles/capabilities/pm?host_kind=electron_workbench');
+    expect(screen.getByTestId('pm-capabilities-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/roles/capabilities/pm?host_kind=electron_workbench',
+    );
+    expect(screen.getByTestId('pm-diagnostics-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/pm/diagnostics?workspace=C%3A%2FTemp%2FProduct',
+    );
+    expect(screen.getByTestId('pm-cache-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/cache-stats');
+    expect(screen.getByTestId('pm-token-budget-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/token-budget-stats');
+    expect(screen.getByTestId('pm-llm-events-endpoint')).toHaveAttribute(
+      'data-endpoint',
+      '/v2/pm/llm-events?role=pm&limit=5&workspace=C%3A%2FTemp%2FProduct',
+    );
     expect(strip).toHaveTextContent('chat');
     expect(strip).toHaveTextContent('llm=ready');
     expect(strip).toHaveTextContent('input=ready');
@@ -316,7 +324,9 @@ describe('PMWorkspace history panel', () => {
 
     await waitFor(() => expect(clearRoleKernelCacheMock).toHaveBeenCalledWith('pm'));
     await waitFor(() => expect(getRoleKernelCacheStatsMock).toHaveBeenCalledTimes(2));
-    expect(await screen.findByTestId('pm-kernel-cache-clear-result')).toHaveTextContent('/v2/pm/cache-clear · cache cleared');
+    const clearResult = await screen.findByTestId('pm-kernel-cache-clear-result');
+    expect(clearResult).toHaveAttribute('data-endpoint', '/v2/pm/cache-clear');
+    expect(clearResult).toHaveTextContent('cache cleared');
   });
 
   it('uses backend PM task list fallback when runtime tasks are absent', async () => {
@@ -362,7 +372,8 @@ describe('PMWorkspace history panel', () => {
       workspace: 'C:/Temp/Product',
     }));
     const evidence = await screen.findByTestId('pm-task-backend-evidence');
-    expect(evidence).toHaveTextContent('/v2/pm/tasks');
+    expect(evidence).not.toHaveTextContent('/v2/pm/tasks');
+    expect(screen.getByTestId('pm-task-list-evidence-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/tasks');
     expect(evidence).toHaveTextContent('backend=2');
     expect(evidence).toHaveTextContent('runtime=0');
     expect(evidence).toHaveTextContent('merged=2');
@@ -390,7 +401,8 @@ describe('PMWorkspace history panel', () => {
     await waitFor(() => expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('tasks=1'));
     expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('PM-created-sync');
     const evidence = screen.getByTestId('pm-task-backend-evidence');
-    expect(evidence).toHaveTextContent('/v2/pm/tasks');
+    expect(evidence).not.toHaveTextContent('/v2/pm/tasks');
+    expect(screen.getByTestId('pm-task-list-evidence-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/tasks');
     expect(evidence).toHaveTextContent('backend=1');
     expect(evidence).toHaveTextContent('merged=1');
     expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveTextContent('taskCount=1');
@@ -474,13 +486,17 @@ describe('PMWorkspace history panel', () => {
       workspace: 'C:/Temp/Product',
     }));
     const panel = await screen.findByTestId('pm-requirements-panel');
-    expect(panel).toHaveTextContent('/v2/pm/requirements');
+    expect(panel).not.toHaveTextContent('/v2/pm/requirements');
+    expect(screen.getByTestId('pm-requirements-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/requirements');
+    expect(screen.getByTestId('pm-requirements-list-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/requirements');
     await waitFor(() => expect(screen.getByTestId('pm-requirements-count')).toHaveTextContent('1'));
     expect(screen.getByTestId('pm-requirements-list')).toHaveTextContent('Traceable requirement');
     await waitFor(() => expect(getPmRequirementMock).toHaveBeenCalledWith('REQ-1', 'C:/Temp/Product'));
     await waitFor(() => expect(screen.getByTestId('pm-requirement-detail')).toHaveTextContent('Requirement detail payload'));
     const detail = screen.getByTestId('pm-requirement-detail');
-    expect(detail).toHaveTextContent('/v2/pm/requirements/REQ-1');
+    expect(detail).not.toHaveTextContent('/v2/pm/requirements/REQ-1');
+    expect(screen.getByTestId('pm-requirement-detail-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/requirements/REQ-1');
+    expect(screen.getByTestId('pm-requirement-detail-body-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/requirements/REQ-1');
     expect(detail).toHaveTextContent('Requirement accepted');
     expect(detail).toHaveTextContent('PM-1');
   });
@@ -580,7 +596,8 @@ describe('PMWorkspace history panel', () => {
     await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(getPmStatusMock).toHaveBeenCalledWith('C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-run-once-status-evidence');
-    expect(evidence).toHaveTextContent('/v2/pm/status');
+    expect(evidence).not.toHaveTextContent('/v2/pm/status');
+    expect(screen.getByTestId('pm-run-once-status-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/status');
     expect(evidence).toHaveTextContent('running');
     expect(evidence).toHaveTextContent('pid=4242');
     expect(evidence).toHaveTextContent('mode=run_once');
@@ -867,7 +884,8 @@ describe('PMWorkspace history panel', () => {
     await waitFor(() => expect(onTogglePm).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(getPmStatusMock).toHaveBeenCalledWith('C:/Temp/Product'));
     const evidence = await screen.findByTestId('pm-toggle-status-evidence');
-    expect(evidence).toHaveTextContent('/v2/pm/status');
+    expect(evidence).not.toHaveTextContent('/v2/pm/status');
+    expect(screen.getByTestId('pm-toggle-status-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/status');
     expect(evidence).toHaveTextContent('running');
     expect(evidence).toHaveTextContent('pid=5150');
     expect(evidence).toHaveTextContent('mode=loop');

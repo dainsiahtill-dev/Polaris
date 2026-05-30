@@ -83,7 +83,20 @@ function normalizeStateToken(value: string): 'ready' | 'blocked' | 'unknown' {
 
 function isActiveRuntimePhase(value: string): boolean {
   const token = String(value || '').trim().toLowerCase();
-  return Boolean(token && !['idle', 'unknown', 'none'].includes(token));
+  return [
+    'agents',
+    'planning',
+    'analyzing',
+    'executing',
+    'llm_calling',
+    'tool_running',
+    'verification',
+    'chief_engineer',
+    'director',
+    'qa',
+    'failed',
+    'error',
+  ].includes(token);
 }
 
 function toRelativeTime(value?: string | null): string {
@@ -265,6 +278,7 @@ export function LlmRuntimeOverlay({
 }: LlmRuntimeOverlayProps) {
   const [expanded, setExpanded] = useState(false);
   const compactFactoryMode = activeView === 'factory';
+  const roleWorkspaceMode = activeView === 'pm' || activeView === 'chief_engineer' || activeView === 'director';
   const running = pmRunning || directorRunning;
   const llmStateToken = normalizeStateToken(llmState);
   const runtimeActive = running || factoryRuntimeActive || isActiveRuntimePhase(currentPhase);
@@ -277,6 +291,11 @@ export function LlmRuntimeOverlay({
     (activeView === 'chief_engineer' && llmBlockedRoles.includes('chief_engineer')) ||
     (activeView === 'factory' && factoryBlockedRoleVisible);
   const isLlmBlocked = llmStateToken === 'blocked' && (runtimeActive || blockedRoleForView);
+  const shouldRenderOverlay =
+    runtimeActive ||
+    websocketReconnecting ||
+    !websocketLive ||
+    isLlmBlocked;
   const phaseLabel = (
     PHASE_LABELS[currentPhase] ||
     (pmRunning && !directorRunning ? 'PM Running' : '') ||
@@ -286,19 +305,19 @@ export function LlmRuntimeOverlay({
   );
 
   useEffect(() => {
-    if (compactFactoryMode) {
+    if (compactFactoryMode || roleWorkspaceMode) {
       setExpanded(false);
     }
-  }, [compactFactoryMode]);
+  }, [compactFactoryMode, roleWorkspaceMode]);
 
   useEffect(() => {
-    if (compactFactoryMode) {
+    if (compactFactoryMode || roleWorkspaceMode) {
       return;
     }
     if (running || websocketReconnecting || isLlmBlocked) {
       setExpanded(true);
     }
-  }, [compactFactoryMode, running, websocketReconnecting, isLlmBlocked]);
+  }, [compactFactoryMode, roleWorkspaceMode, running, websocketReconnecting, isLlmBlocked]);
 
   const recentSteps = useMemo(() => {
     const now = Date.now();
@@ -355,6 +374,10 @@ export function LlmRuntimeOverlay({
     llmStateToken === 'ready' ? 'LLM READY' : isLlmBlocked ? 'LLM BLOCKED' : running ? 'LLM WAIT' : 'LLM IDLE';
   const socketBadgeColor = websocketLive ? 'success' : websocketReconnecting ? 'warning' : 'error';
 
+  if (!shouldRenderOverlay) {
+    return null;
+  }
+
   return (
     <div
       data-testid="llm-runtime-overlay"
@@ -362,6 +385,8 @@ export function LlmRuntimeOverlay({
         'pointer-events-none fixed right-3 z-40 w-[min(94vw,420px)] sm:right-4',
         compactFactoryMode
           ? 'bottom-3 sm:bottom-4 sm:w-[320px]'
+          : roleWorkspaceMode
+            ? 'bottom-28 sm:bottom-28 sm:w-[360px]'
           : 'bottom-16 sm:bottom-6 sm:w-[400px]',
       )}
     >

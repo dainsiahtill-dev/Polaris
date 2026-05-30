@@ -55,6 +55,17 @@ describe('FactoryWorkspace', () => {
     expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument();
   });
 
+  it('shows compact workspace labels while preserving the full path as evidence', () => {
+    const workspace = 'C:/Users/dains/Documents/GitLab/fashion-gen-studio';
+
+    render(<FactoryWorkspace {...baseProps} workspace={workspace} currentRun={null} events={[]} />);
+
+    expect(screen.getByTestId('factory-workspace-label')).toHaveTextContent('fashion-gen-studio');
+    expect(screen.getByTestId('factory-workspace-label')).toHaveAttribute('title', workspace);
+    expect(screen.getByTestId('factory-pm-workspace-label')).toHaveTextContent('fashion-gen-studio');
+    expect(screen.getByTestId('factory-pm-workspace-label')).not.toHaveTextContent('C:/Users/dains');
+  });
+
   it('shows empty audit evidence states before artifacts are available', () => {
     render(<FactoryWorkspace {...baseProps} currentRun={null} events={[]} />);
 

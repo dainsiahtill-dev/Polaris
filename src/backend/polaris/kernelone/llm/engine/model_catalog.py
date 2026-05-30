@@ -14,19 +14,58 @@ from polaris.kernelone.storage.io_paths import build_cache_root
 
 from .contracts import ModelSpec
 
-# SSOT: explicit model configuration MUST come from llm_config.json. A narrow
-# compatibility fallback is kept only for stable registry-prefixed local model
-# aliases that otherwise cannot pass budget checks after a successful LLM test.
+# SSOT: explicit model configuration MUST come from llm_config.json. Narrow
+# compatibility fallbacks are kept only for stable provider-owned aliases that
+# otherwise cannot pass budget checks after a successful LLM test.
 
-_KNOWN_MODEL_LIMITS: dict[str, dict[str, Any]] = {
-    # Compatibility profile for repo-prefixed Ollama model identifiers returned
-    # by model registries such as ModelScope. Explicit llm_config.json limits
-    # always win over this fallback.
-    "qwen3-coder-30b-a3b-instruct-gguf": {
-        "max_context_tokens": 32_768,
-        "max_output_tokens": 8_192,
-        "supports_tools": True,
-        "supports_json_schema": True,
+_KNOWN_MODEL_LIMITS_BY_PROVIDER_TYPE: dict[str, dict[str, dict[str, Any]]] = {
+    "codex_cli": {
+        "gpt-5.3-codex": {
+            "max_context_tokens": 400_000,
+            "max_output_tokens": 128_000,
+            "supports_tools": True,
+            "supports_json_schema": True,
+            "supports_vision": True,
+        },
+        "gpt-5.2-codex": {
+            "max_context_tokens": 400_000,
+            "max_output_tokens": 128_000,
+            "supports_tools": True,
+            "supports_json_schema": True,
+            "supports_vision": True,
+        },
+        "gpt-5.1-codex": {
+            "max_context_tokens": 400_000,
+            "max_output_tokens": 128_000,
+            "supports_tools": True,
+            "supports_json_schema": True,
+            "supports_vision": True,
+        },
+        "gpt-5-codex": {
+            "max_context_tokens": 400_000,
+            "max_output_tokens": 128_000,
+            "supports_tools": True,
+            "supports_json_schema": True,
+            "supports_vision": True,
+        },
+        "gpt-4-codex": {
+            "max_context_tokens": 128_000,
+            "max_output_tokens": 16_384,
+            "supports_tools": True,
+            "supports_json_schema": True,
+            "supports_vision": True,
+        },
+    },
+    "ollama": {
+        # Compatibility profile for repo-prefixed Ollama model identifiers
+        # returned by model registries such as ModelScope. Explicit
+        # llm_config.json limits always win over this fallback.
+        "qwen3-coder-30b-a3b-instruct-gguf": {
+            "max_context_tokens": 32_768,
+            "max_output_tokens": 8_192,
+            "supports_tools": True,
+            "supports_json_schema": True,
+        },
     },
 }
 
@@ -225,13 +264,14 @@ class ModelCatalog:
         return {}
 
     def _resolve_known_model_limits(self, provider_type: str, model_key: str) -> dict[str, Any]:
-        if provider_type != "ollama":
+        provider_limits = _KNOWN_MODEL_LIMITS_BY_PROVIDER_TYPE.get(provider_type)
+        if not isinstance(provider_limits, dict):
             return {}
         for candidate in _model_key_candidates(model_key):
-            direct = _KNOWN_MODEL_LIMITS.get(candidate)
+            direct = provider_limits.get(candidate)
             if isinstance(direct, dict):
                 return dict(direct)
-        for normalized, value in _iter_longest_prefix_matches(_KNOWN_MODEL_LIMITS):
+        for normalized, value in _iter_longest_prefix_matches(provider_limits):
             for candidate in _model_key_candidates(model_key):
                 if candidate == normalized or candidate.startswith(normalized):
                     return dict(value)

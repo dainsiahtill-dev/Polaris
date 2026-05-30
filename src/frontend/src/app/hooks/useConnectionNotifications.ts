@@ -17,6 +17,8 @@ import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import type { ConnectionState } from './useWebSocketWithFallback';
 
+const RUNTIME_DISCONNECTED_TOAST_DELAY_MS = 4000;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -205,52 +207,76 @@ export interface UseRuntimeConnectionNotificationOptions {
 export function useRuntimeConnectionNotifications(
   options: UseRuntimeConnectionNotificationOptions
 ): void {
-  const { live, reconnecting, reconnect, enabled = true } = options;
+  const { live, reconnecting, enabled = true } = options;
 
-  // Track previous live state
   const prevLiveRef = useRef<boolean>(live);
-  const prevReconnectingRef = useRef<boolean>(reconnecting);
+  const liveRef = useRef<boolean>(live);
+  const enabledRef = useRef<boolean>(enabled);
+  const disconnectedToastDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disconnectedToastIdRef = useRef<string | number | null>(null);
+  const disconnectedToastShownRef = useRef<boolean>(false);
 
   useEffect(() => {
-    if (!enabled) return;
+    liveRef.current = live;
+    enabledRef.current = enabled;
 
-    // Connection restored
-    if (!prevLiveRef.current && live) {
+    const clearPendingDisconnectedToast = () => {
+      if (disconnectedToastDelayRef.current) {
+        clearTimeout(disconnectedToastDelayRef.current);
+        disconnectedToastDelayRef.current = null;
+      }
+    };
+
+    if (!enabled) {
+      clearPendingDisconnectedToast();
       if (disconnectedToastIdRef.current) {
         toast.dismiss(disconnectedToastIdRef.current);
         disconnectedToastIdRef.current = null;
       }
-
-      toast.success('连接已恢复', {
-        description: '实时更新已恢复',
-        duration: 3000,
-      });
+      disconnectedToastShownRef.current = false;
+      prevLiveRef.current = live;
+      return;
     }
 
-    // Connection lost (not reconnecting yet)
-    if (prevLiveRef.current && !live && !reconnecting) {
-      disconnectedToastIdRef.current = toast.error('连接已断开', {
-        description: '正在尝试重新连接...',
-        duration: 5000,
-      });
+    if (live) {
+      clearPendingDisconnectedToast();
+      if (!prevLiveRef.current && disconnectedToastShownRef.current) {
+        if (disconnectedToastIdRef.current) {
+          toast.dismiss(disconnectedToastIdRef.current);
+          disconnectedToastIdRef.current = null;
+        }
+        disconnectedToastShownRef.current = false;
+        toast.success('连接已恢复', {
+          description: '实时更新已恢复',
+          duration: 3000,
+        });
+      }
+      prevLiveRef.current = true;
+      return;
     }
 
-    // Reconnecting started
-    if (prevReconnectingRef.current !== reconnecting && reconnecting) {
-      toast.warning('正在重连...', {
-        description: 'WebSocket 连接中断，尝试恢复中',
-        duration: 3000,
-      });
+    if (prevLiveRef.current && !disconnectedToastDelayRef.current && !disconnectedToastShownRef.current) {
+      disconnectedToastDelayRef.current = setTimeout(() => {
+        disconnectedToastDelayRef.current = null;
+        if (!enabledRef.current || liveRef.current) return;
+        disconnectedToastShownRef.current = true;
+        disconnectedToastIdRef.current = toast.error('连接已断开', {
+          description: reconnecting ? '正在重新连接...' : '实时更新已暂停',
+          duration: 5000,
+        });
+      }, RUNTIME_DISCONNECTED_TOAST_DELAY_MS);
     }
 
-    prevLiveRef.current = live;
-    prevReconnectingRef.current = reconnecting;
+    prevLiveRef.current = false;
   }, [live, reconnecting, enabled]);
 
   // Cleanup
   useEffect(() => {
     return () => {
+      if (disconnectedToastDelayRef.current) {
+        clearTimeout(disconnectedToastDelayRef.current);
+        disconnectedToastDelayRef.current = null;
+      }
       if (disconnectedToastIdRef.current) {
         toast.dismiss(disconnectedToastIdRef.current);
       }

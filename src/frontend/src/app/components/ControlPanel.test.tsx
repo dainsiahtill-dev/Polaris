@@ -72,9 +72,12 @@ describe('ControlPanel', () => {
       expect(screen.getByText('Polaris')).toBeInTheDocument();
     });
 
-    it('displays the workspace path', () => {
-      render(<ControlPanel {...defaultProps} />);
-      expect(screen.getByDisplayValue('/test/workspace')).toBeInTheDocument();
+    it('displays a compact workspace label while preserving the full path', () => {
+      render(<ControlPanel {...defaultProps} workspace="/test/very-long/workspace" />);
+      const workspaceInput = screen.getByTestId('control-panel-workspace-label');
+      expect(workspaceInput).toHaveDisplayValue('workspace');
+      expect(workspaceInput).toHaveAttribute('title', '/test/very-long/workspace');
+      expect(workspaceInput).toHaveAttribute('data-workspace-path', '/test/very-long/workspace');
     });
   });
 
@@ -110,7 +113,9 @@ describe('ControlPanel', () => {
       await waitFor(() => expect(onTogglePm).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
-      expect(evidence).toHaveTextContent('/v2/pm/status');
+      expect(evidence).not.toHaveTextContent('/v2/pm/status');
+      expect(evidence).toHaveAttribute('data-endpoint', '/v2/pm/status');
+      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/pm/status'));
       expect(evidence).toHaveTextContent('running');
       expect(evidence).toHaveTextContent('pid=4101');
       expect(evidence).toHaveTextContent('mode=desktop_service');
@@ -178,7 +183,9 @@ describe('ControlPanel', () => {
       await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledWith('/test/workspace'));
       const evidence = await screen.findByTestId('control-panel-director-toggle-evidence');
-      expect(evidence).toHaveTextContent('/v2/director/status?source=auto');
+      expect(evidence).not.toHaveTextContent('/v2/director/status?source=auto');
+      expect(evidence).toHaveAttribute('data-endpoint', '/v2/director/status?source=auto');
+      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/director/status?source=auto'));
       expect(evidence).toHaveTextContent('idle');
       expect(evidence).toHaveTextContent('pid=none');
       expect(evidence).toHaveTextContent('mode=desktop_service');
@@ -274,7 +281,9 @@ describe('ControlPanel', () => {
       await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
-      expect(evidence).toHaveTextContent('/v2/pm/status');
+      expect(evidence).not.toHaveTextContent('/v2/pm/status');
+      expect(evidence).toHaveAttribute('data-endpoint', '/v2/pm/status');
+      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/pm/status'));
       expect(evidence).toHaveTextContent('idle');
       expect(evidence).toHaveTextContent('pid=none');
       expect(evidence).toHaveTextContent('mode=single_iteration');
@@ -319,7 +328,9 @@ describe('ControlPanel', () => {
       await waitFor(() => expect(onResumePm).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
-      expect(evidence).toHaveTextContent('/v2/pm/status');
+      expect(evidence).not.toHaveTextContent('/v2/pm/status');
+      expect(evidence).toHaveAttribute('data-endpoint', '/v2/pm/status');
+      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/pm/status'));
       expect(evidence).toHaveTextContent('running');
       expect(evidence).toHaveTextContent('pid=4102');
       expect(evidence).toHaveTextContent('mode=resume');

@@ -18,8 +18,8 @@ interface ProjectProgressPanelProps {
   tasks: PmTask[];
   directorTasks?: PmTask[] | null;
   pmState?: PmState | null;
-  focus?: string | null;
-  notes?: string | null;
+  focus?: unknown;
+  notes?: unknown;
   goals?: string[] | null;
   planText?: string | null;
   planMtime?: string | null;
@@ -37,10 +37,14 @@ interface ProjectProgressPanelProps {
   directorRealtimeConnected?: boolean;
 }
 
-const toText = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+const toText = (value: unknown): string => {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).trim();
+  return '';
+};
 
-const clampText = (value: string, maxLen: number): string => {
-  const text = value.trim();
+const clampText = (value: unknown, maxLen: number): string => {
+  const text = toText(value);
   if (!text || text.length <= maxLen) return text;
   return text.slice(0, Math.max(0, maxLen - 1)).trimEnd() + '...';
 };
@@ -58,9 +62,9 @@ const isTaskActive = (task: PmTask): boolean => {
   return ['in_progress', 'running', 'executing'].some((key) => status.includes(key));
 };
 
-const taskKey = (task: PmTask): string => task.id || toText(task.title) || toText(task.goal);
+const taskKey = (task: PmTask): string => toText(task.id) || toText(task.title) || toText(task.goal);
 
-const pickTaskSummary = (task: PmTask): string => task.summary || task.title || task.goal || '';
+const pickTaskSummary = (task: PmTask): string => toText(task.summary) || toText(task.title) || toText(task.goal);
 
 export function ProjectProgressPanel({
   tasks,

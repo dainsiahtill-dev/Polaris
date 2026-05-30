@@ -17,6 +17,34 @@ def _clean_filename(raw: str) -> str:
     return name
 
 
+def _is_plausible_filename(candidate: str, chat_files: Sequence[str]) -> bool:
+    if not candidate:
+        return False
+    if candidate in chat_files or Path(candidate).name in chat_files:
+        return True
+    if any(marker in candidate for marker in ("{", "}", "<", ">", "|")):
+        return False
+    if candidate.startswith(("-", "#", "//", "/*", "*")):
+        return False
+    path = Path(candidate)
+    return bool(path.suffix or "/" in candidate or "\\" in candidate)
+
+
+def _extract_fence_filename(line: str) -> str:
+    stripped = line.strip()
+    if not stripped.startswith(DEFAULT_FENCE[0]):
+        return ""
+    info = stripped[len(DEFAULT_FENCE[0]) :].strip()
+    if not info:
+        return ""
+    lowered = info.lower()
+    if lowered.startswith("file:"):
+        return _clean_filename(info.split(":", 1)[1])
+    if lowered.startswith("path="):
+        return _clean_filename(info.split("=", 1)[1])
+    return ""
+
+
 def extract_wholefile_blocks(
     content: str,
     *,
@@ -46,11 +74,17 @@ def extract_wholefile_blocks(
                 block_lines = []
                 continue
 
+            fenced_name = _extract_fence_filename(line)
+            if fenced_name and _is_plausible_filename(fenced_name, chat_files):
+                file_name = fenced_name
+                file_source = "block"
+                continue
+
             if i > 0:
                 candidate = _clean_filename(lines[i - 1])
                 if candidate and candidate not in chat_files and Path(candidate).name in chat_files:
                     candidate = Path(candidate).name
-                if candidate:
+                if candidate and _is_plausible_filename(candidate, chat_files):
                     file_name = candidate
                     file_source = "block"
 

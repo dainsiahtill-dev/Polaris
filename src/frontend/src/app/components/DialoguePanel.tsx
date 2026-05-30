@@ -230,35 +230,36 @@ export function DialoguePanel({
       <div className="relative z-20 flex flex-col h-full">
         <div className="px-4 py-4 border-b border-white/5 bg-black/60 cyber-corner-cut relative mx-2 mt-2">
 
-          <div className="flex items-center justify-between mb-3 relative z-10">
-            <div className="flex items-center gap-2">
-              <div className="size-9 rounded-lg bg-accent/15 flex items-center justify-center text-accent shadow-[0_0_20px_rgba(124,58,237,0.4)] neon-glow-purple scale-110">
+          <div className="relative z-10 mb-3 flex flex-wrap items-start justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent shadow-[0_0_20px_rgba(124,58,237,0.4)] neon-glow-purple scale-110">
                 <MessageSquare className="size-5" />
               </div>
-              <h2 className="text-sm font-heading font-black text-text-main uppercase tracking-[0.25em] glitch-text leading-tight">对话流</h2>
+              <h2 className="whitespace-nowrap text-sm font-heading font-black text-text-main uppercase tracking-[0.18em] glitch-text leading-tight">对话流</h2>
             </div>
-            <div className="flex items-center gap-3 text-[10px] text-text-muted font-mono">
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-[10px] text-text-muted font-mono">
               {onClearLogs ? (
                 <button
                   onClick={() => {
                     onClearLogs();
                   }}
                   disabled={clearingLogs}
-                  className="flex items-center gap-1 rounded-sm bg-black/60 px-2 py-1 border border-white/10 text-text-dim hover:text-text-main hover:border-accent/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-white/10 bg-black/60 text-text-dim transition-colors hover:border-accent/30 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
                   title={clearingLogs ? '清空中...' : '清空对话日志'}
+                  aria-label={clearingLogs ? '清空中' : '清空对话日志'}
                 >
                   <Trash2 className="size-3" />
-                  <span>{clearingLogs ? '清空中' : '清空日志'}</span>
+                  <span className="sr-only">{clearingLogs ? '清空中' : '清空日志'}</span>
                 </button>
               ) : null}
-              <div className="flex items-center gap-1.5 bg-black/60 px-2 py-1 rounded-sm border border-white/10 shadow-[0_0_15px_rgba(6,182,212,0.15)] neon-glow-cyan">
+              <div className="flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm border border-white/10 bg-black/60 px-2 shadow-[0_0_15px_rgba(6,182,212,0.15)] neon-glow-cyan">
                 <ActivityIcon className={`size-3 ${live ? 'text-status-success animate-pulse' : 'text-text-dim'}`} />
                 <span className={live ? 'text-status-success font-bold' : 'text-text-dim font-bold tracking-widest'}>{live ? '实时' : '离线'}</span>
               </div>
-              <div className="ml-2 flex items-center gap-1 rounded-sm bg-black/60 p-0.5 border border-white/10 no-drag shadow-inner">
+              <div className="flex shrink-0 items-center gap-1 rounded-sm bg-black/60 p-0.5 border border-white/10 no-drag shadow-inner">
                 <button
                   onClick={() => setViewMode('tasks')}
-                  className={`px-3 py-1 rounded-sm transition-all font-black uppercase tracking-tighter text-[9px] ${viewMode === 'tasks'
+                  className={`h-6 whitespace-nowrap rounded-sm px-2 transition-all font-black uppercase tracking-tighter text-[9px] ${viewMode === 'tasks'
                     ? 'bg-accent/30 text-accent shadow-[0_0_10px_rgba(124,58,237,0.4)] border border-accent/20'
                     : 'text-text-dim hover:text-text-main'
                     }`}
@@ -267,7 +268,7 @@ export function DialoguePanel({
                 </button>
                 <button
                   onClick={() => setViewMode('stream')}
-                  className={`px-3 py-1 rounded-sm transition-all font-black uppercase tracking-tighter text-[9px] ${viewMode === 'stream'
+                  className={`h-6 whitespace-nowrap rounded-sm px-2 transition-all font-black uppercase tracking-tighter text-[9px] ${viewMode === 'stream'
                     ? 'bg-accent/30 text-accent shadow-[0_0_10px_rgba(124,58,237,0.4)] border border-accent/20'
                     : 'text-text-dim hover:text-text-main'
                     }`}

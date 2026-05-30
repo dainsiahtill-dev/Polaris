@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, Clock, XCircle, ExternalLink, ShieldAlert, FileText, Settings } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Clock, ShieldAlert, FileText, Settings, UserCog } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { apiFetch } from '@/api';
 import { devLogger } from '@/app/utils/devLogger';
@@ -48,7 +48,7 @@ export function InterventionCenter({ isOpen, onClose }: InterventionCenterProps)
       const res = await apiFetch('/interventions/list');
       if (res.ok) {
         const data = await res.json();
-        setInterventions(data.interventions || []);
+        setInterventions(Array.isArray(data.interventions) ? data.interventions : []);
       }
     } catch (error) {
       devLogger.error('Failed to fetch interventions:', error);
@@ -150,24 +150,38 @@ export function InterventionCenter({ isOpen, onClose }: InterventionCenterProps)
   });
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl h-[80vh] flex flex-col bg-[var(--ink-indigo)] border-gray-800 text-gray-200 p-0 gap-0">
-        <DialogHeader className="p-6 border-b border-gray-800">
-          <div className="flex items-center justify-between">
-            <DialogTitle className="text-xl font-semibold flex items-center gap-2">
-              <ShieldAlert className="h-5 w-5 text-emerald-500" />
-              Intervention Center
-            </DialogTitle>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-[200px]">
+    <Dialog open={isOpen} onOpenChange={(open) => {
+      if (!open) {
+        onClose();
+      }
+    }}>
+      <DialogContent
+        data-testid="intervention-center"
+        className="h-[min(80vh,46rem)] w-[min(64rem,calc(100vw-2rem))] max-w-none overflow-hidden flex flex-col bg-[var(--ink-indigo)] border-gray-800 text-gray-200 p-0 gap-0"
+        style={{ backgroundColor: 'rgb(18, 14, 42)' }}
+      >
+        <DialogTitle className="sr-only">Intervention Center</DialogTitle>
+        <DialogDescription className="sr-only">
+          集中处理人工核准、门禁阻断与关键告警。
+        </DialogDescription>
+        <DialogHeader className="border-b border-gray-800 p-5 pr-16">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+            <div className="min-w-0">
+              <h2 className="flex min-w-0 items-center gap-2 text-xl font-semibold text-gray-100">
+                <ShieldAlert className="h-5 w-5 shrink-0 text-emerald-500" />
+                <span className="truncate">Intervention Center</span>
+              </h2>
+              <p className="mt-2 text-sm text-gray-400">
+                集中处理人工核准、门禁阻断与关键告警。
+              </p>
+            </div>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full md:w-[220px]">
               <TabsList className="grid w-full grid-cols-2 bg-gray-800">
                 <TabsTrigger value="pending">待裁 ({interventions.filter(i => i.status === 'pending').length})</TabsTrigger>
                 <TabsTrigger value="history">已决</TabsTrigger>
               </TabsList>
             </Tabs>
           </div>
-          <DialogDescription className="text-gray-400 mt-2">
-            集中处理人工核准、门禁阻断与关键告警。
-          </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 flex overflow-hidden">
@@ -279,33 +293,5 @@ export function InterventionCenter({ isOpen, onClose }: InterventionCenterProps)
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-// Helper icon component since UserCog is not exported from lucide-react in all versions
-function UserCog({ className }: { className?: string }) {
-  return (
-    <svg 
-      xmlns="http://www.w3.org/2000/svg" 
-      width="24" 
-      height="24" 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round" 
-      className={className}
-    >
-      <circle cx="18" cy="15" r="3" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M10 15H6a4 4 0 0 0-4 4v2" />
-      <path d="m21.7 16.4.9-.9" />
-      <path d="m15.3 10 .9.9" />
-      <path d="m21.7 13.6.9.9" />
-      <path d="m15.3 12.8.9-.9" />
-      <path d="m17.2 18.2.9-.9" />
-      <path d="m17.2 11.8.9-.9" />
-    </svg>
   );
 }

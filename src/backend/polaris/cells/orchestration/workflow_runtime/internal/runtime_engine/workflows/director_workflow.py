@@ -79,6 +79,8 @@ def _task_dependencies(task: TaskContract) -> set[str]:
     raw_dependencies: list[Any] = []
     if isinstance(payload.get("depends_on"), list):
         raw_dependencies.extend(payload.get("depends_on") or [])
+    if isinstance(payload.get("dependencies"), list):
+        raw_dependencies.extend(payload.get("dependencies") or [])
     if isinstance(payload.get("blocked_by"), list):
         raw_dependencies.extend(payload.get("blocked_by") or [])
     return {str(item).strip() for item in raw_dependencies if str(item).strip()}

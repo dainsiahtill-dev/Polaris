@@ -249,13 +249,13 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
   return (
     <div className={`flex flex-col h-full bg-[rgba(18,14,42,0.95)] ${className}`}>
       {/* Header */}
-      <div className="flex items-center justify-between p-2 border-b border-amber-400/10 bg-[linear-gradient(165deg,rgba(50,35,18,0.30),rgba(28,18,48,0.40))]">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <div className="flex items-center gap-1 rounded bg-[rgba(18,14,42,0.40)] p-0.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-2 border-b border-amber-400/10 bg-[linear-gradient(165deg,rgba(50,35,18,0.30),rgba(28,18,48,0.40))]">
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+          <div className="flex shrink-0 items-center gap-1 rounded bg-[rgba(18,14,42,0.40)] p-0.5">
             {allowRaw && (
               <button
                 onClick={() => setViewMode('raw')}
-                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${viewMode === 'raw' ? 'bg-amber-500/20 text-amber-200' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`h-6 whitespace-nowrap rounded px-2 text-[10px] transition-colors ${viewMode === 'raw' ? 'bg-amber-500/20 text-amber-200' : 'text-gray-500 hover:text-gray-300'}`}
               >
                 原始
               </button>
@@ -263,7 +263,7 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
             {allowSmart && (
               <button
                 onClick={() => setViewMode('smart')}
-                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${viewMode === 'smart' ? 'bg-cyan-500/20 text-cyan-200' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`h-6 whitespace-nowrap rounded px-2 text-[10px] transition-colors ${viewMode === 'smart' ? 'bg-cyan-500/20 text-cyan-200' : 'text-gray-500 hover:text-gray-300'}`}
               >
                 智析
               </button>
@@ -273,7 +273,7 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
             <span className="text-[10px] text-gray-500">{llmEvents.length} events</span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 shrink-0 items-center justify-end gap-1.5">
           {/* Log Level Filter */}
           {!allowSmart && allowRaw && (
             <div className="flex items-center gap-1">
@@ -331,17 +331,18 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
               }}
               disabled={isClearing}
               title={isClearing ? '清空中...' : '清空当前日志'}
-              className="text-[10px] flex items-center gap-1 px-2 py-1 rounded bg-white/5 text-gray-400 hover:text-amber-200 hover:bg-amber-500/10 border border-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              aria-label={isClearing ? '清空中' : '清空当前日志'}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-white/10 bg-white/5 text-gray-400 transition-colors hover:bg-amber-500/10 hover:text-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Trash2 className="size-3" />
-              {isClearing ? '清空中' : '清空日志'}
+              <span className="sr-only">{isClearing ? '清空中' : '清空日志'}</span>
             </button>
           )}
-          <span className={`text-[10px] flex items-center gap-1 ${live ? 'text-emerald-400' : 'text-gray-500'}`}>
+          <span className={`flex h-7 shrink-0 items-center gap-1 whitespace-nowrap text-[10px] ${live ? 'text-emerald-400' : 'text-gray-500'}`}>
             <Activity className="size-3" />
             {live ? '在线' : '离线'}
           </span>
-          <button onClick={refresh} title="刷新" className="text-gray-500 hover:text-gray-300">
+          <button onClick={refresh} title="刷新" className="flex h-7 w-7 shrink-0 items-center justify-center text-gray-500 hover:text-gray-300">
             <RefreshCw className="size-3" />
           </button>
         </div>

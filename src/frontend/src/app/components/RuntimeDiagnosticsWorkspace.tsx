@@ -135,6 +135,12 @@ function formatTime(value: unknown): string {
   }).format(new Date(epoch));
 }
 
+function workspaceLabel(workspace: string): string {
+  const normalized = String(workspace || '').replace(/\\/g, '/').trim();
+  if (!normalized) return '未选择 workspace';
+  return normalized.split('/').filter(Boolean).pop() || normalized;
+}
+
 function formatBool(value: unknown, trueLabel = '是', falseLabel = '否'): string {
   const parsed = boolValue(value);
   if (parsed === true) return trueLabel;
@@ -356,6 +362,7 @@ export function RuntimeDiagnosticsWorkspace({
   const cards = useMemo(() => buildCards(payload, connectionState), [payload, connectionState]);
   const issues = Array.isArray(payload?.issues) ? payload.issues : [];
   const generatedAt = payload?.generated_at || payload?.timestamp || null;
+  const workspaceDisplay = workspaceLabel(workspace);
 
   return (
     <div data-testid="runtime-diagnostics-workspace" className="flex h-full flex-col overflow-hidden bg-slate-950 text-slate-100">
@@ -377,8 +384,8 @@ export function RuntimeDiagnosticsWorkspace({
             </div>
             <div className="min-w-0">
               <h1 className="text-sm font-semibold text-emerald-100">运行诊断</h1>
-              <p className="truncate text-[10px] uppercase tracking-wider text-emerald-400/70" title={workspace}>
-                {workspace || '未选择 workspace'}
+              <p data-testid="runtime-diagnostics-workspace-label" className="truncate text-[10px] uppercase tracking-wider text-emerald-400/70" title={workspace}>
+                {workspaceDisplay}
               </p>
             </div>
           </div>

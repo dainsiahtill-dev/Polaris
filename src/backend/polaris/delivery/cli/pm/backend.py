@@ -314,6 +314,72 @@ def _invoke_generic_runtime_provider(
     return output
 
 
+def _build_codex_env_from_role_config(state: PmRoleState) -> dict[str, str]:
+    from polaris.infrastructure.llm.provider_runtime_adapter import AppLLMRuntimeAdapter
+
+    provider_id, model = load_pm_model_config()
+    env: dict[str, str] = {}
+    if model:
+        env["KERNELONE_CODEX_MODEL"] = model
+
+    provider_cfg: dict[str, Any] = {}
+    try:
+        loaded_cfg = AppLLMRuntimeAdapter().load_provider_config(
+            workspace=state.workspace_full,
+            provider_id=provider_id,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        loaded_cfg = {}
+    if isinstance(loaded_cfg, dict):
+        provider_cfg = loaded_cfg
+
+    if not provider_cfg:
+        try:
+            from polaris.kernelone.llm import config_store as llm_config
+
+            payload = llm_config.load_llm_config(
+                state.workspace_full,
+                str(getattr(state, "cache_root_full", "") or ""),
+                settings=None,
+            )
+            providers = payload.get("providers") if isinstance(payload, dict) else {}
+            candidate = providers.get(provider_id) if isinstance(providers, dict) else {}
+            if isinstance(candidate, dict):
+                provider_cfg = candidate
+        except (OSError, RuntimeError, TypeError, ValueError):
+            provider_cfg = {}
+
+    if not isinstance(provider_cfg, dict):
+        return env
+    provider_type = str(provider_cfg.get("type") or "").strip().lower()
+    if provider_type not in {"codex", "codex_cli", "codex_sdk"}:
+        return env
+
+    codex_exec = provider_cfg.get("codex_exec")
+    exec_cfg = codex_exec if isinstance(codex_exec, dict) else {}
+    sandbox = str(exec_cfg.get("sandbox") or provider_cfg.get("sandbox") or "").strip()
+    if sandbox:
+        env["KERNELONE_CODEX_SANDBOX"] = sandbox
+
+    skip_git_repo_check = exec_cfg.get("skip_git_repo_check")
+    if isinstance(skip_git_repo_check, bool):
+        env["KERNELONE_CODEX_SKIP_GIT_CHECK"] = "1" if skip_git_repo_check else "0"
+
+    color = str(exec_cfg.get("color") or "").strip()
+    if color:
+        env["KERNELONE_CODEX_COLOR"] = color
+
+    profile = str(exec_cfg.get("profile") or "").strip()
+    if profile:
+        env["KERNELONE_CODEX_PROFILE"] = profile
+
+    cd = str(exec_cfg.get("cd") or "").strip()
+    if cd:
+        env["KERNELONE_CODEX_CD"] = cd
+
+    return env
+
+
 def invoke_pm_backend(
     state: PmRoleState,
     prompt: str,
@@ -345,7 +411,7 @@ def invoke_pm_backend(
                 args.codex_dangerous,
                 args.codex_profile,
                 state.timeout,
-                None,
+                _build_codex_env_from_role_config(state),
                 usage_ctx=usage_ctx,
                 events_path=state.events_full,
             )

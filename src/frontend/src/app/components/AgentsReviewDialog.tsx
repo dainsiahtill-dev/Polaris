@@ -9,6 +9,7 @@ import {
   AlertDialogTitle,
 } from '@/app/components/ui/alert-dialog';
 import type { AgentsReviewInfo } from '@/app/types/appContracts';
+import { workspaceFileLabel } from '@/app/utils/workspaceDisplay';
 
 interface AgentsReviewDialogProps {
   open: boolean;
@@ -49,10 +50,16 @@ export function AgentsReviewDialog({
   onApplyDraft,
   agentsApplying,
 }: AgentsReviewDialogProps) {
+  const targetPath = workspace ? `${workspace}\\AGENTS.md` : 'workspace\\AGENTS.md';
+  const targetLabel = workspaceFileLabel(workspace);
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className="border border-emerald-500/30 bg-[#1f2125] max-w-3xl">
-        <AlertDialogHeader>
+      <AlertDialogContent
+        data-testid="agents-review-dialog"
+        className="grid max-h-[92vh] min-w-0 max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden border border-emerald-500/30 bg-[#1f2125]"
+      >
+        <AlertDialogHeader className="shrink-0">
           <AlertDialogTitle className="text-emerald-200">
             {agentsDraftFailed ? 'AGENTS.md 草案生成失败' : 'AGENTS.md 草案待审'}
           </AlertDialogTitle>
@@ -62,37 +69,41 @@ export function AgentsReviewDialog({
               : '请审阅生成的 AGENTS.md 草案；确认后可回写到工作区，供 PM/Director 后续轮次遵循。'}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-          <div className="flex items-center justify-between gap-2">
-            <span>草案路径: {agentsReview?.draft_path || 'runtime/contracts/agents.generated.md'}</span>
-            <div className="flex items-center gap-2">
+        <div className="min-w-0 shrink-0 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="min-w-0 break-all">
+              草案路径: {agentsReview?.draft_path || 'runtime/contracts/agents.generated.md'}
+            </span>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={onOpenLogs}
-                className="rounded px-2 py-1 text-[11px] text-emerald-100 bg-emerald-500/20 hover:bg-emerald-500/30"
+                className="rounded bg-emerald-500/20 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/30"
               >
                 查看日志
               </button>
               <button
                 type="button"
                 onClick={onOpenDraft}
-                className="rounded px-2 py-1 text-[11px] text-emerald-100 bg-emerald-500/20 hover:bg-emerald-500/30"
+                className="rounded bg-emerald-500/20 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/30"
               >
                 打开草案
               </button>
             </div>
           </div>
-          <div>目标位置: {workspace ? `${workspace}\\AGENTS.md` : 'workspace/AGENTS.md'}</div>
+          <div className="truncate" title={targetPath}>
+            目标位置: <span data-testid="agents-review-target-label">{targetLabel}</span>
+          </div>
           {agentsDraftMtime ? <div>生成时间: {agentsDraftMtime}</div> : null}
           {agentsFeedbackSavedAt ? <div>反馈保存时间: {agentsFeedbackSavedAt}</div> : null}
         </div>
-        <div className="grid gap-3">
-          <div className="rounded-md border border-gray-700 bg-[#181a1f]">
-            <div className="flex items-center justify-between border-b border-gray-800 px-3 py-2 text-xs text-gray-400">
-              <span>AGENTS.generated.md</span>
+        <div data-testid="agents-review-scroll-region" className="grid min-h-0 gap-3 overflow-y-auto pr-1">
+          <div className="min-h-0 rounded-md border border-gray-700 bg-[#181a1f]">
+            <div className="flex min-w-0 items-center justify-between gap-2 border-b border-gray-800 px-3 py-2 text-xs text-gray-400">
+              <span className="min-w-0 truncate">AGENTS.generated.md</span>
               {agentsLoading ? <span>加载中...</span> : null}
             </div>
-            <pre className="h-[60vh] overflow-auto whitespace-pre-wrap p-3 text-xs text-gray-200">
+            <pre className="max-h-[38vh] min-h-48 overflow-auto whitespace-pre-wrap break-words p-3 text-xs text-gray-200">
               {agentsDraftContent || '(空)'}
             </pre>
           </div>
@@ -111,15 +122,15 @@ export function AgentsReviewDialog({
             </div>
           </div>
         </div>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={() => onOpenChange(false)}>取消</AlertDialogCancel>
+        <AlertDialogFooter data-testid="agents-review-footer" className="shrink-0 flex-wrap">
+          <AlertDialogCancel className="whitespace-nowrap" onClick={() => onOpenChange(false)}>取消</AlertDialogCancel>
           {agentsDraftFailed ? (
             <AlertDialogAction
               onClick={(event) => {
                 event.preventDefault();
                 onRetryGenerate();
               }}
-              className="bg-blue-500 text-white hover:bg-blue-400"
+              className="whitespace-nowrap bg-blue-500 text-white hover:bg-blue-400"
             >
               重新生成
             </AlertDialogAction>
@@ -129,14 +140,14 @@ export function AgentsReviewDialog({
               event.preventDefault();
               onSubmitFeedback();
             }}
-            className="bg-blue-500 text-white hover:bg-blue-400"
+            className="whitespace-nowrap bg-blue-500 text-white hover:bg-blue-400"
           >
             提交反馈（暂不回写）
           </AlertDialogAction>
           <AlertDialogAction
             onClick={onApplyDraft}
             disabled={agentsApplying || agentsDraftFailed}
-            className="bg-emerald-500 text-white hover:bg-emerald-400"
+            className="whitespace-nowrap bg-emerald-500 text-white hover:bg-emerald-400"
           >
             {agentsApplying ? '回写中...' : '回写到 AGENTS.md'}
           </AlertDialogAction>

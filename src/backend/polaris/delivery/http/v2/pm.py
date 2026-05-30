@@ -39,7 +39,7 @@ from polaris.delivery.http.workspace import (
     settings_with_workspace_override,
     workspace_values_match,
 )
-from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
+from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path, workspace_has_docs
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -270,7 +270,7 @@ def _build_workspace_diagnostics(
 
     workspace_path = Path(workspace)
     exists = workspace_path.exists()
-    docs_present = (workspace_path / "docs").is_dir() if exists else False
+    docs_present = workspace_has_docs(workspace) if exists else False
     return PMDiagnosticsWorkspaceStatus(
         ok=exists,
         status="ok" if exists else "missing",

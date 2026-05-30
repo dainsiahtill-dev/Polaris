@@ -666,7 +666,10 @@ class TurnEngineExecutor:
         messages: list[dict[str, Any]] = ProjectionEngine().project(projection_dict, ReceiptStore())
 
         tool_definitions = (
-            [] if self._kernel._benchmark_requires_no_tools(request) else build_native_tool_schemas(profile)
+            []
+            if self._kernel._benchmark_requires_no_tools(request)
+            or self._kernel._request_forces_no_transaction_tools(request)
+            else build_native_tool_schemas(profile)
         )
 
         try:
@@ -819,7 +822,10 @@ class TurnEngineExecutor:
         messages: list[dict[str, Any]] = ProjectionEngine().project(projection_dict, ReceiptStore())
 
         tool_definitions = (
-            [] if self._kernel._benchmark_requires_no_tools(request) else build_native_tool_schemas(profile)
+            []
+            if self._kernel._benchmark_requires_no_tools(request)
+            or self._kernel._request_forces_no_transaction_tools(request)
+            else build_native_tool_schemas(profile)
         )
 
         accumulated_content: list[str] = []

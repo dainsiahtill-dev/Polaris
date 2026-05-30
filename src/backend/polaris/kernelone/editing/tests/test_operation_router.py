@@ -33,3 +33,19 @@ def test_route_wholefile_last_fallback() -> None:
     assert len(ops) == 1
     assert ops[0].kind == "full_file"
     assert ops[0].path == "src/a.py"
+
+
+def test_route_wholefile_supports_file_info_fence() -> None:
+    text = "```file: src/a.ts\nexport const ok = true;\n```\n"
+    ops = route_edit_operations(text, inchat_files=[])
+    assert len(ops) == 1
+    assert ops[0].kind == "full_file"
+    assert ops[0].path == "src/a.ts"
+    assert "export const ok" in str(ops[0].content)
+
+
+def test_route_wholefile_does_not_treat_closing_code_line_as_filename() -> None:
+    text = "```file: src/a.ts\nexport const value = {\n  ok: true\n};\n```\n\n<!-- Usage: 1 -->\nEND FILE\n"
+    ops = route_edit_operations(text, inchat_files=[])
+    assert [op.path for op in ops] == ["src/a.ts"]
+    assert "END FILE" not in str(ops[0].content)
