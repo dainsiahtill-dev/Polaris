@@ -197,6 +197,7 @@ function InterviewHallLegacy({
             return (
               <button
                 key={role.id}
+                data-testid={`llm-auto-role-${role.id}`}
                 onClick={() => onSelectRole(role.id)}
                 className={`w-full text-left rounded-xl border p-4 transition-all ${
                   isActive
@@ -386,6 +387,7 @@ function InterviewHallV2({
             return (
               <button
                 key={role.id}
+                data-testid={`llm-auto-role-${role.id}`}
                 onClick={() => onSelectRole(role.id)}
                 className={`w-full text-left rounded-xl border p-4 transition-all ${
                   isActive
@@ -431,6 +433,7 @@ function InterviewHallV2({
                 return (
                   <button
                     key={provider.id}
+                    data-testid={`llm-auto-provider-${provider.id}`}
                     onClick={() => onSelectProvider(provider.id)}
                     className={`w-full text-left rounded-xl border p-4 transition-all ${
                       isActive
@@ -553,6 +556,7 @@ function InterviewHallV2({
 
             <div className="flex flex-col gap-2">
               <button
+                data-testid="llm-auto-run-connectivity"
                 onClick={() => {
                   if (activeRole && activeProvider && activeProviderModel) {
                     onRunConnectivityTest({ 
@@ -569,6 +573,7 @@ function InterviewHallV2({
                 {connectivityRunning ? '连通性测试中...' : '连通性测试'}
               </button>
               <button
+                data-testid="llm-auto-run-interview"
                 onClick={() => {
                   if (activeRole && activeProvider && activeProviderModel) {
                     onRunInterview({ 

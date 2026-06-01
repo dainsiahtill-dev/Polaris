@@ -432,6 +432,190 @@ async def get_workflow_director_status(
     )
 
 
+def _enum_value(value: Any) -> str:
+    return str(getattr(value, "value", value) or "").strip()
+
+
+def _timestamp_sort_value(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, datetime):
+        return value.timestamp()
+    parsed = _parse_engine_updated_at(str(value))
+    return parsed if parsed is not None else 0.0
+
+
+def _datetime_attr_isoformat(value: Any, attr: str) -> str | None:
+    timestamp = getattr(value, attr, None)
+    return timestamp.isoformat() if isinstance(timestamp, datetime) else None
+
+
+def _workspace_tokens_match(left: str, right: str) -> bool:
+    left_text = str(left or "").strip()
+    right_text = str(right or "").strip()
+    if not left_text or not right_text:
+        return False
+    if left_text == right_text:
+        return True
+    try:
+        return os.path.normcase(os.path.abspath(left_text)) == os.path.normcase(os.path.abspath(right_text))
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _is_director_orchestration_snapshot(snapshot: Any, workspace: str) -> bool:
+    run_id = str(getattr(snapshot, "run_id", "") or "").strip()
+    snapshot_workspace = str(getattr(snapshot, "workspace", "") or "").strip()
+    if not run_id.startswith("director-"):
+        return False
+    return _workspace_tokens_match(snapshot_workspace, workspace)
+
+
+def _active_orchestration_state(status_token: str) -> tuple[str, bool]:
+    token = str(status_token or "").strip().lower()
+    if token == "pending":
+        return "QUEUED", True
+    if token == "running":
+        return "RUNNING", True
+    if token == "retrying":
+        return "BUSY", True
+    if token == "blocked":
+        return "BLOCKED", False
+    return token.upper() if token else "IDLE", False
+
+
+def _orchestration_task_rows(snapshot: Any) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    rows: list[dict[str, Any]] = []
+    by_status: dict[str, int] = {}
+    tasks = getattr(snapshot, "tasks", None)
+    if not isinstance(tasks, dict):
+        return rows, by_status
+
+    run_id = str(getattr(snapshot, "run_id", "") or "").strip()
+    for fallback_id, task in tasks.items():
+        payload = task.to_dict() if hasattr(task, "to_dict") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        task_id = str(payload.get("task_id") or getattr(task, "task_id", fallback_id) or fallback_id).strip()
+        if not task_id:
+            continue
+        status_token = _enum_value(payload.get("status") or getattr(task, "status", "pending")).upper()
+        if not status_token:
+            status_token = "PENDING"
+        by_status[status_token] = by_status.get(status_token, 0) + 1
+
+        role_id = str(payload.get("role_id") or getattr(task, "role_id", "director") or "director").strip()
+        rows.append(
+            {
+                "id": task_id,
+                "task_id": task_id,
+                "subject": task_id,
+                "description": str(payload.get("error_message") or "").strip(),
+                "status": status_token,
+                "priority": "MEDIUM",
+                "claimed_by": None,
+                "role_id": role_id,
+                "progress_percent": payload.get("progress_percent", 0.0),
+                "current_file": payload.get("current_file"),
+                "error_category": payload.get("error_category"),
+                "error_message": payload.get("error_message"),
+                "metadata": {
+                    "orchestration_run_id": run_id,
+                    "workflow_task_id": task_id,
+                    "role_id": role_id,
+                },
+            }
+        )
+
+    return rows, by_status
+
+
+async def _list_recent_orchestration_runs(workspace: str, limit: int = 50) -> list[Any]:
+    from polaris.cells.orchestration.workflow_runtime.public.service import get_orchestration_service
+
+    service = await get_orchestration_service()
+    scoped_runs = await service.list_runs(workspace=workspace, limit=limit)
+    if scoped_runs:
+        return list(scoped_runs)
+    return list(await service.list_runs(limit=limit))
+
+
+async def get_active_director_orchestration_status(workspace: str) -> dict[str, Any] | None:
+    """Return active Director run state from the unified orchestration service."""
+
+    try:
+        snapshots = await _list_recent_orchestration_runs(workspace)
+    except (AttributeError, ImportError, OSError, RuntimeError, ValueError) as exc:
+        logger.debug(
+            "get_active_director_orchestration_status: list_runs failed for workspace=%r: %s",
+            workspace,
+            exc,
+            exc_info=True,
+        )
+        return None
+
+    active_statuses = {"pending", "running", "retrying", "blocked"}
+    candidates: list[Any] = []
+    for snapshot in snapshots:
+        if not _is_director_orchestration_snapshot(snapshot, workspace):
+            continue
+        status_token = _enum_value(getattr(snapshot, "status", ""))
+        if status_token.lower() in active_statuses:
+            candidates.append(snapshot)
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: max(
+            _timestamp_sort_value(getattr(item, "updated_at", None)),
+            _timestamp_sort_value(getattr(item, "created_at", None)),
+        ),
+        reverse=True,
+    )
+    snapshot = candidates[0]
+    status_token = _enum_value(getattr(snapshot, "status", ""))
+    state, running = _active_orchestration_state(status_token)
+    task_rows, by_status = _orchestration_task_rows(snapshot)
+    run_id = str(getattr(snapshot, "run_id", "") or "").strip()
+    tasks_payload = {
+        "total": len(task_rows),
+        "by_status": by_status,
+        "task_rows": task_rows,
+    }
+    return {
+        "running": running,
+        "pid": None,
+        "mode": "workflow",
+        "started_at": _datetime_attr_isoformat(snapshot, "created_at"),
+        "updated_at": _datetime_attr_isoformat(snapshot, "updated_at"),
+        "log_path": "",
+        "source": "orchestration_run",
+        "workflow_id": run_id,
+        "run_id": run_id,
+        "state": state,
+        "workspace": str(getattr(snapshot, "workspace", "") or "").strip(),
+        "status": {
+            "state": state,
+            "run_status": status_token.lower(),
+            "workflow_id": run_id,
+            "run_id": run_id,
+            "current_phase": _enum_value(getattr(snapshot, "current_phase", "")),
+            "overall_progress": getattr(snapshot, "overall_progress", 0.0),
+            "tasks": tasks_payload,
+        },
+        "tasks": tasks_payload,
+        "raw_workflow_status": {
+            "source": "orchestration_run",
+            "running": running,
+            "workflow_id": run_id,
+            "workflow_status": status_token.lower(),
+            "tasks": tasks_payload,
+        },
+    }
+
+
 # =============================================================================
 # Director Status Merge - Single Implementation
 # =============================================================================
@@ -859,39 +1043,64 @@ async def build_runtime_projection(
         )
         workflow_director_status = None
 
+    try:
+        active_director_status = await asyncio.wait_for(
+            get_active_director_orchestration_status(workspace),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError:
+        logger.info(
+            "build_runtime_projection: get_active_director_orchestration_status timed out "
+            "(workspace=%r), falling back to workflow archive/local status",
+            workspace,
+        )
+        active_director_status = None
+
+    if active_director_status:
+        if workflow_director_status:
+            active_director_status["archive_status"] = workflow_director_status
+        workflow_director_status = active_director_status
+
     # Step 4: Get workflow tasks for task selection
     workflow_tasks: list[dict[str, Any]] = []
     if workflow_director_status:
-        try:
-            raw_workflow_status = (
-                workflow_director_status.get("raw_workflow_status")
-                if isinstance(workflow_director_status.get("raw_workflow_status"), dict)
-                else workflow_director_status
+        if str(workflow_director_status.get("source") or "").strip() == "orchestration_run":
+            tasks_payload = workflow_director_status.get("tasks")
+            active_rows = tasks_payload.get("task_rows") if isinstance(tasks_payload, dict) else None
+            workflow_tasks = (
+                [dict(item) for item in active_rows if isinstance(item, dict)] if isinstance(active_rows, list) else []
             )
-            workflow_tasks = await asyncio.wait_for(
-                asyncio.to_thread(
-                    lambda: build_workflow_task_rows(
-                        raw_workflow_status,
-                        workspace=workspace,
-                        cache_root=cache_root,
-                    )
-                ),
-                timeout=5.0,  # 5 second timeout for task rows
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "build_runtime_projection: build_workflow_task_rows timed out (workspace=%r)",
-                workspace,
-            )
-            workflow_tasks = []
-        except (RuntimeError, ValueError) as exc:
-            logger.warning(
-                "build_runtime_projection: build_workflow_task_rows failed (workspace=%r): %s",
-                workspace,
-                exc,
-                exc_info=True,
-            )
-            workflow_tasks = []
+        else:
+            try:
+                raw_workflow_status = (
+                    workflow_director_status.get("raw_workflow_status")
+                    if isinstance(workflow_director_status.get("raw_workflow_status"), dict)
+                    else workflow_director_status
+                )
+                workflow_tasks = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        lambda: build_workflow_task_rows(
+                            raw_workflow_status,
+                            workspace=workspace,
+                            cache_root=cache_root,
+                        )
+                    ),
+                    timeout=5.0,  # 5 second timeout for task rows
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "build_runtime_projection: build_workflow_task_rows timed out (workspace=%r)",
+                    workspace,
+                )
+                workflow_tasks = []
+            except (RuntimeError, ValueError) as exc:
+                logger.warning(
+                    "build_runtime_projection: build_workflow_task_rows failed (workspace=%r): %s",
+                    workspace,
+                    exc,
+                    exc_info=True,
+                )
+                workflow_tasks = []
 
     # Step 5: Merge Director status using single implementation
     merged_director_status = merge_director_status(

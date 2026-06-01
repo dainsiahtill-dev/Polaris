@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.orchestration.workflow_runtime.public.service import (
+    OrchestrationMode,
+    OrchestrationSnapshot,
+    RunStatus,
+    TaskPhase,
+    TaskSnapshot,
+)
 from polaris.cells.runtime.projection.internal.runtime_projection_service import (
     ProjectionCache,
     RuntimeProjection,
@@ -16,6 +24,7 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
     _task_totals,
     _workflow_has_live_rows,
     build_snapshot_payload_from_projection,
+    get_active_director_orchestration_status,
     load_runtime_task_rows,
     merge_director_status,
     select_task_rows,
@@ -435,3 +444,73 @@ class TestRuntimeProjectionServiceBuildAsync:
             use_cache=False,
         )
         assert isinstance(proj, RuntimeProjection)
+
+    async def test_build_async_merges_active_director_orchestration_run(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        snapshot = OrchestrationSnapshot(
+            run_id="director-active123",
+            workspace=str(tmp_path),
+            mode=OrchestrationMode.WORKFLOW.value,
+            status=RunStatus.RUNNING,
+            current_phase=TaskPhase.EXECUTING,
+            tasks={
+                "task-0-director": TaskSnapshot(
+                    task_id="task-0-director",
+                    status=RunStatus.RUNNING,
+                    phase=TaskPhase.EXECUTING,
+                    role_id="director",
+                )
+            },
+        )
+
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service.get_pm_local_status",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service.get_director_local_status",
+            AsyncMock(return_value={"running": False, "status": {"state": "IDLE"}}),
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service.get_workflow_director_status",
+            AsyncMock(return_value=None),
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service._list_recent_orchestration_runs",
+            AsyncMock(return_value=[snapshot]),
+        )
+
+        proj = await RuntimeProjectionService.build_async(
+            workspace=str(tmp_path),
+            cache_root=tmp_path,
+            use_cache=False,
+        )
+
+        assert proj.director_merged["state"] == "RUNNING"
+        assert proj.director_merged["running"] is True
+        assert proj.director_merged["source"] == "workflow"
+        assert proj.task_source == TaskSource.WORKFLOW
+        assert proj.task_rows[0]["id"] == "task-0-director"
+
+    async def test_active_director_status_ignores_other_workspaces(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        snapshot = OrchestrationSnapshot(
+            run_id="director-other123",
+            workspace=str(tmp_path / "other"),
+            mode=OrchestrationMode.WORKFLOW.value,
+            status=RunStatus.RUNNING,
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service._list_recent_orchestration_runs",
+            AsyncMock(return_value=[snapshot]),
+        )
+
+        payload = await get_active_director_orchestration_status(str(tmp_path))
+
+        assert payload is None

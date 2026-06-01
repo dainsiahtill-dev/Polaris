@@ -30,6 +30,7 @@ from polaris.delivery.http.schemas import (
     DocsInitApplyResponse,
     DocsInitDialoguePayload,
     DocsInitDialogueResponse,
+    DocsInitFile,
     DocsInitPreviewPayload,
     DocsInitPreviewResponse,
     DocsInitSuggestPayload,
@@ -54,12 +55,68 @@ _DOCS_FIELD_KEYS = (
     "backlog",
 )
 _DOCS_PREVIEW_LLM_TIMEOUT_SECONDS = 75.0
+_DOCS_INIT_ACTIVE_SUFFIXES = frozenset(
+    {
+        ".polaris.json",
+        "00_overview.md",
+        "10_requirements.md",
+        "20_constraints.md",
+        "30_backlog.md",
+        "40_quality.md",
+        "product/requirements.md",
+        "product/plan.md",
+        "product/interface_contract.md",
+        "product/constraints.md",
+    }
+)
+
+
+def _docs_apply_active_rel_path(rel_path: str, target_root: str) -> str:
+    normalized_target = normalize_rel_path(target_root).replace("\\", "/").rstrip("/")
+    normalized_path = normalize_rel_path(rel_path).replace("\\", "/")
+    if not normalized_target or not normalized_path.startswith(f"{normalized_target}/"):
+        return ""
+
+    suffix = normalized_path[len(normalized_target) + 1 :].strip("/")
+    if suffix not in _DOCS_INIT_ACTIVE_SUFFIXES:
+        return ""
+    return f"workspace/docs/{suffix}"
+
+
+def _materialize_active_docs_from_apply_payload(
+    *,
+    workspace: str,
+    cache_root: str,
+    target_root: str,
+    files: list[DocsInitFile],
+    created: list[str],
+) -> None:
+    seen = {path.replace("\\", "/") for path in created}
+    for item in files:
+        active_rel = _docs_apply_active_rel_path(item.path, target_root)
+        if not active_rel or active_rel in seen:
+            continue
+        if not is_safe_docs_path(active_rel, "workspace/docs"):
+            raise StructuredHTTPException(
+                status_code=400,
+                code="INVALID_DOCS_PATH",
+                message="invalid docs path",
+            )
+        try:
+            full_path = resolve_artifact_path(workspace, cache_root, active_rel)
+        except (RuntimeError, ValueError) as e:
+            raise StructuredHTTPException(
+                status_code=400,
+                code="INVALID_DOCS_PATH",
+                message="invalid docs path",
+            ) from e
+        write_text_atomic(full_path, item.content or "")
+        created.append(active_rel)
+        seen.add(active_rel)
 
 
 def _sync_plan_to_runtime(workspace: str, cache_root: str) -> None:
-    """Copy plan.md to runtime/contracts/plan.md so PM loop
-    picks it up automatically.  Uses atomic write via ArtifactService
-    to avoid partial reads by a concurrently running PM loop."""
+    """Copy docs-init contracts to runtime so PM loop picks them up automatically."""
     # Use ArtifactService for unified artifact I/O
     try:
         from polaris.cells.audit.verdict.public.service import ArtifactService
@@ -87,6 +144,22 @@ def _sync_plan_to_runtime(workspace: str, cache_root: str) -> None:
 
         service.write_plan(plan_content)
         log.info("PLAN_SYNC_OK: %s -> runtime/contracts/plan.md", plan_src)
+
+        requirements_src_candidates = [
+            resolve_artifact_path(workspace, cache_root, "workspace/docs/product/requirements.md"),
+            os.path.join(workspace, "docs", "product", "requirements.md"),
+        ]
+        requirements_src = ""
+        for candidate in requirements_src_candidates:
+            if candidate and os.path.isfile(candidate):
+                requirements_src = candidate
+                break
+        if requirements_src:
+            with open(requirements_src, encoding="utf-8") as f:
+                requirements_content = f.read()
+            requirements_dst = resolve_artifact_path(workspace, cache_root, "runtime/contracts/requirements.md")
+            write_text_atomic(requirements_dst, requirements_content)
+            log.info("REQUIREMENTS_SYNC_OK: %s -> runtime/contracts/requirements.md", requirements_src)
 
     except (RuntimeError, ValueError):
         log.warning("PLAN_SYNC_FAIL: could not sync plan to runtime", exc_info=True)
@@ -638,6 +711,13 @@ def _docs_init_apply_core(request: Request, payload: DocsInitApplyPayload) -> Do
             ) from e
         write_text_atomic(full_path, item.content or "")
         created.append(rel_path.replace("\\", "/"))
+    _materialize_active_docs_from_apply_payload(
+        workspace=workspace_str,
+        cache_root=cache_root,
+        target_root=target_root,
+        files=files,
+        created=created,
+    )
     # Record init event (best effort, with semantic suppression in emit_event)
     try:
         event_path = resolve_artifact_path(workspace_str, cache_root, "runtime/events/runtime.events.jsonl")

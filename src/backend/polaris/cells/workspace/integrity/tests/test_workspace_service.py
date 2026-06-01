@@ -274,12 +274,12 @@ class TestIsSafeDocsPath:
 
 
 class TestSelectDocsTargetRoot:
-    def test_uses_legacy_docs_when_exists(self, tmp_path: Path) -> None:
+    def test_uses_managed_docs_when_project_docs_exists(self, tmp_path: Path) -> None:
         (tmp_path / "docs").mkdir()
         result = select_docs_target_root(str(tmp_path))
-        assert result.startswith("workspace/docs/_drafts/init-")
+        assert result == "workspace/docs"
 
-    def test_uses_workspace_docs_when_no_legacy(self, tmp_path: Path) -> None:
+    def test_uses_managed_docs_when_project_docs_missing(self, tmp_path: Path) -> None:
         result = select_docs_target_root(str(tmp_path))
         assert result == "workspace/docs"
 

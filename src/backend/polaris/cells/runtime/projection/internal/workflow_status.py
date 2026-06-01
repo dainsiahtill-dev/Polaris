@@ -463,6 +463,7 @@ def _load_workflow_task_result(cache_root: str, run_tokens: list[str], task_id: 
 
 def _director_result_task_state(result_payload: dict[str, Any]) -> str:
     status_token = str(result_payload.get("status") or "").strip().lower()
+    workflow_status = str(result_payload.get("workflow_child_status") or "").strip().lower()
     qa_verdict = str(result_payload.get("qa_verdict") or result_payload.get("qa_status") or "").strip().upper()
     exit_code_raw = result_payload.get("exit_code")
     exit_code: int | None = None
@@ -471,16 +472,26 @@ def _director_result_task_state(result_payload: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         exit_code = None
 
-    if status_token in {"success", "completed", "passed", "succeeded"} or qa_verdict == "PASS":
-        return "completed"
-    if status_token in {"blocked", "dependency_blocked"}:
+    if workflow_status in {"failed", "fail", "error", "errored"}:
+        return "failed"
+    if workflow_status in {"blocked", "dependency_blocked"}:
         return "blocked"
+    if workflow_status in {"success", "completed", "passed", "succeeded"}:
+        return "completed"
     if status_token in {"failed", "fail", "error", "errored"}:
         return "failed"
-    if exit_code == 0 and status_token not in {"failed", "fail", "error", "blocked"}:
-        return "completed"
+    if status_token in {"blocked", "dependency_blocked"}:
+        return "blocked"
+    if result_payload.get("success") is False or result_payload.get("acceptance") is False:
+        return "failed"
     if exit_code is not None and exit_code != 0:
         return "failed"
+    if qa_verdict in {"FAIL", "FAILED", "ERROR", "BLOCKED"}:
+        return "failed"
+    if status_token in {"success", "completed", "passed", "succeeded"} or qa_verdict == "PASS":
+        return "completed"
+    if exit_code == 0 and status_token not in {"failed", "fail", "error", "blocked"}:
+        return "completed"
     return ""
 
 
@@ -491,6 +502,14 @@ def _apply_workflow_task_result(item: dict[str, Any], result_payload: dict[str, 
 
     current_state = canonicalize_workflow_task_state(item.get("status") or item.get("state"))
     if current_state == "completed" and state != "completed":
+        return
+    has_workflow_terminal_marker = result_payload.get("workflow_terminal") is True
+    workflow_child_state = canonicalize_workflow_task_state(result_payload.get("workflow_child_status"))
+    if (
+        current_state in {"failed", "blocked", "cancelled", "timed_out", "terminated"}
+        and state == "completed"
+        and not (has_workflow_terminal_marker and workflow_child_state == "completed")
+    ):
         return
 
     item["status"] = state

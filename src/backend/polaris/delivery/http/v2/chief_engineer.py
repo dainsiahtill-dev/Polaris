@@ -36,6 +36,7 @@ from polaris.delivery.http.routers._shared import (
 )
 from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
 from polaris.delivery.http.workspace import active_workspace_value, settings_with_workspace_override
+from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.storage import resolve_logical_path
 from pydantic import BaseModel, Field
 
@@ -239,6 +240,34 @@ def _read_json_file(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _pm_task_plan_candidate_paths(workspace: str, *, ramdisk_root: str = "") -> tuple[list[Path], list[str]]:
+    candidate_paths: list[Path] = []
+    resolution_errors: list[str] = []
+    for logical_path in ("runtime/tasks/plan.json", "runtime/contracts/pm_tasks.contract.json"):
+        try:
+            candidate_paths.append(
+                Path(
+                    resolve_logical_path(
+                        workspace,
+                        logical_path,
+                        ramdisk_root=ramdisk_root or None,
+                    )
+                )
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            resolution_errors.append(f"{logical_path}: {type(exc).__name__}: {exc}")
+    return candidate_paths, resolution_errors
+
+
+def _pm_task_plan_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_tasks = payload.get("tasks")
+    if isinstance(raw_tasks, dict):
+        return [item for item in raw_tasks.values() if isinstance(item, dict)]
+    if isinstance(raw_tasks, list):
+        return [item for item in raw_tasks if isinstance(item, dict)]
+    return []
+
+
 def _task_id_from_plan_task(task: dict[str, Any], index: int) -> str:
     for key in ("id", "task_id", "uid", "pm_task_id"):
         value = task.get(key)
@@ -249,20 +278,14 @@ def _task_id_from_plan_task(task: dict[str, Any], index: int) -> str:
 
 
 def _load_pm_task_plan_probe(workspace: str, *, ramdisk_root: str = "") -> ChiefEngineerPMTaskPlanProbe:
-    try:
-        plan_path = Path(
-            resolve_logical_path(
-                workspace,
-                "runtime/tasks/plan.json",
-                ramdisk_root=ramdisk_root or None,
-            )
-        )
-    except (OSError, RuntimeError, ValueError) as exc:
+    candidate_paths, resolution_errors = _pm_task_plan_candidate_paths(workspace, ramdisk_root=ramdisk_root)
+    if not candidate_paths:
         return ChiefEngineerPMTaskPlanProbe(
             status="unresolved",
-            error=f"{type(exc).__name__}: {exc}",
+            error="; ".join(resolution_errors) or "pm_task_plan_unresolved",
         )
 
+    plan_path = next((path for path in candidate_paths if path.is_file()), candidate_paths[0])
     if not plan_path.is_file():
         return ChiefEngineerPMTaskPlanProbe(
             status="missing",
@@ -292,8 +315,8 @@ def _load_pm_task_plan_probe(workspace: str, *, ramdisk_root: str = "") -> Chief
             error="pm_task_plan_payload_not_object",
         )
 
-    raw_tasks = payload.get("tasks")
-    if not isinstance(raw_tasks, list):
+    task_rows = _pm_task_plan_rows(payload)
+    if not task_rows and not isinstance(payload.get("tasks"), (dict, list)):
         return ChiefEngineerPMTaskPlanProbe(
             status="invalid",
             path=str(plan_path),
@@ -302,9 +325,7 @@ def _load_pm_task_plan_probe(workspace: str, *, ramdisk_root: str = "") -> Chief
 
     task_ids: list[str] = []
     seen: set[str] = set()
-    for index, item in enumerate(raw_tasks, start=1):
-        if not isinstance(item, dict):
-            continue
+    for index, item in enumerate(task_rows, start=1):
         task_id = _task_id_from_plan_task(item, index)
         if task_id and task_id not in seen:
             seen.add(task_id)
@@ -422,6 +443,121 @@ def _generate_blueprint_for_task(
         context=item.context,
     )
     return generate_task_blueprint(command)
+
+
+def _blueprint_reference_update(result: ChiefEngineerTaskBlueprintResultResponse) -> dict[str, str]:
+    blueprint_id = str(result.blueprint_id or "").strip()
+    if not result.ok or not blueprint_id:
+        return {}
+    blueprint_path = str(result.blueprint_path or "").strip() or f"runtime/blueprints/{blueprint_id}.json"
+    return {
+        "blueprint_id": blueprint_id,
+        "blueprint_path": blueprint_path,
+        "runtime_blueprint_path": blueprint_path,
+    }
+
+
+def _run_contract_copy_path(plan_path: Path, payload: dict[str, Any]) -> Path | None:
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        return None
+    try:
+        resolved = plan_path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    runtime_root = resolved.parent.parent
+    if runtime_root.name.lower() != "runtime":
+        return None
+    return runtime_root / "runs" / run_id / "contracts" / "pm_tasks.contract.json"
+
+
+def _apply_blueprint_references_to_plan_payload(
+    payload: dict[str, Any],
+    updates_by_task_id: dict[str, dict[str, str]],
+) -> int:
+    updated = 0
+    for index, task in enumerate(_pm_task_plan_rows(payload), start=1):
+        task_id = _task_id_from_plan_task(task, index)
+        update = updates_by_task_id.get(task_id)
+        if not update:
+            continue
+        task.update(update)
+        metadata_raw = task.get("metadata")
+        metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        metadata.update(update)
+        metadata.setdefault("pm_task_id", task_id)
+        task["metadata"] = metadata
+        updated += 1
+    return updated
+
+
+def _sync_blueprint_references_to_pm_task_plans(
+    *,
+    workspace: str,
+    ramdisk_root: str,
+    results: list[ChiefEngineerTaskBlueprintResultResponse],
+) -> int:
+    updates_by_task_id = {
+        result.task_id: update
+        for result in results
+        for update in [_blueprint_reference_update(result)]
+        if update and result.task_id
+    }
+    if not updates_by_task_id:
+        return 0
+
+    candidate_paths, resolution_errors = _pm_task_plan_candidate_paths(workspace, ramdisk_root=ramdisk_root)
+    if not candidate_paths:
+        raise RuntimeError("; ".join(resolution_errors) or "pm_task_plan_unresolved")
+
+    updated_total = 0
+    loaded_payloads = 0
+    written_paths: set[Path] = set()
+    for plan_path in candidate_paths:
+        payload = _read_json_file(plan_path)
+        if not isinstance(payload, dict):
+            continue
+        loaded_payloads += 1
+        updated_count = _apply_blueprint_references_to_plan_payload(payload, updates_by_task_id)
+        if updated_count <= 0:
+            continue
+        write_json_atomic(str(plan_path), payload)
+        written_paths.add(plan_path.resolve())
+        updated_total += updated_count
+
+        run_copy_path = _run_contract_copy_path(plan_path, payload)
+        if run_copy_path is not None and run_copy_path.is_file():
+            write_json_atomic(str(run_copy_path), payload)
+            written_paths.add(run_copy_path.resolve())
+
+    if loaded_payloads <= 0:
+        return 0
+    if updated_total <= 0:
+        raise RuntimeError("pm_task_plan_blueprint_references_not_updated")
+    return len(written_paths)
+
+
+def _sync_blueprint_references_or_raise(
+    *,
+    settings: Any,
+    workspace: str,
+    results: list[ChiefEngineerTaskBlueprintResultResponse],
+) -> None:
+    if not any(result.ok and result.blueprint_id for result in results):
+        return
+    try:
+        _sync_blueprint_references_to_pm_task_plans(
+            workspace=workspace,
+            ramdisk_root=str(getattr(settings, "ramdisk_root", "") or "").strip(),
+            results=results,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise StructuredHTTPException(
+            status_code=500,
+            code="BLUEPRINT_TASK_PLAN_SYNC_FAILED",
+            message="generated Chief Engineer blueprints could not be linked to the PM task plan",
+            details={"error": f"{type(exc).__name__}: {exc}"},
+        ) from exc
 
 
 def _workspace_value(settings: Any) -> str:
@@ -789,7 +925,13 @@ def generate_chief_engineer_blueprint(
             code="INVALID_BLUEPRINT_COMMAND",
             message=str(exc),
         ) from exc
-    return _blueprint_result_response(result)
+    response = _blueprint_result_response(result)
+    _sync_blueprint_references_or_raise(
+        settings=settings,
+        workspace=target_workspace,
+        results=[response],
+    )
+    return response
 
 
 @router.post(
@@ -849,6 +991,11 @@ def bulk_generate_chief_engineer_blueprints(
 
     generated = sum(1 for item in results if item.ok and item.blueprint_id)
     failed = len(errors)
+    _sync_blueprint_references_or_raise(
+        settings=settings,
+        workspace=target_workspace,
+        results=results,
+    )
     return ChiefEngineerBulkGenerateBlueprintResponse(
         ok=failed == 0 and generated == len(payload.tasks),
         workspace=target_workspace,

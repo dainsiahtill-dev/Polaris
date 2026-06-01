@@ -10,7 +10,6 @@ No HTTP semantics — callers map domain exceptions to HTTP at the delivery boun
 
 from __future__ import annotations
 
-import datetime
 import json
 import logging
 import os
@@ -251,10 +250,13 @@ def is_safe_docs_path(rel_path: str, target_root: str) -> bool:
 
 
 def select_docs_target_root(workspace: str) -> str:
-    legacy_docs_dir = os.path.join(workspace, "docs")
-    if os.path.isdir(legacy_docs_dir):
-        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        return os.path.join("workspace/docs", "_drafts", f"init-{stamp}").replace("\\", "/")
+    """Return the active managed docs root for docs-init approval.
+
+    Project-root ``docs/`` can be a user-authored source directory. Polaris
+    managed docs live under the KernelOne ``workspace/docs`` logical root, so
+    the approval target must not branch on the project-root sentinel.
+    """
+    _ = workspace
     return "workspace/docs"
 
 

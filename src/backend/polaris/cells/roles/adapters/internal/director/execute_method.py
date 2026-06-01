@@ -14,6 +14,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.events.file_event_broadcaster import (
+    broadcast_file_written,
+    calculate_patch,
+)
 from polaris.kernelone.fs.text_ops import write_text_atomic
 
 from .helpers import (
@@ -43,7 +47,20 @@ async def execute_director_task(
     Returns:
         执行结果字典
     """
-    requested_task_id = str(input_data.get("task_id", task_id) or "").strip() or str(task_id or "").strip()
+    input_metadata_raw = input_data.get("metadata")
+    input_metadata: dict[str, Any] = input_metadata_raw if isinstance(input_metadata_raw, dict) else {}
+    requested_task_id = (
+        str(
+            input_data.get("task_id")
+            or input_data.get("pm_task_id")
+            or input_metadata.get("task_id")
+            or input_metadata.get("pm_task_id")
+            or input_metadata.get("id")
+            or task_id
+            or ""
+        ).strip()
+        or str(task_id or "").strip()
+    )
     target_task_id = requested_task_id
     selection_source = "task_id_lookup"
     selected_from_board = False
@@ -402,6 +419,7 @@ async def _execute_standard_llm_flow(
     selected_subject: str,
 ) -> dict[str, Any]:
     """执行标准 LLM 流程"""
+    await _attach_director_file_event_bus(adapter)
     message = adapter._build_director_message(task)
     requires_fresh_materialization = _task_requires_fresh_materialization(task)
     workspace_name = Path(str(getattr(adapter, "workspace", "") or "")).resolve().name
@@ -713,6 +731,21 @@ async def _execute_standard_llm_flow(
     }
 
 
+async def _attach_director_file_event_bus(adapter: Any) -> None:
+    """Attach the process MessageBus to Director file writers when available."""
+    execution = getattr(adapter, "_execution", None)
+    set_message_bus = getattr(execution, "set_message_bus", None)
+    if not callable(set_message_bus):
+        return
+
+    message_bus = None
+    resolve_message_bus = getattr(adapter, "_resolve_message_bus", None)
+    if callable(resolve_message_bus):
+        with contextlib.suppress(RuntimeError, ValueError, TypeError):
+            message_bus = await resolve_message_bus()
+    set_message_bus(message_bus)
+
+
 _TS_NAMED_IMPORT_RE = re.compile(
     r"import\s*\{(?P<symbols>[^}]+)\}\s*from\s*['\"](?P<module>\.{1,2}/[^'\"]+)['\"]",
     re.DOTALL,
@@ -771,8 +804,18 @@ def _apply_deterministic_typescript_reexport_repair(
                 if export_line in module_text:
                     continue
                 new_text = module_text.rstrip() + "\n" + export_line + "\n"
-                write_text_atomic(str(module_path), new_text, encoding="utf-8")
                 rel_module = module_path.relative_to(workspace_path).as_posix()
+                message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+                broadcast_file_written(
+                    file_path=rel_module,
+                    operation="modify",
+                    content_size=len(new_text.encode("utf-8")),
+                    task_id=task_id,
+                    patch=calculate_patch(module_text, new_text),
+                    message_bus=message_bus,
+                    worker_id="director",
+                )
+                write_text_atomic(str(module_path), new_text, encoding="utf-8")
                 with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
                     adapter._update_task_progress(task_id, "executing", current_file=rel_module)
                 return [

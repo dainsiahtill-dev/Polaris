@@ -619,6 +619,26 @@ class TestBuildMaterializedMetadata:
         meta = adapter._build_materialized_metadata("req-1", None)  # type: ignore[arg-type]
         assert meta["pm_task_id"] == "req-1"
 
+    def test_nested_pm_task_metadata_preserves_execution_contract(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        meta = adapter._build_materialized_metadata(
+            "task-0-director",
+            {
+                "metadata": {
+                    "id": "T01-001",
+                    "goal": "Create the TypeScript foundation",
+                    "target_files": ["package.json", "src/index.ts"],
+                    "scope_paths": ["src/config"],
+                    "blueprint_id": "ce_T01-001",
+                }
+            },
+        )
+
+        assert meta["pm_task_id"] == "T01-001"
+        assert meta["target_files"] == ["package.json", "src/index.ts"]
+        assert meta["scope_paths"] == ["src/config"]
+        assert meta["blueprint_id"] == "ce_T01-001"
+
 
 # ---------------------------------------------------------------------------
 # Execution backend resolution

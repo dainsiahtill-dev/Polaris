@@ -459,7 +459,7 @@ def test_workflow_dispatch_marks_parent_failure_as_director_failure(tmp_path, mo
     assert qa_result["reason"] == "director_failures_present"
 
 
-def test_workflow_dispatch_reconciles_nested_failure_when_tasks_and_qa_pass(tmp_path, monkeypatch):
+def test_workflow_dispatch_preserves_nested_failure_when_tasks_and_qa_pass(tmp_path, monkeypatch):
     mod = _load_orchestration_engine()
     workflow_config_mod = importlib.import_module("polaris.cells.orchestration.workflow_runtime.public.service")
 
@@ -606,26 +606,27 @@ def test_workflow_dispatch_reconciles_nested_failure_when_tasks_and_qa_pass(tmp_
     )
 
     assert outcome["used"] is True
-    assert outcome["exit_code"] == 0
+    assert outcome["exit_code"] == 1
     director_result = json.loads((tmp_path / "director.result.json").read_text(encoding="utf-8"))
-    assert director_result["status"] == "success"
+    assert director_result["status"] == "failed"
     assert director_result["successes"] == 1
-    assert director_result["failures"] == 0
+    assert director_result["failures"] == 1
+    assert director_result["error"] == "director_failed"
     from polaris.cells.runtime.projection.internal.workflow_status import workflow_state_path
 
     state_path = workflow_state_path(str(workspace), str(cache_root))
     workflow_state = json.loads(Path(state_path).read_text(encoding="utf-8"))
-    assert workflow_state["workflow_status"] == "completed"
-    assert workflow_state["stage"] == "completed"
-    assert workflow_state["director_status"] == "success"
+    assert workflow_state["workflow_status"] == "failed"
+    assert workflow_state["stage"] == "failed"
+    assert workflow_state["director_status"] == "failed"
     assert workflow_state["qa_status"] == "integration_qa_passed"
     assert workflow_state["details"]["integration_qa_result"]["passed"] is True
-    assert workflow_state["details"]["director_result"]["failures"] == 0
-    assert workflow_state["details"]["director_result"]["error"] == ""
-    assert outcome["engine_dispatch"]["summary"]["reconciled_from_task_and_qa_evidence"] is True
+    assert workflow_state["details"]["director_result"]["failures"] == 1
+    assert workflow_state["details"]["director_result"]["error"] == "director_failed"
+    assert "reconciled_from_task_and_qa_evidence" not in outcome["engine_dispatch"]["summary"]
     nested_result = workflow_state["details"]["details"]["final"]["result"]["result"]
-    assert nested_result["director_status"] == "success"
-    assert nested_result["qa_status"] == "integration_qa_passed"
+    assert nested_result["director_status"] == "failed"
+    assert nested_result["qa_status"] == "director_failed"
 
 
 def test_workflow_dispatch_projects_nested_director_failure_result(tmp_path, monkeypatch):

@@ -129,6 +129,18 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
         # Build task description from PM payload with priority on PM-provided description.
         # Handle new registry format where details are in metadata.legacy_task
         metadata = dict(task.get("metadata")) if isinstance(task.get("metadata"), dict) else {}
+        task_context = task.get("context") if isinstance(task.get("context"), dict) else {}
+        if task_context:
+            metadata.setdefault("task_context", task_context)
+            previous_verification = task_context.get("previous_verification_result")
+            if isinstance(previous_verification, dict):
+                metadata["previous_verification_result"] = previous_verification
+            phase_context = task_context.get("phase_context")
+            if isinstance(phase_context, dict):
+                metadata.setdefault("phase_context", phase_context)
+                phase_verification = phase_context.get("verification_result")
+                if isinstance(phase_verification, dict) and phase_verification:
+                    metadata["previous_verification_result"] = phase_verification
         legacy_task = metadata.get("legacy_task", {}) if isinstance(metadata, dict) else {}
 
         # Try to get fields from legacy_task first (new format), then from task directly (old format)

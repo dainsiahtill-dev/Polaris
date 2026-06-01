@@ -2650,6 +2650,56 @@ async def test_director_run_orchestration_accepts_task_id(client: AsyncClient) -
 
 
 @pytest.mark.asyncio
+async def test_director_run_orchestration_uses_diagnostics_ready_tasks_when_no_task_selected(
+    client: AsyncClient,
+) -> None:
+    """Director run should execute diagnostics-ready workflow tasks by default."""
+    mock_result = MagicMock()
+    mock_result.run_id = "run-ready"
+    mock_result.status = "running"
+    mock_result.message = "Director started for ready tasks"
+    mock_result.metadata = {"tasks_queued": 1, "task_ids": ["PM-42"]}
+
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.director.get_orchestration_service",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.delivery.http.v2.director._build_director_diagnostics_for_request",
+            new_callable=AsyncMock,
+        ) as mock_preflight,
+        patch(
+            "polaris.cells.roles.adapters.public.service.register_all_adapters",
+        ),
+    ):
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(return_value=mock_result)
+        mock_service_cls.return_value = mock_service
+        mock_preflight.return_value = _director_run_diagnostics(workspace=".")
+
+        response = await client.post(
+            "/v2/director/run",
+            json={
+                "workspace": ".",
+                "execution_mode": "parallel",
+            },
+        )
+
+        assert response.status_code == 200
+        _, kwargs = mock_service.execute_director_run.await_args
+        assert kwargs["tasks"] == ["PM-42"]
+        assert kwargs["options"]["task_filter"] == "PM-42"
+        assert kwargs["options"]["metadata"]["task_selection_source"] == "diagnostics_ready"
+        assert kwargs["options"]["metadata"]["selected_task_ids"] == ["PM-42"]
+        assert response.json()["tasks_queued"] == 1
+        mock_preflight.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_director_run_orchestration_blocks_when_diagnostics_cannot_execute(
     client: AsyncClient,
 ) -> None:

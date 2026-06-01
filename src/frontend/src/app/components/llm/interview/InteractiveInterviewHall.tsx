@@ -981,7 +981,7 @@ export function InteractiveInterviewHall({
 
   if (view === 'report' && report) {
     return (
-      <div className="rounded-2xl border border-emerald-500/20 bg-black/30 p-5 space-y-4">
+      <div data-testid="llm-interactive-report" className="rounded-2xl border border-emerald-500/20 bg-black/30 p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-xs uppercase tracking-wide text-text-dim">交互式面试报告</div>
@@ -1001,6 +1001,7 @@ export function InteractiveInterviewHall({
               </span>
             )}
             <button
+              data-testid="llm-interactive-report-reset"
               onClick={resetInterview}
               className="px-3 py-1.5 text-[10px] border border-white/10 rounded hover:border-white/30 flex items-center gap-1"
             >
@@ -1016,7 +1017,7 @@ export function InteractiveInterviewHall({
             正在保存面试报告...
           </div>
         ) : reportSavedPath ? (
-          <div className="text-[11px] text-emerald-300">报告已保存：{reportSavedPath}</div>
+          <div data-testid="llm-interactive-report-saved-path" className="text-[11px] text-emerald-300">报告已保存：{reportSavedPath}</div>
         ) : null}
         {error ? (
           <div className="text-[11px] text-red-200 bg-red-500/10 border border-red-500/20 rounded p-2">
@@ -1068,7 +1069,7 @@ export function InteractiveInterviewHall({
       }`}
     >
       {/* Header */}
-      <div className="rounded-xl border border-cyan-500/20 bg-[rgba(4,10,25,0.76)] px-3 py-2 shadow-[0_0_16px_rgba(34,211,238,0.10)]">
+      <div className={`rounded-xl border border-cyan-500/20 bg-[rgba(4,10,25,0.76)] px-3 shadow-[0_0_16px_rgba(34,211,238,0.10)] ${compactMode ? 'py-1' : 'py-2'}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-[10px]">
@@ -1122,16 +1123,18 @@ export function InteractiveInterviewHall({
                   </button>
                 ) : null}
                 {!isFullscreen ? (
-                  <button
-                    type="button"
-                    onClick={() => setLeftPanelCollapsed((prev) => !prev)}
-                    className="px-2 py-1 rounded border border-white/10 text-text-dim hover:border-cyan-400/50 hover:text-cyan-100"
-                  >
+                <button
+                  type="button"
+                  data-testid="llm-interactive-sidebar-toggle"
+                  onClick={() => setLeftPanelCollapsed((prev) => !prev)}
+                  className="px-2 py-1 rounded border border-white/10 text-text-dim hover:border-cyan-400/50 hover:text-cyan-100"
+                >
                     {leftPanelCollapsed ? '展开侧栏' : '收起侧栏'}
                   </button>
                 ) : null}
                 <button
                   type="button"
+                  data-testid="llm-interactive-fullscreen-toggle"
                   onClick={() => setIsFullscreen((prev) => !prev)}
                   className="px-2 py-1 rounded border border-cyan-400/40 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25 inline-flex items-center gap-1"
                   title={isFullscreen ? '退出全屏（Esc）' : '进入全屏'}
@@ -1163,6 +1166,7 @@ export function InteractiveInterviewHall({
               {isDeepTestMode ? (
                 <button
                   type="button"
+                  data-testid="llm-interactive-sidebar-toggle"
                   onClick={() => setLeftPanelCollapsed((prev) => !prev)}
                   className="px-2 py-1 text-[10px] rounded border border-white/10 text-text-dim hover:border-cyan-400/50"
                 >
@@ -1192,6 +1196,7 @@ export function InteractiveInterviewHall({
                     return (
                       <button
                         key={role.id}
+                        data-testid={`llm-interview-role-${role.id}`}
                         onClick={() => onSelectRole(role.id)}
                         className={`w-full text-left rounded-xl border ${compactMode ? 'p-2.5' : 'p-4'} transition-all ${
                           isActive
@@ -1232,6 +1237,7 @@ export function InteractiveInterviewHall({
                     return (
                       <button
                         key={provider.id}
+                        data-testid={`llm-interview-provider-${provider.id}`}
                         onClick={() => onSelectProvider(provider.id)}
                         className={`w-full min-w-0 text-left rounded-xl border ${compactMode ? 'p-2.5' : 'p-3'} transition-all ${
                           isActive
@@ -1327,10 +1333,10 @@ export function InteractiveInterviewHall({
           <div
             data-testid="llm-interactive-center"
             className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-cyan-500/20 bg-[linear-gradient(165deg,rgba(8,16,38,0.92),rgba(4,8,22,0.92))] shadow-[0_0_24px_rgba(34,211,238,0.12)] ${
-              compactMode ? 'gap-2 p-2' : 'gap-3 p-4'
+              compactMode ? 'gap-1.5 p-1.5' : 'gap-3 p-4'
             }`}
           >
-            <div className="flex shrink-0 items-center justify-between gap-2 text-[11px] text-text-dim">
+            <div className={`${compactMode ? 'sr-only' : 'flex'} shrink-0 items-center justify-between gap-2 text-[11px] text-text-dim`}>
               <span className="font-semibold text-text-main">实时对话区</span>
               <span>{messages.length} 条消息</span>
             </div>
@@ -1338,7 +1344,7 @@ export function InteractiveInterviewHall({
             {showThinkingPanel ? (
               <div data-testid="llm-interactive-stream-monitors" className={`grid min-h-0 min-w-0 shrink-0 gap-2 overflow-hidden ${
                 compactMode
-                  ? 'max-h-[210px] grid-cols-1 lg:max-h-[128px] lg:grid-cols-2'
+                  ? 'max-h-[104px] grid-cols-1 lg:max-h-[72px] lg:grid-cols-2'
                   : 'max-h-[320px] grid-cols-1 lg:max-h-[220px] lg:grid-cols-2'
               }`}>
                 <RealtimeThinkingDisplay
@@ -1346,13 +1352,15 @@ export function InteractiveInterviewHall({
                   enabled={thinkingEnabled}
                   isStreaming={responding && thinkingEnabled}
                   onClear={clearThinkingEvents}
-                  className={compactMode ? 'min-h-[82px]' : 'min-h-[140px]'}
+                  dense={compactMode}
+                  className={compactMode ? 'h-full min-h-0' : 'min-h-[140px]'}
                 />
                 <StreamingTags
                   events={tagEvents}
                   isStreaming={responding}
                   onClear={clearTagEvents}
-                  className={compactMode ? 'min-h-[82px]' : 'min-h-[140px]'}
+                  dense={compactMode}
+                  className={compactMode ? 'h-full min-h-0' : 'min-h-[140px]'}
                 />
               </div>
             ) : null}
@@ -1397,6 +1405,7 @@ export function InteractiveInterviewHall({
                         <div className="space-y-2 pt-2 border-t border-white/10">
                           <div className="flex flex-wrap items-center gap-2">
                             <button
+                              data-testid="llm-interactive-answer-pass"
                               onClick={() => updateEvaluation(answer.id, { userRating: 'pass' })}
                               className={`px-2 py-1 text-[10px] rounded border flex items-center gap-1 ${
                                 answer.evaluation?.userRating === 'pass'
@@ -1408,6 +1417,7 @@ export function InteractiveInterviewHall({
                               通过
                             </button>
                             <button
+                              data-testid="llm-interactive-answer-fail"
                               onClick={() => updateEvaluation(answer.id, { userRating: 'fail' })}
                               className={`px-2 py-1 text-[10px] rounded border flex items-center gap-1 ${
                                 answer.evaluation?.userRating === 'fail'
@@ -1506,9 +1516,10 @@ export function InteractiveInterviewHall({
               </div>
             ) : null}
 
-            <div data-testid="llm-interactive-composer" className={`rounded-lg border border-white/10 bg-black/60 flex-shrink-0 ${compactMode ? 'p-2 space-y-1.5' : 'p-3 space-y-2'}`}>
-              <div className="text-[10px] uppercase tracking-wide text-text-dim">继续追问</div>
+            <div data-testid="llm-interactive-composer" className={`rounded-lg border border-white/10 bg-black/60 flex-shrink-0 ${compactMode ? 'grid grid-cols-[minmax(0,1fr)_120px] items-end gap-2 p-2' : 'p-3 space-y-2'}`}>
+              <div className={compactMode ? 'sr-only' : 'text-[10px] uppercase tracking-wide text-text-dim'}>继续追问</div>
               <textarea
+                data-testid="llm-interactive-quick-question"
                 value={quickQuestion}
                 onChange={(event) => setQuickQuestion(event.target.value)}
                 placeholder="在这里输入追问问题..."
@@ -1516,9 +1527,10 @@ export function InteractiveInterviewHall({
                 className="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-text-main resize-none"
               />
               <button
+                data-testid="llm-interactive-send-question"
                 onClick={() => handleSendQuestion(undefined, quickQuestion)}
                 disabled={responding || !quickQuestion.trim()}
-                className={`w-full px-3 text-[10px] font-semibold bg-cyan-500/80 hover:bg-cyan-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1 ${compactMode ? 'py-1' : 'py-1.5'}`}
+                className={`w-full px-3 text-[10px] font-semibold bg-cyan-500/80 hover:bg-cyan-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1 ${compactMode ? 'py-1.5' : 'py-1.5'}`}
               >
                 <Send className="size-3" />
                 {responding ? '发送中...' : '发送追问'}
@@ -1526,32 +1538,35 @@ export function InteractiveInterviewHall({
             </div>
 
             {!isFullscreen && compactMode ? (
-              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/45 p-2">
+              <div data-testid="llm-interactive-finalize-controls" className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/45 p-1.5">
                 <input
                   value={userNotes}
                   onChange={(event) => setUserNotes(event.target.value)}
                   placeholder="面试官备注"
-                  className="min-w-[180px] flex-1 rounded border border-white/10 bg-black/40 px-2 py-1.5 text-[10px] text-text-main"
+                  className="min-w-[180px] flex-1 rounded border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-text-main"
                 />
                 <button
+                  data-testid="llm-interactive-finalize-pass"
                   onClick={() => finalizeInterview('passed')}
                   disabled={!canFinalize || passedAnswers === 0}
-                  className="px-3 py-1.5 text-[10px] font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
+                  className="px-3 py-1 text-[10px] font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
                 >
                   <CheckCircle2 className="size-3" />
                   通过
                 </button>
                 <button
+                  data-testid="llm-interactive-finalize-fail"
                   onClick={() => finalizeInterview('failed')}
                   disabled={answerMessages.length === 0 || responding}
-                  className="px-3 py-1.5 text-[10px] font-semibold bg-rose-500/80 hover:bg-rose-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
+                  className="px-3 py-1 text-[10px] font-semibold bg-rose-500/80 hover:bg-rose-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
                 >
                   <XCircle className="size-3" />
                   失败
                 </button>
                 <button
+                  data-testid="llm-interactive-reset"
                   onClick={resetInterview}
-                  className="px-3 py-1.5 text-[10px] border border-white/10 rounded hover:border-white/30 flex items-center justify-center gap-1"
+                  className="px-3 py-1 text-[10px] border border-white/10 rounded hover:border-white/30 flex items-center justify-center gap-1"
                 >
                   <RefreshCw className="size-3" />
                   重置
@@ -1561,7 +1576,7 @@ export function InteractiveInterviewHall({
           </div>
 
           {!isFullscreen && !compactMode ? (
-            <div className={`rounded-xl border border-white/10 bg-black/30 flex-shrink-0 ${compactMode ? 'p-2.5 space-y-2' : 'p-4 space-y-3'}`}>
+            <div data-testid="llm-interactive-finalize-controls" className={`rounded-xl border border-white/10 bg-black/30 flex-shrink-0 ${compactMode ? 'p-2.5 space-y-2' : 'p-4 space-y-3'}`}>
               <div className="text-xs font-semibold text-text-main uppercase tracking-wide">面试控制</div>
               <textarea
                 value={userNotes}
@@ -1572,6 +1587,7 @@ export function InteractiveInterviewHall({
               />
               <div className={`flex ${compactMode ? 'flex-row flex-wrap' : 'flex-col'} gap-2`}>
                 <button
+                  data-testid="llm-interactive-finalize-pass"
                   onClick={() => finalizeInterview('passed')}
                   disabled={!canFinalize || passedAnswers === 0}
                   className={`px-3 ${compactMode ? 'py-1.5 text-[10px]' : 'py-2 text-[11px]'} font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1`}
@@ -1580,6 +1596,7 @@ export function InteractiveInterviewHall({
                   通过
                 </button>
                 <button
+                  data-testid="llm-interactive-finalize-fail"
                   onClick={() => finalizeInterview('failed')}
                   disabled={answerMessages.length === 0 || responding}
                   className={`px-3 ${compactMode ? 'py-1.5 text-[10px]' : 'py-2 text-[11px]'} font-semibold bg-rose-500/80 hover:bg-rose-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1`}
@@ -1588,6 +1605,7 @@ export function InteractiveInterviewHall({
                   失败
                 </button>
                 <button
+                  data-testid="llm-interactive-reset"
                   onClick={resetInterview}
                   className={`px-3 ${compactMode ? 'py-1.5 text-[10px]' : 'py-2 text-[11px]'} border border-white/10 rounded hover:border-white/30 flex items-center justify-center gap-1`}
                 >
@@ -1662,6 +1680,7 @@ export function InteractiveInterviewHall({
         <div className="absolute right-2 bottom-2 z-50 rounded-xl border border-cyan-400/35 bg-black/70 backdrop-blur-xl p-2 flex items-center gap-2">
           <button
             type="button"
+            data-testid="llm-interactive-fullscreen-exit"
             onClick={() => setIsFullscreen(false)}
             className="px-2 py-1 text-[10px] rounded border border-cyan-400/40 text-cyan-100 hover:bg-cyan-500/20 inline-flex items-center gap-1"
             title="退出全屏（Esc）"
@@ -1671,6 +1690,7 @@ export function InteractiveInterviewHall({
           </button>
           <button
             type="button"
+            data-testid="llm-interactive-finalize-pass"
             onClick={() => finalizeInterview('passed')}
             disabled={!canFinalize || passedAnswers === 0}
             className="px-2 py-1 text-[10px] rounded border border-emerald-500/40 text-emerald-100 bg-emerald-500/20 disabled:opacity-60"
@@ -1679,6 +1699,7 @@ export function InteractiveInterviewHall({
           </button>
           <button
             type="button"
+            data-testid="llm-interactive-finalize-fail"
             onClick={() => finalizeInterview('failed')}
             disabled={answerMessages.length === 0 || responding}
             className="px-2 py-1 text-[10px] rounded border border-rose-500/40 text-rose-100 bg-rose-500/20 disabled:opacity-60"
@@ -1687,6 +1708,7 @@ export function InteractiveInterviewHall({
           </button>
           <button
             type="button"
+            data-testid="llm-interactive-reset"
             onClick={resetInterview}
             className="px-2 py-1 text-[10px] rounded border border-white/10 text-text-dim hover:border-white/30"
           >

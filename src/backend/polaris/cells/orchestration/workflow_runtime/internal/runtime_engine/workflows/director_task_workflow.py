@@ -466,6 +466,23 @@ class DirectorTaskWorkflow(WorkflowQueryState):
                     message=error,
                     details={"task_id": task_id, "phase": phase},
                 )
+                await workflow.execute_activity(
+                    "record_director_task_terminal_result",
+                    {
+                        "task": task.to_dict(),
+                        "workspace": workflow_input.workspace,
+                        "run_id": workflow_input.run_id,
+                        "runtime_metadata": (
+                            workflow_input.metadata if isinstance(workflow_input.metadata, dict) else {}
+                        ),
+                        "status": "failed",
+                        "summary": error,
+                        "errors": [error],
+                        "completed_phases": completed_phases,
+                        "metadata": failed_metadata,
+                    },
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
                 return DirectorTaskResult(
                     task_id=task_id,
                     status="failed",
@@ -536,6 +553,21 @@ class DirectorTaskWorkflow(WorkflowQueryState):
             step_detail=f"All phases completed: {', '.join(completed_phases)}",
             status="completed",
             attempt=retry_count,
+        )
+        await workflow.execute_activity(
+            "record_director_task_terminal_result",
+            {
+                "task": task.to_dict(),
+                "workspace": workflow_input.workspace,
+                "run_id": workflow_input.run_id,
+                "runtime_metadata": workflow_input.metadata if isinstance(workflow_input.metadata, dict) else {},
+                "status": "completed",
+                "summary": "Director task completed",
+                "errors": [],
+                "completed_phases": completed_phases,
+                "metadata": completed_metadata,
+            },
+            start_to_close_timeout=timedelta(seconds=30),
         )
         return DirectorTaskResult(
             task_id=task_id,

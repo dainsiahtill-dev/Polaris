@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -408,6 +409,87 @@ async def test_docs_init_apply_success(client: AsyncClient) -> None:
         assert data["ok"] is True
         assert len(data["files"]) == 2
         assert mock_write.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_docs_init_apply_promotes_draft_payload_to_active_docs(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Draft-root approvals must still materialize active docs for PM startup."""
+    mock_settings.workspace = str(tmp_path)
+    with (
+        patch(
+            "polaris.delivery.http.routers.docs.write_text_atomic",
+        ) as mock_write,
+        patch(
+            "polaris.delivery.http.routers.docs.workspace_has_docs",
+            return_value=True,
+        ),
+        patch(
+            "polaris.delivery.http.routers.docs.clear_workspace_status",
+        ),
+        patch(
+            "polaris.delivery.http.routers.docs.emit_event",
+        ),
+        patch(
+            "polaris.delivery.http.routers.docs._sync_plan_to_runtime",
+        ) as mock_sync,
+    ):
+        response = await client.post(
+            "/v2/docs/init/apply",
+            json={
+                "target_root": "workspace/docs/_drafts/init-20260602-010203",
+                "files": [
+                    {
+                        "path": "workspace/docs/_drafts/init-20260602-010203/product/requirements.md",
+                        "content": "# Requirements\n",
+                    },
+                    {
+                        "path": "workspace/docs/_drafts/init-20260602-010203/product/plan.md",
+                        "content": "# Plan\n",
+                    },
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert "workspace/docs/product/requirements.md" in data["files"]
+    assert "workspace/docs/product/plan.md" in data["files"]
+    assert mock_write.call_count == 4
+    mock_sync.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_docs_init_apply_writes_runtime_plan_contract(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Successful approval must leave the runtime plan contract readable."""
+    from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
+
+    mock_settings.workspace = str(tmp_path)
+    response = await client.post(
+        "/v2/docs/init/apply",
+        json={
+            "target_root": "workspace/docs",
+            "files": [
+                {"path": "workspace/docs/product/requirements.md", "content": "# Requirements\n"},
+                {"path": "workspace/docs/product/plan.md", "content": "# Plan\n\n- Build it\n"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    cache_root = build_cache_root("", str(tmp_path))
+    plan_contract = Path(resolve_artifact_path(str(tmp_path), cache_root, "runtime/contracts/plan.md"))
+    requirements_contract = Path(resolve_artifact_path(str(tmp_path), cache_root, "runtime/contracts/requirements.md"))
+    assert plan_contract.read_text(encoding="utf-8") == "# Plan\n\n- Build it\n"
+    assert requirements_contract.read_text(encoding="utf-8") == "# Requirements\n"
 
 
 @pytest.mark.asyncio

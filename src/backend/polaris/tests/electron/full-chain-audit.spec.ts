@@ -4,7 +4,13 @@ import { type Locator, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
 type BackendInfo = { baseUrl?: string; token?: string };
-type SettingsPayload = { workspace?: string; pm_runs_director?: boolean };
+type SettingsPayload = {
+  workspace?: string;
+  model?: string;
+  pm_model?: string;
+  director_model?: string;
+  pm_runs_director?: boolean;
+};
 type RuntimeLayoutPayload = { runtime_root?: string; workspace?: string };
 type PmStatusPayload = {
   running?: boolean;
@@ -30,6 +36,48 @@ type DirectorResultArtifact = {
   blocked?: number;
   error?: string;
 };
+type ChiefEngineerDiagnosticsPayload = {
+  ok?: boolean;
+  can_handoff?: boolean;
+  blueprints?: {
+    ok?: boolean;
+    planned_tasks?: number;
+    covered_tasks?: number;
+    loadable?: number;
+    director_handoff_ready?: boolean;
+    missing_task_ids?: string[];
+    status?: string;
+    error?: string | null;
+  };
+  handoff_blockers?: string[];
+  generate_blockers?: string[];
+  issues?: string[];
+};
+type LlmConfigPayload = {
+  providers?: Record<string, {
+    name?: string;
+    model?: string;
+    model_id?: string;
+    default_model?: string;
+  }>;
+  roles?: Record<string, { provider_id?: string; model?: string }>;
+  policies?: { required_ready_roles?: unknown[] };
+};
+type LlmStatusPayload = {
+  state?: string;
+  required_ready_roles?: string[];
+  blocked_roles?: string[];
+  roles?: Record<string, {
+    provider_id?: string;
+    model?: string;
+    ready?: boolean;
+    grade?: string;
+    readiness_issue?: string;
+    tested_provider_id?: string;
+    tested_model?: string;
+    tested_timestamp?: string | null;
+  }>;
+};
 type PmContractPayload = {
   quality_gate?: { score?: number; critical_issue_count?: number; summary?: string };
   notes?: string;
@@ -38,9 +86,13 @@ type PmContractPayload = {
   terminal_error?: string;
   tasks?: Array<{
     id?: string;
+    task_id?: string;
     title?: string;
     goal?: string;
+    description?: string;
     scope_paths?: unknown[];
+    target_files?: unknown[];
+    constraints?: unknown[];
     execution_checklist?: unknown[];
     acceptance_criteria?: unknown[];
     acceptance?: unknown[];
@@ -90,6 +142,8 @@ const CHINESE_PROMPT_LEAKAGE_PATTERNS = [
   /提示词内容/i,
 ];
 const DIRECTOR_RESULT_TIMEOUT_MS = 10 * 60 * 1000;
+const REVIEW_SCREENSHOT_WIDTH = 1920;
+const REVIEW_SCREENSHOT_HEIGHT = 1080;
 
 function positiveIntFromEnv(name: string, fallback: number): number {
   const raw = String(process.env[name] || "").trim();
@@ -105,6 +159,54 @@ const PM_FINISH_TIMEOUT_MS = positiveIntFromEnv("KERNELONE_E2E_PM_FINISH_TIMEOUT
 
 function toPosixPath(filePath: string): string {
   return String(filePath || "").split(path.sep).join("/");
+}
+
+function optionalEnvValue(name: string): string {
+  return String(process.env[name] || "").trim();
+}
+
+function buildFullChainSettingsPayload(workspace: string): SettingsPayload {
+  const modelOverride = optionalEnvValue("KERNELONE_E2E_FULL_CHAIN_MODEL");
+  const pmModel = optionalEnvValue("KERNELONE_E2E_PM_MODEL") || modelOverride;
+  const directorModel = optionalEnvValue("KERNELONE_E2E_DIRECTOR_MODEL") || modelOverride;
+  const payload: SettingsPayload = { workspace, pm_runs_director: false };
+
+  if (modelOverride) {
+    payload.model = modelOverride;
+  }
+  if (pmModel) {
+    payload.pm_model = pmModel;
+  }
+  if (directorModel) {
+    payload.director_model = directorModel;
+  }
+  return payload;
+}
+
+async function setReviewViewport(window: Page): Promise<void> {
+  await window.setViewportSize({
+    width: Math.min(REVIEW_SCREENSHOT_WIDTH, 2000),
+    height: Math.min(REVIEW_SCREENSHOT_HEIGHT, 2000),
+  });
+}
+
+async function captureAuditScreenshot(
+  window: Page,
+  testInfo: { outputPath: (name: string) => string },
+  name: string,
+): Promise<{ pngPath: string; reviewJpgPath: string }> {
+  const pngPath = testInfo.outputPath(`${name}.png`);
+  await window.screenshot({ path: pngPath, fullPage: true });
+
+  const reviewJpgPath = testInfo.outputPath(`${name}.review.jpg`);
+  await window.screenshot({
+    path: reviewJpgPath,
+    type: "jpeg",
+    quality: 80,
+    fullPage: false,
+  });
+
+  return { pngPath, reviewJpgPath };
 }
 
 function resolveRepoRoot(startDir: string): string {
@@ -305,6 +407,176 @@ async function dismissEngineFailureDialog(window: Page): Promise<void> {
   }
 }
 
+const FULL_CHAIN_REQUIRED_LLM_ROLES = ["pm", "chief_engineer", "director", "qa"] as const;
+
+function normalizeLlmRole(role: string): string {
+  const normalized = String(role || "").trim().toLowerCase();
+  return normalized === "docs" ? "architect" : normalized;
+}
+
+function roleConfigFor(config: LlmConfigPayload, role: string): { provider_id?: string; model?: string } | undefined {
+  const roles = config.roles || {};
+  return roles[role] || (role === "architect" ? roles.docs : undefined);
+}
+
+function providerModelFor(
+  config: LlmConfigPayload,
+  providerId: string,
+): string {
+  const provider = config.providers?.[providerId];
+  return String(provider?.model || provider?.model_id || provider?.default_model || "").trim();
+}
+
+function resolveLlmRoleBinding(
+  config: LlmConfigPayload,
+  role: string,
+): { role: string; providerId: string; model: string; providerLabel: string } {
+  const normalizedRole = normalizeLlmRole(role);
+  const roleCfg = roleConfigFor(config, normalizedRole);
+  const providerId = String(roleCfg?.provider_id || "").trim();
+  if (!providerId) {
+    throw new Error(`LLM role ${normalizedRole} has no provider binding`);
+  }
+  const provider = config.providers?.[providerId];
+  const model = String(roleCfg?.model || providerModelFor(config, providerId)).trim();
+  if (!model) {
+    throw new Error(`LLM role ${normalizedRole} provider ${providerId} has no model binding`);
+  }
+  return {
+    role: normalizedRole,
+    providerId,
+    model,
+    providerLabel: String(provider?.name || providerId),
+  };
+}
+
+function requiredLlmRolesForFullChain(config: LlmConfigPayload, status: LlmStatusPayload): string[] {
+  const roles = new Set<string>();
+  for (const role of FULL_CHAIN_REQUIRED_LLM_ROLES) roles.add(role);
+  for (const value of status.required_ready_roles || []) roles.add(normalizeLlmRole(value));
+  for (const value of config.policies?.required_ready_roles || []) roles.add(normalizeLlmRole(String(value || "")));
+  roles.delete("");
+  roles.delete("docs");
+  return [...roles];
+}
+
+function llmRoleReady(status: LlmStatusPayload, role: string): boolean {
+  const normalizedRole = normalizeLlmRole(role);
+  const roles = status.roles || {};
+  const roleStatus = roles[normalizedRole] || (normalizedRole === "architect" ? roles.docs : undefined);
+  return Boolean(roleStatus?.ready);
+}
+
+async function openSettingsModal(window: Page): Promise<void> {
+  if (await window.getByTestId("settings-modal").isVisible().catch(() => false)) {
+    return;
+  }
+  const settingsButton = await resolveVisibleLocator(window, [
+    () => window.getByTestId("control-panel-open-settings"),
+    () => window.locator("button[title='Settings'], button[title*='系统配置'], button[title*='设置']"),
+  ], 30_000);
+  await settingsButton.click();
+  await expect(window.getByTestId("settings-modal")).toBeVisible({ timeout: 30_000 });
+}
+
+async function closeSettingsModal(window: Page): Promise<void> {
+  const closeButton = window.getByTestId("settings-modal-close").first();
+  if (await closeButton.isVisible().catch(() => false)) {
+    await closeButton.click();
+    await expect(window.getByTestId("settings-modal")).toBeHidden({ timeout: 30_000 });
+  }
+}
+
+async function refreshRequiredLlmReadinessThroughSettings(
+  window: Page,
+  testInfo: { outputPath: (name: string) => string },
+): Promise<{ rolesChecked: string[]; rolesRefreshed: string[]; screenshots: string[]; finalStatus: LlmStatusPayload }> {
+  await openSettingsModal(window);
+  await window.getByTestId("settings-tab-llm").click();
+  await expect(window.getByTestId("llm-readiness-summary")).toBeVisible({ timeout: 60_000 });
+  const deepTestTab = await resolveVisibleLocator(window, [
+    () => window.getByTestId("llm-settings-tab-deep-test"),
+    () => window.getByRole("button", { name: /^深测$/ }),
+  ], 30_000);
+  await deepTestTab.click();
+  const autoModeButton = await resolveVisibleLocator(window, [
+    () => window.getByTestId("llm-deep-mode-auto"),
+    () => window.getByRole("button", { name: /^自动巡检$/ }),
+  ], 30_000);
+  await autoModeButton.click();
+
+  const screenshots: string[] = [];
+  const beforeShot = await captureAuditScreenshot(window, testInfo, "llm-readiness-before");
+  screenshots.push(toPosixPath(beforeShot.pngPath), toPosixPath(beforeShot.reviewJpgPath));
+
+  const config = await requestJson<LlmConfigPayload>(window, "/v2/llm/config");
+  let status = await requestJson<LlmStatusPayload>(window, "/v2/llm/status");
+  const rolesToCheck = requiredLlmRolesForFullChain(config, status);
+  const rolesRefreshed: string[] = [];
+
+  for (const role of rolesToCheck) {
+    const binding = resolveLlmRoleBinding(config, role);
+    if (llmRoleReady(status, binding.role)) {
+      continue;
+    }
+
+    const roleButton = window.getByTestId(`llm-auto-role-${binding.role}`);
+    await roleButton.scrollIntoViewIfNeeded();
+    await roleButton.click();
+
+    const providerButton = window.getByTestId(`llm-auto-provider-${binding.providerId}`);
+    await providerButton.scrollIntoViewIfNeeded();
+    await providerButton.click();
+
+    const runButton = window.getByTestId("llm-auto-run-connectivity");
+    await expect(
+      runButton,
+      `LLM connectivity button should be enabled for ${binding.role}/${binding.providerLabel}/${binding.model}`,
+    ).toBeEnabled({ timeout: 30_000 });
+    await runButton.focus();
+    await window.keyboard.press("Enter");
+
+    await expect.poll(async () => {
+      const current = await requestJson<LlmStatusPayload>(window, "/v2/llm/status");
+      if (llmRoleReady(current, binding.role)) {
+        return "ready";
+      }
+      const panelStatus = await window.getByTestId("llm-test-panel-status").innerText().catch(() => "");
+      if (/失败|failed/i.test(panelStatus)) {
+        return `failed:${panelStatus}`;
+      }
+      return "pending";
+    }, {
+      message: `LLM role ${binding.role} did not become ready after UI connectivity preflight`,
+      timeout: 3 * 60 * 1000,
+      intervals: [1000, 2000, 5000, 10_000],
+    }).toBe("ready");
+
+    rolesRefreshed.push(binding.role);
+    status = await requestJson<LlmStatusPayload>(window, "/v2/llm/status");
+    const roleShot = await captureAuditScreenshot(window, testInfo, `llm-readiness-${binding.role}`);
+    screenshots.push(toPosixPath(roleShot.pngPath), toPosixPath(roleShot.reviewJpgPath));
+
+    const closePanel = window.getByTestId("llm-test-panel-close").first();
+    if (await closePanel.isVisible().catch(() => false)) {
+      await closePanel.click();
+      await expect(window.getByTestId("llm-test-panel-host")).toBeHidden({ timeout: 30_000 });
+    }
+  }
+
+  status = await requestJson<LlmStatusPayload>(window, "/v2/llm/status");
+  for (const role of rolesToCheck) {
+    expect(llmRoleReady(status, role), `LLM role ${role} should be ready after Settings deep-test preflight`).toBe(true);
+  }
+
+  const afterShot = await captureAuditScreenshot(window, testInfo, "llm-readiness-after");
+  screenshots.push(toPosixPath(afterShot.pngPath), toPosixPath(afterShot.reviewJpgPath));
+  await closeSettingsModal(window);
+  await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+
+  return { rolesChecked: rolesToCheck, rolesRefreshed, screenshots, finalStatus: status };
+}
+
 function makeLargeTsModule(moduleName: string, helperCount: number): string {
   const symbol = moduleName
     .split(/[^a-zA-Z0-9]/)
@@ -426,6 +698,7 @@ async function createComplexProject(baseRoot: string): Promise<{ workspace: stri
     "src/server/app.ts": makeLargeTsModule("server-app", 30),
     "tests/unit/task-service.test.ts": makeTestModule("task-service-unit", 16),
     "tests/integration/api.test.ts": makeTestModule("task-service-integration", 16),
+    "docs/README.md": "# Stress Project Docs\n\nInitial docs marker for Polaris full-chain audit.",
     "README.md": "# Stress Project\n\nGenerated by Polaris full-chain audit.",
   };
 
@@ -687,6 +960,7 @@ async function runCourtFlow(window: Page): Promise<{ dialogueReady: boolean; fal
     ], 8 * 60 * 1000);
   }
 
+  dialogueReady = dialogueReady || !fallbackUsed;
   await applyButton.click();
   await expect(docsDialog).toBeHidden({ timeout: 120_000 });
   return { dialogueReady, fallbackUsed };
@@ -739,6 +1013,30 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   await directorMenuItem.click();
 }
 
+async function enterChiefEngineerWorkspace(window: Page): Promise<void> {
+  const directEntry = await tryResolveVisibleLocator(window, [
+    () => window.getByTestId("enter-chief-engineer-workspace"),
+  ], 2_000);
+  if (directEntry) {
+    await directEntry.click();
+    return;
+  }
+
+  const moreButton = await resolveVisibleLocator(window, [
+    () => window.getByRole("button", { name: /更多功能/ }),
+  ], 30_000);
+  await moreButton.click();
+
+  const chiefMenuItem = await resolveVisibleLocator(window, [
+    () => window.getByTestId("enter-chief-engineer-workspace"),
+    () => window.getByRole("menuitem", { name: /Chief\s*Engineer\s*工作区/i }),
+    () => window.getByRole("menuitem", { name: /Chief\s*Engineer\s*Workspace/i }),
+    () => window.getByText(/Chief\s*Engineer\s*工作区/i),
+    () => window.getByText(/Chief\s*Engineer\s*Workspace/i),
+  ], 15_000);
+  await chiefMenuItem.click();
+}
+
 async function runPmRound(window: Page): Promise<PmStatusPayload> {
   await window.getByTestId("pm-workspace-run-once").click();
   await expect.poll(async () => Boolean((await requestJson<PmStatusPayload>(window, "/v2/pm/status")).running), {
@@ -752,9 +1050,58 @@ async function runPmRound(window: Page): Promise<PmStatusPayload> {
   return await requestJson<PmStatusPayload>(window, "/v2/pm/status");
 }
 
-async function observeDirectorAfterPmOrchestration(
+function chiefEngineerHandoffReady(payload: ChiefEngineerDiagnosticsPayload | null): boolean {
+  const blueprints = payload?.blueprints;
+  if (!blueprints) return false;
+  const planned = Number(blueprints.planned_tasks || 0);
+  const covered = Number(blueprints.covered_tasks || 0);
+  const loadable = Number(blueprints.loadable || 0);
+  const missing = Array.isArray(blueprints.missing_task_ids) ? blueprints.missing_task_ids.length : 0;
+  return Boolean(payload?.can_handoff)
+    && Boolean(blueprints.director_handoff_ready)
+    && planned > 0
+    && covered >= planned
+    && loadable > 0
+    && missing === 0;
+}
+
+async function verifyChiefEngineerPhase(
   window: Page,
-): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string }> {
+): Promise<ChiefEngineerDiagnosticsPayload> {
+  await enterChiefEngineerWorkspace(window);
+  await expect(window.getByTestId("chief-engineer-workspace")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-diagnostics")).toBeVisible();
+
+  let diagnostics = await requestJson<ChiefEngineerDiagnosticsPayload>(window, "/v2/chief-engineer/diagnostics");
+  if (!chiefEngineerHandoffReady(diagnostics)) {
+    const generateAll = window.getByTestId("chief-engineer-blueprint-generate-all");
+    await expect(
+      generateAll,
+      `Chief Engineer generate-all button must be available for human-like handoff: ${JSON.stringify(diagnostics)}`,
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(
+      generateAll,
+      `Chief Engineer generate-all button must be enabled for human-like handoff: ${JSON.stringify(diagnostics)}`,
+    ).toBeEnabled({ timeout: 30_000 });
+    await generateAll.click();
+    await expect.poll(async () => {
+      const current = await requestJson<ChiefEngineerDiagnosticsPayload>(window, "/v2/chief-engineer/diagnostics");
+      return chiefEngineerHandoffReady(current);
+    }, {
+      timeout: 10 * 60 * 1000,
+      intervals: [1000, 2000, 5000, 10_000],
+    }).toBe(true);
+    diagnostics = await requestJson<ChiefEngineerDiagnosticsPayload>(window, "/v2/chief-engineer/diagnostics");
+  }
+
+  expect(
+    chiefEngineerHandoffReady(diagnostics),
+    `Chief Engineer handoff not ready: ${JSON.stringify(diagnostics)}`,
+  ).toBe(true);
+  return diagnostics;
+}
+
+async function runDirectorFromWorkspace(window: Page): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string }> {
   await expect.poll(async () => {
     const tasks = await requestJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto");
     return Array.isArray(tasks)
@@ -764,15 +1111,29 @@ async function observeDirectorAfterPmOrchestration(
     timeout: 120_000,
     intervals: [500, 1000, 2000, 3000],
   }).toBeGreaterThan(0);
-  const tasks = await requestJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto");
-  const linkedTaskCount = Array.isArray(tasks)
-    ? tasks.filter((item) => String(item?.metadata?.pm_task_id || "").trim().length > 0).length
-    : 0;
 
   await expect.poll(async () => window.getByTestId("director-task-item").count(), {
     timeout: 60_000,
     intervals: [500, 1000, 2000, 3000],
   }).toBeGreaterThan(0);
+
+  const executeButton = window.getByTestId("director-workspace-execute");
+  await expect(executeButton).toBeVisible({ timeout: 60_000 });
+  await expect(executeButton).toBeEnabled({ timeout: 60_000 });
+  await executeButton.click();
+
+  await expect.poll(async () => {
+    const status = await requestJson<DirectorStatusPayload>(window, "/v2/director/status?source=auto");
+    return String(status.state || "").trim().toUpperCase();
+  }, {
+    timeout: 120_000,
+    intervals: [500, 1000, 2000, 3000],
+  }).toMatch(/RUNNING|STARTING|QUEUED|BUSY/);
+
+  const tasks = await requestJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto");
+  const linkedTaskCount = Array.isArray(tasks)
+    ? tasks.filter((item) => String(item?.metadata?.pm_task_id || "").trim().length > 0).length
+    : 0;
   const uiTaskCount = await window.getByTestId("director-task-item").count();
   const status = await requestJson<DirectorStatusPayload>(window, "/v2/director/status?source=auto");
   return { linkedTaskCount, uiTaskCount, state: String(status.state || "").trim().toUpperCase() };
@@ -835,7 +1196,13 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     leakage_findings: Array<{ type: string; evidence: string; fixed: boolean }>;
     director_tool_audit: ToolAuditPayload;
     issues_fixed: Array<{ issue: string; root_cause: string; fix: string; verified: boolean }>;
-    acceptance_results: { court_phase: "PASS" | "FAIL"; pm_phase: "PASS" | "FAIL"; director_phase: "PASS" | "FAIL"; qa_phase: "PASS" | "FAIL" };
+    acceptance_results: {
+      court_phase: "PASS" | "FAIL";
+      pm_phase: "PASS" | "FAIL";
+      chief_engineer_phase: "PASS" | "FAIL";
+      director_phase: "PASS" | "FAIL";
+      qa_phase: "PASS" | "FAIL";
+    };
     evidence_paths: { screenshots: string[]; logs: string[]; snapshots: string[] };
     next_risks: string[];
   } = {
@@ -846,7 +1213,13 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     leakage_findings: [],
     director_tool_audit: { total_calls: 0, unauthorized_blocked: 0, dangerous_commands: 0, findings: [] },
     issues_fixed: [],
-    acceptance_results: { court_phase: "FAIL", pm_phase: "FAIL", director_phase: "FAIL", qa_phase: "FAIL" },
+    acceptance_results: {
+      court_phase: "FAIL",
+      pm_phase: "FAIL",
+      chief_engineer_phase: "FAIL",
+      director_phase: "FAIL",
+      qa_phase: "FAIL",
+    },
     evidence_paths: { screenshots: [], logs: [], snapshots: [] },
     next_risks: [],
   };
@@ -856,6 +1229,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
   let latestEventsPath = "";
 
   try {
+    await setReviewViewport(window);
     await dismissEngineFailureDialog(window);
     await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
 
@@ -871,11 +1245,23 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     expect(project.metrics.configFileCount).toBeGreaterThanOrEqual(3);
     expect(project.metrics.testFileCount).toBeGreaterThanOrEqual(2);
 
+    const initialSettings = await requestJson<SettingsPayload>(window, "/settings");
+    const settingsPayload = buildFullChainSettingsPayload(project.workspace);
     const updatedSettings = await requestJson<SettingsPayload>(window, "/settings", {
       method: "POST",
-      body: { workspace: project.workspace, pm_runs_director: true },
+      body: settingsPayload,
     });
-    expect(String(updatedSettings.workspace || "").toLowerCase()).toBe(project.workspace.toLowerCase());
+    const settingsSwitchPath = testInfo.outputPath("settings.workspace-switch.json");
+    await writeUtf8File(settingsSwitchPath, JSON.stringify({
+      requested: settingsPayload,
+      before: initialSettings,
+      post_response: updatedSettings,
+    }, null, 2));
+    audit.evidence_paths.snapshots.push(toPosixPath(settingsSwitchPath));
+    expect(
+      String(updatedSettings.workspace || "").toLowerCase(),
+      `settings POST must activate generated workspace; evidence=${toPosixPath(settingsSwitchPath)}`,
+    ).toBe(project.workspace.toLowerCase());
     await expect.poll(async () => String((await requestJson<SettingsPayload>(window, "/settings")).workspace || "").toLowerCase(), {
       timeout: 90_000,
       intervals: [500, 1000, 2000, 3000],
@@ -885,12 +1271,42 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     runtimeRoot = String(layout.runtime_root || "").trim();
     expect(runtimeRoot).not.toBe("");
 
+    const llmPreflight = await refreshRequiredLlmReadinessThroughSettings(window, testInfo);
+    audit.evidence_paths.screenshots.push(...llmPreflight.screenshots);
+    const llmStatusPath = testInfo.outputPath("llm-readiness.status.json");
+    await writeUtf8File(llmStatusPath, JSON.stringify({
+      roles_checked: llmPreflight.rolesChecked,
+      roles_refreshed: llmPreflight.rolesRefreshed,
+      status: llmPreflight.finalStatus,
+    }, null, 2));
+    audit.evidence_paths.snapshots.push(toPosixPath(llmStatusPath));
+    if (llmPreflight.rolesRefreshed.length > 0) {
+      audit.issues_fixed.push({
+        issue: "llm_role_readiness_stale_or_missing",
+        root_cause: "llm_runtime_config",
+        fix: `refreshed required roles through Settings deep-test UI: ${llmPreflight.rolesRefreshed.join(", ")}`,
+        verified: true,
+      });
+    }
+
     const courtFlow = await runCourtFlow(window);
     await dismissEngineFailureDialog(window);
 
-    const courtShot = testInfo.outputPath("court-phase.png");
-    await window.screenshot({ path: courtShot, fullPage: true });
-    audit.evidence_paths.screenshots.push(toPosixPath(courtShot));
+    const courtShot = await captureAuditScreenshot(window, testInfo, "court-phase");
+    audit.evidence_paths.screenshots.push(toPosixPath(courtShot.pngPath), toPosixPath(courtShot.reviewJpgPath));
+
+    if (!courtFlow.dialogueReady || courtFlow.fallbackUsed) {
+      audit.issues_fixed.push({
+        issue: "court_dialogue_not_ready",
+        root_cause: "architect_dialogue",
+        fix: "strict full-chain audit now fails instead of drafting from an incomplete Architect dialogue",
+        verified: false,
+      });
+      throw new Error(
+        `Court phase failed strict dialogue gate: dialogueReady=${courtFlow.dialogueReady} `
+        + `fallbackUsed=${courtFlow.fallbackUsed} screenshot=${toPosixPath(courtShot.reviewJpgPath)}`,
+      );
+    }
 
     const docsRoots = [
       path.join(project.workspace, "docs"),
@@ -908,14 +1324,6 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     expect((await fs.readFile(planPath, "utf-8")).trim().length).toBeGreaterThan(0);
     audit.acceptance_results.court_phase = "PASS";
     audit.evidence_paths.logs.push(toPosixPath(planPath));
-    if (courtFlow.fallbackUsed) {
-      audit.issues_fixed.push({
-        issue: "court_dialogue_stream_timeout",
-        root_cause: "prompt_or_streaming",
-        fix: "degraded to direct draft generation using filled goal fields",
-        verified: true,
-      });
-    }
 
     const deadlineMs = Date.now() + 45 * 60 * 1000;
     while (Date.now() < deadlineMs) {
@@ -927,37 +1335,13 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       await expect(window.getByTestId("pm-workspace")).toBeVisible();
       const pmTerminalStatus = await runPmRound(window);
       if (pmTerminalStatus.log_path) audit.evidence_paths.logs.push(toPosixPath(pmTerminalStatus.log_path));
-      if (pmTerminalStatus.exit_code && pmTerminalStatus.exit_code !== 0) {
-        audit.issues_fixed.push({
-          issue: `round_${round}_pm_exit_${pmTerminalStatus.exit_code}`,
-          root_cause: "pm_process",
-          fix: `captured PM terminal status execution_id=${pmTerminalStatus.execution_id || "unknown"} error=${pmTerminalStatus.error || ""}`,
-          verified: false,
-        });
-      }
-
-      const directorResultArtifact = await waitForRuntimeArtifact(
-        window,
-        "results/director.result.json",
-        DIRECTOR_RESULT_TIMEOUT_MS,
-      );
-      runtimeRoot = directorResultArtifact.runtimeRoot;
-      const directorResultPath = directorResultArtifact.artifactPath;
-      const directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
-      audit.evidence_paths.logs.push(toPosixPath(directorResultPath));
-      const downstreamDirectorFailure = directorFailureReason(directorResult);
+      const pmShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.pm`);
+      audit.evidence_paths.screenshots.push(toPosixPath(pmShot.pngPath), toPosixPath(pmShot.reviewJpgPath));
 
       const snapshot = await requestJson<SnapshotPayload>(window, "/state/snapshot");
       const snapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.snapshot.json`);
       await writeUtf8File(snapshotPath, JSON.stringify(snapshot, null, 2));
       audit.evidence_paths.snapshots.push(toPosixPath(snapshotPath));
-      const directorSuccesses = Number(directorResult?.successes || 0);
-      const directorStatus = String(directorResult?.status || "").trim();
-      const pmSnapshotGate = (
-        (Array.isArray(snapshot.tasks) ? snapshot.tasks.length : 0) > 0
-        && (Number(snapshot.pm_state?.["completed_task_count"] || 0) > 0 || directorSuccesses > 0)
-        && (String(snapshot.pm_state?.["last_director_status"] || "").trim().length > 0 || directorStatus.length > 0)
-      );
 
       const pmContractArtifact = await waitForRuntimeArtifact(window, "contracts/pm_tasks.contract.json", 120_000);
       runtimeRoot = pmContractArtifact.runtimeRoot;
@@ -978,6 +1362,10 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         const hasAcceptance = Array.isArray(acceptance) && acceptance.length > 0;
         return !(hasGoal && hasScope && hasSteps && hasAcceptance);
       }).length;
+      const pmSnapshotGate = (
+        (Array.isArray(snapshot.tasks) ? snapshot.tasks.length : 0) > 0
+        && (Number(snapshot.pm_state?.["completed_task_count"] || 0) > 0 || tasks.length > 0)
+      );
 
       audit.pm_quality_history.push({
         round,
@@ -990,6 +1378,25 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         ...detectPromptLeakage(await fs.readFile(planPath, "utf-8"), toPosixPath(planPath)),
       ];
       if (leakage.length > 0) audit.leakage_findings.push(...leakage);
+
+      const pmTerminalFailed = Boolean(
+        (typeof pmTerminalStatus.exit_code === "number" && pmTerminalStatus.exit_code !== 0)
+        || pmTerminalStatus.ok === false
+        || String(pmTerminalStatus.status || "").trim().toLowerCase() === "failed",
+      );
+      if (pmTerminalFailed) {
+        audit.issues_fixed.push({
+          issue: `round_${round}_pm_terminal_failed_${pmTerminalStatus.exit_code ?? "unknown"}`,
+          root_cause: "pm_process",
+          fix: `fail-fast before waiting for Director artifacts (execution_id=${pmTerminalStatus.execution_id || "unknown"} status=${pmTerminalStatus.status || "unknown"} error=${pmTerminalStatus.error || ""})`,
+          verified: false,
+        });
+        throw new Error(
+          `PM phase failed closed before Director wait: `
+          + `status=${pmTerminalStatus.status || "unknown"} exit=${pmTerminalStatus.exit_code ?? "unknown"} `
+          + `error=${pmTerminalStatus.error || ""} contract=${toPosixPath(pmContractPath)} screenshot=${toPosixPath(pmShot.reviewJpgPath)}`,
+        );
+      }
 
       if (pmFallbackFailure) {
         audit.issues_fixed.push({
@@ -1012,16 +1419,39 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
 
       await dismissEngineFailureDialog(window);
+      const chiefDiagnostics = await verifyChiefEngineerPhase(window);
+      const chiefSnapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.chief-engineer-diagnostics.json`);
+      await writeUtf8File(chiefSnapshotPath, JSON.stringify(chiefDiagnostics, null, 2));
+      audit.evidence_paths.snapshots.push(toPosixPath(chiefSnapshotPath));
+      audit.acceptance_results.chief_engineer_phase = "PASS";
+      const chiefShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.chief-engineer`);
+      audit.evidence_paths.screenshots.push(toPosixPath(chiefShot.pngPath), toPosixPath(chiefShot.reviewJpgPath));
+      await window.getByTestId("chief-engineer-workspace-back").click();
+      await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+
+      await dismissEngineFailureDialog(window);
       await enterDirectorWorkspace(window);
       await expect(window.getByTestId("director-workspace")).toBeVisible();
-      const director = await observeDirectorAfterPmOrchestration(window);
+      const director = await runDirectorFromWorkspace(window);
       if (director.linkedTaskCount > 0 && director.uiTaskCount > 0) {
         audit.acceptance_results.director_phase = "PASS";
       }
 
-      const dirShot = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.director.png`);
-      await window.screenshot({ path: dirShot, fullPage: true });
-      audit.evidence_paths.screenshots.push(toPosixPath(dirShot));
+      const directorResultArtifact = await waitForRuntimeArtifact(
+        window,
+        "results/director.result.json",
+        DIRECTOR_RESULT_TIMEOUT_MS,
+      );
+      runtimeRoot = directorResultArtifact.runtimeRoot;
+      const directorResultPath = directorResultArtifact.artifactPath;
+      const directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
+      audit.evidence_paths.logs.push(toPosixPath(directorResultPath));
+      const downstreamDirectorFailure = directorFailureReason(directorResult);
+      const directorSuccesses = Number(directorResult?.successes || 0);
+      const directorStatus = String(directorResult?.status || "").trim();
+
+      const dirShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.director`);
+      audit.evidence_paths.screenshots.push(toPosixPath(dirShot.pngPath), toPosixPath(dirShot.reviewJpgPath));
 
       if (downstreamDirectorFailure) {
         audit.issues_fixed.push({
@@ -1032,7 +1462,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         });
         throw new Error(
           `Director phase failed closed: ${downstreamDirectorFailure}; `
-          + `result=${toPosixPath(directorResultPath)} screenshot=${toPosixPath(dirShot)}`,
+          + `result=${toPosixPath(directorResultPath)} screenshot=${toPosixPath(dirShot.reviewJpgPath)}`,
         );
       }
 
@@ -1072,6 +1502,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       if (
         audit.acceptance_results.court_phase === "PASS"
         && audit.acceptance_results.pm_phase === "PASS"
+        && audit.acceptance_results.chief_engineer_phase === "PASS"
         && audit.acceptance_results.director_phase === "PASS"
         && audit.acceptance_results.qa_phase === "PASS"
         && audit.leakage_findings.length === 0
@@ -1105,6 +1536,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     const pass = (
       audit.acceptance_results.court_phase === "PASS"
       && audit.acceptance_results.pm_phase === "PASS"
+      && audit.acceptance_results.chief_engineer_phase === "PASS"
       && audit.acceptance_results.director_phase === "PASS"
       && audit.acceptance_results.qa_phase === "PASS"
       && audit.leakage_findings.length === 0

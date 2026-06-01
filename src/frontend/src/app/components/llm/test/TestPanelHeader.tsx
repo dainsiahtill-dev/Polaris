@@ -56,7 +56,7 @@ export function TestPanelHeader({
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-text-main">
           <span className="truncate">{resolvedTitle}</span>
-          <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border ${STATUS_BADGES[status]}`}>
+          <span data-testid="llm-test-panel-status" className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border ${STATUS_BADGES[status]}`}>
             {resolvedStatusText}
           </span>
         </div>
@@ -98,6 +98,7 @@ export function TestPanelHeader({
         ) : null}
         <button
           type="button"
+          data-testid="llm-test-panel-close"
           onClick={onClose}
           disabled={running}
           className="p-1.5 rounded border border-white/10 hover:border-accent/40 disabled:opacity-50"

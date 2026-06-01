@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
@@ -331,6 +332,58 @@ async def test_get_chief_engineer_diagnostics_blocks_stale_blueprint_without_pm_
     assert data["can_handoff"] is False
     assert data["issues"] == ["blueprint_task_plan_unavailable"]
     assert data["handoff_blockers"] == ["blueprint_task_plan_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_uses_pm_contract_when_task_plan_missing(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Current PM workflow contracts should be valid CE handoff plan evidence."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    task_plan_path = tmp_path / "runtime" / "tasks" / "plan.json"
+    contract_path = tmp_path / "runtime" / "contracts" / "pm_tasks.contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text(
+        '{"tasks": [{"id": "PM-1"}, {"id": "PM-2"}]}',
+        encoding="utf-8",
+    )
+    persistence = MagicMock()
+    persistence.list_all.return_value = ["bp-1", "bp-2"]
+    persistence.load.side_effect = lambda blueprint_id: {
+        "bp-1": {"blueprint_id": "bp-1", "task_id": "PM-1"},
+        "bp-2": {"blueprint_id": "bp-2", "task_id": "PM-2"},
+    }[blueprint_id]
+
+    def resolve_candidate(_workspace: str, logical_path: str, ramdisk_root: str | None = None) -> str:
+        _ = ramdisk_root
+        if logical_path == "runtime/contracts/pm_tasks.contract.json":
+            return str(contract_path)
+        return str(task_plan_path)
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.resolve_logical_path",
+            side_effect=resolve_candidate,
+        ),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["blueprints"]["plan_status"] == "ready"
+    assert Path(data["blueprints"]["plan_path"]).resolve() == contract_path.resolve()
+    assert data["blueprints"]["planned_tasks"] == 2
+    assert data["blueprints"]["covered_tasks"] == 2
+    assert data["blueprints"]["director_handoff_ready"] is True
+    assert data["issues"] == []
 
 
 @pytest.mark.asyncio
@@ -855,6 +908,81 @@ async def test_bulk_generate_chief_engineer_blueprints_uses_public_command_contr
     assert data["failed"] == 0
     assert [item["blueprint_id"] for item in data["results"]] == ["ce_PM-1", "ce_PM-2"]
     assert data["results"][0]["blueprint"]["summary"] == "Generated ce_PM-1"
+
+
+@pytest.mark.asyncio
+async def test_bulk_generate_chief_engineer_blueprints_links_pm_task_contracts(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Bulk CE generation must link PM tasks to persisted runtime blueprints."""
+    from polaris.kernelone.fs.text_ops import write_json_atomic
+    from polaris.kernelone.storage import resolve_logical_path
+
+    mock_settings.workspace = str(tmp_path)
+    mock_settings.workspace_path = str(tmp_path)
+    contract_payload: dict[str, Any] = {
+        "schema_version": 2,
+        "run_id": "pm-00001",
+        "tasks": [
+            {"id": "PM-1", "metadata": {}},
+            {"id": "PM-2"},
+        ],
+    }
+    contract_path = Path(resolve_logical_path(str(tmp_path), "runtime/contracts/pm_tasks.contract.json"))
+    run_contract_path = contract_path.parent.parent / "runs" / "pm-00001" / "contracts" / "pm_tasks.contract.json"
+    write_json_atomic(str(contract_path), contract_payload)
+    write_json_atomic(str(run_contract_path), contract_payload)
+
+    persistence = MagicMock()
+    persistence.load.side_effect = lambda blueprint_id: {
+        "blueprint_id": blueprint_id,
+        "task_id": blueprint_id.removeprefix("ce_"),
+        "summary": f"Generated {blueprint_id}",
+    }
+
+    def generate_result(command: Any) -> TaskBlueprintResultV1:
+        task_id = str(command.task_id)
+        blueprint_id = f"ce_{task_id}"
+        return TaskBlueprintResultV1(
+            ok=True,
+            task_id=task_id,
+            workspace=str(command.workspace),
+            status="generated",
+            blueprint_id=blueprint_id,
+            blueprint_path=f"runtime/blueprints/{blueprint_id}.json",
+        )
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.generate_task_blueprint",
+            side_effect=generate_result,
+        ),
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+    ):
+        response = await client.post(
+            "/v2/chief-engineer/blueprints/bulk",
+            json={
+                "tasks": [
+                    {"task_id": "PM-1", "objective": "Blueprint PM-1"},
+                    {"task_id": "PM-2", "objective": "Blueprint PM-2"},
+                ]
+            },
+        )
+
+    assert response.status_code == 200
+    for path in (contract_path, run_contract_path):
+        updated = json.loads(path.read_text(encoding="utf-8"))
+        rows = {item["id"]: item for item in updated["tasks"]}
+        assert rows["PM-1"]["blueprint_id"] == "ce_PM-1"
+        assert rows["PM-1"]["runtime_blueprint_path"] == "runtime/blueprints/ce_PM-1.json"
+        assert rows["PM-1"]["metadata"]["blueprint_id"] == "ce_PM-1"
+        assert rows["PM-2"]["blueprint_id"] == "ce_PM-2"
+        assert rows["PM-2"]["metadata"]["runtime_blueprint_path"] == "runtime/blueprints/ce_PM-2.json"
 
 
 @pytest.mark.asyncio

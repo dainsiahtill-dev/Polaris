@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.workflow_client impor
 from polaris.domain.entities.policy import Policy
 from polaris.domain.state_machine import PhaseContext, PhaseExecutor, PhaseResult, TaskPhase
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
+from polaris.kernelone.fs.text_ops import write_json_atomic
 
 from .base import ActivityExecutionResult, register_activity
 
@@ -84,6 +86,87 @@ def _resolve_repo_root() -> Path:
     return current.parent
 
 
+def _task_artifact_paths(
+    *,
+    workspace: str,
+    run_id: str,
+    task_id: str,
+    runtime_metadata: dict[str, Any],
+) -> tuple[str, str]:
+    cache_root = str(runtime_metadata.get("cache_root_full") or "").strip()
+    if cache_root:
+        task_root = os.path.join(
+            cache_root,
+            "workflow",
+            run_id or "adhoc",
+            task_id or "task",
+        )
+    else:
+        metadata_dir = get_workspace_metadata_dir_name()
+        task_root = os.path.join(
+            workspace,
+            metadata_dir,
+            "runtime",
+            "workflow",
+            run_id or "adhoc",
+            task_id or "task",
+        )
+    os.makedirs(task_root, exist_ok=True)
+    return os.path.join(task_root, "director.result.json"), os.path.join(task_root, "director.log")
+
+
+def _read_json_object(path: str) -> dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _terminal_result_payload(
+    existing: dict[str, Any],
+    *,
+    task_id: str,
+    status: str,
+    summary: str,
+    errors: list[str],
+    completed_phases: list[str],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    status_token = str(status or "").strip().lower()
+    completed = status_token in {"completed", "success", "passed", "succeeded"}
+    blocked = status_token in {"blocked", "dependency_blocked"}
+    result_status = "success" if completed else "blocked" if blocked else "failed"
+    context_raw = metadata.get("context")
+    context: dict[str, Any] = context_raw if isinstance(context_raw, dict) else {}
+    verification_raw = context.get("verification_result")
+    if not isinstance(verification_raw, dict):
+        verification_raw = metadata.get("verification_result")
+    verification_result = dict(verification_raw) if isinstance(verification_raw, dict) else {}
+    payload = dict(existing)
+    payload.update(
+        {
+            "schema_version": max(int(payload.get("schema_version") or 1), 1),
+            "task_id": task_id,
+            "status": result_status,
+            "success": completed,
+            "acceptance": completed,
+            "qa_verdict": "PASS" if completed else "FAIL",
+            "workflow_terminal": True,
+            "workflow_child_status": "completed" if completed else "blocked" if blocked else "failed",
+            "workflow_completed_phases": list(completed_phases),
+            "workflow_metadata": metadata,
+            "verification_result": verification_result,
+            "summary": summary,
+            "result_summary": summary,
+            "errors": list(errors),
+            "error": "" if completed else (errors[0] if errors else summary or "director_task_failed"),
+        }
+    )
+    return payload
+
+
 def _build_context(payload: dict[str, Any], contract: TaskContract) -> PhaseContext:
     current = _normalize_dict(payload.get("context"))
     metadata = _normalize_dict(current.get("metadata"))
@@ -153,27 +236,12 @@ def _run_director_execution(
     from polaris.delivery.cli.pm.director_interface_core import DirectorTask, create_director
 
     project_root = _resolve_repo_root()
-    cache_root = str(runtime_metadata.get("cache_root_full") or "").strip()
-    if cache_root:
-        task_root = os.path.join(
-            cache_root,
-            "workflow",
-            run_id or "adhoc",
-            contract.task_id or "task",
-        )
-    else:
-        metadata_dir = get_workspace_metadata_dir_name()
-        task_root = os.path.join(
-            workspace,
-            metadata_dir,
-            "runtime",
-            "workflow",
-            run_id or "adhoc",
-            contract.task_id or "task",
-        )
-    os.makedirs(task_root, exist_ok=True)
-    result_path = os.path.join(task_root, "director.result.json")
-    log_path = os.path.join(task_root, "director.log")
+    result_path, log_path = _task_artifact_paths(
+        workspace=workspace,
+        run_id=run_id,
+        task_id=contract.task_id,
+        runtime_metadata=runtime_metadata,
+    )
 
     process_timeout = _coerce_timeout_seconds(
         director_config.get("timeout"),
@@ -391,6 +459,7 @@ async def execute_task_phase(payload: dict[str, Any]) -> dict[str, Any]:
             changed_files=_normalize_list(context.changed_files),
         )
         verification_payload["verification_result"] = {
+            **dict(context.verification_result),
             "build_round": int(context.build_round),
             "stall_count": int(context.stall_count),
         }
@@ -411,6 +480,56 @@ async def execute_task_phase(payload: dict[str, Any]) -> dict[str, Any]:
         payload={"phase": phase, "task_id": contract.task_id, "context": _serialize_context(context)},
         step_title="Phase report completed",
         step_detail="Report phase acknowledged",
+    ).to_dict()
+
+
+@register_activity("record_director_task_terminal_result")
+@activity.defn(name="record_director_task_terminal_result")
+async def record_director_task_terminal_result(payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist the workflow-child terminal result over the legacy task artifact."""
+    contract = TaskContract.from_mapping((payload or {}).get("task"))
+    workspace = str((payload or {}).get("workspace") or "").strip()
+    run_id = str((payload or {}).get("run_id") or "").strip()
+    runtime_metadata = _normalize_dict((payload or {}).get("runtime_metadata"))
+    if not contract.task_id or not workspace:
+        return ActivityExecutionResult(
+            success=False,
+            summary="Cannot record Director task terminal result without task_id and workspace",
+            payload={"task_id": contract.task_id, "workspace": workspace},
+            errors=["missing_terminal_result_identity"],
+        ).to_dict()
+
+    result_path, _log_path = _task_artifact_paths(
+        workspace=workspace,
+        run_id=run_id,
+        task_id=contract.task_id,
+        runtime_metadata=runtime_metadata,
+    )
+    existing = _read_json_object(result_path)
+    status = str((payload or {}).get("status") or "").strip()
+    summary = str((payload or {}).get("summary") or "").strip()
+    errors = _normalize_list((payload or {}).get("errors"))
+    completed_phases = _normalize_list((payload or {}).get("completed_phases"))
+    metadata = _normalize_dict((payload or {}).get("metadata"))
+    terminal_payload = _terminal_result_payload(
+        existing,
+        task_id=contract.task_id,
+        status=status,
+        summary=summary,
+        errors=errors,
+        completed_phases=completed_phases,
+        metadata=metadata,
+    )
+    write_json_atomic(result_path, terminal_payload)
+    return ActivityExecutionResult(
+        success=True,
+        summary="Director task terminal result recorded",
+        payload={
+            "task_id": contract.task_id,
+            "result_path": result_path,
+            "status": terminal_payload.get("status"),
+            "workflow_child_status": terminal_payload.get("workflow_child_status"),
+        },
     ).to_dict()
 
 

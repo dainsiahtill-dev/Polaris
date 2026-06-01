@@ -11,7 +11,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.events.file_event_broadcaster import (
+    broadcast_file_written,
+    calculate_patch,
+)
 
 from .execution_tools import DirectorToolExecutor
 from .helpers import (
@@ -30,7 +33,13 @@ class DirectorPatchExecutor:
 
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
+        self._message_bus: Any | None = None
+        self._worker_id = "director"
         self._tool_executor = DirectorToolExecutor(workspace)
+
+    def set_message_bus(self, message_bus: Any | None) -> None:
+        self._message_bus = message_bus
+        self._tool_executor.set_message_bus(message_bus)
 
     # -------------------------------------------------------------------------
     # LLM Timeout Resolution
@@ -147,7 +156,7 @@ class DirectorPatchExecutor:
             current_file=args.get("file", args.get("path", "")),
         )
         try:
-            result = self._tool_executor.execute_tool(tool_name, args)
+            result = self._tool_executor.execute_tool(tool_name, args, task_id=task_id)
             return {"tool": tool_name, "success": result.get("ok", False), "result": result}
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return {"tool": tool_name, "success": False, "error": str(exc)}
@@ -234,11 +243,37 @@ class DirectorPatchExecutor:
 
             update_task_progress_fn(task_id, "executing", current_file=file_path)
             try:
+                target = (workspace_path / file_path).resolve()
+                if workspace_path not in target.parents and target != workspace_path:
+                    raise RuntimeError(f"Unsafe patch path: {file_path}")
+                existed_before = target.exists()
+                old_content = ""
+                if existed_before and target.is_file():
+                    old_content = target.read_text(encoding="utf-8")
                 outcome = applier.apply(operation, str(workspace_path))
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 results.append({"tool": "patch_apply", "success": False, "error": str(exc)})
                 continue
             if outcome.success:
+                changed = bool(getattr(outcome, "changed", False))
+                operation_kind = "modify"
+                bytes_written = 0
+                broadcast_ok = False
+                if changed:
+                    if target.exists() and target.is_file():
+                        new_content = target.read_text(encoding="utf-8")
+                        operation_kind = "modify" if existed_before else "create"
+                        bytes_written = len(new_content.encode("utf-8"))
+                    else:
+                        new_content = ""
+                        operation_kind = "delete"
+                    broadcast_ok = self._emit_realtime_file_change(
+                        file_path=file_path,
+                        operation=operation_kind,
+                        old_content=old_content,
+                        new_content=new_content,
+                        task_id=task_id,
+                    )
                 edit_type = getattr(operation, "edit_type", None)
                 if edit_type == EditType.SEARCH_REPLACE:
                     source_tool = "edit_file"
@@ -246,10 +281,6 @@ class DirectorPatchExecutor:
                     source_tool = "delete_file"
                 else:
                     source_tool = "write_file"
-                bytes_written = 0
-                replace_text = getattr(operation, "replace", None)
-                if isinstance(replace_text, str):
-                    bytes_written = len(replace_text.encode("utf-8"))
                 results.append(
                     {
                         "tool": "patch_apply",
@@ -259,7 +290,9 @@ class DirectorPatchExecutor:
                             "source_tool": source_tool,
                             "file": file_path,
                             "bytes_written": bytes_written,
-                            "changed": bool(getattr(outcome, "changed", False)),
+                            "changed": changed,
+                            "operation": operation_kind,
+                            "broadcast_ok": broadcast_ok,
                         },
                     }
                 )
@@ -309,7 +342,20 @@ class DirectorPatchExecutor:
             else:
                 new_content = replace
                 tool_name = "write_file"
-            write_text_atomic(str(target), new_content, encoding="utf-8")
+            if tool_name == "edit_file":
+                tool_result = self._tool_executor.execute_tool(
+                    "edit_file",
+                    {"file": file_path, "search": search, "replace": replace},
+                    task_id=task_id,
+                )
+            else:
+                tool_result = self._tool_executor.execute_tool(
+                    "write_file",
+                    {"file": file_path, "content": new_content},
+                    task_id=task_id,
+                )
+            if not bool(tool_result.get("ok")):
+                raise RuntimeError(str(tool_result.get("error") or "Patch apply failed"))
             return {
                 "tool": "patch_apply",
                 "success": True,
@@ -317,11 +363,34 @@ class DirectorPatchExecutor:
                     "ok": True,
                     "source_tool": tool_name,
                     "file": file_path,
-                    "bytes_written": len(new_content.encode("utf-8")),
+                    "bytes_written": int(tool_result.get("bytes_written") or len(new_content.encode("utf-8"))),
+                    "operation": str(tool_result.get("operation") or "modify"),
+                    "broadcast_ok": bool(tool_result.get("broadcast_ok")),
                 },
             }
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return {"tool": "patch_apply", "success": False, "error": str(exc)}
+
+    def _emit_realtime_file_change(
+        self,
+        *,
+        file_path: str,
+        operation: str,
+        old_content: str,
+        new_content: str,
+        task_id: str,
+    ) -> bool:
+        """Broadcast a FILE_WRITTEN event for patch paths applied outside tool executor."""
+        patch = calculate_patch(old_content, new_content)
+        return broadcast_file_written(
+            file_path=file_path,
+            operation=operation,
+            content_size=len(new_content.encode("utf-8")),
+            task_id=task_id,
+            patch=patch,
+            message_bus=self._message_bus,
+            worker_id=self._worker_id,
+        )
 
     @staticmethod
     def _validate_relative_patch_path(file_path: str) -> str | None:

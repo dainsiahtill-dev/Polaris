@@ -212,3 +212,56 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
     assert stub.request.metadata["tasks"] == ["task-1"]
     assert stub.request.metadata["execution_backend"] == "projection_reproject"
     assert stub.request.metadata["projection"]["experiment_id"] == "exp-001"
+
+
+@pytest.mark.asyncio
+async def test_execute_director_run_materializes_pm_task_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stub = _SubmitCaptureService()
+
+    async def _get_service() -> _SubmitCaptureService:
+        return stub
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.get_orchestration_service",
+        _get_service,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.register_all_adapters",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service._select_pm_task_payloads",
+        lambda _workspace, _task_ids: [
+            {
+                "id": "T01-001",
+                "title": "Bootstrap project",
+                "goal": "Create the TypeScript foundation",
+                "target_files": ["package.json", "src/index.ts"],
+                "scope_paths": ["src/config"],
+                "metadata": {"blueprint_id": "ce_T01-001"},
+            }
+        ],
+    )
+
+    service = OrchestrationCommandService(settings={})
+    result = await service.execute_director_run(
+        workspace=str(tmp_path),
+        tasks=["T01-001"],
+        options={"execution_mode": "parallel"},
+    )
+
+    assert result.status == "pending"
+    assert result.metadata is not None
+    assert result.metadata["tasks_queued"] == 1
+    assert stub.request is not None
+    role_entry = stub.request.role_entries[0]
+    assert "Bootstrap project" in role_entry.input
+    assert role_entry.metadata["task_id"] == "T01-001"
+    assert role_entry.metadata["pm_task_id"] == "T01-001"
+    assert role_entry.metadata["blueprint_id"] == "ce_T01-001"
+    assert role_entry.metadata["target_files"] == ["package.json", "src/index.ts"]
+    assert role_entry.metadata["scope_paths"] == ["src/config"]
+    assert stub.request.metadata["pm_task_payloads"][0]["id"] == "T01-001"

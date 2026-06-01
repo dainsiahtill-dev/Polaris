@@ -1694,7 +1694,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
 
     try {
       const report = await runStreamingTest({
-        role: 'connectivity',
+        role,
         providerId,
         model,
         suites,
@@ -1913,6 +1913,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
               系统配置
             </h2>
             <button
+              data-testid="settings-modal-close"
               onClick={onClose}
               className="text-text-dim hover:text-text-main hover:bg-white/5 rounded-full p-1 transition-colors"
             >

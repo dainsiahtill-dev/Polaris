@@ -522,6 +522,39 @@ class TestHelperMethods:
         assert "src/renderer" in prompt
         assert "Do not output `Command:`" in prompt
 
+    def test_verification_repair_round_includes_unresolved_import_candidates(self, tmp_path) -> None:
+        """Retry rounds can repair missing modules inferred from unresolved relative imports."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        task = MagicMock()
+        task.subject = "Implement task repository"
+        task.description = ""
+        task.metadata = {
+            "target_files": ["tests/integration/task.test.ts"],
+            "scope_paths": ["src", "tests"],
+            "previous_verification_result": {
+                "unresolved_imports": [
+                    "tests/integration/task.test.ts: ../../src/app",
+                    "tests/integration/task.test.ts: ../../src/repositories/task.repository",
+                ],
+            },
+        }
+
+        rounds = executor._build_code_generation_rounds(task)
+        round_paths = [item["path"] for item in rounds[0]]
+        prompt = executor._build_code_generation_prompt(task, round_files=round_paths)
+
+        assert round_paths == [
+            "tests/integration/task.test.ts",
+            "src/app.ts",
+            "src/repositories/task.repository.ts",
+        ]
+        assert "Verification Repair Context" in prompt
+        assert "tests/integration/task.test.ts imports ../../src/app" in prompt
+        assert "src/app.ts" in prompt
+        assert "This is a verification repair round" in prompt
+
     def test_round_files_changed_since_detects_prior_runtime_output(self, tmp_path) -> None:
         """Later rounds can be skipped when an earlier runtime call already wrote them."""
         from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor

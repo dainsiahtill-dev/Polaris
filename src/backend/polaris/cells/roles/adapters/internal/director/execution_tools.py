@@ -11,7 +11,10 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.events.file_event_broadcaster import (
+    replace_in_file_with_broadcast,
+    write_file_with_broadcast,
+)
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_patch_like_write_content,
 )
@@ -34,23 +37,36 @@ class DirectorToolExecutor:
     提供文件读写、命令执行、代码搜索等工具的具体实现。
     """
 
-    def __init__(self, workspace: str) -> None:
+    def __init__(
+        self,
+        workspace: str,
+        *,
+        message_bus: Any | None = None,
+        worker_id: str = "director",
+    ) -> None:
         self.workspace = workspace
+        self._message_bus = message_bus
+        self._worker_id = worker_id
+
+    def set_message_bus(self, message_bus: Any | None) -> None:
+        self._message_bus = message_bus
 
     def execute_tool(
         self,
         tool_name: str,
         args: dict[str, Any],
+        *,
+        task_id: str = "",
     ) -> dict[str, Any]:
         """执行指定工具"""
         workspace_path = Path(self.workspace).resolve()
 
         if tool_name == "write_file":
-            return self._tool_write_file(args, workspace_path)
+            return self._tool_write_file(args, workspace_path, task_id=task_id)
         elif tool_name == "read_file":
             return self._tool_read_file(args, workspace_path)
         elif tool_name == "edit_file":
-            return self._tool_edit_file(args, workspace_path)
+            return self._tool_edit_file(args, workspace_path, task_id=task_id)
         elif tool_name in {"run_command", "execute_command"}:
             return self._tool_run_command(args, workspace_path)
         elif tool_name == "search_code":
@@ -66,6 +82,8 @@ class DirectorToolExecutor:
         self,
         args: dict[str, Any],
         workspace: Path,
+        *,
+        task_id: str = "",
     ) -> dict[str, Any]:
         """写入文件工具"""
         raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
@@ -126,11 +144,27 @@ class DirectorToolExecutor:
                 return {"ok": False, "error": normalized.error}
             text = str(normalized.content or "")
 
-            # 确保父目录存在
-            target.parent.mkdir(parents=True, exist_ok=True)
-            # 写入文件（UTF-8）
-            write_text_atomic(str(target), text, encoding="utf-8")
-            result = {"ok": True, "file": rel_path, "bytes_written": len(text.encode("utf-8"))}
+            write_result = write_file_with_broadcast(
+                workspace=str(workspace),
+                file_path=rel_path,
+                content=text,
+                message_bus=self._message_bus,
+                worker_id=self._worker_id,
+                task_id=task_id,
+            )
+            if not bool(write_result.get("ok")):
+                return {
+                    "ok": False,
+                    "error": str(write_result.get("error") or "write_file failed"),
+                    "file": rel_path,
+                }
+            result = {
+                "ok": True,
+                "file": rel_path,
+                "bytes_written": int(write_result.get("bytes") or len(text.encode("utf-8"))),
+                "operation": str(write_result.get("operation") or "modify"),
+                "broadcast_ok": bool(write_result.get("broadcast_ok")),
+            }
             if normalized.normalized_patch_like:
                 result["normalized_patch_like_write"] = True
             return result
@@ -161,27 +195,58 @@ class DirectorToolExecutor:
         self,
         args: dict[str, Any],
         workspace: Path,
+        *,
+        task_id: str = "",
     ) -> dict[str, Any]:
         """编辑文件工具（搜索替换）"""
-        file_path = args.get("file") or args.get("path")
-        search = args.get("search", "")
-        replace = args.get("replace", "")
+        raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
+        file_path = str(raw_file_path or "").strip()
+        search = str(args.get("search") or args.get("old_string") or args.get("oldText") or "")
+        replace = str(args.get("replace") or args.get("new_string") or args.get("newText") or "")
 
         if not file_path:
             return {"ok": False, "error": "Missing file path"}
+        if "\n" in file_path or "\r" in file_path:
+            return {"ok": False, "error": f"Invalid file path contains newline: {file_path!r}"}
+        if search == "":
+            return {"ok": False, "error": "Search text must not be empty"}
 
-        target = workspace / file_path
         try:
+            target = (workspace / file_path).resolve()
+            if workspace not in target.parents and target != workspace:
+                return {"ok": False, "error": f"Unsafe file path outside workspace: {file_path}"}
             if not target.exists():
                 return {"ok": False, "error": f"File not found: {file_path}"}
+            if not target.is_file():
+                return {"ok": False, "error": f"Path is not a file: {file_path}"}
 
             content = target.read_text(encoding="utf-8")
             if search not in content:
                 return {"ok": False, "error": f"Search text not found in file: {search[:50]}..."}
 
-            new_content = content.replace(search, replace, 1)
-            write_text_atomic(str(target), new_content, encoding="utf-8")
-            return {"ok": True, "file": file_path, "replacements": 1}
+            rel_path = target.relative_to(workspace).as_posix()
+            replace_result = replace_in_file_with_broadcast(
+                workspace=str(workspace),
+                file_path=rel_path,
+                old_text=search,
+                new_text=replace,
+                count=1,
+                message_bus=self._message_bus,
+                worker_id=self._worker_id,
+                task_id=task_id,
+            )
+            if not bool(replace_result.get("ok")):
+                return {
+                    "ok": False,
+                    "error": str(replace_result.get("error") or "edit_file failed"),
+                    "file": rel_path,
+                }
+            return {
+                "ok": True,
+                "file": rel_path,
+                "replacements": int(replace_result.get("replacements") or 1),
+                "broadcast_ok": self._message_bus is not None,
+            }
         except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
 

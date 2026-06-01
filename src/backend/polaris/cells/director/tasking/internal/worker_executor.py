@@ -957,6 +957,167 @@ class WorkerExecutor:
                 scopes.append(path)
         return scopes
 
+    def _verification_feedback(self, task: Task) -> dict[str, Any]:
+        """Return previous verification diagnostics carried by the workflow retry."""
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        direct = metadata.get("previous_verification_result")
+        if isinstance(direct, dict) and direct:
+            return direct
+        phase_context = metadata.get("phase_context")
+        if isinstance(phase_context, dict):
+            phase_verification = phase_context.get("verification_result")
+            if isinstance(phase_verification, dict) and phase_verification:
+                return phase_verification
+        task_context = metadata.get("task_context")
+        if isinstance(task_context, dict):
+            previous = task_context.get("previous_verification_result")
+            if isinstance(previous, dict) and previous:
+                return previous
+            nested_phase = task_context.get("phase_context")
+            if isinstance(nested_phase, dict):
+                nested_verification = nested_phase.get("verification_result")
+                if isinstance(nested_verification, dict) and nested_verification:
+                    return nested_verification
+        return {}
+
+    @staticmethod
+    def _parse_unresolved_import_entry(entry: Any) -> tuple[str, str] | None:
+        token = str(entry or "").strip()
+        if ":" not in token:
+            return None
+        source_file, import_ref = token.split(":", maxsplit=1)
+        source_file = source_file.strip().replace("\\", "/")
+        import_ref = import_ref.strip().strip("`'\"")
+        if not source_file or not import_ref.startswith("."):
+            return None
+        return source_file, import_ref
+
+    def _candidate_paths_for_unresolved_import(self, source_file: str, import_ref: str) -> list[str]:
+        source_dir = os.path.dirname(source_file.replace("\\", "/"))
+        resolved = os.path.normpath(os.path.join(source_dir, import_ref)).replace("\\", "/")
+        if not resolved or resolved.startswith("../") or os.path.isabs(resolved):
+            return []
+        leaf = os.path.basename(resolved)
+        extension = os.path.splitext(leaf)[1].lower()
+        if extension in {".ts", ".tsx", ".js", ".jsx", ".json", ".mjs", ".cjs"}:
+            raw_candidates = [resolved]
+        elif source_file.endswith((".ts", ".tsx")):
+            raw_candidates = [
+                f"{resolved}.ts",
+                f"{resolved}.tsx",
+                f"{resolved}.js",
+                f"{resolved}.jsx",
+                f"{resolved}.json",
+                f"{resolved}/index.ts",
+                f"{resolved}/index.tsx",
+                f"{resolved}/index.js",
+            ]
+        elif source_file.endswith((".js", ".jsx", ".mjs", ".cjs")):
+            raw_candidates = [
+                f"{resolved}.js",
+                f"{resolved}.jsx",
+                f"{resolved}.ts",
+                f"{resolved}.tsx",
+                f"{resolved}.json",
+                f"{resolved}/index.js",
+                f"{resolved}/index.ts",
+            ]
+        else:
+            raw_candidates = [resolved]
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for path in raw_candidates:
+            normalized = path.replace("\\", "/")
+            if normalized in seen or not self._is_concrete_target_file_path(normalized):
+                continue
+            if self._resolve_workspace_file_path(normalized) is None:
+                continue
+            seen.add(normalized)
+            candidates.append(normalized)
+        return candidates
+
+    @staticmethod
+    def _path_under_scope(path: str, scope: str) -> bool:
+        normalized_path = path.strip().replace("\\", "/").strip("/")
+        normalized_scope = scope.strip().replace("\\", "/").strip("/")
+        if not normalized_path or not normalized_scope:
+            return False
+        if "." in os.path.basename(normalized_scope):
+            normalized_scope = os.path.dirname(normalized_scope).replace("\\", "/").strip("/")
+        return normalized_path == normalized_scope or normalized_path.startswith(f"{normalized_scope}/")
+
+    def _repair_path_allowed(self, task: Task, path: str) -> bool:
+        normalized = str(path or "").strip().replace("\\", "/")
+        if not normalized or self._resolve_workspace_file_path(normalized) is None:
+            return False
+        target_files = set(self._normalize_target_files(task))
+        if normalized in target_files:
+            return True
+        return any(self._path_under_scope(normalized, scope) for scope in self._normalize_scope_paths(task))
+
+    def _unresolved_import_repair_records(self, task: Task) -> list[dict[str, Any]]:
+        feedback = self._verification_feedback(task)
+        unresolved_raw = feedback.get("unresolved_imports")
+        if not isinstance(unresolved_raw, list):
+            return []
+        records: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_entry in unresolved_raw:
+            parsed = self._parse_unresolved_import_entry(raw_entry)
+            if parsed is None or parsed in seen:
+                continue
+            seen.add(parsed)
+            source_file, import_ref = parsed
+            if not self._repair_path_allowed(task, source_file):
+                continue
+            candidates = [
+                candidate
+                for candidate in self._candidate_paths_for_unresolved_import(source_file, import_ref)
+                if self._repair_path_allowed(task, candidate)
+            ]
+            if not candidates:
+                continue
+            records.append(
+                {
+                    "source_file": source_file,
+                    "import_ref": import_ref,
+                    "candidate_files": candidates[:3],
+                }
+            )
+        return records
+
+    def _verification_repair_target_paths(self, task: Task) -> list[str]:
+        records = self._unresolved_import_repair_records(task)
+        paths: list[str] = []
+        seen: set[str] = set()
+        for record in records:
+            record_paths = [
+                str(record.get("source_file") or ""),
+                *[str(path) for path in list(record.get("candidate_files") or [])[:1]],
+            ]
+            for path in record_paths:
+                normalized = path.strip().replace("\\", "/")
+                if normalized and normalized not in seen and self._repair_path_allowed(task, normalized):
+                    seen.add(normalized)
+                    paths.append(normalized)
+        return paths
+
+    def _verification_repair_prompt_section(self, task: Task) -> str:
+        records = self._unresolved_import_repair_records(task)
+        if not records:
+            return "- No previous verification failure was provided."
+        lines = [
+            "- Previous verification failed with unresolved relative imports.",
+            "- Resolve each issue by creating the listed candidate file or changing the source import to an existing local module.",
+        ]
+        for record in records[:8]:
+            candidates = ", ".join(str(path) for path in list(record.get("candidate_files") or [])[:3])
+            lines.append(
+                f"- {record.get('source_file')} imports {record.get('import_ref')}; allowed repair candidate(s): {candidates}"
+            )
+        return "\n".join(lines)
+
     def _bootstrap_target_file_content(self, *, path: str, task: Task, language: str) -> str:
         """Return minimal UTF-8 content for bootstrap files named by the PM contract."""
         normalized = str(path or "").strip().replace("\\", "/").lower()
@@ -1031,6 +1192,10 @@ class WorkerExecutor:
 
     def _build_code_generation_rounds(self, task: Task) -> list[list[dict]]:
         """Build code generation rounds from task metadata."""
+        repair_paths = self._verification_repair_target_paths(task)
+        if repair_paths:
+            return [[{"path": path, "repair": True} for path in repair_paths]]
+
         metadata = task.metadata if isinstance(task.metadata, dict) else {}
         plan = metadata.get("construction_plan", {})
 
@@ -1367,7 +1532,7 @@ class WorkerExecutor:
         *,
         round_index: int = 0,
         round_total: int = 0,
-        round_files: list[str] | None = None,
+        round_files: list[Any] | None = None,
     ) -> str:
         """Build LLM prompt for code generation."""
         task_subject = self._compact_prompt_fragment(str(task.subject or ""), max_chars=280)
@@ -1375,13 +1540,25 @@ class WorkerExecutor:
             str(task.description or ""),
             max_chars=2600,
         )
-        target_files = round_files or self._normalize_target_files(task)
+        normalized_round_files: list[str] = []
+        for raw_round_file in round_files or []:
+            raw_path = raw_round_file.get("path") if isinstance(raw_round_file, dict) else raw_round_file
+            path = str(raw_path or "").strip().replace("\\", "/")
+            if path and self._is_concrete_target_file_path(path) and path not in normalized_round_files:
+                normalized_round_files.append(path)
+        target_files = normalized_round_files or self._normalize_target_files(task)
         target_text = "\n".join(f"- {path}" for path in target_files[:16]) if target_files else "- (model may decide)"
+        repair_records = self._unresolved_import_repair_records(task)
         target_scope_rule = (
-            "- Concrete target files are declared for this round. Edit/create only those paths; "
-            "do not add unrelated files."
-            if target_files
-            else "- No concrete target files were declared. Choose the smallest concrete file set under the declared scopes."
+            "- This is a verification repair round. Edit/create only the target files listed above, "
+            "including derived repair files. Do not write outside declared scopes."
+            if repair_records and target_files
+            else (
+                "- Concrete target files are declared for this round. Edit/create only those paths; "
+                "do not add unrelated files."
+                if target_files
+                else "- No concrete target files were declared. Choose the smallest concrete file set under the declared scopes."
+            )
         )
         scope_paths = self._normalize_scope_paths(task)
         scope_text = "\n".join(f"- {path}" for path in scope_paths[:16]) if scope_paths else "- (not declared)"
@@ -1456,6 +1633,9 @@ Declared directory/module scopes:
 
 === ChiefEngineer Blueprint Hints ===
 {chr(10).join(construction_hints) if construction_hints else "- no explicit file hints"}
+
+=== Verification Repair Context ===
+{self._verification_repair_prompt_section(task)}
 
 IMPORTANT ARCHITECTURE GUIDELINES:
 1. 遵循模块层级: 底层模块（L0）提供基础设施，上层模块（L1+）依赖底层

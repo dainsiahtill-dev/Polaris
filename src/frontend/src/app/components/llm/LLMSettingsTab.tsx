@@ -266,6 +266,7 @@ function TabNavigation({
       <div className="flex min-w-0 flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <button
+            data-testid="llm-settings-tab-config"
             onClick={() => switchTab('config')}
             className={`px-3 py-1.5 text-[10px] font-semibold rounded-md border transition-colors ${
               activeTab === 'config'
@@ -277,6 +278,7 @@ function TabNavigation({
           </button>
           <button
             type="button"
+            data-testid="llm-settings-tab-deep-test"
             onClick={() => switchTab('deepTest')}
             className={`px-3 py-1.5 text-[10px] font-semibold rounded-md border transition-colors ${
               activeTab === 'deepTest'
@@ -487,6 +489,7 @@ function DeepTestPanel({
           </div>
           <div className="flex items-center gap-1 rounded-md border border-white/10 bg-black/40 p-0.5">
             <button
+              data-testid="llm-deep-mode-interactive"
               onClick={() => setInterviewMode('interactive')}
               className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
                 interviewMode === 'interactive'
@@ -497,6 +500,7 @@ function DeepTestPanel({
               交互问答
             </button>
             <button
+              data-testid="llm-deep-mode-auto"
               onClick={() => {
                 setInterviewMode('auto');
                 setDeepView('hall');

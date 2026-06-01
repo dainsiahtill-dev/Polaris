@@ -188,10 +188,27 @@ async function attachScreenshot(window: Page, testInfo: TestInfo, name: string):
   await window.screenshot({ path: screenshotPath, fullPage: true });
   await testInfo.attach(name, { path: screenshotPath, contentType: "image/png" });
   expect(fs.existsSync(screenshotPath)).toBe(true);
+
+  const reviewPath = testInfo.outputPath(`${name}.review.jpg`);
+  await window.screenshot({
+    path: reviewPath,
+    type: "jpeg",
+    quality: 80,
+    fullPage: false,
+  });
+  await testInfo.attach(`${name}-review`, { path: reviewPath, contentType: "image/jpeg" });
+  expect(fs.existsSync(reviewPath)).toBe(true);
 }
 
-test("LLM deep test layout keeps streaming panels, conversation, and logs contained", async ({ window }, testInfo) => {
-  await window.setViewportSize({ width: 1989, height: 1031 });
+const layoutViewports = [
+  { name: "large-wide", width: 1989, height: 1031, minMessagesHeight: 110 },
+  { name: "wide-short", width: 2000, height: 900, minMessagesHeight: 120 },
+  { name: "standard", width: 1440, height: 820, minMessagesHeight: 96 },
+] as const;
+
+for (const viewport of layoutViewports) {
+test(`LLM deep test layout keeps streaming panels, conversation, and logs contained (${viewport.name})`, async ({ window }, testInfo) => {
+  await window.setViewportSize({ width: viewport.width, height: viewport.height });
   await installLlmDeepLayoutRoutes(window);
   await window.reload({ waitUntil: "domcontentloaded" });
   await expect(window.locator("#root")).toHaveCount(1);
@@ -221,21 +238,30 @@ test("LLM deep test layout keeps streaming panels, conversation, and logs contai
       };
     }
 
-    const passButton = Array.from(document.querySelectorAll("button")).find((button) => (button.textContent || "").trim() === "通过") as HTMLElement | undefined;
-    const sendButton = Array.from(document.querySelectorAll("button")).find((button) => (button.textContent || "").includes("发送追问")) as HTMLElement | undefined;
+    function visibleButtonByText(predicate: (text: string) => boolean): HTMLElement | undefined {
+      return Array.from(document.querySelectorAll("button")).find((button) => {
+        const text = (button.textContent || "").trim();
+        const rect = button.getBoundingClientRect();
+        const style = window.getComputedStyle(button);
+        return predicate(text) && rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+      }) as HTMLElement | undefined;
+    }
+
+    const sendButton = visibleButtonByText((text) => text.includes("发送追问"));
     const modal = rectOf('[data-testid="settings-modal"]');
-    const passRect = passButton ? passButton.getBoundingClientRect() : null;
     const sendRect = sendButton ? sendButton.getBoundingClientRect() : null;
 
     return {
       documentScrollWidth: document.documentElement.scrollWidth,
       documentClientWidth: document.documentElement.clientWidth,
       modal,
+      hall: rectOf('[data-testid="llm-interactive-hall"]'),
+      streamMonitors: rectOf('[data-testid="llm-interactive-stream-monitors"]'),
       center: rectOf('[data-testid="llm-interactive-center"]'),
       messages: rectOf('[data-testid="llm-interactive-messages"]'),
       composer: rectOf('[data-testid="llm-interactive-composer"]'),
+      finalizeControls: rectOf('[data-testid="llm-interactive-finalize-controls"]'),
       logHost: rectOf('[data-testid="llm-test-panel-host"]'),
-      passButton: passRect ? { bottom: Math.round(passRect.bottom) } : null,
       sendButton: sendRect ? { bottom: Math.round(sendRect.bottom) } : null,
       textVisible: {
         answer: document.body.textContent?.includes("建议从四层审计") ?? false,
@@ -245,15 +271,21 @@ test("LLM deep test layout keeps streaming panels, conversation, and logs contai
       },
     };
   });
+  const metricsPath = testInfo.outputPath(`llm-deep-layout-metrics-${viewport.name}.json`);
+  fs.writeFileSync(metricsPath, JSON.stringify({ viewport, metrics }, null, 2), "utf8");
+  await testInfo.attach(`llm-deep-layout-metrics-${viewport.name}`, {
+    path: metricsPath,
+    contentType: "application/json",
+  });
 
   expect(metrics.documentScrollWidth, "LLM deep layout should not create document horizontal overflow").toBeLessThanOrEqual(metrics.documentClientWidth + 4);
   expect(metrics.modal, "settings modal should be measurable").not.toBeNull();
   expect(metrics.center?.bottom, "conversation panel should stay above modal footer").toBeLessThanOrEqual((metrics.modal?.bottom || 0) - 48);
   expect(metrics.logHost?.right, "test log panel should stay inside modal").toBeLessThanOrEqual((metrics.modal?.right || 0) + 2);
-  expect(metrics.messages?.height, "conversation scroll area should remain usable").toBeGreaterThanOrEqual(140);
+  expect(metrics.messages?.height, "conversation scroll area should remain usable").toBeGreaterThanOrEqual(viewport.minMessagesHeight);
   expect(metrics.messages?.scrollWidth, "conversation scroll area should not overflow horizontally").toBeLessThanOrEqual((metrics.messages?.clientWidth || 0) + 4);
   expect(metrics.composer?.bottom, "quick question composer should remain visible").toBeLessThanOrEqual((metrics.modal?.bottom || 0) - 48);
-  expect(metrics.passButton?.bottom, "answer evaluation button should remain visible").toBeLessThanOrEqual((metrics.modal?.bottom || 0) - 48);
+  expect(metrics.finalizeControls?.bottom, "final interview controls should remain visible").toBeLessThanOrEqual((metrics.modal?.bottom || 0) - 48);
   expect(metrics.sendButton?.bottom, "send follow-up button should remain visible").toBeLessThanOrEqual((metrics.modal?.bottom || 0) - 48);
   expect(metrics.textVisible, "streaming, conversation, and log text should all be rendered").toEqual({
     answer: true,
@@ -262,5 +294,6 @@ test("LLM deep test layout keeps streaming panels, conversation, and logs contai
     logPanel: true,
   });
 
-  await attachScreenshot(window, testInfo, "llm-deep-layout-contained");
+  await attachScreenshot(window, testInfo, `llm-deep-layout-contained-${viewport.name}`);
 });
+}

@@ -7,6 +7,7 @@ interface StreamingTagsProps {
   isStreaming?: boolean;
   onClear?: () => void;
   className?: string;
+  dense?: boolean;
 }
 
 interface StreamingContentState {
@@ -37,6 +38,7 @@ export function StreamingTags({
   isStreaming = false,
   onClear,
   className,
+  dense = false,
 }: StreamingTagsProps) {
   const outputRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -135,15 +137,15 @@ export function StreamingTags({
     }
 
     return (
-      <div className="mb-3 rounded border border-amber-500/20 bg-amber-500/5 p-3">
-        <div className="mb-2 flex items-center gap-2 text-xs text-amber-200">
+      <div className={`${dense ? 'mb-2 p-2' : 'mb-3 p-3'} rounded border border-amber-500/20 bg-amber-500/5`}>
+        <div className={`${dense ? 'mb-1 text-[10px]' : 'mb-2 text-xs'} flex items-center gap-2 text-amber-200`}>
           <Brain className="h-3 w-3" />
           <span>思考链</span>
           {contentState.isThinkingActive && (
             <Loader2 className="h-3 w-3 animate-spin" />
           )}
         </div>
-        <div className="whitespace-pre-wrap break-words text-xs leading-relaxed text-amber-100/80">
+        <div className={`${dense ? 'text-[10px]' : 'text-xs'} whitespace-pre-wrap break-words leading-relaxed text-amber-100/80`}>
           {contentState.thinking}
           {contentState.isThinkingActive && (
             <span className="ml-1 inline-block h-3 w-0.5 animate-pulse bg-amber-400 align-middle" />
@@ -159,15 +161,15 @@ export function StreamingTags({
     }
 
     return (
-      <div className="rounded border border-emerald-500/20 bg-emerald-500/5 p-3">
-        <div className="mb-2 flex items-center gap-2 text-xs text-emerald-200">
+      <div className={`${dense ? 'p-2' : 'p-3'} rounded border border-emerald-500/20 bg-emerald-500/5`}>
+        <div className={`${dense ? 'mb-1 text-[10px]' : 'mb-2 text-xs'} flex items-center gap-2 text-emerald-200`}>
           <MessageSquare className="h-3 w-3" />
           <span>作答</span>
           {contentState.isAnswerActive && (
             <Loader2 className="h-3 w-3 animate-spin" />
           )}
         </div>
-        <div className="whitespace-pre-wrap break-words text-xs leading-relaxed text-emerald-100/80">
+        <div className={`${dense ? 'text-[10px]' : 'text-xs'} whitespace-pre-wrap break-words leading-relaxed text-emerald-100/80`}>
           {contentState.answer}
           {contentState.isAnswerActive && (
             <span className="ml-1 inline-block h-3 w-0.5 animate-pulse bg-emerald-400 align-middle" />
@@ -181,7 +183,7 @@ export function StreamingTags({
 
   if (!hasContent && !isStreaming) {
     return (
-      <div className={`flex min-h-0 flex-col rounded-lg border border-white/10 bg-black/40 p-3 ${className || ''}`}>
+      <div className={`flex min-h-0 flex-col rounded-lg border border-white/10 bg-black/40 ${dense ? 'p-2' : 'p-3'} ${className || ''}`}>
         <div className="flex shrink-0 items-center justify-between text-[10px] text-text-dim">
           <div className="flex items-center gap-2">
             <span className="uppercase tracking-wide">流式标签解析</span>
@@ -197,7 +199,7 @@ export function StreamingTags({
             </button>
           )}
         </div>
-        <div className="py-4 text-center text-[10px] text-text-dim">
+        <div className={`${dense ? 'py-2' : 'py-4'} text-center text-[10px] text-text-dim`}>
           开启流式面试后可查看thinking和answer的实时解析
         </div>
       </div>
@@ -205,8 +207,8 @@ export function StreamingTags({
   }
 
   return (
-    <div className={`flex min-h-0 flex-col rounded-lg border border-white/10 bg-black/40 p-3 ${className || ''}`}>
-      <div className="mb-2 flex shrink-0 items-center justify-between text-[10px] text-text-dim">
+    <div className={`flex min-h-0 flex-col rounded-lg border border-white/10 bg-black/40 ${dense ? 'p-2' : 'p-3'} ${className || ''}`}>
+      <div className={`${dense ? 'mb-1' : 'mb-2'} flex shrink-0 items-center justify-between text-[10px] text-text-dim`}>
         <div className="flex items-center gap-2">
           <span className="uppercase tracking-wide">流式标签解析</span>
           <span className="text-[9px]">
@@ -224,7 +226,7 @@ export function StreamingTags({
         )}
       </div>
 
-      <div ref={outputRef} className="min-h-0 flex-1 max-h-96 space-y-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
+      <div ref={outputRef} className={`min-h-0 flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10 ${dense ? 'max-h-16 space-y-1' : 'max-h-96 space-y-2'}`}>
         {renderThinkingSection()}
         {renderAnswerSection()}
       </div>

@@ -746,6 +746,60 @@ def test_summarize_workflow_tasks_uses_task_director_result_files(tmp_path) -> N
     assert task["metadata"]["qa_verdict"] == "PASS"
 
 
+def test_summarize_workflow_tasks_does_not_upgrade_failed_task_from_stale_success_artifact(tmp_path) -> None:
+    result_dir = tmp_path / "workflow" / "run-1" / "TASK-001"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    (result_dir / "director.result.json").write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "exit_code": 0,
+                "qa_verdict": "PASS",
+                "qa_diagnostics": "legacy execution artifact",
+                "changed_files": ["src/main.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    workflow_status = {
+        "workflow_status": "failed",
+        "workflow_chain_run_id": "run-1",
+        "director_runtime_snapshot": {"tasks": {}},
+    }
+
+    summary = workflow_status_module.summarize_workflow_tasks(
+        workflow_status,
+        base_tasks=[
+            {
+                "id": "TASK-001",
+                "title": "Create entry point",
+                "status": "failed",
+                "state": "failed",
+                "error": "Verification failed: unresolved imports",
+            }
+        ],
+        cache_root=str(tmp_path),
+    )
+
+    assert summary["state"] == "failed"
+    assert summary["completed"] == 0
+    assert summary["failed"] == 1
+    task = summary["tasks"][0]
+    assert task["status"] == "failed"
+    assert task["error"] == "Verification failed: unresolved imports"
+
+
+def test_director_result_task_state_prefers_explicit_failure_over_qa_pass() -> None:
+    assert (
+        workflow_status_module._director_result_task_state({"status": "failed", "exit_code": 0, "qa_verdict": "PASS"})
+        == "failed"
+    )
+    assert (
+        workflow_status_module._director_result_task_state({"status": "success", "exit_code": 1, "qa_verdict": "PASS"})
+        == "failed"
+    )
+
+
 def test_build_workflow_director_task_rows_backfills_claimed_by_for_running_task() -> None:
     workflow_status = {
         "running": True,

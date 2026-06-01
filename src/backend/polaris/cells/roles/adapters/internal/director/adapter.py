@@ -439,10 +439,24 @@ class DirectorAdapter(BaseRoleAdapter):
         input_data: dict[str, Any],
     ) -> dict[str, Any]:
         """将迁移期编排任务物化为 runtime.task_runtime 的 canonical task。"""
-        subject = str(input_data.get("subject") or input_data.get("input") or "").strip()
+        input_metadata_raw = input_data.get("metadata")
+        input_metadata: dict[str, Any] = input_metadata_raw if isinstance(input_metadata_raw, dict) else {}
+        subject = str(
+            input_data.get("subject")
+            or input_metadata.get("title")
+            or input_metadata.get("subject")
+            or input_data.get("input")
+            or ""
+        ).strip()
         if not subject:
             subject = f"Director task {requested_task_id}"
-        description = str(input_data.get("description") or input_data.get("input") or "").strip()
+        description = str(
+            input_data.get("description")
+            or input_metadata.get("description")
+            or input_metadata.get("goal")
+            or input_data.get("input")
+            or ""
+        ).strip()
         metadata = self._build_materialized_metadata(requested_task_id, input_data)
         return self.task_runtime.ensure_task_row(
             external_task_id=requested_task_id,
@@ -455,13 +469,26 @@ class DirectorAdapter(BaseRoleAdapter):
         """Build metadata dict for materialized runtime task."""
         if input_data is None:
             input_data = {}
-        input_metadata = input_data.get("metadata") if isinstance(input_data.get("metadata"), dict) else {}
+        input_metadata_raw = input_data.get("metadata")
+        input_metadata: dict[str, Any] = input_metadata_raw if isinstance(input_metadata_raw, dict) else {}
         metadata: dict[str, Any] = {
-            "goal": str(input_data.get("goal") or "").strip(),
-            "scope": str(input_data.get("scope") or "").strip(),
-            "steps": input_data.get("steps") if isinstance(input_data.get("steps"), list) else [],
-            "phase": str(input_data.get("phase") or "implementation").strip(),
-            "pm_task_id": str(input_data.get("pm_task_id") or requested_task_id).strip(),
+            "goal": str(input_data.get("goal") or input_metadata.get("goal") or "").strip(),
+            "scope": str(input_data.get("scope") or input_metadata.get("scope") or "").strip(),
+            "steps": (
+                input_data.get("steps")
+                if isinstance(input_data.get("steps"), list)
+                else input_metadata.get("steps")
+                if isinstance(input_metadata.get("steps"), list)
+                else []
+            ),
+            "phase": str(input_data.get("phase") or input_metadata.get("phase") or "implementation").strip(),
+            "pm_task_id": str(
+                input_data.get("pm_task_id")
+                or input_metadata.get("pm_task_id")
+                or input_metadata.get("task_id")
+                or input_metadata.get("id")
+                or requested_task_id
+            ).strip(),
             "source": "director_adapter.materialized_orchestration_task",
         }
         input_metadata_no_proj = (

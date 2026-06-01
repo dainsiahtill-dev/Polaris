@@ -144,6 +144,37 @@ def _director_tasks_queued(result: Any, requested_task_ids: list[str]) -> int:
     return len(requested_task_ids)
 
 
+def _director_run_task_ids_from_diagnostics(
+    diagnostics: Any,
+    explicit_task_ids: list[str],
+) -> tuple[list[str], str]:
+    """Resolve Director run task IDs from explicit request or diagnostics."""
+
+    normalized_explicit = [str(item).strip() for item in explicit_task_ids if str(item).strip()]
+    if normalized_explicit:
+        return normalized_explicit, "explicit_request"
+
+    task_section = getattr(diagnostics, "tasks", None)
+    candidate_sources = (
+        ("diagnostics_blueprint_ready", getattr(task_section, "blueprint_ready_task_ids", None)),
+        ("diagnostics_ready", getattr(task_section, "ready_task_ids", None)),
+    )
+    seen: set[str] = set()
+    for source, values in candidate_sources:
+        if not isinstance(values, list):
+            continue
+        selected: list[str] = []
+        for item in values:
+            token = str(item or "").strip()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            selected.append(token)
+        if selected:
+            return selected, source
+    return [], "none"
+
+
 def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
     rows = getattr(projection, "task_rows", None)
     if isinstance(rows, list) and rows:
@@ -1748,8 +1779,12 @@ async def director_run_orchestration(
         _ensure_director_can_execute(diagnostics)
 
         service = OrchestrationCommandService(settings)
-        task_ids = [str(payload.task_id).strip()] if str(payload.task_id or "").strip() else []
-        task_filter = payload.task_filter or (task_ids[0] if task_ids else None)
+        explicit_task_ids = [str(payload.task_id).strip()] if str(payload.task_id or "").strip() else []
+        if explicit_task_ids or not str(payload.task_filter or "").strip():
+            task_ids, task_selection_source = _director_run_task_ids_from_diagnostics(diagnostics, explicit_task_ids)
+        else:
+            task_ids, task_selection_source = [], "filter_request"
+        task_filter = payload.task_filter or (task_ids[0] if len(task_ids) == 1 else None)
 
         result = await service.execute_director_run(
             workspace=workspace,
@@ -1759,6 +1794,10 @@ async def director_run_orchestration(
                 "task_id": payload.task_id,
                 "max_workers": payload.max_workers,
                 "execution_mode": payload.execution_mode,
+                "metadata": {
+                    "task_selection_source": task_selection_source,
+                    "selected_task_ids": task_ids,
+                },
             },
         )
 

@@ -14,6 +14,7 @@ Phase 4 Implementation: Single Execution Write Path
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -32,6 +33,7 @@ from polaris.cells.orchestration.workflow_runtime.public.service import (
 # (API routes already do this, but factory flow needs it too)
 from polaris.cells.roles.adapters.public.service import register_all_adapters
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_MAX_WORKERS
+from polaris.kernelone.storage import resolve_runtime_path
 
 # Re-export for backwards compatibility - import from polaris.kernelone.constants
 _DEFAULT_MAX_WORKERS = DEFAULT_MAX_WORKERS
@@ -49,6 +51,118 @@ def _coerce_metadata_overrides(value: Any) -> dict[str, Any]:
             continue
         overrides[token] = item
     return overrides
+
+
+def _pm_task_rows_from_payload(payload: Any) -> list[dict[str, Any]]:
+    """Extract PM task rows from the persisted PM task contract payload."""
+
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        tasks_value = payload.get("tasks")
+        rows = tasks_value if isinstance(tasks_value, list) else []
+    else:
+        rows = []
+    return [dict(item) for item in rows if isinstance(item, dict)]
+
+
+def _task_identity_values(task: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    metadata_raw = task.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    for source in (task, metadata):
+        for key in ("id", "task_id", "pm_task_id", "source_task_id", "external_task_id"):
+            token = str(source.get(key) or "").strip()
+            if token:
+                values.add(token)
+    return values
+
+
+def _load_pm_task_contract_rows(workspace: str) -> list[dict[str, Any]]:
+    """Read runtime/contracts/pm_tasks.contract.json if it exists."""
+
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return []
+    try:
+        contract_path = Path(resolve_runtime_path(workspace_token, "runtime/contracts/pm_tasks.contract.json"))
+    except (OSError, RuntimeError, ValueError):
+        logger.debug("Could not resolve PM task contract path for workspace=%s", workspace_token, exc_info=True)
+        return []
+    if not contract_path.is_file():
+        return []
+    try:
+        with contract_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        logger.debug("Could not read PM task contract path=%s", contract_path, exc_info=True)
+        return []
+    return _pm_task_rows_from_payload(payload)
+
+
+def _select_pm_task_payloads(workspace: str, task_ids: list[str]) -> list[dict[str, Any]]:
+    """Return PM task payloads matching requested Director task IDs."""
+
+    requested_ids = [str(item).strip() for item in task_ids if str(item).strip()]
+    if not requested_ids:
+        return []
+    rows = _load_pm_task_contract_rows(workspace)
+    if not rows:
+        return []
+
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        for token in _task_identity_values(row):
+            by_id.setdefault(token, row)
+
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for requested_id in requested_ids:
+        matched_row = by_id.get(requested_id)
+        if matched_row is None:
+            continue
+        primary_id = str(matched_row.get("id") or matched_row.get("task_id") or requested_id).strip() or requested_id
+        if primary_id in seen:
+            continue
+        seen.add(primary_id)
+        selected.append(dict(matched_row))
+    return selected
+
+
+def _director_role_entry_metadata(
+    *,
+    task_id: str,
+    task_payload: dict[str, Any] | None,
+    metadata_overrides: dict[str, Any],
+) -> dict[str, Any]:
+    """Build flattened Director role metadata from a PM task payload."""
+
+    payload = dict(task_payload or {})
+    nested_metadata_raw = payload.get("metadata")
+    nested_metadata: dict[str, Any] = nested_metadata_raw if isinstance(nested_metadata_raw, dict) else {}
+    metadata: dict[str, Any] = {}
+    metadata.update(payload)
+    metadata.update(dict(nested_metadata))
+    metadata.update(metadata_overrides)
+    normalized_task_id = str(
+        metadata.get("task_id") or metadata.get("pm_task_id") or metadata.get("id") or task_id
+    ).strip()
+    metadata["task_id"] = normalized_task_id
+    metadata["pm_task_id"] = normalized_task_id
+    metadata.setdefault("source_task_id", normalized_task_id)
+    metadata.setdefault("external_task_id", normalized_task_id)
+    metadata.setdefault("director_task_source", "pm_task_contract")
+    metadata.setdefault("source", "pm_task_contract")
+    return metadata
+
+
+def _director_role_entry_input(task_id: str, task_payload: dict[str, Any] | None) -> str:
+    payload = task_payload or {}
+    title = str(payload.get("title") or payload.get("subject") or task_id).strip() or task_id
+    goal = str(payload.get("goal") or payload.get("description") or "").strip()
+    if goal and goal != title:
+        return f"Execute PM task {task_id}: {title}\nGoal: {goal}"
+    return f"Execute PM task {task_id}: {title}"
 
 
 @dataclass
@@ -300,19 +414,47 @@ class OrchestrationCommandService:
             service = await get_orchestration_service()
             register_all_adapters(service)
 
-            # Build role entries
-            input_text = director_options.task_filter or "Execute ready tasks"
-            if task_ids:
-                input_text = f"Execute tasks: {', '.join(task_ids)}"
+            selected_task_payloads = _select_pm_task_payloads(workspace, task_ids)
+            if selected_task_payloads:
+                role_entries = []
+                for task_payload in selected_task_payloads:
+                    task_id = str(
+                        task_payload.get("id") or task_payload.get("task_id") or task_payload.get("pm_task_id") or ""
+                    ).strip()
+                    if not task_id:
+                        continue
+                    role_entries.append(
+                        RoleEntrySpec(
+                            role_id="director",
+                            input=_director_role_entry_input(task_id, task_payload),
+                            scope_paths=[workspace],
+                            metadata=_director_role_entry_metadata(
+                                task_id=task_id,
+                                task_payload=task_payload,
+                                metadata_overrides=metadata_overrides,
+                            ),
+                        )
+                    )
+            else:
+                # Build role entries
+                input_text = director_options.task_filter or "Execute ready tasks"
+                if task_ids:
+                    input_text = f"Execute tasks: {', '.join(task_ids)}"
 
-            role_entries = [
-                RoleEntrySpec(
-                    role_id="director",
-                    input=input_text,
-                    scope_paths=[workspace],
-                    metadata=metadata_overrides,
-                )
-            ]
+                role_entries = [
+                    RoleEntrySpec(
+                        role_id="director",
+                        input=input_text,
+                        scope_paths=[workspace],
+                        metadata=_director_role_entry_metadata(
+                            task_id=task_ids[0] if len(task_ids) == 1 else "director",
+                            task_payload=None,
+                            metadata_overrides=metadata_overrides,
+                        )
+                        if task_ids
+                        else metadata_overrides,
+                    )
+                ]
 
             # Build orchestration request
             orch_request = OrchestrationRunRequest(
@@ -322,6 +464,7 @@ class OrchestrationCommandService:
                 role_entries=role_entries,
                 metadata={
                     "tasks": task_ids,
+                    "pm_task_payloads": selected_task_payloads,
                     "max_workers": director_options.max_workers,
                     "execution_mode": director_options.execution_mode,
                     "command_source": "orchestration_command_service",

@@ -2244,7 +2244,13 @@ def _run_dispatch_pipeline_with_workflow(
         and int(workflow_summary.get("blocked", 0) or 0) == 0
     )
     all_director_tasks_completed = summary_counts_all_completed or task_rows_all_completed
-    if director_status in {"failed", "blocked"} and all_director_tasks_completed and qa_passed:
+    workflow_domain_failed = workflow_domain_director_status in {"failed", "blocked"}
+    if (
+        director_status in {"failed", "blocked"}
+        and all_director_tasks_completed
+        and qa_passed
+        and not workflow_domain_failed
+    ):
         director_status = "success"
         workflow_exit_code = 0
         summary_text = "Director workflow completed"
