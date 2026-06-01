@@ -13,6 +13,33 @@ def _load_orchestration_engine():
     return importlib.import_module("polaris.delivery.cli.pm.orchestration_engine")
 
 
+def test_pm_workflow_wait_timeout_scales_above_short_director_result_timeout():
+    mod = _load_orchestration_engine()
+
+    timeout_seconds = mod._pm_workflow_wait_timeout_seconds(
+        600,
+        {
+            "execution_mode": "parallel",
+            "max_parallel_tasks": 3,
+            "ready_timeout_seconds": 30,
+            "claim_timeout_seconds": 30,
+            "phase_timeout_seconds": 900,
+            "complete_timeout_seconds": 30,
+            "task_timeout_seconds": 3600,
+        },
+        task_count=3,
+    )
+
+    assert timeout_seconds > 600
+    assert timeout_seconds == 3600.0
+
+
+def test_pm_workflow_wait_timeout_keeps_disabled_timeout_disabled():
+    mod = _load_orchestration_engine()
+
+    assert mod._pm_workflow_wait_timeout_seconds(None, {}, task_count=3) is None
+
+
 def test_integration_qa_skips_when_director_tasks_pending(tmp_path):
     mod = _load_orchestration_engine()
     run_dir = tmp_path / "run"
@@ -432,7 +459,7 @@ def test_workflow_dispatch_marks_parent_failure_as_director_failure(tmp_path, mo
     assert qa_result["reason"] == "director_failures_present"
 
 
-def test_workflow_dispatch_keeps_completed_tasks_success_when_parent_status_failed(tmp_path, monkeypatch):
+def test_workflow_dispatch_reconciles_nested_failure_when_tasks_and_qa_pass(tmp_path, monkeypatch):
     mod = _load_orchestration_engine()
     workflow_config_mod = importlib.import_module("polaris.cells.orchestration.workflow_runtime.public.service")
 
@@ -460,7 +487,24 @@ def test_workflow_dispatch_keeps_completed_tasks_success_when_parent_status_fail
             workflow_id="wf-failed-empty",
             workflow_run_id="wf-failed-empty",
             error="",
-            details={},
+            details={
+                "final": {
+                    "ok": True,
+                    "workflow_id": "wf-failed-empty",
+                    "status": "completed",
+                    "result": {
+                        "status": "completed",
+                        "mode": "sequential",
+                        "result": {
+                            "run_id": "pm-run-failed-empty",
+                            "tasks": [],
+                            "director_status": "failed",
+                            "qa_status": "director_failed",
+                            "metadata": {"task_count": 1},
+                        },
+                    },
+                }
+            },
         ),
     )
     monkeypatch.setattr(
@@ -567,6 +611,21 @@ def test_workflow_dispatch_keeps_completed_tasks_success_when_parent_status_fail
     assert director_result["status"] == "success"
     assert director_result["successes"] == 1
     assert director_result["failures"] == 0
+    from polaris.cells.runtime.projection.internal.workflow_status import workflow_state_path
+
+    state_path = workflow_state_path(str(workspace), str(cache_root))
+    workflow_state = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    assert workflow_state["workflow_status"] == "completed"
+    assert workflow_state["stage"] == "completed"
+    assert workflow_state["director_status"] == "success"
+    assert workflow_state["qa_status"] == "integration_qa_passed"
+    assert workflow_state["details"]["integration_qa_result"]["passed"] is True
+    assert workflow_state["details"]["director_result"]["failures"] == 0
+    assert workflow_state["details"]["director_result"]["error"] == ""
+    assert outcome["engine_dispatch"]["summary"]["reconciled_from_task_and_qa_evidence"] is True
+    nested_result = workflow_state["details"]["details"]["final"]["result"]["result"]
+    assert nested_result["director_status"] == "success"
+    assert nested_result["qa_status"] == "integration_qa_passed"
 
 
 def test_workflow_dispatch_projects_nested_director_failure_result(tmp_path, monkeypatch):

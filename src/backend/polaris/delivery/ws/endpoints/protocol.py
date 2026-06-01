@@ -170,7 +170,7 @@ async def handle_v2_message(
             else:
                 consumer_manager_ref[0] = None
                 logger.warning("JetStream consumer failed, operating in legacy mode")
-        except (RuntimeError, ValueError) as e:
+        except (TimeoutError, RuntimeError, ValueError) as e:
             logger.error(f"Failed to create v2 consumer manager: {e}")
             consumer_manager_ref[0] = None
 

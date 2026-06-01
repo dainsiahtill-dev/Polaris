@@ -96,6 +96,20 @@ END FILE"""
         assert ops[0].path == "src/fastapi_entrypoint.py"
         assert "def hello():" in ops[0].replace
 
+    def test_parse_file_block_does_not_treat_sql_create_as_nested_protocol(self):
+        text = """FILE: db/migrations/001_core.sql
+CREATE TABLE IF NOT EXISTS tenants (
+  id TEXT PRIMARY KEY
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenants_id ON tenants(id);
+END FILE"""
+        ops = ProtocolParser.parse(text)
+        assert len(ops) == 1
+        assert ops[0].edit_type == EditType.FULL_FILE
+        assert ops[0].path == "db/migrations/001_core.sql"
+        assert "CREATE TABLE IF NOT EXISTS tenants" in ops[0].replace
+
     def test_parse_create_block(self):
         text = """CREATE: src/new.py
 class NewClass:

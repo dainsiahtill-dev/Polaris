@@ -98,6 +98,20 @@ def _exact_role_status_matches_binding(role_status: dict[str, Any], provider_id:
     )
 
 
+def _role_status_identity_matches_binding(role_status: dict[str, Any], provider_id: str, model: str) -> bool:
+    tested_provider_id = str(role_status.get("provider_id") or "").strip()
+    tested_model = str(role_status.get("model") or "").strip()
+    return (
+        _readiness_identity_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=tested_provider_id,
+            tested_model=tested_model,
+        )
+        == ""
+    )
+
+
 def _exact_provider_status_matches_binding(
     *,
     role: str,
@@ -120,6 +134,27 @@ def _exact_provider_status_matches_binding(
     )
 
 
+def _provider_status_identity_matches_binding(
+    *,
+    role: str,
+    provider_id: str,
+    model: str,
+    provider_status: dict[str, Any],
+) -> bool:
+    if not _provider_role_compatible(role, provider_status):
+        return False
+    tested_model = str(provider_status.get("model") or "").strip()
+    return (
+        _readiness_identity_issue(
+            provider_id=provider_id,
+            model=model,
+            tested_provider_id=provider_id,
+            tested_model=tested_model,
+        )
+        == ""
+    )
+
+
 def _select_binding_status(
     *,
     indexes: list[dict[str, Any]],
@@ -131,6 +166,8 @@ def _select_binding_status(
     first_provider_status: dict[str, Any] | None = None
     first_exact_failed_role: dict[str, Any] | None = None
     first_exact_failed_provider: dict[str, Any] | None = None
+    first_identity_matched_role: dict[str, Any] | None = None
+    first_identity_matched_provider: dict[str, Any] | None = None
 
     for index in indexes:
         role_status = _lookup_role_status(index, role)
@@ -140,6 +177,26 @@ def _select_binding_status(
             first_role_status = role_status
         if first_provider_status is None and isinstance(provider_status, dict):
             first_provider_status = provider_status
+
+        if (
+            first_identity_matched_role is None
+            and isinstance(role_status, dict)
+            and _role_status_identity_matches_binding(role_status, provider_id, model)
+        ):
+            first_identity_matched_role = role_status
+            first_identity_matched_provider = provider_status
+
+        if (
+            first_identity_matched_provider is None
+            and isinstance(provider_status, dict)
+            and _provider_status_identity_matches_binding(
+                role=role,
+                provider_id=provider_id,
+                model=model,
+                provider_status=provider_status,
+            )
+        ):
+            first_identity_matched_provider = provider_status
 
         if isinstance(role_status, dict) and _exact_role_status_matches_binding(role_status, provider_id, model):
             if bool(role_status.get("ready")):
@@ -161,6 +218,8 @@ def _select_binding_status(
 
     if first_exact_failed_role is not None or first_exact_failed_provider is not None:
         return first_exact_failed_role, first_exact_failed_provider
+    if first_identity_matched_role is not None or first_identity_matched_provider is not None:
+        return first_identity_matched_role, first_identity_matched_provider
     return first_role_status, first_provider_status
 
 
@@ -172,14 +231,14 @@ def _readiness_candidate_issue(
     tested_model: str,
     tested_timestamp: Any = None,
 ) -> str:
-    if not provider_id or not model:
-        return "LLM binding is incomplete"
-    if tested_provider_id and tested_provider_id != provider_id:
-        return f"LLM readiness was tested for provider {tested_provider_id}, not {provider_id}"
-    if not tested_model:
-        return "LLM readiness was not tested for the current model"
-    if not model_identity_equal(tested_model, model):
-        return f"LLM readiness was tested for model {tested_model}, not {model}"
+    identity_issue = _readiness_identity_issue(
+        provider_id=provider_id,
+        model=model,
+        tested_provider_id=tested_provider_id,
+        tested_model=tested_model,
+    )
+    if identity_issue:
+        return identity_issue
     freshness_issue = readiness_freshness_issue(tested_timestamp)
     if freshness_issue == "readiness_stale":
         return (
@@ -193,6 +252,24 @@ def _readiness_candidate_issue(
         )
     if freshness_issue == "timestamp_missing":
         return f"LLM readiness for provider {provider_id} model {model} has no timestamp; rerun LLM tests"
+    return ""
+
+
+def _readiness_identity_issue(
+    *,
+    provider_id: str,
+    model: str,
+    tested_provider_id: str,
+    tested_model: str,
+) -> str:
+    if not provider_id or not model:
+        return "LLM binding is incomplete"
+    if tested_provider_id and tested_provider_id != provider_id:
+        return f"LLM readiness was tested for provider {tested_provider_id}, not {provider_id}"
+    if not tested_model:
+        return "LLM readiness was not tested for the current model"
+    if not model_identity_equal(tested_model, model):
+        return f"LLM readiness was tested for model {tested_model}, not {model}"
     return ""
 
 

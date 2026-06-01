@@ -17,6 +17,7 @@ from polaris.cells.storage.layout.public.service import (
 )
 from polaris.cells.workspace.integrity.public.service import (
     clear_workspace_status,
+    read_workspace_status,
     validate_workspace,
     write_workspace_status,
 )
@@ -49,6 +50,51 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _SETTINGS_UPDATE_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def _workspace_readiness_projection(workspace: str) -> tuple[bool, dict[str, Any]]:
+    """Return side-effect-free workspace docs readiness for UI snapshots."""
+
+    docs_present = workspace_has_docs(workspace)
+    try:
+        raw_status = read_workspace_status(workspace) or {}
+    except (RuntimeError, ValueError, OSError) as exc:
+        logger.debug("Failed to read workspace status for snapshot: %s", exc)
+        raw_status = {}
+
+    status = dict(raw_status) if isinstance(raw_status, dict) else {}
+    status_token = str(status.get("status") or "").strip().upper()
+
+    if docs_present:
+        if not status or status_token == "NEEDS_DOCS_INIT":
+            return True, {
+                "status": "READY",
+                "reason": "docs detected",
+                "actions": [],
+                "source": "snapshot_projection",
+            }
+        return True, status
+
+    if not status:
+        status = {
+            "status": "NEEDS_DOCS_INIT",
+            "reason": "docs/ directory not found",
+            "actions": ["INIT_DOCS_WIZARD"],
+            "source": "snapshot_projection",
+        }
+    return False, status
+
+
+def _state_snapshot_payload(state: Any, *, workspace: str, cache_root: str) -> dict[str, Any]:
+    payload = build_snapshot(
+        state,
+        workspace=workspace,
+        cache_root=cache_root,
+    )
+    docs_present, workspace_status = _workspace_readiness_projection(workspace)
+    payload["docs_present"] = docs_present
+    payload["workspace_status"] = workspace_status
+    return payload
 
 
 def _get_settings_update_lock() -> asyncio.Lock:
@@ -309,7 +355,7 @@ def state_snapshot(request: Request) -> dict[str, Any]:
         default_workspace=DEFAULT_WORKSPACE,
         ramdisk_root=ramdisk_root,
     )
-    return build_snapshot(
+    return _state_snapshot_payload(
         state,
         workspace=workspace_ctx.workspace,
         cache_root=workspace_ctx.runtime_root,
@@ -433,7 +479,7 @@ def v2_state_snapshot(request: Request) -> dict[str, Any]:
         default_workspace=DEFAULT_WORKSPACE,
         ramdisk_root=ramdisk_root,
     )
-    return build_snapshot(
+    return _state_snapshot_payload(
         state,
         workspace=workspace_ctx.workspace,
         cache_root=workspace_ctx.runtime_root,

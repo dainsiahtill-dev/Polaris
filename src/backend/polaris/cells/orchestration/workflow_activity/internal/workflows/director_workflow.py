@@ -33,6 +33,9 @@ from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 logger = logging.getLogger(__name__)
 
 workflow = get_workflow_api()
+_DIRECTOR_TASK_ROUND_TIMEOUT_SECONDS = 600
+_DIRECTOR_TASK_TIMEOUT_MARGIN_SECONDS = 300
+_DIRECTOR_TASK_TIMEOUT_MAX_ROUNDS = 12
 
 
 def _extract_ready_tasks(
@@ -109,6 +112,26 @@ def _execution_mode(value: Any) -> str:
     if token == "parallel":
         return token
     return "parallel"
+
+
+def _task_payload_list(task: TaskContract, key: str) -> list[str]:
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item or "").strip() for item in value if str(item or "").strip()]
+
+
+def _task_run_timeout_seconds(task: TaskContract, base_timeout_seconds: int) -> int:
+    """Scale child workflow timeout for multi-round Director code generation."""
+    target_files = _task_payload_list(task, "target_files")
+    scope_paths = _task_payload_list(task, "scope_paths")
+    estimated_rounds = len(target_files) if target_files else len(scope_paths)
+    estimated_rounds = max(1, min(_DIRECTOR_TASK_TIMEOUT_MAX_ROUNDS, estimated_rounds))
+    floor_seconds = (
+        30 + (estimated_rounds * _DIRECTOR_TASK_ROUND_TIMEOUT_SECONDS) + _DIRECTOR_TASK_TIMEOUT_MARGIN_SECONDS
+    )
+    return min(MAX_WORKFLOW_TIMEOUT_SECONDS, max(int(base_timeout_seconds), floor_seconds))
 
 
 def _record_resident_decision_safe(workspace: str, payload: dict[str, Any]) -> None:
@@ -309,7 +332,7 @@ class DirectorWorkflow(WorkflowQueryState):
                             task=task,
                             metadata=dict(workflow_input.metadata),
                         ),
-                        run_timeout=timedelta(seconds=task_timeout_seconds),
+                        run_timeout=timedelta(seconds=_task_run_timeout_seconds(task, task_timeout_seconds)),
                     )
                     for task in batch
                 ],

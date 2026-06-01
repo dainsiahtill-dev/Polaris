@@ -261,7 +261,7 @@ describe('AIDialoguePanel RoleSession visibility', () => {
     );
 
     expect(screen.getByTestId('ai-role-session-strip')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId('ai-role-session-id')).toHaveTextContent('ID'));
+    await waitFor(() => expect(screen.getByTestId('ai-role-session-id')).toHaveTextContent('RS session-1'));
     expect(screen.getByTestId('ai-role-session-id')).toHaveAttribute('title', 'session-1');
     expect(screen.getByTestId('ai-role-session-attachment')).toHaveTextContent('任务');
     expect(screen.getByTestId('ai-role-session-attachment')).toHaveAttribute('title', 'PM-1');
@@ -270,10 +270,12 @@ describe('AIDialoguePanel RoleSession visibility', () => {
     await waitFor(() => expect(screen.getByTestId('ai-role-session-detail-chip')).toHaveTextContent('就绪'));
     expect(screen.getByTestId('ai-role-session-message-chip')).toHaveTextContent('4');
     expect(screen.getByTestId('ai-role-session-message-chip')).toHaveAttribute('title', 'messages=4');
-    expect(screen.getByTestId('ai-role-session-strip')).toHaveClass('overflow-hidden');
+    expect(screen.getByTestId('ai-role-session-strip')).toHaveClass('shrink-0');
     expect(screen.getByTestId('ai-role-session-status-row')).toHaveClass('flex-wrap', 'overflow-hidden');
-    expect(screen.getByTestId('ai-role-session-actions')).toHaveClass('flex-wrap', 'overflow-hidden', 'border-t');
-    expect(screen.getByTestId('ai-role-session-detail-chip')).toHaveClass('overflow-hidden', 'max-w-[8rem]');
+    expect(screen.getByTestId('ai-role-session-status-row')).not.toHaveClass('overflow-x-auto');
+    expect(screen.getByTestId('ai-role-session-actions')).toHaveClass('justify-end', 'overflow-x-auto', 'border-t');
+    expect(screen.getByTestId('ai-role-session-actions')).not.toHaveClass('flex-wrap', 'overflow-hidden');
+    expect(screen.getByTestId('ai-role-session-detail-chip')).toHaveClass('overflow-hidden', 'max-w-[5.5rem]');
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/roles/sessions/session-1');
     expect(onSessionChange).toHaveBeenCalledWith('session-1');
 
@@ -369,5 +371,24 @@ describe('AIDialoguePanel RoleSession visibility', () => {
       '/v2/roles/sessions/session-2/actions/attach',
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+
+  it('renders compact blocked notices without duplicating the full error block in dense sidebars', async () => {
+    render(
+      <AIDialoguePanel
+        dialogueRole="pm"
+        roleDisplayName="PM"
+        workspace="C:/Temp/Product"
+        welcomeMessage="PM blocked"
+        interactionBlockedReason="PM LLM 未通过就绪检查"
+        statusNoticeMode="compact"
+      />,
+    );
+
+    const warning = await screen.findByTestId('ai-status-warning');
+    expect(warning).toHaveTextContent('PM 当前被阻塞');
+    expect(warning).toHaveTextContent('PM LLM 未通过就绪检查');
+    expect(warning).toHaveClass('bg-amber-500/5');
+    expect(warning).not.toHaveTextContent('错误:');
   });
 });

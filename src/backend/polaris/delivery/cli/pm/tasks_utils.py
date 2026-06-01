@@ -401,9 +401,27 @@ def _synthetic_file_candidates_for_stack(tech_stack: dict[str, Any]) -> list[str
     project_type = str(tech_stack.get("project_type") or "").strip().lower()
 
     if language == "unknown":
-        language = "typescript" if project_type in {"web"} else "python"
+        language = "typescript" if project_type in {"desktop", "web"} else "python"
 
     if language == "typescript":
+        if project_type == "desktop":
+            return [
+                "package.json",
+                "tsconfig.json",
+                "src/electron/main.ts",
+                "src/frontend/App.tsx",
+                "src/shared/generationSpec.ts",
+                "tests/generationSpec.test.ts",
+            ]
+        if project_type == "web":
+            return [
+                "package.json",
+                "tsconfig.json",
+                "src/main.tsx",
+                "src/App.tsx",
+                "src/shared/generationSpec.ts",
+                "tests/generationSpec.test.ts",
+            ]
         return [
             "package.json",
             "src/main.ts",
@@ -453,6 +471,8 @@ def _normalize_workspace_file_candidate(value: str) -> str:
     if not token or ".." in token or token.endswith("/"):
         return ""
     lowered = token.lower()
+    if lowered in {"agents.md", "claude.md", "gemini.md"}:
+        return ""
     skip_prefixes = (
         ".git/",
         ".polaris/",
@@ -858,6 +878,7 @@ def build_requirements_fallback_payload(
     if not isinstance(normalized, dict):
         return None
     normalized["quality_gate"] = payload["quality_gate"]
+    normalized["detected_tech_stack"] = tech_stack
     return normalized
 
 

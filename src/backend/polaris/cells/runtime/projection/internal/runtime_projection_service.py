@@ -48,6 +48,7 @@ from polaris.cells.runtime.projection.internal.workflow_status import (
 )
 from polaris.cells.runtime.state_owner.public.service import AppState
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.cells.workspace.integrity.public.service import read_workspace_status, workspace_has_docs
 from polaris.kernelone.memory.integration import (
     get_memory_store,
     get_reflection_store,
@@ -270,7 +271,7 @@ def _parse_engine_updated_at(value: Any) -> float | None:
         if "T" in normalized:
             return datetime.fromisoformat(normalized).timestamp()
         return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").timestamp()
-    except (RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.warning("_parse_timestamp: failed to parse %r: %s", text, exc)
         return None
 
@@ -382,7 +383,7 @@ def get_workflow_director_status_sync(
     """
     try:
         workflow_status = get_workflow_runtime_status(workspace, cache_root)
-    except (RuntimeError, ValueError) as exc:
+    except (AttributeError, ImportError, OSError, RuntimeError, ValueError) as exc:
         logger.warning(
             "get_workflow_director_status_sync: workflow archive read failed for workspace=%r: %s",
             workspace,
@@ -613,6 +614,9 @@ def build_engine_status(
     pm_running = bool((pm_status or {}).get("running"))
     director_running = bool((director_status or {}).get("running"))
     updated_epoch = _parse_engine_updated_at(payload.get("updated_at"))
+    error_code = str(payload.get("error") or "").strip().upper()
+    recovery_code = str(payload.get("recovery_code") or "").strip().upper()
+    orphaned_recovered = error_code == "ENGINE_ORPHANED" or recovery_code == "ENGINE_ORPHANED"
 
     stale_running = (
         running
@@ -622,13 +626,17 @@ def build_engine_status(
         and (updated_epoch is None or (time.time() - float(updated_epoch)) > 15)
     )
 
-    if stale_running:
-        # Projection is read-only; mark stale and let state-owner handle cleanup.
+    if stale_running or orphaned_recovered:
+        # Projection is read-only; stale "running" without a live owner means the
+        # previous process disappeared after persisting an in-flight phase. This
+        # is a recovered idle state, not a fresh execution failure.
         payload = dict(payload)
-        payload["stale"] = True
+        payload["stale"] = True if stale_running else bool(payload.get("stale"))
+        payload["orphaned"] = True
         payload["running"] = False
-        payload["phase"] = "failed"
-        payload["error"] = str(payload.get("error") or "ENGINE_ORPHANED").strip()
+        payload["phase"] = "idle"
+        payload["error"] = ""
+        payload["recovery_code"] = "ENGINE_ORPHANED"
         roles = payload.get("roles")
         if isinstance(roles, dict):
             for role_payload in roles.values():
@@ -636,11 +644,9 @@ def build_engine_status(
                     continue
                 role_payload["running"] = False
                 role_status = str(role_payload.get("status") or "").strip().lower()
-                if role_status in {"running", "pending", "planning", "dispatching"}:
-                    role_payload["status"] = "blocked"
-                role_payload["detail"] = str(
-                    role_payload.get("detail") or "Recovered from orphaned engine state"
-                ).strip()
+                if role_status in {"running", "pending", "planning", "dispatching", "blocked", "failed"}:
+                    role_payload["status"] = "idle"
+                role_payload["detail"] = str(role_payload.get("detail") or "Recovered stale engine state").strip()
 
     payload.setdefault("path", path)
     return payload
@@ -674,7 +680,7 @@ def build_anthro_state(state: AppState) -> dict[str, Any] | None:
             "total_memories": total_memories,
             "total_reflections": total_reflections,
         }
-    except (RuntimeError, ValueError) as exc:
+    except (AttributeError, ImportError, RuntimeError, ValueError) as exc:
         # Anthropomorphic module is optional; log at debug so it does not flood
         # production logs when the subsystem is simply not initialised.
         logger.debug("build_anthro_state: optional module unavailable: %s", exc)
@@ -703,7 +709,7 @@ def build_resident_state(
             goal_executions = service.list_goal_executions()
             if goal_executions:
                 status["goal_executions"] = goal_executions
-        except (RuntimeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, ValueError) as exc:
             # list_goal_executions is Phase 1.2 optional extension; log at debug.
             logger.debug(
                 "build_resident_state: list_goal_executions unavailable for workspace=%r: %s",
@@ -712,7 +718,7 @@ def build_resident_state(
             )
 
         return status
-    except (RuntimeError, ValueError) as exc:
+    except (AttributeError, ImportError, RuntimeError, ValueError) as exc:
         # Resident subsystem is optional - not installed in all deployments.
         logger.debug("build_resident_state: resident subsystem unavailable: %s", exc)
         return None
@@ -1178,6 +1184,8 @@ def build_snapshot_payload_from_projection(
         logger.warning("build_snapshot_payload_from_projection: git_status failed: %s", exc)
         git_status = {}
 
+    docs_present, workspace_status = _workspace_readiness_projection(workspace)
+
     # Load plan_text and agents_content from files (independent of PM running)
     plan_text = ""
     plan_mtime = None
@@ -1214,6 +1222,8 @@ def build_snapshot_payload_from_projection(
         "snapshot_compat": compat,
         "resident": projection.resident,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "docs_present": docs_present,
+        "workspace_status": workspace_status,
         # Add plan_text and agents_content
         "plan_text": plan_text,
         "plan_mtime": plan_mtime,
@@ -1221,6 +1231,44 @@ def build_snapshot_payload_from_projection(
         "agents_mtime": agents_mtime,
         "plan_text_normalized": False,  # Plan text loaded from file needs normalization
     }
+
+
+def _workspace_readiness_projection(workspace: str) -> tuple[bool, dict[str, Any]]:
+    """Return docs readiness in the canonical snapshot payload.
+
+    The desktop consumes runtime snapshots from both HTTP and WebSocket. Keeping
+    this projection in the runtime snapshot builder prevents stale
+    ``NEEDS_DOCS_INIT`` metadata from surviving after docs are created.
+    """
+
+    docs_present = workspace_has_docs(workspace)
+    try:
+        raw_status = read_workspace_status(workspace) or {}
+    except (RuntimeError, ValueError, OSError) as exc:
+        logger.debug("Failed to read workspace status for runtime snapshot: %s", exc)
+        raw_status = {}
+
+    status = dict(raw_status) if isinstance(raw_status, dict) else {}
+    status_token = str(status.get("status") or "").strip().upper()
+
+    if docs_present:
+        if not status or status_token == "NEEDS_DOCS_INIT":
+            return True, {
+                "status": "READY",
+                "reason": "docs detected",
+                "actions": [],
+                "source": "runtime_projection",
+            }
+        return True, status
+
+    if not status:
+        status = {
+            "status": "NEEDS_DOCS_INIT",
+            "reason": "docs/ directory not found",
+            "actions": ["INIT_DOCS_WIZARD"],
+            "source": "runtime_projection",
+        }
+    return False, status
 
 
 def _derive_compat_fields(projection: RuntimeProjection) -> dict[str, Any]:

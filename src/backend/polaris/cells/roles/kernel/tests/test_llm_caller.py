@@ -71,6 +71,14 @@ class TestResolveTimeoutSeconds:
         timeout = resolve_timeout_seconds(cast("RoleProfile", profile))
         assert timeout == 60
 
+    def test_context_timeout_override_wins_over_role_default(self) -> None:
+        profile = MockProfile(role_id="director")
+        timeout = resolve_timeout_seconds(
+            cast("RoleProfile", profile),
+            {"llm_call_timeout_seconds": 45},
+        )
+        assert timeout == 45
+
     def test_director_role_respects_env_override(self) -> None:
         import os
 
@@ -489,6 +497,44 @@ class TestPreparedRequestArchitecture:
         assert prepared.request_options["tool_choice"] == "auto"
         assert prepared.request_options["max_retries"] == 0
         assert prepared.ai_request.context["native_tool_mode"] == "native_tools"
+
+    @pytest.mark.asyncio
+    async def test_prepare_llm_request_honors_context_timeout_override(self, monkeypatch) -> None:
+        caller = LLMCaller(workspace="C:/workspace")
+        profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")
+        profile.tool_policy = SimpleNamespace(whitelist=[])
+
+        class _FakeGateway:
+            def __init__(self, _profile, _workspace) -> None:
+                pass
+
+            async def build_context(self, _context):
+                return SimpleNamespace(
+                    messages=[{"role": "user", "content": "hello"}],
+                    token_estimate=12,
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
+            _FakeGateway,
+        )
+
+        prepared = await caller._prepare_llm_request(
+            profile=cast("RoleProfile", profile),
+            system_prompt="system",
+            context=cast(
+                "ContextRequest",
+                SimpleNamespace(
+                    task_id=None,
+                    context_override={"llm_call_timeout_seconds": 45},
+                ),
+            ),
+            temperature=0.2,
+            max_tokens=256,
+            stream=False,
+        )
+
+        assert prepared.request_options["timeout"] == 45
 
     @pytest.mark.asyncio
     async def test_prepare_llm_request_stream_enables_native_tools(self, monkeypatch) -> None:

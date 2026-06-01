@@ -41,6 +41,7 @@ from polaris.cells.storage.layout import (
     refresh_storage_layout,
     resolve_polaris_roots,
     resolve_storage_layout,
+    save_persisted_settings,
 )
 from polaris.kernelone._runtime_config import (
     get_workspace_metadata_dir_default,
@@ -113,6 +114,30 @@ class TestPersistedSettings:
 
         assert loaded["workspace"] == str(workspace)
         assert loaded["timeout"] == 60
+
+    def test_save_persisted_settings_skips_global_write_when_e2e_protected(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from polaris.bootstrap.config import RuntimeConfig, Settings
+
+        home = tmp_path / "home"
+        workspace = tmp_path / "workspace"
+        runtime_root = tmp_path / "runtime-root"
+        workspace.mkdir(parents=True)
+        runtime_root.mkdir(parents=True)
+        monkeypatch.setenv("KERNELONE_HOME", str(home))
+        monkeypatch.setenv("KERNELONE_E2E_PROTECT_GLOBAL_SETTINGS", "1")
+        clear_storage_roots_cache()
+
+        settings = Settings(
+            workspace=workspace,
+            runtime=RuntimeConfig(root=runtime_root, use_ramdisk=False),
+        )
+        save_persisted_settings(settings)
+
+        assert not (home / "config" / "settings.json").exists()
 
 
 class TestRefreshStorageLayoutCommandV1:

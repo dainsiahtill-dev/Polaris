@@ -101,6 +101,40 @@ async function expectDirectChildrenDoNotOverlap(locator: Locator, label: string)
   expect(overlaps, `${label} direct children should not overlap`).toEqual([]);
 }
 
+async function expectRoleSessionToolbarReadable(window: Page, label: string): Promise<void> {
+  const strip = window.getByTestId("ai-role-session-strip");
+  const statusRow = window.getByTestId("ai-role-session-status-row");
+  const actionRow = window.getByTestId("ai-role-session-actions");
+
+  await expect(strip, `${label} RoleSession strip should be visible`).toBeVisible();
+  await expect(actionRow, `${label} RoleSession actions should be visible`).toBeVisible();
+  await expectContained(strip, `${label} AI RoleSession strip`);
+  await expectDirectChildrenDoNotOverlap(statusRow, `${label} AI RoleSession status row`);
+  await expectDirectChildrenDoNotOverlap(actionRow, `${label} AI RoleSession action row`);
+
+  const buttonMetrics = await actionRow.evaluate((element) =>
+    Array.from(element.querySelectorAll("button")).map((button) => {
+      const rect = button.getBoundingClientRect();
+      return {
+        ariaLabel: button.getAttribute("aria-label") || button.getAttribute("title") || "",
+        text: (button.textContent || "").trim(),
+        width: rect.width,
+        height: rect.height,
+      };
+    }),
+  );
+  expect(buttonMetrics.length, `${label} action toolbar should expose icon buttons`).toBeGreaterThanOrEqual(4);
+  expect(
+    buttonMetrics.filter((item) => item.text),
+    `${label} action toolbar must stay icon-only to prevent label collisions`,
+  ).toEqual([]);
+  expect(
+    buttonMetrics.filter((item) => item.width > 34 || item.height > 34),
+    `${label} action toolbar icon buttons should keep compact fixed dimensions`,
+  ).toEqual([]);
+  await expectNoDocumentHorizontalOverflow(window, `${label} PM AI assistant role session strip`);
+}
+
 async function installLlmDiagnosticsRoutes(window: Page): Promise<void> {
   const llmConfig = {
     schema_version: 1,
@@ -185,6 +219,50 @@ async function installLlmDiagnosticsRoutes(window: Page): Promise<void> {
       contentType: "application/json",
       body: JSON.stringify({ type: "openai_compat", name: "OpenAI Compatible", model: "gpt-5.3-codex" }),
     });
+  });
+}
+
+async function installReadyLlmStatusRoute(window: Page): Promise<void> {
+  const readyStatus = {
+    state: "READY",
+    required_ready_roles: ["pm", "director"],
+    blocked_roles: [],
+    unsupported_roles: [],
+    roles: {
+      pm: {
+        provider_id: "codex_cli",
+        model: "gpt-5.3-codex",
+        ready: true,
+        runtime_supported: true,
+        readiness_issue: "",
+        tested_provider_id: "codex_cli",
+        tested_model: "gpt-5.3-codex",
+        tested_timestamp: "2026-05-30T17:33:43Z",
+      },
+      director: {
+        provider_id: "codex_cli",
+        model: "gpt-5.3-codex",
+        ready: true,
+        runtime_supported: true,
+        readiness_issue: "",
+        tested_provider_id: "codex_cli",
+        tested_model: "gpt-5.3-codex",
+        tested_timestamp: "2026-05-30T17:33:56Z",
+      },
+    },
+    providers: {
+      codex_cli: {
+        ready: true,
+        grade: "PASS",
+        model: "gpt-5.3-codex",
+        role: "pm",
+      },
+    },
+  };
+
+  await window.unroute("**/v2/llm/status**");
+  await window.route("**/v2/llm/status**", async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(readyStatus) });
   });
 }
 
@@ -281,32 +359,38 @@ test("LLM diagnostics and role session toolbar stay readable in dense desktop la
   await window.setViewportSize({ width: 1180, height: 720 });
   await installLlmDiagnosticsRoutes(window);
   await installRoleSessionRoutes(window);
+  await window.reload();
   await expect(window.locator("#root")).toHaveCount(1);
 
   await openSettings(window);
   await expect(window.getByText("系统配置")).toBeVisible();
   await window.getByTestId("settings-tab-llm").click();
   await expect(window.getByTestId("llm-readiness-diagnostics")).toBeVisible();
-  await expect(window.getByTestId("llm-readiness-diagnostic-provider")).toContainText("Qwen Production Beijing Token Plan Provider");
-  await expect(window.getByTestId("llm-readiness-diagnostic-provider")).toContainText("qwen-main");
-  await expect(window.getByTestId("llm-readiness-diagnostic-model")).toContainText("qwen3-max-current-with-long-region-routing-label");
-  await expect(window.getByTestId("llm-readiness-diagnostic-reason")).toContainText("最近通过测试的模型不是当前绑定模型");
+  const qwenDiagnostic = window.getByTestId("llm-readiness-diagnostic-row").filter({ hasText: "qwen-main" }).first();
+  await expect(qwenDiagnostic).toBeVisible();
+  await expect(qwenDiagnostic.getByTestId("llm-readiness-diagnostic-provider")).toContainText("Qwen Production Beijing Token Plan Provider");
+  await expect(qwenDiagnostic.getByTestId("llm-readiness-diagnostic-provider")).toContainText("qwen-main");
+  await expect(qwenDiagnostic.getByTestId("llm-readiness-diagnostic-model")).toContainText("qwen3-max-current-with-long-region-routing-label");
+  await expect(qwenDiagnostic.getByTestId("llm-readiness-diagnostic-reason")).toContainText("最近通过测试的模型不是当前绑定模型");
   await expectContained(window.getByTestId("llm-readiness-summary"), "LLM readiness summary");
-  await expectContained(window.getByTestId("llm-readiness-diagnostic-row"), "LLM readiness diagnostic row");
+  await expectContained(qwenDiagnostic, "LLM readiness diagnostic row");
   await expectNoDocumentHorizontalOverflow(window, "LLM settings diagnostics");
   await attachScreenshot(window, testInfo, "llm-settings-provider-diagnostics");
 
   await window.getByRole("button", { name: "取消" }).click();
   await expect(window.getByText("系统配置")).toHaveCount(0);
 
+  await installReadyLlmStatusRoute(window);
+  await window.reload();
+  await expect(window.locator("#root")).toHaveCount(1);
+
   await enterPmWorkspace(window);
   await expect(window.getByTestId("pm-workspace")).toBeVisible();
-  await expect(window.getByTestId("ai-role-session-strip")).toBeVisible();
-  await expect(window.getByTestId("ai-role-session-actions")).toBeVisible();
-  await expectContained(window.getByTestId("ai-role-session-strip"), "AI RoleSession strip");
-  await expectDirectChildrenDoNotOverlap(window.getByTestId("ai-role-session-status-row"), "AI RoleSession status row");
-  await expectDirectChildrenDoNotOverlap(window.getByTestId("ai-role-session-actions"), "AI RoleSession action row");
-  await expectNoDocumentHorizontalOverflow(window, "PM AI assistant role session strip");
+  await expect(window.getByText("PM 当前被阻塞")).toHaveCount(0);
+  await expectRoleSessionToolbarReadable(window, "1180px");
+
+  await window.setViewportSize({ width: 1024, height: 720 });
+  await expectRoleSessionToolbarReadable(window, "1024px");
   await attachScreenshot(window, testInfo, "pm-ai-role-session-toolbar");
 
   expect(pageErrors, "renderer pageerror should remain empty").toEqual([]);

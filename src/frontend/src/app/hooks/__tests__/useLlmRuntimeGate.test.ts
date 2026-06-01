@@ -179,6 +179,111 @@ describe('useLlmRuntimeGate', () => {
     expect(result.current.llmRuntimeState.blockedRoles).toEqual([]);
   });
 
+  it('clears a newer blocked snapshot when a canonical ready refresh arrives', async () => {
+    const fetchStatus = vi.fn().mockResolvedValue({
+      state: 'READY',
+      blocked_roles: [],
+      required_ready_roles: ['pm', 'director'],
+      last_updated: '2026-05-29T17:20:02Z',
+      roles: {
+        pm: {
+          provider_id: 'codex_cli',
+          model: 'gpt-5.3-codex',
+          ready: true,
+          readiness_issue: '',
+        },
+      },
+    });
+    const mockedBlockedStatus = llmStatus({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm', 'director'],
+      last_updated: '2026-05-29T19:30:00Z',
+      roles: {
+        pm: {
+          provider_id: 'qwen-main',
+          model: 'qwen3-max-current-with-long-region-routing-label',
+          ready: false,
+          readiness_issue: 'model_mismatch',
+          tested_provider_id: 'qwen-main',
+          tested_model: 'qwen3-max-previously-tested-model',
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useLlmRuntimeGate({
+      workspace: 'C:/Temp/Product',
+      live: true,
+      llmStatus: mockedBlockedStatus,
+      blockedRefreshIntervalMs: 60_000,
+      fetchStatus,
+    }));
+
+    await waitFor(() => expect(fetchStatus).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.llmRuntimeState.state).toBe('READY'));
+    expect(result.current.llmRuntimeState.blockedRoles).toEqual([]);
+    expect(result.current.getLlmRoleBlockedReason('pm', 'PM')).toBe('');
+  });
+
+  it('keeps canonical ready state when a newer stale websocket block repeats for the same binding', async () => {
+    const fetchStatus = vi.fn().mockResolvedValue({
+      state: 'READY',
+      blocked_roles: [],
+      required_ready_roles: ['pm', 'director'],
+      last_updated: '2026-05-29T17:20:02Z',
+      roles: {
+        pm: {
+          provider_id: 'codex_cli',
+          model: 'gpt-5.3-codex',
+          ready: true,
+          readiness_issue: '',
+        },
+      },
+    });
+    const staleBlockedStatus = llmStatus({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm', 'director'],
+      last_updated: '2026-05-29T19:30:00Z',
+      roles: {
+        pm: {
+          provider_id: 'codex_cli',
+          model: 'gpt-5.3-codex',
+          ready: false,
+          readiness_issue: 'readiness_stale',
+        },
+      },
+    });
+
+    const { result, rerender } = renderHook(
+      ({ status }) => useLlmRuntimeGate({
+        workspace: 'C:/Temp/Product',
+        live: true,
+        llmStatus: status,
+        blockedRefreshIntervalMs: 60_000,
+        fetchStatus,
+      }),
+      {
+        initialProps: {
+          status: staleBlockedStatus,
+        },
+      },
+    );
+
+    await waitFor(() => expect(result.current.llmRuntimeState.state).toBe('READY'));
+
+    rerender({
+      status: llmStatus({
+        ...staleBlockedStatus,
+        last_updated: '2026-05-29T19:31:00Z',
+      }),
+    });
+
+    expect(result.current.llmRuntimeState.state).toBe('READY');
+    expect(result.current.llmRuntimeState.blockedRoles).toEqual([]);
+    expect(result.current.getLlmRoleBlockedReason('pm', 'PM')).toBe('');
+  });
+
   it('keeps the previous blocked state when blocked refresh fails', async () => {
     const fetchStatus = vi.fn().mockRejectedValue(new Error('offline'));
     const initialStatus = llmStatus({

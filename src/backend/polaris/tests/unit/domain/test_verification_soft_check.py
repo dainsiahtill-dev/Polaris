@@ -58,6 +58,22 @@ class TestCheckMissingTargets:
             missing = check_missing_targets(["", "a.py"], tmpdir)
             assert missing == ["a.py"]
 
+    def test_glob_target_is_satisfied_by_matching_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            api_dir = os.path.join(tmpdir, "src", "api", "v2")
+            os.makedirs(api_dir, exist_ok=True)
+            open(os.path.join(api_dir, "tasks.ts"), "w").close()
+
+            missing = check_missing_targets(["src/api/v2/tasks.*"], tmpdir)
+
+            assert missing == []
+
+    def test_glob_target_missing_when_no_file_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = check_missing_targets(["src/api/v2/tasks.*"], tmpdir)
+
+            assert missing == ["src/api/v2/tasks.*"]
+
 
 class TestDetectUnresolvedImports:
     def test_js_import_resolved(self) -> None:

@@ -31,7 +31,15 @@ const {
   isTruthyEnv,
   selectStartupWorkspaceOverride,
   shouldEnableSelfUpgradeMode,
+  stripUtf8Bom,
 } = require("./config-paths.cjs");
+const {
+  attachProcessStreamErrorGuard,
+  safeWriteProcessStream,
+} = require("./process-streams.cjs");
+
+attachProcessStreamErrorGuard(process.stdout);
+attachProcessStreamErrorGuard(process.stderr);
 
 // Guard against Electron being forced into Node mode by an inherited env var.
 if (process.env.ELECTRON_RUN_AS_NODE) {
@@ -109,7 +117,7 @@ function readPersistedWorkspace() {
       console.log(`[workspace] Settings file not found: ${globalSettingsPath}`);
       return "";
     }
-    const raw = fs.readFileSync(globalSettingsPath, "utf8");
+    const raw = stripUtf8Bom(fs.readFileSync(globalSettingsPath, "utf8"));
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") {
       console.log(`[workspace] Invalid settings format in: ${globalSettingsPath}`);
@@ -820,7 +828,7 @@ async function startBackend(options = {}) {
   }
   const selfUpgradeMode = shouldEnableSelfUpgradeMode({
     env: process.env,
-    workspace: workspaceOverride || repoRoot,
+    workspace: workspaceOverride,
     repoRoot,
     isPackaged: app.isPackaged,
     platform: process.platform,
@@ -868,12 +876,12 @@ async function startBackend(options = {}) {
   };
 
   spawned.stdout.on("data", (data) => {
-    process.stdout.write(`[backend] ${data}`);
+    safeWriteProcessStream(process.stdout, `[backend] ${data}`);
     parseBackendStdoutForReady(data, markReadyFromJson);
   });
 
   spawned.stderr.on("data", (data) => {
-    process.stderr.write(`[backend] STDERR: ${data}`);
+    safeWriteProcessStream(process.stderr, `[backend] STDERR: ${data}`);
   });
 
   spawned.on("exit", (code) => {

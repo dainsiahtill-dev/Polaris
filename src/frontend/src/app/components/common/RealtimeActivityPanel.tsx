@@ -193,7 +193,7 @@ export function RealtimeActivityPanel({
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-950">
+    <div data-testid="realtime-activity-panel" className="h-full flex flex-col bg-slate-950">
       {/* Header - 状态指示器 */}
       <div className={cn(
         'flex h-16 items-center justify-between gap-3 border-b px-4',

@@ -965,10 +965,12 @@ function DirectorCapabilityStrip({
   hosts,
   isLoading,
   error,
+  compact = false,
 }: {
   hosts: DirectorCapabilityHost[];
   isLoading: boolean;
   error: string | null;
+  compact?: boolean;
 }) {
   const allCapabilities = new Set(hosts.flatMap((host) => host.capabilities));
   const deleteAllowed = allCapabilities.has('delete_files');
@@ -976,15 +978,17 @@ function DirectorCapabilityStrip({
 
   return (
     <section
-      className="border-b border-white/10 bg-slate-950/55 px-4 py-2"
+      className={cn(
+        compact ? 'min-w-0' : 'border-b border-white/10 bg-slate-950/55 px-4 py-2',
+      )}
       data-testid="director-capability-strip"
       aria-label="Director capability matrix"
     >
-      <details className="group rounded-lg border border-indigo-500/15 bg-slate-900/35 px-3 py-2">
-        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+      <details className="group h-full rounded-lg border border-indigo-500/15 bg-slate-900/35 px-3 py-2">
+        <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-2 [&::-webkit-details-marker]:hidden">
           <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
             <Wrench className="h-3.5 w-3.5 text-indigo-300" />
-            Director 能力
+            能力
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
@@ -1010,8 +1014,8 @@ function DirectorCapabilityStrip({
               </div>
             ) : null}
           </div>
-          <span className="shrink-0 text-[10px] text-slate-500 group-open:hidden">展开证据</span>
-          <span className="hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起证据</span>
+          <span className="ml-auto shrink-0 text-[10px] text-slate-500 group-open:hidden">详情</span>
+          <span className="ml-auto hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起</span>
         </summary>
         <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
           <EvidenceEndpointBadge endpoint="/v2/director/capabilities" testId="director-capability-endpoint" />
@@ -1077,6 +1081,7 @@ function DirectorKernelDiagnosticsStrip({
   onRefresh,
   onClearCache,
   workspace,
+  compact = false,
 }: {
   cacheStats: RoleKernelCacheStats | null;
   llmEvents: RoleKernelLLMEventsResponse | null;
@@ -1087,20 +1092,23 @@ function DirectorKernelDiagnosticsStrip({
   onRefresh: () => void;
   onClearCache: () => void;
   workspace: string;
+  compact?: boolean;
 }) {
   const eventCount = llmEvents?.count ?? llmEvents?.events?.length;
 
   return (
     <section
-      className="border-b border-white/10 bg-slate-950/45 px-4 py-2"
+      className={cn(
+        compact ? 'min-w-0' : 'border-b border-white/10 bg-slate-950/45 px-4 py-2',
+      )}
       data-testid="director-kernel-diagnostics-strip"
       aria-label="Director Kernel diagnostics"
     >
-      <details className="group rounded-lg border border-indigo-500/15 bg-slate-900/30 px-3 py-2">
-        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+      <details className="group h-full rounded-lg border border-indigo-500/15 bg-slate-900/30 px-3 py-2">
+        <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-2 [&::-webkit-details-marker]:hidden">
           <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
             <BarChart3 className="h-3.5 w-3.5 text-indigo-300" />
-            Kernel 统计
+            Kernel
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             {isLoading ? (
@@ -1126,8 +1134,8 @@ function DirectorKernelDiagnosticsStrip({
               </>
             )}
           </div>
-          <span className="shrink-0 text-[10px] text-slate-500 group-open:hidden">展开证据</span>
-          <span className="hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起证据</span>
+          <span className="ml-auto shrink-0 text-[10px] text-slate-500 group-open:hidden">详情</span>
+          <span className="ml-auto hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起</span>
         </summary>
         <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
           {isLoading ? (
@@ -1276,7 +1284,7 @@ function DirectorReadinessDiagnosticsStrip({
 }) {
   const issues = diagnostics?.issues || [];
   const executionBlockers = directorExecutionBlockers(diagnostics);
-  const visibleIssues = compact ? [] : [...new Set([...executionBlockers, ...issues])].slice(0, 3);
+  const visibleIssues = [...new Set([...executionBlockers, ...issues])].slice(0, compact ? 1 : 3);
   const blocked = executionBlockers.length > 0;
   const llmValues = diagnostics?.llm
     ? [
@@ -1288,19 +1296,21 @@ function DirectorReadinessDiagnosticsStrip({
 
   return (
     <section
-      className="border-b border-white/10 bg-slate-950/50 px-4 py-2"
+      className={cn(
+        compact ? 'min-w-0' : 'border-b border-white/10 bg-slate-950/50 px-4 py-2',
+      )}
       data-testid="director-readiness-diagnostics"
       aria-label="Director readiness diagnostics"
     >
-      <details className="group rounded-lg border border-indigo-500/15 bg-slate-900/35 px-3 py-2">
-        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+      <details className="group h-full rounded-lg border border-indigo-500/15 bg-slate-900/35 px-3 py-2">
+        <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-2 [&::-webkit-details-marker]:hidden">
           <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
             {blocked ? (
               <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
             ) : (
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
             )}
-            交接诊断
+            交接
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             {isLoading ? (
@@ -1342,8 +1352,8 @@ function DirectorReadinessDiagnosticsStrip({
               </span>
             )}
           </div>
-          <span className="shrink-0 text-[10px] text-slate-500 group-open:hidden">展开证据</span>
-          <span className="hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起证据</span>
+          <span className="ml-auto shrink-0 text-[10px] text-slate-500 group-open:hidden">详情</span>
+          <span className="ml-auto hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起</span>
         </summary>
         <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
           <EvidenceEndpointBadge
@@ -2832,34 +2842,49 @@ export function DirectorWorkspace({
       </header>
       )}
 
-      {!factoryMode && (
-        <DirectorCapabilityStrip
-          hosts={capabilityHosts}
-          isLoading={isCapabilityLoading}
-          error={capabilityError}
-        />
-      )}
-      {!factoryMode && (
-        <DirectorKernelDiagnosticsStrip
-          cacheStats={kernelCacheStats}
-          llmEvents={kernelLLMEvents}
-          tokenBudgetStats={kernelTokenBudgetStats}
-          isLoading={isKernelDiagnosticsLoading}
-          isClearing={isKernelCacheClearing}
-          error={kernelDiagnosticsError}
-          onRefresh={() => void loadKernelDiagnostics()}
-          onClearCache={() => void handleClearKernelCache()}
+      {!factoryMode ? (
+        <section
+          className="grid gap-2 border-b border-white/10 bg-slate-950/45 px-4 py-2 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)_minmax(0,1.2fr)]"
+          data-testid="director-operational-evidence-grid"
+          aria-label="Director operational evidence"
+        >
+          <DirectorCapabilityStrip
+            hosts={capabilityHosts}
+            isLoading={isCapabilityLoading}
+            error={capabilityError}
+            compact
+          />
+          <DirectorKernelDiagnosticsStrip
+            cacheStats={kernelCacheStats}
+            llmEvents={kernelLLMEvents}
+            tokenBudgetStats={kernelTokenBudgetStats}
+            isLoading={isKernelDiagnosticsLoading}
+            isClearing={isKernelCacheClearing}
+            error={kernelDiagnosticsError}
+            onRefresh={() => void loadKernelDiagnostics()}
+            onClearCache={() => void handleClearKernelCache()}
+            workspace={workspace}
+            compact
+          />
+          <DirectorReadinessDiagnosticsStrip
+            diagnostics={directorDiagnostics.data}
+            isLoading={directorDiagnostics.loading}
+            error={directorDiagnostics.error}
+            onRefresh={() => void loadDirectorDiagnostics()}
+            compact
+            workspace={workspace}
+          />
+        </section>
+      ) : (
+        <DirectorReadinessDiagnosticsStrip
+          diagnostics={directorDiagnostics.data}
+          isLoading={directorDiagnostics.loading}
+          error={directorDiagnostics.error}
+          onRefresh={() => void loadDirectorDiagnostics()}
+          compact
           workspace={workspace}
         />
       )}
-      <DirectorReadinessDiagnosticsStrip
-        diagnostics={directorDiagnostics.data}
-        isLoading={directorDiagnostics.loading}
-        error={directorDiagnostics.error}
-        onRefresh={() => void loadDirectorDiagnostics()}
-        compact={factoryMode}
-        workspace={workspace}
-      />
       {directorRunEvidence.runId && (
         <RoleRunEvidenceStrip
           tone="cyan"
@@ -3119,8 +3144,10 @@ function NavButton({ icon, label, active, onClick }: NavButtonProps) {
   return (
     <button
       onClick={onClick}
+      aria-label={`切换到${label}`}
+      data-testid={`director-nav-${label}`}
       className={cn(
-        'w-10 h-10 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200',
+        'w-10 h-10 cursor-pointer rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200',
         active
           ? 'bg-indigo-500/15 text-indigo-400 shadow-lg shadow-indigo-500/10'
           : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'

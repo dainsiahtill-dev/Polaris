@@ -6,6 +6,7 @@ from datetime import datetime
 
 from polaris.delivery.cli.pm.config import AGENTS_DRAFT_REL, AGENTS_FEEDBACK_REL
 from polaris.delivery.cli.pm.utils import truncate_text_block
+from polaris.delivery.pm_markdown_selection import markdown_planning_sort_key
 from polaris.kernelone.fs.text_ops import read_file_safe
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
@@ -125,25 +126,81 @@ def gather_docs_context(workspace_full: str, cache_root_full: str) -> tuple:
         docs_sections.append(text)
         docs_context_parts.append(f"## {label}\n{truncate_text_block(text)}\n")
 
-    _append_section(
+    seen_paths: set[str] = set()
+
+    def _append_section_once(label: str, path: str) -> None:
+        normalized = os.path.abspath(path)
+        if normalized in seen_paths:
+            return
+        seen_paths.add(normalized)
+        _append_section(label, path)
+
+    def _append_markdown_sections(
+        label_prefix: str,
+        logical_root: str,
+        *,
+        limit: int = 30,
+        purpose: str = "generic",
+    ) -> None:
+        roots: list[str] = []
+        try:
+            roots.append(resolve_artifact_path(workspace_full, cache_root_full, logical_root))
+        except (RuntimeError, ValueError) as exc:
+            logger.debug("Failed to resolve docs markdown root %r: %s", logical_root, exc)
+        if logical_root.startswith("workspace/"):
+            roots.append(os.path.join(workspace_full, logical_root[len("workspace/") :].replace("/", os.sep)))
+
+        discovered: list[tuple[float, str, str]] = []
+        seen_roots: set[str] = set()
+        for root in roots:
+            if not root:
+                continue
+            normalized_root = os.path.abspath(root)
+            if normalized_root in seen_roots or not os.path.isdir(normalized_root):
+                continue
+            seen_roots.add(normalized_root)
+            for current_root, _dirs, files in os.walk(normalized_root):
+                for filename in files:
+                    if not filename.lower().endswith(".md"):
+                        continue
+                    candidate = os.path.join(current_root, filename)
+                    try:
+                        discovered.append((os.path.getmtime(candidate), candidate.casefold(), candidate))
+                    except OSError:
+                        continue
+                    if len(discovered) >= limit:
+                        break
+                if len(discovered) >= limit:
+                    break
+
+        for _mtime, _name, candidate in sorted(
+            discovered,
+            key=lambda item: markdown_planning_sort_key(item[2], mtime=item[0], purpose=purpose),
+            reverse=True,
+        ):
+            _append_section_once(f"{label_prefix}/{os.path.basename(candidate)}", candidate)
+
+    _append_section_once(
         "docs/agent/tui_runtime.md",
         os.path.join(workspace_full, "docs", "agent", "tui_runtime.md"),
     )
-    _append_section("docs/tui_runtime.md", os.path.join(workspace_full, "docs", "tui_runtime.md"))
-    _append_section(
+    _append_section_once("docs/tui_runtime.md", os.path.join(workspace_full, "docs", "tui_runtime.md"))
+    _append_section_once(
         "docs/product/requirements.md",
         os.path.join(workspace_full, "docs", "product", "requirements.md"),
     )
-    _append_section(
+    _append_section_once(
         "docs/product/plan.md",
         os.path.join(workspace_full, "docs", "product", "plan.md"),
     )
-    _append_section("tui_runtime.md", os.path.join(workspace_full, "tui_runtime.md"))
+    _append_section_once("tui_runtime.md", os.path.join(workspace_full, "tui_runtime.md"))
 
     runtime_plan = resolve_artifact_path(workspace_full, cache_root_full, "runtime/contracts/plan.md")
     runtime_requirements = resolve_artifact_path(workspace_full, cache_root_full, "runtime/contracts/requirements.md")
-    _append_section("runtime/contracts/plan.md", runtime_plan)
-    _append_section("runtime/contracts/requirements.md", runtime_requirements)
+    _append_section_once("runtime/contracts/plan.md", runtime_plan)
+    _append_section_once("runtime/contracts/requirements.md", runtime_requirements)
+    _append_markdown_sections("workspace/plans", "workspace/plans", purpose="plan")
+    _append_markdown_sections("workspace/docs", "workspace/docs", purpose="requirements")
 
     docs_text = "\n\n".join(docs_sections).strip()
     root_text = (read_file_safe(os.path.join(workspace_full, "tui_runtime.md")) or "").strip()

@@ -7,6 +7,7 @@ External services are mocked to avoid DI container and LLM dependencies.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -703,6 +704,93 @@ async def test_pm_diagnostics_accepts_workspace_persistent_docs(
     assert data["startup_blockers"] == []
     assert data["workspace"]["docs_present"] is True
     assert Path(data["planning_input"]["path"]).resolve() == persistent_requirements.resolve()
+
+
+@pytest.mark.asyncio
+async def test_pm_diagnostics_accepts_polaris_plan_markdown_artifacts(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """PM diagnostics should accept Polaris-generated plan markdown under workspace/plans."""
+    from polaris.kernelone.storage import resolve_workspace_persistent_path
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    persistent_docs_root = Path(resolve_workspace_persistent_path(str(workspace), "workspace/docs"))
+    persistent_docs_root.mkdir(parents=True, exist_ok=True)
+    persistent_plan = Path(resolve_workspace_persistent_path(str(workspace), "workspace/plans/fashiongen-plan.md"))
+    persistent_plan.parent.mkdir(parents=True, exist_ok=True)
+    persistent_plan.write_text("# FashionGen Plan\n\n- Build the PM task backlog.\n", encoding="utf-8")
+    mock_settings.workspace = workspace
+    mock_settings.workspace_path = workspace
+
+    with (
+        patch("polaris.delivery.http.v2.pm.get_lancedb_status", return_value={"ok": True}),
+        patch(
+            "polaris.delivery.http.v2.pm.build_llm_status",
+            return_value={
+                "state": "READY",
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "required_ready_roles": ["pm"],
+            },
+        ),
+    ):
+        response = await client.get("/v2/pm/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["can_start"] is True
+    assert data["issues"] == []
+    assert data["startup_blockers"] == []
+    assert data["planning_input"]["source"] == "workspace_plans_markdown"
+    assert Path(data["planning_input"]["path"]).resolve() == persistent_plan.resolve()
+
+
+@pytest.mark.asyncio
+async def test_pm_diagnostics_prefers_requirement_markdown_over_newer_status_docs(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """PM diagnostics should identify the canonical requirements markdown, not fresh status logs."""
+    from polaris.kernelone.storage import resolve_workspace_persistent_path
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    persistent_docs_root = Path(resolve_workspace_persistent_path(str(workspace), "workspace/docs"))
+    persistent_docs_root.mkdir(parents=True, exist_ok=True)
+    canonical = persistent_docs_root / "AI_Studio_项目文档.md"
+    status_doc = persistent_docs_root / "implementation-status.md"
+    canonical.write_text("# 项目文档\n\n完整核心需求：资产库、生成工作台、批量队列。\n", encoding="utf-8")
+    status_doc.write_text("# Implementation Status\n\n当前只剩运行时状态与视觉打磨。\n", encoding="utf-8")
+    os.utime(canonical, (1000, 1000))
+    os.utime(status_doc, (2000, 2000))
+    mock_settings.workspace = workspace
+    mock_settings.workspace_path = workspace
+
+    with (
+        patch("polaris.delivery.http.v2.pm.get_lancedb_status", return_value={"ok": True}),
+        patch(
+            "polaris.delivery.http.v2.pm.build_llm_status",
+            return_value={
+                "state": "READY",
+                "blocked_roles": [],
+                "unsupported_roles": [],
+                "required_ready_roles": ["pm"],
+            },
+        ),
+    ):
+        response = await client.get("/v2/pm/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["can_start"] is True
+    assert data["planning_input"]["source"] == "workspace_docs_markdown"
+    assert Path(data["planning_input"]["path"]).resolve() == canonical.resolve()
 
 
 @pytest.mark.asyncio

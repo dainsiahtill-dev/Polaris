@@ -439,3 +439,17 @@ class TestBuildSystemPromptIncludesAllLayers:
         appendix = "【额外上下文】\n追加的上下文信息"
         result = builder.build_system_prompt(_make_profile(), prompt_appendix=appendix)
         assert "追加的上下文信息" in result
+
+    def test_propose_patch_message_suppresses_tool_policy_whitelist(self) -> None:
+        builder = PromptBuilder()
+        profile = _make_profile()
+        profile.tool_policy.whitelist = ["read_file", "write_file"]
+
+        result = builder.build_system_prompt(
+            profile,
+            message="[mode:propose] Do not call tools. Please complete the task.",
+        )
+
+        assert "允许使用的工具" not in result
+        assert "工具使用: 禁止" in result
+        assert "Command:" in result

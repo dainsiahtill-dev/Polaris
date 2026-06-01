@@ -27,6 +27,8 @@ export interface AIStatusBarProps {
   };
   /** 重新检查状态 */
   onRetry: () => void;
+  /** 状态提醒密度 */
+  noticeMode?: 'full' | 'compact' | 'hidden';
 }
 
 /**
@@ -39,17 +41,59 @@ function StatusWarningPanel({
   debug,
   theme,
   onRetry,
+  noticeMode = 'full',
 }: AIStatusBarProps) {
   const [showDebug, setShowDebug] = useState(false);
 
-  if (statusKind === 'loading' || statusKind === 'ready') {
+  if (noticeMode === 'hidden' || statusKind === 'loading' || statusKind === 'ready') {
     return null;
   }
 
   const { title, detail } = getStatusWarningMessage(statusKind, roleName, error);
+  const isWarningOnly = statusKind === 'blocked' || statusKind === 'unconfigured' || statusKind === 'warning';
+
+  if (noticeMode === 'compact') {
+    return (
+      <div
+        data-testid="ai-status-warning"
+        className={cn(
+          'border-b px-3 py-1.5 text-[11px]',
+          isWarningOnly
+            ? 'border-amber-400/15 bg-amber-500/5 text-amber-100'
+            : 'border-red-500/15 bg-red-500/5 text-red-100',
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <AlertCircle
+            className={cn(
+              'h-3.5 w-3.5 shrink-0',
+              isWarningOnly ? 'text-amber-300' : 'text-red-300',
+            )}
+          />
+          <span className="shrink-0 font-medium">{title}</span>
+          <span className={cn('min-w-0 truncate', isWarningOnly ? 'text-amber-100/65' : 'text-red-100/65')} title={detail}>
+            {detail}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRetry}
+            className={cn(
+              'ml-auto h-6 shrink-0 px-2 text-[10px]',
+              isWarningOnly
+                ? 'text-amber-200 hover:bg-amber-500/10 hover:text-amber-100'
+                : 'text-red-200 hover:bg-red-500/10 hover:text-red-100',
+            )}
+          >
+            重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20">
+    <div data-testid="ai-status-warning" className="px-4 py-2 bg-red-500/10 border-b border-red-500/20">
       <div className="flex items-start gap-2">
         <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
         <div className="flex-1 min-w-0">

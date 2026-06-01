@@ -364,7 +364,7 @@ export function DirectorWorkbenchPanel({
   }, [directorRunAutoRefreshActive, loadDirectorRunEvidence, workflowRunEvidence.runId]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div data-testid="director-workbench-panel" className="flex flex-col h-full">
       {/* 工具栏 */}
       <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-emerald-500/20 bg-emerald-500/5">
         <div className="flex min-w-0 items-center gap-2">

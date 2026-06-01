@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,8 +34,8 @@ def test_protocol_is_runtime_checkable() -> None:
 
 def test_protocol_rejects_non_implementations() -> None:
     """Objects without spawn() are rejected by isinstance check."""
-    assert not isinstance("not a runner", IAsyncProcessRunner)
-    assert not isinstance(42, IAsyncProcessRunner)
+    assert not isinstance("not a runner", AsyncProcessRunnerPort)
+    assert not isinstance(42, AsyncProcessRunnerPort)
 
 
 # =============================================================================
@@ -301,7 +302,7 @@ async def test_write_stdin_with_stdin_lines(tmp_path: Path) -> None:
     )
     async with handle:
         # stream() must complete without hanging; drain all output.
-        async for chunk in handle.stream():
+        async for _chunk in handle.stream():
             pass
         # wait() with a large timeout so the fast echo process finishes.
         status = await handle.wait(timeout=30)

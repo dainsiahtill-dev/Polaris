@@ -2213,7 +2213,17 @@ class RoleExecutionKernel:
     ) -> str:
         """Build system prompt with domain-aware fallback compatibility."""
         domain = str(getattr(request, "domain", "") or "").strip().lower() or "code"
+        context_override = getattr(request, "context_override", None)
+        prompt_layer_options = self._resolve_prompt_layer_options(context_override)
         try:
+            if prompt_layer_options:
+                return self._get_prompt_builder().build_system_prompt(
+                    profile,
+                    prompt_appendix,
+                    domain=domain,
+                    message=str(getattr(request, "message", "") or ""),
+                    **prompt_layer_options,
+                )
             return self._get_prompt_builder().build_system_prompt(
                 profile,
                 prompt_appendix,
@@ -2222,6 +2232,29 @@ class RoleExecutionKernel:
             )
         except TypeError:
             return self._get_prompt_builder().build_system_prompt(profile, prompt_appendix)
+
+    @staticmethod
+    def _resolve_prompt_layer_options(context_override: Any) -> dict[str, bool]:
+        """Resolve per-turn prompt layer switches from explicit runtime context."""
+        if not isinstance(context_override, dict):
+            return {}
+
+        delivery_mode = str(context_override.get("delivery_mode") or "").strip().lower()
+        codegen_mode = str(context_override.get("director_runtime_codegen_mode") or "").strip().lower()
+        is_director_codegen_bridge = bool(context_override.get("director_runtime_codegen")) and (
+            delivery_mode == "propose_patch" or codegen_mode == "proposal_then_apply"
+        )
+        suppress_working_memory = bool(
+            context_override.get("suppress_working_memory_contract") or is_director_codegen_bridge
+        )
+        suppress_tool_policy = bool(context_override.get("suppress_tool_policy_prompt") or is_director_codegen_bridge)
+
+        options: dict[str, bool] = {}
+        if suppress_working_memory:
+            options["include_working_memory_contract"] = False
+        if suppress_tool_policy:
+            options["include_tool_policy"] = False
+        return options
 
     def _create_gateway(
         self,

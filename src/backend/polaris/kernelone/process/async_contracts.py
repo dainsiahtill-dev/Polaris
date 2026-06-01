@@ -1014,6 +1014,9 @@ class PopenAsyncHandle:
                 self._status = ProcessStatus.CANCELLED
                 return False
         except (FileNotFoundError, ProcessLookupError, OSError):
+            self._exit_code = self._proc.returncode
+            self._proc_alive = False
+            self._status = ProcessStatus.CANCELLED
             return True
         self._exit_code = self._proc.returncode
         self._proc_alive = False

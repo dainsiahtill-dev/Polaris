@@ -49,6 +49,7 @@ export function PMAIDialoguePanel({
       workflowExportTarget="pm"
       workflowExportLabel="导出PM"
       interactionBlockedReason={blockedReason}
+      statusNoticeMode="compact"
     />
   );
 }

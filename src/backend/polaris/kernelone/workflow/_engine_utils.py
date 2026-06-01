@@ -181,7 +181,11 @@ async def invoke_handler(
         except TypeError:
             result = handler(payload)
     if inspect.isawaitable(result):
-        return await asyncio.wait_for(result, timeout=timeout_seconds)
+        try:
+            return await asyncio.wait_for(result, timeout=timeout_seconds)
+        except TimeoutError as exc:
+            timeout_value = max(0.01, float(timeout_seconds))
+            raise TimeoutError(f"Workflow handler timed out after {timeout_value:.2f}s") from exc
     return result
 
 

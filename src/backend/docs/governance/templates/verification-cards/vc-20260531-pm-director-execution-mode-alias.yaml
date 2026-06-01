@@ -1,0 +1,25 @@
+id: vc-20260531-pm-director-execution-mode-alias
+date: 2026-05-31
+classification: structural
+scope:
+  - src/backend/polaris/delivery/cli/pm/engine/core.py
+  - src/backend/polaris/delivery/cli/pm/tasks.py
+  - src/backend/polaris/cells/orchestration/pm_planning/pipeline.py
+  - src/backend/polaris/cells/orchestration/pm_planning/internal/pipeline_ports.py
+assumption_register:
+  - assumption: Desktop PM launch passes director workflow mode as parallel/serial.
+    evidence: pm_planning service appends --director-workflow-execution-mode and --director-max-parallel-tasks.
+  - assumption: PM contract engine expects single/multi.
+    evidence: EngineRuntimeConfig and persisted pm_tasks.contract.json use director_execution_mode.
+  - assumption: Missing alias mapping causes PM contract to persist single/max_directors=1.
+    evidence: real run contract under AppData persisted director_execution_mode=single despite parallel launch.
+pre_mortem:
+  likely_failure: Only fixing contract normalization but not engine runtime config would leave live dispatch serial.
+  mitigation: Cover both normalize_engine_config and EngineRuntimeConfig.from_sources.
+verification:
+  commands:
+    - .\.venv\Scripts\ruff.exe check <touched files> --fix
+    - .\.venv\Scripts\ruff.exe format <touched files>
+    - .\.venv\Scripts\mypy.exe <touched files>
+    - .\.venv\Scripts\pytest.exe <targeted tests> -q
+expected_result: parallel desktop settings persist as multi/max_directors>1 and Director dispatch can run concurrently.

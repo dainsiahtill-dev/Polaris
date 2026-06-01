@@ -51,6 +51,20 @@ class ProtocolParser:
     END_PATCH_FILE = re.compile(r"\n\s*END\s+PATCH_FILE\s*(?:\n|$)", re.IGNORECASE)
     END_FILE = re.compile(r"\n\s*END\s+(?:FILE|CREATE)\s*(?:\n|$)", re.IGNORECASE)
 
+    _KNOWN_EXTENSIONLESS_FILES = {
+        ".dockerignore",
+        ".env",
+        ".env.example",
+        ".gitignore",
+        "dockerfile",
+        "go.mod",
+        "go.sum",
+        "license",
+        "makefile",
+        "readme",
+    }
+    _DISALLOWED_PATH_CHARS = {",", "(", ")", ";", "\t"}
+
     @classmethod
     def parse(cls, text: str) -> list[FileOperation]:
         """Parse all protocol dialects, returning unified IR list.
@@ -173,7 +187,7 @@ class ProtocolParser:
             for match in pattern.finditer(text):
                 file_path = _normalize_path(match.group(1))
 
-                if not file_path:
+                if not file_path or not cls._looks_like_protocol_file_path(file_path):
                     continue
 
                 # Extract content to END FILE
@@ -202,6 +216,28 @@ class ProtocolParser:
                     )
 
         return operations
+
+    @classmethod
+    def _looks_like_protocol_file_path(cls, file_path: str) -> bool:
+        """Return whether a protocol header target is plausibly a file path.
+
+        This prevents content such as SQL ``CREATE TABLE ...`` inside a FILE
+        block from being interpreted as a nested CREATE operation.
+        """
+
+        path = _normalize_path(file_path)
+        if not path:
+            return False
+        if any(char.isspace() for char in path):
+            return False
+        if any(char in path for char in cls._DISALLOWED_PATH_CHARS):
+            return False
+        leaf = path.rsplit("/", maxsplit=1)[-1].lower()
+        if leaf in cls._KNOWN_EXTENSIONLESS_FILES:
+            return True
+        if leaf.startswith(".") and len(leaf) > 1:
+            return True
+        return "/" in path or "." in leaf
 
     @classmethod
     def _parse_standalone_search_replace(cls, text: str) -> list[FileOperation]:

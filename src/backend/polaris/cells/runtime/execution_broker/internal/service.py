@@ -53,6 +53,7 @@ _STATUS_MAP: dict[ExecutionStatus, ExecutionProcessStatusV1] = {
 }
 _LOG_DRAIN_MAX_SECONDS_ENV = "KERNELONE_EXECUTION_BROKER_LOG_DRAIN_MAX_SECONDS"
 _LOG_DRAIN_TERMINAL_IDLE_SECONDS = 5.0
+_LOG_DRAIN_TERMINAL_SNAPSHOT_WAIT_SECONDS = 1.0
 _SENSITIVE_ARG_NAMES = {
     "--api-key",
     "--apikey",
@@ -489,12 +490,15 @@ class ExecutionBrokerService:
         return results
 
     async def close(self, *, cancel_running: bool = True) -> None:
+        log_tasks: list[asyncio.Task[None]] = []
         async with self._log_tasks_lock:
-            for task in list(self._process_log_tasks.values()):
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            log_tasks = list(self._process_log_tasks.values())
             self._process_log_tasks.clear()
+        for task in log_tasks:
+            task.cancel()
+        for task in log_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         async with self._handles_lock:
             self._process_handles.clear()
         await self._facade.close(cancel_running=cancel_running)
@@ -598,12 +602,16 @@ class ExecutionBrokerService:
             )
         finally:
             with contextlib.suppress(Exception):
-                snapshot = await _wait_for_terminal_snapshot(handle)
+                snapshot = await _wait_for_terminal_snapshot(
+                    handle,
+                    timeout_seconds=_LOG_DRAIN_TERMINAL_SNAPSHOT_WAIT_SECONDS,
+                )
                 if emitted_process_lines == 0:
                     for line in _iter_result_output_lines(snapshot.result):
                         log_file.write(line + "\n")
+                marker = "terminal" if snapshot.status.terminal else "closed_before_terminal"
                 log_file.write(
-                    "[execution_broker] terminal "
+                    f"[execution_broker] {marker} "
                     f"execution_id={execution_id} "
                     f"pid={snapshot.pid} "
                     f"status={snapshot.status.value} "

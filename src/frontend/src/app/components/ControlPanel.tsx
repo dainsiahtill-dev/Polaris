@@ -632,12 +632,12 @@ export function ControlPanel({
           )}
           <button
             onClick={onPingHealth}
-            className="flex items-center gap-2 group transition-all"
+            className="group flex shrink-0 items-center gap-2 whitespace-nowrap transition-all"
             title={healthStatusDetail || '校验连通性'}
             data-testid="control-panel-health-ping"
           >
             <div className={`size-1.5 rounded-full shadow-[0_0_8px_currentColor] transition-colors duration-500 ${healthTone}`} />
-            <span className="text-[10px] font-mono text-text-dim transition-colors group-hover:text-text-muted uppercase">
+            <span className="whitespace-nowrap text-[10px] font-mono uppercase text-text-dim transition-colors group-hover:text-text-muted">
               {healthLabel}
             </span>
           </button>

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
+import re
 import time
 from typing import Any, NoReturn
 
@@ -26,7 +28,11 @@ CODE_WRITING_FORBIDDEN_WARNING = (
 )
 _RUNTIME_CODEGEN_ENV = "KERNELONE_DIRECTOR_RUNTIME_CODEGEN"
 _DEFAULT_LLM_TIMEOUT_MAX_SECONDS = 300
+_DEFAULT_RUNTIME_CODEGEN_LLM_TIMEOUT_SECONDS = 600
 _RUNTIME_CODEGEN_LLM_TIMEOUT_MAX_SECONDS = 900
+_MIN_RUNTIME_CODEGEN_CALL_SECONDS = 90
+_RUNTIME_CODEGEN_TASK_TIMEOUT_MAX_SECONDS = 3570
+_RUNTIME_CODEGEN_TASK_TIMEOUT_MARGIN_SECONDS = 300
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -85,6 +91,12 @@ class CodeGenerationEngine:
         )
         return min(max(timeout, 15), timeout_max)
 
+    def _default_llm_timeout_hint(self) -> int:
+        """Return the default per-call timeout for the active codegen mode."""
+        if self.runtime_codegen_enabled():
+            return _DEFAULT_RUNTIME_CODEGEN_LLM_TIMEOUT_SECONDS
+        return _DEFAULT_LLM_TIMEOUT_MAX_SECONDS
+
     def resolve_task_timeout_budget(self, task: Any, *, rounds: int) -> int:
         """Resolve total timeout budget for one task, not per round."""
         raw = os.environ.get("KERNELONE_WORKER_TOTAL_TIMEOUT", "")
@@ -94,12 +106,17 @@ class CodeGenerationEngine:
             configured = 0
 
         if configured > 0:
-            return min(max(configured, 30), 1800)
+            return min(max(configured, 30), _RUNTIME_CODEGEN_TASK_TIMEOUT_MAX_SECONDS)
 
         base_timeout = int(getattr(task, "timeout_seconds", 0) or 0)
+        round_count = max(1, min(int(rounds or 1), 12))
+        per_round_timeout = self.resolve_llm_timeout(self._default_llm_timeout_hint())
+        round_floor = 30
+        if round_count > 1:
+            round_floor = per_round_timeout * round_count + _RUNTIME_CODEGEN_TASK_TIMEOUT_MARGIN_SECONDS
         if base_timeout <= 0:
-            base_timeout = self.resolve_llm_timeout(120) * max(1, min(rounds, 2))
-        return min(max(base_timeout, 30), 1800)
+            base_timeout = per_round_timeout * max(1, min(rounds, 2))
+        return min(max(base_timeout, round_floor, 30), _RUNTIME_CODEGEN_TASK_TIMEOUT_MAX_SECONDS)
 
     def remaining_timeout(self, deadline_ts: float) -> int:
         """Return remaining whole seconds to deadline."""
@@ -235,25 +252,20 @@ class CodeGenerationEngine:
             "director_runtime_codegen_mode": "proposal_then_apply",
             "delivery_mode": "propose_patch",
             "disable_internal_tool_rounds": True,
+            "suppress_working_memory_contract": True,
+            "suppress_tool_policy_prompt": True,
             "_transaction_kernel_forced_tool_definitions": [],
             "_transaction_kernel_forced_tool_choice": "none",
         }
-        target_hint = ", ".join(path for path in (round_files or []) if str(path or "").strip())
-        if not target_hint:
-            target_hint = "the listed target files"
-        user_message = (
-            "[mode:propose] Non-interactive batch worker. Return only fenced "
-            f"file sections for: {target_hint}. The first non-whitespace text "
-            "must be ```file:. No progress notes. Do not call tools."
-        )
+        user_message = "[mode:propose] Do not call tools. Please complete the assigned implementation task."
         appendix = (
-            "Polaris Director proposal-to-apply bridge. The user message is "
-            "intentionally in PROPOSE mode because this bridge validates and "
-            "applies the returned file blocks through FileApplyService. Return "
+            "Polaris Director proposal-to-apply bridge. This runtime bridge validates "
+            "and applies the returned file blocks through FileApplyService. Return "
             "only PATCH_FILE blocks or fenced file sections for the target files; "
             "do not ask follow-up questions, do not narrate phases/progress, and "
-            "do not return placeholder content. The response must contain at "
-            "least one parsable file operation."
+            "do not return placeholder content. Do not output Command:, shell "
+            "commands, SESSION_PATCH, status updates, or tool-call text. The "
+            "response must contain at least one parsable file operation."
             "\n\n"
             f"{prompt}"
         )
@@ -265,7 +277,7 @@ class CodeGenerationEngine:
                 message=user_message,
                 context=context,
                 validate_output=False,
-                max_retries=1,
+                max_retries=0,
                 prompt_appendix=appendix,
                 enable_cognitive=False,
             ),
@@ -274,7 +286,189 @@ class CodeGenerationEngine:
 
     @staticmethod
     def _extract_response_text(response: dict[str, Any]) -> str:
-        return str(response.get("response") or response.get("content") or response.get("reply") or "").strip()
+        for candidate in CodeGenerationEngine._iter_response_text_candidates(response):
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return ""
+
+    @staticmethod
+    def _iter_response_text_candidates(response: dict[str, Any]) -> list[Any]:
+        """Collect possible final text fields from role/dialogue response shapes."""
+        candidates: list[Any] = []
+        direct_keys = (
+            "response",
+            "content",
+            "reply",
+            "visible_content",
+            "response_content",
+            "output",
+            "raw_content",
+        )
+        for key in direct_keys:
+            candidates.append(response.get(key))
+
+        for nested_key in ("raw_response", "data", "metadata", "turn_result", "result"):
+            nested = response.get(nested_key)
+            if isinstance(nested, dict):
+                for key in direct_keys:
+                    candidates.append(nested.get(key))
+
+        raw_events = response.get("turn_events_metadata")
+        if isinstance(raw_events, list):
+            for item in raw_events:
+                if not isinstance(item, dict):
+                    continue
+                kind = str(item.get("kind") or "").strip().lower()
+                role = str(item.get("role") or "").strip().lower()
+                if kind == "assistant_turn" or role == "assistant":
+                    candidates.append(item.get("content"))
+        return candidates
+
+    @staticmethod
+    def _extract_turn_ids(response: dict[str, Any]) -> list[str]:
+        """Extract turn/run ids that can join role results to LLM event logs."""
+        ids: list[str] = []
+
+        def add(value: Any) -> None:
+            token = str(value or "").strip()
+            if token and token not in ids:
+                ids.append(token)
+
+        for key in ("turn_id", "run_id"):
+            add(response.get(key))
+
+        for nested_key in ("metadata", "raw_response", "data", "result"):
+            nested = response.get(nested_key)
+            if not isinstance(nested, dict):
+                continue
+            for key in ("turn_id", "run_id"):
+                add(nested.get(key))
+            envelope = nested.get("turn_envelope")
+            if isinstance(envelope, dict):
+                for key in ("turn_id", "run_id"):
+                    add(envelope.get(key))
+
+        return ids
+
+    def _director_llm_event_paths(self) -> list[str]:
+        """Return candidate director LLM event logs for this workspace."""
+        paths: list[str] = []
+        try:
+            from polaris.kernelone.storage.layout import resolve_runtime_path
+
+            paths.append(resolve_runtime_path(self.workspace, "runtime/events/director.llm.events.jsonl"))
+        except (ImportError, RuntimeError, TypeError, ValueError):
+            pass
+        paths.append(os.path.join(self.workspace, ".polaris", "runtime", "events", "director.llm.events.jsonl"))
+
+        seen: set[str] = set()
+        unique_paths: list[str] = []
+        for path in paths:
+            token = str(path or "").strip()
+            if token and token not in seen:
+                seen.add(token)
+                unique_paths.append(token)
+        return unique_paths
+
+    def _recover_response_text_from_llm_events(self, response: dict[str, Any]) -> str:
+        """Recover raw LLM content when RoleTurnResult visible content was empty."""
+        turn_ids = set(self._extract_turn_ids(response))
+        if not turn_ids:
+            return ""
+
+        recovered = ""
+        for event_path in self._director_llm_event_paths():
+            if not os.path.isfile(event_path):
+                continue
+            try:
+                with open(event_path, encoding="utf-8") as handle:
+                    for line in handle:
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        data = event.get("data") if isinstance(event, dict) else None
+                        if not isinstance(data, dict):
+                            continue
+                        event_name = str(event.get("event") or data.get("event_type") or "").strip()
+                        if event_name != "llm_call_end":
+                            continue
+                        event_ids = {
+                            str(event.get("run_id") or "").strip(),
+                            str(data.get("run_id") or "").strip(),
+                        }
+                        if not turn_ids.intersection(token for token in event_ids if token):
+                            continue
+                        metadata = data.get("metadata")
+                        if not isinstance(metadata, dict):
+                            continue
+                        content = str(metadata.get("response_content") or "").strip()
+                        if content:
+                            recovered = content
+            except OSError:
+                continue
+        return recovered
+
+    @staticmethod
+    def _file_operation_marker_score(text: str) -> int:
+        """Score whether text contains actionable file operation protocol."""
+        payload = str(text or "")
+        lowered = payload.lower()
+        return (
+            lowered.count("```file:")
+            + payload.count("PATCH_FILE:")
+            + len(re.findall(r"(?im)^\s*FILE\s*:", payload))
+            + len(re.findall(r"(?im)^\s*DELETE(?:_FILE)?\s*:", payload))
+        )
+
+    @classmethod
+    def _should_prefer_recovered_response(cls, current: str, recovered: str) -> bool:
+        """Return true when event-log content is a more complete codegen payload."""
+        recovered_text = str(recovered or "").strip()
+        if not recovered_text:
+            return False
+        current_text = str(current or "").strip()
+        if not current_text:
+            return True
+
+        current_score = cls._file_operation_marker_score(current_text)
+        recovered_score = cls._file_operation_marker_score(recovered_text)
+        if recovered_score <= 0:
+            return False
+        if current_score <= 0:
+            return True
+        if recovered_score > current_score:
+            return True
+        return recovered_score == current_score and len(recovered_text) > len(current_text) * 2
+
+    @staticmethod
+    def _response_timeout_warning(response: dict[str, Any], timeout: int) -> str | None:
+        """Return a terminal timeout warning when the provider reports timeout."""
+        values: list[Any] = [
+            response.get("error"),
+            response.get("error_category"),
+            response.get("error_message"),
+            response.get("status"),
+        ]
+        for nested_key in ("raw_response", "data"):
+            nested = response.get(nested_key)
+            if isinstance(nested, dict):
+                values.extend(
+                    [
+                        nested.get("error"),
+                        nested.get("error_category"),
+                        nested.get("error_message"),
+                        nested.get("status"),
+                    ]
+                )
+                if bool(nested.get("timeout")):
+                    return f"director_runtime_codegen_timeout:{timeout}s"
+        for value in values:
+            text = str(value or "").strip().lower()
+            if "timeout" in text or "timed out" in text:
+                return f"director_runtime_codegen_timeout:{timeout}s"
+        return None
 
     @staticmethod
     def _normalize_tool_results(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -321,10 +515,70 @@ class CodeGenerationEngine:
             path = str(raw_path or "").strip()
             if not path or path in seen:
                 continue
-            full_path = os.path.join(self.workspace, path)
+            full_path = self._resolve_round_file_path(path)
+            if full_path is None:
+                continue
             if os.path.isfile(full_path):
                 seen.add(path)
                 files.append({"path": path, "content": ""})
+        return files
+
+    def _resolve_round_file_path(self, relative_path: str) -> str | None:
+        """Resolve a round file path inside the workspace boundary."""
+        path = str(relative_path or "").strip()
+        if not path or os.path.isabs(path):
+            return None
+        workspace_abs = os.path.abspath(self.workspace)
+        full_path = os.path.abspath(os.path.join(workspace_abs, path))
+        try:
+            if os.path.commonpath([workspace_abs, full_path]) != workspace_abs:
+                return None
+        except ValueError:
+            return None
+        return full_path
+
+    def _snapshot_round_files(self, round_files: list[str] | None) -> dict[str, tuple[bool, int, int]]:
+        """Capture file existence, size, and mtime before a runtime generation call."""
+        snapshot: dict[str, tuple[bool, int, int]] = {}
+        for raw_path in round_files or []:
+            path = str(raw_path or "").strip()
+            if not path or path in snapshot:
+                continue
+            full_path = self._resolve_round_file_path(path)
+            if full_path is None:
+                continue
+            try:
+                stat = os.stat(full_path)
+            except OSError:
+                snapshot[path] = (False, -1, -1)
+            else:
+                snapshot[path] = (True, int(stat.st_size), int(stat.st_mtime_ns))
+        return snapshot
+
+    def _collect_changed_round_files(
+        self,
+        round_files: list[str] | None,
+        before: dict[str, tuple[bool, int, int]],
+    ) -> list[dict[str, str]]:
+        """Collect target files that were created or changed by the runtime call."""
+        files: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for raw_path in round_files or []:
+            path = str(raw_path or "").strip()
+            if not path or path in seen:
+                continue
+            full_path = self._resolve_round_file_path(path)
+            if full_path is None or not os.path.isfile(full_path):
+                continue
+            try:
+                stat = os.stat(full_path)
+            except OSError:
+                continue
+            current = (True, int(stat.st_size), int(stat.st_mtime_ns))
+            if current == before.get(path, (False, -1, -1)):
+                continue
+            seen.add(path)
+            files.append({"path": path, "content": ""})
         return files
 
     def _apply_response_operations(
@@ -414,7 +668,11 @@ class CodeGenerationEngine:
             if remaining <= 0:
                 warnings.append("director_runtime_codegen_deadline_exhausted")
                 break
+            if remaining < _MIN_RUNTIME_CODEGEN_CALL_SECONDS:
+                warnings.append(f"director_runtime_codegen_deadline_too_short:{remaining}s")
+                break
             timeout = min(max(int(per_call_timeout or 0), 15), remaining)
+            before_signatures = self._snapshot_round_files(round_files)
             try:
                 response = await self._invoke_director_role_response(
                     task=task,
@@ -424,6 +682,10 @@ class CodeGenerationEngine:
                     round_files=round_files,
                 )
             except (asyncio.TimeoutError, TimeoutError):
+                changed_files = self._collect_changed_round_files(round_files, before_signatures)
+                if changed_files:
+                    warnings.append(f"director_runtime_codegen_timeout_after_changes:{timeout}s")
+                    return changed_files, warnings
                 warnings.append(f"director_runtime_codegen_timeout:{timeout}s")
                 break
             except (
@@ -435,7 +697,15 @@ class CodeGenerationEngine:
                 warnings.append(f"director_runtime_codegen_invoke_failed:{exc}")
                 break
 
+            timeout_warning = self._response_timeout_warning(response, timeout)
+            if timeout_warning is not None:
+                warnings.append(timeout_warning)
+                break
+
             response_text = self._extract_response_text(response)
+            recovered_response_text = self._recover_response_text_from_llm_events(response)
+            if self._should_prefer_recovered_response(response_text, recovered_response_text):
+                response_text = recovered_response_text
             try:
                 self.register_spin_guard(
                     spin_tracker,
@@ -451,6 +721,10 @@ class CodeGenerationEngine:
             if tool_files:
                 return tool_files, warnings
 
+            changed_files = self._collect_changed_round_files(round_files, before_signatures)
+            if changed_files:
+                return changed_files, warnings
+
             if response_text:
                 applied_files, apply_errors = self._apply_response_operations(
                     response_text=response_text,
@@ -464,13 +738,18 @@ class CodeGenerationEngine:
                 )
                 if applied_files:
                     return applied_files, [*warnings, *apply_errors]
+                changed_files = self._collect_changed_round_files(round_files, before_signatures)
+                if changed_files:
+                    return changed_files, [*warnings, *apply_errors]
                 warnings.extend(apply_errors)
             else:
                 warnings.append("director_runtime_codegen_empty_response")
 
+            recent_errors = "; ".join(warnings[-4:])
+            error_hint = f" Validation/apply errors: {recent_errors}." if recent_errors else ""
             current_prompt = (
-                f"{prompt}\n\nPrevious attempt {attempt} produced no workspace changes. "
-                "Return valid PATCH_FILE blocks or fenced file sections for the listed target files."
+                f"{prompt}\n\nPrevious attempt {attempt} produced no accepted workspace changes."
+                f"{error_hint} Return valid PATCH_FILE blocks or fenced file sections for the listed target files."
             )
 
         if not warnings:

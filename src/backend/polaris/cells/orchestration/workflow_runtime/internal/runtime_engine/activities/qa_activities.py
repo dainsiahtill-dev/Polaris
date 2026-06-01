@@ -6,7 +6,10 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from polaris.cells.orchestration.pm_planning.public.service import run_integration_verify_runner
+from polaris.cells.orchestration.pm_planning.public.service import (
+    detect_integration_verify_command,
+    run_integration_verify_runner,
+)
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import get_activity_api
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
@@ -83,7 +86,7 @@ def _run_command(command: str, workspace: str, timeout_seconds: int) -> tuple[bo
 
 def _detect_unit_command(workspace: str) -> str:
     if os.path.isfile(os.path.join(workspace, "package.json")):
-        return "npm run test -- --watch=false"
+        return detect_integration_verify_command(workspace)
     if os.path.isfile(os.path.join(workspace, "go.mod")):
         return "go test ./... -run TestDoesNotExist"
     if os.path.isfile(os.path.join(workspace, "Cargo.toml")):

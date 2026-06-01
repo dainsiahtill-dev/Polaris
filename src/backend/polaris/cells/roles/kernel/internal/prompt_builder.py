@@ -196,6 +196,8 @@ class PromptBuilder:
         domain: str = "code",
         message: str = "",
         persona_id: str | None = None,
+        include_working_memory_contract: bool = True,
+        include_tool_policy: bool = True,
     ) -> str:
         """构建完整系统提示词（支持分层缓存）
 
@@ -213,6 +215,8 @@ class PromptBuilder:
             domain: 领域（code/document/research/general）
             message: 当前用户消息
             persona_id: 可选，覆盖 profile 中的 persona_id
+            include_working_memory_contract: 是否注入 ADR-0080 SESSION_PATCH 工作记忆契约
+            include_tool_policy: 是否注入工具策略提示
         """
         # 优先尝试三轴模式（Tri-Axis Role Composition）
         core_template_id = getattr(profile.prompt_policy, "core_template_id", None)
@@ -225,6 +229,8 @@ class PromptBuilder:
                     domain=domain,
                     message=message,
                     task_type=getattr(profile.prompt_policy, "task_type", "default") or "default",
+                    include_working_memory_contract=include_working_memory_contract,
+                    include_tool_policy=include_tool_policy,
                 )
             except Exception as exc:
                 logger.debug("Tri-Axis prompt composition failed, falling back to legacy: %s", exc)
@@ -256,13 +262,17 @@ class PromptBuilder:
         l3_content = self._get_cached_l3()
 
         # L4: 工作记忆契约（ADR-0080 全局缓存）
-        l4_content = self._get_cached_l4()
+        l4_content = self._get_cached_l4() if include_working_memory_contract else ""
 
         # L5: 动态交互策略（按角色/意图构建）
-        tool_prompt = self._build_tool_policy_prompt(
-            profile,
-            domain=domain,
-            message=message,
+        tool_prompt = (
+            self._build_tool_policy_prompt(
+                profile,
+                domain=domain,
+                message=message,
+            )
+            if include_tool_policy
+            else ""
         )
         appendix_prompt = f"【额外上下文】\n{prompt_appendix}" if prompt_appendix else ""
 
@@ -280,7 +290,9 @@ class PromptBuilder:
             )
         except (RuntimeError, ValueError) as exc:
             logger.warning("Prompt chunk assembly failed, fallback to legacy join: %s", exc)
-            legacy_parts = [l1_content, l2_content, l3_content, l4_content]
+            legacy_parts = [l1_content, l2_content, l3_content]
+            if l4_content:
+                legacy_parts.append(l4_content)
             if tool_prompt:
                 legacy_parts.append(tool_prompt)
             if appendix_prompt:
@@ -299,6 +311,8 @@ class PromptBuilder:
         domain: str = "code",
         message: str = "",
         task_type: str = "default",
+        include_working_memory_contract: bool = True,
+        include_tool_policy: bool = True,
     ) -> str:
         """构建三轴专业角色提示词（Tri-Axis Role Composition）
 
@@ -320,6 +334,8 @@ class PromptBuilder:
             domain: 领域（code/document/research/general）
             message: 当前用户消息
             task_type: 任务类型（如 "new_code", "refactor", "bug_fix"）
+            include_working_memory_contract: 是否注入 ADR-0080 SESSION_PATCH 工作记忆契约
+            include_tool_policy: 是否注入工具策略提示
 
         Returns:
             完整系统提示词字符串
@@ -360,6 +376,8 @@ class PromptBuilder:
                     prompt_appendix=prompt_appendix,
                     domain=domain,
                     message=message,
+                    include_working_memory_contract=include_working_memory_contract,
+                    include_tool_policy=include_tool_policy,
                 )
 
             l1_content = composed.system_prompt
@@ -379,13 +397,17 @@ class PromptBuilder:
         l3_content = self._get_cached_l3()
 
         # L4: 工作记忆契约（ADR-0080）
-        l4_content = self._get_cached_l4()
+        l4_content = self._get_cached_l4() if include_working_memory_contract else ""
 
         # L5: 工具策略（基于 profile 的工具策略）
-        tool_prompt = self._build_tool_policy_prompt(
-            profile,
-            domain=domain,
-            message=message,
+        tool_prompt = (
+            self._build_tool_policy_prompt(
+                profile,
+                domain=domain,
+                message=message,
+            )
+            if include_tool_policy
+            else ""
         )
 
         appendix_prompt = f"【额外上下文】\n{prompt_appendix}" if prompt_appendix else ""
@@ -405,7 +427,9 @@ class PromptBuilder:
         except (RuntimeError, ValueError) as exc:
             logger.warning("Tri-Axis prompt chunk assembly failed, fallback: %s", exc)
             # 简化回退
-            parts = [l1_content, l2_content, l3_content, l4_content]
+            parts = [l1_content, l2_content, l3_content]
+            if l4_content:
+                parts.append(l4_content)
             if tool_prompt:
                 parts.append(tool_prompt)
             if appendix_prompt:
@@ -449,14 +473,15 @@ class PromptBuilder:
             cache_control=CacheControl.TRANSIENT,
             role_id=role_id,
         )
-        # ADR-0080: 工作记忆契约（多回合执行专用）
-        self._chunk_assembler.add_chunk(
-            ChunkType.REMINDER,
-            l4_content,
-            source="working_memory_contract",
-            cache_control=CacheControl.TRANSIENT,
-            role_id=role_id,
-        )
+        if l4_content:
+            # ADR-0080: 工作记忆契约（多回合执行专用）
+            self._chunk_assembler.add_chunk(
+                ChunkType.REMINDER,
+                l4_content,
+                source="working_memory_contract",
+                cache_control=CacheControl.TRANSIENT,
+                role_id=role_id,
+            )
         if tool_prompt:
             self._chunk_assembler.add_chunk(
                 ChunkType.REMINDER,
@@ -819,6 +844,7 @@ class PromptBuilder:
     ) -> str:
         """构建动态交互策略提示词"""
         policy = profile.tool_policy
+        message_lower = str(message or "").strip().lower()
         intent = infer_turn_intent(
             role_id=str(getattr(profile, "role_id", "") or ""),
             message=message,
@@ -829,6 +855,13 @@ class PromptBuilder:
             "【交互策略】",
             f"当前任务主意图: {self._render_intent_label(intent)}",
         ]
+
+        if "[mode:propose]" in message_lower and "do not call tools" in message_lower:
+            lines.append("工具使用: 禁止")
+            lines.append(
+                "当前为提案输出模式；请只输出最终文本或运行时要求的补丁/文件块，不要输出 Command:、Action、工具包装器或命令执行记录。"
+            )
+            return "\n".join(lines)
 
         if policy.whitelist:
             lines.append(f"允许使用的工具: {', '.join(policy.whitelist)}")

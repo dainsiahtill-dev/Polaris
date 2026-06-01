@@ -578,6 +578,10 @@ async def _generate_with_kernel(
             last_result.prompt_fingerprint.full_hash if last_result.prompt_fingerprint else None
         )
         response["tool_policy_id"] = last_result.tool_policy_id
+        response["metadata"] = dict(last_result.metadata or {})
+        response["execution_stats"] = dict(last_result.execution_stats or {})
+        if last_result.turn_events_metadata:
+            response["turn_events_metadata"] = [dict(item) for item in last_result.turn_events_metadata]
 
     # 保留验证信息
     if validate_output and last_result:

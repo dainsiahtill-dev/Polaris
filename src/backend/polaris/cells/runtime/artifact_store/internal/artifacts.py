@@ -30,6 +30,9 @@ from polaris.kernelone.storage.io_paths import build_cache_root
 
 logger = logging.getLogger("polaris.artifact_store")
 
+_IN_FLIGHT_ENGINE_PHASES = {"planning", "dispatching", "running", "in_progress"}
+_ENGINE_ORPHAN_STALE_SECONDS = 15.0
+
 
 def read_json(path: str) -> dict[str, Any] | None:
     if not path or not os.path.isfile(path):
@@ -96,6 +99,64 @@ def _read_json_dict(path: str) -> dict[str, Any]:
     return dict(payload) if isinstance(payload, dict) else {}
 
 
+def _parse_status_timestamp(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        normalized = text.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (RuntimeError, ValueError, OverflowError):
+        return None
+
+
+def _is_pm_lifecycle_terminal(payload: dict[str, Any]) -> bool:
+    status = str(payload.get("status") or "").strip().lower()
+    return (
+        payload.get("terminal") is True
+        or status in {"success", "completed", "failed", "cancelled", "canceled"}
+        or "finished_at" in payload
+        or "exit_code" in payload
+    )
+
+
+def _recover_orphaned_engine_state(
+    engine_state: dict[str, Any],
+    *,
+    pm_state: dict[str, Any],
+    pm_lifecycle: dict[str, Any],
+) -> dict[str, Any]:
+    running = bool(engine_state.get("running"))
+    phase = str(engine_state.get("phase") or engine_state.get("state") or "").strip().lower()
+    if not running or phase not in _IN_FLIGHT_ENGINE_PHASES or bool(pm_state.get("running")):
+        return engine_state
+
+    updated_at = _parse_status_timestamp(engine_state.get("updated_at"))
+    stale_by_age = (
+        updated_at is None
+        or (datetime.now(timezone.utc).timestamp() - float(updated_at)) > _ENGINE_ORPHAN_STALE_SECONDS
+    )
+    if not (_is_pm_lifecycle_terminal(pm_lifecycle) or stale_by_age):
+        return engine_state
+
+    recovered = dict(engine_state)
+    recovered["stale"] = True
+    recovered["orphaned"] = True
+    recovered["running"] = False
+    recovered["phase"] = "idle"
+    recovered["state"] = "idle"
+    recovered["error"] = ""
+    recovered["recovery_code"] = str(recovered.get("recovery_code") or "ENGINE_ORPHANED").strip()
+    return recovered
+
+
 def _load_runtime_task_rows(workspace: str, cache_root: str) -> list[dict[str, Any]]:
     tasks_dir = resolve_artifact_path(workspace, cache_root, "runtime/tasks")
     if not tasks_dir or not os.path.isdir(tasks_dir):
@@ -114,6 +175,12 @@ def get_workflow_runtime_status(workspace: str, cache_root: str) -> dict[str, An
     tasks = _load_runtime_task_rows(workspace, cache_root)
     pm_state = _read_json_dict(resolve_artifact_path(workspace, cache_root, "runtime/state/pm.state.json"))
     engine_state = _read_json_dict(resolve_artifact_path(workspace, cache_root, "runtime/status/engine.status.json"))
+    pm_lifecycle = _read_json_dict(resolve_artifact_path(workspace, cache_root, "runtime/status/pm.lifecycle.json"))
+    engine_state = _recover_orphaned_engine_state(
+        engine_state,
+        pm_state=pm_state,
+        pm_lifecycle=pm_lifecycle,
+    )
 
     running = bool(pm_state.get("running") or engine_state.get("running"))
     state = str(
@@ -608,9 +675,12 @@ def build_runtime_snapshot_v2(
             t_state = TaskState.READY
 
         # 解析 blocked_by
-        blocked_by = []
-        if t.get("blocked_by"):
-            blocked_by = t["blocked_by"] if isinstance(t["blocked_by"], list) else [str(t["blocked_by"])]
+        blocked_by: list[str] = []
+        raw_blocked_by = t.get("blocked_by")
+        if isinstance(raw_blocked_by, list):
+            blocked_by = [str(item) for item in raw_blocked_by]
+        elif raw_blocked_by:
+            blocked_by = [str(raw_blocked_by)]
 
         tasks.append(
             RuntimeTaskNode(
@@ -735,6 +805,9 @@ def _build_engine_status_v2(
     phase = str(payload.get("phase") or "").strip().lower()
     pm_running = bool((pm_status or {}).get("running"))
     director_running = bool((director_status or {}).get("running"))
+    error_code = str(payload.get("error") or "").strip().upper()
+    recovery_code = str(payload.get("recovery_code") or "").strip().upper()
+    orphaned_recovered = error_code == "ENGINE_ORPHANED" or recovery_code == "ENGINE_ORPHANED"
 
     # 检查是否孤立运行
     stale_running = (
@@ -744,10 +817,23 @@ def _build_engine_status_v2(
         and not director_running
     )
 
-    if stale_running:
+    if stale_running or orphaned_recovered:
         payload = dict(payload)
+        payload["stale"] = True if stale_running else bool(payload.get("stale"))
+        payload["orphaned"] = True
         payload["running"] = False
-        payload["phase"] = "failed"
-        payload["error"] = "ENGINE_ORPHANED"
+        payload["phase"] = "idle"
+        payload["error"] = ""
+        payload["recovery_code"] = "ENGINE_ORPHANED"
+        roles = payload.get("roles")
+        if isinstance(roles, dict):
+            for role_payload in roles.values():
+                if not isinstance(role_payload, dict):
+                    continue
+                role_payload["running"] = False
+                role_status = str(role_payload.get("status") or "").strip().lower()
+                if role_status in {"running", "pending", "planning", "dispatching", "blocked", "failed"}:
+                    role_payload["status"] = "idle"
+                role_payload["detail"] = str(role_payload.get("detail") or "Recovered stale engine state").strip()
 
     return payload

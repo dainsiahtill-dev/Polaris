@@ -14,6 +14,7 @@ const {
   resolvepolarisRoot,
   selectStartupWorkspaceOverride,
   shouldEnableSelfUpgradeMode,
+  stripUtf8Bom,
 } = require("./config-paths.cjs");
 
 test("resolvepolarisRoot prefers user home on Windows when no overrides exist", () => {
@@ -77,11 +78,26 @@ test("getDesktopBackendInfoPath stores backend bridge state under Polaris runtim
   );
 });
 
-test("selectStartupWorkspaceOverride prefers persisted workspace by default", () => {
+test("stripUtf8Bom removes a leading BOM without changing normal JSON", () => {
+  assert.equal(stripUtf8Bom("\uFEFF{\"workspace\":\"C:/Temp/app\"}"), "{\"workspace\":\"C:/Temp/app\"}");
+  assert.equal(stripUtf8Bom("{\"workspace\":\"C:/Temp/app\"}"), "{\"workspace\":\"C:/Temp/app\"}");
+});
+
+test("selectStartupWorkspaceOverride prefers explicit env workspace over persisted workspace", () => {
   const result = selectStartupWorkspaceOverride({
     env: {
       KERNELONE_WORKSPACE: "C:\\Users\\dains\\Documents\\GitLab\\polaris",
     },
+    persistedWorkspace: "C:\\Temp\\FileServer",
+  });
+
+  assert.equal(result.source, "env");
+  assert.equal(result.workspace, path.resolve("C:\\Users\\dains\\Documents\\GitLab\\polaris"));
+});
+
+test("selectStartupWorkspaceOverride uses persisted workspace when env workspace is absent", () => {
+  const result = selectStartupWorkspaceOverride({
+    env: {},
     persistedWorkspace: "C:\\Temp\\FileServer",
   });
 
@@ -120,6 +136,28 @@ test("selectStartupWorkspaceOverride skips missing persisted workspace when dire
     assert.equal(result.source, "env");
     assert.equal(result.workspace, path.resolve(envWorkspace));
     assert.equal(isDirectoryPath(result.workspace), true);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("selectStartupWorkspaceOverride does not fall back when explicit env workspace is missing", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polaris-workspace-explicit-missing-"));
+  const persistedWorkspace = path.join(tempRoot, "persisted-workspace");
+  fs.mkdirSync(persistedWorkspace, { recursive: true });
+
+  try {
+    const result = selectStartupWorkspaceOverride({
+      env: {
+        KERNELONE_WORKSPACE: path.join(tempRoot, "missing-env-workspace"),
+      },
+      persistedWorkspace,
+      validateDirectory: true,
+    });
+
+    assert.equal(result.source, "env_missing");
+    assert.equal(result.workspace, "");
+    assert.equal(result.invalidWorkspace, path.resolve(path.join(tempRoot, "missing-env-workspace")));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

@@ -8,6 +8,7 @@ and protocol classes.
 
 from __future__ import annotations
 
+from argparse import Namespace
 from types import SimpleNamespace
 
 import pytest
@@ -25,6 +26,7 @@ from polaris.cells.orchestration.pm_planning.internal.pipeline_ports import (
     normalize_pm_payload,
     normalize_priority,
 )
+from polaris.cells.orchestration.pm_planning.pipeline import _merge_engine_config
 
 # ---------------------------------------------------------------------------
 # normalize_priority
@@ -88,6 +90,33 @@ class TestNormalizeEngineConfig:
         cfg = {"max_directors": -1}
         result = normalize_engine_config(cfg)
         assert "max_directors" not in result
+
+    def test_accepts_workflow_payload_aliases(self) -> None:
+        cfg = {
+            "director_workflow_execution_mode": "parallel",
+            "max_parallel_tasks": 3,
+            "scheduling_policy": "dag",
+        }
+        result = normalize_engine_config(cfg)
+        assert result["director_execution_mode"] == "multi"
+        assert result["max_directors"] == 3
+        assert result["scheduling_policy"] == "dag"
+
+
+def test_merge_engine_config_uses_desktop_workflow_args() -> None:
+    args = Namespace(
+        director_workflow_execution_mode="parallel",
+        director_max_parallel_tasks=3,
+        director_scheduling_policy="dag",
+    )
+
+    result = _merge_engine_config(None, args)
+
+    assert result == {
+        "director_execution_mode": "multi",
+        "max_directors": 3,
+        "scheduling_policy": "dag",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +187,28 @@ class TestNormalizePmPayloadHappyPath:
         }
         result = normalize_pm_payload(raw, iteration=1, start_timestamp="t")
         assert "T01" in result["tasks"][0]["dependencies"]
+
+    def test_directory_targets_are_promoted_to_scope_paths(self) -> None:
+        raw = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Build FashionGen modules",
+                    "goal": "create renderer shell and generation contract",
+                    "target_files": [
+                        "src/renderer",
+                        "src/shared/generationSpec.ts",
+                        "package.json",
+                    ],
+                    "phase": "impl",
+                    "acceptance_criteria": ["npm test passes"],
+                }
+            ]
+        }
+        result = normalize_pm_payload(raw, iteration=1, start_timestamp="t")
+        task = result["tasks"][0]
+        assert task["target_files"] == ["src/shared/generationSpec.ts", "package.json"]
+        assert task["scope_paths"] == ["src/renderer"]
 
 
 class TestNormalizePmPayloadEdgeCases:

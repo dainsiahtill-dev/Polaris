@@ -414,6 +414,144 @@ def test_get_workflow_runtime_status_uses_workflow_chain_run_id_for_child_querie
     assert "polaris-director-pm-00001-20260306001000" in query_targets
 
 
+def test_get_workflow_runtime_status_derives_failure_from_completed_pm_result(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace = str(tmp_path / "workspace")
+    os.makedirs(workspace, exist_ok=True)
+    cache_root = str(tmp_path / "cache")
+    os.makedirs(cache_root, exist_ok=True)
+
+    workflow_status_module.write_workflow_state(
+        workspace,
+        cache_root,
+        {
+            "workflow_id": "wf-pm-final-001",
+            "workflow_run_id": "wf-pm-final-001",
+            "run_id": "pm-00001",
+            "workflow_chain_run_id": "pm-00001-20260531170335463035",
+            "workflow_status": "running",
+            "stage": "pm_started",
+            "details": {
+                "status": "completed",
+                "result": {
+                    "status": "completed",
+                    "result": {
+                        "run_id": "pm-00001-20260531170335463035",
+                        "director_status": "failed",
+                        "qa_status": "director_failed",
+                    },
+                },
+            },
+        },
+    )
+
+    def _fake_describe(workflow_id: str, config) -> dict[str, object]:
+        if workflow_id == "wf-pm-final-001":
+            return {
+                "ok": True,
+                "workflow_id": workflow_id,
+                "status": "running",
+                "run_id": "wf-pm-final-001",
+            }
+        return {"ok": False, "workflow_id": workflow_id, "error": "not_found"}
+
+    def _fake_query(workflow_id: str, query_name: str, config=None) -> dict[str, object]:
+        return {"ok": True, "payload": {"stage": "pm_started", "tasks": {}}}
+
+    monkeypatch.setattr(workflow_status_module, "describe_workflow_sync", _fake_describe)
+    monkeypatch.setattr(workflow_status_module, "query_workflow_sync", _fake_query)
+
+    result = workflow_status_module.get_workflow_runtime_status(workspace, cache_root)
+
+    assert isinstance(result, dict)
+    assert result["workflow_status"] == "failed"
+    assert result["running"] is False
+
+
+def test_get_workflow_runtime_status_prefers_success_artifacts_over_stale_nested_qa_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace = str(tmp_path / "workspace")
+    os.makedirs(workspace, exist_ok=True)
+    cache_root = str(tmp_path / "cache")
+    os.makedirs(cache_root, exist_ok=True)
+
+    workflow_status_module.write_workflow_state(
+        workspace,
+        cache_root,
+        {
+            "workflow_id": "wf-pm-final-success",
+            "workflow_run_id": "wf-pm-final-success",
+            "run_id": "pm-00001",
+            "workflow_chain_run_id": "pm-00001-20260531191424476749",
+            "workflow_status": "running",
+            "stage": "pm_started",
+            "details": {
+                "status": "completed",
+                "result": {
+                    "status": "completed",
+                    "result": {
+                        "run_id": "pm-00001-20260531191424476749",
+                        "director_status": "completed",
+                        "qa_status": "qa_failed",
+                    },
+                },
+            },
+        },
+    )
+    results_dir = tmp_path / "cache" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "director.result.json").write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "successes": 3,
+                "total": 3,
+                "failures": 0,
+                "blocked": 0,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (results_dir / "integration_qa.result.json").write_text(
+        json.dumps(
+            {
+                "ran": True,
+                "passed": True,
+                "reason": "integration_qa_passed",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_describe(workflow_id: str, config) -> dict[str, object]:
+        if workflow_id == "wf-pm-final-success":
+            return {
+                "ok": True,
+                "workflow_id": workflow_id,
+                "status": "running",
+                "run_id": "wf-pm-final-success",
+            }
+        return {"ok": False, "workflow_id": workflow_id, "error": "not_found"}
+
+    def _fake_query(workflow_id: str, query_name: str, config=None) -> dict[str, object]:
+        return {"ok": True, "payload": {"stage": "pm_started", "tasks": {}}}
+
+    monkeypatch.setattr(workflow_status_module, "describe_workflow_sync", _fake_describe)
+    monkeypatch.setattr(workflow_status_module, "query_workflow_sync", _fake_query)
+
+    result = workflow_status_module.get_workflow_runtime_status(workspace, cache_root)
+
+    assert isinstance(result, dict)
+    assert result["workflow_status"] == "completed"
+    assert result["running"] is False
+
+
 def test_build_workflow_director_status_payload_uses_child_snapshot() -> None:
     workflow_status = {
         "running": True,

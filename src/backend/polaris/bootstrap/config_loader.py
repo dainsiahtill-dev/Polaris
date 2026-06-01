@@ -127,6 +127,38 @@ class ConfigLoader:
         ),
     }
 
+    LEGACY_FLAT_KEY_ALIASES: dict[str, str] = {
+        "model": "llm.model",
+        "pm_backend": "pm.backend",
+        "pm_model": "pm.model",
+        "pm_show_output": "pm.show_output",
+        "pm_runs_director": "pm.runs_director",
+        "pm_director_show_output": "pm.director_show_output",
+        "pm_director_timeout": "pm.director_timeout",
+        "pm_director_iterations": "pm.director_iterations",
+        "pm_director_match_mode": "pm.director_match_mode",
+        "pm_agents_approval_mode": "pm.agents_approval_mode",
+        "pm_agents_approval_timeout": "pm.agents_approval_timeout",
+        "pm_max_failures": "pm.max_failures",
+        "pm_max_blocked": "pm.max_blocked",
+        "pm_max_same": "pm.max_same",
+        "pm_blocked_strategy": "pm.blocked_strategy",
+        "pm_blocked_degrade_max_retries": "pm.blocked_degrade_max_retries",
+        "director_model": "director.model",
+        "director_iterations": "director.iterations",
+        "director_execution_mode": "director.execution_mode",
+        "director_max_parallel_tasks": "director.max_parallel_tasks",
+        "director_ready_timeout_seconds": "director.ready_timeout_seconds",
+        "director_claim_timeout_seconds": "director.claim_timeout_seconds",
+        "director_phase_timeout_seconds": "director.phase_timeout_seconds",
+        "director_complete_timeout_seconds": "director.complete_timeout_seconds",
+        "director_task_timeout_seconds": "director.task_timeout_seconds",
+        "director_forever": "director.forever",
+        "director_show_output": "director.show_output",
+        "ramdisk_root": "runtime.ramdisk_root",
+        "debug_tracing": "logging.enable_debug_tracing",
+    }
+
     def __init__(self, defaults: dict[str, Any] | None = None) -> None:
         """Initialize config loader.
 
@@ -155,7 +187,13 @@ class ConfigLoader:
             ConfigLoadError: If configuration loading fails
         """
         # 1. Load persisted settings
-        persisted = self._load_persisted(workspace) if workspace else {}
+        #
+        # Polaris desktop stores durable user configuration in the global
+        # `~/.polaris/config/settings.json` file.  Workspace-local config can
+        # still provide project-specific overrides, but it must not be the only
+        # persisted source; otherwise a normal Electron launch started with
+        # `--workspace` silently falls back to hard-coded defaults for LLM/PM.
+        persisted = self._load_persisted_settings(workspace) if workspace else {}
 
         # 2. Load environment variables
         env = self._load_env(env_prefix)
@@ -243,6 +281,25 @@ class ConfigLoader:
 
         return {}
 
+    def _load_global_persisted(self, workspace: Path | None) -> dict[str, Any]:
+        """Load global Polaris settings from the storage-layout cell."""
+        try:
+            from polaris.cells.storage.layout.public import load_persisted_settings
+
+            payload = load_persisted_settings(str(workspace) if workspace else "")
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            logger.warning("Global settings load failed: %s", exc)
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return self._canonicalize_flat_config(self._flatten_dict(payload))
+
+    def _load_persisted_settings(self, workspace: Path | None) -> dict[str, Any]:
+        """Load global settings, then overlay workspace-local settings."""
+        global_settings = self._load_global_persisted(workspace)
+        workspace_settings = self._canonicalize_flat_config(self._load_persisted(workspace))
+        return {**global_settings, **workspace_settings}
+
     def _load_env(self, prefix: str = "KERNELONE_") -> dict[str, Any]:
         """Load configuration from environment variables.
 
@@ -301,6 +358,14 @@ class ConfigLoader:
             else:
                 items[new_key] = v
         return items
+
+    def _canonicalize_flat_config(self, flat: dict[str, Any]) -> dict[str, Any]:
+        """Map legacy compatibility keys to ConfigSnapshot dot-notation keys."""
+        result = dict(flat)
+        for legacy_key, canonical_key in self.LEGACY_FLAT_KEY_ALIASES.items():
+            if legacy_key in result and result[legacy_key] is not None:
+                result[canonical_key] = result.pop(legacy_key)
+        return result
 
     def _settings_to_flat_dict(self, settings: Any) -> dict[str, Any]:
         """Convert Settings object to flat dictionary.

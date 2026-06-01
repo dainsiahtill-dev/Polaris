@@ -59,6 +59,16 @@ type IntegrationQaArtifact = {
   passed?: boolean | null;
 };
 
+type DirectorResultArtifact = {
+  status?: string;
+  successes?: number;
+  failures?: number;
+  blocked?: number;
+  total?: number;
+  summary?: string;
+  error?: string;
+};
+
 type DirectorTaskPayload = {
   metadata?: {
     pm_task_id?: string;
@@ -75,6 +85,19 @@ type PmContractPayload = {
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const PM_FINISH_TIMEOUT_MS = positiveIntFromEnv("KERNELONE_E2E_PM_FINISH_TIMEOUT_MS", 20 * 60 * 1000);
+const REAL_FLOW_TEST_TIMEOUT_MS = Math.max(25 * 60 * 1000, PM_FINISH_TIMEOUT_MS + 5 * 60 * 1000);
 
 async function getBackendInfo(window: Page): Promise<Required<BackendInfo>> {
   const info = await window.evaluate(async () => {
@@ -259,7 +282,7 @@ async function waitForPmFinish(window: Page): Promise<PmStatusPayload> {
       const status = await fetchJson<PmStatusPayload>(window, "/v2/pm/status");
       return Boolean(status.running);
     }, {
-      timeout: 20 * 60 * 1000,
+      timeout: PM_FINISH_TIMEOUT_MS,
       intervals: [1000, 2000, 5000, 10000],
     })
     .toBe(false);
@@ -313,13 +336,19 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   await window.getByRole("menuitem", { name: /Director\s*(工作区|Workspace)/i }).click();
 }
 
-test.setTimeout(25 * 60 * 1000);
+test.setTimeout(REAL_FLOW_TEST_TIMEOUT_MS);
 
 test("real PM -> Director flow reaches PM and Director workspaces", async ({ window, testEnv }, testInfo) => {
   test.skip(!testEnv.useRealSettings, "Set KERNELONE_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
 
   const settings = await fetchJson<SettingsPayload>(window, "/settings");
   expect(String(settings.workspace || "").trim(), "real settings workspace should not be empty").not.toBe("");
+  if (String(process.env.KERNELONE_E2E_ALLOW_REAL_WORKSPACE_MUTATION || "").trim() !== "1") {
+    expect(
+      path.resolve(String(settings.workspace || "")),
+      "real LLM E2E must use the isolated workspace unless KERNELONE_E2E_ALLOW_REAL_WORKSPACE_MUTATION=1 is explicit",
+    ).toBe(path.resolve(testEnv.isolatedWorkspace));
+  }
   expect(settings.pm_runs_director, "real settings should keep PM -> Director enabled").toBe(true);
 
   await dismissEngineFailureDialog(window);
@@ -400,12 +429,15 @@ test("real PM -> Director flow reaches PM and Director workspaces", async ({ win
 
   const integrationQa = await readJsonFile<IntegrationQaArtifact>(integrationQaPath);
 
-  expect(
-    ["pending_director_tasks", "director_failures_present", "integration_qa_passed", "integration_qa_failed"].includes(
-      String(integrationQa?.reason || ""),
-    ),
-    `unexpected integration QA reason: ${String(integrationQa?.reason || "")}`,
-  ).toBe(true);
+  expect(integrationQa?.ran, `integration QA summary: ${String(integrationQa?.summary || "")}`).toBe(true);
+  expect(integrationQa?.passed, `integration QA reason: ${String(integrationQa?.reason || "")}`).toBe(true);
+  expect(String(integrationQa?.reason || "")).toBe("integration_qa_passed");
+
+  const directorResultPath = path.join(runtimeRoot, "results", "director.result.json");
+  const directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
+  expect(String(directorResult?.status || ""), JSON.stringify(directorResult, null, 2)).toBe("success");
+  expect(Number(directorResult?.failures || 0), JSON.stringify(directorResult, null, 2)).toBe(0);
+  expect(Number(directorResult?.blocked || 0), JSON.stringify(directorResult, null, 2)).toBe(0);
 
   await dismissEngineFailureDialog(window);
   await dismissEngineFailureDialog(window);

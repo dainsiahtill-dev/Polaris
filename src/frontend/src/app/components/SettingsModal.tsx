@@ -298,6 +298,34 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
   const [settingsModalResizing, setSettingsModalResizing] = useState(false);
   const resizeStateRef = useRef<null | { startX: number; startY: number; startWidth: number; startHeight: number }>(null);
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (saving || settingsModalResizing) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (reportDrawer.open) {
+        setReportDrawer({ open: false, data: null });
+        return;
+      }
+
+      if (tuiDrawer.open) {
+        setTuiDrawer((prev) => ({ ...prev, open: false }));
+        setTuiError(null);
+        return;
+      }
+
+      onClose();
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [isOpen, onClose, reportDrawer.open, saving, settingsModalResizing, tuiDrawer.open]);
+
   const handleResizePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     e.preventDefault();

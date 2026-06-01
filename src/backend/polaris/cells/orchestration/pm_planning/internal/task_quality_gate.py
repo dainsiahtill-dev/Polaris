@@ -22,17 +22,52 @@ _PM_PROMPT_LEAK_TOKENS = (
     "no yapping",
     "<thinking>",
     "<tool_call>",
-    "提示词",
+)
+_PM_CHINESE_PROMPT_LEAK_TOKENS = (
+    "系统提示词",
+    "开发者提示词",
+    "角色提示词",
+    "内部提示词",
+    "完整提示词",
+    "提示词泄露",
+    "提示词泄漏",
+    "提示词注入",
 )
 _PM_ACTION_TOKENS = (
+    "add",
     "build",
+    "connect",
+    "deliver",
     "implement",
     "define",
     "design",
+    "extract",
+    "fix",
+    "harden",
+    "integrate",
+    "persist",
     "write",
     "create",
     "refactor",
+    "test",
+    "update",
+    "validate",
     "verify",
+    "补充",
+    "补齐",
+    "持久化",
+    "抽取",
+    "记录",
+    "接入",
+    "落地",
+    "收敛",
+    "输出",
+    "完成",
+    "新增",
+    "修复",
+    "创建",
+    "统一",
+    "校验",
     "构建",
     "实现",
     "设计",
@@ -238,7 +273,9 @@ def _contains_prompt_leakage(text: str) -> bool:
     lowered = _normalize_text(text).lower()
     if not lowered:
         return False
-    return any(token in lowered for token in _PM_PROMPT_LEAK_TOKENS)
+    if any(token in lowered for token in _PM_PROMPT_LEAK_TOKENS):
+        return True
+    return any(token in lowered for token in _PM_CHINESE_PROMPT_LEAK_TOKENS)
 
 
 def _has_measurable_acceptance_anchor(acceptance_items: list[str]) -> bool:
@@ -323,7 +360,13 @@ def evaluate_pm_task_quality(
         else:
             measurable_acceptance_task_count += 1
 
-        lowered_task = combined_text.lower()
+        checklist = task.get("execution_checklist")
+        checklist_items = []
+        if isinstance(checklist, list):
+            checklist_items = [_normalize_text(item) for item in checklist if _normalize_text(item)]
+
+        action_text = " ".join([combined_text, " ".join(checklist_items)]).strip()
+        lowered_task = action_text.lower()
         if not any(token in lowered_task for token in _PM_ACTION_TOKENS):
             low_action_count += 1
             warnings.append(f"{task_id}: action signal is weak")
@@ -338,8 +381,7 @@ def evaluate_pm_task_quality(
         if isinstance(deps, list) and any(_normalize_text(item) for item in deps):
             dependency_task_count += 1
 
-        checklist = task.get("execution_checklist")
-        if isinstance(checklist, list) and any(_normalize_text(item) for item in checklist):
+        if checklist_items:
             checklist_task_count += 1
         else:
             warnings.append(f"{task_id}: missing execution_checklist")

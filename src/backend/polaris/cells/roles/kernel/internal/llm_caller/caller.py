@@ -309,7 +309,10 @@ class LLMCaller:
         )
         context_summary = compute_context_summary(input_text)
 
-        request_timeout_seconds = resolve_timeout_seconds(profile)
+        request_timeout_seconds = resolve_timeout_seconds(
+            profile,
+            override if isinstance(override, dict) else None,
+        )
         request_options: dict[str, Any] = {
             "temperature": temperature,
             "max_tokens": max_tokens,

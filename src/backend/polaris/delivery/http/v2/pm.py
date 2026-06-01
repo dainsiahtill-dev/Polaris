@@ -39,6 +39,7 @@ from polaris.delivery.http.workspace import (
     settings_with_workspace_override,
     workspace_values_match,
 )
+from polaris.delivery.pm_markdown_selection import markdown_planning_sort_key
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path, workspace_has_docs
 from pydantic import BaseModel, Field
 
@@ -288,6 +289,11 @@ _PM_PLANNING_INPUT_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("workspace_plan", "workspace/docs/product/plan.md"),
 )
 
+_PM_PLANNING_INPUT_MARKDOWN_ROOTS: tuple[tuple[str, str], ...] = (
+    ("workspace_plans_markdown", "workspace/plans"),
+    ("workspace_docs_markdown", "workspace/docs"),
+)
+
 
 def _planning_input_candidate_paths(
     workspace: str,
@@ -309,6 +315,51 @@ def _planning_input_candidate_paths(
     if logical_path.startswith("workspace/"):
         append(Path(workspace) / logical_path[len("workspace/") :])
     return paths
+
+
+def _planning_input_markdown_candidates(
+    workspace: str,
+    cache_root: str,
+    *,
+    limit_per_root: int = 100,
+) -> list[tuple[str, Path]]:
+    candidates: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+
+    def append(source: str, candidate: Path) -> None:
+        token = str(candidate)
+        if token and token not in seen:
+            seen.add(token)
+            candidates.append((source, candidate))
+
+    for source, logical_root in _PM_PLANNING_INPUT_MARKDOWN_ROOTS:
+        roots: list[Path] = []
+        with suppress(RuntimeError, ValueError, OSError):
+            roots.append(Path(resolve_artifact_path(workspace, cache_root, logical_root)))
+        if logical_root.startswith("workspace/"):
+            roots.append(Path(workspace) / logical_root[len("workspace/") :])
+
+        for root in roots:
+            if not root.is_dir():
+                continue
+            discovered: list[tuple[float, str, Path]] = []
+            with suppress(RuntimeError, ValueError, OSError):
+                for candidate in root.rglob("*.md"):
+                    if not candidate.is_file():
+                        continue
+                    stat = candidate.stat()
+                    discovered.append((stat.st_mtime, str(candidate).casefold(), candidate))
+                    if len(discovered) >= limit_per_root:
+                        break
+            purpose = "plan" if "plans" in logical_root else "requirements"
+            for _mtime, _name, candidate in sorted(
+                discovered,
+                key=lambda item: markdown_planning_sort_key(item[2], mtime=item[0], purpose=purpose),
+                reverse=True,
+            ):
+                append(source, candidate)
+
+    return candidates
 
 
 def _build_planning_input_diagnostics(
@@ -360,6 +411,27 @@ def _build_planning_input_diagnostics(
                     checked_paths=checked_paths,
                 )
             first_empty = first_empty or (source, candidate, size)
+
+    for source, candidate in _planning_input_markdown_candidates(workspace.workspace, cache_root):
+        checked_paths.append(str(candidate))
+        try:
+            text = candidate.read_text(encoding="utf-8").strip()
+            size = candidate.stat().st_size
+        except (OSError, UnicodeError) as exc:
+            first_error = first_error or (source, candidate, str(exc))
+            continue
+
+        if text:
+            return PMDiagnosticsPlanningInputStatus(
+                ok=True,
+                status="ready",
+                source=source,
+                path=str(candidate),
+                bytes=size,
+                chars=len(text),
+                checked_paths=checked_paths,
+            )
+        first_empty = first_empty or (source, candidate, size)
 
     if first_error:
         source, path, error = first_error

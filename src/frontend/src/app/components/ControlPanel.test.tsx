@@ -248,6 +248,7 @@ describe('ControlPanel', () => {
       const healthButton = screen.getByTestId('control-panel-health-ping');
       expect(healthButton).toHaveAttribute('title', '/v2/health · healthy · version=0.1');
       expect(healthButton).toHaveTextContent('Ready');
+      expect(healthButton).toHaveClass('shrink-0', 'whitespace-nowrap');
 
       fireEvent.click(healthButton);
 

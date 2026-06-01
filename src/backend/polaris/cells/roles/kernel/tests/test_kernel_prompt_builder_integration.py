@@ -48,3 +48,41 @@ def test_build_system_prompt_for_request_passes_message_to_prompt_builder(monkey
     assert captured["appendix"] == "benchmark appendix"
     assert captured["domain"] == "code"
     assert captured["message"] == "inspect README and summarize findings"
+
+
+def test_build_system_prompt_for_director_codegen_suppresses_conflicting_layers(monkeypatch) -> None:
+    profile = SimpleNamespace(
+        role_id="director",
+        model="gpt-5.3-codex",
+        version="1.0.0",
+        tool_policy=SimpleNamespace(policy_id="director-policy-v1", whitelist=["read_file", "write_file"]),
+        prompt_policy=SimpleNamespace(core_template_id="director", tpl_version="1.0"),
+    )
+    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.CHAT,
+        workspace=".",
+        message="[mode:propose] Do not call tools.",
+        history=[],
+        context_override={
+            "director_runtime_codegen": True,
+            "director_runtime_codegen_mode": "proposal_then_apply",
+            "delivery_mode": "propose_patch",
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_build_system_prompt(_profile, prompt_appendix, **kwargs: object) -> str:
+        captured["appendix"] = str(prompt_appendix or "")
+        captured.update(kwargs)
+        return "system-prompt"
+
+    prompt_builder = kernel._get_prompt_builder()
+    monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
+
+    result = kernel._build_system_prompt_for_request(profile, request, "bridge appendix")  # type: ignore[arg-type]
+
+    assert result == "system-prompt"
+    assert captured["appendix"] == "bridge appendix"
+    assert captured["include_working_memory_contract"] is False
+    assert captured["include_tool_policy"] is False

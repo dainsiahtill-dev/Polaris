@@ -92,8 +92,9 @@ class TestConfigLoaderLoad:
         assert snapshot.get("server.port") == 8888
         assert snapshot.get("pm.backend") == "openai"
 
-    def test_load_with_workspace_and_persisted_config(self, tmp_path: Path) -> None:
+    def test_load_with_workspace_and_persisted_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should load persisted config from workspace."""
+        monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "empty-global-home"))
         # Create a mock metadata directory with config
         metadata_dir = tmp_path / ".polaris"
         metadata_dir.mkdir()
@@ -107,8 +108,9 @@ class TestConfigLoaderLoad:
         snapshot = loader.load(workspace=tmp_path)
         assert snapshot.get("server.port") == 8080
 
-    def test_load_with_legacy_config(self, tmp_path: Path) -> None:
+    def test_load_with_legacy_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should load legacy .polaris.json config."""
+        monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "empty-global-home"))
         config_file = tmp_path / ".polaris.json"
         config_file.write_text(
             json.dumps({"server": {"port": 9000}}),
@@ -119,8 +121,9 @@ class TestConfigLoaderLoad:
         snapshot = loader.load(workspace=tmp_path)
         assert snapshot.get("server.port") == 9000
 
-    def test_load_with_corrupted_json(self, tmp_path: Path) -> None:
+    def test_load_with_corrupted_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should handle corrupted JSON gracefully."""
+        monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "empty-global-home"))
         metadata_dir = tmp_path / ".polaris"
         metadata_dir.mkdir()
         config_file = metadata_dir / "config.json"
@@ -130,6 +133,76 @@ class TestConfigLoaderLoad:
         # Should not raise, should fall back to defaults
         snapshot = loader.load(workspace=tmp_path)
         assert snapshot.get("server.port") == 49977  # default
+
+    def test_load_with_workspace_reads_global_settings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should load durable desktop settings from ~/.polaris/config/settings.json."""
+        from polaris.bootstrap.config import Settings
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        settings_home = tmp_path / "settings-home"
+        settings_file = settings_home / "config" / "settings.json"
+        settings_file.parent.mkdir(parents=True)
+        settings_file.write_text(
+            json.dumps(
+                {
+                    "workspace": str(workspace),
+                    "llm": {"model": "global-model", "provider": "openai_compat"},
+                    "pm_backend": "codex",
+                    "pm_model": "gpt-5.3-codex",
+                    "director_model": "gpt-5.3-codex",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("KERNELONE_HOME", str(settings_home))
+
+        loader = ConfigLoader()
+        snapshot = loader.load(workspace=workspace)
+        settings = Settings(**snapshot.to_mutable_dict())
+
+        assert snapshot.get("llm.model") == "global-model"
+        assert settings.pm_backend == "codex"
+        assert settings.pm_model == "gpt-5.3-codex"
+        assert settings.director_model == "gpt-5.3-codex"
+
+    def test_cli_workspace_overrides_global_workspace_but_keeps_global_settings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI workspace selection should not discard global PM/LLM settings."""
+        from polaris.bootstrap.config import Settings
+
+        old_workspace = tmp_path / "old-workspace"
+        new_workspace = tmp_path / "new-workspace"
+        old_workspace.mkdir()
+        new_workspace.mkdir()
+        settings_home = tmp_path / "settings-home"
+        settings_file = settings_home / "config" / "settings.json"
+        settings_file.parent.mkdir(parents=True)
+        settings_file.write_text(
+            json.dumps(
+                {
+                    "workspace": str(old_workspace),
+                    "pm_backend": "codex",
+                    "pm_model": "gpt-5.3-codex",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("KERNELONE_HOME", str(settings_home))
+
+        loader = ConfigLoader()
+        snapshot = loader.load(
+            workspace=old_workspace,
+            cli_overrides={"workspace": str(new_workspace)},
+        )
+        settings = Settings(**snapshot.to_mutable_dict())
+
+        assert Path(str(settings.workspace)).resolve() == new_workspace.resolve()
+        assert settings.pm_backend == "codex"
+        assert settings.pm_model == "gpt-5.3-codex"
 
 
 class TestConfigLoaderLoadEnv:

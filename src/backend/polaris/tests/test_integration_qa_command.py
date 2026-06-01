@@ -58,6 +58,37 @@ def test_detect_integration_verify_command_uses_pytest_when_python_tests_exist(
     assert command == "python -m pytest -q"
 
 
+def test_detect_integration_verify_command_uses_node_verify_final_when_test_script_missing(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"verify:final":"node scripts/verify_final.mjs","smoke:boot":"node scripts/smoke_boot.mjs"}}\n',
+        encoding="utf-8",
+    )
+
+    command = detect_integration_verify_command(str(tmp_path))
+
+    assert command == "npm run verify:final"
+
+
+def test_run_integration_verify_runner_passes_node_verify_final_without_test_script(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"verify:final":"node scripts/verify_final.mjs"}}\n',
+        encoding="utf-8",
+    )
+    (scripts_dir / "verify_final.mjs").write_text("console.log('PASS_SUMMARY');\n", encoding="utf-8")
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is True
+    assert summary == "Integration verification passed: npm run verify:final"
+    assert errors == []
+
+
 def test_run_integration_verify_runner_fails_when_pytest_assertion_fails(
     tmp_path: Path,
 ) -> None:

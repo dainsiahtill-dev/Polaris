@@ -154,6 +154,8 @@ class IPromptBuilder(Protocol):
         prompt_appendix: str,
         domain: str = "code",
         message: str = "",
+        include_working_memory_contract: bool = True,
+        include_tool_policy: bool = True,
     ) -> str:
         """构建系统提示词"""
         ...

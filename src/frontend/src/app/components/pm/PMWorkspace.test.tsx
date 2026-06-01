@@ -40,8 +40,16 @@ vi.mock('@/services/roleSessionService', () => ({
 }));
 
 vi.mock('./PMAIDialoguePanel', () => ({
-  PMAIDialoguePanel: ({ taskCount }: { taskCount: number }) => (
-    <div data-testid="pm-ai-dialogue-mock">taskCount={taskCount}</div>
+  PMAIDialoguePanel: ({
+    taskCount,
+    interactionBlockedReason = '',
+  }: {
+    taskCount: number;
+    interactionBlockedReason?: string;
+  }) => (
+    <div data-testid="pm-ai-dialogue-mock" data-blocked-reason={interactionBlockedReason}>
+      taskCount={taskCount}
+    </div>
   ),
 }));
 
@@ -49,6 +57,7 @@ vi.mock('./PMTaskPanel', () => ({
   PMTaskPanel: ({
     tasks,
     onTaskCreated,
+    createDisabledReason = '',
   }: {
     tasks: Array<{ id: string }>;
     onTaskCreated?: (task: {
@@ -59,12 +68,15 @@ vi.mock('./PMTaskPanel', () => ({
       priority: number;
       acceptance: Array<{ description: string }>;
     }) => void;
+    createDisabledReason?: string;
   }) => (
-    <div data-testid="pm-task-panel-mock">
+    <div data-testid="pm-task-panel-mock" data-create-disabled-reason={createDisabledReason}>
       tasks={tasks.length}; ids={tasks.map((task) => task.id).join(',')}
+      {createDisabledReason ? ` createDisabled=${createDisabledReason}` : ''}
       <button
         type="button"
         data-testid="pm-task-panel-mock-create"
+        disabled={Boolean(createDisabledReason)}
         onClick={() => onTaskCreated?.({
           id: 'PM-created-sync',
           title: 'Created PM task sync',
@@ -395,6 +407,7 @@ describe('PMWorkspace history panel', () => {
     );
 
     await waitFor(() => expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('tasks=0'));
+    await waitFor(() => expect(screen.getByTestId('pm-task-panel-mock-create')).not.toBeDisabled());
 
     fireEvent.click(screen.getByTestId('pm-task-panel-mock-create'));
 
@@ -406,6 +419,33 @@ describe('PMWorkspace history panel', () => {
     expect(evidence).toHaveTextContent('backend=1');
     expect(evidence).toHaveTextContent('merged=1');
     expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveTextContent('taskCount=1');
+  });
+
+  it('keeps PM task creation disabled when the task registry is not initialized', async () => {
+    listPmTasksMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        initialized: false,
+        reason: 'PM system not initialized',
+      },
+    });
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    const createButton = await screen.findByTestId('pm-task-panel-mock-create');
+    await waitFor(() => expect(createButton).toBeDisabled());
+    expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('PM 任务注册表未初始化：PM system not initialized');
+    expect(screen.queryByTestId('pm-task-backend-evidence')).not.toBeInTheDocument();
   });
 
   it('loads backend task history and Director dispatch history when opened', async () => {
@@ -665,13 +705,233 @@ describe('PMWorkspace history panel', () => {
     expect(onTogglePm).not.toHaveBeenCalled();
   });
 
+  it('treats can_start=true as authoritative when stale startup blockers remain in diagnostics', async () => {
+    const onRunPmOnce = vi.fn();
+    const onTogglePm = vi.fn();
+    getPmStartupDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        can_start: true,
+        generated_at: '2026-05-23T00:00:00Z',
+        lancedb: { ok: true, state: 'ready' },
+        llm: {
+          ok: true,
+          state: 'ready',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['pm'],
+        },
+        workspace: {
+          ok: true,
+          status: 'ready',
+          workspace: 'C:/Temp/Product',
+          docs_present: true,
+        },
+        planning_input: {
+          ok: true,
+          status: 'ready',
+          source: 'workspace_plans_markdown',
+          path: 'C:/Temp/Product/.polaris/plans/plan.md',
+          bytes: 128,
+          chars: 120,
+          checked_paths: ['C:/Temp/Product/.polaris/plans/plan.md'],
+        },
+        issues: ['workspace_docs_missing'],
+        startup_blockers: ['workspace_docs_missing'],
+      },
+    });
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={onTogglePm}
+        onRunPmOnce={onRunPmOnce}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('pm-backend-evidence-strip')).toHaveTextContent('ready'));
+    expect(screen.queryByTestId('pm-runtime-terminal-banner')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pm-workspace-run-once')).not.toBeDisabled();
+    expect(screen.getByTestId('pm-workspace-toggle')).not.toBeDisabled();
+  });
+
+  it('lets PM diagnostics clear stale external start blockers in the AI panel', async () => {
+    getPmStartupDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        can_start: true,
+        generated_at: '2026-05-23T00:00:00Z',
+        lancedb: { ok: true, state: 'ready' },
+        llm: {
+          ok: true,
+          state: 'ready',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['pm'],
+        },
+        workspace: {
+          ok: true,
+          status: 'ready',
+          workspace: 'C:/Temp/Product',
+          docs_present: true,
+        },
+        planning_input: {
+          ok: true,
+          status: 'ready',
+          source: 'workspace_plans_markdown',
+          path: 'C:/Temp/Product/.polaris/plans/plan.md',
+          bytes: 128,
+          chars: 120,
+          checked_paths: ['C:/Temp/Product/.polaris/plans/plan.md'],
+        },
+        issues: [],
+        startup_blockers: [],
+      },
+    });
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        pmStartBlockedReason="docs/ 初始化未完成"
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('pm-backend-evidence-strip')).toHaveTextContent('ready'));
+    expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveAttribute('data-blocked-reason', '');
+    expect(screen.queryByText('PM 启动被阻止')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pm-workspace-run-once')).not.toBeDisabled();
+    expect(screen.getByTestId('pm-workspace-toggle')).not.toBeDisabled();
+  });
+
+  it('refreshes PM diagnostics when the LLM runtime gate becomes ready', async () => {
+    getPmStartupDiagnosticsMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          ok: false,
+          can_start: false,
+          generated_at: '2026-05-23T00:00:00Z',
+          lancedb: { ok: true, state: 'ready' },
+          llm: {
+            ok: false,
+            state: 'blocked',
+            blocked_roles: ['pm'],
+            unsupported_roles: [],
+            required_ready_roles: ['pm'],
+          },
+          workspace: {
+            ok: true,
+            status: 'ready',
+            workspace: 'C:/Temp/Product',
+            docs_present: true,
+          },
+          planning_input: {
+            ok: true,
+            status: 'ready',
+            source: 'workspace_plans_markdown',
+            path: 'C:/Temp/Product/.polaris/plans/plan.md',
+            bytes: 128,
+            chars: 120,
+            checked_paths: ['C:/Temp/Product/.polaris/plans/plan.md'],
+          },
+          issues: ['llm_not_ready'],
+          startup_blockers: ['llm_not_ready'],
+        },
+      })
+      .mockResolvedValue({
+        ok: true,
+        data: {
+          ok: true,
+          can_start: true,
+          generated_at: '2026-05-23T00:01:00Z',
+          lancedb: { ok: true, state: 'ready' },
+          llm: {
+            ok: true,
+            state: 'ready',
+            blocked_roles: [],
+            unsupported_roles: [],
+            required_ready_roles: ['pm'],
+          },
+          workspace: {
+            ok: true,
+            status: 'ready',
+            workspace: 'C:/Temp/Product',
+            docs_present: true,
+          },
+          planning_input: {
+            ok: true,
+            status: 'ready',
+            source: 'workspace_plans_markdown',
+            path: 'C:/Temp/Product/.polaris/plans/plan.md',
+            bytes: 128,
+            chars: 120,
+            checked_paths: ['C:/Temp/Product/.polaris/plans/plan.md'],
+          },
+          issues: [],
+          startup_blockers: [],
+        },
+      });
+
+    const { rerender } = render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('pm-backend-evidence-strip')).toHaveTextContent('start=blocked'));
+    expect(screen.getByTestId('pm-runtime-terminal-banner')).toHaveTextContent('PM LLM 未通过就绪检查');
+
+    rerender(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+        llmRuntimeState={{
+          state: 'READY',
+          blockedRoles: [],
+          requiredRoles: ['pm'],
+          lastUpdated: '2026-05-23T00:01:00Z',
+        }}
+      />,
+    );
+
+    expect(screen.queryByTestId('pm-runtime-terminal-banner')).not.toBeInTheDocument();
+    await waitFor(() => expect(getPmStartupDiagnosticsMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('pm-backend-evidence-strip')).toHaveTextContent('ready'));
+    expect(screen.queryByTestId('pm-runtime-terminal-banner')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pm-workspace-run-once')).not.toBeDisabled();
+    expect(screen.getByTestId('pm-workspace-toggle')).not.toBeDisabled();
+  });
+
   it('shows PM runtime root cause separately from downstream cascade blockers', () => {
     render(
       <PMWorkspace
         tasks={[]}
         pmState={{}}
         pmRunning={false}
-        pmStartBlockedReason="PM LLM blocked"
+        pmStartBlockedReason="PM manual blocker"
         runtimeIssue={{
           code: 'PM_ITERATION_FAILED',
           title: 'Polaris 引擎执行失败',
@@ -699,7 +959,97 @@ describe('PMWorkspace history panel', () => {
     expect(cascade).toHaveTextContent('Chief Engineer');
     expect(cascade).toHaveTextContent('Director dispatch skipped because PM iteration failed');
     expect(cascade).toHaveTextContent('QA blocked because PM iteration failed');
-    expect(screen.getByTestId('pm-runtime-start-blocker')).toHaveTextContent('当前启动门禁: PM LLM blocked');
+    expect(screen.getByTestId('pm-runtime-start-blocker')).toHaveTextContent('当前启动门禁: PM manual blocker');
+    expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveAttribute('data-blocked-reason', 'PM manual blocker');
+  });
+
+  it('does not turn a historical PM runtime failure into a current PM dialogue blocker', () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        runtimeIssue={{
+          code: 'PM_ITERATION_FAILED',
+          title: 'Polaris 引擎执行失败',
+          detail: 'PM: previous task contract validation failed',
+        }}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    expect(screen.getByTestId('pm-runtime-terminal-banner')).toHaveTextContent('上次 PM Run 失败');
+    expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveAttribute('data-blocked-reason', '');
+  });
+
+  it('suppresses stale PM runtime failure banners while run_once status evidence is running', async () => {
+    const onRunPmOnce = vi.fn().mockResolvedValue(true);
+
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        runtimeIssue={{
+          code: 'PM_ITERATION_FAILED',
+          title: 'Polaris 引擎执行失败',
+          detail: 'PM: previous downstream workflow failed',
+        }}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={onRunPmOnce}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    expect(screen.getByTestId('pm-runtime-terminal-banner')).toHaveTextContent('上次 PM Run 失败');
+
+    fireEvent.click(screen.getByTestId('pm-workspace-run-once'));
+
+    await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
+    const evidence = await screen.findByTestId('pm-run-once-status-evidence');
+    expect(evidence).toHaveTextContent('running');
+    await waitFor(() => expect(screen.queryByTestId('pm-runtime-terminal-banner')).not.toBeInTheDocument());
+    expect(screen.getByTestId('pm-workspace-run-once')).toBeDisabled();
+    expect(screen.getByTestId('pm-workspace-run-once')).toHaveAttribute(
+      'title',
+      'PM 正在运行，不能同时触发单次督办。',
+    );
+    expect(screen.getByTestId('pm-workspace-toggle')).toHaveAttribute(
+      'title',
+      'PM 后端已在运行，等待主状态同步后再操作。',
+    );
+  });
+
+  it('suppresses stale PM runtime errors after the latest terminal status succeeds', () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        pmTerminalStatus={{
+          status: 'success',
+          terminal: true,
+          ok: true,
+          exit_code: 0,
+          error: '',
+        }}
+        runtimeIssue={{
+          code: 'PM_ITERATION_FAILED',
+          title: 'Polaris 引擎执行失败',
+          detail: 'PM: previous task contract validation failed',
+        }}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    expect(screen.queryByTestId('pm-runtime-terminal-banner')).not.toBeInTheDocument();
   });
 
   it('uses missing docs diagnostics to disable PM workspace start controls', async () => {

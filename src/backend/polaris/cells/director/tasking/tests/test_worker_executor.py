@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -283,6 +283,22 @@ class TestHelperMethods:
         assert "a.py" in result
         assert "b.py" in result
 
+    def test_normalize_target_files_filters_directory_scopes(self) -> None:
+        """Directory-like target hints must not be handed to file apply as files."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {"target_files": ["src/renderer", "src/shared/generationSpec.ts", "package.json"]}
+        task.description = ""
+
+        result = executor._normalize_target_files(task)
+
+        task_scope = MagicMock()
+        task_scope.metadata = {"scope_paths": ["src/renderer"]}
+        assert result == ["src/shared/generationSpec.ts", "package.json"]
+        assert executor._normalize_scope_paths(task_scope) == ["src/renderer"]
+
     def test_normalize_target_files_deduplication(self) -> None:
         """Test _normalize_target_files deduplicates."""
         from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
@@ -310,6 +326,256 @@ class TestHelperMethods:
         assert "src/main.py" in result
         assert "tests/test_main.py" in result
 
+    def test_normalize_target_files_from_labeled_description_line(self) -> None:
+        """Target fallback accepts an explicit labeled path line."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {}
+        task.description = "目标文件: src/api/v1/tasks.ts\npath: tests/tasks.test.ts"
+
+        result = executor._normalize_target_files(task)
+
+        assert result == ["src/api/v1/tasks.ts", "tests/tasks.test.ts"]
+
+    def test_normalize_target_files_ignores_acceptance_prose(self) -> None:
+        """Acceptance prose must not be mistaken for Director target files."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {"target_files": []}
+        task.description = (
+            "Acceptance: ['核心 API（POST /v1/tasks、PATCH /v1/tasks/{id}/status）"
+            "在缺失 tenant_id 时返回400，并写入 security_audit_events.ndjson。']"
+        )
+
+        assert executor._normalize_target_files(task) == []
+
+    def test_normalize_target_files_infers_from_scope_paths(self, tmp_path) -> None:
+        """Scope-only PM tasks are narrowed to concrete workspace files."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+        middleware = tmp_path / "src" / "middleware"
+        middleware.mkdir(parents=True)
+        (middleware / "auth.ts").write_text("export const auth = true;\n", encoding="utf-8")
+        tests = tmp_path / "tests" / "integration"
+        tests.mkdir(parents=True)
+        (tests / "api.test.ts").write_text("test('api', () => {});\n", encoding="utf-8")
+
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        task = MagicMock()
+        task.subject = "RBAC中间件与tenant_id强制注入校验"
+        task.description = "实现 tenant_id route RBAC permission checks"
+        task.metadata = {
+            "target_files": [],
+            "scope_paths": [
+                "src/middleware",
+                "src/auth",
+                "src/api",
+                "tests/integration",
+                "tests/integration/permissions",
+            ],
+        }
+
+        result = executor._normalize_target_files(task)
+
+        assert result == [
+            "src/middleware/auth.ts",
+            "src/auth/rbac-tenant-id-route.ts",
+            "src/api/rbac-tenant-id-route.ts",
+        ]
+
+    def test_normalize_target_files_keeps_test_scopes_when_no_source_scope(self, tmp_path) -> None:
+        """Test-only scope tasks can still infer test targets."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        task = MagicMock()
+        task.subject = "Tenant isolation"
+        task.description = ""
+        task.metadata = {"target_files": [], "scope_paths": ["tests/integration"]}
+
+        assert executor._normalize_target_files(task) == ["tests/integration/tenant-isolation.test.ts"]
+
+    def test_code_generation_rounds_chunk_target_files_by_default(self, monkeypatch) -> None:
+        """Default codegen splits larger target-file sets into manageable rounds."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        monkeypatch.delenv("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK", raising=False)
+        monkeypatch.delenv("KERNELONE_CE_ROUND_FILE_CHUNK", raising=False)
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {"target_files": ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts"]}
+        task.description = ""
+
+        rounds = executor._build_code_generation_rounds(task)
+
+        assert [[item["path"] for item in round_plan] for round_plan in rounds] == [
+            ["a.ts", "b.ts"],
+            ["c.ts", "d.ts"],
+            ["e.ts", "f.ts"],
+            ["g.ts"],
+        ]
+
+    def test_code_generation_rounds_chunk_target_files_when_configured(self, monkeypatch) -> None:
+        """Large target-file sets can still be split through an explicit env var."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        monkeypatch.setenv("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK", "3")
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {"target_files": ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts"]}
+        task.description = ""
+
+        rounds = executor._build_code_generation_rounds(task)
+
+        assert [[item["path"] for item in round_plan] for round_plan in rounds] == [
+            ["a.ts", "b.ts", "c.ts"],
+            ["d.ts", "e.ts", "f.ts"],
+            ["g.ts"],
+        ]
+
+    def test_code_generation_rounds_allow_chunk_opt_out(self, monkeypatch) -> None:
+        """A zero chunk env keeps the legacy single-round behavior available."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        monkeypatch.setenv("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK", "0")
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {"target_files": ["a.ts", "b.ts", "c.ts", "d.ts"]}
+        task.description = ""
+
+        rounds = executor._build_code_generation_rounds(task)
+
+        assert len(rounds) == 1
+        assert [item["path"] for item in rounds[0]] == ["a.ts", "b.ts", "c.ts", "d.ts"]
+
+    def test_code_generation_rounds_chunk_test_targets_by_default(self, monkeypatch) -> None:
+        """Test/spec targets keep the default chunking so full chains can converge."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        monkeypatch.delenv("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK", raising=False)
+        monkeypatch.delenv("KERNELONE_CE_ROUND_FILE_CHUNK", raising=False)
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {
+            "target_files": [
+                "src/middleware/tenantContext.ts",
+                "src/api/v1/tasks.ts",
+                "src/modules/task/repository.ts",
+                "tests/e2e/tenant_isolation.spec.ts",
+            ]
+        }
+        task.description = ""
+
+        rounds = executor._build_code_generation_rounds(task)
+
+        assert [[item["path"] for item in round_plan] for round_plan in rounds] == [
+            ["src/middleware/tenantContext.ts", "src/api/v1/tasks.ts"],
+            ["src/modules/task/repository.ts", "tests/e2e/tenant_isolation.spec.ts"],
+        ]
+
+    def test_code_generation_rounds_keep_explicit_chunk_for_test_targets(self, monkeypatch) -> None:
+        """Explicit chunk configuration still controls test/spec targets."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        monkeypatch.setenv("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK", "2")
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {
+            "target_files": [
+                "src/a.ts",
+                "tests/e2e/a.spec.ts",
+                "src/b.ts",
+            ]
+        }
+        task.description = ""
+
+        rounds = executor._build_code_generation_rounds(task)
+
+        assert [[item["path"] for item in round_plan] for round_plan in rounds] == [
+            ["src/a.ts", "tests/e2e/a.spec.ts"],
+            ["src/b.ts"],
+        ]
+
+    def test_code_generation_rounds_infer_concrete_files_for_scope_only_task(self, tmp_path) -> None:
+        """Scope-only module tasks get concrete targets instead of a model-decided prompt."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        task = MagicMock()
+        task.subject = "Implement renderer state"
+        task.metadata = {"target_files": ["src/renderer"], "scope_paths": ["src/renderer"]}
+        task.description = ""
+
+        rounds = executor._build_code_generation_rounds(task)
+        prompt = executor._build_code_generation_prompt(task, round_files=rounds[0])
+
+        assert rounds == [[{"path": "src/renderer/implement-renderer-state.ts"}]]
+        assert "- (model may decide)" not in prompt
+        assert "Concrete target files are declared" in prompt
+        assert "src/renderer" in prompt
+        assert "Do not output `Command:`" in prompt
+
+    def test_round_files_changed_since_detects_prior_runtime_output(self, tmp_path) -> None:
+        """Later rounds can be skipped when an earlier runtime call already wrote them."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        paths = ["src/a.ts", "src/b.ts"]
+        initial = executor._snapshot_workspace_files(paths)
+
+        for relative_path in paths:
+            target = tmp_path / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("export const value = 1;\n", encoding="utf-8")
+
+        assert executor._round_files_changed_since(paths, initial) is True
+        assert executor._collect_existing_file_records(paths) == [
+            {"path": "src/a.ts", "content": ""},
+            {"path": "src/b.ts", "content": ""},
+        ]
+
+    def test_round_files_changed_since_does_not_count_unchanged_existing_files(self, tmp_path) -> None:
+        """Existing files only satisfy a round if they changed after the task started."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        target = tmp_path / "src" / "existing.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("export const value = 1;\n", encoding="utf-8")
+
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        paths = ["src/existing.ts"]
+        initial = executor._snapshot_workspace_files(paths)
+
+        assert executor._round_files_changed_since(paths, initial) is False
+
+    def test_codegen_round_marker_satisfied(self, tmp_path) -> None:
+        """Persisted round markers allow process-level retries to resume."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        target = tmp_path / "src" / "a.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("export const value = 1;\n", encoding="utf-8")
+
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        task = MagicMock()
+        task.id = "T01-002"
+        task.subject = "Task state"
+
+        executor._write_code_generation_round_marker(task, 1, ["src/a.ts"])
+
+        assert executor._code_generation_round_marker_satisfied(task, 1, ["src/a.ts"]) is True
+
+        target.write_text("export const value = 2;\n", encoding="utf-8")
+
+        assert executor._code_generation_round_marker_satisfied(task, 1, ["src/a.ts"]) is False
+
     def test_compact_prompt_fragment_short_text(self) -> None:
         """Test _compact_prompt_fragment with short text."""
         from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
@@ -332,6 +598,196 @@ class TestHelperMethods:
 
 class TestExecutionMethods:
     """Tests for execution methods."""
+
+    @pytest.mark.asyncio
+    async def test_code_generation_uses_per_call_timeout_not_task_budget(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A long task budget must not become a long single LLM call."""
+        from polaris.cells.director.tasking.internal.worker_executor import (
+            _DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS,
+            WorkerExecutor,
+        )
+
+        monkeypatch.delenv("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS", raising=False)
+        monkeypatch.delenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", raising=False)
+        monkeypatch.delenv("KERNELONE_WORKER_LLM_TIMEOUT", raising=False)
+
+        class FakeCodeEngine:
+            default_timeout: int | None = None
+            invoked_timeout: int | None = None
+
+            def resolve_llm_timeout(self, default_timeout: int) -> int:
+                self.default_timeout = default_timeout
+                return default_timeout
+
+            def resolve_task_timeout_budget(self, task: Any, *, rounds: int) -> int:
+                _ = (task, rounds)
+                return 60
+
+            def remaining_timeout(self, deadline_ts: float) -> int:
+                _ = deadline_ts
+                return 30
+
+            async def invoke_generation_with_retries(self, **kwargs: Any) -> tuple[list[dict[str, str]], list[str]]:
+                self.invoked_timeout = int(kwargs["per_call_timeout"])
+                return ([{"path": "src/app.ts", "content": ""}], [])
+
+        executor = WorkerExecutor(workspace="/tmp")
+        fake_engine = FakeCodeEngine()
+        executor._code_engine = fake_engine
+        task = MagicMock()
+        task.id = "T-timeout"
+        task.subject = "Implement app"
+        task.description = "Build the application"
+        task.timeout_seconds = 3600
+        task.metadata = {"target_files": ["src/app.ts"]}
+
+        result = await executor._execute_code_generation(task)
+
+        assert result.success is True
+        assert fake_engine.default_timeout == _DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS
+        assert fake_engine.invoked_timeout == _DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_code_generation_stops_after_empty_timeout_round(self) -> None:
+        """A timed-out round should fail fast instead of wasting budget on later rounds."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        class FakeCodeEngine:
+            calls = 0
+
+            def resolve_llm_timeout(self, default_timeout: int) -> int:
+                return default_timeout
+
+            def resolve_task_timeout_budget(self, task: Any, *, rounds: int) -> int:
+                _ = (task, rounds)
+                return 900
+
+            def remaining_timeout(self, deadline_ts: float) -> int:
+                _ = deadline_ts
+                return 300
+
+            async def invoke_generation_with_retries(self, **kwargs: Any) -> tuple[list[dict[str, str]], list[str]]:
+                _ = kwargs
+                self.calls += 1
+                return ([], ["director_runtime_codegen_timeout:300s"])
+
+        executor = WorkerExecutor(workspace="/tmp")
+        fake_engine = FakeCodeEngine()
+        executor._code_engine = fake_engine
+        task = MagicMock()
+        task.id = "T-timeout"
+        task.subject = "Implement two files"
+        task.description = ""
+        task.timeout_seconds = 900
+        task.metadata = {"target_files": ["src/a.ts", "src/b.ts"]}
+
+        result = await executor._execute_code_generation(task)
+
+        assert result.success is False
+        assert fake_engine.calls == 1
+        assert result.error == "director_runtime_codegen_timeout:300s"
+
+    @pytest.mark.asyncio
+    async def test_code_generation_skips_persisted_round_marker(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        """Retries should skip completed rounds and generate only missing rounds."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        monkeypatch.setenv("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK", "1")
+        first_target = tmp_path / "src" / "a.ts"
+        first_target.parent.mkdir(parents=True, exist_ok=True)
+        first_target.write_text("export const a = 1;\n", encoding="utf-8")
+
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        task = MagicMock()
+        task.id = "T-resume"
+        task.subject = "Implement resumable rounds"
+        task.description = ""
+        task.timeout_seconds = 900
+        task.metadata = {"target_files": ["src/a.ts", "src/b.ts"]}
+        executor._write_code_generation_round_marker(task, 1, ["src/a.ts"])
+
+        class FakeCodeEngine:
+            calls: list[list[str]] = []
+
+            def resolve_llm_timeout(self, default_timeout: int) -> int:
+                return default_timeout
+
+            def resolve_task_timeout_budget(self, task: Any, *, rounds: int) -> int:
+                _ = (task, rounds)
+                return 900
+
+            def remaining_timeout(self, deadline_ts: float) -> int:
+                _ = deadline_ts
+                return 300
+
+            async def invoke_generation_with_retries(self, **kwargs: Any) -> tuple[list[dict[str, str]], list[str]]:
+                round_files = list(kwargs["round_files"])
+                self.calls.append(round_files)
+                for relative_path in round_files:
+                    target = tmp_path / relative_path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(f"export const generated = '{relative_path}';\n", encoding="utf-8")
+                return ([{"path": path, "content": ""} for path in round_files], [])
+
+        fake_engine = FakeCodeEngine()
+        executor._code_engine = fake_engine
+
+        result = await executor._execute_code_generation(task)
+
+        assert result.success is True
+        assert fake_engine.calls == [["src/b.ts"]]
+        assert [item["path"] for item in result.files_created] == ["src/a.ts", "src/b.ts"]
+
+    def test_resolve_llm_call_timeout_hint_from_metadata(self) -> None:
+        """Contracts may explicitly override per-call LLM timeout."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {"llm_call_timeout_seconds": "240"}
+
+        assert executor._resolve_llm_call_timeout_hint(task) == 240
+
+    def test_resolve_llm_call_timeout_hint_from_director_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Director runtime env may override the platform default."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS", "720")
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {}
+
+        assert executor._resolve_llm_call_timeout_hint(task) == 720
+
+    def test_resolve_llm_call_timeout_hint_uses_runtime_codegen_default(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Runtime codegen gets a larger default for slower provider-backed calls."""
+        from polaris.cells.director.tasking.internal.worker_executor import (
+            _DEFAULT_DIRECTOR_RUNTIME_LLM_CALL_TIMEOUT_SECONDS,
+            WorkerExecutor,
+        )
+
+        monkeypatch.delenv("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS", raising=False)
+        monkeypatch.delenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", raising=False)
+        monkeypatch.delenv("KERNELONE_WORKER_LLM_TIMEOUT", raising=False)
+        monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
+        executor = WorkerExecutor(workspace="/tmp")
+        task = MagicMock()
+        task.metadata = {}
+
+        assert executor._resolve_llm_call_timeout_hint(task) == _DEFAULT_DIRECTOR_RUNTIME_LLM_CALL_TIMEOUT_SECONDS
 
     @pytest.mark.asyncio
     async def test_execute_file_creation(self) -> None:

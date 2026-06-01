@@ -698,14 +698,16 @@ def _join_under(root: str, rel_path: str) -> str:
 
 def resolve_global_path(rel_path: str) -> str:
     normalized = normalize_logical_rel_path(rel_path)
-    roots = resolve_storage_roots("")
     if normalized == "config":
         suffix = ""
     elif normalized.startswith("config/"):
         suffix = normalized[len("config/") :]
     else:
         raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {rel_path}")
-    root = roots.config_root
+    # Global config is rooted at ~/.polaris/config and must not depend on a
+    # workspace runtime base. Status and settings endpoints may call this before
+    # runtime storage is available.
+    root = os.path.join(kernelone_home(), "config")
     return _join_under(root, suffix)
 
 

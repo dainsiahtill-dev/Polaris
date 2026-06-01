@@ -17,6 +17,7 @@ from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
 from polaris.cells.orchestration.pm_planning.public.pipeline import (  # noqa: E402
     _should_promote_pm_quality_candidate as should_promote_pm_quality_candidate,
 )
+from polaris.delivery.cli.pm.tasks import normalize_tasks  # noqa: E402
 
 
 def test_evaluate_pm_task_quality_rejects_prompt_leakage() -> None:
@@ -141,6 +142,29 @@ def test_evaluate_pm_task_quality_rejects_natural_language_scope_paths() -> None
     assert "concrete relative scope paths" in issues
 
 
+def test_normalize_tasks_moves_directory_targets_to_scope_paths() -> None:
+    tasks = normalize_tasks(
+        [
+            {
+                "id": "T01",
+                "title": "Build FashionGen shell",
+                "goal": "create renderer and backend scaffolding",
+                "target_files": [
+                    "src/renderer",
+                    "src/shared/generationSpec.ts",
+                    "package.json",
+                ],
+                "acceptance_criteria": ["npm test passes"],
+            }
+        ],
+        iteration=1,
+    )
+
+    task = tasks[0]
+    assert task["target_files"] == ["src/shared/generationSpec.ts", "package.json"]
+    assert task["scope_paths"] == ["src/renderer"]
+
+
 def test_evaluate_pm_task_quality_accepts_specific_actionable_tasks() -> None:
     payload = {
         "tasks": [
@@ -186,6 +210,63 @@ def test_evaluate_pm_task_quality_accepts_specific_actionable_tasks() -> None:
     report = evaluate_pm_task_quality(payload, docs_stage={})
     assert report["ok"] is True
     assert (report.get("score") or 0) >= 70
+
+
+def test_evaluate_pm_task_quality_accepts_chinese_actionable_checklists() -> None:
+    payload = {
+        "tasks": [
+            {
+                "id": "PM-ZH-1",
+                "title": "运行时面板偏好持久化闭环",
+                "goal": "把折叠状态与视图密度纳入 runtime manifest，并保证冷启动回读一致。",
+                "assigned_to": "Director",
+                "scope_paths": ["src/store", "src/main", "src/shared"],
+                "target_files": [
+                    "src/store/useStudioStore.ts",
+                    "src/main/runtimeStore.ts",
+                    "src/shared/runtimePreferences.ts",
+                ],
+                "phase": "implementation",
+                "execution_checklist": [
+                    "定义最小字段契约与非法值清洗规则。",
+                    "接入 store 更新动作并保持状态隔离。",
+                    "补齐冷启动回读测试。",
+                ],
+                "acceptance_criteria": [
+                    "执行 `npm test -- src/store/useStudioStore.test.ts src/main/runtimeStore.test.ts` 通过。",
+                    "证据文档 `.polaris/evidence/runtime-preferences.md` 记录字段契约与回读结果。",
+                ],
+                "backlog_ref": "面板级偏好需要进入 runtime manifest。",
+            },
+            {
+                "id": "PM-ZH-2",
+                "title": "批量预检失败阻断与 API 边界统一",
+                "goal": "统一批量行与 API 入口的预检边界，失败时不创建无效 job。",
+                "assigned_to": "Director",
+                "scope_paths": ["services/api", "src/main", "tests"],
+                "target_files": [
+                    "services/api/jobs.py",
+                    "src/main/jobClient.ts",
+                    "tests/test_job_preflight.py",
+                ],
+                "phase": "verification",
+                "depends_on": ["PM-ZH-1"],
+                "execution_checklist": [
+                    "抽取统一预检校验器。",
+                    "接入批量提交与 API 提交入口。",
+                    "补充失败路径测试与证据记录。",
+                ],
+                "acceptance_criteria": [
+                    "执行 `pytest tests/test_job_preflight.py -v` 通过。",
+                    "失败响应必须包含 422 status 与 error code。",
+                ],
+                "backlog_ref": "预检失败不能生成无效 jobId。",
+            },
+        ]
+    }
+    report = evaluate_pm_task_quality(payload, docs_stage={})
+    assert report["ok"] is True
+    assert (report.get("score") or 0) >= 80
 
 
 def test_evaluate_pm_task_quality_rejects_missing_detail_chain() -> None:

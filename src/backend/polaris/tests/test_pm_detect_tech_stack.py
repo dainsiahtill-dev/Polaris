@@ -32,3 +32,19 @@ def test_detect_tech_stack_typescript_react_when_explicit() -> None:
     detected = detect_tech_stack(requirements, "")
     assert detected.get("language") == "typescript"
     assert detected.get("framework") == "react"
+
+
+def test_detect_tech_stack_fashion_desktop_workbench_prefers_typescript() -> None:
+    requirements = """
+    Build FashionGen Studio as a desktop creative production tool.
+    Use TypeScript, React, Electron, and TailwindCSS for the frontend.
+    Use a Python orchestration backend for image generation providers.
+    The core UI is a model generation workbench, face lab, scene workbench,
+    and batch production workspace.
+    """
+    detected = detect_tech_stack(requirements, "")
+
+    assert detected.get("language") == "typescript"
+    assert detected.get("framework") == "react"
+    assert detected.get("project_type") == "desktop"
+    assert "python" in detected.get("alternative_languages", [])

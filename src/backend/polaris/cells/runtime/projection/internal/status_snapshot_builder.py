@@ -201,6 +201,9 @@ def _build_engine_status(
     pm_running = bool((pm_status or {}).get("running"))
     director_running = bool((director_status or {}).get("running"))
     updated_epoch = _parse_engine_updated_at(payload.get("updated_at"))
+    error_code = str(payload.get("error") or "").strip().upper()
+    recovery_code = str(payload.get("recovery_code") or "").strip().upper()
+    orphaned_recovered = error_code == "ENGINE_ORPHANED" or recovery_code == "ENGINE_ORPHANED"
     stale_running = (
         running
         and phase in {"planning", "dispatching", "running", "in_progress"}
@@ -208,11 +211,14 @@ def _build_engine_status(
         and not director_running
         and (updated_epoch is None or (time.time() - float(updated_epoch)) > 15)
     )
-    if stale_running:
+    if stale_running or orphaned_recovered:
         payload = dict(payload)
+        payload["stale"] = True if stale_running else bool(payload.get("stale"))
+        payload["orphaned"] = True
         payload["running"] = False
-        payload["phase"] = "failed"
-        payload["error"] = str(payload.get("error") or "ENGINE_ORPHANED").strip()
+        payload["phase"] = "idle"
+        payload["error"] = ""
+        payload["recovery_code"] = "ENGINE_ORPHANED"
         roles = payload.get("roles")
         if isinstance(roles, dict):
             for role_payload in roles.values():
@@ -220,11 +226,9 @@ def _build_engine_status(
                     continue
                 role_payload["running"] = False
                 role_status = str(role_payload.get("status") or "").strip().lower()
-                if role_status in {"running", "pending", "planning", "dispatching"}:
-                    role_payload["status"] = "blocked"
-                role_payload["detail"] = str(
-                    role_payload.get("detail") or "Recovered from orphaned engine state"
-                ).strip()
+                if role_status in {"running", "pending", "planning", "dispatching", "blocked", "failed"}:
+                    role_payload["status"] = "idle"
+                role_payload["detail"] = str(role_payload.get("detail") or "Recovered stale engine state").strip()
     payload.setdefault("path", path)
     return payload
 
@@ -250,7 +254,7 @@ def _build_anthro_state(state: AppState) -> dict[str, Any] | None:
             "total_memories": total_memories,
             "total_reflections": total_reflections,
         }
-    except (RuntimeError, ValueError) as exc:
+    except (AttributeError, ImportError, RuntimeError, ValueError) as exc:
         logger.debug("_build_anthro_state: optional module unavailable: %s", exc)
         return None
 

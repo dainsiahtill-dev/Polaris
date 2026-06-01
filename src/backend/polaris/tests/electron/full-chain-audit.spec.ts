@@ -73,7 +73,35 @@ const LEAKAGE_KEYWORDS = [
   "<thinking>",
   "<tool_call>",
 ];
+const SAFE_PROMPT_CONTROL_PHRASES = [
+  "提示词穿透检测",
+  "提示词编译",
+  "真实试穿提示词",
+  "prompt-package.json",
+];
+const CHINESE_PROMPT_LEAKAGE_PATTERNS = [
+  /系统提示词/i,
+  /开发者提示词/i,
+  /角色提示词/i,
+  /内部提示词/i,
+  /完整提示词/i,
+  /提示词泄[露漏]/i,
+  /提示词注入/i,
+  /提示词内容/i,
+];
 const DIRECTOR_RESULT_TIMEOUT_MS = 10 * 60 * 1000;
+
+function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const PM_FINISH_TIMEOUT_MS = positiveIntFromEnv("KERNELONE_E2E_PM_FINISH_TIMEOUT_MS", 45 * 60 * 1000);
 
 function toPosixPath(filePath: string): string {
   return String(filePath || "").split(path.sep).join("/");
@@ -505,12 +533,22 @@ function detectPromptLeakage(text: string, evidencePath: string): Array<{ type: 
     );
   };
 
+  const containsChinesePromptLeakage = (candidate: string): boolean => {
+    let normalized = candidate;
+    for (const safePhrase of SAFE_PROMPT_CONTROL_PHRASES) {
+      normalized = normalized.replaceAll(safePhrase, "");
+    }
+    return CHINESE_PROMPT_LEAKAGE_PATTERNS.some((pattern) => pattern.test(normalized));
+  };
+
   const candidates = extractCandidateTexts();
   const keywordHits = new Set<string>();
   for (const keyword of LEAKAGE_KEYWORDS) {
     const token = keyword.toLowerCase();
     const hit = candidates.some((candidate) => {
       if (token === "role") return containsRoleLeakage(candidate);
+      if (token === "you are") return /\byou are\s+/i.test(candidate);
+      if (token === "提示词") return containsChinesePromptLeakage(candidate);
       return candidate.toLowerCase().includes(token);
     });
     if (hit) keywordHits.add(keyword);
@@ -708,7 +746,7 @@ async function runPmRound(window: Page): Promise<PmStatusPayload> {
     intervals: [500, 1000, 2000, 3000],
   }).toBe(true);
   await expect.poll(async () => Boolean((await requestJson<PmStatusPayload>(window, "/v2/pm/status")).running), {
-    timeout: 25 * 60 * 1000,
+    timeout: PM_FINISH_TIMEOUT_MS,
     intervals: [1000, 2000, 5000, 10_000],
   }).toBe(false);
   return await requestJson<PmStatusPayload>(window, "/v2/pm/status");

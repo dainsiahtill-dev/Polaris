@@ -125,6 +125,7 @@ _PM_TASK_QUALITY_MODES = {"off", "warn", "strict"}
 _PM_TASK_QUALITY_DEFAULT_MODE = "strict"
 _ORCHESTRATION_RUNTIME_OPTIONS = set(SUPPORTED_ORCHESTRATION_RUNTIMES)
 _ORCHESTRATION_RUNTIME_DEFAULT = "workflow"
+_DIRECTOR_WORKFLOW_TIMEOUT_MARGIN_SECONDS = 300
 _FALLBACK_WORKSPACE_FILE_EXTENSIONS = {
     ".py",
     ".ts",
@@ -137,6 +138,64 @@ _FALLBACK_WORKSPACE_FILE_EXTENSIONS = {
     ".yml",
     ".md",
 }
+
+
+def _positive_timeout_int(value: Any, default: int) -> int:
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return max(1, int(default))
+
+
+def _director_workflow_timeout_floor_seconds(
+    director_config: dict[str, Any],
+    *,
+    task_count: int,
+) -> float:
+    """Return a PM workflow wait floor large enough for Director fan-out.
+
+    ``--director-result-timeout`` is a UI/process wait budget, not a safe upper
+    bound for the workflow handler itself. Real Codex-backed Director tasks can
+    exceed a small UI timeout when PM emits dependent tasks, so the runtime
+    budget must scale from the actual contract and Director phase limits.
+    """
+    normalized_task_count = max(1, int(task_count or 0))
+    mode = str(director_config.get("execution_mode") or "parallel").strip().lower()
+    if mode in {"serial", "sequential"}:
+        parallel_limit = 1
+    else:
+        parallel_limit = _positive_timeout_int(director_config.get("max_parallel_tasks"), 3)
+
+    dependency_depth = normalized_task_count
+    estimated_batches = max(1, (normalized_task_count + parallel_limit - 1) // parallel_limit)
+    batch_count = max(estimated_batches, dependency_depth if normalized_task_count > 1 else 1)
+
+    ready_seconds = _positive_timeout_int(director_config.get("ready_timeout_seconds"), 30)
+    claim_seconds = _positive_timeout_int(director_config.get("claim_timeout_seconds"), 30)
+    phase_seconds = _positive_timeout_int(director_config.get("phase_timeout_seconds"), 900)
+    complete_seconds = _positive_timeout_int(director_config.get("complete_timeout_seconds"), 30)
+    task_seconds = _positive_timeout_int(director_config.get("task_timeout_seconds"), MAX_WORKFLOW_TIMEOUT_SECONDS)
+    per_task_budget = min(
+        task_seconds,
+        claim_seconds + (5 * phase_seconds) + complete_seconds,
+    )
+
+    computed = ready_seconds + (batch_count * per_task_budget) + _DIRECTOR_WORKFLOW_TIMEOUT_MARGIN_SECONDS
+    return float(min(MAX_WORKFLOW_TIMEOUT_SECONDS, computed))
+
+
+def _pm_workflow_wait_timeout_seconds(
+    requested_timeout_seconds: float | None,
+    director_config: dict[str, Any],
+    *,
+    task_count: int,
+) -> float | None:
+    if requested_timeout_seconds is None:
+        return None
+    return max(
+        float(requested_timeout_seconds),
+        _director_workflow_timeout_floor_seconds(director_config, task_count=task_count),
+    )
 
 
 def _repo_root_from_module() -> str:
@@ -256,11 +315,17 @@ def _apply_requirements_fallback_for_empty_tasks(
 
     if original_notes:
         fallback_notes = str(fallback_payload.get("notes") or "").strip()
+        recovery_label = "Recovered PM parse context"
+        if (
+            "invoke failed" in str(original_notes).lower()
+            or "provider invocation failed" in str(original_notes).lower()
+        ):
+            recovery_label = "Original PM provider failure context"
         fallback_payload["notes"] = "; ".join(
             part
             for part in (
                 fallback_notes,
-                f"Original PM failure/context: {original_notes}",
+                f"{recovery_label}: {original_notes}",
             )
             if part
         )
@@ -1291,6 +1356,16 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
         + (f"Blocked policy: {blocked_policy_result.decision.value if blocked_policy_result else 'N/A'}\n"),
     )
 
+    qa_reason_final = (
+        str(integration_qa_result.get("reason") or "").strip() if isinstance(integration_qa_result, dict) else ""
+    )
+    qa_failed_after_director_success = bool(
+        isinstance(integration_qa_result, dict)
+        and (integration_qa_result.get("passed") is False or qa_reason_final in {"integration_qa_failed", "qa_failed"})
+        and isinstance(director_result, dict)
+        and str(director_result.get("status") or "").strip().lower() == "success"
+    )
+
     # Update final engine status
     if exit_code == 0:
         engine.update_role_status(
@@ -1300,6 +1375,20 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
             detail="PM iteration completed",
         )
         engine.set_phase("completed", running=False)
+    elif qa_failed_after_director_success:
+        engine.update_role_status(
+            "PM",
+            status="completed",
+            running=False,
+            detail="PM contract persisted; downstream QA failed",
+        )
+        engine.update_role_status(
+            "QA",
+            status="failed",
+            running=False,
+            detail=qa_reason_final or "Integration QA failed",
+        )
+        engine.set_phase("failed", running=False, error=qa_reason_final or "INTEGRATION_QA_FAILED")
     else:
         pm_failure_detail = _build_pm_failure_detail(
             pm_state=pm_state,
@@ -1541,6 +1630,40 @@ def _run_dispatch_pipeline_with_workflow(
         except (RuntimeError, TypeError, ValueError):
             return int(default)
 
+    def _canonicalize_terminal_nested_statuses(
+        value: Any,
+        *,
+        final_workflow_status: str,
+        final_director_status: str,
+        final_qa_status: str,
+    ) -> Any:
+        if isinstance(value, dict):
+            result: dict[str, Any] = {}
+            for key, item in value.items():
+                if final_workflow_status == "completed" and key == "director_status":
+                    result[key] = final_director_status
+                elif final_workflow_status == "completed" and key == "qa_status":
+                    result[key] = final_qa_status
+                else:
+                    result[key] = _canonicalize_terminal_nested_statuses(
+                        item,
+                        final_workflow_status=final_workflow_status,
+                        final_director_status=final_director_status,
+                        final_qa_status=final_qa_status,
+                    )
+            return result
+        if isinstance(value, list):
+            return [
+                _canonicalize_terminal_nested_statuses(
+                    item,
+                    final_workflow_status=final_workflow_status,
+                    final_director_status=final_director_status,
+                    final_qa_status=final_qa_status,
+                )
+                for item in value
+            ]
+        return value
+
     def _workflow_result_director_status(payload: dict[str, Any]) -> str:
         token = str(payload.get("director_status") or payload.get("status") or "").strip().lower()
         if token in {"completed", "success", "succeeded", "passed"}:
@@ -1665,6 +1788,60 @@ def _run_dispatch_pipeline_with_workflow(
 
     config = WorkflowConfig.from_env(force_enable=True)
     workflow_run_id = f"{run_id}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    director_config = {
+        "type": str(getattr(args, "director_type", os.environ.get("KERNELONE_DIRECTOR_TYPE", "auto")) or "auto")
+        .strip()
+        .lower(),
+        "script": _canonical_director_script_path(
+            getattr(
+                args,
+                "director_path",
+                "",
+            )
+        ),
+        "timeout": int(
+            normalize_timeout_seconds(
+                getattr(args, "director_timeout", None),
+                default=3600,
+            )
+            or 3600
+        ),
+        "model": str(getattr(args, "director_model", "") or "").strip(),
+        "prompt_profile": str(getattr(args, "prompt_profile", "") or "").strip(),
+        "execution_mode": (
+            "serial"
+            if str(getattr(args, "director_workflow_execution_mode", "parallel") or "parallel").strip().lower()
+            == "serial"
+            else "parallel"
+        ),
+        "max_parallel_tasks": max(
+            1,
+            int(getattr(args, "director_max_parallel_tasks", 3) or 3),
+        ),
+        "ready_timeout_seconds": max(
+            1,
+            int(getattr(args, "director_ready_timeout_seconds", 30) or 30),
+        ),
+        "claim_timeout_seconds": max(
+            1,
+            int(getattr(args, "director_claim_timeout_seconds", 30) or 30),
+        ),
+        "phase_timeout_seconds": max(
+            1,
+            int(getattr(args, "director_phase_timeout_seconds", 900) or 900),
+        ),
+        "complete_timeout_seconds": max(
+            1,
+            int(getattr(args, "director_complete_timeout_seconds", 30) or 30),
+        ),
+        "task_timeout_seconds": max(
+            1,
+            int(
+                getattr(args, "director_task_timeout_seconds", MAX_WORKFLOW_TIMEOUT_SECONDS)
+                or MAX_WORKFLOW_TIMEOUT_SECONDS
+            ),
+        ),
+    }
 
     workflow_input = PMWorkflowInput(
         workspace=workspace_full,
@@ -1676,60 +1853,7 @@ def _run_dispatch_pipeline_with_workflow(
             "cache_root_full": cache_root_full,
             "pm_iteration": int(iteration or 0),
             "docs_stage": docs_stage if isinstance(docs_stage, dict) else {},
-            "director_config": {
-                "type": str(getattr(args, "director_type", os.environ.get("KERNELONE_DIRECTOR_TYPE", "auto")) or "auto")
-                .strip()
-                .lower(),
-                "script": _canonical_director_script_path(
-                    getattr(
-                        args,
-                        "director_path",
-                        "",
-                    )
-                ),
-                "timeout": int(
-                    normalize_timeout_seconds(
-                        getattr(args, "director_timeout", None),
-                        default=3600,
-                    )
-                    or 3600
-                ),
-                "model": str(getattr(args, "director_model", "") or "").strip(),
-                "prompt_profile": str(getattr(args, "prompt_profile", "") or "").strip(),
-                "execution_mode": (
-                    "serial"
-                    if str(getattr(args, "director_workflow_execution_mode", "parallel") or "parallel").strip().lower()
-                    == "serial"
-                    else "parallel"
-                ),
-                "max_parallel_tasks": max(
-                    1,
-                    int(getattr(args, "director_max_parallel_tasks", 3) or 3),
-                ),
-                "ready_timeout_seconds": max(
-                    1,
-                    int(getattr(args, "director_ready_timeout_seconds", 30) or 30),
-                ),
-                "claim_timeout_seconds": max(
-                    1,
-                    int(getattr(args, "director_claim_timeout_seconds", 30) or 30),
-                ),
-                "phase_timeout_seconds": max(
-                    1,
-                    int(getattr(args, "director_phase_timeout_seconds", 900) or 900),
-                ),
-                "complete_timeout_seconds": max(
-                    1,
-                    int(getattr(args, "director_complete_timeout_seconds", 30) or 30),
-                ),
-                "task_timeout_seconds": max(
-                    1,
-                    int(
-                        getattr(args, "director_task_timeout_seconds", MAX_WORKFLOW_TIMEOUT_SECONDS)
-                        or MAX_WORKFLOW_TIMEOUT_SECONDS
-                    ),
-                ),
-            },
+            "director_config": director_config,
             "max_verification_retries": (
                 0 if should_degrade and degrade_settings.get("max_verification_retries") == 0 else 2
             ),
@@ -1747,6 +1871,11 @@ def _run_dispatch_pipeline_with_workflow(
         wait_seconds = float(wait_timeout)
         if wait_seconds <= 0:
             wait_seconds = None
+    wait_seconds = _pm_workflow_wait_timeout_seconds(
+        wait_seconds,
+        director_config,
+        task_count=len(dispatch_tasks),
+    )
 
     submission = submit_pm_workflow_sync(
         workflow_input,
@@ -2080,6 +2209,7 @@ def _run_dispatch_pipeline_with_workflow(
     qa_reason = (
         str(integration_qa_result.get("reason") or "").strip() if isinstance(integration_qa_result, dict) else ""
     )
+    qa_passed = isinstance(integration_qa_result, dict) and integration_qa_result.get("passed") is True
     if isinstance(integration_qa_result, dict) and (
         integration_qa_result.get("passed") is False or qa_reason in qa_failure_reasons
     ):
@@ -2091,6 +2221,66 @@ def _run_dispatch_pipeline_with_workflow(
             detail=qa_reason or "Integration QA failed",
         )
 
+    qa_failed_after_director_success = bool(
+        director_status == "success"
+        and isinstance(integration_qa_result, dict)
+        and (integration_qa_result.get("passed") is False or qa_reason in qa_failure_reasons)
+    )
+
+    workflow_summary_tasks = workflow_summary.get("tasks")
+    task_rows_all_completed = bool(
+        isinstance(workflow_summary_tasks, list)
+        and workflow_summary_tasks
+        and all(
+            isinstance(item, dict)
+            and canonicalize_workflow_task_state(item.get("status") or item.get("state")) == "completed"
+            for item in workflow_summary_tasks
+        )
+    )
+    summary_counts_all_completed = bool(
+        int(workflow_summary.get("total", task_count) or 0) > 0
+        and int(workflow_summary.get("completed", 0) or 0) >= int(workflow_summary.get("total", task_count) or 0)
+        and int(workflow_summary.get("failed", 0) or 0) == 0
+        and int(workflow_summary.get("blocked", 0) or 0) == 0
+    )
+    all_director_tasks_completed = summary_counts_all_completed or task_rows_all_completed
+    if director_status in {"failed", "blocked"} and all_director_tasks_completed and qa_passed:
+        director_status = "success"
+        workflow_exit_code = 0
+        summary_text = "Director workflow completed"
+        workflow_summary["state"] = "completed"
+        workflow_summary["failed"] = 0
+        workflow_summary["blocked"] = 0
+        workflow_summary["active"] = 0
+        workflow_summary["pending"] = 0
+        director_result.update(
+            {
+                "status": director_status,
+                "successes": int(workflow_summary.get("completed", 0)),
+                "failures": 0,
+                "blocked": 0,
+                "total": int(workflow_summary.get("total", task_count)),
+                "summary": summary_text,
+                "error": "",
+            }
+        )
+        if isinstance(engine_dispatch, dict) and "summary" in engine_dispatch:
+            cast("dict[str, Any]", engine_dispatch["summary"]).update(
+                {
+                    "successes": int(workflow_summary.get("completed", 0)),
+                    "failures": 0,
+                    "blocked": 0,
+                    "deferred_execution": False,
+                    "reconciled_from_task_and_qa_evidence": True,
+                }
+            )
+        engine.update_role_status(
+            "Director",
+            status="completed",
+            running=False,
+            detail=summary_text,
+        )
+
     # Persist results
     write_json_atomic(run_director_result, director_result)
     runtime_director_result = resolve_artifact_path(
@@ -2100,18 +2290,64 @@ def _run_dispatch_pipeline_with_workflow(
     )
     write_json_atomic(runtime_director_result, director_result)
 
+    final_qa_status = qa_reason or ("integration_qa_passed" if qa_passed else "integration_qa_not_run")
+    final_workflow_status = "completed" if workflow_exit_code == 0 else "failed"
+    final_details = cast(
+        "dict[str, Any]",
+        _canonicalize_terminal_nested_statuses(
+            dict(submission_payload),
+            final_workflow_status=final_workflow_status,
+            final_director_status=director_status,
+            final_qa_status=final_qa_status,
+        ),
+    )
+    final_details.update(
+        {
+            "status": final_workflow_status,
+            "director_result": director_result,
+            "integration_qa_result": integration_qa_result,
+        }
+    )
+    workflow_state_payload = {
+        **workflow_state_payload,
+        "workflow_status": final_workflow_status,
+        "stage": final_workflow_status,
+        "completed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "director_status": director_status,
+        "qa_status": final_qa_status,
+        "details": final_details,
+    }
+    workflow_state_path = write_workflow_state(
+        workspace_full,
+        cache_root_full,
+        workflow_state_payload,
+    )
+
     if workflow_exit_code != 0:
         terminal_error = (
-            str(director_result.get("error") or "").strip()
+            (
+                str(qa_reason or integration_qa_result.get("summary") or "").strip()
+                if isinstance(integration_qa_result, dict)
+                else ""
+            )
+            or str(director_result.get("error") or "").strip()
             or str(director_result.get("summary") or "").strip()
-            or "DIRECTOR_WORKFLOW_FAILED"
+            or "WORKFLOW_EXECUTION_FAILED"
         )
-        engine.update_role_status(
-            "PM",
-            status="failed",
-            running=False,
-            detail="PM iteration failed during downstream workflow execution",
-        )
+        if qa_failed_after_director_success:
+            engine.update_role_status(
+                "PM",
+                status="completed",
+                running=False,
+                detail="PM contract persisted; downstream QA failed",
+            )
+        else:
+            engine.update_role_status(
+                "PM",
+                status="failed",
+                running=False,
+                detail="PM iteration failed during downstream workflow execution",
+            )
         if hasattr(engine, "set_phase"):
             engine.set_phase("failed", running=False, error=terminal_error)
 

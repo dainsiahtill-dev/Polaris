@@ -711,12 +711,18 @@ class EmbeddedWorkflowAPI:
         if runtime_engine is None:
             raise RuntimeError("Runtime not initialized")
 
-        payload_value = kwargs.get("input", args[0] if args else {})
-        payload = _payload_from_value(payload_value)
-        payload.setdefault(_WORKFLOW_CONTRACT_MODE_KEY, _WORKFLOW_CONTRACT_MODE_LEGACY)
         child_id = str(kwargs.get("id") or kwargs.get("workflow_id") or "").strip()
         if not child_id:
             child_id = f"{context.workflow_id}-{workflow_name}-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+
+        timeout_seconds = _coerce_timeout_seconds(
+            kwargs.get("execution_timeout", kwargs.get("run_timeout")),
+            default=120.0,
+        )
+        payload_value = kwargs.get("input", args[0] if args else {})
+        payload = _payload_from_value(payload_value)
+        payload.setdefault(_WORKFLOW_CONTRACT_MODE_KEY, _WORKFLOW_CONTRACT_MODE_LEGACY)
+        payload.setdefault("timeout_seconds", timeout_seconds)
 
         submission = await runtime_engine.start_workflow(
             workflow_name=workflow_name,
@@ -727,10 +733,6 @@ class EmbeddedWorkflowAPI:
             error = str(getattr(submission, "error", "") or "child_workflow_submit_failed").strip()
             raise RuntimeError(error)
 
-        timeout_seconds = _coerce_timeout_seconds(
-            kwargs.get("execution_timeout", kwargs.get("run_timeout")),
-            default=120.0,
-        )
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         try:
             while True:

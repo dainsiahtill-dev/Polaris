@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from polaris.delivery.cli.pm.utils import read_json_file
+from polaris.delivery.pm_markdown_selection import markdown_planning_sort_key
 from polaris.kernelone.fs.control_flags import stop_requested
 from polaris.kernelone.fs.text_ops import read_file_safe, write_json_atomic
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
@@ -43,6 +44,57 @@ def _first_existing_file(candidates: list[str]) -> str:
         if candidate and os.path.isfile(candidate):
             return candidate
     return candidates[0] if candidates else ""
+
+
+def _append_markdown_artifact_candidates(
+    candidates: list[str],
+    workspace_full: str,
+    cache_root_full: str,
+    rel_root: str,
+    *,
+    limit: int = 100,
+    purpose: str = "generic",
+) -> None:
+    roots: list[str] = []
+    try:
+        roots.append(resolve_artifact_path(workspace_full, cache_root_full, rel_root))
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("Failed to resolve markdown artifact root %r: %s", rel_root, exc)
+    if rel_root.startswith("workspace/"):
+        roots.append(os.path.join(workspace_full, rel_root[len("workspace/") :].replace("/", os.sep)))
+
+    seen_roots: set[str] = set()
+    discovered: list[tuple[float, str, str]] = []
+    for root in roots:
+        if not root:
+            continue
+        normalized_root = os.path.abspath(root)
+        if normalized_root in seen_roots or not os.path.isdir(normalized_root):
+            continue
+        seen_roots.add(normalized_root)
+        for current_root, _dirs, files in os.walk(normalized_root):
+            for filename in files:
+                if not filename.lower().endswith(".md"):
+                    continue
+                candidate = os.path.join(current_root, filename)
+                try:
+                    discovered.append((os.path.getmtime(candidate), candidate.casefold(), candidate))
+                except OSError:
+                    continue
+                if len(discovered) >= limit:
+                    break
+            if len(discovered) >= limit:
+                break
+
+    seen_candidates = set(candidates)
+    for _mtime, _name, candidate in sorted(
+        discovered,
+        key=lambda item: markdown_planning_sort_key(item[2], mtime=item[0], purpose=purpose),
+        reverse=True,
+    ):
+        if candidate not in seen_candidates:
+            seen_candidates.add(candidate)
+            candidates.append(candidate)
 
 
 def archive_task_history(
@@ -164,6 +216,13 @@ def load_state_and_context(
         cache_root_full,
         "workspace/docs/product/plan.md",
     )
+    _append_markdown_artifact_candidates(
+        plan_candidates,
+        workspace_full,
+        cache_root_full,
+        "workspace/plans",
+        purpose="plan",
+    )
     plan_full = _first_existing_file(plan_candidates)
 
     req_raw = str(getattr(args, "requirements_path", "") or "").strip()
@@ -191,6 +250,13 @@ def load_state_and_context(
             cache_root_full,
             fallback_req_rel,
         )
+    _append_markdown_artifact_candidates(
+        req_candidates,
+        workspace_full,
+        cache_root_full,
+        "workspace/docs",
+        purpose="requirements",
+    )
     req_full = _first_existing_file(req_candidates)
     pm_out_full = resolve_artifact_path(workspace_full, cache_root_full, args.pm_out)
     pm_state_full = resolve_artifact_path(workspace_full, cache_root_full, args.state_path)

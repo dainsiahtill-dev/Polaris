@@ -41,6 +41,34 @@ def test_node_checks_prefer_project_build_script(tmp_path, monkeypatch) -> None:
     assert calls == ["npm run build"]
 
 
+def test_node_checks_skip_dependency_binary_build_when_dependencies_are_not_installed(tmp_path, monkeypatch) -> None:
+    _write_package(
+        tmp_path / "package.json",
+        {
+            "scripts": {"build": "tsc -p tsconfig.json && vite build"},
+            "devDependencies": {"typescript": "^5.7.0", "vite": "^7.0.0"},
+        },
+    )
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+
+    class FakeCommandExecutionService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def parse_command(self, command: str, **kwargs: Any) -> str:
+            raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(
+        "polaris.domain.state_machine.phase_executor.CommandExecutionService",
+        FakeCommandExecutionService,
+    )
+
+    executor = PhaseExecutor(str(tmp_path), Policy())
+    errors = executor._run_node_checks(PhaseContext(task_id="T1", workspace=str(tmp_path)))
+
+    assert errors == []
+
+
 def test_node_checks_skip_tsc_when_compiler_is_not_available(tmp_path, monkeypatch) -> None:
     _write_package(tmp_path / "package.json", {"scripts": {}})
     (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")

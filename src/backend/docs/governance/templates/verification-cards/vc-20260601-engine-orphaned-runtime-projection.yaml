@@ -1,0 +1,33 @@
+schema_version: 1
+id: vc-20260601-engine-orphaned-runtime-projection
+date: 2026-06-01
+classification: pattern
+title: Treat recovered ENGINE_ORPHANED runtime projection as idle
+assumption_register:
+  - id: A1
+    statement: A stale engine.status.json can survive after PM and Director have already returned to idle.
+    evidence:
+      - runtime/status/engine.status.json may retain in-flight phase fields after pm.lifecycle.json is terminal.
+  - id: A2
+    statement: ENGINE_ORPHANED is a recovery marker, not a fresh execution failure.
+    evidence:
+      - Projection code already converts stale in-flight running phases to idle with recovery_code ENGINE_ORPHANED.
+  - id: A3
+    statement: All runtime projection entrypoints must apply the same recovery semantics.
+    evidence:
+      - WebSocket status, HTTP snapshot, and artifact-backed compatibility reads use parallel projection helpers.
+pre_mortem:
+  most_likely_wrong_fix:
+    - Only hiding the red status in React would leave WebSocket/API consumers inconsistent.
+    - Only normalizing stale running phases would miss previously normalized payloads with phase=failed and error=ENGINE_ORPHANED.
+verification_plan:
+  tests:
+    - src/backend/polaris/tests/test_runtime_projection_observability.py::TestEngineStatusOrphanRecovery
+  commands:
+    - ruff check src/backend/polaris/cells/runtime/projection/internal/runtime_projection_service.py src/backend/polaris/cells/runtime/projection/internal/status_snapshot_builder.py src/backend/polaris/cells/runtime/artifact_store/internal/artifacts.py src/backend/polaris/tests/test_runtime_projection_observability.py --fix
+    - ruff format src/backend/polaris/cells/runtime/projection/internal/runtime_projection_service.py src/backend/polaris/cells/runtime/projection/internal/status_snapshot_builder.py src/backend/polaris/cells/runtime/artifact_store/internal/artifacts.py src/backend/polaris/tests/test_runtime_projection_observability.py
+    - mypy src/backend/polaris/cells/runtime/projection/internal/runtime_projection_service.py src/backend/polaris/cells/runtime/projection/internal/status_snapshot_builder.py src/backend/polaris/cells/runtime/artifact_store/internal/artifacts.py
+    - pytest src/backend/polaris/tests/test_runtime_projection_observability.py::TestEngineStatusOrphanRecovery -q
+expected_result:
+  - ENGINE_ORPHANED payloads with phase=failed are projected as idle, running=false, error="".
+  - Role rows embedded in recovered payloads are not shown as blocked/failed.

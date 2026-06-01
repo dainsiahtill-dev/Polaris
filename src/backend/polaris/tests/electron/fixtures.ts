@@ -98,6 +98,10 @@ function createIsolatedWorkspace(): string {
   return workspace;
 }
 
+function allowRealWorkspaceMutationForE2E(): boolean {
+  return String(process.env.KERNELONE_E2E_ALLOW_REAL_WORKSPACE_MUTATION || "").trim() === "1";
+}
+
 function cleanupIsolatedE2EHome(target: string): void {
   if (!target) {
     return;
@@ -357,6 +361,7 @@ export const test = base.extend<Fixtures>({
       env.KERNELONE_RUNTIME_ROOT = testEnv.isolatedRuntimeRoot;
       env.KERNELONE_STATE_TO_RAMDISK = "0";
     } else {
+      env.KERNELONE_E2E_PROTECT_GLOBAL_SETTINGS = "1";
       const realSettingsHome = String(env.KERNELONE_E2E_HOME || env.KERNELONE_HOME || "").trim();
       if (realSettingsHome) {
         env.KERNELONE_HOME = assertOutsideRepo(realSettingsHome, "KERNELONE_HOME");
@@ -372,7 +377,10 @@ export const test = base.extend<Fixtures>({
     if (venvPython && !env.KERNELONE_PYTHON) {
       env.KERNELONE_PYTHON = venvPython;
     }
-    if (!testEnv.useRealSettings && !env.KERNELONE_WORKSPACE) {
+    if (!allowRealWorkspaceMutationForE2E()) {
+      env.KERNELONE_WORKSPACE = testEnv.isolatedWorkspace;
+      delete env.KERNELONE_SELF_UPGRADE_MODE;
+    } else if (!testEnv.useRealSettings && !env.KERNELONE_WORKSPACE) {
       env.KERNELONE_WORKSPACE = testEnv.isolatedWorkspace;
       delete env.KERNELONE_SELF_UPGRADE_MODE;
     }

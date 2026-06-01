@@ -42,6 +42,7 @@ interface PMTaskPanelProps {
   pmRunning: boolean;
   taskTraceMap?: TaskTraceMap;
   workspace?: string;
+  createDisabledReason?: string;
 }
 
 type TaskFilter = 'all' | 'pending' | 'running' | 'completed' | 'blocked';
@@ -329,6 +330,7 @@ export function PMTaskPanel({
   pmRunning,
   taskTraceMap,
   workspace = '',
+  createDisabledReason = '',
 }: PMTaskPanelProps) {
   const [filter, setFilter] = useState<TaskFilter>('all');
   const [sort, setSort] = useState<TaskSort>('priority');
@@ -375,6 +377,14 @@ export function PMTaskPanel({
     },
     [selectedTaskId, selectedTaskProjection, taskDetailEvidence],
   );
+  const normalizedCreateDisabledReason = createDisabledReason.trim();
+  const createTaskDisabled = normalizedCreateDisabledReason.length > 0;
+
+  useEffect(() => {
+    if (createTaskDisabled && showCreatePanel) {
+      setShowCreatePanel(false);
+    }
+  }, [createTaskDisabled, showCreatePanel]);
 
   useEffect(() => {
     const query = searchQuery.trim();
@@ -597,6 +607,15 @@ export function PMTaskPanel({
   };
 
   const handleCreateTask = async () => {
+    if (createTaskDisabled) {
+      setCreateEvidence({
+        loading: false,
+        error: normalizedCreateDisabledReason,
+        task: null,
+      });
+      return;
+    }
+
     const subject = createSubject.trim();
     if (!subject) {
       setCreateEvidence({
@@ -684,13 +703,13 @@ export function PMTaskPanel({
   const validTaskSearchResults = taskSearchResults.filter((result) => Boolean(readTaskSearchId(result)));
 
   return (
-    <div className="h-full flex"
+    <div data-testid="pm-task-panel" className="h-full flex"
     >
       {/* Task List */}
       <div className="flex-1 flex flex-col min-w-0 border-r border-white/10"
       >
         {/* Toolbar */}
-        <div className="h-14 flex items-center gap-3 px-4 border-b border-white/10 bg-white/[0.02]"
+        <div data-testid="pm-task-toolbar" className="h-14 flex items-center gap-3 px-4 border-b border-white/10 bg-white/[0.02]"
         >
           <div className="relative flex-1 max-w-sm"
           >
@@ -737,8 +756,20 @@ export function PMTaskPanel({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowCreatePanel((current) => !current)}
+              onClick={() => {
+                if (createTaskDisabled) {
+                  setCreateEvidence({
+                    loading: false,
+                    error: normalizedCreateDisabledReason,
+                    task: null,
+                  });
+                  return;
+                }
+                setShowCreatePanel((current) => !current);
+              }}
+              disabled={createTaskDisabled}
               data-testid="pm-task-create-toggle"
+              title={normalizedCreateDisabledReason || '创建 PM 任务'}
               className={cn(
                 'text-slate-400 hover:bg-amber-500/10 hover:text-amber-200',
                 showCreatePanel && 'bg-amber-500/10 text-amber-200',
@@ -792,8 +823,9 @@ export function PMTaskPanel({
                 variant="outline"
                 size="sm"
                 onClick={() => { void handleCreateTask(); }}
-                disabled={createEvidence.loading}
+                disabled={createEvidence.loading || createTaskDisabled}
                 data-testid="pm-task-create-submit"
+                title={normalizedCreateDisabledReason || '提交 PM 任务'}
                 className="border-amber-500/30 text-amber-200 hover:bg-amber-500/10"
               >
                 {createEvidence.loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Plus className="mr-1.5 h-3.5 w-3.5" />}

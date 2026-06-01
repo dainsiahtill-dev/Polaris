@@ -439,12 +439,19 @@ async def test_v2_state_snapshot(client: AsyncClient) -> None:
             "polaris.delivery.http.routers.system.build_snapshot",
             return_value={"ok": True, "workspace": ".", "cache_root": "/tmp/runtime"},
         ),
+        patch("polaris.delivery.http.routers.system.workspace_has_docs", return_value=True),
+        patch(
+            "polaris.delivery.http.routers.system.read_workspace_status",
+            return_value={"status": "NEEDS_DOCS_INIT", "reason": "stale"},
+        ),
     ):
         response = await client.get("/v2/state/snapshot")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
         assert data["workspace"] == "."
+        assert data["docs_present"] is True
+        assert data["workspace_status"]["status"] == "READY"
 
 
 # ---------------------------------------------------------------------------

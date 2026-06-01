@@ -180,6 +180,28 @@ async def test_connect_returns_false_for_nats_api_subscribe_error(monkeypatch: p
 
 
 @pytest.mark.asyncio
+async def test_connect_returns_false_for_jetstream_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    jetstream = _FakeJetStream(stream_info_error=TimeoutError("nats: timeout"))
+
+    async def _get_default_client() -> _FakeNATSClient:
+        return _FakeNATSClient(jetstream)
+
+    monkeypatch.setattr(ws_consumer_manager, "get_default_client", _get_default_client)
+    manager = JetStreamConsumerManager(
+        workspace_key="workspace",
+        client_id="client-1",
+        channels=["llm"],
+    )
+
+    connected = await manager.connect()
+
+    assert connected is False
+    assert manager.is_connected is False
+    assert manager._jetstream is None
+    assert manager._subscription is None
+
+
+@pytest.mark.asyncio
 async def test_connect_creates_missing_runtime_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     jetstream = _FakeJetStream(
         stream_info_error=JSConsumerNotFoundError(code=404, err_code=10059, description="stream not found")

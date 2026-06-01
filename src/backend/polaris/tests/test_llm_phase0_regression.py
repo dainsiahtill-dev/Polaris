@@ -502,6 +502,84 @@ class TestRoleRuntimeSupportConsistency:
         assert response["blocked_roles"] == ["pm"]
         assert response["state"] == "BLOCKED"
 
+    def test_llm_status_prefers_current_binding_candidate_over_workspace_mismatch(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "codex_cli": {"type": "codex_cli", "name": "Codex CLI"},
+                "deepseek": {"type": "anthropic_compat", "name": "DeepSeek"},
+            },
+            "roles": {
+                "pm": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"},
+            },
+            "policies": {
+                "required_ready_roles": ["pm"],
+            },
+        }
+        workspace_index = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+            "providers": {},
+        }
+        global_index = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "codex_cli",
+                    "model": "gpt-5.3-codex",
+                    "timestamp": "2000-01-01T00:00:00+00:00",
+                },
+            },
+            "providers": {},
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=workspace_index,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index_candidates",
+                return_value=[workspace_index, global_index],
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        pm = response["roles"]["pm"]
+        assert pm["ready"] is False
+        assert pm["readiness_issue"] == "readiness_stale"
+        assert pm["tested_provider_id"] == "codex_cli"
+        assert pm["tested_model"] == "gpt-5.3-codex"
+        assert pm["tested_timestamp"] == "2000-01-01T00:00:00+00:00"
+        assert response["blocked_roles"] == ["pm"]
+
     def test_llm_status_preserves_role_specific_stale_issue_over_provider_role_mismatch(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 
@@ -1306,6 +1384,61 @@ class TestRoleRuntimeSupportConsistency:
         assert "stale" in str(exc.value.detail)
         assert "openai_compat" in str(exc.value.detail)
         assert "Qwen3-Max" in str(exc.value.detail)
+
+    def test_pm_gate_prefers_current_binding_candidate_over_workspace_mismatch(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import _ensure_llm_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_state = AppState(settings=mock_settings)
+
+        workspace_index = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "provider_id": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+        }
+        global_index = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "provider_id": "codex_cli",
+                    "model": "gpt-5.3-codex",
+                    "timestamp": "2000-01-01T00:00:00+00:00",
+                },
+            }
+        }
+        config_payload = {
+            "providers": {
+                "codex_cli": {"type": "codex_cli"},
+                "deepseek": {"type": "anthropic_compat"},
+            },
+            "roles": {"pm": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"}},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=workspace_index),
+            patch(
+                "polaris.delivery.http.routers._shared.load_llm_test_index_candidates",
+                return_value=[workspace_index, global_index],
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            _ensure_llm_ready(mock_state, "pm")
+
+        assert exc.value.status_code == 409
+        assert "stale" in str(exc.value.detail)
+        assert "codex_cli" in str(exc.value.detail)
+        assert "gpt-5.3-codex" in str(exc.value.detail)
+        assert "deepseek-v4-pro" not in str(exc.value.detail)
 
     def test_role_gate_reports_failed_readiness_for_current_provider_model(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState

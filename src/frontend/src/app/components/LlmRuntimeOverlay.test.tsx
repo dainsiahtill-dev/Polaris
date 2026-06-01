@@ -149,6 +149,69 @@ describe('LlmRuntimeOverlay', () => {
     expect(screen.queryByText(/blocked: pm/)).not.toBeInTheDocument();
   });
 
+  it('does not keep the runtime card open for an idle recovered failure phase', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        currentPhase="failed"
+        llmState="ready"
+        executionLogs={[
+          {
+            id: 'docs-init',
+            timestamp: new Date().toISOString(),
+            level: 'success',
+            source: 'System',
+            message: 'Initialized docs via onboarding wizard',
+          },
+        ]}
+      />
+    );
+
+    expect(screen.queryByTestId('llm-runtime-overlay')).not.toBeInTheDocument();
+    expect(screen.queryByText('执行失败')).not.toBeInTheDocument();
+  });
+
+  it('does not label an idle stale failure phase as current execution failure when shown for connection state', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        websocketLive={false}
+        currentPhase="error"
+        llmState="ready"
+        executionLogs={[
+          {
+            id: 'docs-init',
+            timestamp: new Date().toISOString(),
+            level: 'success',
+            source: 'System',
+            message: 'Initialized docs via onboarding wizard',
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByTestId('llm-runtime-overlay')).toBeInTheDocument();
+    expect(screen.getByText('空闲')).toBeInTheDocument();
+    expect(screen.queryByText('执行失败')).not.toBeInTheDocument();
+    expect(screen.queryByText('Initialized docs via onboarding wizard')).not.toBeInTheDocument();
+  });
+
+  it('keeps connection-only recovery collapsed to avoid covering the workspace', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        websocketLive={false}
+        websocketReconnecting={true}
+        websocketAttemptCount={2}
+      />
+    );
+
+    expect(screen.getByTestId('llm-runtime-overlay')).toBeInTheDocument();
+    expect(screen.getByTestId('llm-runtime-overlay-details')).toHaveClass('grid-rows-[0fr]');
+    expect(screen.getByTestId('llm-runtime-overlay-details')).toHaveClass('opacity-0');
+    expect(screen.getByText('系统待命')).toBeInTheDocument();
+  });
+
   it('collapses expanded runtime details when switching into Factory view', async () => {
     const { rerender } = render(
       <LlmRuntimeOverlay

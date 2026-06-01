@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/api';
 import type { LlmStatus } from '@/app/types/appContracts';
 
@@ -114,7 +114,42 @@ function toEpoch(value: string | null): number {
 function isStaleLlmRuntimePayload(current: LlmRuntimeGateState, next: LlmRuntimeGateState): boolean {
   const currentEpoch = toEpoch(current.lastUpdated);
   const nextEpoch = toEpoch(next.lastUpdated);
-  return currentEpoch > 0 && nextEpoch > 0 && nextEpoch < currentEpoch;
+  if (currentEpoch <= 0 || nextEpoch <= 0 || nextEpoch >= currentEpoch) {
+    return false;
+  }
+  if (current.state === 'BLOCKED' && next.state === 'READY') {
+    return false;
+  }
+  return true;
+}
+
+function roleBindingSignature(state: LlmRuntimeGateState, role: string): string {
+  const detail = state.roleDetails?.[role];
+  if (!detail) return '';
+  return `${detail.providerId}\u0000${detail.model}`;
+}
+
+function isCanonicalReadyForBlockedRoles(
+  canonical: LlmRuntimeGateState | null,
+  next: LlmRuntimeGateState,
+): boolean {
+  if (!canonical || canonical.state !== 'READY' || next.state !== 'BLOCKED') {
+    return false;
+  }
+
+  const blockedRoles = next.blockedRoles.filter((role) => next.requiredRoles.includes(role));
+  if (!blockedRoles.length) {
+    return false;
+  }
+
+  return blockedRoles.every((role) => {
+    const canonicalDetail = canonical.roleDetails?.[role];
+    if (!canonicalDetail || canonicalDetail.ready !== true) {
+      return false;
+    }
+    const nextSignature = roleBindingSignature(next, role);
+    return !nextSignature || nextSignature === roleBindingSignature(canonical, role);
+  });
 }
 
 export function normalizeLlmRuntimeGatePayload(payload: unknown): LlmRuntimeGateState {
@@ -176,15 +211,23 @@ export function useLlmRuntimeGate({
   fetchStatus = fetchLlmStatusPayload,
 }: UseLlmRuntimeGateOptions) {
   const [llmRuntimeState, setLlmRuntimeState] = useState<LlmRuntimeGateState>(EMPTY_LLM_RUNTIME_STATE);
+  const canonicalReadyStateRef = useRef<LlmRuntimeGateState | null>(null);
 
   const clearLlmRuntimeState = useCallback(() => {
     setLlmRuntimeState(EMPTY_LLM_RUNTIME_STATE);
   }, []);
 
-  const applyLlmStatusPayload = useCallback((payload: unknown) => {
+  const applyLlmStatusPayload = useCallback((payload: unknown, source: 'stream' | 'canonical' = 'stream') => {
     const nextState = normalizeLlmRuntimeGatePayload(payload);
+    if (source === 'canonical') {
+      canonicalReadyStateRef.current = nextState.state === 'READY' ? nextState : null;
+    }
     setLlmRuntimeState((current) => (
+      source === 'stream' && isCanonicalReadyForBlockedRoles(canonicalReadyStateRef.current, nextState)
+        ? current
+        : (
       isStaleLlmRuntimePayload(current, nextState) ? current : nextState
+        )
     ));
   }, []);
 
@@ -196,7 +239,7 @@ export function useLlmRuntimeGate({
 
     try {
       const payload = await fetchStatus(workspace);
-      applyLlmStatusPayload(payload);
+      applyLlmStatusPayload(payload, 'canonical');
       return payload;
     } catch {
       if (options.clearOnFailure) {
@@ -208,7 +251,7 @@ export function useLlmRuntimeGate({
 
   const handleLlmStatusChange = useCallback((status: LlmStatus | null) => {
     if (status) {
-      applyLlmStatusPayload(status);
+      applyLlmStatusPayload(status, 'stream');
       return;
     }
     clearLlmRuntimeState();
@@ -226,7 +269,7 @@ export function useLlmRuntimeGate({
       return;
     }
     if (llmStatus) {
-      applyLlmStatusPayload(llmStatus);
+      applyLlmStatusPayload(llmStatus, 'stream');
     }
   }, [applyLlmStatusPayload, clearLlmRuntimeState, llmStatus, workspace]);
 
@@ -249,6 +292,17 @@ export function useLlmRuntimeGate({
       window.clearInterval(timer);
     };
   }, [blockedRefreshIntervalMs, llmRuntimeState.state, refreshLlmGate, workspace]);
+
+  useEffect(() => {
+    if (!workspace || !live || !llmStatus) return;
+    const timer = window.setInterval(() => {
+      void refreshLlmGate({ clearOnFailure: false });
+    }, Math.max(blockedRefreshIntervalMs * 2, 30_000));
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [blockedRefreshIntervalMs, live, llmStatus, refreshLlmGate, workspace]);
 
   return {
     llmRuntimeState,

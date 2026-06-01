@@ -336,18 +336,26 @@ def _build_pm_quality_retry_prompt(
 def _merge_engine_config(payload_engine: Any, args: argparse.Namespace) -> dict[str, Any]:
     normalized_payload = normalize_engine_config(payload_engine)
 
-    raw_mode = normalized_payload.get(
-        "director_execution_mode",
-        getattr(args, "director_execution_mode", "single"),
-    )
-    mode = str(raw_mode or "single").strip().lower()
-    if mode not in {"single", "multi"}:
+    raw_mode = normalized_payload.get("director_execution_mode")
+    if raw_mode is None:
+        raw_mode = (
+            getattr(args, "director_execution_mode", None)
+            or getattr(args, "director_workflow_execution_mode", None)
+            or "single"
+        )
+    mode_token = str(raw_mode or "single").strip().lower().replace("-", "_")
+    if mode_token in {"parallel", "concurrent"}:
+        mode = "multi"
+    elif mode_token in {"serial", "sequential"}:
+        mode = "single"
+    elif mode_token in {"single", "multi"}:
+        mode = mode_token
+    else:
         mode = "single"
 
-    raw_workers = normalized_payload.get(
-        "max_directors",
-        getattr(args, "max_directors", 1),
-    )
+    raw_workers = normalized_payload.get("max_directors")
+    if raw_workers is None:
+        raw_workers = getattr(args, "max_directors", None) or getattr(args, "director_max_parallel_tasks", None) or 1
     try:
         max_directors = int(raw_workers)
     except (TypeError, ValueError):

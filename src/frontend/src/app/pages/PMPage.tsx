@@ -124,6 +124,7 @@ export function PMPage({
         currentPhase={currentPhase}
         qualityGate={qualityGate as Parameters<typeof PMWorkspace>[0]['qualityGate']}
         taskTraceMap={taskTraceMap}
+        llmRuntimeState={llmRuntimeState}
       />
       <LlmRuntimeOverlay
         activeView="pm"

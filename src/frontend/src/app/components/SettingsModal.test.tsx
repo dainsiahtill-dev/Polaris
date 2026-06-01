@@ -120,6 +120,14 @@ describe('SettingsModal', () => {
       expect(screen.getByTestId('settings-tab-general')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-llm')).toBeInTheDocument();
     });
+
+    it('closes the modal when Escape is pressed', () => {
+      render(<SettingsModal {...defaultProps} />);
+
+      fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+
+      expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('Tab Navigation', () => {

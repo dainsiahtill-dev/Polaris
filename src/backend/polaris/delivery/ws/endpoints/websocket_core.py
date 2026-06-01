@@ -34,7 +34,7 @@ from polaris.delivery.ws.endpoints.journal_stream import (
     send_journal_incremental,
     send_journal_snapshot,
 )
-from polaris.delivery.ws.endpoints.models import WebSocketSendError
+from polaris.delivery.ws.endpoints.models import WebSocketSendError, is_websocket_disconnect_runtime_error
 from polaris.delivery.ws.endpoints.protocol import build_status_payload
 from polaris.delivery.ws.endpoints.stream import send_json_safe
 from polaris.infrastructure.realtime.process_local.log_fanout import (
@@ -285,6 +285,21 @@ async def runtime_websocket(
         )
     except (RuntimeError, ValueError) as exc:
         close_reason = f"{type(exc).__name__}:{exc!s}"
+        if isinstance(exc, RuntimeError) and is_websocket_disconnect_runtime_error(exc):
+            close_code = 1001
+            close_reason = f"client_disconnect:{exc!s}"
+            if connection_state is not None:
+                connection_state.last_event = "disconnect"
+                connection_state.last_error = ""
+                connection_state.last_updated_at = time.time()
+            await _log_connection_event(
+                resolved_workspace,
+                cache_root,
+                connection_id,
+                "disconnect",
+                {"client": client, "close_code": close_code, "reason": str(exc), **workspace_details},
+            )
+            return
         if connection_state is not None:
             connection_state.last_event = "error"
             connection_state.last_error = close_reason

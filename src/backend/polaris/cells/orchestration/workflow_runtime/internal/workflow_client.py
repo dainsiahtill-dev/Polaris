@@ -155,6 +155,9 @@ async def _submit_pm_workflow_async(
         ),
         "metadata": (workflow_input.metadata if isinstance(workflow_input.metadata, dict) else {}),
     }
+    if timeout_seconds is not None:
+        with contextlib.suppress(TypeError, ValueError):
+            payload["timeout_seconds"] = max(0.1, float(timeout_seconds))
     result = await adapter.submit_workflow(
         workflow_name="pm_workflow",
         workflow_id=workflow_input.workflow_id,

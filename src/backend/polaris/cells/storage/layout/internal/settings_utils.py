@@ -12,6 +12,7 @@ from polaris.kernelone.runtime.defaults import DEFAULT_PM_LOG
 from polaris.kernelone.storage.io_paths import normalize_artifact_rel_path
 
 logger = logging.getLogger(__name__)
+_E2E_PROTECT_GLOBAL_SETTINGS_ENV = "KERNELONE_E2E_PROTECT_GLOBAL_SETTINGS"
 
 
 def get_legacy_settings_path() -> str:
@@ -120,6 +121,10 @@ def _write_json_dict(path: str, payload: dict[str, Any]) -> None:
 def _write_text_atomic(path: str, content: str) -> None:
     """Delegate to KernelOne atomic write for consistency and durability."""
     write_text_atomic(path, content, encoding="utf-8")
+
+
+def _is_truthy_env(name: str) -> bool:
+    return str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _normalize_abs_path(value: Any) -> str:
@@ -309,6 +314,12 @@ def load_persisted_settings(workspace: str = "") -> dict[str, Any]:
 
 def save_persisted_settings(settings: "Settings") -> None:
     sync_process_settings_environment(settings)
+    if _is_truthy_env(_E2E_PROTECT_GLOBAL_SETTINGS_ENV):
+        logger.info(
+            "Skipped persisted settings write because %s is enabled",
+            _E2E_PROTECT_GLOBAL_SETTINGS_ENV,
+        )
+        return
     workspace = str(getattr(settings, "workspace", "") or "").strip()
     workspace_root = os.path.abspath(workspace) if workspace else ""
     payload = settings.to_payload()

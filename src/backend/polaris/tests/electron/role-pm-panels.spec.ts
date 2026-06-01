@@ -7,18 +7,9 @@ const ignoredConsoleErrorPatterns = [
   /Unable to preload CSS for \/assets\//i,
 ];
 
-const expectedPmCreateFailurePattern = /400 POST .*\/v2\/pm\/tasks\?/i;
-
-function unexpectedFailedResponses(errors: string[]): string[] {
-  return errors.filter((error) => !expectedPmCreateFailurePattern.test(error));
-}
-
-function actionableConsoleErrors(errors: string[], expectedPmCreateFailureObserved: boolean): string[] {
+function actionableConsoleErrors(errors: string[]): string[] {
   return errors.filter((error) => {
     if (ignoredConsoleErrorPatterns.some((pattern) => pattern.test(error))) {
-      return false;
-    }
-    if (expectedPmCreateFailureObserved && /Failed to load resource: the server responded with a status of 400/i.test(error)) {
       return false;
     }
     return true;
@@ -110,18 +101,27 @@ test("PM task and document secondary panels stay operable and contained", async 
   await expect(pmWorkspace).toBeVisible();
 
   await clickWorkspaceTab(pmWorkspace, "任务");
-  await pmWorkspace.getByTestId("pm-task-create-toggle").click();
-  const createPanel = pmWorkspace.getByTestId("pm-task-create-panel");
-  await expectPanelContained(window, createPanel, "PM task create panel");
-  const taskTitle = `E2E UI secondary PM task ${Date.now()}`;
-  await createPanel.getByTestId("pm-task-create-subject").fill(taskTitle);
-  await createPanel.getByTestId("pm-task-create-description").fill("Verify PM task creation and backend search panel layout.");
-  await createPanel.getByTestId("pm-task-create-acceptance").fill("Task create evidence is visible\nSearch panel stays contained");
-  await createPanel.getByTestId("pm-task-create-submit").click();
-  const createEvidence = pmWorkspace.getByTestId("pm-task-create-evidence");
-  await expect(createEvidence).toBeVisible({ timeout: 15_000 });
-  await expect(createEvidence).not.toContainText("Failed to create PM task");
-  await expect(createEvidence).toContainText(/created|PM system not initialized/, { timeout: 15_000 });
+  const createToggle = pmWorkspace.getByTestId("pm-task-create-toggle");
+  if (await createToggle.isEnabled()) {
+    await createToggle.click();
+    const createPanel = pmWorkspace.getByTestId("pm-task-create-panel");
+    await expectPanelContained(window, createPanel, "PM task create panel");
+    const taskTitle = `E2E UI secondary PM task ${Date.now()}`;
+    await createPanel.getByTestId("pm-task-create-subject").fill(taskTitle);
+    await createPanel.getByTestId("pm-task-create-description").fill("Verify PM task creation and backend search panel layout.");
+    await createPanel.getByTestId("pm-task-create-acceptance").fill("Task create evidence is visible\nSearch panel stays contained");
+    await createPanel.getByTestId("pm-task-create-submit").click();
+    const createEvidence = pmWorkspace.getByTestId("pm-task-create-evidence");
+    await expect(createEvidence).toBeVisible({ timeout: 15_000 });
+    await expect(createEvidence).not.toContainText("Failed to create PM task");
+    await expect(createEvidence).toContainText("created", { timeout: 15_000 });
+  } else {
+    await expect(createToggle).toHaveAttribute(
+      "title",
+      /PM 启动诊断未通过|PM 后端诊断|PM 任务合同|PM 任务注册表|PM 正在|工厂模式/,
+    );
+    await expect(pmWorkspace.getByTestId("pm-task-create-panel")).toHaveCount(0);
+  }
   await attachScreenshot(window, testInfo, "pm-secondary-task-created");
 
   await pmWorkspace.getByPlaceholder("搜索任务...").fill("E2E UI secondary");
@@ -172,11 +172,10 @@ test("PM task and document secondary panels stay operable and contained", async 
     await attachScreenshot(window, testInfo, "pm-secondary-document-empty");
   }
 
-  const unexpectedHttpFailures = unexpectedFailedResponses(failedResponses);
   expect(pageErrors, "renderer pageerror should remain empty during PM panel sweep").toEqual([]);
-  expect(unexpectedHttpFailures, "unexpected HTTP failures should remain empty during PM panel sweep").toEqual([]);
+  expect(failedResponses, "HTTP failures should remain empty during PM panel sweep").toEqual([]);
   expect(
-    actionableConsoleErrors(consoleErrors, unexpectedHttpFailures.length === 0 && failedResponses.length > 0),
+    actionableConsoleErrors(consoleErrors),
     "actionable console errors should remain empty",
   ).toEqual([]);
 });

@@ -66,6 +66,41 @@ async def test_launch_process_wait_and_log(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_log_drain_close_does_not_record_running_as_terminal(tmp_path: Path) -> None:
+    runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
+    broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))
+    log_path = tmp_path / "process-close.log"
+
+    command = LaunchExecutionProcessCommandV1(
+        name="close-before-terminal-test",
+        args=(sys.executable, "-c", "import time; time.sleep(30)"),
+        workspace=str(tmp_path),
+        timeout_seconds=60.0,
+        log_path=str(log_path),
+        metadata={"test_case": "log_drain_close_does_not_record_running_as_terminal"},
+    )
+
+    try:
+        launch = await broker.launch_process(command)
+        assert launch.success is True
+        assert launch.handle is not None
+
+        deadline = time.monotonic() + 2.0
+        while not log_path.exists() and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
+
+        await broker.close(cancel_running=True)
+
+        content = log_path.read_text(encoding="utf-8")
+        assert "[execution_broker] launched" in content
+        assert "[execution_broker] terminal" not in content
+        assert "[execution_broker] closed_before_terminal" in content
+        assert "status=running" in content
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_launch_process_wait_delivers_stdin_without_streaming(tmp_path: Path) -> None:
     """wait_process must deliver stdin even when no caller consumes process streams."""
     runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)

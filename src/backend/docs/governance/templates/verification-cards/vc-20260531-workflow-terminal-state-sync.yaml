@@ -1,0 +1,24 @@
+id: vc-20260531-workflow-terminal-state-sync
+title: Workflow terminal state sync must not preserve stale running or QA failure status
+classification: pattern
+assumption_register:
+  - id: A1
+    statement: "A completed PM workflow can leave runtime/state/workflow.workflow.state.json with workflow_status=running."
+    evidence: "Electron real PM->Director run produced integration_qa_passed while the persisted workflow state remained running."
+  - id: A2
+    statement: "Nested workflow-domain qa_status values may be stale after post-dispatch integration QA writes the canonical result artifact."
+    evidence: "Persisted details.result.result.qa_status was qa_failed while runtime/results/integration_qa.result.json had passed=true."
+  - id: A3
+    statement: "Projection should trust terminal result artifacts when they prove Director success and integration QA pass."
+    evidence: "runtime/results/director.result.json and runtime/results/integration_qa.result.json are canonical post-dispatch artifacts."
+pre_mortem:
+  likely_wrong_fix: "Only hide the red banner in the frontend while leaving stale runtime state on disk."
+  mitigation: "Fix both runtime projection and PM workflow final state persistence, then add regression tests."
+verification_plan:
+  - command: ".venv/Scripts/python.exe -m pytest src/backend/polaris/tests/orchestration/test_workflow_runtime.py src/backend/polaris/tests/test_orchestration_engine_integration_qa.py -q"
+    expected: "Projection derives completed from terminal success artifacts and orchestration persists completed state."
+  - command: ".venv/Scripts/python.exe -m mypy src/backend/polaris/cells/runtime/projection/internal/workflow_status.py src/backend/polaris/delivery/cli/pm/orchestration_engine.py"
+    expected: "Success: no issues found"
+  - command: ".venv/Scripts/python.exe -m ruff check src/backend/polaris/cells/runtime/projection/internal/workflow_status.py src/backend/polaris/delivery/cli/pm/orchestration_engine.py --fix"
+    expected: "No lint errors"
+status: planned

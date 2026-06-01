@@ -47,6 +47,11 @@ function isTruthyEnv(value) {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+function stripUtf8Bom(text) {
+  const value = String(text || "");
+  return value.charCodeAt(0) === 0xfeff ? value.slice(1) : value;
+}
+
 function resolvepolarisRoot(env = process.env, platform = process.platform) {
   const rootOverride = String(env.KERNELONE_ROOT || "").trim();
   if (rootOverride) {
@@ -88,7 +93,6 @@ function selectStartupWorkspaceOverride(options = {}) {
   const validateDirectory = Boolean(options.validateDirectory);
   const persistedWorkspace = expandPath(options.persistedWorkspace || "");
   const envWorkspace = expandPath(env.KERNELONE_WORKSPACE || "");
-  const skipped = [];
 
   function candidate(workspace, source) {
     if (!workspace) {
@@ -97,35 +101,21 @@ function selectStartupWorkspaceOverride(options = {}) {
     if (!validateDirectory || isDirectoryPath(workspace)) {
       return { workspace, source };
     }
-    skipped.push({ workspace, source });
-    return null;
+    return {
+      workspace: "",
+      source: `${source}_missing`,
+      invalidWorkspace: workspace,
+    };
   }
 
   if (envWorkspace && isTruthyEnv(env.KERNELONE_WORKSPACE_FORCE)) {
-    const selected = candidate(envWorkspace, "env_forced");
-    if (selected) {
-      return selected;
-    }
-  }
-  if (persistedWorkspace) {
-    const selected = candidate(persistedWorkspace, "persisted");
-    if (selected) {
-      return selected;
-    }
+    return candidate(envWorkspace, "env_forced");
   }
   if (envWorkspace) {
-    const selected = candidate(envWorkspace, "env");
-    if (selected) {
-      return selected;
-    }
+    return candidate(envWorkspace, "env");
   }
-  if (skipped.length > 0) {
-    const first = skipped[0];
-    return {
-      workspace: "",
-      source: `${first.source}_missing`,
-      invalidWorkspace: first.workspace,
-    };
+  if (persistedWorkspace) {
+    return candidate(persistedWorkspace, "persisted");
   }
   return { workspace: "", source: "none" };
 }
@@ -180,4 +170,5 @@ module.exports = {
   getGlobalSettingsPath,
   selectStartupWorkspaceOverride,
   shouldEnableSelfUpgradeMode,
+  stripUtf8Bom,
 };

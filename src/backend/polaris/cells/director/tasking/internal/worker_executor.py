@@ -16,6 +16,7 @@ Phase 4 note:
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -33,6 +34,72 @@ from polaris.domain.entities import Task, TaskResult
 from polaris.domain.services import get_token_service
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS = 300
+_DEFAULT_DIRECTOR_RUNTIME_LLM_CALL_TIMEOUT_SECONDS = 600
+_DIRECTOR_LLM_CALL_TIMEOUT_METADATA_KEYS = (
+    "llm_call_timeout_seconds",
+    "director_llm_timeout_seconds",
+    "request_timeout_seconds",
+)
+_DIRECTOR_LLM_CALL_TIMEOUT_ENV_KEYS = (
+    "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
+    "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS",
+    "KERNELONE_WORKER_LLM_TIMEOUT",
+)
+_SCOPE_INFERENCE_MAX_FILES = 12
+_SCOPE_INFERENCE_MAX_FILES_PER_SCOPE = 3
+_SCOPE_INFERENCE_SOURCE_EXTENSIONS = (
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".py",
+    ".sql",
+    ".json",
+    ".toml",
+    ".yaml",
+    ".yml",
+)
+_SCOPE_INFERENCE_IGNORED_DIRS = {
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".polaris",
+    ".pytest_cache",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "runtime",
+}
+_TASK_TOKEN_STOPWORDS = {
+    "according",
+    "acceptance",
+    "criteria",
+    "execute",
+    "goal",
+    "implementation",
+    "task",
+    "test",
+    "tests",
+}
+
+
+def _parse_positive_timeout_seconds(raw: Any) -> int | None:
+    """Parse a positive timeout value in seconds."""
+    if raw is None:
+        return None
+    try:
+        timeout = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return None
+    if timeout <= 0:
+        return None
+    return timeout
 
 
 # -----------------------------------------------------------------------
@@ -380,13 +447,13 @@ class WorkerExecutor:
 
         # Get model and timeout from environment
         model = os.environ.get("KERNELONE_WORKER_MODEL", "MiniMax-M2.5")
-        per_call_timeout = self._code_engine.resolve_llm_timeout(
-            task.timeout_seconds  # type: ignore[arg-type]
-        )
+        per_call_timeout = self._code_engine.resolve_llm_timeout(self._resolve_llm_call_timeout_hint(task))
 
         # Build code generation rounds
         rounds = self._build_code_generation_rounds(task)
         total_rounds = len(rounds) if rounds else 1
+        target_files = self._normalize_target_files(task)
+        initial_target_signatures = self._snapshot_workspace_files(target_files)
         budget_seconds = self._code_engine.resolve_task_timeout_budget(
             task,
             rounds=total_rounds,  # type: ignore[arg-type]
@@ -419,6 +486,22 @@ class WorkerExecutor:
                     for item in round_plan
                     if isinstance(item, dict) and str(item.get("path") or "").strip()
                 ]
+                if self._code_generation_round_marker_satisfied(task, round_index, round_paths):
+                    files_created.extend(self._collect_existing_file_records(round_paths))
+                    logger.info(
+                        "[WorkerExecutor] CodeGen round %s/%s satisfied by persisted progress marker",
+                        round_index,
+                        len(rounds),
+                    )
+                    continue
+                if files_created and self._round_files_changed_since(round_paths, initial_target_signatures):
+                    files_created.extend(self._collect_existing_file_records(round_paths))
+                    logger.info(
+                        "[WorkerExecutor] CodeGen round %s/%s already satisfied by earlier runtime output",
+                        round_index,
+                        len(rounds),
+                    )
+                    continue
                 prompt = self._build_code_generation_prompt(
                     task,
                     round_index=round_index,
@@ -443,6 +526,15 @@ class WorkerExecutor:
                             "Worker code generation blocked for task %s: %s",
                             task.id,
                             "; ".join(round_warnings[:3]),
+                        )
+                    if round_files:
+                        self._write_code_generation_round_marker(task, round_index, round_paths)
+                    if not round_files and round_warnings:
+                        return CodeGenerationResult(
+                            success=False,
+                            files_created=files_created,
+                            error=round_warnings[0],
+                            output=(f"Code generation round {round_index}/{len(rounds)} produced no accepted files"),
                         )
                 except (
                     CodeGenerationPolicyViolationError,
@@ -566,6 +658,26 @@ class WorkerExecutor:
 
     # === Helper Methods ===
 
+    def _resolve_llm_call_timeout_hint(self, task: Task) -> int:
+        """Resolve per-call LLM timeout without using the task total budget."""
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        for key in _DIRECTOR_LLM_CALL_TIMEOUT_METADATA_KEYS:
+            timeout = _parse_positive_timeout_seconds(metadata.get(key))
+            if timeout is not None:
+                return timeout
+        for key in _DIRECTOR_LLM_CALL_TIMEOUT_ENV_KEYS:
+            timeout = _parse_positive_timeout_seconds(os.environ.get(key))
+            if timeout is not None:
+                return timeout
+        runtime_codegen_enabled = getattr(self._code_engine, "runtime_codegen_enabled", None)
+        if callable(runtime_codegen_enabled):
+            try:
+                if bool(runtime_codegen_enabled()):
+                    return _DEFAULT_DIRECTOR_RUNTIME_LLM_CALL_TIMEOUT_SECONDS
+            except (RuntimeError, TypeError, ValueError):
+                logger.debug("Failed to resolve runtime Director codegen mode", exc_info=True)
+        return _DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS
+
     def _normalize_target_files(self, task: Task) -> list[str]:
         """Get normalized list of target files from task."""
         files: list[str] = []
@@ -579,7 +691,7 @@ class WorkerExecutor:
         if isinstance(target_files, list):
             for f in target_files:
                 path = str(f or "").strip()
-                if path and path not in seen:
+                if path and self._is_concrete_target_file_path(path) and path not in seen:
                     seen.add(path)
                     files.append(path)
 
@@ -589,19 +701,209 @@ class WorkerExecutor:
             for item in file_plan:
                 if isinstance(item, dict):
                     path = str(item.get("path") or "").strip()
-                    if path and path not in seen:
+                    if path and self._is_concrete_target_file_path(path) and path not in seen:
                         seen.add(path)
                         files.append(path)
 
         # Fallback: extract from description
         if not files and task.description:
             for line in task.description.split("\n"):
-                line = line.strip()
-                if self._is_probable_file_path(line) and line not in seen:
-                    seen.add(line)
-                    files.append(line)
+                description_path = self._extract_description_target_path(line)
+                if description_path and description_path not in seen:
+                    seen.add(description_path)
+                    files.append(description_path)
+
+        if not files:
+            for inferred_path in self._infer_target_files_from_scope_paths(task):
+                if inferred_path not in seen:
+                    seen.add(inferred_path)
+                    files.append(inferred_path)
 
         return files
+
+    def _infer_target_files_from_scope_paths(self, task: Task) -> list[str]:
+        """Infer concrete target files from PM directory scopes.
+
+        PM contracts sometimes describe module scopes without concrete files.
+        Passing that ambiguity through to the LLM creates broad prompts that can
+        consume the whole task budget. This inference keeps the Director prompt
+        bounded by existing files in the declared scopes and one conservative
+        new file candidate for empty scopes.
+        """
+        inferred: list[str] = []
+        seen: set[str] = set()
+        for scope in self._normalize_scope_paths(task):
+            if len(inferred) >= _SCOPE_INFERENCE_MAX_FILES:
+                break
+            scope_files = self._existing_files_for_scope(scope, task)
+            if not scope_files:
+                synthesized = self._synthesize_scope_target_file(scope, task)
+                scope_files = [synthesized] if synthesized else []
+            for path in scope_files:
+                if len(inferred) >= _SCOPE_INFERENCE_MAX_FILES:
+                    break
+                if path and path not in seen:
+                    seen.add(path)
+                    inferred.append(path)
+        source_targets = [path for path in inferred if not self._is_test_like_target_file(path)]
+        if source_targets:
+            return source_targets
+        return inferred
+
+    def _existing_files_for_scope(self, scope: str, task: Task) -> list[str]:
+        """Return existing workspace files under a declared scope."""
+        normalized_scope = str(scope or "").strip().replace("\\", "/").rstrip("/")
+        if not normalized_scope or os.path.isabs(normalized_scope) or ".." in normalized_scope.split("/"):
+            return []
+        if self._is_concrete_target_file_path(normalized_scope):
+            full_file = self._resolve_workspace_file_path(normalized_scope)
+            if full_file and os.path.isfile(full_file):
+                return [normalized_scope]
+            return []
+
+        full_scope = self._resolve_workspace_file_path(normalized_scope)
+        if not full_scope or not os.path.isdir(full_scope):
+            return []
+
+        candidates: list[str] = []
+        for root, dirnames, filenames in os.walk(full_scope):
+            dirnames[:] = [
+                name
+                for name in sorted(dirnames)
+                if name not in _SCOPE_INFERENCE_IGNORED_DIRS and not name.startswith(".")
+            ]
+            for filename in sorted(filenames):
+                full_path = os.path.join(root, filename)
+                rel_path = os.path.relpath(full_path, self.workspace).replace("\\", "/")
+                if self._is_scope_inference_candidate(rel_path):
+                    candidates.append(rel_path)
+            if len(candidates) >= _SCOPE_INFERENCE_MAX_FILES_PER_SCOPE * 4:
+                break
+
+        tokens = self._task_ascii_tokens(task)
+        candidates.sort(key=lambda path: self._scope_candidate_sort_key(path, tokens))
+        return candidates[:_SCOPE_INFERENCE_MAX_FILES_PER_SCOPE]
+
+    def _is_scope_inference_candidate(self, path: str) -> bool:
+        """Return whether an existing file is useful as an inferred target."""
+        normalized = str(path or "").strip().replace("\\", "/")
+        if not self._is_concrete_target_file_path(normalized):
+            return False
+        leaf = os.path.basename(normalized)
+        if leaf.startswith(".") and leaf not in {".env", ".env.example", ".gitignore"}:
+            return False
+        lowered = normalized.lower()
+        return lowered.endswith(_SCOPE_INFERENCE_SOURCE_EXTENSIONS)
+
+    def _scope_candidate_sort_key(self, path: str, tokens: list[str]) -> tuple[int, int, str]:
+        """Prefer paths whose names match task tokens, then shorter paths."""
+        lowered = str(path or "").lower()
+        token_hits = sum(1 for token in tokens if token and token in lowered)
+        return (-token_hits, len(lowered), lowered)
+
+    def _synthesize_scope_target_file(self, scope: str, task: Task) -> str | None:
+        """Create a conservative target filename inside an empty declared scope."""
+        normalized_scope = str(scope or "").strip().replace("\\", "/").rstrip("/")
+        if not normalized_scope or os.path.isabs(normalized_scope) or ".." in normalized_scope.split("/"):
+            return None
+        if self._is_concrete_target_file_path(normalized_scope):
+            return normalized_scope
+        slug = self._task_slug(task)
+        if self._looks_like_test_scope(normalized_scope):
+            filename = self._test_filename(slug)
+        else:
+            filename = f"{slug}{self._preferred_source_extension()}"
+        return f"{normalized_scope}/{filename}"
+
+    def _task_slug(self, task: Task) -> str:
+        """Build an ASCII slug from task text for synthesized file names."""
+        tokens = self._task_ascii_tokens(task)
+        if not tokens:
+            return "implementation"
+        return "-".join(tokens[:4])
+
+    def _task_ascii_tokens(self, task: Task) -> list[str]:
+        """Extract stable ASCII tokens from task fields."""
+        parts = [
+            str(getattr(task, "subject", "") or ""),
+            str(getattr(task, "description", "") or ""),
+        ]
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        for key in ("acceptance_criteria", "execution_checklist"):
+            value = metadata.get(key)
+            if isinstance(value, list):
+                parts.extend(str(item or "") for item in value)
+        text = " ".join(parts).replace("_", " ").replace("-", " ").lower()
+        tokens: list[str] = []
+        seen: set[str] = set()
+        for token in re.findall(r"[a-z][a-z0-9]{1,}", text):
+            if token in _TASK_TOKEN_STOPWORDS or token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+            if len(tokens) >= 12:
+                break
+        return tokens
+
+    def _preferred_source_extension(self) -> str:
+        """Infer the most suitable source extension for new scope targets."""
+        if os.path.isfile(os.path.join(self.workspace, "tsconfig.json")):
+            return ".ts"
+        if os.path.isfile(os.path.join(self.workspace, "pyproject.toml")):
+            return ".py"
+        if os.path.isfile(os.path.join(self.workspace, "package.json")):
+            return ".js"
+        return ".ts"
+
+    def _looks_like_test_scope(self, scope: str) -> bool:
+        """Return whether a scope is intended for tests."""
+        scope_text = str(scope or "").strip().lower().replace("\\", "/")
+        normalized = f"/{scope_text}/"
+        return (
+            "/test/" in normalized
+            or "/tests/" in normalized
+            or normalized.endswith("/test/")
+            or normalized.endswith("/tests/")
+        )
+
+    def _test_filename(self, slug: str) -> str:
+        """Return a conventional test filename for the current workspace."""
+        extension = self._preferred_source_extension()
+        if extension == ".py":
+            return f"test_{slug.replace('-', '_')}.py"
+        if extension == ".js":
+            return f"{slug}.test.js"
+        return f"{slug}.test.ts"
+
+    def _extract_description_target_path(self, line: str) -> str | None:
+        """Extract an explicit target path from one description line.
+
+        This fallback is intentionally conservative. PM acceptance text can
+        contain API routes, filenames used as evidence labels, or prose with
+        punctuation; those are not target-file contracts and must not pollute
+        Director prompts.
+        """
+        cleaned = str(line or "").strip()
+        if not cleaned:
+            return None
+        cleaned = re.sub(r"^[\d]+[.)]\s*", "", cleaned)
+        cleaned = re.sub(r"^[-*•]\s*", "", cleaned)
+        cleaned = cleaned.strip()
+        labeled = re.match(
+            r"(?i)^(?:file|path|target|target_file|target files?|目标文件|文件)\s*[:：]\s*(.+?)\s*$",
+            cleaned,
+        )
+        if labeled:
+            cleaned = labeled.group(1).strip()
+        cleaned = cleaned.strip("`'\"")
+        if any(ch.isspace() for ch in cleaned):
+            return None
+        if any(ch in cleaned for ch in "[]{}()，。；；：,;"):
+            return None
+        normalized = cleaned.replace("\\", "/")
+        if self._is_probable_file_path(normalized) and self._is_concrete_target_file_path(normalized):
+            return normalized
+        return None
 
     def _is_probable_file_path(self, path: str) -> bool:
         """Check if string looks like a file path."""
@@ -611,6 +913,49 @@ class WorkerExecutor:
         has_ext = "." in path and len(path.rsplit(".", maxsplit=1)[-1]) <= 5
         has_slash = "/" in path or "\\" in path
         return has_ext or has_slash
+
+    def _is_concrete_target_file_path(self, path: str) -> bool:
+        """Return true when a PM target path names a file, not a directory scope."""
+        token = str(path or "").strip().replace("\\", "/")
+        if not token or token.endswith("/"):
+            return False
+        if os.path.isabs(token) or ".." in token.split("/"):
+            return False
+        leaf = os.path.basename(token)
+        if not leaf:
+            return False
+        known_extensionless = {
+            ".dockerignore",
+            ".env",
+            ".env.example",
+            ".gitignore",
+            "dockerfile",
+            "go.mod",
+            "go.sum",
+            "license",
+            "makefile",
+            "readme",
+        }
+        if leaf.lower() in known_extensionless:
+            return True
+        return "." in leaf
+
+    def _normalize_scope_paths(self, task: Task) -> list[str]:
+        """Return directory/module scopes declared by PM without treating them as files."""
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        scopes: list[str] = []
+        seen: set[str] = set()
+        for key in ("scope_paths", "write_scope"):
+            value = metadata.get(key)
+            if not isinstance(value, list):
+                continue
+            for raw in value:
+                path = str(raw or "").strip().replace("\\", "/").rstrip("/")
+                if not path or path in seen:
+                    continue
+                seen.add(path)
+                scopes.append(path)
+        return scopes
 
     def _bootstrap_target_file_content(self, *, path: str, task: Task, language: str) -> str:
         """Return minimal UTF-8 content for bootstrap files named by the PM contract."""
@@ -693,32 +1038,248 @@ class WorkerExecutor:
         if isinstance(plan, dict):
             rounds = plan.get("rounds", [])
             if rounds:
-                return rounds
+                normalized_rounds: list[list[dict]] = []
+                for round_items in rounds:
+                    if not isinstance(round_items, list):
+                        continue
+                    normalized_items = [
+                        item
+                        for item in round_items
+                        if isinstance(item, dict) and self._is_concrete_target_file_path(str(item.get("path") or ""))
+                    ]
+                    if normalized_items:
+                        normalized_rounds.append(normalized_items)
+                return normalized_rounds or [[]]
 
         # Check for file_plans (legacy format)
         if isinstance(plan, dict):
             file_plans = plan.get("file_plans", [])
             if file_plans:
-                # Check for chunking environment variable
-                chunk_size_str = os.environ.get("KERNELONE_CE_ROUND_FILE_CHUNK", "")
-                if chunk_size_str:
-                    try:
-                        chunk_size = int(chunk_size_str)
-                        if chunk_size > 0:
-                            # Split file_plans into chunks
-                            chunks = []
-                            for i in range(0, len(file_plans), chunk_size):
-                                chunks.append(file_plans[i : i + chunk_size])
-                            return chunks
-                    except ValueError:
-                        pass
-                return [file_plans]  # Single round with all files
+                normalized_plans = [
+                    item
+                    for item in file_plans
+                    if isinstance(item, dict) and self._is_concrete_target_file_path(str(item.get("path") or ""))
+                ]
+                if not normalized_plans:
+                    return [[]]
+                chunk_size = self._effective_code_generation_round_chunk_size(normalized_plans)
+                if chunk_size > 0:
+                    return [normalized_plans[i : i + chunk_size] for i in range(0, len(normalized_plans), chunk_size)]
+                return [normalized_plans]  # Single round with all files
 
         # Default: single round with all target files
         files = self._normalize_target_files(task)
         if files:
-            return [[{"path": f} for f in files]]
-        return []
+            file_plans = [{"path": f} for f in files]
+            chunk_size = self._effective_code_generation_round_chunk_size(file_plans)
+            if chunk_size > 0:
+                return [file_plans[i : i + chunk_size] for i in range(0, len(file_plans), chunk_size)]
+            return [file_plans]
+        return [[]]
+
+    @staticmethod
+    def _resolve_code_generation_round_chunk_size() -> int:
+        """Resolve file count per code-generation round."""
+        raw = (
+            os.environ.get("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK")
+            or os.environ.get("KERNELONE_CE_ROUND_FILE_CHUNK")
+            or "2"
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 0
+        if value <= 0:
+            return 0
+        return min(value, 8)
+
+    @staticmethod
+    def _code_generation_round_chunk_configured() -> bool:
+        """Return whether a caller explicitly configured target-file chunking."""
+        return bool(
+            os.environ.get("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK") or os.environ.get("KERNELONE_CE_ROUND_FILE_CHUNK")
+        )
+
+    def _effective_code_generation_round_chunk_size(self, file_plans: list[dict]) -> int:
+        """Return the chunk size for this concrete file set."""
+        _ = file_plans
+        chunk_size = self._resolve_code_generation_round_chunk_size()
+        if chunk_size <= 0:
+            return 0
+        return chunk_size
+
+    @staticmethod
+    def _is_test_like_target_file(path: str) -> bool:
+        """Return whether a target path is likely to produce expensive test/spec output."""
+        normalized = str(path or "").strip().replace("\\", "/").lower()
+        if not normalized:
+            return False
+        return (
+            "/test/" in f"/{normalized}"
+            or "/tests/" in f"/{normalized}"
+            or normalized.endswith(".test.ts")
+            or normalized.endswith(".test.tsx")
+            or normalized.endswith(".test.js")
+            or normalized.endswith(".spec.ts")
+            or normalized.endswith(".spec.tsx")
+            or normalized.endswith(".spec.js")
+        )
+
+    def _resolve_workspace_file_path(self, relative_path: str) -> str | None:
+        """Resolve a workspace-relative file path without allowing traversal."""
+        path = str(relative_path or "").strip()
+        if not path or os.path.isabs(path):
+            return None
+        workspace_abs = os.path.abspath(self.workspace)
+        full_path = os.path.abspath(os.path.join(workspace_abs, path))
+        try:
+            if os.path.commonpath([workspace_abs, full_path]) != workspace_abs:
+                return None
+        except ValueError:
+            return None
+        return full_path
+
+    def _snapshot_workspace_files(self, paths: list[str]) -> dict[str, tuple[bool, int, int]]:
+        """Capture initial target-file signatures for over-completion detection."""
+        snapshot: dict[str, tuple[bool, int, int]] = {}
+        for raw_path in paths:
+            path = str(raw_path or "").strip()
+            if not path or path in snapshot:
+                continue
+            full_path = self._resolve_workspace_file_path(path)
+            if full_path is None:
+                continue
+            try:
+                stat = os.stat(full_path)
+            except OSError:
+                snapshot[path] = (False, -1, -1)
+            else:
+                snapshot[path] = (True, int(stat.st_size), int(stat.st_mtime_ns))
+        return snapshot
+
+    def _round_files_changed_since(
+        self,
+        paths: list[str],
+        initial_signatures: dict[str, tuple[bool, int, int]],
+    ) -> bool:
+        """Return true when every path in a round was created or changed."""
+        normalized = [str(path or "").strip() for path in paths if str(path or "").strip()]
+        if not normalized:
+            return False
+        for path in normalized:
+            full_path = self._resolve_workspace_file_path(path)
+            if full_path is None or not os.path.isfile(full_path):
+                return False
+            try:
+                stat = os.stat(full_path)
+            except OSError:
+                return False
+            current = (True, int(stat.st_size), int(stat.st_mtime_ns))
+            if current == initial_signatures.get(path, (False, -1, -1)):
+                return False
+        return True
+
+    def _collect_existing_file_records(self, paths: list[str]) -> list[dict[str, str]]:
+        """Return lightweight records for existing workspace files."""
+        records: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for raw_path in paths:
+            path = str(raw_path or "").strip()
+            if not path or path in seen:
+                continue
+            full_path = self._resolve_workspace_file_path(path)
+            if full_path is None or not os.path.isfile(full_path):
+                continue
+            seen.add(path)
+            records.append({"path": path, "content": ""})
+        return records
+
+    def _code_generation_round_marker_path(self, task: Task, round_index: int) -> str:
+        """Return the persisted progress marker path for one task round."""
+        raw_task_id = str(getattr(task, "id", "") or getattr(task, "subject", "") or "task")
+        safe_task_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_task_id).strip("._") or "task"
+        return os.path.join(
+            self.workspace,
+            ".polaris",
+            "runtime",
+            "director",
+            "codegen_progress",
+            safe_task_id,
+            f"round-{round_index:03d}.json",
+        )
+
+    def _workspace_file_signature(self, relative_path: str) -> dict[str, int] | None:
+        """Return a stable file signature for a workspace-relative file."""
+        full_path = self._resolve_workspace_file_path(relative_path)
+        if full_path is None or not os.path.isfile(full_path):
+            return None
+        try:
+            stat = os.stat(full_path)
+        except OSError:
+            return None
+        return {
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+        }
+
+    def _write_code_generation_round_marker(
+        self,
+        task: Task,
+        round_index: int,
+        round_paths: list[str],
+    ) -> None:
+        """Persist successful round progress so process-level retries can resume."""
+        normalized_paths = [str(path or "").strip() for path in round_paths if str(path or "").strip()]
+        if not normalized_paths:
+            return
+        signatures: dict[str, dict[str, int]] = {}
+        for path in normalized_paths:
+            signature = self._workspace_file_signature(path)
+            if signature is None:
+                return
+            signatures[path] = signature
+        marker_path = self._code_generation_round_marker_path(task, round_index)
+        payload = {
+            "schema_version": 1,
+            "task_id": str(getattr(task, "id", "") or ""),
+            "round_index": round_index,
+            "target_files": normalized_paths,
+            "signatures": signatures,
+            "timestamp_epoch": time.time(),
+        }
+        os.makedirs(os.path.dirname(marker_path), exist_ok=True)
+        with open(marker_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+
+    def _code_generation_round_marker_satisfied(
+        self,
+        task: Task,
+        round_index: int,
+        round_paths: list[str],
+    ) -> bool:
+        """Return whether a previous process already completed this round."""
+        normalized_paths = [str(path or "").strip() for path in round_paths if str(path or "").strip()]
+        if not normalized_paths:
+            return False
+        marker_path = self._code_generation_round_marker_path(task, round_index)
+        try:
+            with open(marker_path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+        if not isinstance(payload, dict) or int(payload.get("schema_version") or 0) != 1:
+            return False
+        target_files = payload.get("target_files")
+        signatures = payload.get("signatures")
+        if target_files != normalized_paths or not isinstance(signatures, dict):
+            return False
+        for path in normalized_paths:
+            expected = signatures.get(path)
+            current = self._workspace_file_signature(path)
+            if not isinstance(expected, dict) or current != expected:
+                return False
+        return True
 
     def _write_files(self, files: list[dict], task_id: str = "") -> list[dict]:
         """Delegate to FileApplyService."""
@@ -816,6 +1377,14 @@ class WorkerExecutor:
         )
         target_files = round_files or self._normalize_target_files(task)
         target_text = "\n".join(f"- {path}" for path in target_files[:16]) if target_files else "- (model may decide)"
+        target_scope_rule = (
+            "- Concrete target files are declared for this round. Edit/create only those paths; "
+            "do not add unrelated files."
+            if target_files
+            else "- No concrete target files were declared. Choose the smallest concrete file set under the declared scopes."
+        )
+        scope_paths = self._normalize_scope_paths(task)
+        scope_text = "\n".join(f"- {path}" for path in scope_paths[:16]) if scope_paths else "- (not declared)"
         construction_hints: list[str] = []
         for plan in self._construction_file_plans(task):
             path = str(plan.get("path") or "").strip()
@@ -879,6 +1448,9 @@ Description: {task_description}
 Target files for this execution:
 {target_text}
 
+Declared directory/module scopes:
+{scope_text}
+
 === Architecture Context (全局架构上下文) ===
 {arch_section}
 
@@ -895,6 +1467,12 @@ IMPORTANT ARCHITECTURE GUIDELINES:
 7. 接口优先: 对于稳定模块，先定义清晰的公共接口，再实现内部逻辑
 
 Please generate the code to implement this task.
+
+Output contract:
+{target_scope_rule}
+- Return only `PATCH_FILE:` blocks or fenced ` ```file: path` file sections.
+- Do not output `Command:`, shell commands, terminal logs, status narration, SESSION_PATCH, or tool-call wrappers.
+- If target files are not concrete, choose concrete workspace-relative file paths under the declared scopes and create those files.
 
 For each file you create, provide:
 1. Prefer PATCH format for incremental edits on existing files:
@@ -929,6 +1507,9 @@ Requirements:
 - Ensure the code is syntactically correct
 - Prioritize minimal patch edits over full-file rewrites when file already exists
 - Prefer editing/creating the listed target files before creating new files
+- Keep this generation response focused on source-file changes. Skip package
+  installation, build/test commands, and dev-server startup; Polaris runs
+  verification after file application.
 """
 
         raw_max_chars = os.environ.get("KERNELONE_WORKER_PROMPT_MAX_CHARS", "9000")

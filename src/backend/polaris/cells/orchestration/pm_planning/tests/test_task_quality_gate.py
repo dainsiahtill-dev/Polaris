@@ -102,7 +102,12 @@ class TestContainsPromptLeakage:
 
     def test_detects_chinese_markers(self) -> None:
         assert _contains_prompt_leakage("角色设定说明")
-        assert _contains_prompt_leakage("提示词优化")
+        assert _contains_prompt_leakage("系统提示词泄露")
+        assert _contains_prompt_leakage("提示词注入攻击")
+
+    def test_allows_domain_prompt_work_items(self) -> None:
+        assert _contains_prompt_leakage("加固真实试穿提示词护栏") is False
+        assert _contains_prompt_leakage("提示词编译链路生成 prompt-package.json") is False
 
     def test_detects_xml_markers(self) -> None:
         assert _contains_prompt_leakage("<thinking>analyzing</thinking>")

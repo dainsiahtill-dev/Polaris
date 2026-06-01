@@ -24,7 +24,7 @@ from polaris.delivery.ws.endpoints.helpers import (
     is_process_channel,
     parse_json_line,
 )
-from polaris.delivery.ws.endpoints.models import WebSocketSendError
+from polaris.delivery.ws.endpoints.models import WebSocketSendError, is_websocket_disconnect_runtime_error
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +93,15 @@ async def send_json(
 
     except RuntimeError as e:
         error_msg = str(e).lower()
-        error_type = "connection_closed" if "closed" in error_msg or "close" in error_msg else "runtime_error"
-        logger.warning(f"WebSocket runtime error: {e}", extra=error_context)
+        error_type = (
+            "connection_closed"
+            if is_websocket_disconnect_runtime_error(e) or "closed" in error_msg or "close" in error_msg
+            else "runtime_error"
+        )
+        if error_type == "connection_closed":
+            logger.info("WebSocket closed during send: %s", e, extra=error_context)
+        else:
+            logger.warning("WebSocket runtime error: %s", e, extra=error_context)
         raise WebSocketSendError(error_type, str(e), e) from e
 
     except ValueError as e:

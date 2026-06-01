@@ -314,3 +314,55 @@ async def test_subscribe_handles_previous_consumer_disconnect_error(monkeypatch:
     assert isinstance(consumer_ref[0], _FakeConsumerManager)
     assert consumer_ref[0].is_connected is True
     assert sent_payloads[-1]["type"] == "SUBSCRIBED"
+
+
+@pytest.mark.asyncio
+async def test_subscribe_degrades_to_legacy_when_jetstream_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A JetStream timeout must not escape the WebSocket handler."""
+    sent_payloads: list[dict[str, Any]] = []
+
+    async def _send_json_safe(*_args: Any, **_kwargs: Any) -> bool:
+        sent_payloads.append(_args[1])
+        return True
+
+    class _TimeoutConsumer:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.connected = False
+
+        @property
+        def is_connected(self) -> bool:
+            return False
+
+        async def connect(self) -> bool:
+            raise TimeoutError("nats: timeout")
+
+    monkeypatch.setattr(protocol, "JetStreamConsumerManager", _TimeoutConsumer)
+    monkeypatch.setattr(protocol, "send_json_safe", _send_json_safe)
+
+    tail_ref = [200]
+    consumer_ref: list[Any] = [None]
+    client_id_ref = [""]
+    channels_ref: list[list[str]] = [[]]
+    cursor_ref = [0]
+
+    await protocol.handle_v2_message(
+        message={"type": "SUBSCRIBE", "protocol": "runtime.v2", "client_id": "same", "channels": ["llm"]},
+        websocket=object(),
+        status_sig="",
+        connection_id="abc123",
+        client="test-client",
+        workspace="C:/workspace",
+        cache_root="C:/runtime",
+        roles_filter=set(),
+        tail_lines_ref=tail_ref,
+        consumer_manager_ref=consumer_ref,
+        client_id_ref=client_id_ref,
+        channels_ref=channels_ref,
+        cursor_ref=cursor_ref,
+        state=object(),
+        handle_event_query_func=None,
+    )
+
+    assert consumer_ref[0] is None
+    assert sent_payloads[-1]["type"] == "SUBSCRIBED"
+    assert sent_payloads[-1]["payload"]["jetstream"] is False

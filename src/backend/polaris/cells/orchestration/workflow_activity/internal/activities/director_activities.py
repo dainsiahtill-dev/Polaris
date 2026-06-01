@@ -33,8 +33,8 @@ _PHASE_NAME_MAP = {
     "verification": TaskPhase.VERIFICATION,
     "report": TaskPhase.COMPLETED,
 }
-_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS = 930
-_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS = 900
+_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS = 3600
+_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS = 3570
 
 
 def _normalize_dict(value: Any) -> dict[str, Any]:
@@ -175,7 +175,7 @@ def _run_director_execution(
 
     process_timeout = _coerce_timeout_seconds(
         director_config.get("timeout"),
-        default=300,
+        default=600,
         maximum=_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS,
     )
     task_timeout = _coerce_timeout_seconds(

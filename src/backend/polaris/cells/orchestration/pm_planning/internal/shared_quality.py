@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -25,7 +26,16 @@ _PM_PROMPT_LEAK_TOKENS = (
     "no yapping",
     "<thinking>",
     "<tool_call>",
-    "提示词",
+)
+_PM_CHINESE_PROMPT_LEAK_TOKENS = (
+    "系统提示词",
+    "开发者提示词",
+    "角色提示词",
+    "内部提示词",
+    "完整提示词",
+    "提示词泄露",
+    "提示词泄漏",
+    "提示词注入",
 )
 _PM_ACTION_TOKENS = (
     "build",
@@ -117,7 +127,9 @@ def _contains_prompt_leakage(text: str) -> bool:
     lowered = _normalize_text(text).lower()
     if not lowered:
         return False
-    return any(token in lowered for token in _PM_PROMPT_LEAK_TOKENS)
+    if any(token in lowered for token in _PM_PROMPT_LEAK_TOKENS):
+        return True
+    return any(token in lowered for token in _PM_CHINESE_PROMPT_LEAK_TOKENS)
 
 
 def _has_measurable_acceptance_anchor(acceptance_items: list[str]) -> bool:
@@ -141,6 +153,118 @@ def _tail_non_empty_lines(text: str, *, limit: int = 8) -> list[str]:
     if len(lines) <= limit:
         return lines
     return lines[-limit:]
+
+
+def _read_package_json(workspace_full: str) -> dict[str, Any]:
+    package_path = os.path.join(workspace_full, "package.json")
+    try:
+        with open(package_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, RuntimeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_package_scripts(package_payload: dict[str, Any]) -> dict[str, str]:
+    scripts = package_payload.get("scripts")
+    if not isinstance(scripts, dict):
+        return {}
+    normalized: dict[str, str] = {}
+    for name, command in scripts.items():
+        key = str(name or "").strip()
+        value = str(command or "").strip()
+        if key and value:
+            normalized[key] = value
+    return normalized
+
+
+def _detect_node_verify_command(workspace_full: str) -> str:
+    package_payload = _read_package_json(workspace_full)
+    scripts = _read_package_scripts(package_payload)
+    if "test" in scripts:
+        return "npm run test -- --watch=false"
+    for script_name in ("verify:final", "verify", "smoke:boot", "smoke", "build", "lint"):
+        if script_name in scripts:
+            return f"npm run {script_name}"
+    return "node -e \"JSON.parse(require('fs').readFileSync('package.json', 'utf8'))\""
+
+
+def _package_has_declared_dependencies(package_payload: dict[str, Any]) -> bool:
+    for section_name in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        section = package_payload.get(section_name)
+        if isinstance(section, dict) and section:
+            return True
+    return False
+
+
+def _node_dependencies_missing(workspace_full: str, package_payload: dict[str, Any]) -> bool:
+    if not _package_has_declared_dependencies(package_payload):
+        return False
+    return not os.path.isdir(os.path.join(workspace_full, "node_modules"))
+
+
+def _is_node_package_command(command_args: list[str]) -> bool:
+    if not command_args:
+        return False
+    executable = str(command_args[0] or "").strip().lower()
+    return executable in {"npm", "pnpm", "yarn"}
+
+
+def _has_node_test_files(workspace_full: str) -> bool:
+    test_roots = ("tests", "test", "src")
+    test_markers = (".test.ts", ".test.tsx", ".test.js", ".test.jsx", ".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx")
+    for rel_root in test_roots:
+        root = os.path.join(workspace_full, rel_root)
+        if not os.path.isdir(root):
+            continue
+        try:
+            for _current_root, dir_names, file_names in os.walk(root):
+                dir_names[:] = [
+                    name
+                    for name in dir_names
+                    if name not in {"node_modules", "dist", "build", "coverage", ".git", ".polaris"}
+                ]
+                for name in file_names:
+                    token = str(name or "").strip().lower()
+                    if token.endswith(test_markers):
+                        return True
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return False
+
+
+def _count_node_source_files(workspace_full: str) -> int:
+    count = 0
+    source_exts = (".ts", ".tsx", ".js", ".jsx", ".json", ".css", ".html")
+    skip_dirs = {"node_modules", "dist", "build", "coverage", ".git", ".polaris"}
+    try:
+        for _current_root, dir_names, file_names in os.walk(workspace_full):
+            dir_names[:] = [name for name in dir_names if name not in skip_dirs]
+            for name in file_names:
+                if str(name or "").strip().lower().endswith(source_exts):
+                    count += 1
+    except (OSError, RuntimeError, ValueError):
+        return 0
+    return count
+
+
+def _run_node_static_verify_runner(workspace_full: str, package_payload: dict[str, Any]) -> tuple[bool, str, list[str]]:
+    scripts = package_payload.get("scripts")
+    script_names = set(scripts.keys()) if isinstance(scripts, dict) else set()
+    source_count = _count_node_source_files(workspace_full)
+    has_tests = _has_node_test_files(workspace_full)
+    errors: list[str] = []
+    if source_count <= 0:
+        errors.append("Node static verification failed: no source/config files found")
+    if "test" in script_names and not has_tests:
+        errors.append("Node static verification failed: package has a test script but no test/spec files exist")
+    if errors:
+        return False, "Node static verification failed while dependencies are not installed", errors
+    summary = (
+        "Node static verification passed while dependencies are not installed "
+        f"(source_files={source_count}, tests={'present' if has_tests else 'not-required'})."
+    )
+    return True, summary, []
 
 
 def detect_integration_verify_command(workspace_full: str) -> str:
@@ -216,7 +340,7 @@ def detect_integration_verify_command(workspace_full: str) -> str:
                 unique_targets.append(item)
         return "python -m compileall -q " + " ".join(unique_targets)
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["node"]):
-        return "npm run test -- --watch=false"
+        return _detect_node_verify_command(workspace_full)
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["go"]):
         return "go test ./... -run TestDoesNotExist"
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["rust"]):
@@ -237,6 +361,10 @@ def run_integration_verify_runner(workspace_full: str) -> tuple[bool, str, list[
     except ValueError as exc:
         summary = f"Integration verification command rejected: {exc}"
         return False, summary, [summary]
+
+    package_payload = _read_package_json(workspace_full)
+    if _is_node_package_command(command_args) and _node_dependencies_missing(workspace_full, package_payload):
+        return _run_node_static_verify_runner(workspace_full, package_payload)
 
     try:
         cmd_svc = CommandExecutionService(workspace_full)

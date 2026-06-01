@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -273,9 +274,42 @@ class TestEmbeddedWorkflowAPI:
 
         payload = engine.start_workflow.await_args.kwargs["payload"]
         assert payload["_workflow_contract_mode"] == "legacy"
+        assert payload["timeout_seconds"] == 120.0
         assert payload["tasks"][0]["id"] == "task-1"
         assert "task_id" not in payload["tasks"][0]
         assert WorkflowContract.from_payload(payload).mode == "legacy"
+
+    @pytest.mark.asyncio
+    async def test_child_workflow_run_timeout_is_forwarded_to_runtime_payload(self) -> None:
+        api = EmbeddedWorkflowAPI()
+        engine = MagicMock()
+        engine.start_workflow = AsyncMock(return_value=MagicMock(submitted=True, error=""))
+        engine.describe_workflow = AsyncMock(
+            return_value=MagicMock(
+                status="completed",
+                result={"status": "completed", "result": {"status": "completed"}},
+            )
+        )
+        ctx = WorkflowContext(
+            workflow_id="parent",
+            payload={},
+            workflow_name="pm_workflow",
+            runtime_engine=engine,
+        )
+        token = set_workflow_context(ctx)
+
+        try:
+            await api.execute_child_workflow(
+                "director_task_workflow",
+                {"task": {"id": "T01", "title": "Task"}},
+                id="director-task-child",
+                run_timeout=timedelta(seconds=900),
+            )
+        finally:
+            clear_workflow_context(token)
+
+        payload = engine.start_workflow.await_args.kwargs["payload"]
+        assert payload["timeout_seconds"] == 900.0
 
 
 class TestEmbeddedActivityAPI:

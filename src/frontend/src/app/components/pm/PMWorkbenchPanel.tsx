@@ -596,7 +596,7 @@ export function PMWorkbenchPanel({
   }, [loadPmRunEvidence, pmRunAutoRefreshActive, workflowRunEvidence.runId]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div data-testid="pm-workbench-panel" className="flex flex-col h-full">
       {/* 工具栏 */}
       <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-amber-500/20 bg-amber-500/5">
         <div className="flex min-w-0 items-center gap-2">

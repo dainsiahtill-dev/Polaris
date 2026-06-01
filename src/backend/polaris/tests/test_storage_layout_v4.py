@@ -203,6 +203,25 @@ def test_storage_layout_exposes_global_project_runtime_taxonomy(tmp_path: Path) 
     assert Path(global_cfg).as_posix().endswith("/.polaris/config/settings.json")
 
 
+def test_global_config_path_does_not_require_runtime_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Global config lookup must keep working even when runtime root probing fails."""
+    from polaris.kernelone.storage import layout as layout_module
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("KERNELONE_HOME", str(home))
+
+    def fail_runtime_probe(*_: object, **__: object) -> tuple[str, str]:
+        raise AssertionError("runtime base should not be probed for global config paths")
+
+    monkeypatch.setattr(layout_module, "_runtime_base_and_mode", fail_runtime_probe)
+
+    global_cfg = Path(resolve_global_path("config/llm/llm_config.json"))
+    assert global_cfg == home / "config" / "llm" / "llm_config.json"
+
+
 def test_project_and_global_logical_prefix_aliases_are_rejected(tmp_path: Path) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir(parents=True, exist_ok=True)

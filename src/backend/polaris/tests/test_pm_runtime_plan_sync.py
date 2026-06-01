@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from polaris.delivery.cli.pm import orchestration_engine
+from polaris.delivery.cli.pm.orchestration.core import load_state_and_context
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
 
@@ -146,3 +148,40 @@ def test_pm_run_once_syncs_persistent_docs_plan_to_runtime_contract(
     runtime_plan_path = Path(resolve_artifact_path(str(workspace), "", "runtime/contracts/plan.md"))
     assert runtime_plan_path.is_file()
     assert runtime_plan_path.read_text(encoding="utf-8") == plan_text
+
+
+def test_pm_context_prefers_requirement_markdown_over_newer_status_docs(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """PM must not treat fresh status reports as the product requirements source."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime_root = workspace / ".polaris" / "runtime"
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+
+    docs_root = Path(resolve_artifact_path(str(workspace), "", "workspace/docs"))
+    plans_root = Path(resolve_artifact_path(str(workspace), "", "workspace/plans"))
+    docs_root.mkdir(parents=True, exist_ok=True)
+    plans_root.mkdir(parents=True, exist_ok=True)
+
+    canonical_requirements = docs_root / "AI_Studio_项目文档.md"
+    status_report = docs_root / "implementation-status.md"
+    implementation_plan = plans_root / "studio-implementation-plan.md"
+    canonical_requirements.write_text("# 项目文档\n\n完整核心需求：资产库、生成工作台、批量队列。\n", encoding="utf-8")
+    status_report.write_text("# Implementation Status\n\n当前只剩运行时状态与视觉打磨。\n", encoding="utf-8")
+    implementation_plan.write_text("# Implementation Plan\n\n分阶段落地核心工作台。\n", encoding="utf-8")
+    os.utime(canonical_requirements, (1000, 1000))
+    os.utime(status_report, (2000, 2000))
+    os.utime(implementation_plan, (1500, 1500))
+
+    args = _build_args(workspace)
+    args.start_from = "architect"
+    context = load_state_and_context(str(workspace), "", args, 1)
+
+    assert "完整核心需求" in context["requirements"]
+    assert "视觉打磨" not in context["requirements"]
+    assert "分阶段落地核心工作台" in context["plan_text"]

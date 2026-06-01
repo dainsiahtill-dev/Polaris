@@ -26,7 +26,7 @@ def detect_tech_stack(
         Dict with keys: language, framework, project_type, confidence,
         alternative_languages
     """
-    text = f"{requirements} {plan_text}".lower()
+    text = f"{requirements} {plan_text}".replace("\ufeff", "").lower()
 
     # Language detection patterns (regex with token boundaries to avoid false positives,
     # e.g., "architecture" should not trigger React/TypeScript).
@@ -46,6 +46,9 @@ def detect_tech_stack(
             r"tsconfig\.json",
             r"\.tsx?\b",
             r"\bnestjs\b",
+            r"\belectron\b",
+            r"\bvite\b",
+            r"\btailwind\b",
         ],
         "javascript": [
             r"\bjavascript\b",
@@ -98,6 +101,11 @@ def detect_tech_stack(
         if score > 0:
             lang_scores[lang] = score
 
+    # Desktop/frontend workbenches are usually driven by TS/React/Electron even
+    # when the same requirements mention a Python orchestration backend.
+    if re.search(r"\b(electron|react|vite|tailwind|desktop|frontend|tsx)\b", text):
+        lang_scores["typescript"] = lang_scores.get("typescript", 0) + 2
+
     detected_lang = max(lang_scores, key=lambda k: lang_scores.get(k, 0)) if lang_scores else "unknown"
     lang_confidence = lang_scores.get(detected_lang, 0) / max(lang_scores.values()) if lang_scores else 0
 
@@ -120,9 +128,11 @@ def detect_tech_stack(
         detected_framework = None
 
     project_type = "generic"
-    if re.search(r"\bapi\b|\brest\b|\bendpoint\b|\bserver\b", text):
+    if re.search(r"\bdesktop\b|\belectron\b|\bworkbench\b|\b工作台\b|\b桌面\b", text):
+        project_type = "desktop"
+    elif re.search(r"\bapi\b|\brest\b|\bendpoint\b|\bserver\b", text):
         project_type = "api"
-    elif re.search(r"\bcli\b|\bcommand\b|\bterminal\b|\btool\b", text):
+    elif re.search(r"\bcli\b|\bcommand[- ]line\b|\bterminal\b", text):
         project_type = "cli"
     elif re.search(r"\bweb\b|\bfrontend\b|\bui\b|\binterface\b", text):
         project_type = "web"

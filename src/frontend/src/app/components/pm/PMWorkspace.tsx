@@ -98,6 +98,12 @@ interface PMWorkspaceProps {
   factoryMode?: boolean;
   qualityGate?: QualityGateData | null;
   taskTraceMap?: TaskTraceMap;
+  llmRuntimeState?: {
+    state: 'READY' | 'BLOCKED' | 'UNKNOWN';
+    blockedRoles: string[];
+    requiredRoles: string[];
+    lastUpdated: string | null;
+  };
   onOpenSettings?: () => void;
 }
 
@@ -298,6 +304,9 @@ function pmStartupBlockers(diagnostics: PmStartupDiagnosticsResponse | null): st
   if (!diagnostics) {
     return [];
   }
+  if (diagnostics.can_start === true) {
+    return [];
+  }
   if (Array.isArray(diagnostics.startup_blockers) && diagnostics.startup_blockers.length > 0) {
     return diagnostics.startup_blockers
       .map((issue) => String(issue || '').trim())
@@ -318,6 +327,11 @@ function formatPmStartupBlockReason(diagnostics: PmStartupDiagnosticsResponse | 
   const primary = PM_STARTUP_BLOCKER_LABELS[blockers[0]] || blockers[0].replace(/_/g, ' ');
   const extraCount = blockers.length - 1;
   return `PM 启动诊断未通过：${primary}${extraCount > 0 ? `，另有 ${extraCount} 项阻断` : ''}`;
+}
+
+function isLlmStartupBlockReason(value: string): boolean {
+  const token = String(value || '').trim().toLowerCase();
+  return Boolean(token && (token.includes('llm') || token.includes('provider') || token.includes('model')));
 }
 
 function taskListRecord(task: PmTaskSearchResult): Record<string, unknown> {
@@ -487,6 +501,19 @@ function splitPMRuntimeIssue(issue: PMRuntimeIssue | null | undefined): {
   return { rootCause, cascades, detail };
 }
 
+function isPMTerminalSuccess(pmTerminalStatus: PMTerminalStatus | null | undefined): boolean {
+  if (!pmTerminalStatus || pmTerminalStatus.terminal !== true) {
+    return false;
+  }
+  const status = stringValue(pmTerminalStatus.status).toLowerCase();
+  const exitCode = typeof pmTerminalStatus.exit_code === 'number' ? pmTerminalStatus.exit_code : null;
+  const error = stringValue(pmTerminalStatus.error);
+  if (error || pmTerminalStatus.ok === false || status === 'failed') {
+    return false;
+  }
+  return pmTerminalStatus.ok === true || status === 'success' || status === 'completed' || exitCode === 0;
+}
+
 function resolvePMRuntimeBanner({
   pmRunning,
   pmStartBlockedReason,
@@ -498,18 +525,25 @@ function resolvePMRuntimeBanner({
   runtimeIssue?: PMRuntimeIssue | null;
   pmTerminalStatus?: PMTerminalStatus | null;
 }): PMRuntimeBanner | null {
-  if (runtimeIssue && !pmRunning) {
+  const hasConfirmedTerminalSuccess = isPMTerminalSuccess(pmTerminalStatus);
+
+  if (runtimeIssue && !pmRunning && !hasConfirmedTerminalSuccess) {
     const breakdown = splitPMRuntimeIssue(runtimeIssue);
+    const hasStartBlocker = Boolean(pmStartBlockedReason);
     return {
-      title: runtimeIssue.title || 'PM 运行已终止',
+      title: hasStartBlocker ? runtimeIssue.title || 'PM 运行已终止' : '上次 PM Run 失败',
       detail: breakdown.detail || runtimeIssue.code || 'PM 运行失败，请查看运行日志。',
-      severity: 'error',
+      severity: hasStartBlocker ? 'error' : 'warning',
       refs: [],
       code: runtimeIssue.code,
       rootCause: breakdown.rootCause,
       cascades: breakdown.cascades,
       startBlocker: pmStartBlockedReason || '',
     };
+  }
+
+  if (!pmRunning && hasConfirmedTerminalSuccess && !pmStartBlockedReason) {
+    return null;
   }
 
   if (!pmRunning && pmStartBlockedReason) {
@@ -548,6 +582,16 @@ function resolvePMRuntimeBanner({
       stringValue(pmTerminalStatus.log_path),
     ].filter(Boolean),
   };
+}
+
+function formatPMStatusSnapshot(status: PmStatus | null): string {
+  if (!status) return '等待状态';
+  return [
+    status.running ? 'running' : 'idle',
+    typeof status.pid === 'number' ? `pid=${status.pid}` : '',
+    status.mode ? `mode=${status.mode}` : '',
+    status.source ? `source=${status.source}` : '',
+  ].filter(Boolean).join(' · ');
 }
 
 function PMBackendEvidenceStrip({
@@ -598,31 +642,57 @@ function PMBackendEvidenceStrip({
     : evidence.capabilitiesError
       ? '能力 ?'
       : `能力 ${evidence.capabilities.length}`;
+  const blockerCount = pmStartupBlockers(evidence.diagnostics).length || evidence.diagnostics?.issues?.length || 0;
+  const diagnosticsSummaryLabel = evidence.loading
+    ? '诊断中'
+    : evidence.diagnosticsError
+      ? '诊断失败'
+      : canStart === false
+        ? `阻断 ${blockerCount || 1}`
+        : evidence.diagnostics?.ok
+          ? '启动可用'
+          : '诊断未知';
+  const llmSummaryLabel = evidence.loading
+    ? 'LLM ...'
+    : evidence.diagnosticsError
+      ? 'LLM ?'
+      : `LLM ${evidence.diagnostics?.llm?.state || (evidence.diagnostics?.llm?.ok ? 'ready' : 'unknown')}`;
+  const inputSummaryLabel = evidence.loading
+    ? '输入 ...'
+    : evidence.diagnosticsError
+      ? '输入 ?'
+      : `输入 ${evidence.diagnostics?.planning_input?.status || (evidence.diagnostics?.planning_input?.ok ? 'ready' : 'unknown')}`;
 
   return (
     <section
-      className="border-b border-white/10 bg-slate-950/60 px-4 py-2 text-xs text-slate-300"
+      className="border-b border-white/10 bg-slate-950/45 px-4 py-2 text-xs text-slate-300"
       data-testid="pm-backend-evidence-strip"
       aria-label="PM backend evidence"
     >
       <details className="group">
-        <summary className="flex cursor-pointer list-none items-center gap-2 outline-none">
+        <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-2 outline-none [&::-webkit-details-marker]:hidden">
           <Wrench className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           <span className="shrink-0 font-medium text-slate-100">PM 后端状态</span>
           <span className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[10px]', summaryTone)}>
             {summaryLabel}
           </span>
-          <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
+          <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300" title={diagnosticsLabel}>
+            {diagnosticsSummaryLabel}
+          </span>
+          <span className="hidden shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400 lg:inline-flex">
             {capabilityLabel}
           </span>
-          <span className="min-w-0 truncate rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400" title={diagnosticsLabel}>
-            {diagnosticsLabel}
+          <span className="hidden shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400 xl:inline-flex">
+            {llmSummaryLabel}
+          </span>
+          <span className="hidden shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400 2xl:inline-flex">
+            {inputSummaryLabel}
           </span>
           <span className="hidden shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400 xl:inline-flex">
-            events={llmEventCount}
+            事件 {llmEventCount}
           </span>
-          <span className="ml-auto shrink-0 text-[10px] text-slate-500 group-open:hidden">详情</span>
-          <span className="ml-auto hidden shrink-0 text-[10px] text-slate-500 group-open:inline">收起</span>
+          <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] text-slate-500 group-open:hidden">详情</span>
+          <span className="ml-auto hidden shrink-0 rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] text-slate-500 group-open:inline">收起</span>
           <Button
             variant="ghost"
             size="icon"
@@ -641,7 +711,7 @@ function PMBackendEvidenceStrip({
         <div className="mt-2 grid gap-2 rounded-lg border border-white/10 bg-slate-950/50 p-2 md:grid-cols-2 xl:grid-cols-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Wrench className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-          <span className="shrink-0 font-medium text-amber-100">Capabilities</span>
+          <span className="shrink-0 font-medium text-amber-100">能力</span>
           <EvidenceEndpointBadge
             endpoint="/v2/roles/capabilities/pm?host_kind=electron_workbench"
             testId="pm-capabilities-endpoint"
@@ -659,7 +729,7 @@ function PMBackendEvidenceStrip({
 
           <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Activity className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-          <span className="shrink-0 font-medium text-amber-100">Diagnostics</span>
+          <span className="shrink-0 font-medium text-amber-100">诊断</span>
           <EvidenceEndpointBadge
             endpoint={evidenceEndpoint('/v2/pm/diagnostics', workspace)}
             testId="pm-diagnostics-endpoint"
@@ -677,7 +747,7 @@ function PMBackendEvidenceStrip({
 
           <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Brain className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-          <span className="shrink-0 font-medium text-amber-100">LLM events</span>
+          <span className="shrink-0 font-medium text-amber-100">LLM 事件</span>
           <EvidenceEndpointBadge
             endpoint={evidenceEndpoint('/v2/pm/llm-events?role=pm&limit=5', workspace)}
             testId="pm-llm-events-endpoint"
@@ -695,7 +765,7 @@ function PMBackendEvidenceStrip({
 
           <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Database className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-          <span className="shrink-0 font-medium text-amber-100">Kernel cache</span>
+          <span className="shrink-0 font-medium text-amber-100">缓存</span>
           <EvidenceEndpointBadge endpoint="/v2/pm/cache-stats" testId="pm-cache-endpoint" />
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
@@ -733,7 +803,7 @@ function PMBackendEvidenceStrip({
 
           <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-white/[0.025] px-2 py-1.5">
           <Coins className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-          <span className="shrink-0 font-medium text-amber-100">Token budget</span>
+          <span className="shrink-0 font-medium text-amber-100">Token 预算</span>
           <EvidenceEndpointBadge endpoint="/v2/pm/token-budget-stats" testId="pm-token-budget-endpoint" />
           {evidence.loading ? (
             <span className="text-slate-400">读取中...</span>
@@ -771,6 +841,7 @@ export function PMWorkspace({
   factoryMode = false,
   qualityGate = null,
   taskTraceMap,
+  llmRuntimeState,
   onOpenSettings,
 }: PMWorkspaceProps) {
   const [activeView, setActiveView] = useState<PMActiveView>('tasks');
@@ -792,6 +863,8 @@ export function PMWorkspace({
   });
   const [backendPmTasks, setBackendPmTasks] = useState<PmTask[]>([]);
   const [backendPmTaskError, setBackendPmTaskError] = useState('');
+  const [backendPmTaskInitialized, setBackendPmTaskInitialized] = useState<boolean | null>(null);
+  const [backendPmTaskInitReason, setBackendPmTaskInitReason] = useState('');
   const [isLoadingBackendPmTasks, setIsLoadingBackendPmTasks] = useState(false);
   const [pmBackendEvidence, setPmBackendEvidence] = useState<PMBackendEvidenceState>(EMPTY_PM_BACKEND_EVIDENCE);
   const [pmKernelCacheClearing, setPmKernelCacheClearing] = useState(false);
@@ -801,16 +874,32 @@ export function PMWorkspace({
     if (!workspace) {
       setBackendPmTasks([]);
       setBackendPmTaskError('');
+      setBackendPmTaskInitialized(null);
+      setBackendPmTaskInitReason('');
       setIsLoadingBackendPmTasks(false);
       return;
     }
 
     setIsLoadingBackendPmTasks(true);
     setBackendPmTaskError('');
+    setBackendPmTaskInitialized(null);
+    setBackendPmTaskInitReason('');
     try {
       const result = await listPmTasks({ limit: 100, offset: 0, workspace });
       if (!result.ok || !result.data) {
         throw new Error(result.error || 'PM task list unavailable');
+      }
+      if (result.data.initialized === false) {
+        setBackendPmTasks([]);
+        setBackendPmTaskInitialized(false);
+        setBackendPmTaskInitReason(
+          result.data.reason
+            || result.data.message
+            || result.data.error
+            || result.data.code
+            || 'PM task registry is not initialized',
+        );
+        return;
       }
       const rows = Array.isArray(result.data.tasks)
         ? result.data.tasks
@@ -818,9 +907,14 @@ export function PMWorkspace({
           ? result.data.items
           : [];
       setBackendPmTasks(rows.map(normalizePmTaskListRow).filter((task): task is PmTask => Boolean(task)));
+      setBackendPmTaskInitialized(true);
+      setBackendPmTaskInitReason('');
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'PM task list unavailable';
       setBackendPmTasks([]);
-      setBackendPmTaskError(error instanceof Error ? error.message : 'PM task list unavailable');
+      setBackendPmTaskError(message);
+      setBackendPmTaskInitialized(false);
+      setBackendPmTaskInitReason(message);
     } finally {
       setIsLoadingBackendPmTasks(false);
     }
@@ -885,6 +979,19 @@ export function PMWorkspace({
     void loadPmBackendEvidence();
   }, [loadPmBackendEvidence]);
 
+  const llmRuntimeRefreshKey = [
+    llmRuntimeState?.state || '',
+    llmRuntimeState?.lastUpdated || '',
+    ...(llmRuntimeState?.blockedRoles || []),
+  ].join('|');
+
+  useEffect(() => {
+    if (!llmRuntimeState?.lastUpdated) {
+      return;
+    }
+    void loadPmBackendEvidence();
+  }, [llmRuntimeRefreshKey, llmRuntimeState?.lastUpdated, loadPmBackendEvidence]);
+
   const handleClearPmKernelCache = useCallback(async () => {
     setPmKernelCacheClearing(true);
     setPmKernelCacheClearStatus('');
@@ -948,11 +1055,39 @@ export function PMWorkspace({
     });
   }, []);
 
-  const pmDiagnosticStartReason = useMemo(
-    () => formatPmStartupBlockReason(pmBackendEvidence.diagnostics),
-    [pmBackendEvidence.diagnostics],
+  const pmLlmRuntimeReady = llmRuntimeState?.state === 'READY';
+  const pmDiagnosticStartReason = useMemo(() => {
+    const reason = formatPmStartupBlockReason(pmBackendEvidence.diagnostics);
+    return pmLlmRuntimeReady && isLlmStartupBlockReason(reason) ? '' : reason;
+  }, [pmBackendEvidence.diagnostics, pmLlmRuntimeReady]);
+  const pmDiagnosticsAllowStart = pmBackendEvidence.diagnostics?.can_start === true;
+  const pmDiagnosticsPending = Boolean(
+    !factoryMode
+      && workspace
+      && (pmBackendEvidence.loading || (!pmBackendEvidence.diagnostics && !pmBackendEvidence.diagnosticsError)),
   );
-  const pmStartBlockReason = !pmRunning ? pmStartBlockedReason || pmDiagnosticStartReason : '';
+  const pendingLlmBlockReason = pmDiagnosticsPending && isLlmStartupBlockReason(pmStartBlockedReason);
+  const externalPmStartBlockedReason = pmDiagnosticsAllowStart || pendingLlmBlockReason ? '' : pmStartBlockedReason;
+  const statusEvidenceRunning = Boolean(
+    runOnceStatusEvidence.data?.running === true || toggleStatusEvidence.data?.running === true,
+  );
+  const observedPmRunning = pmRunning || statusEvidenceRunning;
+  const pmStatusSyncPending = !pmRunning && statusEvidenceRunning;
+  const pmStartBlockReason = !observedPmRunning ? externalPmStartBlockedReason || pmDiagnosticStartReason : '';
+  const pmTaskCreateDisabledReason = factoryMode
+    ? '工厂模式下无法手动创建 PM 任务。'
+    : !workspace
+      ? '未选择工作区，无法创建 PM 任务。'
+      : pmDiagnosticsPending
+        ? 'PM 后端诊断中，请等待启动门禁确认。'
+        : pmBackendEvidence.diagnosticsError
+          ? `PM 后端诊断不可用：${pmBackendEvidence.diagnosticsError}`
+          : pmStartBlockReason
+            || (isLoadingBackendPmTasks ? 'PM 任务合同正在同步，请稍候。' : '')
+            || (backendPmTaskInitialized === false
+              ? `PM 任务注册表未初始化：${backendPmTaskInitReason || '请先完成 PM 计划生成或解除启动门禁。'}`
+              : '')
+            || (backendPmTaskError ? `PM 任务合同读取失败：${backendPmTaskError}` : '');
   const pmStarting = Boolean(isStarting);
   const pmStopping = Boolean(isStopping);
   const pmToggleBusyReason = pmStarting
@@ -972,11 +1107,13 @@ export function PMWorkspace({
   const pmRunOnceDisabledReason = factoryMode
     ? '工厂模式下无法使用此功能'
     : pmRunOnceBusyReason
-      || (pmRunning ? 'PM 正在运行，不能同时触发单次督办。' : '')
+      || (observedPmRunning ? 'PM 正在运行，不能同时触发单次督办。' : '')
       || pmStartBlockReason;
   const pmToggleDisabledReason = factoryMode
     ? '工厂模式下无法使用此功能'
-    : pmToggleBusyReason || pmStartBlockReason;
+    : pmToggleBusyReason
+      || (pmStatusSyncPending ? 'PM 后端已在运行，等待主状态同步后再操作。' : '')
+      || pmStartBlockReason;
 
   const handleRunPmOnce = useCallback(async () => {
     if (pmRunOnceBusyReason) {
@@ -1031,7 +1168,7 @@ export function PMWorkspace({
       return;
     }
 
-    if (!pmRunning && pmStartBlockReason) {
+    if (!observedPmRunning && pmStartBlockReason) {
       setToggleStatusEvidence({
         triggered: true,
         loading: false,
@@ -1072,7 +1209,7 @@ export function PMWorkspace({
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
-  }, [onTogglePm, pmRunning, pmStartBlockReason, pmToggleBusyReason, workspace]);
+  }, [observedPmRunning, onTogglePm, pmStartBlockReason, pmToggleBusyReason, workspace]);
 
   const handleDocumentSelect = useCallback((path: string) => {
     userSwitchedViewRef.current = true;
@@ -1097,11 +1234,11 @@ export function PMWorkspace({
   
   // 获取当前正在执行的任务
   const currentTask = pmTaskEvidenceRows.find((task) => task.status === 'in_progress' || String(task.status) === 'running') ?? null;
-  const pmStartBlocked = Boolean(pmStartBlockReason && !pmRunning);
+  const pmStartBlocked = Boolean(pmStartBlockReason && !observedPmRunning);
   const pmRunOnceDisabled = Boolean(pmRunOnceDisabledReason);
   const pmToggleDisabled = Boolean(pmToggleDisabledReason);
   const pmRuntimeBanner = resolvePMRuntimeBanner({
-    pmRunning,
+    pmRunning: observedPmRunning || pmStarting || runOnceStatusEvidence.loading || toggleStatusEvidence.loading,
     pmStartBlockedReason: pmStartBlockReason,
     runtimeIssue,
     pmTerminalStatus,
@@ -1171,7 +1308,7 @@ export function PMWorkspace({
           </div>
 
           {/* 当前阶段状态指示 */}
-          {pmRunning && (
+          {observedPmRunning && (
             <div className={cn(
               "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all duration-300",
               currentPhaseConfig.color.replace('text-', 'bg-').replace('400', '500/20'),
@@ -1199,7 +1336,7 @@ export function PMWorkspace({
           </div>
           
           {/* 当前任务指示 - 带脉冲动画 */}
-          {currentTask && pmRunning && (
+          {currentTask && observedPmRunning && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 max-w-[250px] animate-pulse">
               <Zap className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 animate-pulse" />
               <span className="text-xs text-amber-300 truncate" title={currentTask.title}>
@@ -1237,14 +1374,14 @@ export function PMWorkspace({
           </Button>
 
           <Button
-            variant={pmRunning ? 'default' : 'outline'}
+            variant={observedPmRunning ? 'default' : 'outline'}
             size="sm"
             onClick={() => { void handleTogglePm(); }}
             data-testid="pm-workspace-toggle"
             disabled={pmToggleDisabled}
             title={pmToggleDisabledReason || undefined}
             className={cn(
-              pmRunning
+              observedPmRunning
                 ? 'bg-amber-600 hover:bg-amber-700 text-white'
                 : 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10'
               )}
@@ -1254,7 +1391,7 @@ export function PMWorkspace({
                 <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
                 {pmStopping ? '停止中' : pmStarting ? '启动中' : '确认中'}
               </>
-            ) : pmRunning ? (
+            ) : observedPmRunning ? (
               <>
                 <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse mr-2" />
                 运行中
@@ -1328,7 +1465,7 @@ export function PMWorkspace({
               <span className="min-w-0 truncate text-slate-500">
                 {runOnceStatusEvidence.loading
                   ? '正在同步后端状态...'
-                  : runOnceStatusEvidence.error || runOnceStatusEvidence.data?.workspace || '等待状态'}
+                  : runOnceStatusEvidence.error || formatPMStatusSnapshot(runOnceStatusEvidence.data)}
               </span>
               <span className="ml-auto text-[10px] text-slate-500 group-open:hidden">详情</span>
               <span className="ml-auto hidden text-[10px] text-slate-500 group-open:inline">收起</span>
@@ -1393,7 +1530,7 @@ export function PMWorkspace({
               <span className="min-w-0 truncate text-slate-500">
                 {toggleStatusEvidence.loading
                   ? '正在同步后端状态...'
-                  : toggleStatusEvidence.error || toggleStatusEvidence.data?.workspace || '等待状态'}
+                  : toggleStatusEvidence.error || formatPMStatusSnapshot(toggleStatusEvidence.data)}
               </span>
               <span className="ml-auto text-[10px] text-slate-500 group-open:hidden">详情</span>
               <span className="ml-auto hidden text-[10px] text-slate-500 group-open:inline">收起</span>
@@ -1436,7 +1573,7 @@ export function PMWorkspace({
         </section>
       )}
 
-      {(backendPmTaskError || backendPmTasks.length > 0) && (
+      {(isLoadingBackendPmTasks || backendPmTaskError || tasks.length > 0 || backendPmTasks.length > 0) && (
         <section
           className="border-b border-white/10 bg-slate-950/45 px-4 py-1.5 text-xs text-slate-300"
           data-testid="pm-task-backend-evidence"
@@ -1449,9 +1586,17 @@ export function PMWorkspace({
                 'rounded-full border px-2 py-0.5 text-[10px]',
                 backendPmTaskError
                   ? 'border-rose-500/25 bg-rose-500/10 text-rose-200'
+                  : backendPmTaskInitialized === false
+                    ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
                   : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
               )}>
-                {isLoadingBackendPmTasks ? '读取中' : backendPmTaskError ? '读取失败' : `backend ${backendPmTasks.length}`}
+                {isLoadingBackendPmTasks
+                  ? '读取中'
+                  : backendPmTaskError
+                    ? '读取失败'
+                    : backendPmTaskInitialized === false
+                      ? '未初始化'
+                      : `backend ${backendPmTasks.length}`}
               </span>
               <span className="min-w-0 truncate text-slate-500">
                 runtime {tasks.length} · merged {pmTaskEvidenceRows.length}
@@ -1466,6 +1611,8 @@ export function PMWorkspace({
               <span className="text-slate-400">正在读取任务合同...</span>
             ) : backendPmTaskError ? (
               <span className="text-rose-300">{backendPmTaskError}</span>
+            ) : backendPmTaskInitialized === false ? (
+              <span className="text-amber-200">{backendPmTaskInitReason || 'PM task registry is not initialized'}</span>
             ) : (
               <>
                 <span className="text-slate-400">backend={backendPmTasks.length}</span>
@@ -1632,9 +1779,10 @@ export function PMWorkspace({
                       selectedTaskId={selectedTaskId}
                       onTaskSelect={handleTaskSelect}
                       onTaskCreated={handleBackendPmTaskCreated}
-                      pmRunning={pmRunning}
+                      pmRunning={observedPmRunning}
                       taskTraceMap={taskTraceMap}
                       workspace={workspace}
+                      createDisabledReason={pmTaskCreateDisabledReason}
                     />
                   </div>
                 </div>
@@ -1645,7 +1793,7 @@ export function PMWorkspace({
                   llmStreamEvents={llmStreamEvents}
                   processStreamEvents={processStreamEvents}
                   currentPhase={currentPhase}
-                  isRunning={pmRunning}
+                  isRunning={observedPmRunning}
                   role="pm"
                 />
               )}
@@ -1667,7 +1815,7 @@ export function PMWorkspace({
               )}
               {activeView === 'workbench' && (
                 <PMWorkbenchPanel
-                  pmRunning={pmRunning}
+                  pmRunning={observedPmRunning}
                   workspace={workspace}
                   taskCount={totalTasks}
                   hostKind="electron_workbench"
@@ -1682,11 +1830,11 @@ export function PMWorkspace({
               <PanelResizeHandle className="w-1 bg-white/5 hover:bg-amber-500/30 transition-colors" />
               <Panel defaultSize={35} minSize={25} maxSize={50}>
                 <PMAIDialoguePanel
-                  pmRunning={pmRunning}
+                  pmRunning={observedPmRunning}
                   workspace={workspace}
                   taskCount={totalTasks}
                   selectedTaskId={selectedTaskId}
-                  interactionBlockedReason={pmRuntimeBanner?.detail || pmStartBlockedReason}
+                  interactionBlockedReason={pmStartBlockReason}
                 />
               </Panel>
             </>
@@ -1696,7 +1844,7 @@ export function PMWorkspace({
 
       {/* Status Bar */}
       <PMStatusBar
-        pmRunning={pmRunning}
+        pmRunning={observedPmRunning}
         taskCount={totalTasks}
         completedCount={completedTasks}
         iteration={pmState?.pm_iteration as number | undefined}
@@ -1724,8 +1872,10 @@ function NavButton({ icon, label, active, onClick }: NavButtonProps) {
   return (
     <button
       onClick={onClick}
+      aria-label={`切换到${label}`}
+      data-testid={`pm-nav-${label}`}
       className={cn(
-        'w-10 h-10 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200',
+        'w-10 h-10 cursor-pointer rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200',
         active
           ? 'bg-amber-500/15 text-amber-400 shadow-lg shadow-amber-500/10'
           : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'

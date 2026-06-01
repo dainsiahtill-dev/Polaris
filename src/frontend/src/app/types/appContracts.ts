@@ -129,6 +129,9 @@ export interface EngineStatus {
   summary?: Record<string, unknown>;
   updated_at?: string;
   error?: string;
+  stale?: boolean;
+  orphaned?: boolean;
+  recovery_code?: string;
   path?: string;
 }
 

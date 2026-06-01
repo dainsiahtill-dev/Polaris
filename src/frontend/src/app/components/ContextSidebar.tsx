@@ -91,7 +91,7 @@ export function ContextSidebar({
     }, [onActiveTabChange]);
 
     return (
-        <div className="flex h-full glass-bubble border-l-0 overflow-hidden">
+        <div data-testid="context-sidebar" className="flex h-full glass-bubble border-l-0 overflow-hidden">
             {/* Tab Strip (Vertical Left) */}
             <div className="w-14 flex flex-col items-center py-6 gap-6 border-r border-white/5 bg-black/40 backdrop-blur-xl z-20">
                 <TabButton

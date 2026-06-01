@@ -48,10 +48,12 @@ function PMTaskPanelHarness({
   tasks = [],
   onTaskCreated,
   workspace = 'C:/Temp/Product',
+  createDisabledReason = '',
 }: {
   tasks?: PmTask[];
   onTaskCreated?: (task: PmTask) => void;
   workspace?: string;
+  createDisabledReason?: string;
 }) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   return (
@@ -62,6 +64,7 @@ function PMTaskPanelHarness({
       onTaskCreated={onTaskCreated}
       pmRunning={false}
       workspace={workspace}
+      createDisabledReason={createDisabledReason}
     />
   );
 }
@@ -300,5 +303,19 @@ describe('PMTaskPanel', () => {
       id: 'PM-created-1',
       title: '补齐 PM 桌面任务创建',
     }));
+  });
+
+  it('blocks manual PM task creation when PM startup diagnostics are blocked', () => {
+    render(<PMTaskPanelHarness createDisabledReason="PM 启动诊断未通过：PM LLM 未通过就绪检查" />);
+
+    const toggle = screen.getByTestId('pm-task-create-toggle');
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute('title', 'PM 启动诊断未通过：PM LLM 未通过就绪检查');
+    expect(screen.queryByTestId('pm-task-create-panel')).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(createPmTaskMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('pm-task-create-panel')).not.toBeInTheDocument();
   });
 });

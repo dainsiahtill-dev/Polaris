@@ -1,0 +1,48 @@
+id: vc-20260531-director-tasking-timeout-alignment
+date: "2026-05-31"
+classification: pattern
+scope:
+  - src/backend/polaris/cells/director/tasking/internal/worker_executor.py
+  - src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py
+failure_mode: >
+  PM real-flow runs reported PM_ITERATION_FAILED because Director runtime code
+  generation was cancelled at about 180 seconds even after the global provider
+  config and E2E environment were raised to 660 seconds.
+assumption_register:
+  - id: A1
+    statement: WorkerExecutor owns the per-call timeout hint passed into CodeGenerationEngine.
+    status: verified_true
+    evidence: >
+      worker_executor._execute_code_generation calls
+      self._code_engine.resolve_llm_timeout(self._resolve_llm_call_timeout_hint(task)).
+  - id: A2
+    statement: The stale 180 second value bypasses ~/.polaris provider config.
+    status: verified_true
+    evidence: >
+      worker_executor had _DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS = 180 and
+      did not read KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS or
+      KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS.
+  - id: A3
+    statement: Director role runtime already has a platform default for long code generation.
+    status: verified_true
+    evidence: >
+      polaris.kernelone.constants.DIRECTOR_TIMEOUT_SECONDS is 660 seconds and
+      roles adapter timeout defaults already use that constant.
+pre_mortem:
+  risk: >
+    Raising the default by itself could hide task total-budget bugs or prevent
+    explicit PM contracts from setting lower per-call limits.
+  mitigation: >
+    Keep task timeout_seconds separate from per-call LLM timeout metadata;
+    metadata still wins over environment, environment wins over the platform
+    default, and CodeGenerationEngine retains its lower/upper bounds.
+verification_plan:
+  - command: .\.venv\Scripts\python.exe -m pytest src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py -q
+    expected: PASS
+  - command: .\.venv\Scripts\python.exe -m mypy src/backend/polaris/cells/director/tasking/internal/worker_executor.py src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py
+    expected: PASS
+  - command: .\.venv\Scripts\python.exe -m ruff check src/backend/polaris/cells/director/tasking/internal/worker_executor.py src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py --fix
+    expected: PASS
+  - command: npm.cmd run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts --reporter=line --workers=1
+    expected: Director LLM cancellation no longer occurs at 180 seconds.
+status: pending

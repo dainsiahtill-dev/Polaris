@@ -88,6 +88,24 @@ async def test_activity_execution_attempt_increments_on_retry() -> None:
         await runner.stop()
 
 
+@pytest.mark.asyncio
+async def test_workflow_handler_timeout_has_actionable_message() -> None:
+    """Workflow handler timeouts must not collapse to an empty error string."""
+    from polaris.kernelone.workflow._engine_utils import invoke_handler
+
+    async def slow_handler(payload: dict[str, object]) -> dict[str, object]:
+        await asyncio.sleep(0.05)
+        return payload
+
+    with pytest.raises(TimeoutError, match=r"Workflow handler timed out after 0\.01s"):
+        await invoke_handler(
+            slow_handler,
+            workflow_id="wf-timeout",
+            payload={"ok": True},
+            timeout_seconds=0.01,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Fix 2: apply_patch_with_broadcast failure is logged
 # ---------------------------------------------------------------------------

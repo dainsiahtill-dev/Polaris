@@ -13,6 +13,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from glob import glob
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +109,24 @@ def check_missing_targets(target_files: list[str], workspace: str) -> list[str]:
     for rel in normalize_paths(target_files):
         if not rel:
             continue
-        full = os.path.join(workspace, rel)
-        if not os.path.exists(full):
-            missing.append(rel)
+        if _target_exists(rel, workspace):
+            continue
+        missing.append(rel)
 
     return missing
+
+
+def _target_exists(rel_path: str, workspace: str) -> bool:
+    """Return whether a target path or glob pattern resolves in workspace."""
+    normalized = rel_path.replace("\\", os.sep).replace("/", os.sep).strip()
+    full = os.path.join(workspace, normalized) if workspace else normalized
+    if _contains_glob(normalized):
+        return bool(glob(full, recursive=True))
+    return os.path.exists(full)
+
+
+def _contains_glob(path: str) -> bool:
+    return any(char in path for char in "*?[")
 
 
 def detect_unresolved_imports(file_path: str, workspace: str) -> list[str]:

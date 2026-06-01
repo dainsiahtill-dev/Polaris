@@ -357,7 +357,7 @@ export function ChiefEngineerWorkbenchPanel({
   }, [directorRunAutoRefreshActive, directorRunEvidence.runId, loadDirectorRunEvidence]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div data-testid="chief-engineer-workbench-panel" className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-cyan-500/20 bg-cyan-500/5 px-4 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-sm font-medium text-cyan-100">Chief Engineer 工作台</span>

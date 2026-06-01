@@ -39,15 +39,47 @@ def _get_cached_director_timeout() -> int:
     return max(60, min(value, 900))
 
 
-def resolve_timeout_seconds(profile: Any) -> int:
+def _coerce_context_timeout_override(raw: Any) -> int | None:
+    """Parse a per-request timeout override from trusted runtime context."""
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return max(1, min(int(value), 900))
+
+
+def _resolve_context_timeout_override(context_override: Any) -> int | None:
+    if not isinstance(context_override, dict):
+        return None
+    for key in (
+        "llm_call_timeout_seconds",
+        "request_timeout_seconds",
+        "timeout_seconds",
+    ):
+        timeout = _coerce_context_timeout_override(context_override.get(key))
+        if timeout is not None:
+            return timeout
+    return None
+
+
+def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -> int:
     """Resolve LLM call timeout based on role profile.
 
     Args:
         profile: Role profile with role_id
+        context_override: Optional trusted runtime context with per-call timeout
 
     Returns:
         Timeout seconds (60 for non-director, configurable for director)
     """
+    context_timeout = _resolve_context_timeout_override(context_override)
+    if context_timeout is not None:
+        return context_timeout
+
     role_id = str(getattr(profile, "role_id", "") or "").strip().lower()
 
     if role_id != _DIRECTOR_ROLE_ID:

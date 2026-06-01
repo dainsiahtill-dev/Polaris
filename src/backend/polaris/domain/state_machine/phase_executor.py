@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from polaris.kernelone.process.command_executor import CommandExecutionService
 
 from ..entities.capability import CapabilityChecker, Role, validate_director_action
+from ..verification.soft_check import check_missing_targets
 from .task_phase import PhaseContext, PhaseResult, TaskPhase
 
 if TYPE_CHECKING:
@@ -231,11 +232,11 @@ class PhaseExecutor:
         missing_targets = []
         unresolved_imports = []
 
-        # Check for missing target files
-        for target in context.metadata.get("target_files", []):
-            target_path = os.path.join(context.workspace, target)
-            if not os.path.exists(target_path):
-                missing_targets.append(target)
+        # Check for missing target files. PM contracts can use glob targets
+        # such as ``src/api/v2/*.ts`` to describe an implementation surface.
+        target_files = context.metadata.get("target_files", [])
+        if isinstance(target_files, list):
+            missing_targets = check_missing_targets([str(item) for item in target_files], context.workspace)
 
         # Detect unresolved imports (simple heuristic)
         unresolved_imports = self._detect_unresolved_imports(context)
@@ -243,6 +244,13 @@ class PhaseExecutor:
         # Run syntax/type checks based on project type
         check_results = self._run_project_checks(context)
         errors.extend(check_results.get("errors", []))
+
+        context.verification_result = {
+            "errors": list(errors),
+            "missing_targets": list(missing_targets),
+            "unresolved_imports": list(unresolved_imports),
+            "build_round": int(context.build_round),
+        }
 
         # Determine if we should retry - explicit bool conversion for mypy
         has_issues: bool = bool(missing_targets or unresolved_imports or errors)
@@ -252,6 +260,7 @@ class PhaseExecutor:
 
         if has_issues:
             context.build_round += 1
+            context.verification_result["build_round"] = int(context.build_round)
             return PhaseResult(
                 success=False,
                 phase=TaskPhase.VERIFICATION,
@@ -264,10 +273,13 @@ class PhaseExecutor:
                     "build_round": context.build_round,
                     "missing_targets": missing_targets,
                     "unresolved_imports": unresolved_imports,
+                    "errors": errors,
+                    "verification_result": dict(context.verification_result),
                 },
                 next_phase=TaskPhase.EXECUTION if can_retry else None,
             )
 
+        context.verification_result["passed"] = True
         return PhaseResult(
             success=True,
             phase=TaskPhase.VERIFICATION,
@@ -430,7 +442,7 @@ class PhaseExecutor:
 
         try:
             return importlib.util.find_spec(token) is not None
-        except (RuntimeError, ValueError):
+        except (ImportError, RuntimeError, ValueError):
             return False
 
     def _run_project_checks(self, context: PhaseContext) -> dict[str, Any]:
@@ -473,6 +485,51 @@ class PhaseExecutor:
                 return True
         return False
 
+    @staticmethod
+    def _package_has_declared_dependencies(package_payload: dict[str, Any]) -> bool:
+        for section_name in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+            section = package_payload.get(section_name)
+            if isinstance(section, dict) and section:
+                return True
+        return False
+
+    def _node_modules_installed(self) -> bool:
+        return os.path.isdir(os.path.join(self.workspace, "node_modules"))
+
+    @staticmethod
+    def _script_uses_dependency_binary(script: str) -> bool:
+        """Return true when a package script depends on local package binaries."""
+
+        import re
+
+        dependency_bins = {
+            "eslint",
+            "jest",
+            "rollup",
+            "ts-node",
+            "tsc",
+            "tsx",
+            "vite",
+            "vitest",
+            "webpack",
+        }
+        for segment in re.split(r"\s*(?:&&|\|\||;)\s*", str(script or "")):
+            command = segment.strip().split(" ", 1)[0].strip().lower()
+            if command in dependency_bins:
+                return True
+        return False
+
+    def _should_skip_node_script_for_missing_dependencies(
+        self,
+        package_payload: dict[str, Any],
+        script: str,
+    ) -> bool:
+        if self._node_modules_installed():
+            return False
+        if not self._package_has_declared_dependencies(package_payload):
+            return False
+        return self._script_uses_dependency_binary(script)
+
     def _local_node_bin_exists(self, executable_name: str) -> bool:
         bin_dir = os.path.join(self.workspace, "node_modules", ".bin")
         candidates = (
@@ -495,11 +552,14 @@ class PhaseExecutor:
 
     def _run_node_checks(self, context: PhaseContext) -> list[str]:
         """Run Node.js/TypeScript checks via CommandExecutionService (KernelOne contract)."""
-        errors = []
+        errors: list[str] = []
         cmd_svc = CommandExecutionService(self.workspace)
         package_payload = self._read_package_json()
 
-        if self._package_script(package_payload, "build"):
+        build_script = self._package_script(package_payload, "build")
+        if build_script:
+            if self._should_skip_node_script_for_missing_dependencies(package_payload, build_script):
+                return errors
             try:
                 req = cmd_svc.parse_command(
                     "npm run build",
@@ -513,7 +573,10 @@ class PhaseExecutor:
                 pass  # npm/build not in allowlist / validation failure
         elif os.path.exists(os.path.join(self.workspace, "tsconfig.json")) and (
             self._local_node_bin_exists("tsc")
-            or self._package_declares_dependency(package_payload, {"typescript", "tsc"})
+            or (
+                self._node_modules_installed()
+                and self._package_declares_dependency(package_payload, {"typescript", "tsc"})
+            )
         ):
             try:
                 req = cmd_svc.parse_command(
@@ -531,7 +594,10 @@ class PhaseExecutor:
         if (
             os.path.exists(os.path.join(self.workspace, ".eslintrc.js"))
             or os.path.exists(os.path.join(self.workspace, ".eslintrc.json"))
-        ) and (self._local_node_bin_exists("eslint") or self._package_declares_dependency(package_payload, {"eslint"})):
+        ) and (
+            self._local_node_bin_exists("eslint")
+            or (self._node_modules_installed() and self._package_declares_dependency(package_payload, {"eslint"}))
+        ):
             try:
                 req = cmd_svc.parse_command(
                     "npx eslint --quiet .",

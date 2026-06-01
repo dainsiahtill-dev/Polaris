@@ -51,6 +51,25 @@ _DEFAULT_MAX_DIRECTOR_RETRIES = 5
 DirectorRunner = Callable[..., int]
 
 
+def _normalize_director_execution_mode(value: Any, default: str = "single") -> str:
+    """Normalize UI/CLI and engine execution mode vocabularies."""
+    token = str(value or default or "single").strip().lower().replace("-", "_")
+    if token in {"multi", "parallel", "concurrent"}:
+        return "multi"
+    if token in {"single", "serial", "sequential"}:
+        return "single"
+    return "multi" if str(default).strip().lower() in {"multi", "parallel"} else "single"
+
+
+def _get_first_attr(args: Any, names: Sequence[str], default: Any) -> Any:
+    """Return the first non-empty attribute from argparse-like objects."""
+    for name in names:
+        value = getattr(args, name, None)
+        if value is not None and str(value).strip() != "":
+            return value
+    return default
+
+
 @dataclass(frozen=True)
 class EngineRuntimeConfig:
     """Runtime settings for Polaris engine dispatch."""
@@ -68,18 +87,30 @@ class EngineRuntimeConfig:
         """Build config from args and payload."""
         payload_engine = payload_engine if isinstance(payload_engine, dict) else {}
 
-        raw_mode = payload_engine.get(
-            "director_execution_mode",
-            getattr(args, "director_execution_mode", "single"),
+        raw_mode = (
+            payload_engine.get("director_execution_mode")
+            or payload_engine.get("director_workflow_execution_mode")
+            or payload_engine.get("execution_mode")
         )
-        mode = str(raw_mode or "single").strip().lower()
+        if raw_mode is None:
+            raw_mode = _get_first_attr(
+                args,
+                ("director_execution_mode", "director_workflow_execution_mode"),
+                "single",
+            )
+        mode = _normalize_director_execution_mode(raw_mode)
         if mode not in _ALLOWED_EXECUTION_MODES:
             mode = "single"
 
-        raw_workers = payload_engine.get(
-            "max_directors",
-            getattr(args, "max_directors", 1),
-        )
+        raw_workers = payload_engine.get("max_directors")
+        if raw_workers is None:
+            raw_workers = payload_engine.get("max_parallel_tasks", payload_engine.get("director_max_parallel_tasks"))
+        if raw_workers is None:
+            raw_workers = _get_first_attr(
+                args,
+                ("max_directors", "director_max_parallel_tasks"),
+                1,
+            )
         try:
             max_directors = int(raw_workers)
         except (RuntimeError, ValueError) as exc:

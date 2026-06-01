@@ -14,6 +14,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -50,6 +51,22 @@ _DEFAULT_CODEX_PM_PLANNING_TIMEOUT_SECONDS = 360
 _MIN_PM_PLANNING_TIMEOUT_SECONDS = 5
 _MAX_PM_PLANNING_TIMEOUT_SECONDS = 600
 _CODEX_PROVIDER_IDS = {"codex", "codex_cli", "codex_sdk"}
+_PM_LIFECYCLE_STATUS_FILE = "pm.lifecycle.json"
+_CONTRACT_MTIME_SLOP_SECONDS = 2.0
+_ACTIVE_ENGINE_PHASES = {
+    "planning",
+    "dispatching",
+    "running",
+    "in_progress",
+    "analyzing",
+    "executing",
+    "llm_calling",
+    "tool_running",
+    "verification",
+    "chief_engineer",
+    "director",
+    "qa",
+}
 
 
 def _parse_positive_int(value: Any) -> int:
@@ -82,6 +99,103 @@ def _read_contract_terminal_error(contract_path: Path) -> str:
         return ""
     detail = str(payload.get("terminal_error") or payload.get("notes") or "").strip()
     return f"{code}: {detail}" if detail else code
+
+
+def _read_engine_terminal_state(engine_status_path: Path) -> dict[str, Any]:
+    if not engine_status_path.is_file():
+        return {}
+    try:
+        payload = json.loads(engine_status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        logger.debug("Failed to read PM engine status from %s: %s", engine_status_path, exc)
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    phase = str(payload.get("phase") or "").strip().lower()
+    if phase not in {"completed", "failed", "cancelled", "canceled", "terminated", "timed_out"}:
+        return {}
+    error = str(payload.get("error") or "").strip()
+    updated_at = str(payload.get("updated_at") or "").strip()
+    roles = payload.get("roles")
+    pm_role = roles.get("PM") if isinstance(roles, dict) else None
+    pm_status = str(pm_role.get("status") or "").strip().lower() if isinstance(pm_role, dict) else ""
+    pm_completed = pm_status in {"completed", "success", "succeeded"}
+    pm_failed = pm_status in {"failed", "blocked"}
+    pm_ok = phase == "completed" or (phase == "failed" and pm_completed and not pm_failed)
+    return {
+        "terminal": True,
+        "ok": pm_ok,
+        "status": "success" if pm_ok else "failed",
+        "exit_code": 0 if pm_ok else 1,
+        "error": "" if pm_ok else error,
+        "phase": phase,
+        "pm_role_status": pm_status,
+        "run_id": str(payload.get("run_id") or "").strip(),
+        "updated_at": updated_at,
+        "updated_at_ts": _parse_timestamp_seconds(updated_at),
+    }
+
+
+def _read_engine_active_state(engine_status_path: Path) -> dict[str, Any]:
+    if not engine_status_path.is_file():
+        return {}
+    try:
+        payload = json.loads(engine_status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        logger.debug("Failed to read active PM engine status from %s: %s", engine_status_path, exc)
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    phase = str(payload.get("phase") or "").strip().lower()
+    running = bool(payload.get("running"))
+    if not (running or phase in _ACTIVE_ENGINE_PHASES):
+        return {}
+    updated_at = str(payload.get("updated_at") or "").strip()
+    return {
+        "active": True,
+        "running": running,
+        "phase": phase,
+        "run_id": str(payload.get("run_id") or "").strip(),
+        "updated_at": updated_at,
+        "updated_at_ts": _parse_timestamp_seconds(updated_at),
+    }
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_timestamp_seconds(value: Any) -> float | None:
+    if isinstance(value, int | float):
+        return float(value)
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized).timestamp()
+    except ValueError:
+        return None
+
+
+def _engine_terminal_state_is_current(
+    engine_terminal_state: dict[str, Any],
+    *,
+    started_at: float | None,
+) -> bool:
+    if not engine_terminal_state:
+        return False
+    updated_at_ts = _float_or_none(engine_terminal_state.get("updated_at_ts"))
+    if started_at is None or updated_at_ts is None:
+        return True
+    return updated_at_ts + _CONTRACT_MTIME_SLOP_SECONDS >= float(started_at)
 
 
 @dataclass
@@ -193,6 +307,7 @@ class PMService:
                 handle = await self._spawn_process(cmd, log_path)
                 self._handle = handle
                 self._handle.mode = "run_once"
+                self._write_lifecycle_status(self._handle, mode=self._handle.mode)
                 return self._build_start_response(handle, mode=self._handle.mode)
             except (RuntimeError, ValueError) as exc:
                 raise ProcessError("Failed to start PM process", process_name="pm", cause=exc) from exc
@@ -219,6 +334,7 @@ class PMService:
                 handle = await self._spawn_process(cmd, log_path)
                 self._handle = handle
                 self._handle.mode = "loop_resume" if resume else "loop"
+                self._write_lifecycle_status(self._handle, mode=self._handle.mode)
                 response = self._build_start_response(handle, mode=self._handle.mode)
                 response["resume"] = resume
                 return response
@@ -345,8 +461,8 @@ class PMService:
                 except (RuntimeError, ValueError) as fallback_exc:
                     logger.debug("Fallback os.kill failed for pid=%s: %s", pid, fallback_exc)
 
-    def _resolve_execution_status(self) -> ExecutionProcessStatusV1 | None:
-        execution_id = self._handle.execution_id
+    def _resolve_execution_status(self, execution_id: str | None = None) -> ExecutionProcessStatusV1 | None:
+        execution_id = execution_id or self._handle.execution_id
         if not execution_id:
             return None
         try:
@@ -358,8 +474,8 @@ class PMService:
             logger.debug("Failed to resolve PM execution broker status for %s: %s", execution_id, exc)
             return None
 
-    def _resolve_execution_snapshot(self) -> Any | None:
-        execution_id = self._handle.execution_id
+    def _resolve_execution_snapshot(self, execution_id: str | None = None) -> Any | None:
+        execution_id = execution_id or self._handle.execution_id
         if not execution_id:
             return None
         try:
@@ -376,19 +492,27 @@ class PMService:
         return self._handle.is_running
 
     def get_status(self) -> dict:
-        execution_id = self._handle.execution_id
-        execution_status = self._resolve_execution_status()
+        lifecycle = self._read_lifecycle_status()
+        execution_id = self._handle.execution_id or _text_value(lifecycle.get("execution_id"))
+        handle_pid = self._handle.pid
+        handle_mode = self._handle.mode
+        handle_started_at = self._handle.started_at
+        handle_log_path = self._handle.log_path
+        execution_status = self._resolve_execution_status(execution_id)
         running = (
             execution_status in _ACTIVE_EXECUTION_STATUSES if execution_status is not None else self._handle.is_running
         )
+        lifecycle_pid = _parse_positive_int(lifecycle.get("pid"))
+        if not running and not self._handle.process and lifecycle_pid and self._is_pid_alive_sync(lifecycle_pid):
+            running = True
         if self._handle.process and not running:
             self._handle.terminate()
 
-        log_path = self._handle.log_path
+        log_path = handle_log_path or _text_value(lifecycle.get("log_path"))
         if not log_path:
             log_path = self._resolve_log_path()
 
-        snapshot = self._resolve_execution_snapshot()
+        snapshot = self._resolve_execution_snapshot(execution_id)
         exit_code: int | None = None
         execution_error = ""
         terminal = False
@@ -408,21 +532,114 @@ class PMService:
         contract_path = self._resolve_contract_path()
         contract_exists = contract_path.exists()
         contract_size = contract_path.stat().st_size if contract_exists else 0
+        started_at = handle_started_at or _float_or_none(lifecycle.get("started_at"))
+        engine_status_path = self._resolve_engine_status_path()
+        engine_terminal_state = _read_engine_terminal_state(engine_status_path)
+        engine_terminal_current = _engine_terminal_state_is_current(
+            engine_terminal_state,
+            started_at=started_at,
+        )
+        engine_active_state = _read_engine_active_state(engine_status_path)
+        engine_active_current = _engine_terminal_state_is_current(
+            engine_active_state,
+            started_at=started_at,
+        )
+        if engine_terminal_current:
+            running = False
+            terminal = True
+            ok = bool(engine_terminal_state.get("ok"))
+            exit_code = int(engine_terminal_state.get("exit_code", 1))
+            execution_error = str(engine_terminal_state.get("error") or "").strip()
+            self._write_lifecycle_terminal_status(
+                lifecycle,
+                status=str(engine_terminal_state.get("status") or ("success" if ok else "failed")),
+                ok=ok,
+                exit_code=exit_code,
+                error=execution_error,
+            )
         contract_terminal_error = _read_contract_terminal_error(contract_path)
+        lifecycle_status = str(lifecycle.get("status") or "").strip().lower()
+        lifecycle_was_running = lifecycle_status in {"queued", "running"} and lifecycle.get("terminal") is not True
+        lifecycle_pid_alive = bool(lifecycle_pid and self._is_pid_alive_sync(lifecycle_pid))
+        orphaned_running_lifecycle = (
+            lifecycle_was_running
+            and lifecycle_pid > 0
+            and not lifecycle_pid_alive
+            and not running
+            and not engine_terminal_current
+        )
+        contract_current_for_run = (
+            contract_exists
+            and not running
+            and exit_code is None
+            and not execution_error
+            and self._contract_is_current_for_run(contract_path, started_at)
+        )
         if contract_terminal_error and not running and exit_code is None and not execution_error:
             terminal = True
             ok = False
             exit_code = 1
             execution_error = contract_terminal_error
+            self._write_lifecycle_terminal_status(
+                lifecycle,
+                status="failed",
+                ok=ok,
+                exit_code=exit_code,
+                error=execution_error,
+            )
+        elif engine_active_current and not running and not engine_terminal_current:
+            terminal = True
+            ok = False
+            exit_code = 1
+            phase_detail = str(engine_active_state.get("phase") or "active").strip() or "active"
+            execution_error = f"PM process exited before terminal engine update (phase={phase_detail})"
+            self._write_lifecycle_terminal_status(
+                lifecycle,
+                status="failed",
+                ok=ok,
+                exit_code=exit_code,
+                error=execution_error,
+            )
+        elif contract_current_for_run:
+            terminal = True
+            ok = True
+            exit_code = 0
+            self._write_lifecycle_terminal_status(
+                lifecycle,
+                status="success",
+                ok=ok,
+                exit_code=exit_code,
+                error="",
+            )
+        elif orphaned_running_lifecycle and exit_code is None and not execution_error:
+            terminal = True
+            ok = False
+            exit_code = 1
+            execution_error = "PM process exited before terminal lifecycle update"
+            self._write_lifecycle_terminal_status(
+                lifecycle,
+                status="failed",
+                ok=ok,
+                exit_code=exit_code,
+                error=execution_error,
+            )
+        status_value = execution_status.value if execution_status is not None else None
+        source = "execution_broker" if execution_status is not None else "handle"
+        if execution_status is None and lifecycle:
+            source = "lifecycle"
+        if terminal and not running and engine_terminal_current:
+            status_value = str(engine_terminal_state.get("status") or ("success" if ok else "failed"))
+        if terminal and status_value is None:
+            status_value = "success" if ok else "failed"
 
         return {
             "running": running,
-            "pid": self._handle.pid,
-            "mode": self._handle.mode,
-            "started_at": self._handle.started_at,
+            "pid": handle_pid or (lifecycle_pid or None),
+            "mode": handle_mode or _text_value(lifecycle.get("mode")),
+            "started_at": started_at,
             "log_path": log_path,
-            "source": "execution_broker" if execution_status is not None else "handle",
-            "status": execution_status.value if execution_status is not None else None,
+            "source": source,
+            "status": status_value,
             "execution_id": execution_id,
             "terminal": terminal,
             "ok": ok,
@@ -445,6 +662,113 @@ class PMService:
             "contract_path": str(contract_path),
             "contract_exists": contract_path.exists(),
         }
+
+    def _resolve_lifecycle_status_path(self) -> Path:
+        storage = self._refresh_storage_layout()
+        return storage.get_path("status", _PM_LIFECYCLE_STATUS_FILE)
+
+    def _resolve_engine_status_path(self) -> Path:
+        storage = self._refresh_storage_layout()
+        return storage.get_path("status", "engine.status.json")
+
+    def _read_lifecycle_status(self) -> dict[str, Any]:
+        path = self._resolve_lifecycle_status_path()
+        if not path.is_file():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.debug("Failed to read PM lifecycle status from %s: %s", path, exc)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _write_lifecycle_status(self, handle: ProcessHandle, *, mode: str) -> None:
+        path = self._resolve_lifecycle_status_path()
+        payload = {
+            "schema_version": "pm.lifecycle.v1",
+            "status": "running",
+            "mode": mode,
+            "execution_id": handle.execution_id,
+            "pid": handle.pid,
+            "log_path": handle.log_path,
+            "started_at": handle.started_at,
+            "workspace": str(self._resolve_effective_workspace()),
+            "contract_path": str(self._resolve_contract_path()),
+            "updated_at": time.time(),
+        }
+        try:
+            write_text_atomic(
+                str(path),
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Failed to write PM lifecycle status to %s: %s", path, exc)
+
+    def _write_lifecycle_terminal_status(
+        self,
+        lifecycle: dict[str, Any],
+        *,
+        status: str,
+        ok: bool | None,
+        exit_code: int | None,
+        error: str,
+    ) -> None:
+        path = self._resolve_lifecycle_status_path()
+        existing_status = str(lifecycle.get("status") or "").strip().lower()
+        if existing_status == status and lifecycle.get("terminal") is True:
+            return
+        payload = dict(lifecycle) if lifecycle else {}
+        payload.update(
+            {
+                "schema_version": "pm.lifecycle.v1",
+                "status": status,
+                "terminal": True,
+                "ok": ok,
+                "exit_code": exit_code,
+                "error": error,
+                "finished_at": time.time(),
+                "updated_at": time.time(),
+            }
+        )
+        try:
+            write_text_atomic(
+                str(path),
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Failed to write PM terminal lifecycle status to %s: %s", path, exc)
+
+    def _contract_is_current_for_run(self, contract_path: Path, started_at: float | None) -> bool:
+        if started_at is None:
+            return True
+        try:
+            return contract_path.stat().st_mtime + _CONTRACT_MTIME_SLOP_SECONDS >= float(started_at)
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.debug("Failed to compare PM contract mtime for %s: %s", contract_path, exc)
+            return False
+
+    def _is_pid_alive_sync(self, pid: int) -> bool:
+        if pid <= 0:
+            return False
+        if os.name == "nt":
+            try:
+                import ctypes
+
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.OpenProcess(0x1000, False, int(pid))
+                if handle:
+                    kernel32.CloseHandle(handle)
+                    return True
+                return False
+            except (AttributeError, OSError, RuntimeError, ValueError):
+                return False
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except OSError:
+            return False
 
     async def _check_backend_available(self) -> str | None:
         from polaris.bootstrap.runtime_health import check_backend_available

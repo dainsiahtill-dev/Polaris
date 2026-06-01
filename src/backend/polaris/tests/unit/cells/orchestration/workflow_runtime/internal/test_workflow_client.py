@@ -61,11 +61,13 @@ class TestSubmitPmWorkflowSync:
 
             def __init__(self) -> None:
                 self.describe_calls = 0
+                self.submitted_payload = {}
 
             async def start(self) -> None:
                 self._running = True
 
             async def submit_workflow(self, workflow_name, workflow_id, payload):
+                self.submitted_payload = dict(payload)
                 return SimpleNamespace(
                     workflow_id=workflow_id,
                     run_id=workflow_id,
@@ -101,6 +103,7 @@ class TestSubmitPmWorkflowSync:
         assert result.submitted is True
         assert result.status == "completed"
         assert adapter.describe_calls >= 2
+        assert adapter.submitted_payload["timeout_seconds"] == 2.0
         assert result.details["final"]["status"] == "completed"
 
 

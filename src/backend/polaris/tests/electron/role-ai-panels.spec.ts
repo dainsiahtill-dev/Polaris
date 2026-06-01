@@ -63,6 +63,80 @@ async function expectPanelContained(window: Page, locator: Locator, label: strin
   await expectNoDocumentHorizontalOverflow(window, label);
 }
 
+async function expectRoleSessionToolbarStable(workspace: Locator, label: string): Promise<void> {
+  const roleSessionStrip = workspace.getByTestId("ai-role-session-strip").first();
+  await expect(roleSessionStrip, `${label} RoleSession strip should be visible`).toBeVisible();
+  await expectChildrenDoNotOverlap(
+    roleSessionStrip.getByTestId("ai-role-session-status-row").first(),
+    `${label} RoleSession status chips`,
+  );
+  await expectChildrenDoNotOverlap(
+    roleSessionStrip.getByTestId("ai-role-session-actions").first(),
+    `${label} RoleSession action toolbar`,
+  );
+
+  const metrics = await roleSessionStrip.evaluate((element) => {
+    const strip = element as HTMLElement;
+    const actionButtons = Array.from(strip.querySelectorAll("[data-testid='ai-role-session-actions'] button"))
+      .map((button) => {
+        const rect = button.getBoundingClientRect();
+        return {
+          text: (button.textContent || "").trim(),
+          width: rect.width,
+          height: rect.height,
+        };
+      });
+    return {
+      clientWidth: strip.clientWidth,
+      scrollWidth: strip.scrollWidth,
+      actionButtons,
+    };
+  });
+
+  expect(metrics.scrollWidth, `${label} RoleSession strip should not overflow horizontally`).toBeLessThanOrEqual(metrics.clientWidth + 4);
+  expect(
+    metrics.actionButtons.filter((button) => button.text),
+    `${label} RoleSession actions should remain icon-only`,
+  ).toEqual([]);
+  expect(
+    metrics.actionButtons.filter((button) => button.width > 34 || button.height > 34),
+    `${label} RoleSession actions should keep compact dimensions`,
+  ).toEqual([]);
+}
+
+async function expectChildrenDoNotOverlap(locator: Locator, label: string): Promise<void> {
+  const overlaps = await locator.evaluate((element) => {
+    const tolerance = 1;
+    const items = Array.from(element.children).map((child, index) => {
+      const rect = child.getBoundingClientRect();
+      return {
+        index,
+        text: (child.textContent || child.getAttribute("aria-label") || child.getAttribute("title") || "").trim(),
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+      };
+    }).filter((item) => item.right > item.left && item.bottom > item.top);
+
+    const collisions: Array<{ a: number; b: number; aText: string; bText: string }> = [];
+    for (let i = 0; i < items.length; i += 1) {
+      for (let j = i + 1; j < items.length; j += 1) {
+        const a = items[i];
+        const b = items[j];
+        const xOverlap = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const yOverlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (xOverlap > tolerance && yOverlap > tolerance) {
+          collisions.push({ a: a.index, b: b.index, aText: a.text, bText: b.text });
+        }
+      }
+    }
+    return collisions;
+  });
+
+  expect(overlaps, `${label} children should not visually overlap`).toEqual([]);
+}
+
 test("AI RoleSession secondary panels stay readable and contained", async ({ window }, testInfo) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
@@ -90,12 +164,18 @@ test("AI RoleSession secondary panels stay readable and contained", async ({ win
   await window.getByTestId("enter-director-workspace").click();
   const directorWorkspace = window.getByTestId("director-workspace");
   await expect(directorWorkspace).toBeVisible();
-  await expect(directorWorkspace.getByTestId("ai-role-session-strip").first()).toBeVisible();
+  const roleSessionStrip = directorWorkspace.getByTestId("ai-role-session-strip").first();
+  await expect(roleSessionStrip).toBeVisible();
 
   await expect.poll(async () => {
     const text = await directorWorkspace.getByTestId("ai-role-session-id").first().innerText();
     return text.includes("creating") || text.includes("unavailable") ? "pending" : "ready";
   }, { timeout: 20_000 }).toBe("ready");
+
+  await expectRoleSessionToolbarStable(directorWorkspace, "1280px");
+  await window.setViewportSize({ width: 1024, height: 720 });
+  await expectRoleSessionToolbarStable(directorWorkspace, "1024px");
+  await expectNoDocumentHorizontalOverflow(window, "Director AI assistant compact RoleSession toolbar");
 
   await directorWorkspace.getByTestId("ai-role-session-list").first().click();
   await expectPanelContained(window, directorWorkspace.getByTestId("ai-role-session-list-panel").first(), "RoleSession list panel");

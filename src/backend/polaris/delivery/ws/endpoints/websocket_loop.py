@@ -19,7 +19,11 @@ from polaris.delivery.ws.endpoints.helpers import (
     stream_signature,
     wants_role,
 )
-from polaris.delivery.ws.endpoints.models import RUNTIME_EVENT_PROTOCOL_VERSION, RUNTIME_EVENT_SCHEMA_VERSION
+from polaris.delivery.ws.endpoints.models import (
+    RUNTIME_EVENT_PROTOCOL_VERSION,
+    RUNTIME_EVENT_SCHEMA_VERSION,
+    is_websocket_disconnect_runtime_error,
+)
 from polaris.delivery.ws.endpoints.signature_utils import remember_stream_signature
 from polaris.delivery.ws.endpoints.stream import (
     emit_stream_line,
@@ -107,7 +111,15 @@ async def run_main_loop(
             needs_resync = False
 
             if receive_task in done:
-                raw = receive_task.result()
+                try:
+                    raw = receive_task.result()
+                except RuntimeError as exc:
+                    if is_websocket_disconnect_runtime_error(exc):
+                        close_code = 1001
+                        close_reason = f"client_disconnect:{exc!s}"
+                        active = False
+                        continue
+                    raise
                 (
                     status_sig,
                     tail_lines,

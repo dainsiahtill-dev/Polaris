@@ -1,0 +1,45 @@
+id: vc-20260531-pm-director-lifecycle-stale-running
+title: PM and Director stale running lifecycle recovery
+date: 2026-05-31
+classification: pattern
+scope:
+  cells:
+    - runtime.execution_broker
+    - orchestration.pm_planning
+  files:
+    - src/backend/polaris/cells/runtime/execution_broker/internal/service.py
+    - src/backend/polaris/kernelone/process/async_contracts.py
+    - src/backend/polaris/cells/orchestration/pm_planning/service.py
+assumption_register:
+  - id: A1
+    statement: A broker log line marked terminal must only represent a terminal snapshot.
+    evidence:
+      - Runtime logs showed terminal status=running after E2E cleanup.
+    validation:
+      - pytest execution_broker test asserts closed_before_terminal for early drain closure.
+  - id: A2
+    statement: A current PM contract must not imply success when the lifecycle still references a dead running PID.
+    evidence:
+      - pm.lifecycle.json remained running with pid 29124 after the process disappeared.
+    validation:
+      - pytest PM lifecycle test asserts orphaned running lifecycle becomes failed.
+  - id: A3
+    statement: Vanished Popen processes must not preserve running status during terminate.
+    evidence:
+      - execution_broker logs showed running/exit_code=None after cleanup paths.
+    validation:
+      - focused runtime/process tests exercise termination and broker close behavior.
+pre_mortem:
+  likely_wrong_fix:
+    - Hiding the warning only in frontend while leaving lifecycle files stale.
+    - Treating any existing PM contract as success even when a run-owned PID is gone.
+verification_plan:
+  commands:
+    - ruff check src/backend/polaris/cells/runtime/execution_broker/internal/service.py src/backend/polaris/kernelone/process/async_contracts.py src/backend/polaris/cells/orchestration/pm_planning/service.py src/backend/polaris/cells/runtime/execution_broker/tests/test_service.py src/backend/polaris/tests/test_pm_service_lifecycle_lock.py --fix
+    - ruff format src/backend/polaris/cells/runtime/execution_broker/internal/service.py src/backend/polaris/kernelone/process/async_contracts.py src/backend/polaris/cells/orchestration/pm_planning/service.py src/backend/polaris/cells/runtime/execution_broker/tests/test_service.py src/backend/polaris/tests/test_pm_service_lifecycle_lock.py
+    - mypy src/backend/polaris/cells/runtime/execution_broker/internal/service.py src/backend/polaris/kernelone/process/async_contracts.py src/backend/polaris/cells/orchestration/pm_planning/service.py
+    - pytest src/backend/polaris/cells/runtime/execution_broker/tests/test_service.py src/backend/polaris/tests/test_pm_service_lifecycle_lock.py -q
+expected_outcome:
+  broker_logs: no terminal marker for running snapshots
+  pm_status: orphaned running lifecycle is terminal failed
+  ui_effect: stale PM blocked banners are not reinforced by bad backend state

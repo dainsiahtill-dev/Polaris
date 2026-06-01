@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import os
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -55,12 +57,19 @@ class _FakeFinishedProcess:
         self.terminated = True
 
 
+def datetime_now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
 @pytest.mark.asyncio
-async def test_pm_run_once_is_single_flight_under_concurrency(tmp_path) -> None:
+async def test_pm_run_once_is_single_flight_under_concurrency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     storage = StorageLayout(settings.workspace, settings.runtime_base)
     service = PMService(settings, storage)
 
@@ -72,8 +81,9 @@ async def test_pm_run_once_is_single_flight_under_concurrency(tmp_path) -> None:
 
     spawn_count = 0
 
-    async def _fake_spawn_process(_cmd, log_path: str) -> ProcessHandle:
+    async def _fake_spawn_process(cmd: list[str], log_path: str) -> ProcessHandle:
         nonlocal spawn_count
+        del cmd
         spawn_count += 1
         # Keep start window open to expose race conditions.
         await asyncio.sleep(0.05)
@@ -85,11 +95,11 @@ async def test_pm_run_once_is_single_flight_under_concurrency(tmp_path) -> None:
             execution_id=f"exec-{spawn_count}",
         )
 
-    service._check_backend_available = _fake_check_backend_available  # type: ignore[method-assign]
-    service._clear_stop_flag = _fake_clear_stop_flag  # type: ignore[method-assign]
-    service._build_command = lambda loop_mode, resume=False: ["python", "-V"]  # type: ignore[method-assign]
-    service._resolve_log_path = lambda: str(tmp_path / "pm.process.log")  # type: ignore[method-assign]
-    service._spawn_process = _fake_spawn_process  # type: ignore[method-assign]
+    monkeypatch.setattr(service, "_check_backend_available", _fake_check_backend_available)
+    monkeypatch.setattr(service, "_clear_stop_flag", _fake_clear_stop_flag)
+    monkeypatch.setattr(service, "_build_command", lambda loop_mode, resume=False: ["python", "-V"])
+    monkeypatch.setattr(service, "_resolve_log_path", lambda: str(tmp_path / "pm.process.log"))
+    monkeypatch.setattr(service, "_spawn_process", _fake_spawn_process)
 
     results = await asyncio.gather(
         service.run_once(),
@@ -122,7 +132,7 @@ def test_pm_status_uses_broker_active_state_when_process_handle_is_terminal(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
     process = _FakeFinishedProcess(pid=4321)
     service._handle = ProcessHandle(
@@ -155,7 +165,7 @@ def test_pm_status_infers_terminal_failure_from_pm_contract(tmp_path: Path) -> N
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     storage = StorageLayout(settings.workspace, settings.runtime_base)
     service = PMService(settings, storage)
     contract_path = storage.get_path("contracts", "pm_tasks.contract.json")
@@ -180,6 +190,456 @@ def test_pm_status_infers_terminal_failure_from_pm_contract(tmp_path: Path) -> N
     assert status["error"] == "PM_LLM_INVOKE_FAILED: quota exhausted"
 
 
+def test_pm_status_clears_stale_running_lifecycle_when_engine_is_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    stale_pid = 999999
+    lifecycle_handle = ProcessHandle(
+        process=_FakeFinishedProcess(pid=stale_pid),
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=time.time(),
+        mode="run_once",
+        execution_id="exec-stale",
+    )
+    service._write_lifecycle_status(lifecycle_handle, mode="run_once")
+    service._handle = ProcessHandle()
+
+    engine_status_path = storage.get_path("status", "engine.status.json")
+    engine_status_path.parent.mkdir(parents=True, exist_ok=True)
+    engine_status_path.write_text(
+        json.dumps({"phase": "failed", "running": False, "error": "PM_ITERATION_FAILED"}),
+        encoding="utf-8",
+    )
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-stale"
+            return ExecutionProcessStatusV1.RUNNING
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is True
+    assert status["ok"] is False
+    assert status["exit_code"] == 1
+    assert status["status"] == "failed"
+    assert status["error"] == "PM_ITERATION_FAILED"
+    lifecycle_after = json.loads(storage.get_path("status", "pm.lifecycle.json").read_text(encoding="utf-8"))
+    assert lifecycle_after["status"] == "failed"
+    assert lifecycle_after["terminal"] is True
+    assert lifecycle_after["exit_code"] == 1
+
+
+def test_pm_status_prefers_current_terminal_engine_over_active_broker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    service._handle = ProcessHandle(
+        process=_FakeRunningProcess(pid=os.getpid()),
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=time.time() - 10,
+        mode="run_once",
+        execution_id="exec-active-terminal-engine",
+    )
+
+    engine_status_path = storage.get_path("status", "engine.status.json")
+    engine_status_path.parent.mkdir(parents=True, exist_ok=True)
+    engine_status_path.write_text(
+        json.dumps(
+            {
+                "phase": "failed",
+                "running": False,
+                "error": "PM_ITERATION_FAILED",
+                "updated_at": datetime_now_iso(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-active-terminal-engine"
+            return ExecutionProcessStatusV1.RUNNING
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+    monkeypatch.setattr(service, "_is_pid_alive_sync", lambda _pid: True)
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is True
+    assert status["ok"] is False
+    assert status["exit_code"] == 1
+    assert status["status"] == "failed"
+    assert status["error"] == "PM_ITERATION_FAILED"
+    lifecycle_after = json.loads(storage.get_path("status", "pm.lifecycle.json").read_text(encoding="utf-8"))
+    assert lifecycle_after["status"] == "failed"
+    assert lifecycle_after["terminal"] is True
+
+
+def test_pm_status_keeps_pm_success_when_terminal_engine_failed_in_qa(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    service._handle = ProcessHandle(
+        process=_FakeRunningProcess(pid=os.getpid()),
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=time.time() - 10,
+        mode="run_once",
+        execution_id="exec-active-terminal-engine",
+    )
+
+    engine_status_path = storage.get_path("status", "engine.status.json")
+    engine_status_path.parent.mkdir(parents=True, exist_ok=True)
+    engine_status_path.write_text(
+        json.dumps(
+            {
+                "phase": "failed",
+                "running": False,
+                "error": "INTEGRATION_QA_FAILED",
+                "roles": {
+                    "PM": {"status": "completed", "running": False},
+                    "Director": {"status": "completed", "running": False},
+                    "QA": {"status": "failed", "running": False},
+                },
+                "updated_at": datetime_now_iso(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-active-terminal-engine"
+            return ExecutionProcessStatusV1.RUNNING
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+    monkeypatch.setattr(service, "_is_pid_alive_sync", lambda _pid: True)
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is True
+    assert status["ok"] is True
+    assert status["exit_code"] == 0
+    assert status["status"] == "success"
+    assert status["error"] == ""
+    lifecycle_after = json.loads(storage.get_path("status", "pm.lifecycle.json").read_text(encoding="utf-8"))
+    assert lifecycle_after["status"] == "success"
+    assert lifecycle_after["terminal"] is True
+    assert lifecycle_after["exit_code"] == 0
+
+
+def test_pm_status_ignores_stale_terminal_engine_from_previous_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    started_at = time.time()
+    service._handle = ProcessHandle(
+        process=_FakeRunningProcess(pid=os.getpid()),
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=started_at,
+        mode="run_once",
+        execution_id="exec-active-newer-run",
+    )
+
+    engine_status_path = storage.get_path("status", "engine.status.json")
+    engine_status_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_updated_at = datetime.fromtimestamp(started_at - 60, UTC).isoformat().replace("+00:00", "Z")
+    engine_status_path.write_text(
+        json.dumps(
+            {
+                "phase": "failed",
+                "running": False,
+                "error": "PM_ITERATION_FAILED",
+                "updated_at": stale_updated_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-active-newer-run"
+            return ExecutionProcessStatusV1.RUNNING
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+
+    status = service.get_status()
+
+    assert status["running"] is True
+    assert status["terminal"] is False
+    assert status["status"] == ExecutionProcessStatusV1.RUNNING.value
+
+
+def test_pm_status_infers_terminal_success_from_current_pm_contract(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    contract_path = storage.get_path("contracts", "pm_tasks.contract.json")
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(
+        json.dumps({"tasks": [{"id": "T01", "title": "Implement feature"}]}),
+        encoding="utf-8",
+    )
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is True
+    assert status["ok"] is True
+    assert status["exit_code"] == 0
+    assert status["status"] == "success"
+
+
+def test_pm_status_recovers_orphaned_running_lifecycle_when_current_contract_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    service._write_lifecycle_status(
+        ProcessHandle(
+            process=_FakeRunningProcess(pid=999999),
+            log_path=str(tmp_path / "pm.process.log"),
+            started_at=time.time(),
+            mode="run_once",
+            execution_id="exec-orphaned",
+        ),
+        mode="run_once",
+    )
+    service._handle = ProcessHandle()
+
+    contract_path = storage.get_path("contracts", "pm_tasks.contract.json")
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(json.dumps({"tasks": [{"id": "T01", "title": "Implement feature"}]}), encoding="utf-8")
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-orphaned"
+            raise RuntimeError("execution not found")
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+    monkeypatch.setattr(service, "_is_pid_alive_sync", lambda _pid: False)
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is True
+    assert status["ok"] is True
+    assert status["exit_code"] == 0
+    assert status["status"] == "success"
+    assert status["error"] == ""
+    lifecycle_after = json.loads(storage.get_path("status", "pm.lifecycle.json").read_text(encoding="utf-8"))
+    assert lifecycle_after["status"] == "success"
+    assert lifecycle_after["terminal"] is True
+    assert lifecycle_after["exit_code"] == 0
+    assert lifecycle_after["ok"] is True
+
+
+def test_pm_status_rejects_contract_success_when_engine_is_still_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    started_at = time.time() - 10
+    service._write_lifecycle_status(
+        ProcessHandle(
+            process=_FakeRunningProcess(pid=999999),
+            log_path=str(tmp_path / "pm.process.log"),
+            started_at=started_at,
+            mode="run_once",
+            execution_id="exec-orphaned-active-engine",
+        ),
+        mode="run_once",
+    )
+    service._handle = ProcessHandle()
+
+    contract_path = storage.get_path("contracts", "pm_tasks.contract.json")
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(json.dumps({"tasks": [{"id": "T01", "title": "Implement feature"}]}), encoding="utf-8")
+
+    engine_status_path = storage.get_path("status", "engine.status.json")
+    engine_status_path.parent.mkdir(parents=True, exist_ok=True)
+    engine_status_path.write_text(
+        json.dumps(
+            {
+                "phase": "dispatching",
+                "running": True,
+                "error": "",
+                "updated_at": datetime_now_iso(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-orphaned-active-engine"
+            raise RuntimeError("execution not found")
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+    monkeypatch.setattr(service, "_is_pid_alive_sync", lambda _pid: False)
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is True
+    assert status["ok"] is False
+    assert status["exit_code"] == 1
+    assert status["status"] == "failed"
+    assert status["error"] == "PM process exited before terminal engine update (phase=dispatching)"
+    lifecycle_after = json.loads(storage.get_path("status", "pm.lifecycle.json").read_text(encoding="utf-8"))
+    assert lifecycle_after["status"] == "failed"
+    assert lifecycle_after["terminal"] is True
+    assert lifecycle_after["exit_code"] == 1
+    assert lifecycle_after["ok"] is False
+
+
+def test_pm_status_marks_orphaned_running_lifecycle_without_contract_as_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    service._write_lifecycle_status(
+        ProcessHandle(
+            process=_FakeRunningProcess(pid=999999),
+            log_path=str(tmp_path / "pm.process.log"),
+            started_at=time.time(),
+            mode="run_once",
+            execution_id="exec-orphaned",
+        ),
+        mode="run_once",
+    )
+    service._handle = ProcessHandle()
+
+    class FakeBroker:
+        def get_process_status(self, query) -> ExecutionProcessStatusV1:
+            assert query.execution_id == "exec-orphaned"
+            raise RuntimeError("execution not found")
+
+    pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
+    monkeypatch.setattr(pm_service_module, "get_execution_broker_service", lambda: FakeBroker())
+    monkeypatch.setattr(service, "_is_pid_alive_sync", lambda _pid: False)
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is True
+    assert status["ok"] is False
+    assert status["exit_code"] == 1
+    assert status["status"] == "failed"
+    assert status["error"] == "PM process exited before terminal lifecycle update"
+    lifecycle_after = json.loads(storage.get_path("status", "pm.lifecycle.json").read_text(encoding="utf-8"))
+    assert lifecycle_after["status"] == "failed"
+    assert lifecycle_after["terminal"] is True
+
+
+def test_pm_status_restores_running_state_from_lifecycle_record(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    lifecycle_handle = ProcessHandle(
+        process=_FakeRunningProcess(pid=os.getpid()),
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=time.time(),
+        mode="run_once",
+        execution_id="exec-lifecycle",
+    )
+    service._write_lifecycle_status(lifecycle_handle, mode="run_once")
+    service._handle = ProcessHandle()
+
+    status = service.get_status()
+
+    assert status["running"] is True
+    assert status["source"] == "lifecycle"
+    assert status["pid"] == os.getpid()
+    assert status["mode"] == "run_once"
+    assert status["execution_id"] == "exec-lifecycle"
+
+
+def test_pm_status_does_not_mark_stale_contract_success_for_newer_run(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    settings = Settings(workspace=workspace)
+    storage = StorageLayout(settings.workspace, settings.runtime_base)
+    service = PMService(settings, storage)
+    contract_path = storage.get_path("contracts", "pm_tasks.contract.json")
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(json.dumps({"tasks": [{"id": "old"}]}), encoding="utf-8")
+    old_time = time.time() - 60
+    os.utime(contract_path, (old_time, old_time))
+
+    service._handle = ProcessHandle(
+        process=_FakeFinishedProcess(pid=4321),
+        log_path=str(tmp_path / "pm.process.log"),
+        started_at=time.time(),
+        mode="run_once",
+        execution_id=None,
+    )
+
+    status = service.get_status()
+
+    assert status["running"] is False
+    assert status["terminal"] is False
+    assert status["ok"] is None
+    assert status["exit_code"] is None
+
+
 @pytest.mark.asyncio
 async def test_pm_run_once_rejects_duplicate_when_broker_is_running(
     tmp_path: Path,
@@ -188,7 +648,7 @@ async def test_pm_run_once_rejects_duplicate_when_broker_is_running(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
     service._handle = ProcessHandle(
         process=_FakeFinishedProcess(pid=4321),
@@ -217,7 +677,7 @@ def test_pm_status_falls_back_to_process_handle_when_broker_lookup_fails(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
     service._handle = ProcessHandle(
         process=_FakeRunningProcess(pid=4321),
@@ -246,7 +706,7 @@ def test_pm_build_command_includes_director_workflow_controls(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     settings.pm.runs_director = True
     settings.director.execution_mode = "serial"
     settings.director.max_parallel_tasks = 7
@@ -275,7 +735,7 @@ def test_pm_build_command_uses_existing_migrated_cli(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
 
     cmd = service._build_command(loop_mode=False)
@@ -291,7 +751,7 @@ def test_pm_service_refreshes_storage_layout_when_workspace_changes(tmp_path) ->
     workspace_a.mkdir(parents=True, exist_ok=True)
     workspace_b.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace_a))
+    settings = Settings(workspace=workspace_a)
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
 
     expected_a = (
@@ -316,10 +776,10 @@ def test_pm_service_rebinds_to_application_settings_object(tmp_path: Path) -> No
     workspace_a.mkdir(parents=True, exist_ok=True)
     workspace_b.mkdir(parents=True, exist_ok=True)
 
-    original_settings = Settings(workspace=str(workspace_a))
+    original_settings = Settings(workspace=workspace_a)
     service = PMService(original_settings, StorageLayout(original_settings.workspace, original_settings.runtime_base))
 
-    updated_settings = Settings(workspace=str(workspace_b))
+    updated_settings = Settings(workspace=workspace_b)
     service.rebind_settings(updated_settings)
 
     resolved_log_path = Path(service._resolve_log_path()).resolve()
@@ -336,7 +796,7 @@ def test_pm_service_build_command_uses_runtime_json_log_rel_path(tmp_path) -> No
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
 
     cmd = service._build_command(loop_mode=False)
@@ -353,7 +813,7 @@ async def test_pm_spawn_process_propagates_runtime_cache_root(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace))
+    settings = Settings(workspace=workspace)
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
 
     launched_env: dict[str, str] = {}
@@ -391,7 +851,7 @@ def test_pm_service_prefers_persisted_workspace_when_configured_workspace_is_def
     workspace_stale.mkdir(parents=True, exist_ok=True)
     workspace_target.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(workspace=str(workspace_stale))
+    settings = Settings(workspace=workspace_stale)
     service = PMService(settings, StorageLayout(settings.workspace, settings.runtime_base))
     pm_service_module = importlib.import_module("polaris.cells.orchestration.pm_planning.service")
 

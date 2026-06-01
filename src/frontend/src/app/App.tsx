@@ -42,6 +42,13 @@ import { getLatestExecutionActivityLog, readEngineRoleDetail } from '@/app/utils
 import { isLancedbExplicitlyBlocked } from '@/app/utils/lancedbGate';
 import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
 import { useLlmRuntimeGate } from './hooks/useLlmRuntimeGate';
+import {
+  isWorkspaceDocsMissing,
+  resolveEffectivePhase,
+  resolveEffectivePmRunning,
+  shouldIncomingSnapshotClearDocsBlocker,
+  shouldSuppressRuntimeIssueAfterPmSuccess,
+} from './runtimeState';
 
 // Lazy load pages
 
@@ -147,6 +154,10 @@ function shouldKeepRicherSnapshot(
   previous: SnapshotPayload | null,
   incoming: SnapshotPayload | null,
 ): boolean {
+  if (shouldIncomingSnapshotClearDocsBlocker(previous, incoming)) {
+    return false;
+  }
+
   const previousTaskCount = countSnapshotTasks(previous);
   const incomingTaskCount = countSnapshotTasks(incoming);
   if (previousTaskCount > 0 && incomingTaskCount === 0) {
@@ -173,45 +184,6 @@ function isFactoryRunActive(run: { status?: unknown; phase?: unknown } | null | 
   const phase = String(run.phase || '').trim().toLowerCase();
   if (TERMINAL_FACTORY_RUN_TOKENS.has(status) || TERMINAL_FACTORY_RUN_TOKENS.has(phase)) return false;
   return !IDLE_FACTORY_RUN_TOKENS.has(status) || !IDLE_FACTORY_RUN_TOKENS.has(phase);
-}
-
-function isPmTerminalFailure(status: BackendStatus | null): boolean {
-  if (!status) return false;
-  const statusToken = String(status.status || '').trim().toLowerCase();
-  const exitCode = typeof status.exit_code === 'number' ? status.exit_code : null;
-  const error = String(status.error || '').trim();
-  return (
-    (exitCode !== null && exitCode !== 0)
-    || status.ok === false
-    || (status.terminal === true && statusToken === 'failed')
-    || Boolean(error)
-  );
-}
-
-function isPmRuntimeIssue(issue: RuntimeIssue | null): boolean {
-  if (!issue) return false;
-  const token = `${issue.code || ''} ${issue.title || ''}`.toUpperCase();
-  return (
-    token.includes('PM')
-    || token.includes('ENGINE_RUNTIME_FAILED')
-    || token.includes('POLARIS 引擎执行失败')
-  );
-}
-
-function resolveEffectivePmRunning(status: BackendStatus | null, issue: RuntimeIssue | null): boolean {
-  if (isPmTerminalFailure(status) || isPmRuntimeIssue(issue)) {
-    return false;
-  }
-  return Boolean(status?.running);
-}
-
-function resolveEffectivePhase(currentPhase: string, pmRunning: boolean, issue: RuntimeIssue | null): string {
-  if (isPmRuntimeIssue(issue)) return 'error';
-  const token = String(currentPhase || '').trim().toLowerCase();
-  if (!pmRunning && ['planning', 'analyzing', 'llm_calling'].includes(token)) {
-    return 'idle';
-  }
-  return currentPhase;
 }
 
 function AppContent() {
@@ -456,6 +428,14 @@ function AppContent() {
 
     const phase = String(engineStatus.phase || '').trim().toLowerCase();
     const errorCode = String(engineStatus.error || '').trim();
+    const recoveryCode = String(engineStatus.recovery_code || '').trim();
+    const orphanedRecovered = (
+      engineStatus.orphaned === true
+      || engineStatus.stale === true
+      || errorCode === 'ENGINE_ORPHANED'
+      || recoveryCode === 'ENGINE_ORPHANED'
+    );
+    if (orphanedRecovered && (!errorCode || errorCode === 'ENGINE_ORPHANED')) return null;
     if (!errorCode && phase !== 'failed') return null;
 
     const detailLines: string[] = [];
@@ -570,28 +550,34 @@ function AppContent() {
     return null;
   }, [snapshot?.pm_state]);
 
-  const activeRuntimeIssue: RuntimeIssue | null = useMemo(
-    () => runtimeIssue ?? engineRuntimeIssue ?? pmStateRuntimeIssue ?? actionRuntimeIssue,
-    [runtimeIssue, engineRuntimeIssue, pmStateRuntimeIssue, actionRuntimeIssue]
-  );
+  const activeRuntimeIssue: RuntimeIssue | null = useMemo(() => {
+    const issue = runtimeIssue ?? engineRuntimeIssue ?? pmStateRuntimeIssue ?? actionRuntimeIssue;
+    if (shouldSuppressRuntimeIssueAfterPmSuccess(pmStatus, issue)) {
+      return null;
+    }
+    return issue;
+  }, [runtimeIssue, engineRuntimeIssue, pmStateRuntimeIssue, actionRuntimeIssue, pmStatus]);
 
-  const docsMissing = useMemo(() => {
-    if (snapshot?.docs_present === false) return true;
-    return snapshot?.workspace_status?.status === 'NEEDS_DOCS_INIT';
-  }, [snapshot?.docs_present, snapshot?.workspace_status?.status]);
+  const docsReadinessSnapshot = progressSnapshot?.docs_present === true ? progressSnapshot : snapshot;
+  const docsMissing = useMemo(
+    () => isWorkspaceDocsMissing(snapshot, progressSnapshot),
+    [progressSnapshot, snapshot],
+  );
 
   const agentsRequired = Boolean(snapshot?.agents_review?.needs_review);
   const agentsDraftReady = Boolean(snapshot?.agents_review?.draft_path);
   const agentsDraftFailed = agentsReview.draftFailed;
   const rawPmRunning = Boolean(pmStatus?.running);
   const effectivePmRunning = resolveEffectivePmRunning(pmStatus, activeRuntimeIssue);
-  const effectiveCurrentPhase = resolveEffectivePhase(currentPhase, effectivePmRunning, activeRuntimeIssue);
+  const effectiveCurrentPhase = resolveEffectivePhase(currentPhase, effectivePmRunning, activeRuntimeIssue, directorRunning);
   const docsStartBlockedReason = docsMissing ? 'docs/ 初始化未完成' : '';
   const lancedbStartBlockedReason = lancedbBlocked
     ? String(lancedbStatus?.error || '').trim() || 'LanceDB 不可用'
     : '';
-  const pmLlmBlockedReason = getLlmRoleBlockedReason('pm', 'PM');
-  const directorLlmBlockedReason = getLlmRoleBlockedReason('director', 'Director');
+  const pmLlmBlockedReason = llmRuntimeState.state === 'READY' ? '' : getLlmRoleBlockedReason('pm', 'PM');
+  const directorLlmBlockedReason = llmRuntimeState.state === 'READY'
+    ? ''
+    : getLlmRoleBlockedReason('director', 'Director');
   const pmStartBlockedReason = docsStartBlockedReason || lancedbStartBlockedReason || pmLlmBlockedReason;
   const directorAgentsBlockedReason = agentsRequired && agentsDraftFailed
     ? 'AGENTS 草稿生成失败'
@@ -1265,8 +1251,8 @@ function AppContent() {
             open={ui.isDocsInitOpen}
             onOpenChange={(open) => open ? uiActions.openDocsInit() : uiActions.closeDocsInit()}
             workspace={workspace}
-            workspaceStatus={snapshot?.workspace_status}
-            docsPresent={snapshot?.docs_present}
+            workspaceStatus={docsReadinessSnapshot?.workspace_status}
+            docsPresent={docsReadinessSnapshot?.docs_present}
             onApplied={() => {
               uiActions.closeDocsInit();
               handleRefresh();

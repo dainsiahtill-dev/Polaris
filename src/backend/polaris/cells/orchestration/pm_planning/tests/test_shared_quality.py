@@ -9,6 +9,8 @@ run_integration_verify_runner (mocked).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from polaris.cells.orchestration.pm_planning.internal.shared_quality import (
     _contains_prompt_leakage,
@@ -136,6 +138,12 @@ class TestContainsPromptLeakageShared:
     def test_system_prompt_marker(self) -> None:
         assert _contains_prompt_leakage("you are a PM agent") is True
 
+    def test_chinese_system_prompt_marker(self) -> None:
+        assert _contains_prompt_leakage("系统提示词泄露") is True
+
+    def test_domain_prompt_work_item_is_allowed(self) -> None:
+        assert _contains_prompt_leakage("提示词编译链路生成 prompt-package.json") is False
+
     def test_normal_text(self) -> None:
         assert _contains_prompt_leakage("build a login page") is False
 
@@ -211,10 +219,29 @@ class TestDetectIntegrationVerifyCommand:
         result = detect_integration_verify_command(str(tmp_path))
         assert "compileall" in result
 
-    def test_nodejs(self, monkeypatch, tmp_path) -> None:
-        (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    def test_nodejs_with_test_script(self, monkeypatch, tmp_path) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps({"scripts": {"test": "vitest run"}}),
+            encoding="utf-8",
+        )
         result = detect_integration_verify_command(str(tmp_path))
         assert result == "npm run test -- --watch=false"
+
+    def test_nodejs_prefers_verify_final_when_test_script_missing(self, monkeypatch, tmp_path) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps({"scripts": {"verify:final": "node scripts/verify_final.mjs"}}),
+            encoding="utf-8",
+        )
+        result = detect_integration_verify_command(str(tmp_path))
+        assert result == "npm run verify:final"
+
+    def test_nodejs_prefers_smoke_boot_when_only_smoke_exists(self, monkeypatch, tmp_path) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps({"scripts": {"smoke:boot": "node scripts/smoke_boot.mjs"}}),
+            encoding="utf-8",
+        )
+        result = detect_integration_verify_command(str(tmp_path))
+        assert result == "npm run smoke:boot"
 
     def test_go_module(self, monkeypatch, tmp_path) -> None:
         (tmp_path / "go.mod").write_text("", encoding="utf-8")
@@ -265,3 +292,45 @@ class TestRunIntegrationVerifyRunner:
         # Either passes or fails — does not raise
         assert isinstance(ok, bool)
         assert isinstance(summary, str)
+
+    def test_node_dependency_static_fallback_passes_with_tests(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.delenv("KERNELONE_INTEGRATION_QA_COMMAND", raising=False)
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"test": "vitest run"},
+                    "devDependencies": {"vitest": "^2.1.0", "typescript": "^5.7.0"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.ts").write_text("export const ok = true;\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "app.test.ts").write_text("import { ok } from '../src/app';\n", encoding="utf-8")
+
+        ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+        assert ok is True
+        assert "static verification passed" in summary.lower()
+        assert errors == []
+
+    def test_node_dependency_static_fallback_requires_tests_for_test_script(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.delenv("KERNELONE_INTEGRATION_QA_COMMAND", raising=False)
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"test": "vitest run"},
+                    "devDependencies": {"vitest": "^2.1.0"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.ts").write_text("export const ok = true;\n", encoding="utf-8")
+
+        ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+        assert ok is False
+        assert "static verification failed" in summary.lower()
+        assert any("no test/spec files" in item for item in errors)

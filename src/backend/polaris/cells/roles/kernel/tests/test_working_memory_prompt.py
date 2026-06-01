@@ -46,6 +46,20 @@ class TestWorkingMemoryContractGuide:
         assert "suspected_files" in prompt
         assert "verified_results" in prompt
 
+    def test_session_patch_can_be_suppressed_for_proposal_bridge(self, profile) -> None:
+        """Director proposal bridge must not receive conflicting SESSION_PATCH instructions."""
+        pb = PromptBuilder()
+        prompt = pb.build_system_prompt(
+            profile,
+            prompt_appendix="Return only PATCH_FILE blocks.",
+            include_working_memory_contract=False,
+            include_tool_policy=False,
+        )
+
+        assert "<SESSION_PATCH>" not in prompt
+        assert "</SESSION_PATCH>" not in prompt
+        assert "Return only PATCH_FILE blocks." in prompt
+
     def test_session_patch_guide_in_professional_prompt(self, profile) -> None:
         """三轴模式下的 prompt 也必须包含 SESSION_PATCH 规范。"""
         pb = PromptBuilder()
@@ -53,6 +67,21 @@ class TestWorkingMemoryContractGuide:
 
         assert "<SESSION_PATCH>" in prompt
         assert "</SESSION_PATCH>" in prompt
+
+    def test_professional_prompt_can_suppress_session_patch_for_proposal_bridge(self, profile) -> None:
+        """Tri-axis Director prompts also support bridge-only prompt narrowing."""
+        pb = PromptBuilder()
+        prompt = pb.build_professional_prompt(
+            profile,
+            recipe_id="director",
+            prompt_appendix="Return only PATCH_FILE blocks.",
+            include_working_memory_contract=False,
+            include_tool_policy=False,
+        )
+
+        assert "<SESSION_PATCH>" not in prompt
+        assert "</SESSION_PATCH>" not in prompt
+        assert "Return only PATCH_FILE blocks." in prompt
 
     def test_session_patch_schema_fields_present(self, profile) -> None:
         """SESSION_PATCH 块的 schema 所有字段都必须在 prompt 中出现。"""

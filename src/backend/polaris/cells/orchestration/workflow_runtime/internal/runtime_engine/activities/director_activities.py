@@ -27,8 +27,8 @@ _PHASE_NAME_MAP = {
     "verification": TaskPhase.VERIFICATION,
     "report": TaskPhase.COMPLETED,
 }
-_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS = 930
-_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS = 900
+_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS = 3600
+_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS = 3570
 
 
 def _normalize_dict(value: Any) -> dict[str, Any]:
@@ -146,6 +146,7 @@ def _run_director_execution(
     workspace: str,
     run_id: str,
     contract: TaskContract,
+    phase_context: PhaseContext,
     director_config: dict[str, Any],
     runtime_metadata: dict[str, Any],
 ) -> tuple[bool, str, list[str], dict[str, Any]]:
@@ -176,7 +177,7 @@ def _run_director_execution(
 
     process_timeout = _coerce_timeout_seconds(
         director_config.get("timeout"),
-        default=300,
+        default=600,
         maximum=_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS,
     )
     task_timeout = _coerce_timeout_seconds(
@@ -207,7 +208,13 @@ def _run_director_execution(
         target_files=_normalize_list(contract.payload.get("target_files")),
         acceptance_criteria=_normalize_list(contract.payload.get("acceptance_criteria")),
         constraints=_normalize_list(contract.payload.get("constraints")),
-        context={"workspace": workspace, "run_id": run_id, "task": contract.to_dict()},
+        context={
+            "workspace": workspace,
+            "run_id": run_id,
+            "task": contract.to_dict(),
+            "phase_context": _serialize_context(phase_context),
+            "previous_verification_result": dict(phase_context.verification_result),
+        },
         scope_paths=_normalize_list(contract.payload.get("scope_paths")),
         scope_mode=str(contract.payload.get("scope_mode") or "module").strip() or "module",
     )
@@ -305,16 +312,21 @@ async def execute_task_phase(payload: dict[str, Any]) -> dict[str, Any]:
             workspace=context.workspace,
             run_id=str((payload or {}).get("run_id") or "").strip(),
             contract=contract,
+            phase_context=context,
             director_config=_normalize_dict((payload or {}).get("director_config")),
             runtime_metadata=_normalize_dict((payload or {}).get("runtime_metadata")),
         )
         if success:
             context.changed_files = list(changed_files)
+            context.metadata["director_execution"] = dict(_metadata)
             result = PhaseResult(
                 success=True,
                 phase=TaskPhase.EXECUTION,
                 message="Director implementation step completed",
-                context_updates={"changed_files": list(changed_files)},
+                context_updates={
+                    "changed_files": list(changed_files),
+                    "metadata": dict(context.metadata),
+                },
                 next_phase=TaskPhase.VERIFICATION,
             )
             step_title = "Phase execution completed"

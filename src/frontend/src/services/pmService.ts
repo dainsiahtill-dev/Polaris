@@ -668,6 +668,11 @@ export interface PmTaskListParams {
 
 export interface PmTaskListResponse {
   ok?: boolean;
+  initialized?: boolean;
+  reason?: string;
+  message?: string;
+  error?: string;
+  code?: string;
   tasks?: PmTaskSearchResult[];
   items?: PmTaskSearchResult[];
   pagination?: Record<string, unknown>;

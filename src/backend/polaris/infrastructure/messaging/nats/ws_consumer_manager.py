@@ -149,10 +149,17 @@ class JetStreamConsumerManager:
             )
             return True
 
-        except (ImportError, RuntimeError, ValueError, JSAPIError) as e:
+        except (ImportError, TimeoutError, RuntimeError, ValueError, JSAPIError) as e:
             error_text = str(e or "").strip()
             lowered = error_text.lower()
-            if "temporarily unavailable" in lowered or "no servers available" in lowered:
+            if isinstance(e, TimeoutError):
+                _log_throttled(
+                    "warning",
+                    "jetstream_connect_timeout",
+                    "JetStream consumer timed out: %s",
+                    error_text or type(e).__name__,
+                )
+            elif "temporarily unavailable" in lowered or "no servers available" in lowered:
                 _log_throttled(
                     "warning",
                     "jetstream_connect_unavailable",

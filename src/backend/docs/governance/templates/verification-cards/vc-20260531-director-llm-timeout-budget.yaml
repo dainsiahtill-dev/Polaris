@@ -1,0 +1,31 @@
+id: vc-20260531-director-llm-timeout-budget
+title: Director per-call LLM timeout is independent from task total budget
+date: "2026-05-31"
+scope:
+  - src/backend/polaris/cells/director/tasking/internal/worker_executor.py
+  - src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py
+risk: high
+failure_mode: >
+  Director workflow task timeout_seconds was used as a per-call LLM timeout
+  hint, causing long-running Codex CLI calls to hold the workflow without a
+  timely terminal result.
+controls:
+  - Task total budget and per-call LLM budget must remain separate.
+  - PM contracts may override per-call timeout only through explicit timeout
+    metadata keys.
+  - Default Director per-call LLM timeout follows KernelOne
+    DIRECTOR_TIMEOUT_SECONDS.
+  - Runtime environment overrides remain supported through
+    KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS,
+    KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS, and KERNELONE_WORKER_LLM_TIMEOUT.
+evidence:
+  tests:
+    - command: .\.venv\Scripts\pytest.exe src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py -q
+      result: "39 passed"
+    - command: .\.venv\Scripts\mypy.exe src/backend/polaris/cells/director/tasking/internal/worker_executor.py src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py
+      result: "Success: no issues found in 2 source files"
+    - command: .\.venv\Scripts\ruff.exe check src/backend/polaris/cells/director/tasking/internal/worker_executor.py src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py
+      result: "All checks passed"
+acceptance:
+  - A task with timeout_seconds=3600 still uses the Director per-call default for one LLM call unless explicit LLM metadata or runtime env overrides it.
+  - A timed out model call returns a terminal Director result instead of holding the UI indefinitely.

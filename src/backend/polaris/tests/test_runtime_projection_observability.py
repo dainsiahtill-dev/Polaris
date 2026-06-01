@@ -12,10 +12,37 @@ Verifies that:
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+def _write_engine_status(cache_root, payload: dict[str, object]) -> None:
+    status_dir = cache_root / "status"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    (status_dir / "engine.status.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
+def _write_pm_lifecycle(cache_root, payload: dict[str, object]) -> None:
+    status_dir = cache_root / "status"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    (status_dir / "pm.lifecycle.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+
+def _backend_root_from_test_file() -> str:
+    import os
+
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -31,6 +58,286 @@ def _make_minimal_state():
     state = MagicMock()
     state.settings = settings
     return state
+
+
+# ---------------------------------------------------------------------------
+# engine.status orphan recovery
+# ---------------------------------------------------------------------------
+
+
+class TestEngineStatusOrphanRecovery:
+    """Stale in-flight engine.status files must recover to idle, not failure."""
+
+    def test_runtime_projection_recovers_stale_engine_running_to_idle(self, tmp_path):
+        from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": True,
+                "phase": "dispatching",
+                "updated_at": "2026-05-31T10:53:57Z",
+                "error": "",
+                "roles": {
+                    "PM": {"status": "dispatching", "running": True},
+                },
+            },
+        )
+
+        result = rps.build_engine_status(
+            str(workspace),
+            str(cache_root),
+            pm_status={"running": False},
+            director_status={"running": False},
+        )
+
+        assert result is not None
+        assert result["stale"] is True
+        assert result["orphaned"] is True
+        assert result["running"] is False
+        assert result["phase"] == "idle"
+        assert result["error"] == ""
+        assert result["recovery_code"] == "ENGINE_ORPHANED"
+        assert result["roles"]["PM"]["status"] == "idle"
+
+    def test_runtime_projection_recovers_engine_orphaned_failure_to_idle(self, tmp_path):
+        from polaris.cells.runtime.projection.internal import runtime_projection_service as rps
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": False,
+                "phase": "failed",
+                "updated_at": "2026-05-31T10:53:57Z",
+                "error": "ENGINE_ORPHANED",
+                "roles": {
+                    "PM": {"status": "blocked", "running": False},
+                },
+            },
+        )
+
+        result = rps.build_engine_status(
+            str(workspace),
+            str(cache_root),
+            pm_status={"running": False},
+            director_status={"running": False},
+        )
+
+        assert result is not None
+        assert result["orphaned"] is True
+        assert result["running"] is False
+        assert result["phase"] == "idle"
+        assert result["error"] == ""
+        assert result["recovery_code"] == "ENGINE_ORPHANED"
+        assert result["roles"]["PM"]["status"] == "idle"
+
+    def test_status_snapshot_recovers_stale_engine_running_to_idle(self, tmp_path):
+        from polaris.cells.runtime.projection.internal import status_snapshot_builder as ssb
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": True,
+                "phase": "planning",
+                "updated_at": "2026-05-31T10:53:57Z",
+                "error": "",
+                "roles": {
+                    "Director": {"status": "running", "running": True},
+                },
+            },
+        )
+
+        result = ssb._build_engine_status(
+            str(workspace),
+            str(cache_root),
+            pm_status={"running": False},
+            director_status={"running": False},
+        )
+
+        assert result is not None
+        assert result["stale"] is True
+        assert result["running"] is False
+        assert result["phase"] == "idle"
+        assert result["error"] == ""
+        assert result["roles"]["Director"]["status"] == "idle"
+
+    def test_status_snapshot_recovers_engine_orphaned_failure_to_idle(self, tmp_path):
+        from polaris.cells.runtime.projection.internal import status_snapshot_builder as ssb
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": False,
+                "phase": "failed",
+                "error": "ENGINE_ORPHANED",
+                "roles": {
+                    "PM": {"status": "failed", "running": False},
+                },
+            },
+        )
+
+        result = ssb._build_engine_status(
+            str(workspace),
+            str(cache_root),
+            pm_status={"running": False},
+            director_status={"running": False},
+        )
+
+        assert result is not None
+        assert result["orphaned"] is True
+        assert result["running"] is False
+        assert result["phase"] == "idle"
+        assert result["error"] == ""
+        assert result["roles"]["PM"]["status"] == "idle"
+
+    def test_artifact_store_recovers_stale_engine_running_to_idle(self, tmp_path):
+        from polaris.cells.runtime.artifact_store.internal import artifacts
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": True,
+                "phase": "running",
+                "error": "",
+            },
+        )
+
+        result = artifacts._build_engine_status_v2(
+            str(workspace),
+            str(cache_root),
+            pm_status={"running": False},
+            director_status={"running": False},
+        )
+
+        assert result is not None
+        assert result["stale"] is True
+        assert result["orphaned"] is True
+        assert result["running"] is False
+        assert result["phase"] == "idle"
+        assert result["error"] == ""
+        assert result["recovery_code"] == "ENGINE_ORPHANED"
+
+    def test_artifact_store_recovers_engine_orphaned_failure_to_idle(self, tmp_path):
+        from polaris.cells.runtime.artifact_store.internal import artifacts
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": False,
+                "phase": "failed",
+                "error": "ENGINE_ORPHANED",
+                "roles": {
+                    "PM": {"status": "blocked", "running": False},
+                },
+            },
+        )
+
+        result = artifacts._build_engine_status_v2(
+            str(workspace),
+            str(cache_root),
+            pm_status={"running": False},
+            director_status={"running": False},
+        )
+
+        assert result is not None
+        assert result["orphaned"] is True
+        assert result["running"] is False
+        assert result["phase"] == "idle"
+        assert result["error"] == ""
+        assert result["roles"]["PM"]["status"] == "idle"
+
+    def test_artifact_store_workflow_status_ignores_terminal_pm_stale_engine(self, tmp_path):
+        from polaris.cells.runtime.artifact_store.internal import artifacts
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": True,
+                "phase": "dispatching",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "error": "",
+            },
+        )
+        _write_pm_lifecycle(
+            cache_root,
+            {
+                "status": "success",
+                "terminal": True,
+                "ok": True,
+                "exit_code": 0,
+            },
+        )
+
+        result = artifacts.get_workflow_runtime_status(str(workspace), str(cache_root))
+
+        assert result["running"] is False
+        assert result["state"] == "idle"
+        assert result["stage"] == "idle"
+
+    def test_artifact_store_workflow_status_keeps_fresh_engine_running(self, tmp_path):
+        from polaris.cells.runtime.artifact_store.internal import artifacts
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": True,
+                "phase": "dispatching",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "error": "",
+            },
+        )
+
+        result = artifacts.get_workflow_runtime_status(str(workspace), str(cache_root))
+
+        assert result["running"] is True
+        assert result["state"] == "dispatching"
+        assert result["stage"] == "dispatching"
+
+    def test_artifact_store_workflow_status_recovers_old_engine_without_owner(self, tmp_path):
+        from polaris.cells.runtime.artifact_store.internal import artifacts
+
+        workspace = tmp_path / "workspace"
+        cache_root = tmp_path / "runtime"
+        workspace.mkdir()
+        _write_engine_status(
+            cache_root,
+            {
+                "running": True,
+                "phase": "planning",
+                "updated_at": (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat(),
+                "error": "",
+            },
+        )
+
+        result = artifacts.get_workflow_runtime_status(str(workspace), str(cache_root))
+
+        assert result["running"] is False
+        assert result["state"] == "idle"
+        assert result["stage"] == "idle"
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +763,7 @@ class TestDependencyManifest:
 
         import yaml
 
-        backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        backend_root = _backend_root_from_test_file()
         cell_yaml_path = os.path.join(backend_root, "polaris", "cells", "runtime", "projection", "cell.yaml")
         with open(cell_yaml_path, encoding="utf-8") as fh:
             doc = yaml.safe_load(fh)
@@ -482,7 +789,7 @@ class TestDependencyManifest:
         # must correspond to a real cross-cell import in the internal/ directory.
         import os
 
-        backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        backend_root = _backend_root_from_test_file()
         internal_dir = os.path.join(backend_root, "polaris", "cells", "runtime", "projection", "internal")
         violations: list[str] = []
         for module_prefix, cell_id in self.EXPECTED_CELL_DEPENDENCIES.items():
@@ -521,7 +828,7 @@ class TestProjectionReadBoundaryInvariant:
         import os
         import re
 
-        backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        backend_root = _backend_root_from_test_file()
         internal_dir = os.path.join(backend_root, "polaris", "cells", "runtime", "projection", "internal")
         # Pattern: "from polaris.cells.<cell>." NOT followed by "public."
         # or "from polaris.cells.<cell>.public."

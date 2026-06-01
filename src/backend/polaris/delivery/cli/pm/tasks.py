@@ -75,7 +75,18 @@ def normalize_engine_config(raw_config: Any) -> dict[str, Any]:
 
     normalized: dict[str, Any] = {}
 
-    mode = str(raw_config.get("director_execution_mode") or "").strip().lower()
+    raw_mode = (
+        raw_config.get("director_execution_mode")
+        or raw_config.get("director_workflow_execution_mode")
+        or raw_config.get("execution_mode")
+    )
+    mode_token = str(raw_mode or "").strip().lower().replace("-", "_")
+    if mode_token in ("parallel", "concurrent"):
+        mode = "multi"
+    elif mode_token in ("serial", "sequential"):
+        mode = "single"
+    else:
+        mode = mode_token
     if mode in ("single", "multi"):
         normalized["director_execution_mode"] = mode
 
@@ -83,7 +94,11 @@ def normalize_engine_config(raw_config: Any) -> dict[str, Any]:
     if policy in ("fifo", "priority", "dag"):
         normalized["scheduling_policy"] = policy
 
-    max_directors_raw = raw_config.get("max_directors")
+    max_directors_raw = (
+        raw_config.get("max_directors")
+        if raw_config.get("max_directors") is not None
+        else raw_config.get("max_parallel_tasks", raw_config.get("director_max_parallel_tasks"))
+    )
     if max_directors_raw is not None:
         try:
             max_directors = int(max_directors_raw)
@@ -182,6 +197,40 @@ def _derive_scope_paths_from_target_files(target_files: list[str]) -> list[str]:
     return scope_paths
 
 
+def _is_concrete_target_file_path(path: str) -> bool:
+    token = normalize_path(str(path or "").strip()).replace("\\", "/").rstrip("/")
+    if not token:
+        return False
+    leaf = os.path.basename(token).lower()
+    extensionless_files = {
+        ".dockerignore",
+        ".env",
+        ".env.example",
+        ".gitignore",
+        "dockerfile",
+        "go.mod",
+        "go.sum",
+        "license",
+        "makefile",
+        "readme",
+    }
+    return leaf in extensionless_files or "." in leaf
+
+
+def _split_target_files_and_directory_scopes(target_files: list[str]) -> tuple[list[str], list[str]]:
+    files: list[str] = []
+    scopes: list[str] = []
+    for path in target_files:
+        normalized = normalize_path(str(path or "").strip())
+        if not normalized:
+            continue
+        if _is_concrete_target_file_path(normalized):
+            files.append(normalized)
+        elif normalized not in scopes:
+            scopes.append(normalized)
+    return files, scopes
+
+
 def _normalize_acceptance_items(items: list[str]) -> list[str]:
     normalized: list[str] = []
     for raw in items:
@@ -252,11 +301,13 @@ def normalize_tasks(raw_tasks: Any, iteration: int) -> list[dict[str, Any]]:
         task_id = generate_task_id(item, iteration, index)
         priority = normalize_priority(item.get("priority"), fallback=index)
         context_files = normalize_path_list(item.get("context_files") or item.get("files"))
-        target_files = normalize_path_list(item.get("target_files") or item.get("files"))
+        target_files, target_directory_scopes = _split_target_files_and_directory_scopes(
+            normalize_path_list(item.get("target_files") or item.get("files"))
+        )
         scope_paths = _normalize_scope_list(
             item.get("scope_paths") or item.get("scope") or item.get("module_scope") or item.get("write_scope")
         )
-        scope_paths = list(dict.fromkeys(scope_paths))
+        scope_paths = list(dict.fromkeys([*scope_paths, *target_directory_scopes]))
         scope_mode = _normalize_scope_mode(item.get("scope_mode"))
         if not scope_paths and target_files:
             scope_paths = _derive_scope_paths_from_target_files(target_files)

@@ -169,8 +169,19 @@ describe('DirectorStrategyPanel settings bridge', () => {
 
     const editorJson = await screen.findByTestId('strategy-editor-json');
     expect(settingsServiceMock.get).toHaveBeenCalledTimes(1);
-    expect(editorJson).toHaveTextContent('"mode": "parallel"');
+    await waitFor(() => {
+      expect(editorJson).toHaveTextContent('"mode": "parallel"');
+      expect(editorJson).toHaveTextContent('"iterations": 2');
+    });
+    expect(screen.getByTestId('director-strategy-message')).toHaveTextContent('已读取 /settings');
     expect(screen.getByTestId('director-strategy-panel')).toHaveTextContent('/settings');
+    expect(screen.getByTestId('director-strategy-workspace-label')).toHaveTextContent('workspace=Product');
+    expect(screen.getByTestId('director-strategy-workspace-label')).not.toHaveTextContent('C:/Temp');
+    expect(screen.getByTestId('director-strategy-workspace-label')).toHaveAttribute('title', 'C:/Temp/Product');
+    expect(screen.getByTestId('director-strategy-workspace-label')).toHaveAttribute(
+      'data-workspace-path',
+      'C:/Temp/Product',
+    );
     expect(screen.getByTestId('director-strategy-panel')).toHaveTextContent('tasks1/4');
 
     fireEvent.click(screen.getByText('save-strategy'));

@@ -82,8 +82,19 @@ test("backend settings switch persists workspace in Electron", async ({ window, 
     expect(result.postWorkspace.toLowerCase()).toBe(targetWorkspace.toLowerCase());
     expect(result.getWorkspace.toLowerCase()).toBe(targetWorkspace.toLowerCase());
 
-    const persisted = JSON.parse(fs.readFileSync(persistedPath, "utf-8")) as { workspace?: string };
-    expect(String(persisted.workspace || "").toLowerCase()).toBe(targetWorkspace.toLowerCase());
+    const persistedTextAfter = fs.existsSync(persistedPath)
+      ? fs.readFileSync(persistedPath, "utf-8")
+      : null;
+    if (testEnv.useRealSettings) {
+      expect(
+        persistedTextAfter,
+        "real-settings E2E must not mutate the user's ~/.polaris/config/settings.json",
+      ).toBe(originalPersistedSettings);
+    } else {
+      expect(persistedTextAfter, "isolated settings file should be written").not.toBeNull();
+      const persisted = JSON.parse(persistedTextAfter || "{}") as { workspace?: string };
+      expect(String(persisted.workspace || "").toLowerCase()).toBe(targetWorkspace.toLowerCase());
+    }
   } finally {
     if (testEnv.useRealSettings) {
       if (originalPersistedSettings !== null) {

@@ -1,0 +1,33 @@
+id: vc-20260531-director-codegen-timeout-terminal
+date: "2026-05-31"
+classification: pattern
+scope:
+  - src/backend/polaris/cells/roles/kernel/internal/llm_caller
+  - src/backend/polaris/cells/director/execution/internal/code_generation_engine.py
+assumption_register:
+  - assumption: Director bridge already passes per-call timeout in context.
+    evidence: code_generation_engine sets context.llm_call_timeout_seconds.
+    status: confirmed
+  - assumption: roles.kernel ignores the context timeout.
+    evidence: LLMCaller used resolve_timeout_seconds(profile) without context_override.
+    status: confirmed
+  - assumption: provider timeout response can be retried as empty response.
+    evidence: invoke_generation_with_retries only treated raised TimeoutError as terminal.
+    status: confirmed
+  - assumption: file-generation user text can trigger injection wrapping.
+    evidence: director.llm.events.jsonl showed UNTRUSTED_USER_MESSAGE around the bridge message.
+    status: confirmed
+  - assumption: large target-file batches increase phase timeout risk.
+    evidence: second Director task wrote files over the 900s phase window and was cancelled before terminal result.
+    status: confirmed
+pre_mortem:
+  risk: Overriding timeout from untrusted user text.
+  mitigation: Only RoleTurnRequest.context_override is used; normal prompt text is not parsed.
+verification_plan:
+  - command: .\.venv\Scripts\pytest.exe src/backend/polaris/cells/roles/kernel/tests/test_llm_caller.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py -q
+    expected: PASS
+  - command: .\.venv\Scripts\pytest.exe src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py -q
+    expected: PASS
+  - command: npm run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts --reporter=line --workers=1
+    expected: PM reaches terminal state without a second provider-timeout retry
+status: pending

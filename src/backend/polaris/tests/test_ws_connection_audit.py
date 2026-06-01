@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -10,7 +11,8 @@ from polaris.kernelone.storage.io_paths import build_cache_root
 
 def _audit_log_path(workspace: Path, ramdisk_root: Path) -> Path:
     cache_root = build_cache_root(str(ramdisk_root), str(workspace))
-    return Path(cache_root) / "events" / "ws.connection.events.jsonl"
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    return Path(cache_root) / "audit" / f"audit-{month}.jsonl"
 
 
 def _read_events(path: Path) -> list[dict]:
@@ -20,7 +22,7 @@ def _read_events(path: Path) -> list[dict]:
     events: list[dict] = []
     for line in lines:
         text = str(line or "").strip()
-        if not text:
+        if not text or text.startswith("#"):
             continue
         payload = json.loads(text)
         if isinstance(payload, dict):
@@ -68,13 +70,18 @@ def test_websocket_close_events_are_persisted(tmp_path, monkeypatch):
     events = _wait_for_events(_audit_log_path(workspace, ramdisk_root))
     assert events, "ws connection audit log should not be empty"
 
-    runtime_events = [event for event in events if event.get("endpoint") == "/v2/ws/runtime"]
-    accepted_events = [event for event in runtime_events if event.get("event") == "accepted"]
+    runtime_events = [
+        event
+        for event in events
+        if (event.get("data") or {}).get("endpoint") == "/v2/ws/runtime"
+        and (event.get("action") or {}).get("name") == "ws_connection_event"
+    ]
+    accepted_events = [event for event in runtime_events if (event.get("data") or {}).get("event") == "accepted"]
     assert accepted_events, "expected at least one accepted event"
-    accepted_details = accepted_events[-1].get("details") or {}
+    accepted_details = (accepted_events[-1].get("data") or {}).get("details") or {}
 
-    assert any(event.get("event") == "open" for event in runtime_events)
-    assert any(event.get("event") in {"disconnect", "closed"} for event in runtime_events)
+    assert any((event.get("data") or {}).get("event") == "open" for event in runtime_events)
+    assert any((event.get("data") or {}).get("event") in {"disconnect", "closed"} for event in runtime_events)
     assert str(accepted_details.get("workspace") or "").strip() == str(workspace.resolve())
     assert str(accepted_details.get("workspace_key") or "").strip()
     assert str(accepted_details.get("runtime_root") or "").strip()

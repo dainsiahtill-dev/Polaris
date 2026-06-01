@@ -354,7 +354,7 @@ export function PMDocumentPanel({
   const validSearchResults = searchResults.filter((result) => Boolean(readSearchResultPath(result)));
 
   return (
-    <div className="flex h-full">
+    <div data-testid="pm-document-panel" className="flex h-full">
       <div className="flex w-64 flex-col border-r border-white/10 bg-slate-950/30">
         <div className="flex h-14 items-center justify-between border-b border-white/10 px-3">
           <span className="text-sm font-medium text-slate-300">文档</span>

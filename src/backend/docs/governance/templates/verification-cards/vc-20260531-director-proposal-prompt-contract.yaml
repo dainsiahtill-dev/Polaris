@@ -1,0 +1,34 @@
+id: vc-20260531-director-proposal-prompt-contract
+title: Director proposal prompt contract must not conflict with working-memory protocol
+date: 2026-05-31
+classification: structural
+status: in_progress
+assumption_register:
+  - id: A1
+    statement: Director proposal-to-apply codegen must return parsable file operations only.
+    evidence:
+      - src/backend/polaris/cells/director/execution/internal/code_generation_engine.py
+  - id: A2
+    statement: Shared role prompts currently inject SESSION_PATCH for all role turns.
+    evidence:
+      - src/backend/polaris/cells/roles/kernel/internal/prompt_builder.py
+  - id: A3
+    statement: The observed Director timeout is consistent with contradictory output contracts.
+    evidence:
+      - runtime/events/director.llm.events.jsonl showed llm_error=call_cancelled after a long codegen prompt.
+pre_mortem:
+  likely_wrong_fix: Raising timeouts again would hide the conflict and still leave unstable model behavior.
+  likely_breakage:
+    - Accidentally removing SESSION_PATCH from normal interactive role turns.
+    - Breaking prompt-builder test doubles that accept the older method signature.
+verification_plan:
+  commands:
+    - ruff check src/backend/polaris/cells/roles/kernel/internal/prompt_builder.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/director/execution/internal/code_generation_engine.py src/backend/polaris/cells/roles/kernel/tests/test_working_memory_prompt.py src/backend/polaris/cells/roles/kernel/tests/test_kernel_prompt_builder_integration.py --fix
+    - ruff format src/backend/polaris/cells/roles/kernel/internal/prompt_builder.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/director/execution/internal/code_generation_engine.py src/backend/polaris/cells/roles/kernel/tests/test_working_memory_prompt.py src/backend/polaris/cells/roles/kernel/tests/test_kernel_prompt_builder_integration.py
+    - mypy src/backend/polaris/cells/roles/kernel/internal/prompt_builder.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/director/execution/internal/code_generation_engine.py src/backend/polaris/cells/roles/kernel/tests/test_working_memory_prompt.py src/backend/polaris/cells/roles/kernel/tests/test_kernel_prompt_builder_integration.py
+    - pytest src/backend/polaris/cells/roles/kernel/tests/test_working_memory_prompt.py src/backend/polaris/cells/roles/kernel/tests/test_kernel_prompt_builder_integration.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py -q
+expected:
+  - Ordinary prompt builds still include SESSION_PATCH.
+  - Director proposal bridge prompt builds exclude SESSION_PATCH and tool-policy layers.
+  - Director code-generation tests remain green.
+

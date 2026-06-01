@@ -15,6 +15,7 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
     _state_token,
     _task_totals,
     _workflow_has_live_rows,
+    build_snapshot_payload_from_projection,
     load_runtime_task_rows,
     merge_director_status,
     select_task_rows,
@@ -23,6 +24,7 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
 from polaris.cells.runtime.projection.internal.status_snapshot_builder import (
     _parse_engine_updated_at as _parse_status_snapshot_updated_at,
 )
+from polaris.cells.workspace.integrity.public.service import write_workspace_status
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -363,6 +365,43 @@ class TestRuntimeProjectionDataclass:
         assert proj.pm_local == custom
         assert proj.task_source == TaskSource.WORKFLOW
         assert proj.task_rows == [{"id": "task-1"}]
+
+
+# =============================================================================
+# build_snapshot_payload_from_projection tests
+# =============================================================================
+
+
+class TestBuildSnapshotPayloadFromProjection:
+    def test_docs_ready_projection_overrides_stale_workspace_status(self, tmp_path: Path) -> None:
+        (tmp_path / "docs").mkdir()
+        write_workspace_status(
+            str(tmp_path),
+            status="NEEDS_DOCS_INIT",
+            reason="stale status from before docs init",
+            actions=["INIT_DOCS_WIZARD"],
+        )
+
+        payload = build_snapshot_payload_from_projection(
+            RuntimeProjection(),
+            workspace=str(tmp_path),
+            cache_root=tmp_path,
+        )
+
+        assert payload["docs_present"] is True
+        assert payload["workspace_status"]["status"] == "READY"
+        assert payload["workspace_status"]["source"] == "runtime_projection"
+
+    def test_docs_missing_projection_marks_workspace_not_initialized(self, tmp_path: Path) -> None:
+        payload = build_snapshot_payload_from_projection(
+            RuntimeProjection(),
+            workspace=str(tmp_path),
+            cache_root=tmp_path,
+        )
+
+        assert payload["docs_present"] is False
+        assert payload["workspace_status"]["status"] == "NEEDS_DOCS_INIT"
+        assert payload["workspace_status"]["source"] == "runtime_projection"
 
 
 # =============================================================================

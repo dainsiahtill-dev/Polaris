@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, GitCompare, Loader2, RefreshCw, Settings2,
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import type { BackendSettings } from '@/app/types/appContracts';
+import { workspaceLabel } from '@/app/utils/workspaceDisplay';
 import { settingsService } from '@/services';
 import { StrategyDiffViewer, type StrategyVersion } from './StrategyDiffViewer';
 import { StrategyEditorPanel, type DirectorExecutionStrategy } from './StrategyEditorPanel';
@@ -177,6 +178,7 @@ export function DirectorStrategyPanel({
     () => buildDirectorStrategyFromSettings(settingsSnapshot, workspace),
     [settingsSnapshot, workspace],
   );
+  const displayWorkspace = workspaceLabel(workspace, '');
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -275,7 +277,14 @@ export function DirectorStrategyPanel({
             <h2 className="text-sm font-semibold text-slate-100">Director 策略控制</h2>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-slate-400">
               <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-cyan-200">/settings</span>
-              <span className="truncate">workspace={workspace}</span>
+              <span
+                data-testid="director-strategy-workspace-label"
+                className="max-w-[220px] truncate rounded border border-white/10 bg-white/[0.03] px-2 py-0.5 font-mono"
+                title={workspace}
+                data-workspace-path={workspace}
+              >
+                workspace={displayWorkspace}
+              </span>
             </div>
           </div>
         </div>

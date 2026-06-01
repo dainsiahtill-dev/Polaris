@@ -18,11 +18,11 @@ def _normalize_path(text: str) -> str:
     if not text:
         return ""
     path = text.strip().strip("'`\"").strip()
-    # Remove trailing comments (only # at line start, not inside quotes)
+    # Remove trailing comments only when separated from the path by whitespace.
     import re
 
-    path = re.sub(r"(?:^|[^\"'])#.*$", "", path).strip()
-    path = re.sub(r"(?:^|[^\"'])//.*$", "", path).strip()
+    path = re.sub(r"\s+#.*$", "", path).strip()
+    path = re.sub(r"\s+//.*$", "", path).strip()
     # Unify separators
     path = path.replace("\\", "/")
     # Remove ./ prefix

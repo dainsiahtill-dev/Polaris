@@ -6,6 +6,7 @@ deterministic gates + evidence checks.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import Any
@@ -24,6 +25,19 @@ _DEFAULT_COORDINATION_TRIGGERS = (
     "complex_task",
     "qa_fail",
     "qa_inconclusive",
+)
+_MAX_INFERRED_VERIFY_COMMANDS = 3
+_VERIFY_COMMAND_PREFIXES = (
+    "node ",
+    "npm ",
+    "npx ",
+    "pnpm ",
+    "yarn ",
+    "python ",
+    "python -m ",
+    "pytest",
+    "ruff ",
+    "mypy ",
 )
 
 
@@ -119,6 +133,68 @@ def _normalize_gate_list(value: Any) -> list[Any]:
 
 def _normalize_evidence_required(value: Any) -> list[str]:
     return normalize_path_list(value)
+
+
+def _looks_like_verify_command(command: str) -> bool:
+    token = str(command or "").strip().lower()
+    if not token:
+        return False
+    return any(token == prefix.strip() or token.startswith(prefix) for prefix in _VERIFY_COMMAND_PREFIXES)
+
+
+def _acceptance_text_items(task: dict[str, Any]) -> list[str]:
+    if not isinstance(task, dict):
+        return []
+    return normalize_str_list(task.get("acceptance_criteria") or task.get("acceptance"))
+
+
+def _infer_verify_command_gates_from_acceptance(acceptance: list[str]) -> list[dict[str, Any]]:
+    gates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in acceptance:
+        for match in re.finditer(r"`([^`\r\n]+)`", str(item or "")):
+            command = match.group(1).strip()
+            if not _looks_like_verify_command(command):
+                continue
+            if command in seen:
+                continue
+            seen.add(command)
+            gates.append(
+                {
+                    "kind": "verify_command_success",
+                    "command": command,
+                    "working_dir": "workspace",
+                    "timeout_seconds": 180,
+                }
+            )
+            if len(gates) >= _MAX_INFERRED_VERIFY_COMMANDS:
+                return gates
+    return gates
+
+
+def _infer_package_json_script_gates_from_acceptance(acceptance: list[str]) -> list[dict[str, Any]]:
+    combined = "\n".join(str(item or "") for item in acceptance).lower()
+    if "package.json" not in combined:
+        return []
+    if not any(token in combined for token in ("script", "scripts", "脚本")):
+        return []
+    required = []
+    for name in ("build", "test"):
+        if re.search(rf"(?:`|['\"])?{re.escape(name)}(?:`|['\"])?", combined):
+            required.append(name)
+    if not required:
+        return []
+    return [{"kind": "package_json_scripts_present", "scripts": required}]
+
+
+def _infer_default_hard_gates_from_acceptance(task: dict[str, Any]) -> list[Any]:
+    acceptance = _acceptance_text_items(task)
+    if not acceptance:
+        return []
+    gates: list[Any] = []
+    gates.extend(_infer_package_json_script_gates_from_acceptance(acceptance))
+    gates.extend(_infer_verify_command_gates_from_acceptance(acceptance))
+    return gates
 
 
 def _looks_like_ui_or_3d_task(task_type: str) -> bool:
@@ -240,13 +316,14 @@ def normalize_qa_contract(raw_contract: Any, *, task: dict[str, Any] | None = No
         # explicit PM-authored qa_contract.
         if assigned_to and assigned_to != "Director":
             return {}
+        inferred_hard_gates = _infer_default_hard_gates_from_acceptance(source_task)
         return {
             "schema_version": 1,
             "source": "auto_compat",
             "plugin": _DEFAULT_PLUGIN,
             "plugin_hint": _DEFAULT_PLUGIN,
             "task_type": task_type,
-            "hard_gates": ["director_status_success"],
+            "hard_gates": ["director_status_success", *inferred_hard_gates],
             "regression_gates": [],
             "evidence_required": [],
             "retry_policy": {
@@ -270,7 +347,7 @@ def normalize_qa_contract(raw_contract: Any, *, task: dict[str, Any] | None = No
     contract_task_type = str(raw_contract.get("task_type") or "").strip().lower() or task_type
     hard_gates = _normalize_gate_list(raw_contract.get("hard_gates"))
     if not hard_gates:
-        hard_gates = ["director_status_success"]
+        hard_gates = ["director_status_success", *_infer_default_hard_gates_from_acceptance(source_task)]
     regression_gates = _normalize_gate_list(raw_contract.get("regression_gates"))
     evidence_required = _normalize_evidence_required(raw_contract.get("evidence_required"))
     retry_policy = _normalize_retry_policy(raw_contract.get("retry_policy"))
@@ -344,6 +421,35 @@ def _read_source_value(context: dict[str, Any], source: str) -> dict[str, Any]:
         payload = context.get("task")
         return payload if isinstance(payload, dict) else {}
     return {}
+
+
+def _evaluate_package_json_scripts_present(
+    gate: dict[str, Any],
+    *,
+    workspace_full: str,
+) -> tuple[bool, str]:
+    required_scripts = normalize_str_list(gate.get("scripts"))
+    if not required_scripts:
+        return False, "package_json_scripts_present:no_scripts"
+
+    package_json_path = os.path.join(workspace_full, "package.json")
+    if not os.path.isfile(package_json_path):
+        return False, "package_json_scripts_present:package_json_missing"
+
+    try:
+        with open(package_json_path, encoding="utf-8") as handle:
+            package_payload = json.load(handle)
+    except json.JSONDecodeError:
+        return False, "package_json_scripts_present:invalid_json"
+    except OSError as exc:
+        return False, f"package_json_scripts_present:read_error:{type(exc).__name__}"
+
+    scripts = package_payload.get("scripts") if isinstance(package_payload, dict) else None
+    scripts = scripts if isinstance(scripts, dict) else {}
+    missing = [script for script in required_scripts if not str(scripts.get(script) or "").strip()]
+    if missing:
+        return False, f"package_json_scripts_present:missing={','.join(missing)}"
+    return True, "package_json_scripts_present"
 
 
 def _evaluate_gate(
@@ -476,6 +582,8 @@ def _evaluate_gate(
             )
             verify_runs.append(record)
             return int(record.get("exit_code", -1)) in expected_codes, "verify_command_success"
+        if kind == "package_json_scripts_present":
+            return _evaluate_package_json_scripts_present(gate, workspace_full=workspace_full)
         return False, f"unknown_gate:{kind}"
 
     return False, "invalid_gate"

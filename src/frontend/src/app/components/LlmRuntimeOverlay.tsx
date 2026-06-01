@@ -94,9 +94,15 @@ function isActiveRuntimePhase(value: string): boolean {
     'chief_engineer',
     'director',
     'qa',
-    'failed',
-    'error',
   ].includes(token);
+}
+
+function normalizeDisplayPhase(value: string, running: boolean, factoryRuntimeActive: boolean): string {
+  const token = String(value || '').trim().toLowerCase();
+  if (!running && !factoryRuntimeActive && ['error', 'failed', 'blocked', 'cancelled', 'canceled'].includes(token)) {
+    return 'idle';
+  }
+  return value;
 }
 
 function toRelativeTime(value?: string | null): string {
@@ -291,16 +297,18 @@ export function LlmRuntimeOverlay({
     (activeView === 'chief_engineer' && llmBlockedRoles.includes('chief_engineer')) ||
     (activeView === 'factory' && factoryBlockedRoleVisible);
   const isLlmBlocked = llmStateToken === 'blocked' && (runtimeActive || blockedRoleForView);
+  const connectionOnly = !runtimeActive && !isLlmBlocked && (websocketReconnecting || !websocketLive);
   const shouldRenderOverlay =
     runtimeActive ||
     websocketReconnecting ||
     !websocketLive ||
     isLlmBlocked;
+  const displayPhase = normalizeDisplayPhase(currentPhase, running, factoryRuntimeActive);
   const phaseLabel = (
-    PHASE_LABELS[currentPhase] ||
+    PHASE_LABELS[displayPhase] ||
     (pmRunning && !directorRunning ? 'PM Running' : '') ||
     (directorRunning ? 'Director 执行中' : '') ||
-    currentPhase ||
+    displayPhase ||
     '等待中'
   );
 
@@ -314,10 +322,12 @@ export function LlmRuntimeOverlay({
     if (compactFactoryMode || roleWorkspaceMode) {
       return;
     }
-    if (running || websocketReconnecting || isLlmBlocked) {
+    if (running || isLlmBlocked) {
       setExpanded(true);
+    } else if (connectionOnly) {
+      setExpanded(false);
     }
-  }, [compactFactoryMode, roleWorkspaceMode, running, websocketReconnecting, isLlmBlocked]);
+  }, [compactFactoryMode, roleWorkspaceMode, running, isLlmBlocked, connectionOnly]);
 
   const recentSteps = useMemo(() => {
     const now = Date.now();
@@ -335,8 +345,9 @@ export function LlmRuntimeOverlay({
 
     const candidates = fresh.length > 0 ? fresh : running ? [] : ordered.slice(-32);
     const filtered = candidates.filter((entry) => !isLowSignalLog(entry));
+    const hasLowSignalLogs = candidates.some(isLowSignalLog);
     const hasStructuredFragments = candidates.some(isStructuredRuntimeFragment);
-    const pool = filtered.length > 0 || hasStructuredFragments ? filtered : candidates;
+    const pool = filtered.length > 0 || hasStructuredFragments || hasLowSignalLogs ? filtered : candidates;
 
     const ranked = [...pool].sort((a, b) => {
       const tsDiff = toEpoch(b.timestamp) - toEpoch(a.timestamp);
@@ -363,7 +374,7 @@ export function LlmRuntimeOverlay({
   }, [fileEditEvents]);
 
   const latestStep = recentSteps[0] ?? null;
-  const headline = pickHeadline(running, latestStep, currentPhase);
+  const headline = pickHeadline(running, latestStep, displayPhase);
   const effectiveUpdateTime = latestStep?.timestamp || llmLastUpdated || null;
   const visibleRequiredRoles = running || isLlmBlocked ? llmRequiredRoles : [];
   const visibleBlockedRoles = isLlmBlocked ? llmBlockedRoles : [];

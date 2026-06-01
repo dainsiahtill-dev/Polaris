@@ -802,7 +802,7 @@ class WorkflowEngine:
                         blocked_reasons[task_id] = "task_spec_not_found"
                         continue
                     deps_not_completed = []
-                    for dep in spec.depends_on:
+                    for dep in pending_spec.depends_on:
                         dep_state = state.task_states.get(dep)
                         if dep_state is None:
                             deps_not_completed.append(f"{dep}(missing)")

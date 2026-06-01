@@ -88,6 +88,8 @@ export interface AIDialoguePanelProps {
   onSessionChange?: (sessionId: string | null) => void;
   /** 外部运行门禁阻塞原因 */
   interactionBlockedReason?: string;
+  /** 状态提醒密度，用于嵌入式侧栏降低重复告警噪音 */
+  statusNoticeMode?: 'full' | 'compact' | 'hidden';
 }
 
 const DEFAULT_THEMES: Record<DialogueRole, NonNullable<AIDialoguePanelProps['roleTheme']>> = {
@@ -331,10 +333,13 @@ function RoleSessionStrip({
   return (
     <div
       data-testid="ai-role-session-strip"
-      className="min-w-0 overflow-hidden border-b border-white/10 bg-slate-950/60 px-3 py-2 text-[11px]"
+      className="shrink-0 border-b border-white/10 bg-slate-950/60 px-3 py-2 text-[11px]"
     >
-      <div className="grid min-w-0 grid-cols-1 gap-1.5">
-        <div data-testid="ai-role-session-status-row" className="flex min-w-0 max-w-full flex-wrap items-center gap-x-1.5 gap-y-1 overflow-hidden">
+      <div className="grid min-w-0 grid-rows-[auto_auto] gap-1.5">
+        <div
+          data-testid="ai-role-session-status-row"
+          className="flex min-h-6 min-w-0 max-w-full flex-wrap items-center gap-x-1.5 gap-y-1 overflow-hidden pr-1"
+        >
           {isInitializingSession ? (
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-slate-400" />
           ) : sessionId ? (
@@ -342,21 +347,20 @@ function RoleSessionStrip({
           ) : (
             <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-300" />
           )}
-          <span className="shrink-0 text-slate-500">会话</span>
           <span
             data-testid="ai-role-session-id"
-            className="inline-flex shrink-0 items-center rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono leading-none text-slate-300"
+            className="inline-flex max-w-[7rem] shrink-0 items-center overflow-hidden truncate whitespace-nowrap rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono leading-none text-slate-300"
             title={sessionId || sessionError || 'RoleSession 尚未创建'}
           >
-            {isInitializingSession ? '创建中' : sessionId ? 'ID' : '未建'}
+            {isInitializingSession ? '创建中' : sessionId ? `RS ${formatShortId(sessionId)}` : '未建'}
           </span>
-          <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 leading-none ${tone}`}>
+          <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 leading-none ${tone}`} title={`附着模式: ${getAttachmentModeLabel(effectiveAttachmentMode)}`}>
             {getAttachmentModeLabel(effectiveAttachmentMode)}
           </span>
           {detailLabel ? (
             <span
               data-testid="ai-role-session-detail-chip"
-              className={`inline-flex max-w-[8rem] shrink items-center gap-1 overflow-hidden rounded border px-1.5 py-0.5 leading-none ${
+              className={`inline-flex max-w-[5.5rem] shrink-0 items-center gap-1 overflow-hidden rounded border px-1.5 py-0.5 leading-none ${
                 sessionDetailError
                   ? 'border-amber-400/20 bg-amber-500/10 text-amber-200'
                   : 'border-white/10 bg-white/5 text-slate-300'
@@ -380,7 +384,7 @@ function RoleSessionStrip({
           {attachedTarget ? (
             <span
               data-testid="ai-role-session-attachment"
-              className="inline-flex shrink-0 items-center gap-1 rounded border border-white/10 bg-white/5 px-1.5 py-0.5 leading-none text-slate-300"
+              className="inline-flex max-w-[6.5rem] shrink-0 items-center gap-1 overflow-hidden rounded border border-white/10 bg-white/5 px-1.5 py-0.5 leading-none text-slate-300"
               title={attachedTargetTitle}
             >
               <Link2 className="h-3 w-3 shrink-0" />
@@ -420,7 +424,7 @@ function RoleSessionStrip({
           ) : null}
           <span
             data-testid="ai-role-capability-chip"
-            className={`inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 leading-none ${
+            className={`inline-flex max-w-[4.5rem] shrink-0 items-center gap-1 overflow-hidden rounded border px-1.5 py-0.5 leading-none ${
               roleCapabilitiesError
                 ? 'border-amber-400/20 bg-amber-500/10 text-amber-200'
                 : 'border-white/10 bg-white/5 text-slate-300'
@@ -432,125 +436,128 @@ function RoleSessionStrip({
             ) : (
               <ShieldCheck className="h-3 w-3 shrink-0" />
             )}
-            <span className="whitespace-nowrap">{isLoadingRoleCapabilities ? '...' : roleCapabilitiesError ? '?' : roleCapabilities.length}项</span>
+            <span className="min-w-0 truncate whitespace-nowrap tabular-nums">{isLoadingRoleCapabilities ? '...' : roleCapabilitiesError ? '?' : roleCapabilities.length}项</span>
           </span>
         </div>
-        <div data-testid="ai-role-session-actions" className="flex min-w-0 max-w-full flex-wrap items-center gap-1 overflow-hidden border-t border-white/5 pt-1.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleRoleSessions}
-          data-testid="ai-role-session-list"
-          aria-label="查看 RoleSession 列表"
-          className={`h-7 w-7 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100 ${
-            showRoleSessions ? 'bg-white/5 text-slate-100' : ''
-          }`}
-          title="查看 RoleSession 列表"
+        <div
+          data-testid="ai-role-session-actions"
+          className="flex min-w-0 max-w-full items-center justify-end gap-1 overflow-x-auto overflow-y-hidden border-t border-white/5 pt-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {isLoadingRoleSessions ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <ListIcon className="h-3.5 w-3.5" />
-          )}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleRoleSessionEvidence}
-          disabled={!sessionId || isInitializingSession}
-          data-testid="ai-role-session-evidence-toggle"
-          aria-label="查看 RoleSession 产物与审计"
-          className={`h-7 w-7 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100 disabled:opacity-50 ${
-            showRoleSessionEvidence ? 'bg-white/5 text-slate-100' : ''
-          }`}
-          title="查看 RoleSession 产物与审计"
-        >
-          <Activity className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleRoleSessionMemory}
-          disabled={!sessionId || isInitializingSession}
-          data-testid="ai-role-session-memory-toggle"
-          aria-label="查看 Context OS RoleSession 记忆"
-          className={`h-7 w-7 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100 disabled:opacity-50 ${
-            showRoleSessionMemory ? 'bg-white/5 text-slate-100' : ''
-          }`}
-          title="查看 Context OS RoleSession 记忆"
-        >
-          {isLoadingRoleSessionMemory ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Database className="h-3.5 w-3.5" />
-          )}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleRoleSessionSnapshotExport}
-          disabled={!sessionId || isInitializingSession}
-          data-testid="ai-role-session-snapshot-toggle"
-          aria-label="导出当前 RoleSession 快照"
-          className={`h-7 w-7 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100 disabled:opacity-50 ${
-            showRoleSessionSnapshotExport ? 'bg-white/5 text-slate-100' : ''
-          }`}
-          title="导出当前 RoleSession 快照"
-        >
-          {isExportingRoleSessionSnapshot ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Download className="h-3.5 w-3.5" />
-          )}
-        </Button>
-        {canDetach || isDetachingRoleSession ? (
           <Button
             variant="ghost"
             size="icon"
-            onClick={onDetachRoleSession}
-            disabled={!sessionId || isInitializingSession || isDetachingRoleSession}
-            data-testid="ai-role-session-detach"
-            aria-label="解除当前 RoleSession 与工作流任务的附着"
-            className="h-7 w-7 shrink-0 text-slate-400 hover:bg-cyan-500/10 hover:text-cyan-100 disabled:opacity-50"
-            title="解除当前 RoleSession 与工作流任务的附着"
+            onClick={onToggleRoleSessions}
+            data-testid="ai-role-session-list"
+            aria-label="查看 RoleSession 列表"
+            className={`h-6 w-6 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100 ${
+              showRoleSessions ? 'bg-white/5 text-slate-100' : ''
+            }`}
+            title="查看 RoleSession 列表"
           >
-            {isDetachingRoleSession ? (
+            {isLoadingRoleSessions ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <Link2Off className="h-3.5 w-3.5" />
+              <ListIcon className="h-3.5 w-3.5" />
             )}
           </Button>
-        ) : null}
-        {canExport ? (
           <Button
             variant="ghost"
             size="icon"
-            onClick={onExportToWorkflow}
-            disabled={!sessionId || isInitializingSession || isExportingWorkflow}
-            data-testid="ai-role-session-export"
-            aria-label={`导出当前 RoleSession 到 ${workflowExportTarget} 工作流`}
-            className="h-7 w-7 shrink-0 text-slate-400 hover:bg-emerald-500/10 hover:text-emerald-100 disabled:opacity-50"
-            title={`导出当前 RoleSession 到 ${workflowExportTarget} 工作流`}
+            onClick={onToggleRoleSessionEvidence}
+            disabled={!sessionId || isInitializingSession}
+            data-testid="ai-role-session-evidence-toggle"
+            aria-label="查看 RoleSession 产物与审计"
+            className={`h-6 w-6 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100 disabled:opacity-50 ${
+              showRoleSessionEvidence ? 'bg-white/5 text-slate-100' : ''
+            }`}
+            title="查看 RoleSession 产物与审计"
           >
-            {isExportingWorkflow ? (
+            <Activity className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleRoleSessionMemory}
+            disabled={!sessionId || isInitializingSession}
+            data-testid="ai-role-session-memory-toggle"
+            aria-label="查看 Context OS RoleSession 记忆"
+            className={`h-6 w-6 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100 disabled:opacity-50 ${
+              showRoleSessionMemory ? 'bg-white/5 text-slate-100' : ''
+            }`}
+            title="查看 Context OS RoleSession 记忆"
+          >
+            {isLoadingRoleSessionMemory ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <Upload className="h-3.5 w-3.5" />
+              <Database className="h-3.5 w-3.5" />
             )}
           </Button>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onNewSession}
-          disabled={isInitializingSession}
-          data-testid="ai-role-session-new"
-          aria-label="新建 RoleSession"
-          className="h-7 w-7 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100"
-          title="新建 RoleSession"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleRoleSessionSnapshotExport}
+            disabled={!sessionId || isInitializingSession}
+            data-testid="ai-role-session-snapshot-toggle"
+            aria-label="导出当前 RoleSession 快照"
+            className={`h-6 w-6 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100 disabled:opacity-50 ${
+              showRoleSessionSnapshotExport ? 'bg-white/5 text-slate-100' : ''
+            }`}
+            title="导出当前 RoleSession 快照"
+          >
+            {isExportingRoleSessionSnapshot ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+          </Button>
+          {canDetach || isDetachingRoleSession ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDetachRoleSession}
+              disabled={!sessionId || isInitializingSession || isDetachingRoleSession}
+              data-testid="ai-role-session-detach"
+              aria-label="解除当前 RoleSession 与工作流任务的附着"
+              className="h-6 w-6 shrink-0 text-slate-400 hover:bg-cyan-500/10 hover:text-cyan-100 disabled:opacity-50"
+              title="解除当前 RoleSession 与工作流任务的附着"
+            >
+              {isDetachingRoleSession ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Link2Off className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          ) : null}
+          {canExport ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onExportToWorkflow}
+              disabled={!sessionId || isInitializingSession || isExportingWorkflow}
+              data-testid="ai-role-session-export"
+              aria-label={`导出当前 RoleSession 到 ${workflowExportTarget} 工作流`}
+              className="h-6 w-6 shrink-0 text-slate-400 hover:bg-emerald-500/10 hover:text-emerald-100 disabled:opacity-50"
+              title={`导出当前 RoleSession 到 ${workflowExportTarget} 工作流`}
+            >
+              {isExportingWorkflow ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onNewSession}
+            disabled={isInitializingSession}
+            data-testid="ai-role-session-new"
+            aria-label="新建 RoleSession"
+            className="h-6 w-6 shrink-0 text-slate-400 hover:bg-white/5 hover:text-slate-100"
+            title="新建 RoleSession"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
     </div>
@@ -943,6 +950,7 @@ export function AIDialoguePanel({
   workflowExportLabel,
   onSessionChange,
   interactionBlockedReason,
+  statusNoticeMode = 'full',
 }: AIDialoguePanelProps) {
   const theme = roleTheme || DEFAULT_THEMES[dialogueRole];
   const defaultWelcome = `${roleDisplayName} 已就绪。您可以开始对话。`;
@@ -1064,6 +1072,7 @@ export function AIDialoguePanel({
         debug={chatStatus?.debug}
         theme={theme}
         onRetry={checkStatus}
+        noticeMode={statusNoticeMode}
       />
 
       <RoleSessionStrip
@@ -1174,6 +1183,7 @@ export function AIDialoguePanel({
         isLoading={isLoading}
         isChatReady={effectiveIsChatReady}
         isExplicitlyUnconfigured={isExplicitlyUnconfigured}
+        statusKind={effectiveStatusKind}
         blockedReason={blockedReason}
         roleName={roleDisplayName}
         theme={theme}

@@ -19,6 +19,29 @@ logger = logging.getLogger(__name__)
 WORKFLOW_STATE_FILE = "runtime/state/workflow.workflow.state.json"
 WORKFLOW_PM_TASKS_FILE = "runtime/contracts/pm_tasks.contract.json"
 _TERMINAL_STATUSES = {"completed", "failed", "terminated", "timed_out", "canceled"}
+_FAILURE_STATUSES = {
+    "blocked",
+    "director_failed",
+    "director_failures_present",
+    "error",
+    "failed",
+    "fail",
+    "failure",
+    "integration_qa_error",
+    "integration_qa_failed",
+    "integration_qa_runtime_error",
+    "qa_failed",
+    "task_failed",
+}
+_NON_FAILURE_STATUSES = {
+    "completed",
+    "done",
+    "integration_qa_passed",
+    "ok",
+    "passed",
+    "success",
+    "succeeded",
+}
 _WORKFLOW_STATE_MAP = {
     "planned": "pending",
     "pending": "pending",
@@ -140,6 +163,117 @@ def load_workflow_state(
 
 def _is_terminal_status(status: str) -> bool:
     return str(status or "").strip().lower() in _TERMINAL_STATUSES
+
+
+def _iter_nested_payloads(value: Any, *, depth: int = 0) -> list[dict[str, Any]]:
+    """Return nested mappings with a conservative depth guard."""
+    if depth > 8:
+        return []
+    if isinstance(value, dict):
+        nested_payloads = [value]
+        for item in value.values():
+            nested_payloads.extend(_iter_nested_payloads(item, depth=depth + 1))
+        return nested_payloads
+    if isinstance(value, list):
+        list_payloads: list[dict[str, Any]] = []
+        for item in value:
+            list_payloads.extend(_iter_nested_payloads(item, depth=depth + 1))
+        return list_payloads
+    return []
+
+
+def _payload_has_failure_signal(value: Any) -> bool:
+    for payload in _iter_nested_payloads(value):
+        for key in ("director_status", "qa_status", "reason", "status", "error"):
+            token = str(payload.get(key) or "").strip().lower()
+            if not token or token in _NON_FAILURE_STATUSES:
+                continue
+            if token in _FAILURE_STATUSES:
+                return True
+        if payload.get("passed") is False:
+            reason = str(payload.get("reason") or payload.get("status") or "").strip().lower()
+            if not reason or reason not in _NON_FAILURE_STATUSES:
+                return True
+        for count_key in ("failures", "blocked"):
+            try:
+                if int(payload.get(count_key) or 0) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+def _load_workflow_result_artifacts(cache_root: str) -> list[dict[str, Any]]:
+    cache_root_value = str(cache_root or "").strip()
+    if not cache_root_value:
+        return []
+    payloads: list[dict[str, Any]] = []
+    for relative_path in (
+        os.path.join("results", "director.result.json"),
+        os.path.join("results", "integration_qa.result.json"),
+    ):
+        payload = read_json(os.path.join(cache_root_value, relative_path))
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return payloads
+
+
+def _result_artifacts_prove_terminal_success(payloads: list[dict[str, Any]]) -> bool:
+    director_result: dict[str, Any] = {}
+    integration_qa_result: dict[str, Any] = {}
+    for payload in payloads:
+        if "integration_qa" in str(payload.get("reason") or "").lower() or "passed" in payload:
+            integration_qa_result = payload
+            continue
+        if "successes" in payload or "failures" in payload or "blocked" in payload:
+            director_result = payload
+
+    director_status = str(director_result.get("status") or "").strip().lower()
+    try:
+        director_total = int(director_result.get("total") or 0)
+        director_failures = int(director_result.get("failures") or 0)
+        director_blocked = int(director_result.get("blocked") or 0)
+    except (TypeError, ValueError):
+        return False
+
+    qa_reason = str(integration_qa_result.get("reason") or "").strip().lower()
+    return (
+        director_status == "success"
+        and director_total > 0
+        and director_failures == 0
+        and director_blocked == 0
+        and integration_qa_result.get("passed") is True
+        and qa_reason == "integration_qa_passed"
+    )
+
+
+def _derive_terminal_failure_status(
+    *,
+    cache_root: str,
+    statuses: tuple[str, ...],
+    payloads: tuple[Any, ...],
+) -> str:
+    for status in statuses:
+        token = str(status or "").strip().lower()
+        if token in {"terminated", "timed_out", "canceled", "cancelled"}:
+            return "canceled" if token == "cancelled" else token
+        if token in _FAILURE_STATUSES:
+            return "failed"
+
+    result_artifacts = _load_workflow_result_artifacts(cache_root)
+    if _result_artifacts_prove_terminal_success(result_artifacts):
+        return ""
+
+    for payload in (*payloads, *result_artifacts):
+        if _payload_has_failure_signal(payload):
+            return "failed"
+    return ""
+
+
+def _derive_terminal_success_status(*, cache_root: str) -> str:
+    if _result_artifacts_prove_terminal_success(_load_workflow_result_artifacts(cache_root)):
+        return "completed"
+    return ""
 
 
 def _snapshot_payload(value: Any) -> dict[str, Any]:
@@ -928,6 +1062,26 @@ def get_workflow_runtime_status(
         .strip()
         .lower()
     )
+
+    derived_failure_status = _derive_terminal_failure_status(
+        cache_root=cache_root,
+        statuses=(child_status, qa_child_status),
+        payloads=(
+            record,
+            description,
+            runtime_snapshot,
+            child_description,
+            child_snapshot_payload,
+            qa_child_description,
+            qa_child_snapshot_payload,
+        ),
+    )
+    if derived_failure_status:
+        runtime_status = derived_failure_status
+    else:
+        derived_success_status = _derive_terminal_success_status(cache_root=cache_root)
+        if derived_success_status:
+            runtime_status = derived_success_status
 
     running = not _is_terminal_status(runtime_status or "running")
     updated_record = dict(record)

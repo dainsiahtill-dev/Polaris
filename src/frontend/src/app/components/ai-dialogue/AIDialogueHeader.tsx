@@ -74,11 +74,13 @@ export function AIDialogueHeader({
           <p className="truncate text-[10px] text-slate-500">
             {isChatReady
               ? `${configuredProviderLabel} · ${configuredModelLabel}`
-              : statusKind === 'unconfigured'
-                ? `${roleName} 未配置`
-                : statusKind === 'blocked'
-                  ? `${roleName} 已阻塞`
-                  : `${roleName} 状态获取失败`}
+              : statusKind === 'loading'
+                ? `${roleName} 状态检查中`
+                : statusKind === 'unconfigured'
+                  ? `${roleName} 未配置`
+                  : statusKind === 'blocked'
+                    ? `${roleName} 已阻塞`
+                    : `${roleName} 状态获取失败`}
           </p>
         </div>
       </div>

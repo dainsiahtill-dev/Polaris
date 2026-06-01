@@ -207,6 +207,43 @@ def test_build_requirements_fallback_payload_uses_synthetic_paths_when_no_files_
     assert "synthetic bootstrap paths" in notes
 
 
+def test_build_requirements_fallback_payload_for_fashion_desktop_ignores_agents_file() -> None:
+    requirements = """
+    # FashionGen Studio
+    Build a desktop creative production tool for Taobao fashion ecommerce imagery.
+    Frontend: TypeScript + React + Electron + TailwindCSS.
+    Python backend: image generation orchestration service.
+    Workbenches: model generation, headless model, face lab, scene generation,
+    and batch production.
+    """
+    payload = build_requirements_fallback_payload(
+        requirements=requirements,
+        iteration=14,
+        timestamp="2026-05-31 00:00:00",
+        workspace_files=["AGENTS.md"],
+    )
+
+    assert isinstance(payload, dict)
+    assert payload.get("detected_tech_stack", {}).get("language") == "typescript"
+    assert payload.get("detected_tech_stack", {}).get("framework") == "react"
+    assert payload.get("detected_tech_stack", {}).get("project_type") == "desktop"
+    tasks = payload.get("tasks")
+    assert isinstance(tasks, list)
+    all_targets: list[str] = []
+    for task in tasks:
+        all_targets.extend(task.get("target_files") or [])
+
+    assert "AGENTS.md" not in all_targets
+    assert "package.json" in all_targets
+    assert "src/electron/main.ts" in all_targets
+    assert "src/frontend/App.tsx" in all_targets
+    assert "src/shared/generationSpec.ts" in all_targets
+    assert "tests/generationSpec.test.ts" in all_targets
+    notes = str(payload.get("notes") or "").lower()
+    assert "synthetic bootstrap paths" in notes
+    assert "existing workspace files" not in notes
+
+
 def test_build_requirements_fallback_payload_uses_workspace_files_before_synthetic_paths() -> None:
     requirements = """
     # Enterprise Task Management API
@@ -342,7 +379,8 @@ def test_empty_tasks_fallback_recovers_empty_parse_output() -> None:
     assert len(tasks) >= 1
     assert payload["run_id"] == "pm-00011"
     assert payload["pm_iteration"] == 11
-    assert "Original PM failure/context" in str(payload.get("notes") or "")
+    assert "Recovered PM parse context" in str(payload.get("notes") or "")
+    assert "Original PM failure/context" not in str(payload.get("notes") or "")
     warnings = payload.get("schema_warnings")
     assert isinstance(warnings, list)
     joined_warnings = "\n".join(str(item) for item in warnings)

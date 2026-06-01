@@ -138,17 +138,17 @@ class ScriptDirectorAdapter(DirectorInterface):
         if raw_task_timeout is not None:
             task_timeout = timeout_seconds_or_none(raw_task_timeout, default=0)
             if task_timeout is not None:
-                return min(max(int(task_timeout), 30), 1800)
+                return min(max(int(task_timeout), 30), 3570)
 
         if self.timeout is not None:
             # Leave a safety margin so loop-director can write result before process kill.
-            return min(max(int(self.timeout) - 30, 30), 1800)
+            return min(max(int(self.timeout) - 30, 30), 3570)
 
         env_raw = os.environ.get("KERNELONE_DIRECTOR_TASK_TIMEOUT", "600")
         env_timeout = timeout_seconds_or_none(env_raw, default=600)
         if env_timeout is None:
             return 600
-        return min(max(int(env_timeout), 30), 1800)
+        return min(max(int(env_timeout), 30), 3570)
 
     def _find_project_root(self) -> Path:
         """Find project root by looking for src/backend/scripts/loop-director.py."""
@@ -229,6 +229,7 @@ class ScriptDirectorAdapter(DirectorInterface):
                         "scope_mode": scope_mode,
                         "acceptance_criteria": task.acceptance_criteria,
                         "constraints": task.constraints,
+                        "context": task.context if isinstance(task.context, dict) else {},
                     }
                 ],
             }
