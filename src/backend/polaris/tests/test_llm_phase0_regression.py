@@ -1959,6 +1959,61 @@ class TestLLMVisualLayoutPersistence:
         assert loaded.get("visual_viewport", {}).get("zoom") == 1.15
 
 
+class TestLLMConfigProviderDeletionPersistence:
+    """Regression tests for user-deleted provider persistence."""
+
+    def test_save_with_provider_removed_does_not_restore_old_provider(self, mock_workspace):
+        from polaris.kernelone.llm.config_store import load_llm_config, save_llm_config
+
+        original_payload = {
+            "schema_version": 2,
+            "providers": {
+                "codex_cli": {"type": "codex_cli"},
+                "ollama": {"type": "ollama", "base_url": "http://localhost:11434"},
+                "openai_compat": {
+                    "type": "openai_compat",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "old-secret",
+                },
+            },
+            "roles": {
+                "pm": {"provider_id": "codex_cli", "model": "gpt-5.3-codex"},
+                "chief_engineer": {"provider_id": "openai_compat", "model": "gpt-4.1-mini"},
+                "director": {"provider_id": "ollama", "model": "llama3.2"},
+                "qa": {"provider_id": "ollama", "model": "llama3.2"},
+                "architect": {"provider_id": "openai_compat", "model": "gpt-4.1-mini"},
+            },
+        }
+        save_llm_config(mock_workspace, mock_workspace, original_payload)
+
+        updated_payload = {
+            "schema_version": 2,
+            "providers": {
+                "openai_compat": {
+                    "type": "openai_compat",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "********",
+                },
+            },
+            "roles": {
+                "pm": {"provider_id": "openai_compat", "model": "gpt-4.1-mini"},
+                "chief_engineer": {"provider_id": "openai_compat", "model": "gpt-4.1-mini"},
+                "director": {"provider_id": "openai_compat", "model": "gpt-4.1-mini"},
+                "qa": {"provider_id": "openai_compat", "model": "gpt-4.1-mini"},
+                "architect": {"provider_id": "openai_compat", "model": "gpt-4.1-mini"},
+            },
+        }
+
+        save_llm_config(mock_workspace, mock_workspace, updated_payload)
+        loaded = load_llm_config(mock_workspace, mock_workspace)
+
+        providers = loaded.get("providers", {})
+        assert set(providers) == {"openai_compat"}
+        assert "codex_cli" not in providers
+        assert "ollama" not in providers
+        assert providers["openai_compat"]["api_key"] == "old-secret"
+
+
 class TestLLMConfigLoadPreservesUserFields:
     """Ensure loading config never rewrites or drops user-managed fields."""
 

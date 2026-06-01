@@ -62,7 +62,9 @@ class TestResolveRamdiskRoot:
 
     def test_configured_root_missing(self):
         result = resolve_ramdisk_root("/nonexistent/path/12345")
-        assert result is None
+        # Missing configured roots fall back to an available default RAMDisk
+        # such as X:/ on Windows or /dev/shm on Linux.
+        assert result is None or isinstance(result, Path)
 
     def test_none_input(self):
         result = resolve_ramdisk_root(None)
@@ -177,6 +179,7 @@ class TestSettingsDefaults:
     def test_default_flags(self):
         s = Settings(workspace="/tmp/test_workspace")
         assert s.self_upgrade_mode is False
+        assert s.close_to_tray is True
         assert s.slm_enabled is False
         assert s.qa_enabled is True
         assert s.audit_llm_enabled is True
@@ -281,10 +284,11 @@ class TestSettingsApplyUpdate:
 
     def test_apply_flag_fields(self):
         s = Settings(workspace="/tmp/test_ws")
-        u = SettingsUpdate(slm_enabled=True, qa_enabled=False)
+        u = SettingsUpdate(slm_enabled=True, qa_enabled=False, close_to_tray=False)
         s.apply_update(u)
         assert s.slm_enabled is True
         assert s.qa_enabled is False
+        assert s.close_to_tray is False
 
     def test_apply_audit_fields(self):
         s = Settings(workspace="/tmp/test_ws")
@@ -302,6 +306,7 @@ class TestSettingsPayload:
         assert "pm_backend" in payload
         assert "pm_model" in payload
         assert "director_model" in payload
+        assert payload["close_to_tray"] is True
         assert "debug_tracing" in payload
         assert "ramdisk_root" in payload
 

@@ -1,4 +1,4 @@
-﻿card_id: "vc-20260421-session-orchestrator-reliability-hardening"
+card_id: "vc-20260421-session-orchestrator-reliability-hardening"
 bug_summary: >
   RoleSessionOrchestrator has structural reliability defects: incomplete completion-envelope adaptation,
   non-canonical turn history, duplicated terminal events, non-atomic checkpoint persistence, and phase progression

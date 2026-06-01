@@ -42,6 +42,7 @@ interface TestPanelProps {
   streamingEnabled?: boolean;
   onStreamingEnabledChange?: (enabled: boolean) => void;
   onClearEvents?: () => void;
+  embedded?: boolean;
 }
 
 const EVENT_PREFIX: Record<TestEventType, string> = {
@@ -104,6 +105,7 @@ export function TestPanel({
   streamingEnabled,
   onStreamingEnabledChange,
   onClearEvents,
+  embedded = false,
 }: TestPanelProps) {
   // 优先使用 runConfig 中的配置
   const suites = runConfig?.suites ?? suitesProp;
@@ -186,18 +188,18 @@ export function TestPanel({
     setEvents([]);
     setInternalStatus('running');
     
-    // 🚀 立即添加启动事件，给用户即时反馈
+    // 立即添加启动事件，给用户即时反馈
     const now = new Date().toISOString();
     setEvents([
       {
         type: 'stdout',
         timestamp: now,
-        content: `🚀 正在启动对 ${provider.name} 的测试...`,
+        content: `正在启动对 ${provider.name} 的测试...`,
       },
       {
         type: 'stdout',
         timestamp: now,
-        content: `📡 正在连接到测试服务器...`,
+        content: '正在连接到测试服务器...',
       },
     ]);
     
@@ -274,6 +276,7 @@ export function TestPanel({
   }, [handlePointerMove]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (embedded) return;
     if (event.button !== 0) return;
     const target = event.target as HTMLElement;
     if (target.closest('button') || target.closest('input') || target.closest('label')) return;
@@ -299,7 +302,7 @@ export function TestPanel({
 
   const logText = useMemo(() => formatEvents(events), [events]);
 
-  const panelTitle = title || `🖥️ Testing: ${provider.name}`;
+  const panelTitle = title || `Testing: ${provider.name}`;
   const panelSubtitleBase = subtitle || `Provider: ${provider.name} · Model: ${provider.modelId || 'default'}`;
   const panelSubtitle = sessionId ? `${panelSubtitleBase} · Session: ${sessionId}` : panelSubtitleBase;
   const terminalPlaceholder =
@@ -373,15 +376,17 @@ export function TestPanel({
 
   return (
     <div
-      className={`relative bg-black/30 bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-pink-500/10 rounded-xl border border-cyan-400/30 shadow-[0_0_20px_rgba(34,211,238,0.18),0_0_40px_rgba(168,85,247,0.12)] backdrop-blur-xl h-fit overflow-hidden transition-all ${
-        collapsed ? 'max-w-[240px]' : 'w-full'
+      className={`relative bg-black/30 bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-pink-500/10 rounded-xl border border-cyan-400/30 shadow-[0_0_20px_rgba(34,211,238,0.18),0_0_40px_rgba(168,85,247,0.12)] backdrop-blur-xl overflow-hidden transition-all ${
+        embedded ? 'flex h-full min-h-0 w-full flex-col' : 'h-fit'
+      } ${
+        collapsed && !embedded ? 'max-w-[240px]' : 'w-full'
       }`}
-      style={{ transform: `translate(${position.x}px, ${position.y}px)` }}
+      style={embedded ? undefined : { transform: `translate(${position.x}px, ${position.y}px)` }}
     >
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-cyan-400/60 via-fuchsia-400/50 to-pink-400/60" />
       <div
         onPointerDown={handlePointerDown}
-        className={`select-none ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+        className={`select-none ${embedded ? '' : dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
         style={{ touchAction: 'none' }}
       >
         <TestPanelHeader
@@ -402,8 +407,8 @@ export function TestPanel({
 
       {!collapsed ? (
         <>
-          <div className="p-4 space-y-3">
-            <div className={`grid gap-3 text-[10px] text-text-dim ${panelMode === 'event-viewer' ? 'grid-cols-4' : 'grid-cols-3'}`}>
+          <div className={`${embedded ? 'flex min-h-0 flex-1 flex-col gap-3 p-3' : 'p-4 space-y-3'}`}>
+            <div className={`grid gap-2 text-[10px] text-text-dim ${panelMode === 'event-viewer' ? 'grid-cols-2 2xl:grid-cols-4' : 'grid-cols-1 2xl:grid-cols-3'}`}>
               <div className="rounded border border-white/10 bg-black/20 px-2 py-1">
                 状态: <span className="text-text-main">{statusLabel}</span>
               </div>
@@ -423,12 +428,13 @@ export function TestPanel({
             <TerminalOutput
               events={events}
               placeholder={terminalPlaceholder}
-              heightClassName={panelMode === 'event-viewer' ? 'h-[22rem]' : 'h-80'}
+              heightClassName={embedded ? 'min-h-0 flex-1' : panelMode === 'event-viewer' ? 'h-[22rem]' : 'h-80'}
+              className={embedded ? 'flex min-h-0 flex-1 flex-col' : undefined}
             />
           </div>
 
           {panelMode === 'stream-runner' ? (
-            <div className="p-4 border-t border-white/10 flex items-center gap-2">
+            <div className={`${embedded ? 'p-3' : 'p-4'} border-t border-white/10 flex shrink-0 items-center gap-2`}>
               <button
                 type="button"
                 onClick={() => {
@@ -454,7 +460,7 @@ export function TestPanel({
               </button>
             </div>
           ) : (
-            <div className="p-4 border-t border-white/10 text-[10px] text-text-dim">
+            <div className={`${embedded ? 'p-3' : 'p-4'} border-t border-white/10 text-[10px] text-text-dim shrink-0`}>
               日志由实时会话驱动，发送问题后会持续流式更新。
             </div>
           )}

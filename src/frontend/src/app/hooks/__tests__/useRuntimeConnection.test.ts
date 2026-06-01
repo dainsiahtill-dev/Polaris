@@ -1,4 +1,4 @@
-﻿/**
+/**
  * useRuntimeConnection Hook Tests
  *
  * 测试运行时连接状态管理 Hook 的核心功能：

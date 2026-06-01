@@ -1,4 +1,4 @@
-﻿import { X, Loader2, RotateCw, Clipboard } from 'lucide-react';
+import { X, Loader2, RotateCw, Clipboard } from 'lucide-react';
 import { TestLogViewer } from './TestLogViewer';
 import { TestProgressBar } from './TestProgressBar';
 import { TestResultDisplay } from './TestResultDisplay';

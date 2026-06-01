@@ -6,6 +6,8 @@ const { ensureLocalNatsServer } = require("./nats-server");
 const repoRoot = path.join(__dirname, "..", "..");
 const electronMain = path.join(repoRoot, "src", "electron", "main.cjs");
 const backendScript = path.join(repoRoot, "src", "backend", "server.py");
+const backendSourcePath = path.join(repoRoot, "src", "backend");
+const venvRoot = path.join(repoRoot, ".venv");
 
 function normalizeForMatch(value) {
   return String(value || "").replace(/\\/g, "/").toLowerCase();
@@ -114,14 +116,83 @@ killExistingBackend();
 console.log("[run-electron] killExistingBackend completed");
 
 function resolveVenvPython() {
-  const venvRoot = path.join(repoRoot, ".venv");
   const pythonPath = process.platform === "win32"
     ? path.join(venvRoot, "Scripts", "python.exe")
     : path.join(venvRoot, "bin", "python");
   if (fs.existsSync(pythonPath)) {
-    return pythonPath;
+    const check = checkPythonExecutable(pythonPath);
+    if (check.ok) {
+      return pythonPath;
+    }
+    console.warn(`[polaris] ignoring invalid .venv python: ${check.message}`);
   }
   return "";
+}
+
+function resolveVenvSitePackagesPath(pythonPath) {
+  if (!pythonPath || !normalizeForMatch(pythonPath).startsWith(normalizeForMatch(venvRoot))) {
+    return "";
+  }
+  if (process.platform === "win32") {
+    const sitePackagesPath = path.join(venvRoot, "Lib", "site-packages");
+    return fs.existsSync(sitePackagesPath) ? sitePackagesPath : "";
+  }
+  const libPath = path.join(venvRoot, "lib");
+  if (!fs.existsSync(libPath)) {
+    return "";
+  }
+  const candidates = fs.readdirSync(libPath, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("python"))
+    .map((entry) => path.join(libPath, entry.name, "site-packages"))
+    .filter((candidate) => fs.existsSync(candidate));
+  return candidates[0] || "";
+}
+
+function withPrependedPythonPath(baseEnv, entries) {
+  const normalizedEntries = entries.filter(Boolean);
+  if (normalizedEntries.length === 0) {
+    return baseEnv;
+  }
+  const existing = String(baseEnv.PYTHONPATH || "")
+    .split(path.delimiter)
+    .filter(Boolean);
+  const seen = new Set();
+  const merged = [...normalizedEntries, ...existing].filter((entry) => {
+    const key = normalizeForMatch(entry);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+  return { ...baseEnv, PYTHONPATH: merged.join(path.delimiter) };
+}
+
+function buildPythonRuntimeEnv(baseEnv, pythonPath) {
+  return withPrependedPythonPath(
+    { ...baseEnv, PYTHONUNBUFFERED: "1" },
+    [resolveVenvSitePackagesPath(pythonPath), backendSourcePath],
+  );
+}
+
+function checkPythonExecutable(pythonPath) {
+  if (!pythonPath || !fs.existsSync(pythonPath)) {
+    return { ok: false, message: "python executable is missing" };
+  }
+  try {
+    execFileSync(pythonPath, ["-c", "import sys; print(sys.executable)"], {
+      cwd: repoRoot,
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    return { ok: true, message: "" };
+  } catch (error) {
+    const stderr = error && error.stderr ? String(error.stderr).trim() : "";
+    const stdout = error && error.stdout ? String(error.stdout).trim() : "";
+    const message = stderr || stdout || (error && error.message ? error.message : String(error));
+    return { ok: false, message };
+  }
 }
 
 async function main() {
@@ -137,12 +208,16 @@ async function main() {
   if (venvPython) {
     if (!configuredPython) {
       env.KERNELONE_PYTHON = venvPython;
-    } else if (!fs.existsSync(configuredPython)) {
-      console.warn(`[polaris] KERNELONE_PYTHON not found: ${configuredPython}`);
+    } else if (!checkPythonExecutable(configuredPython).ok) {
+      console.warn(`[polaris] KERNELONE_PYTHON is not usable: ${configuredPython}`);
       env.KERNELONE_PYTHON = venvPython;
     }
+  } else if (configuredPython && !checkPythonExecutable(configuredPython).ok) {
+    console.warn(`[polaris] KERNELONE_PYTHON is not usable: ${configuredPython}`);
+    delete env.KERNELONE_PYTHON;
   }
 
+  Object.assign(env, buildPythonRuntimeEnv(env, env.KERNELONE_PYTHON || venvPython));
   console.log(`[polaris] python: ${env.KERNELONE_PYTHON || "python"}`);
 
   const electronBinary = require("electron");

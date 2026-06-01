@@ -59,6 +59,157 @@ export interface UseInterviewStreamOptions {
   onTagEvent?: (event: StreamingTagEvent) => void;
 }
 
+type StreamTagName = 'thinking' | 'answer';
+
+const STREAM_TAG_ALIASES: Record<string, StreamTagName> = {
+  thinking: 'thinking',
+  think: 'thinking',
+  reasoning: 'thinking',
+  analysis: 'thinking',
+  answer: 'answer',
+  final: 'answer',
+  response: 'answer',
+};
+
+const START_EVENT_BY_TAG: Record<StreamTagName, StreamingTagEventType> = {
+  thinking: 'thinking_start',
+  answer: 'answer_start',
+};
+
+const CHUNK_EVENT_BY_TAG: Record<StreamTagName, StreamingTagEventType> = {
+  thinking: 'thinking_chunk',
+  answer: 'answer_chunk',
+};
+
+const END_EVENT_BY_TAG: Record<StreamTagName, StreamingTagEventType> = {
+  thinking: 'thinking_end',
+  answer: 'answer_end',
+};
+
+const CLOSE_TAGS_BY_TAG: Record<StreamTagName, string[]> = {
+  thinking: ['</thinking>', '</think>', '</reasoning>', '</analysis>'],
+  answer: ['</answer>', '</final>', '</response>'],
+};
+
+const normalizeTagName = (rawTag: string): StreamTagName | null => {
+  const normalized = rawTag
+    .trim()
+    .replace(/^\//, '')
+    .split(/\s+/)[0]
+    ?.toLowerCase();
+  return normalized ? STREAM_TAG_ALIASES[normalized] || null : null;
+};
+
+const trailingCloseTagPrefixLength = (value: string, tag: StreamTagName) => {
+  const lowerValue = value.toLowerCase();
+  let bestLength = 0;
+  for (const closeTag of CLOSE_TAGS_BY_TAG[tag]) {
+    const maxLength = Math.min(closeTag.length - 1, lowerValue.length);
+    for (let length = maxLength; length > bestLength; length -= 1) {
+      if (closeTag.startsWith(lowerValue.slice(-length))) {
+        bestLength = length;
+        break;
+      }
+    }
+  }
+  return bestLength;
+};
+
+const findCloseTag = (value: string, tag: StreamTagName) => {
+  const lowerValue = value.toLowerCase();
+  let best: { index: number; length: number } | null = null;
+  for (const closeTag of CLOSE_TAGS_BY_TAG[tag]) {
+    const index = lowerValue.indexOf(closeTag);
+    if (index >= 0 && (!best || index < best.index)) {
+      best = { index, length: closeTag.length };
+    }
+  }
+  return best;
+};
+
+export const createContentTagParser = () => {
+  let buffer = '';
+  let activeTag: StreamTagName | null = null;
+
+  const emit = (
+    type: StreamingTagEventType,
+    content: string | undefined,
+    timestamp: string,
+    onTagEvent?: (event: StreamingTagEvent) => void
+  ) => {
+    onTagEvent?.({
+      type,
+      data: {
+        content,
+        timestamp,
+        isComplete: type.endsWith('_end') ? true : undefined,
+      },
+    });
+  };
+
+  const consume = (
+    chunk: string,
+    timestamp: string,
+    onTagEvent?: (event: StreamingTagEvent) => void
+  ) => {
+    if (!chunk) return;
+    buffer += chunk;
+
+    for (let guard = 0; guard < 1000 && buffer; guard += 1) {
+      if (activeTag) {
+        const closeMatch = findCloseTag(buffer, activeTag);
+
+        if (!closeMatch) {
+          const keepLength = trailingCloseTagPrefixLength(buffer, activeTag);
+          const emitText = keepLength > 0 ? buffer.slice(0, -keepLength) : buffer;
+          if (emitText) {
+            emit(CHUNK_EVENT_BY_TAG[activeTag], emitText, timestamp, onTagEvent);
+          }
+          buffer = keepLength > 0 ? buffer.slice(-keepLength) : '';
+          break;
+        }
+
+        const text = buffer.slice(0, closeMatch.index);
+        if (text) {
+          emit(CHUNK_EVENT_BY_TAG[activeTag], text, timestamp, onTagEvent);
+        }
+        emit(END_EVENT_BY_TAG[activeTag], undefined, timestamp, onTagEvent);
+        buffer = buffer.slice(closeMatch.index + closeMatch.length);
+        activeTag = null;
+        continue;
+      }
+
+      const tagStart = buffer.indexOf('<');
+      if (tagStart < 0) {
+        buffer = buffer.slice(Math.max(0, buffer.length - 16));
+        break;
+      }
+      if (tagStart > 0) {
+        buffer = buffer.slice(tagStart);
+      }
+
+      const tagEnd = buffer.indexOf('>');
+      if (tagEnd < 0) {
+        break;
+      }
+
+      const rawTag = buffer.slice(1, tagEnd);
+      buffer = buffer.slice(tagEnd + 1);
+      if (rawTag.trim().startsWith('/')) {
+        continue;
+      }
+
+      const nextTag = normalizeTagName(rawTag);
+      if (nextTag) {
+        activeTag = nextTag;
+        emit(START_EVENT_BY_TAG[nextTag], undefined, timestamp, onTagEvent);
+      }
+    }
+  };
+
+  return { consume };
+};
+
 export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
   const { onEvent, onStart, onComplete, onError, onThinkingEvent, onTagEvent } = options;
   const [isStreaming, setIsStreaming] = useState(false);
@@ -147,6 +298,9 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
       const decoder = new TextDecoder();
       let buffer = '';
       let finalResult: InterviewStreamResult | null = null;
+      const contentTagParser = createContentTagParser();
+      let currentEvent: string | null = null;
+      let currentData = '';
       
       while (true) {
         const { done, value } = await reader.read();
@@ -158,15 +312,13 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
         // Process SSE messages
         const lines = buffer.split('\n');
         buffer = lines.pop() || ''; // Keep incomplete line in buffer
-        
-        let currentEvent: string | null = null;
-        let currentData = '';
-        
-        for (const line of lines) {
+
+        for (const rawLine of lines) {
+          const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
           if (line.startsWith('event: ')) {
             currentEvent = line.slice(7);
           } else if (line.startsWith('data: ')) {
-            currentData = line.slice(6);
+            currentData = currentData ? `${currentData}\n${line.slice(6)}` : line.slice(6);
           } else if (line === '' && currentEvent) {
             // End of event, process it
             try {
@@ -210,6 +362,18 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
                     content: data.line || '',
                   });
                   break;
+
+                case 'content_chunk': {
+                  const content = typeof data.content === 'string' ? data.content : '';
+                  const timestamp = typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString();
+                  onEvent?.({
+                    type: 'stdout',
+                    timestamp,
+                    content: `[content_chunk] ${JSON.stringify(data)}`,
+                  });
+                  contentTagParser.consume(content, timestamp, onTagEvent);
+                  break;
+                }
                   
                 case 'thinking':
                 case 'command_execution':

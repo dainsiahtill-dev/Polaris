@@ -1,24 +1,22 @@
 """Word DOCX Extractor for Knowledge Pipeline.
 
 Uses python-docx for text extraction from .docx files.
+Provides graceful degradation if python-docx is not installed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 from typing import TYPE_CHECKING
 
-# python-docx is a required dependency (confirmed available)
-import docx
-from docx.oxml.table import CT_Tbl
-from docx.table import Table as DocxTable
-from docx.text.paragraph import Paragraph
 from polaris.kernelone.akashic.knowledge_pipeline.extractors.base import (
     BaseExtractor,
 )
 
 logger = logging.getLogger(__name__)
+DOCX_AVAILABLE = importlib.util.find_spec("docx") is not None
 
 if TYPE_CHECKING:
     from docx.document import Document as DocxDocument
@@ -55,7 +53,7 @@ class DocxExtractor(BaseExtractor):
 
     def is_available(self) -> bool:
         """Check if DOCX extraction is available."""
-        return True
+        return DOCX_AVAILABLE
 
     async def extract(self, doc: DocumentInput) -> list[ExtractedFragment]:  # type: ignore[override]
         """Extract text fragments from a Word document.
@@ -65,6 +63,12 @@ class DocxExtractor(BaseExtractor):
         from polaris.kernelone.akashic.knowledge_pipeline.protocols import (
             ExtractedFragment,
         )
+
+        if not DOCX_AVAILABLE:
+            logger.warning(
+                "DOCX extraction unavailable: python-docx not installed. Install with: pip install python-docx"
+            )
+            return self._fallback_extract(doc)
 
         # python-docx needs file bytes or a file path
         # We receive content as bytes
@@ -82,6 +86,17 @@ class DocxExtractor(BaseExtractor):
 
         try:
             import io
+
+            try:
+                import docx
+                from docx.oxml.table import CT_Tbl
+                from docx.table import Table as DocxTable
+                from docx.text.paragraph import Paragraph
+            except ImportError:
+                logger.warning(
+                    "DOCX extraction unavailable: python-docx import failed. Install with: pip install python-docx"
+                )
+                return self._fallback_extract(doc)
 
             # Run CPU-bound DOCX parsing in thread pool to avoid blocking event loop
             loop = asyncio.get_running_loop()
@@ -237,6 +252,11 @@ class DocxExtractor(BaseExtractor):
     ) -> list[ExtractedFragment]:
         """Not used - override extract() handles bytes directly."""
         return []
+
+    def _fallback_extract(self, doc: DocumentInput) -> list[ExtractedFragment]:
+        """Fallback to plain text extraction when python-docx is unavailable."""
+        text = self._decode_content(doc)
+        return self._extract_lines(text, self._options)
 
 
 __all__ = ["DocxExtractor"]

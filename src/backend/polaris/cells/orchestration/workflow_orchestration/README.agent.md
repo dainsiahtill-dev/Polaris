@@ -1,4 +1,4 @@
-﻿# orchestration.workflow_orchestration Cell
+# orchestration.workflow_orchestration Cell
 
 ## 职责
 Owns the OrchestrationService public contract, RuntimeOrchestrator port, ProcessLauncher port, and EventStream port. Depends on workflow_runtime for the WorkflowEngine instance and workflow_activity for concrete workflow/activity definitions. Coordinates workflow submission, signals, cancellation, and progress tracking.

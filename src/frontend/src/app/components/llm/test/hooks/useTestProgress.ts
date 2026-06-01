@@ -1,4 +1,4 @@
-﻿import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { TestLog, TestLogType, TestState, TestStep, TestTarget, TestResult } from '../types';
 
 const DEFAULT_TEST_STEPS: TestStep[] = [

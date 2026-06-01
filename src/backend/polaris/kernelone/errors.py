@@ -1395,6 +1395,7 @@ class BootstrapError(ConfigurationError):
         message: str,
         *,
         phase: str = "",
+        stage: str = "",
         **kwargs,
     ) -> None:
         super().__init__(
@@ -1402,8 +1403,12 @@ class BootstrapError(ConfigurationError):
             code="BOOTSTRAP_ERROR",
             **kwargs,
         )
+        if stage and not phase:
+            phase = stage
         if phase:
             self.details["phase"] = phase
+        if stage:
+            self.details["stage"] = stage
 
 
 class BackendBootstrapError(BootstrapError):

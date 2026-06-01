@@ -1,4 +1,4 @@
-﻿import os
+import os
 
 def is_empty_dir(path):
     items = os.listdir(path)

@@ -1,4 +1,4 @@
-﻿# orchestration.workflow_activity Cell
+# orchestration.workflow_activity Cell
 
 ## 职责
 Owns the Activity and Workflow definition public contracts and DI port for injecting HandlerRegistry implementations (ActivityRegistry, WorkflowRegistry) into the WorkflowEngine. All concrete implementations live in workflow_runtime; this cell defines only the port contracts and the registry abstractions.

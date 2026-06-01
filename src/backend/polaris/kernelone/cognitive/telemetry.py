@@ -6,10 +6,6 @@ from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
-
 
 class NoOpSpan:
     """No-op span context manager for when telemetry is disabled."""
@@ -62,12 +58,22 @@ class CognitiveTelemetry:
             enabled: Whether to enable telemetry collection and export.
         """
         self._enabled = enabled
+        self._trace_api: Any = None
+        self._tracer: Any = None
         if enabled:
-            provider = TracerProvider()
-            processor = SimpleSpanProcessor(ConsoleSpanExporter())
-            provider.add_span_processor(processor)
-            trace.set_tracer_provider(provider)
-        self._tracer = trace.get_tracer("cognitive_life_form")
+            try:
+                from opentelemetry import trace
+                from opentelemetry.sdk.trace import TracerProvider
+                from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+
+                provider = TracerProvider()
+                processor = SimpleSpanProcessor(ConsoleSpanExporter())
+                provider.add_span_processor(processor)
+                trace.set_tracer_provider(provider)
+                self._trace_api = trace
+                self._tracer = trace.get_tracer("cognitive_life_form")
+            except ImportError:
+                self._enabled = False
 
     def start_span(
         self,
@@ -84,7 +90,7 @@ class CognitiveTelemetry:
         Returns:
             A span context manager (real or no-op depending on enabled state)
         """
-        if not self._enabled:
+        if not self._enabled or self._tracer is None:
             return NoOpSpan()
         return self._tracer.start_as_current_span(name, attributes=attributes)
 
@@ -103,7 +109,9 @@ class CognitiveTelemetry:
         if not self._enabled:
             return
 
-        current_span = trace.get_current_span()
+        if self._trace_api is None:
+            return
+        current_span = self._trace_api.get_current_span()
         if current_span:
             current_span.add_event(event_name, attributes)
 
@@ -118,7 +126,9 @@ class CognitiveTelemetry:
         if not self._enabled:
             return
 
-        current_span = trace.get_current_span()
+        if self._trace_api is None:
+            return
+        current_span = self._trace_api.get_current_span()
         if current_span:
             current_span.set_attribute(key, value)
 

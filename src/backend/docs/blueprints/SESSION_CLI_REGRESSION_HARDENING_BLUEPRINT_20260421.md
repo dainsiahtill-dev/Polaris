@@ -1,4 +1,4 @@
-﻿# Session CLI Regression Hardening Blueprint (2026-04-21)
+# Session CLI Regression Hardening Blueprint (2026-04-21)
 
 **Status**: Implemented and validated  
 **Scope**: `roles.runtime` + `roles.kernel` + `director.delivery` CLI regression hardening  

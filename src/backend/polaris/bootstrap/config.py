@@ -211,6 +211,7 @@ class SettingsUpdate(BaseModel):
     self_upgrade_mode: bool | None = None
     workspace: str | None = None
     timeout: int | None = None
+    close_to_tray: bool | None = None
     json_log_path: str | None = None
     ramdisk_root: str | None = None
 
@@ -310,6 +311,7 @@ class Settings(BaseModel):
     nats: NATSConfig = Field(default_factory=NATSConfig)
 
     timeout: int = Field(default=0, description="PM orchestration timeout in seconds")
+    close_to_tray: bool = Field(default=True, description="Hide window to tray when the desktop window is closed")
     json_log_path: str | None = Field(default=None, description="Runtime PM JSON log path")
     slm_enabled: bool = Field(default=False, description="Enable SLM features")
     qa_enabled: bool = Field(default=True, description="Enable QA agent")
@@ -753,6 +755,8 @@ class Settings(BaseModel):
                 self.workspace = target_workspace if target_workspace is not None else self.workspace
             elif key == "timeout":
                 self.timeout = int(value or 0)
+            elif key == "close_to_tray":
+                self.close_to_tray = bool(value)
             elif key == "json_log_path":
                 self.json_log_path = str(value).strip() if value else None
             elif key == "ramdisk_root":
@@ -889,6 +893,7 @@ class Settings(BaseModel):
         payload["pm_backend"] = self.pm_backend
         payload["pm_model"] = self.pm_model
         payload["director_model"] = self.director_model
+        payload["close_to_tray"] = self.close_to_tray
         payload["pm_show_output"] = self.pm_show_output
         payload["pm_runs_director"] = self.pm_runs_director
         payload["pm_director_show_output"] = self.pm_director_show_output

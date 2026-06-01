@@ -1,4 +1,4 @@
-﻿# roles.host Cell
+# roles.host Cell
 
 ## 职责
 Unified host protocol core. Provides HostKind, HostCapabilityProfile, and UnifiedHostAdapter so that role runtime can adapt execution strategy (streaming, async tools, file write, audit export) based on the calling host environment (workflow, electron_workbench, tui, cli, api_server, headless).

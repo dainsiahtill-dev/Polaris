@@ -1,4 +1,4 @@
-﻿[LLMInvoker] MODULE LOADED: __name__=polaris.cells.roles.kernel.internal.llm_caller.invoker
+[LLMInvoker] MODULE LOADED: __name__=polaris.cells.roles.kernel.internal.llm_caller.invoker
 {
   "role": "director",
   "provider_id": "codex_cli",

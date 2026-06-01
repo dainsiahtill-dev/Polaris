@@ -1,4 +1,4 @@
-﻿# Session Orchestrator Reliability Blueprint (2026-04-21)
+# Session Orchestrator Reliability Blueprint (2026-04-21)
 
 **Status**: Implemented and targeted regressions passed  
 **Scope**: `roles.runtime` + `roles.kernel` session orchestration reliability hardening  

@@ -1,4 +1,4 @@
-﻿# Polaris Stage A Test Plan (Unit/Contract)
+# Polaris Stage A Test Plan (Unit/Contract)
 
 ## Purpose
 Stage A verifies Polaris's core logic, contracts, and safety rules at the unit/contract level without invoking external models or long‑running side effects.

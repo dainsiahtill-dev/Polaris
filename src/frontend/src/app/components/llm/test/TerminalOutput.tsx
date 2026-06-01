@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TestEvent, TestEventType } from './types';
 
 const EVENT_STYLES: Record<TestEventType, { prefix: string; className: string }> = {

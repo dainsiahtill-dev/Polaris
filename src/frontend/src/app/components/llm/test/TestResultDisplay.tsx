@@ -1,4 +1,4 @@
-﻿import { CheckCircle2, AlertTriangle, Activity, Brain, Clock } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Activity, Brain, Clock } from 'lucide-react';
 import type { TestResult } from './types';
 
 interface TestResultDisplayProps {

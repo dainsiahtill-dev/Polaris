@@ -1,4 +1,4 @@
-﻿export type TestStatus = 'idle' | 'running' | 'success' | 'failed' | 'cancelled';
+export type TestStatus = 'idle' | 'running' | 'success' | 'failed' | 'cancelled';
 
 export type TestLogType = 'info' | 'error' | 'success' | 'request' | 'response';
 

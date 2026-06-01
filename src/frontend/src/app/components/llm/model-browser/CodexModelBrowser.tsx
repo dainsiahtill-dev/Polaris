@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Terminal } from 'lucide-react';
 import { PtyDrawer } from '@/app/components/PtyDrawer';
 

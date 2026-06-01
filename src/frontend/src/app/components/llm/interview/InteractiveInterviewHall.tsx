@@ -458,10 +458,6 @@ export function InteractiveInterviewHall({
         }
       };
       setMessages((prev) => [...prev, answerMessage]);
-      setStreamingThinking('');
-      setStreamingAnswer('');
-      setIsThinkingActive(false);
-      setIsAnswerActive(false);
       
       if (result.ok === false) {
         setError(result.error || '模型返回失败');
@@ -476,6 +472,8 @@ export function InteractiveInterviewHall({
           content: '已收到模型响应'
         });
       }
+      setIsThinkingActive(false);
+      setIsAnswerActive(false);
       setResponding(false);
     },
     onError: (error) => {
@@ -534,6 +532,29 @@ export function InteractiveInterviewHall({
     return pairs;
   }, [messages]);
   const hasStreamingContent = streamingThinking || streamingAnswer || isThinkingActive || isAnswerActive;
+  const displayedThinkingEvents = useMemo(() => {
+    const next = [...thinkingEvents];
+    if (streamingThinking || isThinkingActive) {
+      next.push({
+        id: 'live-stream-thinking',
+        kind: 'reasoning',
+        timestamp: new Date().toISOString(),
+        status: isThinkingActive ? 'in_progress' : 'completed',
+        thinking: streamingThinking,
+      });
+      return next;
+    }
+    if (streamingAnswer || isAnswerActive) {
+      next.push({
+        id: 'live-stream-answer',
+        kind: 'agent_message',
+        timestamp: new Date().toISOString(),
+        status: isAnswerActive ? 'in_progress' : 'completed',
+        answer: streamingAnswer,
+      });
+    }
+    return next;
+  }, [isAnswerActive, isThinkingActive, streamingAnswer, streamingThinking, thinkingEvents]);
 
   useEffect(() => {
     if (hasStreamingContent) {
@@ -635,6 +656,8 @@ export function InteractiveInterviewHall({
     if (!question) return;
 
     setError(null);
+    clearThinkingEvents();
+    clearTagEvents();
     setSessionStatus('running');
     syncTestPanelStatus('running');
     pushSessionEvent({
@@ -1037,24 +1060,24 @@ export function InteractiveInterviewHall({
 
   return (
     <div
+      data-testid="llm-interactive-hall"
       className={`relative ${
         isFullscreen
           ? 'fixed inset-2 z-[70] flex min-h-0 flex-col gap-2 rounded-2xl border border-cyan-400/35 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.16),_rgba(2,6,23,0.98)_65%)] p-2 shadow-[0_0_40px_rgba(34,211,238,0.25)]'
-          : 'flex h-full min-h-0 flex-col gap-5'
+          : 'flex h-full min-h-0 min-w-0 flex-1 basis-0 flex-col gap-2 overflow-hidden'
       }`}
     >
       {/* Header */}
-      <div className={`rounded-2xl border border-cyan-500/25 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.25),_rgba(3,7,18,0.88)_60%)] shadow-[0_0_30px_rgba(34,211,238,0.18)] ${compactMode ? 'p-2' : 'p-4'}`}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className={`${compactMode ? 'text-[9px] tracking-[0.16em]' : 'text-[10px] tracking-[0.2em]'} text-cyan-200/80 uppercase`}>交互式面试</div>
-            <h3 className={`${compactMode ? 'text-sm' : 'text-lg'} font-semibold text-text-main`}>交互式面试大厅</h3>
-            {!compactMode ? (
-              <div className="text-[11px] text-text-dim mt-1">
-                当前组合：{activeRole?.label || '未选择'} / {activeProvider?.name || '未选择'}
-                {selectedModel ? ` • ${selectedModel}` : ''}
-              </div>
-            ) : null}
+      <div className="rounded-xl border border-cyan-500/20 bg-[rgba(4,10,25,0.76)] px-3 py-2 shadow-[0_0_16px_rgba(34,211,238,0.10)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-[10px]">
+              <span className="font-semibold text-cyan-100">交互式面试</span>
+              <span className="truncate text-text-dim">
+                {activeRole?.label || '未选择'} / {activeProvider?.name || '未选择'}
+                {selectedModel ? ` / ${selectedModel}` : ''}
+              </span>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[10px]">
             <span className={`px-2 py-1 rounded border uppercase tracking-wide ${SESSION_STATUS[sessionStatus].badge}`}>
@@ -1081,7 +1104,7 @@ export function InteractiveInterviewHall({
               onClick={clearSessionEvents}
               className="px-2 py-1 rounded border border-white/10 hover:border-cyan-400/50 text-text-dim hover:text-cyan-100"
             >
-              清空公共日志
+              清空日志
             </button>
             {isDeepTestMode ? (
               <>
@@ -1120,16 +1143,11 @@ export function InteractiveInterviewHall({
             ) : null}
           </div>
         </div>
-        {!compactMode ? (
-          <div className="text-[10px] text-text-dim mt-3">
-          面试日志已迁移到公共浮动 TestPanel（可悬浮/拖拽），本页面仅保留面试交互与评估。
-          </div>
-        ) : null}
       </div>
 
       {/* Main content area - 响应式布局 */}
-      <div
-        className={`grid flex-1 min-h-0 overflow-hidden ${
+        <div
+        className={`grid min-h-0 min-w-0 flex-1 basis-0 overflow-hidden ${
           isFullscreen
             ? 'grid-cols-1 gap-2'
             : isDeepTestMode
@@ -1139,7 +1157,7 @@ export function InteractiveInterviewHall({
       >
         {/* Left Panel - Role Selection */}
         {showLeftPanel ? (
-          <div className={`${compactMode ? 'grid grid-rows-[auto_1fr] gap-2' : 'grid grid-rows-[auto_1fr_auto_1fr] gap-4'} min-h-0 overflow-hidden`}>
+          <div className={`${compactMode ? 'grid grid-rows-[auto_1fr] gap-2' : 'grid grid-rows-[auto_1fr_auto_1fr] gap-4'} min-h-0 min-w-0 overflow-hidden`}>
             <div className="flex items-center justify-between">
               <div className="text-xs font-semibold text-text-main uppercase tracking-wide">面试岗位</div>
               {isDeepTestMode ? (
@@ -1215,7 +1233,7 @@ export function InteractiveInterviewHall({
                       <button
                         key={provider.id}
                         onClick={() => onSelectProvider(provider.id)}
-                        className={`w-full text-left rounded-xl border ${compactMode ? 'p-2.5' : 'p-3'} transition-all ${
+                        className={`w-full min-w-0 text-left rounded-xl border ${compactMode ? 'p-2.5' : 'p-3'} transition-all ${
                           isActive
                             ? 'border-emerald-400/50 bg-emerald-500/10'
                             : `${styles.border} ${styles.bg} hover:border-white/20`
@@ -1254,7 +1272,7 @@ export function InteractiveInterviewHall({
 
         {/* Second Panel - Question Templates */}
         {showTemplateColumn ? (
-          <div className="flex flex-col gap-4 min-h-0 overflow-hidden xl:order-3">
+          <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-hidden xl:order-3">
             <div className="text-xs font-semibold text-text-main uppercase tracking-wide">问题模板库</div>
             <div className="space-y-3 flex-1 min-h-0 overflow-auto pr-1">
               {templatesByCategory.length === 0 ? (
@@ -1305,37 +1323,46 @@ export function InteractiveInterviewHall({
         ) : null}
 
         {/* Center Panel - Real-time Conversation */}
-        <div className={`flex min-h-0 flex-col overflow-hidden xl:order-2 ${compactMode ? 'gap-2' : 'gap-4'}`}>
-          <div className="text-xs font-semibold text-text-main uppercase tracking-wide flex-shrink-0">实时对话区</div>
-          <div className={`rounded-2xl border border-cyan-500/20 bg-[linear-gradient(165deg,rgba(8,16,38,0.92),rgba(4,8,22,0.92))] flex-1 min-h-0 flex flex-col overflow-hidden shadow-[0_0_24px_rgba(34,211,238,0.12)] ${compactMode ? 'p-2 space-y-2' : 'p-4 space-y-3'}`}>
-            <div className="text-[11px] text-text-dim flex-shrink-0">
-              对话时间线（支持长文本滚动）
+        <div className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden xl:order-2">
+          <div
+            data-testid="llm-interactive-center"
+            className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-cyan-500/20 bg-[linear-gradient(165deg,rgba(8,16,38,0.92),rgba(4,8,22,0.92))] shadow-[0_0_24px_rgba(34,211,238,0.12)] ${
+              compactMode ? 'gap-2 p-2' : 'gap-3 p-4'
+            }`}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 text-[11px] text-text-dim">
+              <span className="font-semibold text-text-main">实时对话区</span>
+              <span>{messages.length} 条消息</span>
             </div>
 
             {showThinkingPanel ? (
-              <div className={`flex-shrink-0 space-y-2 overflow-hidden ${compactMode ? 'max-h-36' : 'max-h-52'}`}>
-                <div className={`${compactMode ? 'max-h-32' : 'max-h-24'} overflow-y-auto`}>
-                  <RealtimeThinkingDisplay
-                    events={thinkingEvents}
-                    enabled={thinkingEnabled}
-                    isStreaming={responding && thinkingEnabled}
-                    onClear={clearThinkingEvents}
-                  />
-                </div>
-                <div className={`${compactMode ? 'max-h-32' : 'max-h-24'} overflow-y-auto`}>
-                  <StreamingTags
-                    events={tagEvents}
-                    isStreaming={responding}
-                    onClear={clearTagEvents}
-                  />
-                </div>
+              <div data-testid="llm-interactive-stream-monitors" className={`grid min-h-0 min-w-0 shrink-0 gap-2 overflow-hidden ${
+                compactMode
+                  ? 'max-h-[210px] grid-cols-1 lg:max-h-[128px] lg:grid-cols-2'
+                  : 'max-h-[320px] grid-cols-1 lg:max-h-[220px] lg:grid-cols-2'
+              }`}>
+                <RealtimeThinkingDisplay
+                  events={displayedThinkingEvents}
+                  enabled={thinkingEnabled}
+                  isStreaming={responding && thinkingEnabled}
+                  onClear={clearThinkingEvents}
+                  className={compactMode ? 'min-h-[82px]' : 'min-h-[140px]'}
+                />
+                <StreamingTags
+                  events={tagEvents}
+                  isStreaming={responding}
+                  onClear={clearTagEvents}
+                  className={compactMode ? 'min-h-[82px]' : 'min-h-[140px]'}
+                />
               </div>
             ) : null}
 
             {messages.length === 0 ? (
-              <div className="text-xs text-text-dim flex-1 flex items-center justify-center min-h-0">暂无对话记录，请先选择模板问题或输入自定义问题。</div>
+              <div data-testid="llm-interactive-messages" className="flex min-h-0 min-w-0 flex-1 items-center justify-center rounded-lg border border-white/10 bg-black/25 text-xs text-text-dim">
+                暂无对话记录，请先选择模板问题或输入自定义问题。
+              </div>
             ) : (
-              <div className={`flex-1 min-h-0 overflow-y-auto ${compactMode ? 'space-y-2 pr-1' : 'space-y-3 pr-2'}`}>
+              <div data-testid="llm-interactive-messages" className={`min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-cyan-500/15 bg-black/25 custom-scrollbar ${compactMode ? 'space-y-2 p-2 pr-1' : 'space-y-3 p-3 pr-2'}`}>
                 {qaPairs.map((pair, index) => {
                   const question = pair.question;
                   const answer = pair.answer;
@@ -1479,7 +1506,7 @@ export function InteractiveInterviewHall({
               </div>
             ) : null}
 
-            <div className={`rounded-lg border border-white/10 bg-black/60 flex-shrink-0 ${compactMode ? 'p-2 space-y-1.5' : 'p-3 space-y-2'}`}>
+            <div data-testid="llm-interactive-composer" className={`rounded-lg border border-white/10 bg-black/60 flex-shrink-0 ${compactMode ? 'p-2 space-y-1.5' : 'p-3 space-y-2'}`}>
               <div className="text-[10px] uppercase tracking-wide text-text-dim">继续追问</div>
               <textarea
                 value={quickQuestion}
@@ -1497,9 +1524,43 @@ export function InteractiveInterviewHall({
                 {responding ? '发送中...' : '发送追问'}
               </button>
             </div>
+
+            {!isFullscreen && compactMode ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/45 p-2">
+                <input
+                  value={userNotes}
+                  onChange={(event) => setUserNotes(event.target.value)}
+                  placeholder="面试官备注"
+                  className="min-w-[180px] flex-1 rounded border border-white/10 bg-black/40 px-2 py-1.5 text-[10px] text-text-main"
+                />
+                <button
+                  onClick={() => finalizeInterview('passed')}
+                  disabled={!canFinalize || passedAnswers === 0}
+                  className="px-3 py-1.5 text-[10px] font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
+                >
+                  <CheckCircle2 className="size-3" />
+                  通过
+                </button>
+                <button
+                  onClick={() => finalizeInterview('failed')}
+                  disabled={answerMessages.length === 0 || responding}
+                  className="px-3 py-1.5 text-[10px] font-semibold bg-rose-500/80 hover:bg-rose-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
+                >
+                  <XCircle className="size-3" />
+                  失败
+                </button>
+                <button
+                  onClick={resetInterview}
+                  className="px-3 py-1.5 text-[10px] border border-white/10 rounded hover:border-white/30 flex items-center justify-center gap-1"
+                >
+                  <RefreshCw className="size-3" />
+                  重置
+                </button>
+              </div>
+            ) : null}
           </div>
 
-          {!isFullscreen ? (
+          {!isFullscreen && !compactMode ? (
             <div className={`rounded-xl border border-white/10 bg-black/30 flex-shrink-0 ${compactMode ? 'p-2.5 space-y-2' : 'p-4 space-y-3'}`}>
               <div className="text-xs font-semibold text-text-main uppercase tracking-wide">面试控制</div>
               <textarea

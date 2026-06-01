@@ -1,4 +1,4 @@
-﻿export * from './types';
+export * from './types';
 export * from './TestProgressModal';
 export * from './TestLogViewer';
 export * from './TestProgressBar';

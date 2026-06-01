@@ -154,6 +154,14 @@ class TestBootstrapError:
         """Should accept phase parameter."""
         error = BootstrapError("Test error", phase="test_phase")
         assert str(error) == "Test error"
+        assert error.details["phase"] == "test_phase"
+
+    def test_error_with_stage_alias(self) -> None:
+        """Should accept legacy stage parameter as phase metadata."""
+        error = BootstrapError("Test error", stage="test_stage")
+        assert str(error) == "Test error"
+        assert error.details["phase"] == "test_stage"
+        assert error.details["stage"] == "test_stage"
 
 
 class TestBackendBootstrapperDebugTracing:

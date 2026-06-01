@@ -1,4 +1,4 @@
-﻿# CLI SUPER Mode Blueprint
+# CLI SUPER Mode Blueprint
 
 Date: 2026-04-22
 Status: Proposed

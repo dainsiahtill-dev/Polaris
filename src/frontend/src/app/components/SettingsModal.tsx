@@ -89,6 +89,7 @@ interface SettingsModalProps {
     timeout?: number;
     refresh_interval?: number;
     auto_refresh?: boolean;
+    close_to_tray?: boolean;
     show_memory?: boolean;
     io_fsync_mode?: string;
     memory_refs_mode?: string;
@@ -125,6 +126,7 @@ interface SettingsModalProps {
     timeout?: number;
     refresh_interval?: number;
     auto_refresh?: boolean;
+    close_to_tray?: boolean;
     show_memory?: boolean;
     io_fsync_mode?: string;
     memory_refs_mode?: string;
@@ -182,6 +184,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
   const [promptProfile, setPromptProfile] = useState(defaultProfile);
   const [refreshInterval, setRefreshInterval] = useState(3);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [closeToTray, setCloseToTray] = useState(true);
   const [pmInterval, setPmInterval] = useState(20);
   const [pmTimeout, setPmTimeout] = useState(0);
   const [pmRunsDirector, setPmRunsDirector] = useState(true);
@@ -410,6 +413,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     setPromptProfile(settings.prompt_profile || defaultProfile);
     setRefreshInterval(settings.refresh_interval ?? 3);
     setAutoRefresh(settings.auto_refresh ?? true);
+    setCloseToTray(settings.close_to_tray ?? true);
     setPmInterval(settings.interval ?? 20);
     setPmTimeout(settings.timeout ?? 0);
     setPmShowOutput(settings.pm_show_output ?? true);
@@ -1844,6 +1848,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
         prompt_profile: promptProfile,
         refresh_interval: refreshInterval,
         auto_refresh: autoRefresh,
+        close_to_tray: closeToTray,
         interval: pmInterval,
         timeout: pmTimeout,
         pm_show_output: pmShowOutput,
@@ -1994,6 +1999,31 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 disabled:opacity-50 transition-all"
                       />
                       <p className="text-[10px] text-text-dim mt-1.5">建议 1-10 秒。</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 桌面行为 */}
+                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                  <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
+                    <span className="size-1.5 rounded-full bg-accent"></span>
+                    桌面行为
+                  </h3>
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      id="close-to-tray"
+                      checked={closeToTray}
+                      onChange={(e) => setCloseToTray(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent checked:border-accent focus:ring-accent/50 text-accent transition-colors"
+                    />
+                    <div>
+                      <label htmlFor="close-to-tray" className="text-sm text-text-muted cursor-pointer select-none">
+                        关闭窗口时进入后台运行
+                      </label>
+                      <p className="text-[10px] text-text-dim mt-1.5">
+                        勾选后点击窗口关闭按钮会隐藏到托盘；取消勾选后会彻底退出应用。
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2450,49 +2480,51 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 </div>
               </TabsContent>
 
-              <TabsContent value="llm" className="mt-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">
-                <Suspense fallback={<DeferredSectionFallback label="LLM 设置" />}>
-                  <LLMSettingsTab
-                    llmConfig={llmConfig}
-                    llmStatus={llmStatus}
-                    llmLoading={llmLoading}
-                    llmSaving={llmSaving}
-                    llmError={llmError}
-                    deletingProviders={deletingProviders}
-                    onSaveConfig={saveLLMConfig}
-                    onRunInterview={runInterview}
-                    onRunConnectivityTest={runConnectivityTest}
-                    onAskInteractiveInterview={askInteractiveInterview}
-                    onSaveInteractiveInterview={saveInteractiveInterview}
-                    resolveProviderEnvOverrides={resolveProviderEnvOverrides}
-                    onUpdateConfig={updateLLMConfigDraft}
-                    onTestProvider={runProviderTestStreaming}
-                    onCancelTestProvider={cancelProviderTest}
-                    onCancelInterview={cancelInterview}
-                    onAddProvider={async (providerId, provider) => {
-                      const payload: ProviderConfig = {
-                        type: (provider.type || 'cli') as ProviderKind,
-                        name: provider.name,
-                        command: provider.command,
-                        args: provider.args,
-                        env: provider.env,
-                        base_url: provider.base_url,
-                        api_key_ref: provider.api_key_ref,
-                        model: provider.model,
-                        default_model: provider.default_model,
-                      };
-                      await addProviderAndPersist(providerId, payload);
-                    }}
-                    onUpdateProvider={(providerId, updates) => {
-                      updateProvider(providerId, updates as Partial<ProviderConfig>);
-                    }}
-                    onDeleteProvider={async (providerId) => {
-                      await deleteProviderAndPersist(providerId);
-                    }}
-                  />
-                </Suspense>
+              <TabsContent value="llm" className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden pr-0">
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <Suspense fallback={<DeferredSectionFallback label="LLM 设置" />}>
+                    <LLMSettingsTab
+                      llmConfig={llmConfig}
+                      llmStatus={llmStatus}
+                      llmLoading={llmLoading}
+                      llmSaving={llmSaving}
+                      llmError={llmError}
+                      deletingProviders={deletingProviders}
+                      onSaveConfig={saveLLMConfig}
+                      onRunInterview={runInterview}
+                      onRunConnectivityTest={runConnectivityTest}
+                      onAskInteractiveInterview={askInteractiveInterview}
+                      onSaveInteractiveInterview={saveInteractiveInterview}
+                      resolveProviderEnvOverrides={resolveProviderEnvOverrides}
+                      onUpdateConfig={updateLLMConfigDraft}
+                      onTestProvider={runProviderTestStreaming}
+                      onCancelTestProvider={cancelProviderTest}
+                      onCancelInterview={cancelInterview}
+                      onAddProvider={async (providerId, provider) => {
+                        const payload: ProviderConfig = {
+                          type: (provider.type || 'cli') as ProviderKind,
+                          name: provider.name,
+                          command: provider.command,
+                          args: provider.args,
+                          env: provider.env,
+                          base_url: provider.base_url,
+                          api_key_ref: provider.api_key_ref,
+                          model: provider.model,
+                          default_model: provider.default_model,
+                        };
+                        await addProviderAndPersist(providerId, payload);
+                      }}
+                      onUpdateProvider={(providerId, updates) => {
+                        updateProvider(providerId, updates as Partial<ProviderConfig>);
+                      }}
+                      onDeleteProvider={async (providerId) => {
+                        await deleteProviderAndPersist(providerId);
+                      }}
+                    />
+                  </Suspense>
+                </div>
                 {reportDrawer.open ? (
-                  <div className="mt-4 rounded-lg border border-white/10 bg-[rgba(35,25,14,0.7)] p-3">
+                  <div className="mt-3 shrink-0 rounded-lg border border-white/10 bg-[rgba(35,25,14,0.7)] p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-semibold text-text-main">LLM 测试回执</span>
                       <button
@@ -2579,10 +2611,6 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
             <div className="absolute bottom-1 right-1 size-3 border-b-2 border-r-2 border-white/30" />
           </div>
         </div>
-        <div
-          id="llm-test-panel-slot"
-          className="absolute left-0 top-full mt-4 w-full max-w-[90vw] lg:top-6 lg:left-full lg:ml-4 lg:mt-0 lg:w-[360px] xl:w-[420px]"
-        />
       </div>
     </div>
   );

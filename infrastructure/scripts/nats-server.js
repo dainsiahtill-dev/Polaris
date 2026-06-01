@@ -8,8 +8,13 @@ const TAG = "[nats-server]";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4222;
-const STARTUP_TIMEOUT_MS = 8000;
+const STARTUP_TIMEOUT_MS = readPositiveIntegerEnv("KERNELONE_NATS_STARTUP_TIMEOUT_MS", 30000);
 const STARTUP_POLL_MS = 100;
+
+function readPositiveIntegerEnv(name, fallback) {
+  const value = Number.parseInt(String(process.env[name] || ""), 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 /** Resolve nats-server executable path. */
 function resolveNatsServerPath() {

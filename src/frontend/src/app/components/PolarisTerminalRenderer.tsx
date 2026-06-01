@@ -1,4 +1,4 @@
-﻿interface PolarisTerminalRendererProps {
+interface PolarisTerminalRendererProps {
   text: string;
   className?: string;
 }

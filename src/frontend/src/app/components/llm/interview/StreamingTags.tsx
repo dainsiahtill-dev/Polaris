@@ -49,10 +49,10 @@ export function StreamingTags({
   });
 
   useEffect(() => {
-    let newThinking = contentState.thinking;
-    let newAnswer = contentState.answer;
-    let isThinkingActive = contentState.isThinkingActive;
-    let isAnswerActive = contentState.isAnswerActive;
+    let newThinking = '';
+    let newAnswer = '';
+    let isThinkingActive = false;
+    let isAnswerActive = false;
 
     for (const event of events) {
       if (!isTagEvent(event)) continue;
@@ -85,21 +85,24 @@ export function StreamingTags({
       }
     }
 
-    if (
-      newThinking !== contentState.thinking ||
-      newAnswer !== contentState.answer ||
-      isThinkingActive !== contentState.isThinkingActive ||
-      isAnswerActive !== contentState.isAnswerActive
-    ) {
-      setContentState({
+    setContentState((prev) => {
+      if (
+        prev.thinking === newThinking &&
+        prev.answer === newAnswer &&
+        prev.isThinkingActive === isThinkingActive &&
+        prev.isAnswerActive === isAnswerActive
+      ) {
+        return prev;
+      }
+      return {
         thinking: newThinking,
         answer: newAnswer,
         isThinkingActive,
         isAnswerActive,
         lastUpdate: Date.now(),
-      });
-    }
-  }, [events, contentState.thinking, contentState.answer]);
+      };
+    });
+  }, [events]);
 
   useEffect(() => {
     const el = outputRef.current;
@@ -178,8 +181,8 @@ export function StreamingTags({
 
   if (!hasContent && !isStreaming) {
     return (
-      <div className={`rounded-lg border border-white/10 bg-black/40 p-3 ${className || ''}`}>
-        <div className="flex items-center justify-between text-[10px] text-text-dim">
+      <div className={`flex min-h-0 flex-col rounded-lg border border-white/10 bg-black/40 p-3 ${className || ''}`}>
+        <div className="flex shrink-0 items-center justify-between text-[10px] text-text-dim">
           <div className="flex items-center gap-2">
             <span className="uppercase tracking-wide">流式标签解析</span>
             <span className="text-[9px]">等待数据...</span>
@@ -202,8 +205,8 @@ export function StreamingTags({
   }
 
   return (
-    <div className={`rounded-lg border border-white/10 bg-black/40 p-3 ${className || ''}`}>
-      <div className="mb-2 flex items-center justify-between text-[10px] text-text-dim">
+    <div className={`flex min-h-0 flex-col rounded-lg border border-white/10 bg-black/40 p-3 ${className || ''}`}>
+      <div className="mb-2 flex shrink-0 items-center justify-between text-[10px] text-text-dim">
         <div className="flex items-center gap-2">
           <span className="uppercase tracking-wide">流式标签解析</span>
           <span className="text-[9px]">
@@ -221,7 +224,7 @@ export function StreamingTags({
         )}
       </div>
 
-      <div ref={outputRef} className="max-h-96 space-y-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
+      <div ref={outputRef} className="min-h-0 flex-1 max-h-96 space-y-2 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
         {renderThinkingSection()}
         {renderAnswerSection()}
       </div>

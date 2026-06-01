@@ -47,24 +47,24 @@ export function TestPanelHeader({
   statusText,
   extraActions
 }: TestPanelHeaderProps) {
-  const resolvedTitle = title || `🖥️ Testing: ${provider.name}`;
+  const resolvedTitle = title || `Testing: ${provider.name}`;
   const resolvedSubtitle = subtitle || `Provider: ${provider.name} · Model: ${provider.modelId || 'default'}`;
   const resolvedStatusText = statusText?.[status] || STATUS_TEXT[status];
 
   return (
-    <div className="flex items-start justify-between gap-4 p-4 border-b border-cyan-500/20 bg-black/40">
-      <div>
-        <div className="text-sm font-semibold text-text-main flex items-center gap-2">
-          {resolvedTitle}
+    <div className="flex items-start justify-between gap-3 p-3 border-b border-cyan-500/20 bg-black/40">
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-text-main">
+          <span className="truncate">{resolvedTitle}</span>
           <span className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border ${STATUS_BADGES[status]}`}>
             {resolvedStatusText}
           </span>
         </div>
-        <div className="text-[10px] text-text-dim mt-1">
+        <div className="mt-1 truncate text-[10px] text-text-dim">
           {resolvedSubtitle}
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {extraActions}
         {onCopyLogs ? (
           <button

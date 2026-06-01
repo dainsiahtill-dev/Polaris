@@ -1,4 +1,4 @@
-﻿import { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import type { TestEvent } from '../types';
 
 const MAX_EVENTS = 500;

@@ -54,6 +54,7 @@ const defaultSettings = {
   timeout: 0,
   refresh_interval: 3,
   auto_refresh: true,
+  close_to_tray: true,
   show_memory: false,
   io_fsync_mode: 'strict',
   memory_refs_mode: 'soft',
@@ -231,6 +232,11 @@ describe('SettingsModal', () => {
       expect(screen.getByLabelText('自动刷新')).toBeInTheDocument();
     });
 
+    it('shows close-to-tray checkbox', () => {
+      render(<SettingsModal {...defaultProps} />);
+      expect(screen.getByLabelText('关闭窗口时进入后台运行')).toBeInTheDocument();
+    });
+
     it('shows PM interval input', () => {
       render(<SettingsModal {...defaultProps} />);
       const intervalInput = screen.getByDisplayValue(20);
@@ -265,6 +271,13 @@ describe('SettingsModal', () => {
       fireEvent.click(checkbox);
       expect(checkbox).not.toBeChecked();
     });
+
+    it('toggles close-to-tray checkbox', async () => {
+      render(<SettingsModal {...defaultProps} />);
+      const checkbox = screen.getByLabelText('关闭窗口时进入后台运行');
+      fireEvent.click(checkbox);
+      expect(checkbox).not.toBeChecked();
+    });
   });
 
   describe('Save Process', () => {
@@ -291,8 +304,25 @@ describe('SettingsModal', () => {
             prompt_profile: 'zhenguan_governance',
             refresh_interval: 3,
             auto_refresh: true,
+            close_to_tray: true,
             io_fsync_mode: 'strict',
             memory_refs_mode: 'soft',
+          })
+        );
+      });
+    });
+
+    it('saves close-to-tray as false when unchecked', async () => {
+      defaultProps.onSave.mockResolvedValueOnce(undefined);
+      render(<SettingsModal {...defaultProps} />);
+
+      fireEvent.click(screen.getByLabelText('关闭窗口时进入后台运行'));
+      fireEvent.click(screen.getByText('保存配置'));
+
+      await waitFor(() => {
+        expect(defaultProps.onSave).toHaveBeenCalledWith(
+          expect.objectContaining({
+            close_to_tray: false,
           })
         );
       });

@@ -547,6 +547,7 @@ export interface BackendSettings {
   timeout: number;
   refresh_interval: number;
   auto_refresh: boolean;
+  close_to_tray?: boolean;
   show_memory: boolean;
   io_fsync_mode?: string;
   memory_refs_mode?: string;

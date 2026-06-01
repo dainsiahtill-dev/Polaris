@@ -1,4 +1,4 @@
-﻿import { AlertTriangle, CheckCircle2, Info, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TestLog } from './types';
 

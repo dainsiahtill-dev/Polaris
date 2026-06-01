@@ -1,4 +1,4 @@
-﻿"""SUPER Mode Pipeline E2E Tests — 全链路 & 小闭环.
+"""SUPER Mode Pipeline E2E Tests — 全链路 & 小闭环.
 
 Test matrix (2026-04-27):
   Full pipeline:  Architect → PM → CE → Director → QA

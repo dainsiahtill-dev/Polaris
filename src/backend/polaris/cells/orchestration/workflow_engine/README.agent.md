@@ -1,4 +1,4 @@
-﻿# orchestration.workflow_engine Cell
+# orchestration.workflow_engine Cell
 
 ## 职责
 Owns the KernelOne WorkflowEngine — a self-hosted DAG/sequential workflow executor with retry, fail-fast, pause/resume, and signal support. Provides the HandlerRegistry protocol for Cell-internal registry injection. This cell owns the engine runtime and is the only cell that may modify kernelone/workflow/engine.py.

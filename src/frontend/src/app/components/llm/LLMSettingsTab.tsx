@@ -3,7 +3,7 @@
  * LLM 设置主组件，使用 Context + Reducer 模式
  */
 
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 
@@ -259,66 +259,63 @@ function TabNavigation({
   if (factoryUnsupportedRoles.length) tips.push(`Factory 不支持: ${factoryUnsupportedRoles.join(', ')}`);
   const tipText = tips.length ? tips.join(' | ') : '请完成必需的 LLM 测试';
   const tipTitle = blockedRoleDetailTitle || tipText;
+  const showDetailedDiagnostics = activeTab === 'config' && hasBlock && blockedRoleDiagnostics.length > 0;
 
   return (
-    <div className="rounded-2xl border border-cyan-500/20 bg-[radial-gradient(circle_at_top,_rgba(14,116,144,0.22),_transparent_60%)] p-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
-      <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+    <div className={`rounded-xl border border-cyan-500/20 bg-[rgba(5,10,24,0.72)] px-3 shadow-[0_0_18px_rgba(34,211,238,0.12)] ${activeTab === 'deepTest' ? 'py-1.5' : 'py-2'}`}>
+      <div className="flex min-w-0 flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <button
             onClick={() => switchTab('config')}
-            className={`px-4 py-2 text-[11px] font-semibold uppercase tracking-wider rounded-lg border transition-all ${
+            className={`px-3 py-1.5 text-[10px] font-semibold rounded-md border transition-colors ${
               activeTab === 'config'
-                ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/40 shadow-[0_0_16px_rgba(34,211,238,0.25)]'
+                ? 'bg-cyan-500/20 text-cyan-100 border-cyan-400/40'
                 : 'text-text-dim border-white/10 hover:border-cyan-400/40 hover:text-cyan-100'
             }`}
           >
-            CONFIG
+            配置
           </button>
           <button
             type="button"
             onClick={() => switchTab('deepTest')}
-            className={`px-4 py-2 text-[11px] font-semibold uppercase tracking-wider rounded-lg border transition-all ${
+            className={`px-3 py-1.5 text-[10px] font-semibold rounded-md border transition-colors ${
               activeTab === 'deepTest'
-                ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/40 shadow-[0_0_16px_rgba(16,185,129,0.25)]'
+                ? 'bg-emerald-500/20 text-emerald-100 border-emerald-400/40'
                 : 'text-text-dim border-white/10 hover:border-emerald-400/40 hover:text-emerald-100'
             }`}
           >
-            DEEP TEST
+            深测
           </button>
         </div>
 
-        <div data-testid="llm-readiness-summary" className="flex min-w-0 flex-wrap items-center justify-start gap-2 xl:justify-end">
+        <div data-testid="llm-readiness-summary" className="flex min-w-0 flex-wrap items-center justify-start gap-1.5 xl:justify-end">
           {!hasBlock ? (
-            <CheckCircle2 className="size-4 text-emerald-400" />
+            <CheckCircle2 className="size-3.5 text-emerald-400" />
           ) : (
-            <AlertTriangle className="size-4 text-yellow-400" />
+            <AlertTriangle className="size-3.5 text-yellow-400" />
           )}
-          <span className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-white/10 bg-black/40">
+          <span className="text-[10px] px-2 py-1 rounded-md border border-white/10 bg-black/40">
             {statusLabel}
           </span>
           {hasBlock ? (
-            <span className="min-w-0 max-w-full break-words rounded border border-amber-400/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300" title={tipTitle}>
+            <span className="min-w-0 max-w-full truncate rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-200" title={tipTitle}>
               {tipText}
             </span>
           ) : null}
         </div>
       </div>
-      {hasBlock && blockedRoleDiagnostics.length > 0 ? (
-        <div className="mt-4 border-t border-white/10 pt-3" data-testid="llm-readiness-diagnostics">
-          <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
-            <AlertTriangle className="size-3.5 text-amber-300" />
-            <span>阻塞诊断</span>
-          </div>
-          <div className="divide-y divide-white/10 overflow-hidden rounded-lg border border-white/10 bg-black/25">
+      {showDetailedDiagnostics ? (
+        <div className="mt-2 max-h-24 overflow-y-auto rounded-lg border border-white/10 bg-black/25" data-testid="llm-readiness-diagnostics">
+          <div className="divide-y divide-white/10">
             {blockedRoleDiagnostics.map((detail) => (
               <div
                 key={detail.roleId}
                 data-testid="llm-readiness-diagnostic-row"
-                className="grid min-w-0 gap-2 px-3 py-2 text-[11px] md:grid-cols-[112px_minmax(0,1fr)_minmax(180px,0.8fr)]"
+                className="grid min-w-0 gap-2 px-2.5 py-1.5 text-[10px] md:grid-cols-[96px_minmax(0,1fr)_minmax(160px,0.74fr)]"
                 title={formatBlockedRoleTitle(detail)}
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="rounded border border-amber-400/30 bg-amber-500/10 px-2 py-1 font-semibold text-amber-200">
+                  <span className="rounded border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 font-semibold text-amber-200">
                     {detail.roleLabel}
                   </span>
                   <span className={`h-2 w-2 rounded-full ${detail.runtimeSupported ? 'bg-amber-300' : 'bg-red-400'}`} />
@@ -481,21 +478,17 @@ function DeepTestPanel({
   }, [completeTest, openTestPanel, startTest]);
 
   return (
-    <div className="flex flex-col gap-4 w-full flex-1 min-h-0">
-      <div className={`rounded-2xl border border-emerald-500/20 bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.22),_transparent_60%)] shadow-[0_0_30px_rgba(16,185,129,0.18)] ${interviewMode === 'interactive' ? 'p-2.5' : 'p-4'}`}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-xs uppercase tracking-widest text-emerald-200">深测议堂</div>
-            {interviewMode !== 'interactive' ? (
-              <div className="text-[10px] text-text-dim mt-1">
-                深度测试用于验证角色与模型适配度，输出详细能力报告。
-              </div>
-            ) : null}
+    <div className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col gap-2 overflow-hidden">
+      <div className="rounded-xl border border-emerald-500/20 bg-[rgba(3,12,20,0.66)] px-3 py-2 shadow-[0_0_16px_rgba(16,185,129,0.10)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2 text-[10px] text-text-dim">
+            <span className="font-semibold text-emerald-100">深测</span>
+            <span className="truncate">{selectedMeta?.label || selectedRole} / {selectedProviderId || '未选择提供商'}</span>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-black/40 p-1">
+          <div className="flex items-center gap-1 rounded-md border border-white/10 bg-black/40 p-0.5">
             <button
               onClick={() => setInterviewMode('interactive')}
-              className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-all ${
+              className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
                 interviewMode === 'interactive'
                   ? 'bg-emerald-500/20 text-emerald-200'
                   : 'text-text-dim hover:text-emerald-100'
@@ -508,7 +501,7 @@ function DeepTestPanel({
                 setInterviewMode('auto');
                 setDeepView('hall');
               }}
-              className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-all ${
+              className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
                 interviewMode === 'auto'
                   ? 'bg-cyan-500/20 text-cyan-200'
                   : 'text-text-dim hover:text-cyan-100'
@@ -520,7 +513,7 @@ function DeepTestPanel({
         </div>
       </div>
 
-      <div className="w-full flex-1 min-h-0">
+      <div className="min-h-0 min-w-0 flex-1 basis-0 overflow-hidden">
         {interviewMode === 'interactive' ? (
           <InteractiveInterviewHall
             roles={roles}
@@ -597,7 +590,7 @@ function LLMSettingsTabInner({
   const { activeTab, configView, testPanel } = state;
   
   const { events, addEvent, resetEvents } = useTestEvents();
-  const panelHostRef = useRef<HTMLElement | null>(null);
+  const [panelHost, setPanelHost] = useState<HTMLElement | null>(null);
   
   // Use ref to avoid closure staleness in TestPanel callbacks
   const completeTestRef = useRef(completeTest);
@@ -606,13 +599,6 @@ function LLMSettingsTabInner({
     completeTestRef.current = completeTest;
     selectedProviderIdRef.current = testPanel.selectedProviderId;
   }, [completeTest, testPanel.selectedProviderId]);
-
-  // 初始化 portal host
-  useEffect(() => {
-    if (typeof document !== 'undefined') {
-      panelHostRef.current = document.getElementById('llm-test-panel-slot');
-    }
-  }, []);
 
   // Provider Registry
   const {
@@ -786,8 +772,11 @@ function LLMSettingsTabInner({
     );
   }
 
+  const testPanelProviderId = testPanel.selectedProviderId;
+  const isInteractiveStreamPanel = Boolean(testPanel.runConfig?.suites?.includes('interactive_stream_view'));
+
   return (
-    <div className="flex flex-col gap-6 h-full min-h-0">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
       <TabNavigation
         globalReadiness={globalReadiness}
         factoryReadiness={factoryReadiness}
@@ -805,119 +794,138 @@ function LLMSettingsTabInner({
       )}
 
       {llmSaving && (
-        <div className="flex items-center gap-2 text-[10px] text-text-dim">
+        <div className="flex shrink-0 items-center gap-2 text-[10px] text-text-dim">
           <Loader2 className="size-3 animate-spin" />
           <span>Saving LLM configuration...</span>
         </div>
       )}
 
-      {activeTab === 'config' && (
-        <div className="space-y-4">
-          {/* View Switcher */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-text-main mb-1">LLM 提供商配置</h3>
-              <p className="text-[10px] text-text-dim">
-                列表视图用于日常配置，吏部·铨选司用于角色-模型连线。
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1 rounded-lg border border-cyan-500/20 bg-black/40 p-1">
-                <button
-                  onClick={() => setConfigView('list')}
-                  data-testid="llm-config-view-list"
-                  className={`px-3 py-1.5 text-[10px] font-semibold rounded transition-all ${
-                    configView === 'list'
-                      ? 'bg-cyan-500/20 text-cyan-200'
-                      : 'text-text-dim hover:text-cyan-100'
-                  }`}
-                >
-                  列表视图
-                </button>
-                <button
-                  onClick={() => setConfigView('visual')}
-                  data-testid="llm-config-view-visual"
-                  aria-label="视觉视图"
-                  className={`px-3 py-1.5 text-[10px] font-semibold rounded transition-all ${
-                    configView === 'visual'
-                      ? 'bg-fuchsia-500/20 text-fuchsia-200'
-                      : 'text-text-dim hover:text-fuchsia-100'
-                  }`}
-                >
-                  吏部·铨选司（视觉视图）
-                </button>
+      <div
+        className={`grid min-h-0 min-w-0 flex-1 basis-0 gap-3 overflow-hidden ${
+          testPanelProviderId
+            ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(340px,420px)]'
+            : 'grid-cols-1'
+        }`}
+      >
+        <div className="min-h-0 min-w-0 overflow-hidden">
+          {activeTab === 'config' && (
+            <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-semibold text-text-main">LLM 提供商配置</h3>
+                  <p className="truncate text-[10px] text-text-dim">列表配置与角色-模型连线。</p>
+                </div>
+                <div className="flex items-center gap-1 rounded-md border border-cyan-500/20 bg-black/40 p-0.5">
+                  <button
+                    onClick={() => setConfigView('list')}
+                    data-testid="llm-config-view-list"
+                    className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
+                      configView === 'list'
+                        ? 'bg-cyan-500/20 text-cyan-200'
+                        : 'text-text-dim hover:text-cyan-100'
+                    }`}
+                  >
+                    列表
+                  </button>
+                  <button
+                    onClick={() => setConfigView('visual')}
+                    data-testid="llm-config-view-visual"
+                    aria-label="视觉视图"
+                    className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
+                      configView === 'visual'
+                        ? 'bg-fuchsia-500/20 text-fuchsia-200'
+                        : 'text-text-dim hover:text-fuchsia-100'
+                    }`}
+                  >
+                    视觉视图
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1 custom-scrollbar">
+                {configView === 'visual' ? (
+                  <LLMVisualEditor
+                    config={visualConfig}
+                    status={visualStatus}
+                    onConfigChange={handleVisualConfigChange}
+                    onSave={handleVisualSave}
+                  />
+                ) : (
+                  <ProviderListManager
+                    providers={providers}
+                    configuredProviders={llmConfig?.providers || {}}
+                    llmStatus={llmStatus}
+                    isSaving={llmSaving}
+                    deletingProviders={deletingProviders}
+                    getProviderInfo={(type) => {
+                      const entry = getProviderInfo(type);
+                      if (!entry) return undefined;
+                      const defaults = getProviderDefaultConfig(type);
+                      if (!defaults) return undefined;
+                      const component = getProviderComponent(type);
+                      if (!component) return undefined;
+                      return { info: entry, defaultConfig: defaults, component };
+                    }}
+                    getProviderComponent={(type) => getProviderComponent(type) ?? null}
+                    getCostClass={getCostClass}
+                    onAddProvider={onAddProvider || (() => {})}
+                    onUpdateProvider={onUpdateProvider || (() => {})}
+                    onDeleteProvider={onDeleteProvider || (() => {})}
+                    onTestProvider={handleTestProvider}
+                    onEnterDeepTest={() => switchTab('deepTest')}
+                  />
+                )}
               </div>
             </div>
-          </div>
+          )}
 
-          {configView === 'visual' ? (
-            <LLMVisualEditor
-              config={visualConfig}
-              status={visualStatus}
-              onConfigChange={handleVisualConfigChange}
-              onSave={handleVisualSave}
-            />
-          ) : (
-            <ProviderListManager
-              providers={providers}
-              configuredProviders={llmConfig?.providers || {}}
-              llmStatus={llmStatus}
-              isSaving={llmSaving}
-              deletingProviders={deletingProviders}
-              getProviderInfo={(type) => {
-                const entry = getProviderInfo(type);
-                if (!entry) return undefined;
-                const defaults = getProviderDefaultConfig(type);
-                if (!defaults) return undefined;
-                const component = getProviderComponent(type);
-                if (!component) return undefined;
-                return { info: entry, defaultConfig: defaults, component };
-              }}
-              getProviderComponent={(type) => getProviderComponent(type) ?? null}
-              getCostClass={getCostClass}
-              onAddProvider={onAddProvider || (() => {})}
-              onUpdateProvider={onUpdateProvider || (() => {})}
-              onDeleteProvider={onDeleteProvider || (() => {})}
-              onTestProvider={handleTestProvider}
-              onEnterDeepTest={() => switchTab('deepTest')}
-            />
+          {activeTab === 'deepTest' && (
+            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+              <DeepTestPanel
+                llmConfig={llmConfig}
+                llmStatus={llmStatus}
+                onRunConnectivityTest={onRunConnectivityTest}
+                onAskInteractiveInterview={onAskInteractiveInterview}
+                onSaveInteractiveInterview={onSaveInteractiveInterview}
+                resolveProviderEnvOverrides={resolveProviderEnvOverrides}
+                addTestEvent={addEvent}
+                resetTestEvents={resetEvents}
+              />
+            </div>
           )}
         </div>
-      )}
 
-      {activeTab === 'deepTest' && (
-        <DeepTestPanel
-          llmConfig={llmConfig}
-          llmStatus={llmStatus}
-          onRunConnectivityTest={onRunConnectivityTest}
-          onAskInteractiveInterview={onAskInteractiveInterview}
-          onSaveInteractiveInterview={onSaveInteractiveInterview}
-          resolveProviderEnvOverrides={resolveProviderEnvOverrides}
-          addTestEvent={addEvent}
-          resetTestEvents={resetEvents}
-        />
-      )}
+        {testPanelProviderId ? (
+          <aside
+            ref={setPanelHost}
+            data-testid="llm-test-panel-host"
+            className="pointer-events-auto min-h-[280px] min-w-0 max-w-full overflow-hidden rounded-xl border border-cyan-500/20 bg-[rgba(2,6,23,0.62)] p-2 shadow-[0_0_18px_rgba(34,211,238,0.12)] xl:min-h-0"
+            aria-label="LLM 测试面板"
+          />
+        ) : null}
+      </div>
 
       {/* Test Panel Portal */}
-      {panelHostRef.current && testPanel.selectedProviderId && (
+      {panelHost && testPanelProviderId && (
         createPortal(
           <TestPanel
             provider={buildSimpleProvider(
-              testPanel.selectedProviderId,
-              llmConfig?.providers?.[testPanel.selectedProviderId] || {},
+              testPanelProviderId,
+              llmConfig?.providers?.[testPanelProviderId] || {},
               llmConfig?.roles
             )}
+            embedded={true}
             events={events}
             status={testPanel.status}
             runConfig={testPanel.runConfig}
-            autoStart={Boolean(testPanel.runConfig?.suites && !testPanel.runConfig.suites.includes('interactive_stream_view'))}
-            panelMode={testPanel.runConfig?.suites?.includes('interactive_stream_view') ? 'event-viewer' : 'stream-runner'}
-            title={testPanel.runConfig?.suites?.includes('interactive_stream_view') ? '🖥️ 正在测试：交互式面试' : undefined}
-            subtitle={testPanel.runConfig?.suites?.includes('interactive_stream_view')
-              ? `供应商：${llmConfig?.providers?.[testPanel.selectedProviderId]?.name || testPanel.selectedProviderId} · 模型：${testPanel.runConfig?.model || llmConfig?.providers?.[testPanel.selectedProviderId]?.model || '默认'}`
+            autoStart={Boolean(testPanel.runConfig?.suites && !isInteractiveStreamPanel)}
+            panelMode={isInteractiveStreamPanel ? 'event-viewer' : 'stream-runner'}
+            title={isInteractiveStreamPanel ? '交互式面试日志' : undefined}
+            subtitle={isInteractiveStreamPanel
+              ? `供应商：${llmConfig?.providers?.[testPanelProviderId]?.name || testPanelProviderId} · 模型：${testPanel.runConfig?.model || llmConfig?.providers?.[testPanelProviderId]?.model || '默认'}`
               : undefined}
-            placeholder={testPanel.runConfig?.suites?.includes('interactive_stream_view') ? '$ 尚未发送面试问题...' : undefined}
-            onClearEvents={testPanel.runConfig?.suites?.includes('interactive_stream_view') ? resetEvents : undefined}
+            placeholder={isInteractiveStreamPanel ? '$ 尚未发送面试问题...' : undefined}
+            onClearEvents={isInteractiveStreamPanel ? resetEvents : undefined}
             onClose={() => {
               closeTestPanel();
               resetEvents();
@@ -939,7 +947,7 @@ function LLMSettingsTabInner({
               }
             }}
           />,
-          panelHostRef.current
+          panelHost
         )
       )}
     </div>

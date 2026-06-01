@@ -1,4 +1,4 @@
-﻿card_id: "vc-20260421-session-cli-regression-hardening"
+card_id: "vc-20260421-session-cli-regression-hardening"
 bug_summary: >
   Director CLI sessions can fail deterministically on Windows-style file paths and then terminate
   incorrectly. The current chain combines malformed path normalization, continuation delivery-mode

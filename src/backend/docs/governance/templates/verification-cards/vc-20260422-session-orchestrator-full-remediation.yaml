@@ -1,4 +1,4 @@
-﻿card_id: "vc-20260422-session-orchestrator-full-remediation"
+card_id: "vc-20260422-session-orchestrator-full-remediation"
 bug_summary: >
   MATERIALIZE_CHANGES sessions can enter an exploration loop and exhaust max turns without
   progressing to read/write. The loop is caused by BatchReceipt model receipts being dropped

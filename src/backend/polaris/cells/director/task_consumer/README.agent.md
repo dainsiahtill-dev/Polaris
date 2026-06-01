@@ -1,4 +1,4 @@
-﻿# director.task_consumer Cell
+# director.task_consumer Cell
 
 ## 职责
 DEPRECATED - Use DirectorPool instead. Poll task market for PENDING_EXEC tasks and coordinate execution with Safe Parallel support. Provides ScopeConflictDetector for detecting scope path conflicts with other in-progress tasks.

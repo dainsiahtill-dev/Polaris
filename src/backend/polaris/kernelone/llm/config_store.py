@@ -167,6 +167,41 @@ def _restore_masked_sensitive_values(value: Any, previous: Any, *, key_hint: str
     return value
 
 
+_AUTHORITATIVE_MAPPING_SECTIONS = frozenset(
+    {
+        "providers",
+        "roles",
+        "visual_layout",
+        "visual_node_states",
+    }
+)
+
+
+def _restore_authoritative_mapping_section(value: Any, previous: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    previous_dict = previous if isinstance(previous, dict) else {}
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        result[str(key)] = _restore_masked_sensitive_values(item, previous_dict.get(key), key_hint=str(key))
+    return result
+
+
+def _restore_authoritative_config_sections(
+    merged_payload: dict[str, Any],
+    incoming_payload: dict[str, Any],
+    existing_payload: dict[str, Any],
+) -> dict[str, Any]:
+    for section in _AUTHORITATIVE_MAPPING_SECTIONS:
+        if section in incoming_payload:
+            merged_payload[section] = _restore_authoritative_mapping_section(
+                incoming_payload.get(section),
+                existing_payload.get(section),
+            )
+    return merged_payload
+
+
 # =============================================================================
 # Pydantic Validation Models
 # =============================================================================
@@ -789,6 +824,11 @@ def save_llm_config(
 
         # Restore masked sensitive values
         merged_payload = _restore_masked_sensitive_values(incoming_payload, existing_payload)
+        merged_payload = _restore_authoritative_config_sections(
+            merged_payload,
+            incoming_payload,
+            existing_payload,
+        )
         normalized = normalize_llm_config(merged_payload, settings=settings)
 
         # Ensure schema version is at least the target version (migration result takes precedence)

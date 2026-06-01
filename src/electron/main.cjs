@@ -37,6 +37,7 @@ const {
   attachProcessStreamErrorGuard,
   safeWriteProcessStream,
 } = require("./process-streams.cjs");
+const { readCloseToTraySetting } = require("./app-close-policy.cjs");
 
 attachProcessStreamErrorGuard(process.stdout);
 attachProcessStreamErrorGuard(process.stderr);
@@ -48,6 +49,8 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
 
 const repoRoot = path.join(__dirname, "..", "..");
 const backendScript = path.join(__dirname, "..", "backend", "server.py");
+const backendSourcePath = path.join(repoRoot, "src", "backend");
+const venvRoot = path.join(repoRoot, ".venv");
 const frontendDist = path.join(__dirname, "..", "frontend", "dist", "index.html");
 const globalSettingsPath = getGlobalSettingsPath(process.env, process.platform);
 const desktopBackendInfoPath = getDesktopBackendInfoPath(process.env, process.platform);
@@ -194,6 +197,10 @@ const PTY_MAX_WRITE_CHARS = 200000;
 // Tray management
 let tray = null;
 let mainWindowRef = null;
+
+function shouldCloseWindowToTray() {
+  return readCloseToTraySetting(globalSettingsPath);
+}
 
 function getTrayIconPath() {
   // Prefer 16x16 icon for tray, fallback to any available icon
@@ -666,14 +673,86 @@ function getFreePort() {
 }
 
 function resolveVenvPython() {
-  const venvRoot = path.join(repoRoot, ".venv");
   const venvPython = process.platform === "win32"
     ? path.join(venvRoot, "Scripts", "python.exe")
     : path.join(venvRoot, "bin", "python");
   if (fs.existsSync(venvPython)) {
-    return { exists: true, pythonPath: venvPython };
+    const check = checkPythonExecutable(venvPython);
+    return { exists: true, usable: check.ok, pythonPath: venvPython, message: check.message };
   }
-  return { exists: false, pythonPath: "" };
+  return { exists: false, usable: false, pythonPath: "", message: "" };
+}
+
+function normalizeForMatch(value) {
+  return String(value || "").replace(/\\/g, "/").toLowerCase();
+}
+
+function resolveVenvSitePackagesPath(pythonPath) {
+  if (!pythonPath || !normalizeForMatch(pythonPath).startsWith(normalizeForMatch(venvRoot))) {
+    return "";
+  }
+  if (process.platform === "win32") {
+    const sitePackagesPath = path.join(venvRoot, "Lib", "site-packages");
+    return fs.existsSync(sitePackagesPath) ? sitePackagesPath : "";
+  }
+  const libPath = path.join(venvRoot, "lib");
+  if (!fs.existsSync(libPath)) {
+    return "";
+  }
+  const candidates = fs.readdirSync(libPath, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("python"))
+    .map((entry) => path.join(libPath, entry.name, "site-packages"))
+    .filter((candidate) => fs.existsSync(candidate));
+  return candidates[0] || "";
+}
+
+function withPrependedPythonPath(baseEnv, entries) {
+  const normalizedEntries = entries.filter(Boolean);
+  if (normalizedEntries.length === 0) {
+    return baseEnv;
+  }
+  const existing = String(baseEnv.PYTHONPATH || "")
+    .split(path.delimiter)
+    .filter(Boolean);
+  const seen = new Set();
+  const merged = [...normalizedEntries, ...existing].filter((entry) => {
+    const key = normalizeForMatch(entry);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+  return { ...baseEnv, PYTHONPATH: merged.join(path.delimiter) };
+}
+
+function buildPythonRuntimeEnv(baseEnv, pythonPath) {
+  return withPrependedPythonPath(
+    { ...baseEnv, PYTHONUNBUFFERED: "1" },
+    [resolveVenvSitePackagesPath(pythonPath), backendSourcePath],
+  );
+}
+
+function checkPythonExecutable(pythonPath) {
+  if (!pythonPath || !fs.existsSync(pythonPath)) {
+    return { ok: false, message: "Python executable is missing." };
+  }
+  try {
+    const result = spawnSync(pythonPath, ["-c", "import sys; print(sys.executable)"], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    });
+    if (result.status === 0) {
+      return { ok: true, message: "" };
+    }
+    return {
+      ok: false,
+      message: (result.stderr || result.stdout || "").trim() || `Python exited with code ${String(result.status)}`,
+    };
+  } catch (err) {
+    return { ok: false, message: String(err) };
+  }
 }
 
 function checkVenvDependencies(pythonPath) {
@@ -684,7 +763,7 @@ function checkVenvDependencies(pythonPath) {
     const result = spawnSync(pythonPath, ["-m", "pip", "check"], {
       cwd: repoRoot,
       encoding: "utf-8",
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      env: buildPythonRuntimeEnv(process.env, pythonPath),
     });
     if (result.status === 0) {
       return { ok: true, message: "" };
@@ -710,6 +789,21 @@ function ensureVenvNotice() {
       type: "warning",
       title: "Polaris",
       message: "缺少 Python 虚拟环境（.venv）",
+      detail: text,
+    });
+    return { pythonPath: "" };
+  }
+  if (!venv.usable) {
+    const text = [
+      "Python 虚拟环境已损坏或不可执行。",
+      venv.message || "",
+      "请运行 npm run setup:dev 重新创建 .venv。",
+    ].filter(Boolean).join("\n");
+    console.warn(text);
+    dialog.showMessageBoxSync({
+      type: "warning",
+      title: "Polaris",
+      message: "Python 虚拟环境不可用",
       detail: text,
     });
     return { pythonPath: "" };
@@ -803,6 +897,13 @@ async function startBackend(options = {}) {
   backendStatus.lastError = "";
   backendStatus.lastExitCode = null;
   const venv = ensureVenvNotice();
+  if (process.env.KERNELONE_PYTHON) {
+    const configuredPythonCheck = checkPythonExecutable(process.env.KERNELONE_PYTHON);
+    if (!configuredPythonCheck.ok) {
+      console.warn(`[backend] Ignoring unusable KERNELONE_PYTHON: ${configuredPythonCheck.message}`);
+      delete process.env.KERNELONE_PYTHON;
+    }
+  }
   if (!process.env.KERNELONE_PYTHON && venv.pythonPath) {
     process.env.KERNELONE_PYTHON = venv.pythonPath;
   }
@@ -838,11 +939,10 @@ async function startBackend(options = {}) {
     args.push("--self-upgrade-mode");
   }
 
-  const backendEnv = {
+  const backendEnv = buildPythonRuntimeEnv({
     ...process.env,
-    PYTHONUNBUFFERED: "1",
     KERNELONE_DIRECTOR_RUNTIME_CODEGEN: process.env.KERNELONE_DIRECTOR_RUNTIME_CODEGEN || "1",
-  };
+  }, python);
   if (backendEnv.KERNELONE_E2E_USE_REAL_SETTINGS === "1" && backendEnv.KERNELONE_HOME) {
     backendEnv.KERNELONE_RUNTIME_ROOT = backendEnv.KERNELONE_RUNTIME_ROOT || path.join(backendEnv.KERNELONE_HOME, "runtime-cache");
     backendEnv.KERNELONE_STATE_TO_RAMDISK = "0";
@@ -1004,9 +1104,13 @@ async function createWindow() {
   win.on('resized', () => saveWindowState(win));
   win.on('moved', () => saveWindowState(win));
 
-  // Handle close button - hide to tray instead of quitting
+  // Handle close button according to persisted user preference.
   win.on('close', (event) => {
     if (!isAppQuitting && !quitSequenceStarted) {
+      if (!shouldCloseWindowToTray()) {
+        console.log('[window] Closing app because close_to_tray is disabled');
+        return;
+      }
       event.preventDefault();
       win.hide();
       console.log('[window] Hidden to tray instead of closing');

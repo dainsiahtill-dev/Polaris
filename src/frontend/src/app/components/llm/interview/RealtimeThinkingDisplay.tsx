@@ -110,8 +110,8 @@ export function RealtimeThinkingDisplay({
     : '开启 Debug 模式 + 实时流式 后可查看思考过程。';
 
   return (
-    <div className={`rounded-lg border border-white/10 bg-black/40 p-3 space-y-2 ${className || ''}`}>
-      <div className="flex items-center justify-between text-[10px] text-text-dim">
+    <div className={`flex min-h-0 flex-col rounded-lg border border-white/10 bg-black/40 p-3 ${className || ''}`}>
+      <div className="mb-2 flex shrink-0 items-center justify-between text-[10px] text-text-dim">
         <div className="flex items-center gap-2">
           <span className="uppercase tracking-wide">实时思考过程</span>
           <span className="text-[9px]">{isStreaming ? 'streaming...' : autoScroll ? '自动滚动' : '已暂停滚动'}</span>
@@ -130,7 +130,7 @@ export function RealtimeThinkingDisplay({
 
       <div
         ref={outputRef}
-        className="max-h-56 overflow-y-auto space-y-2 pr-1"
+        className="min-h-0 flex-1 max-h-56 overflow-y-auto space-y-2 pr-1"
       >
         {events.length === 0 ? (
           <div className="text-[11px] text-text-dim italic">{emptyText}</div>

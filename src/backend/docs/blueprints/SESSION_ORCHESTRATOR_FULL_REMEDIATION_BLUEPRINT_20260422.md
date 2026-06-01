@@ -1,4 +1,4 @@
-﻿# Session Orchestrator Full Remediation Blueprint (2026-04-22)
+# Session Orchestrator Full Remediation Blueprint (2026-04-22)
 
 **Status**: Implemented and validated  
 **Scope**: `roles.runtime` + `roles.kernel` core continuation loop hardening  
