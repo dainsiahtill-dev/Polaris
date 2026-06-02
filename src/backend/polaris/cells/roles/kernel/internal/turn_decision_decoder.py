@@ -12,7 +12,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -194,29 +194,54 @@ class TurnDecisionDecoder:
 
         return tools
 
-    def _parse_native_tool(self, native: dict) -> ToolInvocation:
-        """解析provider原生格式"""
-        function = native.get("function", {})
-        if not isinstance(function, dict):
-            raise TurnDecisionDecodeError("native tool payload missing function block")
-        tool_name = str(function.get("name", "") or "").strip()
-        if not tool_name:
-            raise TurnDecisionDecodeError("native tool payload missing function.name")
-        arguments = function.get("arguments", "{}")
+    def _parse_native_tool(self, native: dict[str, Any]) -> ToolInvocation:
+        """解析 provider 原生工具调用格式。
 
-        # 处理arguments可能是字符串或dict的情况
-        if isinstance(arguments, str):
-            arguments = json.loads(arguments)
-        if not isinstance(arguments, dict):
-            raise TurnDecisionDecodeError("native tool payload arguments must be a mapping")
+        The transaction decoder is the execution authorization point, so it
+        must normalize provider-native envelopes here instead of assuming the
+        upstream LLM caller has converted every response into OpenAI shape.
+        """
+        call_id: Any = native.get("id") or native.get("tool_call_id") or native.get("tool_use_id")
+        function = native.get("function", {})
+        if isinstance(function, dict) and function:
+            tool_name = str(function.get("name", "") or "").strip()
+            arguments = function.get("arguments", {})
+        elif str(native.get("type") or "").strip().lower() == "tool_use" or native.get("name"):
+            tool_name = str(native.get("name", "") or "").strip()
+            arguments = native.get("input", native.get("arguments", native.get("args", {})))
+        else:
+            function_call = native.get("functionCall") or native.get("function_call")
+            if not isinstance(function_call, dict):
+                raise TurnDecisionDecodeError("native tool payload missing function/tool_use block")
+            call_id = call_id or function_call.get("id")
+            tool_name = str(function_call.get("name", "") or "").strip()
+            arguments = function_call.get("args", function_call.get("arguments", {}))
+
+        if not tool_name:
+            raise TurnDecisionDecodeError("native tool payload missing tool name")
+
+        parsed_arguments = self._parse_native_tool_arguments(arguments)
 
         return ToolInvocation(
-            call_id=ToolCallId(native.get("id", self._generate_id())),
+            call_id=ToolCallId(str(call_id or self._generate_id())),
             tool_name=tool_name,
-            arguments=arguments,
+            arguments=parsed_arguments,
             effect_type=self._infer_effect_type(tool_name),
             execution_mode=self._infer_execution_mode(tool_name),
         )
+
+    @staticmethod
+    def _parse_native_tool_arguments(arguments: Any) -> dict[str, Any]:
+        """Normalize provider-native tool arguments into a mapping."""
+        if isinstance(arguments, str):
+            if not arguments.strip():
+                return {}
+            parsed = json.loads(arguments)
+        else:
+            parsed = arguments
+        if not isinstance(parsed, dict):
+            raise TurnDecisionDecodeError("native tool payload arguments must be a mapping")
+        return dict(parsed)
 
     def decode_for_finalization(
         self,

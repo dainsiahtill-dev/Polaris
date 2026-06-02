@@ -742,9 +742,10 @@ class RetryOrchestrator:
                 if not isinstance(native_call, Mapping):
                     continue
                 function_payload = native_call.get("function")
-                if not isinstance(function_payload, Mapping):
-                    continue
-                native_name = str(function_payload.get("name") or "").strip()
+                if isinstance(function_payload, Mapping):
+                    native_name = str(function_payload.get("name") or "").strip()
+                else:
+                    native_name = str(native_call.get("name") or "").strip()
                 if native_name:
                     raw_native_names.append(native_name)
             logger.warning(

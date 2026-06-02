@@ -291,6 +291,37 @@ def _contract_backed_task_rows(
     return merged_rows
 
 
+def _runtime_task_rows_for_workspace(workspace: str) -> list[dict[str, Any]]:
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return []
+    try:
+        runtime_rows = TaskRuntimeService(workspace_token).list_task_rows()
+    except (RuntimeError, ValueError, OSError):
+        logger.debug("Director diagnostics runtime task overlay failed for workspace=%s", workspace, exc_info=True)
+        return []
+    return [dict(row) for row in runtime_rows if isinstance(row, dict)]
+
+
+def _is_workflow_shell_task(row: dict[str, Any]) -> bool:
+    metadata = _as_dict(row.get("metadata"))
+    task_id = str(row.get("id") or row.get("task_id") or "").strip()
+    workflow_task_id = str(metadata.get("workflow_task_id") or "").strip()
+    has_pm_identity = any(
+        str(value or "").strip()
+        for value in (
+            row.get("pm_task_id"),
+            metadata.get("pm_task_id"),
+            metadata.get("source_task_id"),
+            metadata.get("external_task_id"),
+        )
+    )
+    if has_pm_identity:
+        return False
+    shell_ids = {task_id, workflow_task_id}
+    return any(token.startswith("task-") and token.endswith("-director") for token in shell_ids if token)
+
+
 def _runtime_backed_task_rows(
     task_rows: list[dict[str, Any]],
     *,
@@ -298,43 +329,33 @@ def _runtime_backed_task_rows(
 ) -> list[dict[str, Any]]:
     """Overlay canonical task runtime rows so diagnostics honor lease expiry."""
 
-    workspace_token = str(workspace or "").strip()
-    if not workspace_token:
-        return task_rows
-
-    try:
-        runtime_rows = TaskRuntimeService(workspace_token).list_task_rows()
-    except (RuntimeError, ValueError, OSError):
-        logger.debug("Director diagnostics runtime task overlay failed for workspace=%s", workspace, exc_info=True)
-        return task_rows
-
-    runtime_rows = [dict(row) for row in runtime_rows if isinstance(row, dict)]
+    runtime_rows = _runtime_task_rows_for_workspace(workspace)
     if not runtime_rows:
         return task_rows
 
     runtime_by_token: dict[str, dict[str, Any]] = {}
-    for runtime_row in runtime_rows:
-        runtime_task_id = _task_id_from_row(runtime_row)
-        runtime_details = _task_details(runtime_row)
+    for runtime_task_row in runtime_rows:
+        runtime_task_id = _task_id_from_row(runtime_task_row)
+        runtime_details = _task_details(runtime_task_row)
         for token in _task_identity_tokens(runtime_task_id, runtime_details):
-            runtime_by_token.setdefault(token, runtime_row)
+            runtime_by_token.setdefault(token, runtime_task_row)
 
     merged_rows: list[dict[str, Any]] = []
+    matched_runtime_ids: set[int] = set()
     for row in task_rows:
         task_id = _task_id_from_row(row)
         details = _task_details(row)
-        runtime_row = next(
-            (
-                runtime_by_token.get(token)
-                for token in _task_identity_tokens(task_id, details)
-                if token in runtime_by_token
-            ),
-            None,
-        )
+        runtime_row: dict[str, Any] | None = None
+        for token in _task_identity_tokens(task_id, details):
+            candidate = runtime_by_token.get(token)
+            if candidate is not None:
+                runtime_row = candidate
+                break
         if runtime_row is None:
             merged_rows.append(row)
             continue
 
+        matched_runtime_ids.add(id(runtime_row))
         merged = dict(row)
         merged.update(runtime_row)
         row_metadata_raw = row.get("metadata")
@@ -348,6 +369,13 @@ def _runtime_backed_task_rows(
             if not merged.get(key) and row.get(key):
                 merged[key] = row.get(key)
         merged_rows.append(merged)
+
+    for runtime_row in runtime_rows:
+        if id(runtime_row) not in matched_runtime_ids:
+            merged_rows.append(runtime_row)
+
+    if runtime_rows:
+        merged_rows = [row for row in merged_rows if not _is_workflow_shell_task(row)]
 
     return merged_rows
 

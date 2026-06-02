@@ -41,6 +41,20 @@ def _native_tool(
     }
 
 
+def _anthropic_native_tool(
+    name: str,
+    arguments: dict[str, object] | str,
+    *,
+    call_id: str = "toolu_1",
+) -> dict[str, object]:
+    return {
+        "id": call_id,
+        "type": "tool_use",
+        "name": name,
+        "input": arguments,
+    }
+
+
 class TestThinkingNeverExecutable:
     """验证：thinking 内容永远不会产生工具调用。"""
 
@@ -108,6 +122,57 @@ class TestNativeToolExecutionSource:
         assert decision["tool_batch"] is not None
         assert len(decision["tool_batch"]["invocations"]) == 1
         assert decision["tool_batch"]["invocations"][0]["tool_name"] == "read_file"
+
+    def test_anthropic_tool_use_blocks_execute(self) -> None:
+        decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))
+
+        response = RawLLMResponse(
+            content="",
+            thinking=None,
+            native_tool_calls=[
+                _anthropic_native_tool(
+                    "append_to_file",
+                    {"path": "src/game.ts", "content": "\nexport const ready = true;\n"},
+                    call_id="toolu_append",
+                ),
+            ],
+            model="kimi-for-coding",
+            usage={},
+        )
+
+        decision = decoder.decode(response, TurnId("turn_anthropic_tool_use"))
+
+        assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
+        assert decision["tool_batch"] is not None
+        invocation = decision["tool_batch"]["invocations"][0]
+        assert invocation["call_id"] == "toolu_append"
+        assert invocation["tool_name"] == "append_to_file"
+        assert invocation["arguments"]["path"] == "src/game.ts"
+
+    def test_anthropic_tool_use_string_input_executes(self) -> None:
+        decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))
+
+        response = RawLLMResponse(
+            content="",
+            thinking=None,
+            native_tool_calls=[
+                _anthropic_native_tool(
+                    "write_file",
+                    json.dumps({"path": "package.json", "content": "{}"}, ensure_ascii=False),
+                    call_id="toolu_write",
+                ),
+            ],
+            model="claude-3",
+            usage={},
+        )
+
+        decision = decoder.decode(response, TurnId("turn_anthropic_string_input"))
+
+        assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
+        assert decision["tool_batch"] is not None
+        invocation = decision["tool_batch"]["invocations"][0]
+        assert invocation["tool_name"] == "write_file"
+        assert invocation["arguments"] == {"path": "package.json", "content": "{}"}
 
     def test_different_native_tools_all_execute(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))
