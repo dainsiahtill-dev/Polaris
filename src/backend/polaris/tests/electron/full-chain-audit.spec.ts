@@ -123,6 +123,7 @@ type PmContractPayload = {
   }>;
 };
 type RuntimeEvent = { ts_epoch?: number; event_id?: string; name?: string };
+type ImageDimensions = { width: number; height: number };
 
 type ComplexityMetrics = {
   fileCount: number;
@@ -130,6 +131,17 @@ type ComplexityMetrics = {
   moduleCount: number;
   configFileCount: number;
   testFileCount: number;
+};
+
+type FullChainProjectScenario = {
+  key: "enterprise" | "game";
+  workspacePrefix: string;
+  packageName: string;
+  goal: string;
+  replies: string[];
+  buildRequiredFiles: string[];
+  testFiles: string[];
+  files: Record<string, string>;
 };
 
 type ToolAuditPayload = {
@@ -172,6 +184,45 @@ const DIRECTOR_RESULT_TIMEOUT_MS = positiveIntFromEnv(
 const REVIEW_SCREENSHOT_WIDTH = 1920;
 const REVIEW_SCREENSHOT_HEIGHT = 1080;
 
+function readJpegDimensions(bytes: Buffer, filePath: string): ImageDimensions {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+    throw new Error(`not a JPEG file: ${filePath}`);
+  }
+
+  let offset = 2;
+  while (offset + 9 < bytes.length) {
+    while (offset < bytes.length && bytes[offset] === 0xff) {
+      offset += 1;
+    }
+    const marker = bytes[offset];
+    offset += 1;
+
+    if (marker === 0xd9 || marker === 0xda) {
+      break;
+    }
+    if (offset + 2 > bytes.length) {
+      break;
+    }
+
+    const segmentLength = bytes.readUInt16BE(offset);
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) {
+      break;
+    }
+
+    const isStartOfFrame = marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+    if (isStartOfFrame) {
+      return {
+        height: bytes.readUInt16BE(offset + 3),
+        width: bytes.readUInt16BE(offset + 5),
+      };
+    }
+
+    offset += segmentLength;
+  }
+
+  throw new Error(`JPEG dimensions not found: ${filePath}`);
+}
+
 function positiveIntFromEnv(name: string, fallback: number): number {
   const raw = String(process.env[name] || "").trim();
   if (!raw) {
@@ -199,6 +250,37 @@ function toPosixPath(filePath: string): string {
 
 function optionalEnvValue(name: string): string {
   return String(process.env[name] || "").trim();
+}
+
+function withGoalOverride(scenario: FullChainProjectScenario): FullChainProjectScenario {
+  const goalOverride = optionalEnvValue("KERNELONE_E2E_PROJECT_GOAL");
+  return goalOverride ? { ...scenario, goal: goalOverride } : scenario;
+}
+
+function resolveProjectScenario(): FullChainProjectScenario {
+  const raw = (
+    optionalEnvValue("KERNELONE_E2E_PROJECT_SCENARIO")
+    || optionalEnvValue("KERNELONE_E2E_PROJECT_TYPE")
+  ).toLowerCase();
+  if (!raw || raw === "enterprise" || raw === "etms") {
+    return withGoalOverride(buildEnterpriseProjectScenario());
+  }
+  if (raw === "game" || raw === "tactical-game") {
+    return withGoalOverride(buildGameProjectScenario());
+  }
+  throw new Error(
+    `Unsupported KERNELONE_E2E_PROJECT_SCENARIO=${raw}; supported=enterprise, game`,
+  );
+}
+
+function resolveSafeWorkspaceName(prefix: string): string {
+  const override = optionalEnvValue("KERNELONE_E2E_WORKSPACE_NAME");
+  const candidate = override || `${prefix}_${Date.now().toString(36)}`;
+  const sanitized = candidate.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 96);
+  if (!sanitized || sanitized === "." || sanitized === "..") {
+    throw new Error(`Invalid KERNELONE_E2E_WORKSPACE_NAME=${override}`);
+  }
+  return sanitized;
 }
 
 function resolveFullChainStartPhase(): FullChainStartPhase {
@@ -262,6 +344,13 @@ async function captureAuditScreenshot(
     quality: 80,
     fullPage: false,
   });
+  const reviewStats = await fs.stat(reviewJpgPath);
+  expect(reviewStats.size, `${name}.review.jpg should not be empty`).toBeGreaterThan(1024);
+  const dimensions = readJpegDimensions(await fs.readFile(reviewJpgPath), reviewJpgPath);
+  expect(dimensions.width, `${name}.review.jpg width should stay review-sized`).toBeLessThanOrEqual(2000);
+  expect(dimensions.height, `${name}.review.jpg height should stay review-sized`).toBeLessThanOrEqual(2000);
+  expect(dimensions.width, `${name}.review.jpg width should be visible`).toBeGreaterThan(0);
+  expect(dimensions.height, `${name}.review.jpg height should be visible`).toBeGreaterThan(0);
 
   return { pngPath, reviewJpgPath };
 }
@@ -697,11 +786,48 @@ function makeTestModule(suiteName: string, caseCount: number): string {
   return lines.join("\n");
 }
 
-async function createComplexProject(baseRoot: string): Promise<{ workspace: string; metrics: ComplexityMetrics }> {
-  const workspace = path.join(baseRoot, `Polaris_ETMS_Stress_E2E_${Date.now().toString(36)}`);
-  await fs.rm(workspace, { recursive: true, force: true });
-  await fs.mkdir(workspace, { recursive: true });
+function makeStructuralBuildScript(requiredFiles: string[]): string {
+  return [
+    "import { existsSync, readFileSync } from \"node:fs\";",
+    "",
+    `const required = ${JSON.stringify(requiredFiles, null, 2)};`,
+    "",
+    "for (const file of required) {",
+    "  if (!existsSync(file)) throw new Error(`missing ${file}`);",
+    "  if (readFileSync(file, \"utf-8\").trim().length === 0) throw new Error(`empty ${file}`);",
+    "}",
+    "",
+    "console.log(`structural build passed: ${required.length} files`);",
+  ].join("\n");
+}
 
+function makeStructuralTestScript(testFiles: string[]): string {
+  return [
+    "import { existsSync, readFileSync } from \"node:fs\";",
+    "",
+    `const tests = ${JSON.stringify(testFiles, null, 2)};`,
+    "for (const file of tests) {",
+    "  if (!existsSync(file)) throw new Error(`missing ${file}`);",
+    "  const text = readFileSync(file, \"utf-8\");",
+    "  if (!text.includes(\"describe(\") || !text.includes(\"expect(\")) {",
+    "    throw new Error(`invalid test structure ${file}`);",
+    "  }",
+    "}",
+    "",
+    "console.log(`structural tests passed: ${tests.length} files`);",
+  ].join("\n");
+}
+
+function buildEnterpriseProjectScenario(): FullChainProjectScenario {
+  const buildRequiredFiles = [
+    "package.json",
+    "tsconfig.json",
+    "src/models/task.ts",
+    "src/repositories/task-repository.ts",
+    "src/services/task-service.ts",
+    "src/server/app.ts",
+  ];
+  const testFiles = ["tests/unit/task-service.test.ts", "tests/integration/api.test.ts"];
   const files: Record<string, string> = {
     "package.json": JSON.stringify({
       name: "polaris-etms-stress-e2e",
@@ -727,39 +853,8 @@ async function createComplexProject(baseRoot: string): Promise<{ workspace: stri
     "jest.config.ts": "export default { testEnvironment: \"node\", roots: [\"<rootDir>/tests\"] };",
     ".env.example": "PORT=3010\nJWT_SECRET=replace-me\nDATABASE_URL=postgres://localhost:5432/etms",
     "docker-compose.yml": "version: \"3.9\"\nservices:\n  postgres:\n    image: postgres:16\n  redis:\n    image: redis:7",
-    "scripts/build.mjs": [
-      "import { existsSync, readFileSync } from \"node:fs\";",
-      "",
-      "const required = [",
-      "  \"package.json\",",
-      "  \"tsconfig.json\",",
-      "  \"src/models/task.ts\",",
-      "  \"src/repositories/task-repository.ts\",",
-      "  \"src/services/task-service.ts\",",
-      "  \"src/server/app.ts\",",
-      "];",
-      "",
-      "for (const file of required) {",
-      "  if (!existsSync(file)) throw new Error(`missing ${file}`);",
-      "  if (readFileSync(file, \"utf-8\").trim().length === 0) throw new Error(`empty ${file}`);",
-      "}",
-      "",
-      "console.log(`structural build passed: ${required.length} files`);",
-    ].join("\n"),
-    "scripts/test.mjs": [
-      "import { existsSync, readFileSync } from \"node:fs\";",
-      "",
-      "const tests = [\"tests/unit/task-service.test.ts\", \"tests/integration/api.test.ts\"];",
-      "for (const file of tests) {",
-      "  if (!existsSync(file)) throw new Error(`missing ${file}`);",
-      "  const text = readFileSync(file, \"utf-8\");",
-      "  if (!text.includes(\"describe(\") || !text.includes(\"expect(\")) {",
-      "    throw new Error(`invalid test structure ${file}`);",
-      "  }",
-      "}",
-      "",
-      "console.log(`structural tests passed: ${tests.length} files`);",
-    ].join("\n"),
+    "scripts/build.mjs": makeStructuralBuildScript(buildRequiredFiles),
+    "scripts/test.mjs": makeStructuralTestScript(testFiles),
     "src/models/task.ts": makeLargeTsModule("task-model", 26),
     "src/repositories/task-repository.ts": makeLargeTsModule("task-repository", 30),
     "src/services/task-service.ts": makeLargeTsModule("task-service", 34),
@@ -772,8 +867,144 @@ async function createComplexProject(baseRoot: string): Promise<{ workspace: stri
     "README.md": "# Stress Project\n\nGenerated by Polaris full-chain audit.",
   };
 
+  return {
+    key: "enterprise",
+    workspacePrefix: "Polaris_ETMS_Stress_E2E",
+    packageName: "polaris-etms-stress-e2e",
+    goal: "构建企业级多租户任务管理系统，要求任务可执行、可测试、可审计，且依赖链可闭合。",
+    replies: [
+      "",
+      "补充：部署本机进程，JWT 鉴权，必须含可执行验收命令，禁止越权路径写入。",
+      "补充：任务必须包含目标、作用域、执行清单、可测验收。",
+    ],
+    buildRequiredFiles,
+    testFiles,
+    files,
+  };
+}
+
+function buildGameProjectScenario(): FullChainProjectScenario {
+  const buildRequiredFiles = [
+    "package.json",
+    "tsconfig.json",
+    "src/engine/game-loop.ts",
+    "src/world/procedural-map.ts",
+    "src/combat/combat-system.ts",
+    "src/ai/director-ai.ts",
+    "src/renderer/hud.ts",
+  ];
+  const testFiles = ["tests/unit/combat-system.test.ts", "tests/integration/game-session.test.ts"];
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "polaris-tactical-game-e2e",
+      version: "1.0.0",
+      private: true,
+      scripts: {
+        build: "node scripts/build.mjs",
+        start: "node dist/renderer/index.js",
+        test: "node scripts/test.mjs",
+      },
+    }, null, 2),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        rootDir: ".",
+        outDir: "dist",
+      },
+      include: ["src/**/*.ts", "tests/**/*.ts"],
+    }, null, 2),
+    "AGENTS.md": [
+      "# Game Workspace Rules",
+      "",
+      "All text files must be read and written with explicit UTF-8.",
+      "This workspace is a TypeScript browser tactical roguelike seed project.",
+      "Do not introduce Rust, Cargo, Go, Python, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
+      "Preserve package.json scripts: build must remain `node scripts/build.mjs`, and test must remain `node scripts/test.mjs`.",
+      "Use the existing structural verification scripts for acceptance.",
+      "If adding PRNG tests, assert same-seed reproducibility, range, and distribution invariants only; do not assert unverified magic-number outputs.",
+    ].join("\n"),
+    "index.html": [
+      "<!doctype html>",
+      "<html lang=\"en\">",
+      "  <head>",
+      "    <meta charset=\"UTF-8\" />",
+      "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />",
+      "    <title>Polaris Tactical Roguelike</title>",
+      "  </head>",
+      "  <body>",
+      "    <main id=\"app\"></main>",
+      "    <script type=\"module\" src=\"/src/main.ts\"></script>",
+      "  </body>",
+      "</html>",
+    ].join("\n"),
+    ".env.example": "GAME_SEED=polaris-audit\nSAVE_SLOT=local\nLEADERBOARD_URL=http://127.0.0.1:4179",
+    "docker-compose.yml": "version: \"3.9\"\nservices:\n  leaderboard:\n    image: redis:7\n    ports:\n      - \"6379:6379\"",
+    "scripts/build.mjs": makeStructuralBuildScript(buildRequiredFiles),
+    "scripts/test.mjs": makeStructuralTestScript(testFiles),
+    "src/engine/game-loop.ts": makeLargeTsModule("game-loop", 38),
+    "src/engine/state.ts": makeLargeTsModule("game-state", 34),
+    "src/world/procedural-map.ts": makeLargeTsModule("procedural-map", 36),
+    "src/world/encounter-table.ts": makeLargeTsModule("encounter-table", 26),
+    "src/combat/combat-system.ts": makeLargeTsModule("combat-system", 40),
+    "src/combat/action-queue.ts": makeLargeTsModule("action-queue", 30),
+    "src/ai/director-ai.ts": makeLargeTsModule("enemy-director-ai", 34),
+    "src/content/cards.ts": makeLargeTsModule("card-content", 32),
+    "src/content/relics.ts": makeLargeTsModule("relic-content", 24),
+    "src/persistence/save-system.ts": makeLargeTsModule("save-system", 30),
+    "src/renderer/hud.ts": makeLargeTsModule("hud-renderer", 32),
+    "src/renderer/input-controller.ts": makeLargeTsModule("input-controller", 28),
+    "src/main.ts": [
+      "export const bootMessage = \"Polaris tactical roguelike ready\";",
+      "export function boot(): string {",
+      "  return bootMessage;",
+      "}",
+    ].join("\n"),
+    "tests/unit/combat-system.test.ts": makeTestModule("combat-system-unit", 18),
+    "tests/integration/game-session.test.ts": makeTestModule("game-session-integration", 18),
+    "docs/README.md": "# Tactical Roguelike Game Docs\n\nInitial docs marker for Polaris full-chain game audit.",
+    "README.md": "# Tactical Roguelike Game\n\nGenerated by Polaris full-chain game audit.",
+  };
+
+  return {
+    key: "game",
+    workspacePrefix: "Polaris_Game_Stress_E2E",
+    packageName: "polaris-tactical-game-e2e",
+    goal: [
+      "构建一个中大型 Web 战术 Roguelike 游戏项目，要求可执行、可测试、可审计。",
+      "游戏必须包含随机种子地图生成、回合制战斗、卡牌/技能系统、敌人 AI、存档恢复、关卡进度、前端渲染和测试。",
+      "项目必须落在当前 C:/Temp 工作区内，至少 3 个模块、500+ 行代码、单元测试和集成测试，并提供 npm run build / npm run test 验收命令。",
+      "必须保留现有 node scripts/build.mjs 与 scripts/test.mjs 结构化验收脚本，禁止引入 Rust/Cargo、Webpack/Jest/Vite/Vitest 或任何新外部依赖。",
+      "如果实现 PRNG，不允许写固定魔法数期望测试，只能测试同 seed 序列一致性、范围和分布稳定性。",
+    ].join(" "),
+    replies: [
+      "",
+      "补充：游戏要支持浏览器端 Canvas 或 DOM 渲染、回合制行动队列、随机种子地图、敌人 AI、卡牌/技能内容表、存档恢复和本地排行榜接口。只能使用当前 TypeScript 文件和内置 node 结构化验收脚本，不要更换技术栈或包管理方案。",
+      "补充：请拆成 engine、world、combat、ai、content、persistence、renderer、tests 等可交付模块，每个任务必须包含目标、作用域、执行清单和可测验收。测试必须验证行为不变量，禁止把未经计算核对的随机数常量写成验收期望；禁止新增 Cargo.toml、webpack.config.js、jest.config.js 等非当前 seed 所需配置。",
+    ],
+    buildRequiredFiles,
+    testFiles,
+    files,
+  };
+}
+
+async function createComplexProject(
+  baseRoot: string,
+  scenario: FullChainProjectScenario,
+): Promise<{ workspace: string; metrics: ComplexityMetrics }> {
+  const workspace = path.join(baseRoot, resolveSafeWorkspaceName(scenario.workspacePrefix));
+  const resolvedBase = path.resolve(baseRoot);
+  const resolvedWorkspace = path.resolve(workspace);
+  if (resolvedWorkspace !== resolvedBase && !resolvedWorkspace.startsWith(`${resolvedBase}${path.sep}`)) {
+    throw new Error(`Refusing to create workspace outside ${resolvedBase}: ${resolvedWorkspace}`);
+  }
+  await fs.rm(workspace, { recursive: true, force: true });
+  await fs.mkdir(workspace, { recursive: true });
+
   await Promise.all(
-    Object.entries(files).map(async ([relativePath, content]) => {
+    Object.entries(scenario.files).map(async ([relativePath, content]) => {
       await writeUtf8File(path.join(workspace, relativePath), content);
     }),
   );
@@ -954,7 +1185,10 @@ async function tryResolveVisibleLocator(
   }
 }
 
-async function runCourtFlow(window: Page): Promise<{ dialogueReady: boolean; fallbackUsed: boolean }> {
+async function runCourtFlow(
+  window: Page,
+  scenario: FullChainProjectScenario,
+): Promise<{ dialogueReady: boolean; fallbackUsed: boolean }> {
   const openDocsButton = await resolveVisibleLocator(window, [
     () => window.getByTestId("open-docs-init"),
     () => window.getByRole("button", { name: /生成计划/ }),
@@ -971,24 +1205,17 @@ async function runCourtFlow(window: Page): Promise<{ dialogueReady: boolean; fal
     () => window.getByTestId("docs-init-goal-input"),
     () => window.getByPlaceholder(/做一个简单的文件服务器/i),
   ], 30_000);
-  await goalInput.fill(
-    "构建企业级多租户任务管理系统，要求任务可执行、可测试、可审计，且依赖链可闭合。",
-  );
+  await goalInput.fill(scenario.goal);
 
   let dialogueReady = false;
   let fallbackUsed = false;
-  const replies = [
-    "",
-    "补充：部署本机进程，JWT 鉴权，必须含可执行验收命令，禁止越权路径写入。",
-    "补充：任务必须包含目标、作用域、执行清单、可测验收。",
-  ];
-  for (let index = 0; index < replies.length; index += 1) {
+  for (let index = 0; index < scenario.replies.length; index += 1) {
     if (index > 0) {
       const messageInput = await resolveVisibleLocator(window, [
         () => window.getByTestId("docs-init-message-input"),
         () => window.getByPlaceholder(/Directly answer Architect follow-up/i),
       ], 10_000);
-      await messageInput.fill(replies[index]);
+      await messageInput.fill(scenario.replies[index]);
     }
     const runDialogueButton = await resolveVisibleLocator(window, [
       () => window.getByTestId("docs-init-run-dialogue"),
@@ -1083,7 +1310,9 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   await directorMenuItem.click();
 }
 
-async function inspectDirectorCodeChanges(window: Page): Promise<{ eventCount: number; empty: boolean }> {
+async function inspectDirectorCodeChanges(
+  window: Page,
+): Promise<{ eventCount: number; empty: boolean; expanded: boolean; detailKind: "diff" | "summary" | "none" }> {
   const codeNav = window.getByTestId("director-nav-代码");
   await expect(codeNav).toBeVisible({ timeout: 30_000 });
   await codeNav.click();
@@ -1096,7 +1325,30 @@ async function inspectDirectorCodeChanges(window: Page): Promise<{ eventCount: n
     eventCount > 0 || empty,
     `Director code panel should expose either file changes or an explicit empty state: eventCount=${eventCount} empty=${empty}`,
   ).toBe(true);
-  return { eventCount, empty };
+
+  if (eventCount === 0) {
+    return { eventCount, empty, expanded: false, detailKind: "none" };
+  }
+
+  const firstEvent = eventList.locator(":scope > div").first();
+  await firstEvent.scrollIntoViewIfNeeded();
+  await firstEvent.click();
+  let detailKind: "diff" | "summary" | "none" = "none";
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await window.getByTestId("real-time-file-diff").first().isVisible().catch(() => false)) {
+      detailKind = "diff";
+      break;
+    }
+    if (await window.getByTestId("director-file-edit-summary").first().isVisible().catch(() => false)) {
+      detailKind = "summary";
+      break;
+    }
+    await window.waitForTimeout(250);
+  }
+  expect(detailKind, "Director code panel should expand a file-change detail view").not.toBe("none");
+
+  return { eventCount, empty, expanded: true, detailKind };
 }
 
 async function enterChiefEngineerWorkspace(window: Page): Promise<void> {
@@ -1397,6 +1649,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
 
     const startPhase = resolveFullChainStartPhase();
+    const scenario = resolveProjectScenario();
     const resumeWorkspace = optionalEnvValue("KERNELONE_E2E_RESUME_WORKSPACE");
     if (startPhase !== "court" && !resumeWorkspace) {
       throw new Error(
@@ -1408,8 +1661,20 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         workspace: path.resolve(resumeWorkspace),
         metrics: await measureComplexity(path.resolve(resumeWorkspace)),
       }
-      : await createComplexProject("C:/Temp");
+      : await createComplexProject("C:/Temp", scenario);
     audit.workspace = project.workspace;
+    const scenarioPath = testInfo.outputPath("project.scenario.json");
+    await writeUtf8File(scenarioPath, JSON.stringify({
+      key: scenario.key,
+      workspacePrefix: scenario.workspacePrefix,
+      packageName: scenario.packageName,
+      goal: scenario.goal,
+      replies: scenario.replies,
+      buildRequiredFiles: scenario.buildRequiredFiles,
+      testFiles: scenario.testFiles,
+    }, null, 2));
+    audit.evidence_paths.snapshots.push(toPosixPath(scenarioPath));
+
     const complexityPath = testInfo.outputPath("complexity.metrics.json");
     await writeUtf8File(complexityPath, JSON.stringify(project.metrics, null, 2));
     audit.evidence_paths.snapshots.push(toPosixPath(complexityPath));
@@ -1468,7 +1733,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
 
     let planPath = "";
     if (shouldRunFullChainPhase(startPhase, "court")) {
-      const courtFlow = await runCourtFlow(window);
+      const courtFlow = await runCourtFlow(window, scenario);
       await dismissEngineFailureDialog(window);
 
       const courtShot = await captureAuditScreenshot(window, testInfo, "court-phase");
@@ -1705,6 +1970,10 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
             directorCodeEvidence.eventCount,
             `Director code change view should show task-runtime or realtime file changes after successful execution; result=${toPosixPath(directorResultPath)}`,
           ).toBeGreaterThan(0);
+          expect(
+            directorCodeEvidence.expanded,
+            `Director code change view should allow expanding change details; result=${toPosixPath(directorResultPath)}`,
+          ).toBe(true);
         }
         const dirCodeShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.director-code`);
         audit.evidence_paths.screenshots.push(toPosixPath(dirCodeShot.pngPath), toPosixPath(dirCodeShot.reviewJpgPath));

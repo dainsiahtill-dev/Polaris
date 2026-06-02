@@ -33,6 +33,7 @@ _RUNTIME_CODEGEN_LLM_TIMEOUT_MAX_SECONDS = 900
 _MIN_RUNTIME_CODEGEN_CALL_SECONDS = 90
 _RUNTIME_CODEGEN_TASK_TIMEOUT_MAX_SECONDS = 3570
 _RUNTIME_CODEGEN_TASK_TIMEOUT_MARGIN_SECONDS = 300
+_POLICY_TEXT_MAX_CHARS = 8000
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -224,6 +225,178 @@ class CodeGenerationEngine:
         """Return whether real Director runtime code writing is explicitly enabled."""
         return _env_flag(_RUNTIME_CODEGEN_ENV, default=False)
 
+    def _read_workspace_text_file(self, relative_path: str, *, max_chars: int = _POLICY_TEXT_MAX_CHARS) -> str:
+        """Read a small UTF-8 workspace text file through a path-boundary check."""
+        full_path = self._resolve_round_file_path(relative_path)
+        if full_path is None or not os.path.isfile(full_path):
+            return ""
+        try:
+            with open(full_path, encoding="utf-8") as handle:
+                return handle.read(max(1, int(max_chars or _POLICY_TEXT_MAX_CHARS)))
+        except (OSError, UnicodeError, ValueError):
+            return ""
+
+    def _workspace_rules_text(self) -> str:
+        """Return user/workspace rules that must constrain Director proposals."""
+        return self._read_workspace_text_file("AGENTS.md")
+
+    def _workspace_package_scripts(self) -> dict[str, str]:
+        """Return current package.json scripts, preserving only string values."""
+        return self._workspace_package_policy_snapshot().get("scripts", {})
+
+    @staticmethod
+    def _string_dict(value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(name): str(command)
+            for name, command in value.items()
+            if str(name or "").strip() and isinstance(command, str) and command.strip()
+        }
+
+    def _workspace_package_policy_snapshot(self) -> dict[str, dict[str, str]]:
+        """Return protected package.json sections before a runtime call mutates files."""
+        text = self._read_workspace_text_file("package.json", max_chars=80_000)
+        if not text:
+            return {"scripts": {}, "dependencies": {}, "devDependencies": {}}
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return {"scripts": {}, "dependencies": {}, "devDependencies": {}}
+        if not isinstance(payload, dict):
+            return {"scripts": {}, "dependencies": {}, "devDependencies": {}}
+        return {
+            "scripts": self._string_dict(payload.get("scripts")),
+            "dependencies": self._string_dict(payload.get("dependencies")),
+            "devDependencies": self._string_dict(payload.get("devDependencies")),
+        }
+
+    def _build_workspace_policy_prompt(self) -> str:
+        """Build a compact immutable-policy appendix from workspace facts."""
+        parts: list[str] = []
+        rules = self._workspace_rules_text().strip()
+        if rules:
+            parts.extend(
+                [
+                    "WORKSPACE AGENTS.md RULES (hard constraints, higher priority than task convenience):",
+                    rules,
+                ]
+            )
+        scripts = self._workspace_package_scripts()
+        if scripts:
+            parts.extend(
+                [
+                    "CURRENT package.json scripts. Preserve these unless AGENTS.md explicitly allows changing them:",
+                    json.dumps(scripts, ensure_ascii=False, sort_keys=True),
+                ]
+            )
+        if not parts:
+            return ""
+        return "\n".join(parts)
+
+    def _proposal_policy_violations(self, response_text: str) -> list[str]:
+        """Return proposal violations against local workspace rules before applying writes."""
+        rules = self._workspace_rules_text().lower()
+        text = str(response_text or "")
+        lowered = text.lower()
+        violations: list[str] = []
+        if (
+            "preserve package.json scripts" in rules
+            and self._proposal_mentions_path(text, "package.json")
+            and ('"scripts"' in text or '"devdependencies"' in lowered or '"dependencies"' in lowered)
+        ):
+            violations.append("workspace_policy_violation:package_json_scripts_or_dependencies_change_forbidden")
+        for name in self._forbidden_workspace_file_names(rules):
+            if self._proposal_mentions_path(text, name):
+                violations.append(f"workspace_policy_violation:forbidden_file:{name}")
+        return violations
+
+    @staticmethod
+    def _forbidden_workspace_file_names(rules: str) -> list[str]:
+        """Resolve forbidden tooling filenames from workspace policy text."""
+        lowered = str(rules or "").lower()
+        if "do not introduce" not in lowered:
+            return []
+        forbidden: list[str] = []
+        if "cargo" in lowered or "rust" in lowered:
+            forbidden.append("cargo.toml")
+        if "webpack" in lowered:
+            forbidden.append("webpack.config.js")
+        if "jest" in lowered:
+            forbidden.append("jest.config.js")
+        if "vite" in lowered:
+            forbidden.append("vite.config.ts")
+        if "vitest" in lowered:
+            forbidden.append("vitest.config.ts")
+        return forbidden
+
+    def _file_policy_violations(
+        self,
+        files: list[dict[str, str]],
+        package_snapshot: dict[str, dict[str, str]] | None = None,
+    ) -> list[str]:
+        """Return policy violations for actual files written by tools or direct workspace writes."""
+        rules = self._workspace_rules_text().lower()
+        if not rules:
+            return []
+        snapshot = package_snapshot or self._workspace_package_policy_snapshot()
+        violations: list[str] = []
+        forbidden_names = self._forbidden_workspace_file_names(rules)
+        preserve_scripts = "preserve package.json scripts" in rules
+        protect_dependencies = "external build/test dependency" in rules or "do not introduce" in rules
+
+        for file_info in files:
+            relative_path = str(file_info.get("path") or "").strip().replace("\\", "/").lower()
+            if not relative_path:
+                continue
+            for name in forbidden_names:
+                if relative_path == name or relative_path.endswith(f"/{name}"):
+                    violations.append(f"workspace_policy_violation:forbidden_file:{name}")
+
+            if relative_path != "package.json":
+                continue
+            if not preserve_scripts and not protect_dependencies:
+                continue
+
+            content = str(file_info.get("content") or "")
+            if not content.strip():
+                content = self._read_workspace_text_file("package.json", max_chars=80_000)
+            if not content.strip():
+                violations.append("workspace_policy_violation:package_json_change_requires_validation")
+                continue
+
+            try:
+                payload = json.loads(content)
+            except json.JSONDecodeError:
+                violations.append("workspace_policy_violation:package_json_invalid_after_write")
+                continue
+            if not isinstance(payload, dict):
+                violations.append("workspace_policy_violation:package_json_invalid_after_write")
+                continue
+
+            if preserve_scripts and self._string_dict(payload.get("scripts")) != snapshot.get("scripts", {}):
+                violations.append("workspace_policy_violation:package_json_scripts_change_forbidden")
+
+            if protect_dependencies:
+                for section in ("dependencies", "devDependencies"):
+                    if self._string_dict(payload.get(section)) != snapshot.get(section, {}):
+                        violations.append(f"workspace_policy_violation:package_json_{section}_change_forbidden")
+
+        return list(dict.fromkeys(violations))
+
+    @staticmethod
+    def _proposal_mentions_path(response_text: str, relative_path: str) -> bool:
+        """Return whether a proposal declares a PATCH_FILE/FILE block for a path."""
+        path_token = re.escape(str(relative_path or "").strip().replace("\\", "/"))
+        if not path_token:
+            return False
+        return bool(
+            re.search(
+                rf"(?im)^\s*(?:`{{3}}\s*)?(?:patch_file|file)\s*:\s*{path_token}\b",
+                str(response_text or "").replace("\\", "/"),
+            )
+        )
+
     async def _invoke_director_role_response(
         self,
         *,
@@ -258,7 +431,10 @@ class CodeGenerationEngine:
             "_transaction_kernel_forced_tool_choice": "none",
         }
         user_message = "[mode:propose] Do not call tools. Please complete the assigned implementation task."
-        proposal_prompt = self._normalize_proposal_prompt(prompt)
+        workspace_policy_prompt = self._build_workspace_policy_prompt()
+        proposal_prompt = self._normalize_proposal_prompt(
+            "\n\n".join(part for part in (workspace_policy_prompt, prompt) if part.strip())
+        )
         appendix = (
             "Polaris Director proposal-to-apply bridge. This runtime bridge validates "
             "and applies the returned file blocks through FileApplyService. Return "
@@ -686,6 +862,7 @@ class CodeGenerationEngine:
                 warnings.append(f"director_runtime_codegen_deadline_too_short:{remaining}s")
                 break
             timeout = min(max(int(per_call_timeout or 0), 15), remaining)
+            package_policy_snapshot = self._workspace_package_policy_snapshot()
             before_signatures = self._snapshot_round_files(round_files)
             try:
                 response = await self._invoke_director_role_response(
@@ -698,6 +875,10 @@ class CodeGenerationEngine:
             except (asyncio.TimeoutError, TimeoutError):
                 changed_files = self._collect_changed_round_files(round_files, before_signatures)
                 if changed_files:
+                    file_policy_violations = self._file_policy_violations(changed_files, package_policy_snapshot)
+                    if file_policy_violations:
+                        warnings.extend(file_policy_violations)
+                        break
                     warnings.append(f"director_runtime_codegen_timeout_after_changes:{timeout}s")
                     return changed_files, warnings
                 warnings.append(f"director_runtime_codegen_timeout:{timeout}s")
@@ -733,13 +914,30 @@ class CodeGenerationEngine:
 
             tool_files = self._extract_written_files_from_tool_results(self._normalize_tool_results(response))
             if tool_files:
+                file_policy_violations = self._file_policy_violations(tool_files, package_policy_snapshot)
+                if file_policy_violations:
+                    warnings.extend(file_policy_violations)
+                    break
                 return tool_files, warnings
 
             changed_files = self._collect_changed_round_files(round_files, before_signatures)
             if changed_files:
+                file_policy_violations = self._file_policy_violations(changed_files, package_policy_snapshot)
+                if file_policy_violations:
+                    warnings.extend(file_policy_violations)
+                    break
                 return changed_files, warnings
 
             if response_text:
+                policy_violations = self._proposal_policy_violations(response_text)
+                if policy_violations:
+                    warnings.extend(policy_violations)
+                    current_prompt = (
+                        f"{prompt}\n\nPrevious attempt {attempt} violated workspace policy: "
+                        f"{'; '.join(policy_violations)}. Read and obey AGENTS.md. "
+                        "Return a new proposal that preserves package.json scripts/dependencies and avoids forbidden files."
+                    )
+                    continue
                 applied_files, apply_errors = self._apply_response_operations(
                     response_text=response_text,
                     task_id=task_id,
@@ -751,9 +949,17 @@ class CodeGenerationEngine:
                     },
                 )
                 if applied_files:
+                    file_policy_violations = self._file_policy_violations(applied_files, package_policy_snapshot)
+                    if file_policy_violations:
+                        warnings.extend(file_policy_violations)
+                        break
                     return applied_files, [*warnings, *apply_errors]
                 changed_files = self._collect_changed_round_files(round_files, before_signatures)
                 if changed_files:
+                    file_policy_violations = self._file_policy_violations(changed_files, package_policy_snapshot)
+                    if file_policy_violations:
+                        warnings.extend([*apply_errors, *file_policy_violations])
+                        break
                     return changed_files, [*warnings, *apply_errors]
                 warnings.extend(apply_errors)
             else:

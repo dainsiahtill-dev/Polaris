@@ -203,6 +203,11 @@ def _node_dependencies_missing(workspace_full: str, package_payload: dict[str, A
     return not os.path.isdir(os.path.join(workspace_full, "node_modules"))
 
 
+def _node_static_fallback_allowed() -> bool:
+    raw = str(os.environ.get("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _is_node_package_command(command_args: list[str]) -> bool:
     if not command_args:
         return False
@@ -364,6 +369,20 @@ def run_integration_verify_runner(workspace_full: str) -> tuple[bool, str, list[
 
     package_payload = _read_package_json(workspace_full)
     if _is_node_package_command(command_args) and _node_dependencies_missing(workspace_full, package_payload):
+        if not _node_static_fallback_allowed():
+            summary = (
+                "Integration verification blocked: Node dependencies are declared but not installed "
+                f"for command: {command}"
+            )
+            return (
+                False,
+                summary,
+                [
+                    summary,
+                    "Run npm install/pnpm install/yarn install before integration QA, or set "
+                    "KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK=1 for explicit structural-only QA.",
+                ],
+            )
         return _run_node_static_verify_runner(workspace_full, package_payload)
 
     try:

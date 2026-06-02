@@ -295,6 +295,7 @@ class TestRunIntegrationVerifyRunner:
 
     def test_node_dependency_static_fallback_passes_with_tests(self, monkeypatch, tmp_path) -> None:
         monkeypatch.delenv("KERNELONE_INTEGRATION_QA_COMMAND", raising=False)
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK", "1")
         (tmp_path / "package.json").write_text(
             json.dumps(
                 {
@@ -317,6 +318,7 @@ class TestRunIntegrationVerifyRunner:
 
     def test_node_dependency_static_fallback_requires_tests_for_test_script(self, monkeypatch, tmp_path) -> None:
         monkeypatch.delenv("KERNELONE_INTEGRATION_QA_COMMAND", raising=False)
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK", "1")
         (tmp_path / "package.json").write_text(
             json.dumps(
                 {

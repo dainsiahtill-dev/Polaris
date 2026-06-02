@@ -21,6 +21,7 @@ from polaris.cells.orchestration.pm_planning.internal.shared_quality import (  #
 def _clear_integration_qa_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KERNELONE_INTEGRATION_QA_COMMAND", raising=False)
     monkeypatch.delenv("KERNELONE_INTEGRATION_QA_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK", raising=False)
 
 
 def test_detect_integration_verify_command_prefers_compileall_for_python_without_tests(
@@ -86,6 +87,50 @@ def test_run_integration_verify_runner_passes_node_verify_final_without_test_scr
 
     assert ok is True
     assert summary == "Integration verification passed: npm run verify:final"
+    assert errors == []
+
+
+def test_run_integration_verify_runner_blocks_node_static_fallback_by_default(
+    tmp_path: Path,
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"jest"},"devDependencies":{"jest":"^29.0.0"}}\n',
+        encoding="utf-8",
+    )
+    (tests_dir / "sample.test.js").write_text(
+        "test('ready', () => expect(true).toBe(true));\n",
+        encoding="utf-8",
+    )
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is False
+    assert "Node dependencies are declared but not installed" in summary
+    assert any("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK=1" in error for error in errors)
+
+
+def test_run_integration_verify_runner_allows_explicit_node_static_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK", "1")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"jest"},"devDependencies":{"jest":"^29.0.0"}}\n',
+        encoding="utf-8",
+    )
+    (tests_dir / "sample.test.js").write_text(
+        "test('ready', () => expect(true).toBe(true));\n",
+        encoding="utf-8",
+    )
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is True
+    assert summary.startswith("Node static verification passed while dependencies are not installed")
     assert errors == []
 
 

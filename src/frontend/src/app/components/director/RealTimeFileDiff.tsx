@@ -109,7 +109,7 @@ export function RealTimeFileDiff({
   if (isEmpty && operation === 'create') {
     // 新文件 - 显示全部内容为新增
     return (
-      <div className={cn('rounded-lg border', colors.bg, colors.border)}>
+      <div data-testid="real-time-file-diff" className={cn('rounded-lg border', colors.bg, colors.border)}>
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
           <div className="flex items-center gap-2">
@@ -145,7 +145,7 @@ export function RealTimeFileDiff({
 
   if (isEmpty && operation === 'delete') {
     return (
-      <div className={cn('rounded-lg border', colors.bg, colors.border)}>
+      <div data-testid="real-time-file-diff" className={cn('rounded-lg border', colors.bg, colors.border)}>
         <div className="flex items-center justify-between px-3 py-2">
           <div className="flex items-center gap-2">
             <FileCode className={cn('w-4 h-4', colors.icon)} />
@@ -160,7 +160,7 @@ export function RealTimeFileDiff({
   }
 
   return (
-    <div className={cn('rounded-lg border overflow-hidden', colors.bg, colors.border)}>
+    <div data-testid="real-time-file-diff" className={cn('rounded-lg border overflow-hidden', colors.bg, colors.border)}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 bg-slate-900/30">
         <div className="flex items-center gap-3">

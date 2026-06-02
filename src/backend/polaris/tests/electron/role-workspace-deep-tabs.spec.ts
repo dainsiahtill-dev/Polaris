@@ -350,14 +350,63 @@ async function exerciseWorkspaceTabs(
   testInfo: TestInfo,
   workspace: Locator,
   workspaceLabel: string,
-  tabs: Array<{ label: string; screenshotName: string }>,
+  tabs: Array<{ label: string; screenshotName: string; afterOpen?: () => Promise<void> }>,
 ): Promise<void> {
   for (const tab of tabs) {
     await clickWorkspaceTab(window, workspace, tab.label);
     await expectNoDocumentHorizontalOverflow(window, `${workspaceLabel} ${tab.label}`);
     await expectRoleSessionStripContained(workspace, `${workspaceLabel} ${tab.label}`);
+    if (tab.afterOpen) {
+      await tab.afterOpen();
+    }
     await attachScreenshot(window, testInfo, tab.screenshotName);
   }
+}
+
+async function expandDirectorCodeChangeDetails(
+  window: Page,
+  directorWorkspace: Locator,
+  label: string,
+): Promise<void> {
+  const panel = directorWorkspace.getByTestId("director-code-panel");
+  await expect(panel, `${label} panel should be visible`).toBeVisible({ timeout: 15_000 });
+  const eventList = panel.getByTestId("director-code-event-list");
+  const empty = await panel.getByTestId("director-code-empty").isVisible().catch(() => false);
+  const eventCount = await eventList.locator(":scope > div").count().catch(() => 0);
+  expect(
+    eventCount > 0 || empty,
+    `${label} should expose either file changes or an explicit empty state: eventCount=${eventCount} empty=${empty}`,
+  ).toBe(true);
+  if (eventCount === 0) {
+    return;
+  }
+
+  const diffToggle = eventList.getByText("展开 Diff").first();
+  if (await diffToggle.isVisible().catch(() => false)) {
+    await diffToggle.click();
+  } else {
+    const summaryToggle = eventList.getByText("展开统计").first();
+    if (await summaryToggle.isVisible().catch(() => false)) {
+      await summaryToggle.click();
+    } else {
+      await eventList.locator(":scope > div").first().click();
+    }
+  }
+
+  let detailKind: "diff" | "summary" | "none" = "none";
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await panel.getByTestId("real-time-file-diff").first().isVisible().catch(() => false)) {
+      detailKind = "diff";
+      break;
+    }
+    if (await panel.getByTestId("director-file-edit-summary").first().isVisible().catch(() => false)) {
+      detailKind = "summary";
+      break;
+    }
+    await window.waitForTimeout(250);
+  }
+  expect(detailKind, `${label} should expand diff or statistics details`).not.toBe("none");
 }
 
 test("PM, Chief Engineer, and Director deep workspace tabs remain contained", async ({ window }, testInfo) => {
@@ -454,7 +503,13 @@ test("PM, Chief Engineer, and Director deep workspace tabs remain contained", as
   await exerciseWorkspaceTabs(window, testInfo, directorWorkspace, "Director", [
     { label: "任务", screenshotName: "director-tab-tasks" },
     { label: "实时", screenshotName: "director-tab-activity" },
-    { label: "代码", screenshotName: "director-tab-code" },
+    {
+      label: "代码",
+      screenshotName: "director-tab-code",
+      afterOpen: async () => {
+        await expandDirectorCodeChangeDetails(window, directorWorkspace, "Director code");
+      },
+    },
     { label: "终端", screenshotName: "director-tab-terminal" },
     { label: "调试", screenshotName: "director-tab-debug" },
     { label: "策略", screenshotName: "director-tab-strategy" },

@@ -288,6 +288,108 @@ class TestBlockedEntryPoints:
 
         assert CodeGenerationEngine._extract_response_text(response).startswith("```file: src/app.py")
 
+    def test_workspace_policy_prompt_includes_agents_and_package_scripts(self, tmp_path):
+        (tmp_path / "AGENTS.md").write_text(
+            "Preserve package.json scripts.\nDo not introduce Jest.\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "package.json").write_text(
+            json.dumps({"scripts": {"build": "node scripts/build.mjs", "test": "node scripts/test.mjs"}}),
+            encoding="utf-8",
+        )
+        engine = CodeGenerationEngine(str(tmp_path), Mock())
+
+        prompt = engine._build_workspace_policy_prompt()
+
+        assert "Preserve package.json scripts" in prompt
+        assert '"build": "node scripts/build.mjs"' in prompt
+        assert '"test": "node scripts/test.mjs"' in prompt
+
+    def test_proposal_policy_violations_rejects_forbidden_package_changes(self, tmp_path):
+        (tmp_path / "AGENTS.md").write_text(
+            "\n".join(
+                [
+                    "Preserve package.json scripts: build must remain `node scripts/build.mjs`.",
+                    "Do not introduce Rust, Cargo, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        engine = CodeGenerationEngine(str(tmp_path), Mock())
+
+        violations = engine._proposal_policy_violations(
+            'PATCH_FILE: package.json\n{"scripts":{"test":"jest"},"devDependencies":{"jest":"^29.0.0"}}'
+        )
+
+        assert "workspace_policy_violation:package_json_scripts_or_dependencies_change_forbidden" in violations
+
+    def test_proposal_policy_violations_rejects_forbidden_tooling_files(self, tmp_path):
+        (tmp_path / "AGENTS.md").write_text(
+            "Do not introduce Rust, Cargo, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
+            encoding="utf-8",
+        )
+        engine = CodeGenerationEngine(str(tmp_path), Mock())
+
+        violations = engine._proposal_policy_violations(
+            "```file: webpack.config.js\nmodule.exports = {};\n```\n\nPATCH_FILE: Cargo.toml\n[package]\n"
+        )
+
+        assert "workspace_policy_violation:forbidden_file:webpack.config.js" in violations
+        assert "workspace_policy_violation:forbidden_file:cargo.toml" in violations
+
+    def test_file_policy_violations_rejects_package_script_and_dependency_changes(self, tmp_path):
+        (tmp_path / "AGENTS.md").write_text(
+            "\n".join(
+                [
+                    "Preserve package.json scripts: build must remain `node scripts/build.mjs`.",
+                    "Do not introduce Rust, Cargo, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"build": "node scripts/build.mjs", "test": "node scripts/test.mjs"},
+                    "devDependencies": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        engine = CodeGenerationEngine(str(tmp_path), Mock())
+        baseline = engine._workspace_package_policy_snapshot()
+
+        violations = engine._file_policy_violations(
+            [
+                {
+                    "path": "package.json",
+                    "content": json.dumps(
+                        {
+                            "scripts": {"build": "vite build", "test": "jest"},
+                            "devDependencies": {"jest": "^29.0.0", "vite": "^6.0.0"},
+                        }
+                    ),
+                }
+            ],
+            baseline,
+        )
+
+        assert "workspace_policy_violation:package_json_scripts_change_forbidden" in violations
+        assert "workspace_policy_violation:package_json_devDependencies_change_forbidden" in violations
+
+    def test_file_policy_violations_rejects_forbidden_tooling_files(self, tmp_path):
+        (tmp_path / "AGENTS.md").write_text(
+            "Do not introduce Rust, Cargo, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
+            encoding="utf-8",
+        )
+        engine = CodeGenerationEngine(str(tmp_path), Mock())
+
+        violations = engine._file_policy_violations(
+            [{"path": "config/jest.config.js", "content": "export default {};"}],
+        )
+
+        assert violations == ["workspace_policy_violation:forbidden_file:jest.config.js"]
+
     def test_recover_response_text_from_director_llm_events(self, tmp_path):
         workspace = tmp_path / "workspace"
         event_dir = workspace / ".polaris" / "runtime" / "events"
@@ -501,6 +603,58 @@ class TestBlockedEntryPoints:
         assert calls == 1
         assert files == [{"path": "src/app.py", "content": ""}]
         assert warnings == []
+        executor._apply_response_operations.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_runtime_codegen_rejects_policy_violating_direct_package_write(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
+        (tmp_path / "AGENTS.md").write_text(
+            "\n".join(
+                [
+                    "Preserve package.json scripts: build must remain `node scripts/build.mjs`.",
+                    "Do not introduce Rust, Cargo, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        package_json = tmp_path / "package.json"
+        package_json.write_text(
+            json.dumps({"scripts": {"build": "node scripts/build.mjs", "test": "node scripts/test.mjs"}}),
+            encoding="utf-8",
+        )
+        executor = Mock()
+        executor._apply_response_operations.return_value = ([], ["no_file_blocks"])
+        engine = CodeGenerationEngine(str(tmp_path), executor)
+
+        async def fake_invoke(**_: object) -> dict[str, object]:
+            package_json.write_text(
+                json.dumps({"scripts": {"build": "vite build", "test": "jest"}, "devDependencies": {"jest": "^29"}}),
+                encoding="utf-8",
+            )
+            return {
+                "response": "Implemented.",
+                "provider": "test-provider",
+                "model": "test-model",
+            }
+
+        monkeypatch.setattr(engine, "_invoke_director_role_response", fake_invoke)
+
+        task = Mock()
+        task.id = "task-1"
+        files, warnings = await engine.invoke_generation_with_retries(
+            task=task,
+            prompt="implement",
+            model="ignored",
+            per_call_timeout=60,
+            deadline_ts=9999999999,
+            round_label="r1",
+            round_files=["package.json"],
+            spin_tracker={},
+        )
+
+        assert files == []
+        assert "workspace_policy_violation:package_json_scripts_change_forbidden" in warnings
+        assert "workspace_policy_violation:package_json_devDependencies_change_forbidden" in warnings
         executor._apply_response_operations.assert_not_called()
 
     @pytest.mark.asyncio
