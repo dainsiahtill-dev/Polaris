@@ -332,7 +332,7 @@ def append_file_with_broadcast(
     patch = calculate_patch(old_content, new_content)
 
     # 广播事件
-    broadcast_file_written(
+    broadcast_ok = broadcast_file_written(
         file_path=rel_path,
         operation="modify",
         content_size=len(new_content),
@@ -346,6 +346,7 @@ def append_file_with_broadcast(
         "ok": True,
         "path": rel_path,
         "appended_bytes": len(content.encode("utf-8")),
+        "broadcast_ok": bool(broadcast_ok),
     }
 
 
@@ -402,7 +403,7 @@ def replace_in_file_with_broadcast(
     patch = calculate_patch(old_content, new_content)
 
     # 广播事件
-    broadcast_file_written(
+    broadcast_ok = broadcast_file_written(
         file_path=rel_path,
         operation="modify",
         content_size=len(new_content),
@@ -417,6 +418,7 @@ def replace_in_file_with_broadcast(
         "ok": True,
         "path": rel_path,
         "replacements": replacements,
+        "broadcast_ok": bool(broadcast_ok),
     }
 
 

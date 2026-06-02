@@ -16,6 +16,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { cn } from '@/app/components/ui/utils';
+import { parseRealtimePatchForDiff } from './realtimeDiffParsing';
 
 interface RealTimeFileDiffProps {
   filePath: string;
@@ -41,46 +42,8 @@ export function RealTimeFileDiff({
 }: RealTimeFileDiffProps) {
   // 解析 patch 内容，转换为 oldValue 和 newValue
   const { oldValue, newValue } = useMemo(() => {
-    // 如果有 patch 内容，解析它
-    if (patch) {
-      const lines = patch.split('\n');
-      const oldLines: string[] = [];
-      const newLines: string[] = [];
-
-      let inNewSection = false;
-      for (const line of lines) {
-        // Skip diff headers
-        if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('@@')) {
-          if (line.startsWith('@@')) {
-            inNewSection = true;
-          }
-          continue;
-        }
-
-        if (line.startsWith('-')) {
-          if (!inNewSection) {
-            oldLines.push(line.substring(1));
-          }
-        } else if (line.startsWith('+')) {
-          newLines.push(line.substring(1));
-        } else if (line.startsWith(' ')) {
-          oldLines.push(line.substring(1));
-          newLines.push(line.substring(1));
-        }
-      }
-
-      return {
-        oldValue: oldLines.join('\n'),
-        newValue: newLines.join('\n'),
-      };
-    }
-
-    // Fallback: 使用直接传递的内容
-    return {
-      oldValue: oldContent || '',
-      newValue: newContent || '',
-    };
-  }, [patch, oldContent, newContent]);
+    return parseRealtimePatchForDiff({ patch, operation, oldContent, newContent });
+  }, [patch, operation, oldContent, newContent]);
 
   // 计算变更统计
   const stats = useMemo(() => {

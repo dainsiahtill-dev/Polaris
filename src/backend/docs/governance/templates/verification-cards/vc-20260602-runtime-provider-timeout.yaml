@@ -1,0 +1,76 @@
+card_id: "vc-20260602-runtime-provider-timeout"
+bug_summary: >
+  KernelOne role-runtime provider invocation passed timeout into provider
+  configuration but did not enforce a caller-owned wall-clock deadline around
+  the synchronous provider call. Slow provider retry/stream behavior could keep
+  PM planning alive past the configured timeout.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/kernelone/llm/runtime.py"
+  method: "invoke_role_runtime_provider()"
+  symptom: >
+    PM CLI launched with --timeout 300, emitted PM planning invoke_start, and
+    stayed running beyond 300 seconds with no invoke_done or invoke_error event.
+
+assumptions:
+  - id: "A1"
+    statement: "The PM timeout reaches KernelOne runtime as the timeout argument."
+    status: verified_true
+    evidence: >
+      polaris.delivery.cli.pm.backend._invoke_generic_runtime_provider passes
+      state.timeout to invoke_role_runtime_provider; Electron process evidence
+      showed the PM subprocess command included --timeout 300.
+
+  - id: "A2"
+    statement: "Provider config timeout alone is insufficient as a hard upper bound."
+    status: verified_true
+    evidence: >
+      Runtime evidence showed PM planning invoke_start at 2026-06-02T00:35:45Z
+      with no terminal event after more than 300 seconds.
+
+  - id: "A3"
+    statement: "The safest shared fix is a KernelOne caller-owned wall-clock guard."
+    status: verified_true
+    evidence: >
+      All role-runtime provider calls pass through
+      polaris.kernelone.llm.runtime.invoke_role_runtime_provider before provider
+      dispatch, so the guard protects PM, Director, QA, and audit callers
+      without duplicating provider-specific timeout code.
+
+pre_mortem:
+  failure_point: >
+    If the timeout guard waits for a ThreadPoolExecutor shutdown, the process
+    can still hang after timeout. The implementation must use a daemon thread
+    and return immediately after join(timeout).
+  risk_zone:
+    - "polaris/kernelone/llm/runtime.py"
+    - "Role-runtime provider calls that expect fallback after non-timeout errors"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/tests/test_runtime_role_binding.py"
+      description: "test_kernel_runtime_provider_invocation_times_out_slow_provider"
+      expected: "A slow provider returns provider_invoke_timeout within the requested timeout budget"
+      status: new
+    - file: "polaris/tests/test_runtime_role_binding.py"
+      description: "test_kernel_runtime_provider_invocation_forces_workspace_working_dir"
+      expected: "Existing successful provider behavior remains unchanged"
+      status: existing
+  integration_tests:
+    - description: "Run runtime role binding tests"
+      command: "python -m pytest src/backend/polaris/tests/test_runtime_role_binding.py -q"
+      status: new
+    - description: "Run PM planning broker tests"
+      command: "python -m pytest src/backend/polaris/cells/orchestration/pm_planning/tests/test_pm_service_broker.py -q"
+      status: new
+  manual_check:
+    - "Run Electron full-chain audit and confirm PM invocation emits a terminal event instead of hanging past timeout"
+    - "If provider remains too slow, bind PM to a fresh ready provider rather than accepting stale readiness"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-06-02"

@@ -1,0 +1,79 @@
+card_id: "vc-20260602-pm-planning-timeout"
+bug_summary: >
+  PM planning command construction compressed the configured LLM timeout to the
+  legacy 60 second default when settings.timeout was unset, causing long remote
+  provider calls to fail before the UI-configured 300 second timeout budget.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/cells/orchestration/pm_planning/service.py"
+  method: "PMService._resolve_planning_timeout_seconds()"
+  symptom: >
+    Electron launched PM CLI with --timeout 60 even though runtime settings
+    exposed llm.timeout=300; PM then produced zero tasks after a DeepSeek
+    provider timeout, preventing Director and the real-time diff panel from
+    receiving any file change events.
+
+assumptions:
+  - id: "A1"
+    statement: "settings.timeout is the explicit PM planning override and remains highest priority after env override."
+    status: verified_true
+    evidence: >
+      PMService._resolve_planning_timeout_seconds() first checks
+      KERNELONE_PM_PLANNING_TIMEOUT_SECONDS, then settings.timeout, before
+      falling back to settings.llm.timeout.
+
+  - id: "A2"
+    statement: "The observed run used the LLM timeout fallback path rather than an explicit PM timeout."
+    status: verified_true
+    evidence: >
+      The failed Electron full-chain evidence showed settings.timeout=0 and
+      settings.llm.timeout=300, while electron-main-stdout.log recorded the PM
+      command with --timeout 60.
+
+  - id: "A3"
+    statement: "Clamping the LLM timeout directly is safer than min(llm_timeout, default), because the maximum bound already prevents unbounded subprocess SLA."
+    status: verified_true
+    evidence: >
+      _clamp_pm_planning_timeout() enforces the 5..600 second bounds; therefore
+      a 300 second LLM timeout remains bounded while no longer being collapsed
+      to the 60 second default.
+
+pre_mortem:
+  failure_point: >
+    If the fix only changes the Electron E2E environment or PM CLI invocation,
+    other PM planning launch paths would continue to drift from persisted LLM
+    settings. The root fix must live in the command builder used by the
+    orchestration.pm_planning cell.
+  risk_zone:
+    - "polaris/cells/orchestration/pm_planning/service.py"
+    - "polaris/cells/orchestration/pm_planning/tests/test_pm_service_broker.py"
+    - "Electron full-chain PM startup path"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/orchestration/pm_planning/tests/test_pm_service_broker.py"
+      description: "test_build_command_uses_bounded_pm_planning_timeout"
+      expected: "settings.llm.timeout=300 produces PM CLI --timeout 300 when settings.timeout is unset"
+      status: new
+    - file: "polaris/cells/orchestration/pm_planning/tests/test_pm_service_broker.py"
+      description: "test_build_command_clamps_oversized_llm_timeout"
+      expected: "settings.llm.timeout above the max is clamped to --timeout 600"
+      status: new
+  integration_tests:
+    - description: "Run targeted PM planning broker tests"
+      command: "python -m pytest src/backend/polaris/cells/orchestration/pm_planning/tests/test_pm_service_broker.py -q"
+      status: new
+    - description: "Run Electron full-chain audit until PM reaches Director"
+      command: "npm run test:e2e -- src/backend/polaris/tests/electron/full-chain-audit.spec.ts"
+      status: new
+  manual_check:
+    - "Inspect Electron PM command log and confirm --timeout 300 for settings.llm.timeout=300"
+    - "Verify Director code panel receives fileEditEvents after PM dispatches tasks"
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-06-02"

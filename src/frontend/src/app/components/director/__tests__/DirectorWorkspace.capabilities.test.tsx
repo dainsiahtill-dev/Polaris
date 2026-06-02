@@ -300,6 +300,50 @@ describe.sequential('Director capability desktop integration', () => {
     expect(screen.getByTestId('director-delete-capability')).toHaveTextContent('delete_files blocked');
   });
 
+  it('renders realtime file edits and diff details in the code view', async () => {
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+        fileEditEvents={[
+          {
+            id: 'file-1',
+            filePath: 'src/app.ts',
+            operation: 'modify',
+            contentSize: 128,
+            taskId: 'director-task-1',
+            patch: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new',
+            timestamp: '2026-06-02T00:00:00.000Z',
+          },
+          {
+            id: 'file-2',
+            filePath: 'src/new.ts',
+            operation: 'create',
+            contentSize: 32,
+            taskId: 'director-task-1',
+            patch: 'export const value = 1;\n',
+            timestamp: '2026-06-02T00:00:01.000Z',
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('director-nav-代码'));
+
+    expect(await screen.findByText('实时代码变更')).toBeInTheDocument();
+    expect(screen.getByText('2 个文件')).toBeInTheDocument();
+    expect(screen.getByText('src/app.ts')).toBeInTheDocument();
+    expect(screen.getByText('src/new.ts')).toBeInTheDocument();
+    expect(screen.getAllByText('创建').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('修改').length).toBeGreaterThanOrEqual(1);
+
+    fireEvent.click(screen.getByText('src/app.ts'));
+    expect(screen.getByTestId('real-time-file-diff')).toBeInTheDocument();
+  });
+
   it('renders Director readiness diagnostics from the backend route', async () => {
     serviceMocks.getDirectorDiagnostics.mockResolvedValueOnce({
       ok: true,

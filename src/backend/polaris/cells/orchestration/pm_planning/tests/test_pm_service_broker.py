@@ -273,13 +273,26 @@ class TestPMServiceExecutionBroker:
         self,
         mock_settings: MagicMock,
     ) -> None:
-        """PM planning should not disable the LLM timeout when settings.timeout is unset."""
+        """PM planning should honor the configured LLM timeout when settings.timeout is unset."""
         service = PMService(settings=mock_settings)
 
         cmd = service._build_command(loop_mode=False)
         timeout_index = cmd.index("--timeout") + 1
 
-        assert cmd[timeout_index] == "60"
+        assert cmd[timeout_index] == "300"
+
+    def test_build_command_clamps_oversized_llm_timeout(
+        self,
+        mock_settings: MagicMock,
+    ) -> None:
+        """PM planning keeps the LLM timeout bounded for process-level planning SLA."""
+        mock_settings.llm.timeout = 900
+        service = PMService(settings=mock_settings)
+
+        cmd = service._build_command(loop_mode=False)
+        timeout_index = cmd.index("--timeout") + 1
+
+        assert cmd[timeout_index] == "600"
 
     def test_build_command_lifts_codex_pm_planning_timeout(
         self,

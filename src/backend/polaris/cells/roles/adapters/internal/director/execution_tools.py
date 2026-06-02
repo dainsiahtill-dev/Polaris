@@ -245,7 +245,7 @@ class DirectorToolExecutor:
                 "ok": True,
                 "file": rel_path,
                 "replacements": int(replace_result.get("replacements") or 1),
-                "broadcast_ok": self._message_bus is not None,
+                "broadcast_ok": bool(replace_result.get("broadcast_ok")),
             }
         except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}

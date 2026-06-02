@@ -14,11 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from polaris.kernelone.events.file_event_broadcaster import (
-    broadcast_file_written,
-    calculate_patch,
-)
-from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.events.file_event_broadcaster import write_file_with_broadcast
 
 from .helpers import (
     _DEFAULT_TASK_LEASE_TTL_SECONDS,
@@ -806,16 +802,16 @@ def _apply_deterministic_typescript_reexport_repair(
                 new_text = module_text.rstrip() + "\n" + export_line + "\n"
                 rel_module = module_path.relative_to(workspace_path).as_posix()
                 message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-                broadcast_file_written(
+                write_result = write_file_with_broadcast(
+                    workspace=str(workspace_path),
                     file_path=rel_module,
-                    operation="modify",
-                    content_size=len(new_text.encode("utf-8")),
-                    task_id=task_id,
-                    patch=calculate_patch(module_text, new_text),
+                    content=new_text,
                     message_bus=message_bus,
                     worker_id="director",
+                    task_id=task_id,
                 )
-                write_text_atomic(str(module_path), new_text, encoding="utf-8")
+                if not bool(write_result.get("ok")):
+                    continue
                 with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
                     adapter._update_task_progress(task_id, "executing", current_file=rel_module)
                 return [
@@ -828,6 +824,9 @@ def _apply_deterministic_typescript_reexport_repair(
                             "file": rel_module,
                             "symbol": symbol,
                             "reexport": export_line,
+                            "bytes_written": int(write_result.get("bytes") or len(new_text.encode("utf-8"))),
+                            "operation": str(write_result.get("operation") or "modify"),
+                            "broadcast_ok": bool(write_result.get("broadcast_ok")),
                         },
                     }
                 ]

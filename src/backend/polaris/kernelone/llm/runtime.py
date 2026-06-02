@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
+import threading
+import time
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from typing import Any
 
@@ -163,6 +166,48 @@ def _strict_role_binding_enabled(environ: Mapping[str, str] | None = None) -> bo
         if raw:
             return raw == "strict"
     return False
+
+
+def _invoke_provider_with_timeout(
+    provider_instance: Any,
+    prompt: str,
+    model: str,
+    invoke_cfg: dict[str, Any],
+    timeout_seconds: int,
+) -> tuple[bool, Any, str, int]:
+    """Invoke a synchronous provider with a caller-owned wall-clock timeout."""
+
+    started_at = time.monotonic()
+    result_queue: queue.Queue[tuple[bool, Any, str]] = queue.Queue(maxsize=1)
+
+    def _target() -> None:
+        try:
+            result = provider_instance.invoke(prompt, model, invoke_cfg)
+            result_queue.put(
+                (
+                    bool(getattr(result, "ok", False)),
+                    result,
+                    str(getattr(result, "error", "") or ""),
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            result_queue.put((False, None, str(exc)))
+
+    worker = threading.Thread(
+        target=_target,
+        name=f"llm-provider-invoke-{model[:32] or 'unknown'}",
+        daemon=True,
+    )
+    worker.start()
+    worker.join(max(1, int(timeout_seconds)))
+    elapsed_ms = int((time.monotonic() - started_at) * 1000)
+    if worker.is_alive():
+        return False, None, f"provider_invoke_timeout:{int(timeout_seconds)}s", elapsed_ms
+    try:
+        ok, result, error = result_queue.get_nowait()
+    except queue.Empty:
+        return False, None, "provider_invoke_failed:no_result", elapsed_ms
+    return ok, result, error, elapsed_ms
 
 
 def resolve_provider_api_key(
@@ -352,23 +397,21 @@ def invoke_role_runtime_provider(
     def _invoke_with_model(
         invoke_model: str,
         invoke_cfg: dict[str, Any],
-    ) -> tuple[bool, Any, str]:
-        """Invoke provider and return (ok, result, error)."""
-        try:
-            result = provider_instance.invoke(str(prompt or ""), invoke_model, invoke_cfg)
-            return (
-                bool(getattr(result, "ok", False)),
-                result,
-                str(getattr(result, "error", "") or ""),
-            )
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return False, None, str(exc)
+    ) -> tuple[bool, Any, str, int]:
+        """Invoke provider and return (ok, result, error, elapsed_ms)."""
+        return _invoke_provider_with_timeout(
+            provider_instance,
+            str(prompt or ""),
+            invoke_model,
+            invoke_cfg,
+            effective_timeout,
+        )
 
     # Primary invocation
-    ok, result, error = _invoke_with_model(model, invoke_cfg)
+    ok, result, error, elapsed_ms = _invoke_with_model(model, invoke_cfg)
 
     # Fallback: retry with fallback_model on failure (no infinite fallback loop)
-    if not ok and fallback_model and fallback_model != model:
+    if not ok and not error.startswith("provider_invoke_timeout:") and fallback_model and fallback_model != model:
         logger.debug(
             "invoke_role_runtime_provider fallback: role=%s primary=%s failed, retrying with fallback_model=%s",
             role,
@@ -376,7 +419,7 @@ def invoke_role_runtime_provider(
             fallback_model,
         )
         adapter.record_provider_failure(resolved_type)
-        ok, result, error = _invoke_with_model(fallback_model, invoke_cfg)
+        ok, result, error, elapsed_ms = _invoke_with_model(fallback_model, invoke_cfg)
         if ok:
             model = fallback_model  # use fallback model in result
 
@@ -390,7 +433,7 @@ def invoke_role_runtime_provider(
         provider_id=provider_id,
         provider_type=resolved_type,
         model=model,
-        latency_ms=int(getattr(result, "latency_ms", 0) or 0) if result else 0,
+        latency_ms=int(getattr(result, "latency_ms", 0) or elapsed_ms) if result else elapsed_ms,
         error=error,
         usage=getattr(result, "usage", None) if result else None,
     )

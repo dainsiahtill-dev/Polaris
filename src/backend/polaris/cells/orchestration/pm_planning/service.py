@@ -1018,9 +1018,7 @@ class PMService:
         llm_config = getattr(self._settings, "llm", None)
         llm_timeout = _parse_positive_int(getattr(llm_config, "timeout", 0))
         if llm_timeout > 0:
-            return self._apply_planning_timeout_floor(
-                _clamp_pm_planning_timeout(min(llm_timeout, _DEFAULT_PM_PLANNING_TIMEOUT_SECONDS))
-            )
+            return self._apply_planning_timeout_floor(_clamp_pm_planning_timeout(llm_timeout))
 
         return self._apply_planning_timeout_floor(_DEFAULT_PM_PLANNING_TIMEOUT_SECONDS)
 

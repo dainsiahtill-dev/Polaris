@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import sys
+import time
 import types
 import warnings
 from types import SimpleNamespace
@@ -140,6 +141,53 @@ def test_kernel_runtime_provider_invocation_forces_workspace_working_dir(tmp_pat
 
     assert result.ok is True
     assert provider.seen_config["working_dir"] == str(tmp_path)
+
+
+def test_kernel_runtime_provider_invocation_times_out_slow_provider(tmp_path) -> None:
+    class _SlowProvider:
+        def invoke(self, _prompt: str, _model: str, _config: dict[str, object]) -> SimpleNamespace:
+            time.sleep(2)
+            return SimpleNamespace(ok=True, output="late", error="", latency_ms=2000, usage={})
+
+    class _Adapter:
+        def __init__(self) -> None:
+            self.failures: list[str] = []
+            self.provider = _SlowProvider()
+
+        def get_role_model(self, _role: str) -> tuple[str, str]:
+            return "slow-provider", "slow-model"
+
+        def load_provider_config(self, *, workspace: str, provider_id: str) -> dict[str, object]:
+            del workspace, provider_id
+            return {"type": "slow"}
+
+        def get_provider_instance(self, provider_type: str) -> _SlowProvider | None:
+            return self.provider if provider_type == "slow" else None
+
+        def record_provider_failure(self, provider_type: str) -> None:
+            self.failures.append(provider_type)
+
+    adapter = _Adapter()
+    started_at = time.monotonic()
+
+    result = invoke_kernel_role_runtime_provider(
+        role="pm",
+        workspace=str(tmp_path),
+        prompt="plan the work",
+        fallback_model="fallback-model",
+        timeout=1,
+        adapter=adapter,
+        blocked_provider_types=None,
+    )
+
+    elapsed = time.monotonic() - started_at
+    assert elapsed < 1.8
+    assert result.attempted is True
+    assert result.ok is False
+    assert result.error == "provider_invoke_timeout:1s"
+    assert result.output == ""
+    assert result.latency_ms >= 900
+    assert adapter.failures == ["slow"]
 
 
 @pytest.mark.asyncio
