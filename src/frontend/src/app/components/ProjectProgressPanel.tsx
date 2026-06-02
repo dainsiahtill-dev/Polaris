@@ -13,6 +13,7 @@ import { StatusBadge } from '@/app/components/ui/badge';
 import type { StatusBadgeColor } from '@/app/components/ui/badge';
 import { PhaseIndicator, QualityGateCard, ExecutionLog } from './pm';
 import type { QualityGateData, LogEntry, Phase } from './pm';
+import type { DialogueEvent } from './DialoguePanel';
 
 
 interface ProjectProgressPanelProps {
@@ -33,6 +34,7 @@ interface ProjectProgressPanelProps {
   // 新增：详细状态
   qualityGate?: QualityGateData | null;
   executionLogs?: LogEntry[];
+  dialogueEvents?: DialogueEvent[];
   currentPhase?: string;
   directorTaskSource?: 'realtime' | 'snapshot';
   directorRealtimeConnected?: boolean;
@@ -118,6 +120,26 @@ function normalizeQaEvidenceGrade(value: unknown): QaEvidenceGrade {
   return 'unknown';
 }
 
+type QaEvidenceCandidate = LogEntry | DialogueEvent;
+
+function qaEvidenceCandidateMeta(entry: QaEvidenceCandidate): Record<string, unknown> {
+  const meta = (entry as { meta?: unknown }).meta;
+  return isRecord(meta) ? meta : {};
+}
+
+function qaEvidenceCandidateMessage(entry: QaEvidenceCandidate): string {
+  const message = (entry as { message?: unknown }).message;
+  if (typeof message === 'string') return message;
+  const content = (entry as { content?: unknown }).content;
+  return typeof content === 'string' ? content : '';
+}
+
+function qaEvidenceCandidatePhase(entry: QaEvidenceCandidate): string {
+  const refs = (entry as { refs?: unknown }).refs;
+  if (!isRecord(refs)) return '';
+  return toText(refs.phase).toLowerCase();
+}
+
 function qaEvidenceColor(grade: QaEvidenceGrade): StatusBadgeColor {
   if (grade === 'real_command_passed') return 'success';
   if (grade === 'structural_fallback_passed' || grade.startsWith('not_run')) return 'warning';
@@ -125,20 +147,27 @@ function qaEvidenceColor(grade: QaEvidenceGrade): StatusBadgeColor {
   return 'default';
 }
 
-export function extractLatestQaEvidence(logs: LogEntry[]): QaEvidenceSummary | null {
-  const candidates = [...logs].reverse();
+export function extractLatestQaEvidence(logs: LogEntry[], dialogueEvents: DialogueEvent[] = []): QaEvidenceSummary | null {
+  const candidates = [...logs, ...dialogueEvents].reverse();
   for (const entry of candidates) {
-    const meta = isRecord(entry.meta) ? entry.meta : {};
+    const meta = qaEvidenceCandidateMeta(entry);
     const grade = normalizeQaEvidenceGrade(meta.evidence_grade);
     const reason = toText(meta.reason);
-    const hasQaEvidence = grade !== 'unknown' || reason.startsWith('integration_qa_') || entry.message.includes('integration_qa');
+    const message = qaEvidenceCandidateMessage(entry);
+    const phase = qaEvidenceCandidatePhase(entry);
+    const hasQaEvidence =
+      grade !== 'unknown'
+      || reason.startsWith('integration_qa_')
+      || phase === 'integration_qa'
+      || message.includes('integration_qa')
+      || message.includes('Project integration QA');
     if (!hasQaEvidence) {
       continue;
     }
     return {
       grade,
-      reason: reason || toText(entry.message),
-      summary: toText(meta.summary) || toText(entry.message),
+      reason: reason || toText(message),
+      summary: toText(meta.summary) || toText(message),
       passed: typeof meta.passed === 'boolean' ? meta.passed : null,
     };
   }
@@ -163,6 +192,7 @@ export function ProjectProgressPanel({
   // 新增
   qualityGate,
   executionLogs = [],
+  dialogueEvents = [],
   currentPhase = 'idle',
   directorTaskSource = 'snapshot',
   directorRealtimeConnected = false,
@@ -308,7 +338,7 @@ export function ProjectProgressPanel({
         ? 'Director live queue 为空'
         : 'Director live queue 已断开'
       : 'Director queue 待同步';
-  const qaEvidence = extractLatestQaEvidence(executionLogs);
+  const qaEvidence = extractLatestQaEvidence(executionLogs, dialogueEvents);
 
   return (
     <div

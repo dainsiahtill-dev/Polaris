@@ -3015,7 +3015,14 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         }
       }
 
-      const existingQaArtifact = await tryRuntimeArtifact(window, "results/integration_qa.result.json");
+      const qaArtifactMinMtimeMs = shouldRunFullChainPhase(startPhase, "director")
+        ? startEpochSeconds * 1000
+        : undefined;
+      const existingQaArtifact = await tryRuntimeArtifact(
+        window,
+        "results/integration_qa.result.json",
+        qaArtifactMinMtimeMs ? { minMtimeMs: qaArtifactMinMtimeMs } : undefined,
+      );
       const existingQa = existingQaArtifact
         ? await readJsonFile<IntegrationQaArtifact>(existingQaArtifact.artifactPath)
         : null;
@@ -3028,7 +3035,12 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
           body: { run_id: `full-chain-qa-${Date.now()}` },
         });
       }
-      const qaArtifact = await waitForRuntimeArtifact(window, "results/integration_qa.result.json", 120_000);
+      const qaArtifact = await waitForRuntimeArtifact(
+        window,
+        "results/integration_qa.result.json",
+        120_000,
+        qaArtifactMinMtimeMs ? { minMtimeMs: qaArtifactMinMtimeMs } : undefined,
+      );
       runtimeRoot = qaArtifact.runtimeRoot;
       const qaPath = qaArtifact.artifactPath;
       const qa = await readJsonFile<IntegrationQaArtifact>(qaPath);
@@ -3049,6 +3061,20 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
           `Integration QA PASS must include strong evidence grade; qa=${toPosixPath(qaPath)} summary=${String(qa?.summary || "")}`,
         ).toBe("real_command_passed");
         audit.acceptance_results.qa_phase = "PASS";
+
+        let qaEvidenceBadge = window.getByTestId("qa-evidence-grade");
+        if (!await qaEvidenceBadge.isVisible({ timeout: 5_000 }).catch(() => false)) {
+          await reloadRendererAfterWorkspaceSwitch(window);
+          qaEvidenceBadge = window.getByTestId("qa-evidence-grade");
+        }
+        await expect(
+          qaEvidenceBadge,
+          `QA phase PASS must be recoverable in the desktop runtime panel; qa=${toPosixPath(qaPath)}`,
+        ).toBeVisible({ timeout: 60_000 });
+        await expect(qaEvidenceBadge).toContainText("real command passed");
+        await expect(qaEvidenceBadge).toContainText("integration_qa_passed");
+        const qaShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.qa`);
+        audit.evidence_paths.screenshots.push(toPosixPath(qaShot.pngPath), toPosixPath(qaShot.reviewJpgPath));
       } else {
         audit.issues_fixed.push({
           issue: `round_${round}_qa_reason_${latestQaReason || "unknown"}`,

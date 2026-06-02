@@ -143,6 +143,10 @@ export function normalizeDialogueEvent(raw: Record<string, unknown>): DialogueEv
     raw.refs && typeof raw.refs === 'object'
       ? (raw.refs as DialogueEvent['refs'])
       : undefined;
+  const meta =
+    raw.meta && typeof raw.meta === 'object' && !Array.isArray(raw.meta)
+      ? (raw.meta as Record<string, unknown>)
+      : undefined;
   return {
     seq,
     eventId: eventId || undefined,
@@ -151,6 +155,7 @@ export function normalizeDialogueEvent(raw: Record<string, unknown>): DialogueEv
     content: content || '(empty)',
     timestamp,
     refs,
+    meta,
   };
 }
 

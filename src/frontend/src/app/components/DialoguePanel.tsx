@@ -25,6 +25,7 @@ export interface DialogueEvent {
     task_id?: string;
     phase?: string;
   };
+  meta?: Record<string, unknown>;
 }
 
 interface DialoguePanelProps {

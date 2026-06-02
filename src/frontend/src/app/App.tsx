@@ -1183,6 +1183,7 @@ function AppContent() {
                       // 新增：详细状态
                       qualityGate={qualityGate}
                       executionLogs={executionLogs}
+                      dialogueEvents={dialogueEvents}
                       currentPhase={effectiveCurrentPhase}
                     />
                   </div>
