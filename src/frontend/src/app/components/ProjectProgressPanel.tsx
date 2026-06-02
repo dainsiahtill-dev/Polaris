@@ -10,6 +10,7 @@ import {
 import { PlanBoard } from './PlanBoard';
 import { UI_TERMS } from '@/app/constants/uiTerminology';
 import { StatusBadge } from '@/app/components/ui/badge';
+import type { StatusBadgeColor } from '@/app/components/ui/badge';
 import { PhaseIndicator, QualityGateCard, ExecutionLog } from './pm';
 import type { QualityGateData, LogEntry, Phase } from './pm';
 
@@ -65,6 +66,84 @@ const isTaskActive = (task: PmTask): boolean => {
 const taskKey = (task: PmTask): string => toText(task.id) || toText(task.title) || toText(task.goal);
 
 const pickTaskSummary = (task: PmTask): string => toText(task.summary) || toText(task.title) || toText(task.goal);
+
+type QaEvidenceGrade =
+  | 'real_command_passed'
+  | 'real_command_failed'
+  | 'structural_fallback_passed'
+  | 'structural_fallback_failed'
+  | 'blocked_missing_dependencies'
+  | 'not_run'
+  | 'not_run_docs_only'
+  | 'qa_error'
+  | 'unknown';
+
+type QaEvidenceSummary = {
+  grade: QaEvidenceGrade;
+  reason: string;
+  summary: string;
+  passed: boolean | null;
+};
+
+const QA_EVIDENCE_LABELS: Record<QaEvidenceGrade, string> = {
+  real_command_passed: 'real command passed',
+  real_command_failed: 'real command failed',
+  structural_fallback_passed: 'structural fallback',
+  structural_fallback_failed: 'fallback failed',
+  blocked_missing_dependencies: 'deps missing',
+  not_run: 'not run',
+  not_run_docs_only: 'docs only',
+  qa_error: 'qa error',
+  unknown: 'unknown',
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function normalizeQaEvidenceGrade(value: unknown): QaEvidenceGrade {
+  const grade = String(value || '').trim().toLowerCase();
+  if (
+    grade === 'real_command_passed'
+    || grade === 'real_command_failed'
+    || grade === 'structural_fallback_passed'
+    || grade === 'structural_fallback_failed'
+    || grade === 'blocked_missing_dependencies'
+    || grade === 'not_run'
+    || grade === 'not_run_docs_only'
+    || grade === 'qa_error'
+  ) {
+    return grade;
+  }
+  return 'unknown';
+}
+
+function qaEvidenceColor(grade: QaEvidenceGrade): StatusBadgeColor {
+  if (grade === 'real_command_passed') return 'success';
+  if (grade === 'structural_fallback_passed' || grade.startsWith('not_run')) return 'warning';
+  if (grade === 'blocked_missing_dependencies' || grade.endsWith('_failed') || grade === 'qa_error') return 'error';
+  return 'default';
+}
+
+export function extractLatestQaEvidence(logs: LogEntry[]): QaEvidenceSummary | null {
+  const candidates = [...logs].reverse();
+  for (const entry of candidates) {
+    const meta = isRecord(entry.meta) ? entry.meta : {};
+    const grade = normalizeQaEvidenceGrade(meta.evidence_grade);
+    const reason = toText(meta.reason);
+    const hasQaEvidence = grade !== 'unknown' || reason.startsWith('integration_qa_') || entry.message.includes('integration_qa');
+    if (!hasQaEvidence) {
+      continue;
+    }
+    return {
+      grade,
+      reason: reason || toText(entry.message),
+      summary: toText(meta.summary) || toText(entry.message),
+      passed: typeof meta.passed === 'boolean' ? meta.passed : null,
+    };
+  }
+  return null;
+}
 
 export function ProjectProgressPanel({
   tasks,
@@ -229,6 +308,7 @@ export function ProjectProgressPanel({
         ? 'Director live queue 为空'
         : 'Director live queue 已断开'
       : 'Director queue 待同步';
+  const qaEvidence = extractLatestQaEvidence(executionLogs);
 
   return (
     <div
@@ -365,6 +445,22 @@ export function ProjectProgressPanel({
           <QualityGateCard data={qualityGate} />
         </div>
       )}
+
+      {qaEvidence ? (
+        <div
+          data-testid="qa-evidence-grade"
+          className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-text-muted"
+          title={qaEvidence.summary || undefined}
+        >
+          <span className="font-medium text-text-main">QA evidence</span>
+          <StatusBadge color={qaEvidenceColor(qaEvidence.grade)} variant="outlined" className="font-mono">
+            {QA_EVIDENCE_LABELS[qaEvidence.grade]}
+          </StatusBadge>
+          {qaEvidence.reason ? (
+            <span className="font-mono text-text-dim">{qaEvidence.reason}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* 执行日志 */}
       {pmRunning && executionLogs.length > 0 && (

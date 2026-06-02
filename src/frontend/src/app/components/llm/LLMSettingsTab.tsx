@@ -517,7 +517,7 @@ function DeepTestPanel({
         </div>
       </div>
 
-      <div className="min-h-0 min-w-0 flex-1 basis-0 overflow-hidden">
+      <div className="min-h-[360px] min-w-0 flex-1 basis-0 overflow-hidden">
         {interviewMode === 'interactive' ? (
           <InteractiveInterviewHall
             roles={roles}
@@ -780,7 +780,7 @@ function LLMSettingsTabInner({
   const isInteractiveStreamPanel = Boolean(testPanel.runConfig?.suites?.includes('interactive_stream_view'));
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar">
       <TabNavigation
         globalReadiness={globalReadiness}
         factoryReadiness={factoryReadiness}
@@ -805,7 +805,7 @@ function LLMSettingsTabInner({
       )}
 
       <div
-        className={`grid min-h-0 min-w-0 flex-1 basis-0 gap-3 overflow-hidden ${
+        className={`grid min-h-[420px] min-w-0 flex-1 basis-0 gap-3 overflow-visible xl:overflow-hidden ${
           testPanelProviderId
             ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(340px,420px)]'
             : 'grid-cols-1'

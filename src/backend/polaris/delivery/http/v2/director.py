@@ -40,6 +40,7 @@ from polaris.cells.runtime.projection.public.service import (
     merge_director_status,
     select_task_rows_from_projection,
 )
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.http.dependencies import (
     get_director_service as get_director_service_dep,
     require_auth,
@@ -213,6 +214,142 @@ def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
             }
         )
     return fallback_rows
+
+
+def _contract_backed_task_rows(
+    task_rows: list[dict[str, Any]],
+    *,
+    workspace: str,
+    cache_root: str,
+) -> list[dict[str, Any]]:
+    """Use the PM contract as Director diagnostics' full task universe."""
+
+    contract_rows = build_workflow_task_rows({}, workspace=workspace, cache_root=cache_root)
+    contract_rows = [dict(row) for row in contract_rows if isinstance(row, dict)]
+    if not contract_rows:
+        return task_rows
+
+    runtime_by_token: dict[str, dict[str, Any]] = {}
+    for row in task_rows:
+        task_id = _task_id_from_row(row)
+        details = _task_details(row)
+        for token in _task_identity_tokens(task_id, details):
+            runtime_by_token.setdefault(token, row)
+
+    merged_rows: list[dict[str, Any]] = []
+    matched_runtime_ids: set[int] = set()
+    for contract in contract_rows:
+        contract_id = str(contract.get("id") or contract.get("task_id") or "").strip()
+        metadata_raw = contract.get("metadata")
+        metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+        contract_tokens = {
+            token
+            for token in (
+                contract_id,
+                str(contract.get("pm_task_id") or "").strip(),
+                str(metadata.get("pm_task_id") or "").strip(),
+                str(metadata.get("source_task_id") or "").strip(),
+                str(metadata.get("external_task_id") or "").strip(),
+            )
+            if token
+        }
+        runtime_row = next(
+            (runtime_by_token.get(token) for token in contract_tokens if token in runtime_by_token), None
+        )
+        if runtime_row is None:
+            normalized = dict(contract)
+            normalized.setdefault("status", "PENDING")
+            normalized_metadata_raw = normalized.get("metadata")
+            normalized_metadata: dict[str, Any] = (
+                normalized_metadata_raw if isinstance(normalized_metadata_raw, dict) else {}
+            )
+            normalized_metadata.setdefault("pm_task_id", contract_id)
+            normalized["metadata"] = normalized_metadata
+            merged_rows.append(normalized)
+            continue
+
+        matched_runtime_ids.add(id(runtime_row))
+        merged = dict(contract)
+        merged.update(runtime_row)
+        runtime_metadata_raw = runtime_row.get("metadata")
+        runtime_metadata: dict[str, Any] = runtime_metadata_raw if isinstance(runtime_metadata_raw, dict) else {}
+        contract_metadata_raw = contract.get("metadata")
+        contract_metadata: dict[str, Any] = contract_metadata_raw if isinstance(contract_metadata_raw, dict) else {}
+        merged_metadata = dict(contract_metadata)
+        merged_metadata.update(runtime_metadata)
+        if contract_id:
+            merged_metadata.setdefault("pm_task_id", contract_id)
+        merged["metadata"] = merged_metadata
+        for key in ("dependencies", "depends_on", "blocked_by", "blockedBy"):
+            if not merged.get(key) and contract.get(key):
+                merged[key] = contract.get(key)
+        merged_rows.append(merged)
+
+    for row in task_rows:
+        if id(row) not in matched_runtime_ids:
+            merged_rows.append(row)
+    return merged_rows
+
+
+def _runtime_backed_task_rows(
+    task_rows: list[dict[str, Any]],
+    *,
+    workspace: str,
+) -> list[dict[str, Any]]:
+    """Overlay canonical task runtime rows so diagnostics honor lease expiry."""
+
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return task_rows
+
+    try:
+        runtime_rows = TaskRuntimeService(workspace_token).list_task_rows()
+    except (RuntimeError, ValueError, OSError):
+        logger.debug("Director diagnostics runtime task overlay failed for workspace=%s", workspace, exc_info=True)
+        return task_rows
+
+    runtime_rows = [dict(row) for row in runtime_rows if isinstance(row, dict)]
+    if not runtime_rows:
+        return task_rows
+
+    runtime_by_token: dict[str, dict[str, Any]] = {}
+    for runtime_row in runtime_rows:
+        runtime_task_id = _task_id_from_row(runtime_row)
+        runtime_details = _task_details(runtime_row)
+        for token in _task_identity_tokens(runtime_task_id, runtime_details):
+            runtime_by_token.setdefault(token, runtime_row)
+
+    merged_rows: list[dict[str, Any]] = []
+    for row in task_rows:
+        task_id = _task_id_from_row(row)
+        details = _task_details(row)
+        runtime_row = next(
+            (
+                runtime_by_token.get(token)
+                for token in _task_identity_tokens(task_id, details)
+                if token in runtime_by_token
+            ),
+            None,
+        )
+        if runtime_row is None:
+            merged_rows.append(row)
+            continue
+
+        merged = dict(row)
+        merged.update(runtime_row)
+        row_metadata_raw = row.get("metadata")
+        row_metadata: dict[str, Any] = row_metadata_raw if isinstance(row_metadata_raw, dict) else {}
+        runtime_metadata_raw = runtime_row.get("metadata")
+        runtime_metadata: dict[str, Any] = runtime_metadata_raw if isinstance(runtime_metadata_raw, dict) else {}
+        metadata = dict(row_metadata)
+        metadata.update(runtime_metadata)
+        merged["metadata"] = metadata
+        for key in ("dependencies", "depends_on", "blocked_by", "blockedBy"):
+            if not merged.get(key) and row.get(key):
+                merged[key] = row.get(key)
+        merged_rows.append(merged)
+
+    return merged_rows
 
 
 def _task_row_matches_id(row: dict[str, Any], task_id: str) -> bool:
@@ -835,6 +972,28 @@ def _load_blueprint_payload_by_id(workspace: str, blueprint_id: str) -> dict[str
     return payload if isinstance(payload, dict) else None
 
 
+def _load_all_blueprint_payloads(workspace: str) -> list[dict[str, Any]]:
+    if not str(workspace or "").strip():
+        return []
+    try:
+        persistence = BlueprintPersistence(workspace, ensure_directory=False)
+        blueprint_ids = persistence.list_all()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        logger.debug("Director blueprint persistence scan failed for workspace=%s", workspace, exc_info=True)
+        return []
+
+    payloads: list[dict[str, Any]] = []
+    for blueprint_id in blueprint_ids:
+        try:
+            payload = persistence.load(str(blueprint_id or "").strip())
+        except (OSError, RuntimeError, TypeError, ValueError):
+            logger.debug("Director blueprint payload scan failed for blueprint_id=%s", blueprint_id, exc_info=True)
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return payloads
+
+
 def _resolve_blueprint_path(workspace: str, cache_root: str, value: str) -> Path | None:
     token = str(value or "").strip()
     if not token:
@@ -877,12 +1036,18 @@ def _blueprint_artifact_state(
     cache_root: str,
     task_id: str,
     details: dict[str, Any],
+    blueprint_payloads: list[dict[str, Any]] | None = None,
 ) -> Literal["valid", "missing", "invalid"]:
     blueprint_id, blueprint_path, runtime_blueprint_path = _blueprint_reference_values(details)
+    identities = _task_identity_tokens(task_id, details)
     if not any((blueprint_id, blueprint_path, runtime_blueprint_path)):
+        available_payloads = (
+            blueprint_payloads if blueprint_payloads is not None else _load_all_blueprint_payloads(workspace)
+        )
+        if any(_blueprint_payload_matches_task(payload, identities) for payload in available_payloads):
+            return "valid"
         return "missing"
 
-    identities = _task_identity_tokens(task_id, details)
     payloads: list[dict[str, Any]] = []
     id_payload = _load_blueprint_payload_by_id(workspace, blueprint_id)
     if id_payload is not None:
@@ -919,13 +1084,35 @@ def _task_diagnostics_from_rows(
     blocked_task_ids: list[str] = []
     running_task_ids: list[str] = []
     requires_blueprint_evidence = source == "workflow"
+    blueprint_payloads = _load_all_blueprint_payloads(workspace) if requires_blueprint_evidence else []
     completed_identity_tokens: set[str] = set()
+    blocking_identity_tokens: set[str] = set()
+    row_details: list[tuple[str, dict[str, Any]]] = []
 
     for row in rows:
         task_id = _task_id_from_row(row)
         details = _task_details(row)
-        if str(details["status"]) == "COMPLETED":
+        row_details.append((task_id, details))
+        status_token = str(details["status"])
+        if status_token == "COMPLETED":
             completed_identity_tokens.update(_task_identity_tokens(task_id, details))
+        elif status_token in {"FAILED", "BLOCKED", "CANCELLED"}:
+            blocking_identity_tokens.update(_task_identity_tokens(task_id, details))
+
+    changed = True
+    while changed:
+        changed = False
+        for task_id, details in row_details:
+            status_token = str(details["status"])
+            if status_token != "PENDING":
+                continue
+            dependencies = details["dependencies"]
+            if any(str(dependency or "").strip() in blocking_identity_tokens for dependency in dependencies):
+                identities = _task_identity_tokens(task_id, details)
+                new_tokens = identities.difference(blocking_identity_tokens)
+                if new_tokens:
+                    blocking_identity_tokens.update(new_tokens)
+                    changed = True
 
     for row in rows:
         task_id = _task_id_from_row(row)
@@ -938,18 +1125,27 @@ def _task_diagnostics_from_rows(
                 cache_root=cache_root,
                 task_id=task_id,
                 details=details,
+                blueprint_payloads=blueprint_payloads,
             )
             if requires_blueprint_evidence and task_id
             else "valid"
         )
 
         if status_token == "PENDING":
-            pending += 1
             unmet_dependencies = [
                 str(dependency or "").strip()
                 for dependency in dependencies
                 if str(dependency or "").strip() and str(dependency or "").strip() not in completed_identity_tokens
             ]
+            blocking_dependencies = [
+                dependency for dependency in unmet_dependencies if dependency in blocking_identity_tokens
+            ]
+            if blocking_dependencies:
+                blocked += 1
+                if task_id:
+                    blocked_task_ids.append(task_id)
+                continue
+            pending += 1
             if not unmet_dependencies and task_id:
                 if blueprint_state == "missing":
                     missing_blueprint_task_ids.append(task_id)
@@ -1210,19 +1406,21 @@ def _director_diagnostic_issues(
             issues.append("director_ready_tasks_missing_blueprints")
         if task_section.invalid_blueprint_task_ids:
             issues.append("director_ready_tasks_invalid_blueprints")
+    if task_section.blocked > 0:
+        issues.append("director_tasks_blocked")
+    if task_section.failed > 0:
+        issues.append("director_tasks_failed")
     if (
         task_section.total > 0
         and not task_section.missing_blueprint_task_ids
         and not task_section.invalid_blueprint_task_ids
+        and task_section.blocked == 0
+        and task_section.failed == 0
         and task_section.ready_to_execute == 0
         and task_section.running == 0
         and not status_section.running
     ):
         issues.append("director_no_ready_tasks")
-    if task_section.blocked > 0:
-        issues.append("director_tasks_blocked")
-    if task_section.failed > 0:
-        issues.append("director_tasks_failed")
     if worker_section.error:
         issues.append("director_workers_unavailable")
     if worker_section.total == 0:
@@ -1260,10 +1458,19 @@ def _director_execution_blockers(
             blockers.append("director_ready_tasks_missing_blueprints")
         if task_section.invalid_blueprint_task_ids:
             blockers.append("director_ready_tasks_invalid_blueprints")
+    has_runnable_or_running_work = (
+        task_section.ready_to_execute > 0 or task_section.running > 0 or status_section.running
+    )
+    if not has_runnable_or_running_work and task_section.blocked > 0:
+        blockers.append("director_tasks_blocked")
+    if not has_runnable_or_running_work and task_section.failed > 0:
+        blockers.append("director_tasks_failed")
     if (
         task_section.total > 0
         and not task_section.missing_blueprint_task_ids
         and not task_section.invalid_blueprint_task_ids
+        and task_section.blocked == 0
+        and task_section.failed == 0
         and task_section.ready_to_execute == 0
     ):
         blockers.append("director_no_ready_tasks")
@@ -1285,6 +1492,8 @@ async def _build_director_diagnostics(
     state = getattr(request.app.state, "app_state", None) or request.app.state
     settings = settings_with_workspace_override(state.settings, workspace_override or "")
     workspace = active_workspace_value(settings)
+    ramdisk_root = str(getattr(settings, "ramdisk_root", "") or resolve_env_str("ramdisk_root") or "").strip()
+    cache_root = build_cache_root(ramdisk_root, workspace)
 
     status_section = DirectorDiagnosticsStatusSection(
         ok=False,
@@ -1313,6 +1522,9 @@ async def _build_director_diagnostics(
             projection_source=projection_source,
         )
         task_rows = _projection_task_rows(projection)
+        if task_rows:
+            task_rows = _runtime_backed_task_rows(task_rows, workspace=workspace)
+            task_rows = _contract_backed_task_rows(task_rows, workspace=workspace, cache_root=cache_root)
         projected_workers = _worker_rows_from_projection(projection)
         task_source = "workflow" if task_rows else "empty"
     except (RuntimeError, ValueError) as exc:
@@ -1331,10 +1543,9 @@ async def _build_director_diagnostics(
                 error=str(exc),
             )
         else:
+            task_rows = _runtime_backed_task_rows(task_rows, workspace=workspace)
             task_section = _task_diagnostics_from_rows(task_rows, task_source, workspace=workspace, cache_root="")
     else:
-        ramdisk_root = str(getattr(settings, "ramdisk_root", "") or resolve_env_str("ramdisk_root") or "").strip()
-        cache_root = build_cache_root(ramdisk_root, workspace)
         task_section = _task_diagnostics_from_rows(
             task_rows,
             task_source,

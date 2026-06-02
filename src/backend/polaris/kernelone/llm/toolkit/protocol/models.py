@@ -114,6 +114,7 @@ class OperationResult:
     new_hash: str = ""  # Hash of file after change
     old_line_count: int = 0
     new_line_count: int = 0
+    director_policy: dict[str, Any] | None = None
 
     # Audit timestamp
     timestamp: float = field(default_factory=time.time)
@@ -163,6 +164,7 @@ class ApplyReport:
                     "success": r.success,
                     "error_code": r.error_code.value,
                     "changed": r.changed,
+                    **({"director_policy": r.director_policy} if r.director_policy else {}),
                 }
                 for r in self.results
             ],

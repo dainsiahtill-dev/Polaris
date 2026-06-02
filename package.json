@@ -29,6 +29,8 @@
     "pretest:e2e:smoke": "npm run e2e:prepare",
     "test:e2e:runtime": "playwright test -c playwright.electron.config.ts src/backend/polaris/tests/electron/app.spec.ts src/backend/polaris/tests/electron/realtime-visibility.spec.ts",
     "pretest:e2e:runtime": "npm run e2e:prepare",
+    "test:e2e:settings": "playwright test -c playwright.electron.config.ts src/backend/polaris/tests/electron/settings-persistence-window-close.spec.ts",
+    "pretest:e2e:settings": "npm run e2e:prepare",
     "test:e2e:acceptance": "node --env-file-if-exists=.env infrastructure/scripts/run-electron-acceptance-e2e.mjs",
     "pretest:e2e:acceptance": "npm run e2e:prepare",
     "test:e2e:real-flow": "node --env-file-if-exists=.env infrastructure/scripts/run-electron-real-flow-e2e.mjs",

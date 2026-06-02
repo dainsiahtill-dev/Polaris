@@ -153,17 +153,18 @@ class TestValidateLLMConfig:
         assert is_valid is False
         assert any("non-existent" in e.lower() for e in errors)
 
-    def test_validate_rejects_required_role_without_provider_id(self) -> None:
-        """Required role rows must be present with provider_id before saving."""
+    def test_validate_warns_required_role_without_provider_id(self) -> None:
+        """Required role rows without provider_id are saved but reported as not ready."""
         config = {
             "schema_version": 2,
             "providers": {"test": {"type": "ollama"}},
             "roles": {"pm": {"model": "llama3"}},
             "policies": {"required_ready_roles": ["pm"]},
         }
-        is_valid, errors, _ = validate_llm_config(config)
-        assert is_valid is False
-        assert any("missing 'provider_id'" in e for e in errors)
+        is_valid, errors, warnings = validate_llm_config(config)
+        assert is_valid is True
+        assert errors == []
+        assert any("missing 'provider_id'" in warning for warning in warnings)
 
     def test_validate_warns_dangerous_sandbox(self) -> None:
         """Test validate warns about dangerous sandbox mode."""

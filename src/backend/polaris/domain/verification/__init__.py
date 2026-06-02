@@ -9,6 +9,16 @@ Migrated from old Director's multi-layer defense:
 - EvidenceCollector: Detailed evidence for audit
 """
 
+from .director_policy_gate import (
+    DirectorPolicyObject,
+    DirectorWritePolicyVerdict,
+    ForbiddenPathRule,
+    PackageManifestDiff,
+    SectionDiff,
+    diff_package_manifest,
+    parse_agents_write_policy,
+    validate_director_write_policy,
+)
 from .evidence_collector import (
     EvidenceCollector,
     EvidencePackage,
@@ -26,28 +36,27 @@ from .soft_check import SoftCheck, SoftCheckResult, check_missing_targets, detec
 from .write_gate import WriteGate, WriteGateResult, validate_write_scope
 
 __all__ = [
-    # Evidence Collection
+    "DirectorPolicyObject",
+    "DirectorWritePolicyVerdict",
     "EvidenceCollector",
     "EvidencePackage",
     "EvidenceType",
-    # Existence Gate
     "ExistenceGate",
     "FileEvidence",
+    "ForbiddenPathRule",
     "GateResult",
-    # Impact Analysis
     "ImpactAnalyzer",
     "ImpactResult",
     "LLMEvidence",
-    # Progress Delta
+    "PackageManifestDiff",
     "ProgressDelta",
     "ProgressTracker",
     "RiskLevel",
-    # Soft Check
+    "SectionDiff",
     "SoftCheck",
     "SoftCheckResult",
     "ToolEvidence",
     "VerificationEvidence",
-    # Write Gate
     "WriteGate",
     "WriteGateResult",
     "analyze_impact",
@@ -58,5 +67,8 @@ __all__ = [
     "create_evidence_collector",
     "detect_stall",
     "detect_unresolved_imports",
+    "diff_package_manifest",
+    "parse_agents_write_policy",
+    "validate_director_write_policy",
     "validate_write_scope",
 ]

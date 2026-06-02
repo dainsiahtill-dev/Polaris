@@ -153,11 +153,13 @@ class BackendBootstrapper:
             stage = "port_selection"
             config_port = config.get_typed("server.port", int, 0) or 0
             effective_port = request.port if request.port > 0 else config_port
-            port = self._select_port(effective_port)
+            effective_host = request.host or config.get_typed("server.host", str, "127.0.0.1") or "127.0.0.1"
+            port = self._select_port(effective_port, host=effective_host)
 
             # Stage 8: Create server handle
             stage = "server_creation"
             server_handle = await self._create_server(app, request, port)
+            actual_port = int(getattr(server_handle, "port", port) or port)
 
             # Stage 9: Run startup hooks
             stage = "startup_hooks"
@@ -168,17 +170,17 @@ class BackendBootstrapper:
             startup_time_ms = int((time.time() - start_time) * 1000)
 
             # Store running server
-            self._running_servers[port] = server_handle
+            self._running_servers[actual_port] = server_handle
 
             # BUG-002 fix: only mark succeeded after all startup steps complete.
             self._bootstrap_succeeded = True
 
             # Emit backend_started event (for Electron compatibility)
-            self._emit_startup_event(port, True)
+            self._emit_startup_event(actual_port, True)
 
             return BackendLaunchResult(
                 success=True,
-                port=port,
+                port=actual_port,
                 process_handle=server_handle,
                 startup_time_ms=startup_time_ms,
                 config_snapshot=config,
@@ -494,7 +496,7 @@ class BackendBootstrapper:
                 stage="app_creation",
             ) from e
 
-    def _select_port(self, preferred_port: int = 0) -> int:
+    def _select_port(self, preferred_port: int = 0, *, host: str = "127.0.0.1") -> int:
         """Select an available port.
 
         Args:
@@ -503,13 +505,13 @@ class BackendBootstrapper:
         Returns:
             Available port number
         """
-        if preferred_port and preferred_port > 0 and self._is_port_available(preferred_port):
+        if preferred_port and preferred_port > 0 and self._is_port_available(preferred_port, host=host):
             return preferred_port
 
         # Auto-select port
         return self._find_free_port()
 
-    def _is_port_available(self, port: int) -> bool:
+    def _is_port_available(self, port: int, *, host: str = "127.0.0.1") -> bool:
         """Check if a port is available.
 
         Args:
@@ -520,7 +522,7 @@ class BackendBootstrapper:
         """
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("", port))
+                s.bind((host or "127.0.0.1", port))
                 return True
         except OSError:
             return False
@@ -576,7 +578,7 @@ class BackendBootstrapper:
                 # _select_port return value, but we expose the real port via
                 # the handle itself if UvicornServerHandle surfaces it.
                 return handle
-            except OSError as exc:
+            except (OSError, TimeoutError) as exc:
                 last_error = exc
                 logger.warning(
                     "Port %d bind failed (attempt %d/3): %s",

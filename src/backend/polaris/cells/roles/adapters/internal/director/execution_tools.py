@@ -11,6 +11,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from polaris.domain.verification.director_policy_gate import validate_director_write_policy
 from polaris.kernelone.events.file_event_broadcaster import (
     replace_in_file_with_broadcast,
     write_file_with_broadcast,
@@ -29,6 +30,64 @@ from .security import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_policy_scope_list(value: Any) -> list[str]:
+    """Normalize an optional scope-like tool argument into a string list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item or "").strip()]
+    return []
+
+
+def _director_write_allowed_scope(tool_kwargs: dict[str, Any] | None) -> list[str]:
+    """Extract an explicit Director write scope if the call carries one."""
+    kwargs = tool_kwargs or {}
+    for key in (
+        "allowed_scope",
+        "allowed_scope_paths",
+        "scope_paths",
+        "target_files",
+        "pm_target_files",
+        "act_files",
+    ):
+        scope = _coerce_policy_scope_list(kwargs.get(key))
+        if scope:
+            return scope
+    return []
+
+
+def _is_package_manifest_path(rel_path: str) -> bool:
+    normalized = str(rel_path or "").replace("\\", "/").strip("/").lower()
+    return normalized == "package.json" or normalized.endswith("/package.json")
+
+
+def _read_workspace_agents_policy_text(workspace: Path, rel_path: str) -> str:
+    """Read root and nested AGENTS.md files that apply to a workspace-relative path."""
+    normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
+    candidates = ["AGENTS.md"]
+    parent_parts = [part for part in normalized_rel.split("/")[:-1] if part]
+    for index in range(1, len(parent_parts) + 1):
+        candidates.append("/".join([*parent_parts[:index], "AGENTS.md"]))
+
+    texts: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        target = (workspace / candidate).resolve()
+        if workspace not in target.parents and target != workspace:
+            continue
+        try:
+            if target.is_file():
+                texts.append(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError):
+            continue
+    return "\n".join(texts)
 
 
 class DirectorToolExecutor:
@@ -50,6 +109,41 @@ class DirectorToolExecutor:
 
     def set_message_bus(self, message_bus: Any | None) -> None:
         self._message_bus = message_bus
+
+    def _validate_director_policy_for_write(
+        self,
+        *,
+        workspace: Path,
+        rel_path: str,
+        old_content: str,
+        new_content: str,
+        operation: str,
+        tool_kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Validate a pending write and return KernelOne-compatible policy evidence."""
+        normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
+        package_write = _is_package_manifest_path(normalized_rel)
+        verdict = validate_director_write_policy(
+            changed_files=[normalized_rel] if normalized_rel else [],
+            allowed_scope=_director_write_allowed_scope(tool_kwargs),
+            agents_md=_read_workspace_agents_policy_text(workspace, normalized_rel),
+            operation=operation,
+            package_before=old_content if package_write else None,
+            package_after=new_content if package_write else None,
+            require_change=True,
+        )
+        evidence = verdict.to_dict()
+        if verdict.allowed:
+            return {"ok": True, "director_policy": evidence}
+
+        reason = "; ".join(verdict.reasons) or "Director write policy denied the write"
+        return {
+            "ok": False,
+            "error": f"Director write policy denied: {reason}",
+            "error_type": "director_write_policy_denied",
+            "blocked": True,
+            "director_policy": evidence,
+        }
 
     def execute_tool(
         self,
@@ -144,6 +238,17 @@ class DirectorToolExecutor:
                 return {"ok": False, "error": normalized.error}
             text = str(normalized.content or "")
 
+            policy_result = self._validate_director_policy_for_write(
+                workspace=workspace,
+                rel_path=rel_path,
+                old_content=existing_content or "",
+                new_content=text,
+                operation="write_file:modify" if existing_content is not None else "write_file:create",
+                tool_kwargs=args,
+            )
+            if not policy_result.get("ok"):
+                return policy_result
+
             write_result = write_file_with_broadcast(
                 workspace=str(workspace),
                 file_path=rel_path,
@@ -164,6 +269,7 @@ class DirectorToolExecutor:
                 "bytes_written": int(write_result.get("bytes") or len(text.encode("utf-8"))),
                 "operation": str(write_result.get("operation") or "modify"),
                 "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                "director_policy": policy_result.get("director_policy"),
             }
             if normalized.normalized_patch_like:
                 result["normalized_patch_like_write"] = True
@@ -225,6 +331,18 @@ class DirectorToolExecutor:
                 return {"ok": False, "error": f"Search text not found in file: {search[:50]}..."}
 
             rel_path = target.relative_to(workspace).as_posix()
+            new_content = content.replace(search, replace, 1)
+            policy_result = self._validate_director_policy_for_write(
+                workspace=workspace,
+                rel_path=rel_path,
+                old_content=content,
+                new_content=new_content,
+                operation="edit_file",
+                tool_kwargs=args,
+            )
+            if not policy_result.get("ok"):
+                return policy_result
+
             replace_result = replace_in_file_with_broadcast(
                 workspace=str(workspace),
                 file_path=rel_path,
@@ -246,6 +364,7 @@ class DirectorToolExecutor:
                 "file": rel_path,
                 "replacements": int(replace_result.get("replacements") or 1),
                 "broadcast_ok": bool(replace_result.get("broadcast_ok")),
+                "director_policy": policy_result.get("director_policy"),
             }
         except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}

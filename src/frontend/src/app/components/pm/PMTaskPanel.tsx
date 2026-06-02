@@ -911,17 +911,17 @@ export function PMTaskPanel({
         )}
 
         {/* Task List Content */}
-        <div className="flex-1 overflow-auto"
+        <div data-testid="pm-task-list" className="flex-1 overflow-auto"
         >
           {filteredTasks.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-500"
+            <div data-testid="pm-task-empty" className="h-full flex flex-col items-center justify-center text-slate-500"
             >
               <Filter className="w-12 h-12 mb-4 opacity-20" />
               <p className="text-sm">暂无任务</p>
               <p className="text-xs text-slate-600 mt-1">任务将显示在这里</p>
             </div>
           ) : (
-            <div className="divide-y divide-white/5"
+            <div data-testid="pm-task-list-content" className="divide-y divide-white/5"
             >
               {filteredTasks.map((task) => (
                 <TaskListItem
@@ -999,6 +999,8 @@ function TaskListItem({ task, selected, onClick, pmRunning, taskTraceMap }: Task
   return (
     <div
       onClick={onClick}
+      data-testid="pm-task-item"
+      data-task-id={task.id}
       className={cn(
         'group flex items-center gap-3 px-4 py-3 cursor-pointer transition-all duration-200',
         // Running state: pulse animation + amber border highlight
@@ -1147,7 +1149,7 @@ function TaskDetailPanel({
     : '';
 
   return (
-    <div className="w-96 flex flex-col border-l border-white/10 bg-slate-950/30"
+    <div data-testid="pm-task-detail" className="w-96 flex flex-col border-l border-white/10 bg-slate-950/30"
     >
       {/* Header */}
       <div className="h-14 flex items-center justify-between px-4 border-b border-white/10"

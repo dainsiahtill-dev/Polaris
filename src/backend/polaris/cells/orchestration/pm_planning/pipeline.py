@@ -273,8 +273,13 @@ def _is_docs_scope_allowed(path: str, active_doc: str, active_dir: str) -> bool:
 def _evaluate_pm_task_quality(
     normalized: dict[str, Any],
     docs_stage: dict[str, Any] | None,
+    workspace_full: str = "",
 ) -> dict[str, Any]:
-    return evaluate_shared_pm_task_quality(normalized, docs_stage=docs_stage)
+    return evaluate_shared_pm_task_quality(
+        normalized,
+        docs_stage=docs_stage,
+        workspace_full=workspace_full,
+    )
 
 
 def _build_pm_json_retry_prompt(invalid_output: str) -> str:
@@ -630,7 +635,7 @@ def run_pm_planning_iteration(
                         "tasks": [],
                         "notes": "PM JSON parse failed.",
                     }
-            normalized = normalize_pm_payload(payload, iteration, start_timestamp)
+            normalized = normalize_pm_payload(payload, iteration, start_timestamp, workspace_full=workspace_full)
 
         _migrate_tasks_in_place(normalized if isinstance(normalized, dict) else {})
 
@@ -659,6 +664,7 @@ def run_pm_planning_iteration(
                     "deps_normalized",
                     "acceptance_added",
                     "descriptions_added",
+                    "game_domain_tasks_added",
                 )
             )
             > 0
@@ -678,6 +684,7 @@ def run_pm_planning_iteration(
         quality_report = _evaluate_pm_task_quality(
             normalized,
             docs_stage=docs_stage if isinstance(docs_stage, dict) else {},
+            workspace_full=workspace_full,
         )
         merged_warnings = []
         seen_warnings = set()

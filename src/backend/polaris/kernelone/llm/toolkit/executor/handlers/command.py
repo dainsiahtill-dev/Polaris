@@ -11,11 +11,22 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
+    _attach_director_policy_evidence,
+    _validate_director_policy_for_write,
+)
+from polaris.kernelone.llm.toolkit.executor.utils import (
+    resolve_workspace_path,
+    to_workspace_relative_path,
+)
+
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
     from polaris.kernelone.tool_execution.constants import CommandValidationResult
 
 logger = logging.getLogger(__name__)
+
+_OUTPUT_REDIRECT_RE = re.compile(r'\s+>\s+["\']?([^"\'\s]+)["\']?\s*$')
 
 
 def register_handlers() -> dict[str, Any]:
@@ -151,6 +162,10 @@ def _attach_command_effect_receipt(result: dict[str, Any]) -> dict[str, Any]:
         "timed_out": bool(payload.get("timed_out")),
         "success": bool(payload.get("ok")),
     }
+    if isinstance(payload.get("director_policy"), dict):
+        payload["effect_receipt"]["director_policy"] = payload["director_policy"]
+    if isinstance(payload.get("redirect_writes"), list):
+        payload["effect_receipt"]["redirect_writes"] = payload["redirect_writes"]
     return payload
 
 
@@ -208,7 +223,7 @@ def _execute_command_chain(
     )
     import os
 
-    if _needs_shell_on_windows and os.name == "nt":
+    if _needs_shell_on_windows and os.name == "nt" and not any(_has_output_redirection(cmd) for cmd in commands):
         return _execute_via_shell(self, command_text, timeout_seconds)
 
     # Execute commands sequentially
@@ -218,6 +233,7 @@ def _execute_command_chain(
     last_result: dict[str, Any] = {}
     single_result: dict[str, Any]
     any_timed_out = False
+    redirect_writes: list[dict[str, Any]] = []
 
     for idx, cmd in enumerate(commands):
         op = operators[idx] if idx < len(operators) else ";"
@@ -235,7 +251,7 @@ def _execute_command_chain(
             continue
 
         # Handle output redirection
-        redirect_match = re.search(r'\s+>\s+["\']?([^"\'\s]+)["\']?\s*$', cmd)
+        redirect_match = _OUTPUT_REDIRECT_RE.search(cmd)
         redirect_file: str | None = None
         if redirect_match:
             redirect_file = redirect_match.group(1).strip()
@@ -315,13 +331,34 @@ def _execute_command_chain(
         single_result = _execute_single_command(self, cmd, timeout_seconds)
 
         if redirect_file and single_result.get("ok"):
-            # Redirect stdout to file
-            try:
-                with open(redirect_file, "w", encoding="utf-8") as f:
-                    f.write(single_result.get("stdout", ""))
-            except OSError as e:
+            redirect_result = _write_redirect_output(
+                self,
+                redirect_file=redirect_file,
+                output_text=str(single_result.get("stdout") or ""),
+                command_text=command_text,
+            )
+            if not redirect_result.get("ok"):
                 single_result["ok"] = False
-                single_result["error"] = f"Failed to write to {redirect_file}: {e}"
+                single_result["exit_code"] = 1
+                single_result["error"] = str(redirect_result.get("error") or "")
+                single_result["stderr"] = str(redirect_result.get("error") or "")
+                for key in ("blocked", "director_policy", "error_type"):
+                    if key in redirect_result:
+                        single_result[key] = redirect_result[key]
+            else:
+                single_result["redirect_file"] = redirect_result.get("file")
+                single_result["bytes_redirected"] = redirect_result.get("bytes_written", 0)
+                redirect_writes.append(
+                    {
+                        "file": redirect_result.get("file"),
+                        "bytes_written": redirect_result.get("bytes_written", 0),
+                        "director_policy": redirect_result.get("director_policy"),
+                    }
+                )
+                _attach_director_policy_evidence(
+                    single_result,
+                    redirect_result.get("director_policy") if isinstance(redirect_result, dict) else None,
+                )
 
         if input_file:
             # Read stdin from file for next command
@@ -362,7 +399,7 @@ def _execute_command_chain(
         else:
             chain_err_msg = f"Command chain failed with exit code {final_exit_code}"
 
-    return {
+    response = {
         "ok": final_exit_code == 0,
         "exit_code": final_exit_code,
         "stdout": "\n".join(all_stdout).strip(),
@@ -372,6 +409,73 @@ def _execute_command_chain(
         "timed_out": any_timed_out,
         "error": chain_err_msg,
     }
+    if redirect_writes:
+        response["redirect_writes"] = redirect_writes
+        latest_policy = redirect_writes[-1].get("director_policy")
+        if isinstance(latest_policy, dict):
+            response["director_policy"] = latest_policy
+    if isinstance(last_result.get("director_policy"), dict):
+        response["director_policy"] = last_result["director_policy"]
+    if "blocked" in last_result:
+        response["blocked"] = bool(last_result["blocked"])
+    if str(last_result.get("error_type") or "").strip():
+        response["error_type"] = str(last_result["error_type"])
+    return response
+
+
+def _write_redirect_output(
+    self: AgentAccelToolExecutor,
+    *,
+    redirect_file: str,
+    output_text: str,
+    command_text: str,
+) -> dict[str, Any]:
+    """Write command stdout redirection through KFS and Director policy gate."""
+    try:
+        target_path = resolve_workspace_path(self._kernel_fs, redirect_file)
+        rel = to_workspace_relative_path(self._kernel_fs, target_path)
+        if self._kernel_fs.workspace_exists(rel) and not self._kernel_fs.workspace_is_file(rel):
+            return {"ok": False, "error": f"Redirect target is not a file: {rel}"}
+        old_content = (
+            self._kernel_fs.workspace_read_text(rel, encoding="utf-8") if self._kernel_fs.workspace_exists(rel) else ""
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        return {"ok": False, "error": f"Failed to prepare redirect target {redirect_file}: {exc}"}
+
+    policy_result = _validate_director_policy_for_write(
+        self,
+        rel=rel,
+        old_content=old_content,
+        new_content=output_text,
+        operation="command_redirect",
+        tool_kwargs=None,
+    )
+    if not policy_result.get("ok"):
+        return policy_result
+
+    try:
+        receipt = self._kernel_fs.workspace_write_text(rel, output_text, encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": f"Failed to write to {rel}: {exc}"}
+
+    result = {
+        "ok": True,
+        "file": receipt.logical_path,
+        "bytes_written": receipt.bytes_written,
+        "effect_receipt": {
+            "operation": "command_redirect",
+            "command": command_text,
+            "file": receipt.logical_path,
+            "bytes_written": receipt.bytes_written,
+            "encoding": "utf-8",
+        },
+    }
+    return _attach_director_policy_evidence(result, policy_result.get("director_policy"))
+
+
+def _has_output_redirection(command_text: str) -> bool:
+    """Return whether the command has a simple stdout redirection target."""
+    return _OUTPUT_REDIRECT_RE.search(str(command_text or "")) is not None
 
 
 def _execute_single_command(
@@ -431,6 +535,20 @@ def _execute_via_shell(
             "error": f"Command blocked: {validation_result.reason}",
             "blocked": True,
             "command": command_text,
+        }
+
+    if _has_output_redirection(command_text):
+        return {
+            "ok": False,
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "Shell output redirection must be handled by the command_redirect policy gate",
+            "command": command_text,
+            "shell": True,
+            "timed_out": False,
+            "error": "Shell output redirection must be handled by the command_redirect policy gate",
+            "blocked": True,
+            "error_type": "unmanaged_shell_redirection_blocked",
         }
 
     # Detect long-running server processes that should run in background

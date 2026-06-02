@@ -1961,6 +1961,18 @@ function requirementSource(requirement: PmRequirementEntry): string {
   return readRequirementString(requirement, ['source_doc', 'sourceDoc', 'source', 'path']);
 }
 
+function requirementAcceptanceCriteria(requirement: PmRequirementEntry | null | undefined): string[] {
+  return requirement
+    ? requirementStringList(readRequirementValue(requirement, ['acceptance_criteria', 'acceptanceCriteria', 'criteria']))
+    : [];
+}
+
+function requirementRelatedTasks(requirement: PmRequirementEntry | null | undefined): string[] {
+  return requirement
+    ? requirementStringList(readRequirementValue(requirement, ['related_task_ids', 'relatedTaskIds', 'task_ids', 'tasks']))
+    : [];
+}
+
 function PMRequirementsPanel({ workspace }: { workspace: string }) {
   const [requirements, setRequirements] = useState<PmRequirementEntry[]>([]);
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null);
@@ -2050,12 +2062,19 @@ function PMRequirementsPanel({ workspace }: { workspace: string }) {
     [requirements, selectedRequirementId],
   );
   const detailRequirement = selectedRequirement || selectedListRequirement;
-  const acceptanceCriteria = detailRequirement
-    ? requirementStringList(readRequirementValue(detailRequirement, ['acceptance_criteria', 'acceptanceCriteria', 'criteria']))
-    : [];
-  const relatedTasks = detailRequirement
-    ? requirementStringList(readRequirementValue(detailRequirement, ['related_task_ids', 'relatedTaskIds', 'task_ids', 'tasks']))
-    : [];
+  const matrixRequirements = useMemo(() => {
+    const selectedId = selectedRequirement ? requirementApiId(selectedRequirement) : '';
+    if (!selectedId) {
+      return requirements;
+    }
+    return requirements.map((requirement) => (
+      requirementApiId(requirement) === selectedId
+        ? { ...requirement, ...selectedRequirement }
+        : requirement
+    ));
+  }, [requirements, selectedRequirement]);
+  const acceptanceCriteria = requirementAcceptanceCriteria(detailRequirement);
+  const relatedTasks = requirementRelatedTasks(detailRequirement);
   const source = detailRequirement ? requirementSource(detailRequirement) : '';
   const detailEndpoint = selectedRequirementId ? `/v2/pm/requirements/${selectedRequirementId}` : '/v2/pm/requirements/{id}';
 
@@ -2087,6 +2106,70 @@ function PMRequirementsPanel({ workspace }: { workspace: string }) {
           {requirementsError}
         </div>
       ) : null}
+
+      <section
+        data-testid="pm-requirement-matrix"
+        className="mb-3 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-slate-950/35"
+      >
+        <div className="flex h-9 items-center justify-between border-b border-white/10 px-3 text-xs">
+          <div className="font-medium text-slate-200">需求矩阵</div>
+          <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+            {matrixRequirements.length} rows
+          </span>
+        </div>
+        <div className="max-h-40 overflow-auto">
+          {matrixRequirements.length === 0 ? (
+            <div data-testid="pm-requirement-matrix-empty" className="px-3 py-4 text-xs text-slate-500">
+              暂无需求矩阵数据
+            </div>
+          ) : (
+            <div className="min-w-[720px] divide-y divide-white/5">
+              <div className="grid grid-cols-[1.2fr_0.75fr_1.2fr_1fr] gap-2 px-3 py-2 text-[10px] uppercase text-slate-500">
+                <span>Requirement</span>
+                <span>Source</span>
+                <span>Acceptance</span>
+                <span>Related Tasks</span>
+              </div>
+              {matrixRequirements.slice(0, 100).map((requirement, index) => {
+                const apiId = requirementApiId(requirement);
+                const matrixAcceptance = requirementAcceptanceCriteria(requirement);
+                const matrixTasks = requirementRelatedTasks(requirement);
+                return (
+                  <button
+                    key={`matrix-${requirementRowKey(requirement, index)}`}
+                    type="button"
+                    data-testid="pm-requirement-matrix-row"
+                    data-requirement-id={apiId || ''}
+                    onClick={() => apiId && setSelectedRequirementId(apiId)}
+                    disabled={!apiId}
+                    className={cn(
+                      'grid w-full grid-cols-[1.2fr_0.75fr_1.2fr_1fr] gap-2 px-3 py-2 text-left text-xs transition-colors',
+                      apiId && apiId === selectedRequirementId
+                        ? 'bg-amber-500/10 text-slate-100'
+                        : 'text-slate-300 hover:bg-white/5',
+                      !apiId && 'cursor-not-allowed opacity-60',
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{requirementTitle(requirement)}</span>
+                      <span className="mt-0.5 block truncate font-mono text-[10px] text-slate-500">{apiId || 'no-id'}</span>
+                    </span>
+                    <span data-testid="pm-requirement-matrix-source" className="min-w-0 truncate font-mono text-[11px] text-slate-400">
+                      {requirementSource(requirement) || 'unlinked'}
+                    </span>
+                    <span data-testid="pm-requirement-matrix-acceptance" className="min-w-0 truncate text-slate-300">
+                      {matrixAcceptance.length > 0 ? matrixAcceptance.join(' · ') : '未记录验收条件'}
+                    </span>
+                    <span data-testid="pm-requirement-matrix-related-task" className="min-w-0 truncate font-mono text-[11px] text-amber-200">
+                      {matrixTasks.length > 0 ? matrixTasks.join(', ') : '未关联 PM 任务'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
 
       <div className="grid min-h-0 flex-1 gap-3 overflow-hidden xl:grid-cols-[minmax(260px,0.42fr)_minmax(0,0.58fr)]">
         <section className="min-h-0 rounded-lg border border-white/10 bg-white/5">
@@ -2287,7 +2370,7 @@ function PMHistoryPanel({ pmState, workspace }: { pmState: Record<string, unknow
   }, [loadHistory]);
 
   return (
-    <div className="h-full flex flex-col p-6">
+    <div data-testid="pm-history-panel" className="h-full flex flex-col p-6">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-slate-100">执行历史</h2>
@@ -2327,7 +2410,7 @@ function PMHistoryPanel({ pmState, workspace }: { pmState: Record<string, unknow
                 加载任务历史...
               </div>
             ) : taskHistory.length === 0 ? (
-              <div className="px-2 py-4 text-xs text-slate-500">暂无任务历史</div>
+              <div data-testid="pm-history-task-empty" className="px-2 py-4 text-xs text-slate-500">暂无任务历史</div>
             ) : (
               taskHistory.slice(0, 50).map((entry, index) => {
                 const key = historyValue(entry.id) || `${historyEntryId(entry)}-${index}`;
@@ -2362,7 +2445,7 @@ function PMHistoryPanel({ pmState, workspace }: { pmState: Record<string, unknow
                 加载分发历史...
               </div>
             ) : directorIterations.length === 0 ? (
-              <div className="px-2 py-4 text-xs text-slate-500">暂无 Director 分发历史</div>
+              <div data-testid="pm-history-director-empty" className="px-2 py-4 text-xs text-slate-500">暂无 Director 分发历史</div>
             ) : (
               directorIterations.slice(0, 25).map((iteration, index) => {
                 const iterationId = typeof iteration.iteration === 'number' ? iteration.iteration : index + 1;
@@ -2394,7 +2477,7 @@ function PMHistoryPanel({ pmState, workspace }: { pmState: Record<string, unknow
             {JSON.stringify(pmState, null, 2)}
           </pre>
         ) : (
-          <div className="border-t border-white/10 px-3 py-4 text-xs text-slate-500">
+          <div data-testid="pm-history-state-empty" className="border-t border-white/10 px-3 py-4 text-xs text-slate-500">
             暂无 PM 状态快照
           </div>
         )}
@@ -2411,7 +2494,7 @@ function PMAnalyticsPanel({ tasks }: { tasks: PmTask[] }) {
   }, {} as Record<string, number>);
 
   return (
-    <div className="h-full flex flex-col p-6">
+    <div data-testid="pm-analytics-panel" className="h-full flex flex-col p-6">
       <h2 className="text-lg font-semibold text-slate-100 mb-4">任务统计</h2>
       {tasks.length > 0 ? (
         <div className="grid grid-cols-2 gap-4">

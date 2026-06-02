@@ -90,6 +90,20 @@ class _LRUHandlerCache:
         return len(self._cache)
 
 
+def _copy_handler_failure_evidence(payload: dict[str, Any], handler_result: dict[str, Any]) -> None:
+    """Preserve structured handler evidence when executor wraps a failed result."""
+    for key in ("director_policy", "director_policy_denials"):
+        if key in handler_result:
+            payload[key] = handler_result[key]
+    if "blocked" in handler_result:
+        payload["blocked"] = bool(handler_result["blocked"])
+    handler_error_type = str(handler_result.get("error_type") or "").strip()
+    if handler_error_type:
+        payload["handler_error_type"] = handler_error_type
+        if handler_error_type == "director_write_policy_denied":
+            payload["error_type"] = handler_error_type
+
+
 class AgentAccelToolExecutor:
     """Standard tool executor.
 
@@ -412,7 +426,7 @@ class AgentAccelToolExecutor:
                         self._failure_budget.get_tool_failure_count(canonical_tool_name),
                         error_pattern.error_signature[:60],
                     )
-                    return {
+                    blocked_payload = {
                         "ok": False,
                         "error": failure_result.suggestion
                         or f"Tool {canonical_tool_name} blocked due to repeated failures",
@@ -423,8 +437,10 @@ class AgentAccelToolExecutor:
                         "retryable": failure_result.retryable,
                         "loop_break": failure_result.loop_break,
                     }
+                    _copy_handler_failure_evidence(blocked_payload, result)
+                    return blocked_payload
 
-                return {
+                failed_payload = {
                     "ok": False,
                     "error": error_message,
                     "tool": canonical_tool_name,
@@ -433,6 +449,8 @@ class AgentAccelToolExecutor:
                     "retryable": failure_result.retryable,
                     "loop_break": failure_result.loop_break,
                 }
+                _copy_handler_failure_evidence(failed_payload, result)
+                return failed_payload
             return {"ok": True, "result": result}
         except BudgetExceededError as exc:
             return {

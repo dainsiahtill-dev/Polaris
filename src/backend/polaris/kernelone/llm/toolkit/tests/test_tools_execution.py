@@ -6,6 +6,7 @@ These tests create temporary workspaces and verify actual tool behavior.
 Run with: pytest polaris/kernelone/llm/toolkit/tests/test_tools_execution.py -v
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -40,6 +41,14 @@ def temp_workspace(tmp_path):
     return str(tmp_path)
 
 
+def _repo_rg_payload(result: dict) -> dict:
+    """Return repo_rg payload across legacy double-wrapped and current result shapes."""
+    payload = result.get("result", {})
+    if isinstance(payload, dict) and isinstance(payload.get("result"), dict):
+        return payload["result"]
+    return payload if isinstance(payload, dict) else {}
+
+
 class TestRepoRgExecution:
     """Test repo_rg tool execution."""
 
@@ -49,9 +58,7 @@ class TestRepoRgExecution:
         result = executor.execute("repo_rg", {"pattern": "^def ", "path": "src"})
 
         assert result["ok"] is True
-        assert (
-            len(result["result"]["result"]["results"]) >= 2
-        )  # At least foo and bar from main.py (other files may also match)
+        assert len(_repo_rg_payload(result)["results"]) >= 2  # At least foo and bar from main.py
 
     def test_pattern_with_trailing_space_preserved(self, temp_workspace) -> None:
         """Pattern '^def ' (with trailing space) should find only function definitions."""
@@ -59,7 +66,7 @@ class TestRepoRgExecution:
         result = executor.execute("repo_rg", {"pattern": "^def ", "path": "src"})
 
         assert result["ok"] is True
-        matches = result["result"]["result"]["results"]
+        matches = _repo_rg_payload(result)["results"]
         # Should find "def foo():" and "def bar():" but NOT "class Bar:"
         assert all("def " in m["snippet"] for m in matches)
 
@@ -69,7 +76,7 @@ class TestRepoRgExecution:
         result = executor.execute("repo_rg", {"pattern": "Def", "path": "src", "case_sensitive": True})
 
         assert result["ok"] is True
-        assert len(result["result"]["result"]["results"]) == 0  # 'Def' != 'def'
+        assert len(_repo_rg_payload(result)["results"]) == 0  # 'Def' != 'def'
 
     def test_handles_unicode(self, temp_workspace) -> None:
         """repo_rg should handle unicode characters."""
@@ -77,7 +84,7 @@ class TestRepoRgExecution:
         result = executor.execute("repo_rg", {"pattern": "你好", "path": "src"})
 
         assert result["ok"] is True
-        assert len(result["result"]["result"]["results"]) >= 1
+        assert len(_repo_rg_payload(result)["results"]) >= 1
 
     def test_max_results_respected(self, temp_workspace) -> None:
         """repo_rg should respect max_results limit."""
@@ -85,7 +92,7 @@ class TestRepoRgExecution:
         result = executor.execute("repo_rg", {"pattern": ".", "path": "src", "max_results": 1})
 
         assert result["ok"] is True
-        assert len(result["result"]["result"]["results"]) <= 1
+        assert len(_repo_rg_payload(result)["results"]) <= 1
 
     def test_single_file_search_without_context_parses_line_only_output(self, temp_workspace) -> None:
         """repo_rg should parse `line:snippet` output when searching a single file path."""
@@ -93,7 +100,7 @@ class TestRepoRgExecution:
         result = executor.execute("repo_rg", {"pattern": "class Bar", "path": "src/main.py"})
 
         assert result["ok"] is True
-        matches = result["result"]["result"]["results"]
+        matches = _repo_rg_payload(result)["results"]
         assert len(matches) >= 1
         assert any(match["file"].endswith("src/main.py") for match in matches)
         assert any("class Bar" in match["snippet"] for match in matches)
@@ -104,7 +111,7 @@ class TestRepoRgExecution:
         result = executor.execute("repo_rg", {"pattern": "def foo", "path": "src/main.py", "context_lines": 2})
 
         assert result["ok"] is True
-        matches = result["result"]["result"]["results"]
+        matches = _repo_rg_payload(result)["results"]
         assert len(matches) >= 1
         assert any(match["file"].endswith("src/main.py") for match in matches)
         assert any("def foo" in match["snippet"] for match in matches)
@@ -381,6 +388,236 @@ class TestPathSecurity:
         assert result["ok"] is False or "error" in result
 
 
+class TestDirectorWritePolicyGate:
+    """Test unified Director write policy evidence across write handlers."""
+
+    def test_write_file_blocks_agents_forbidden_path(self, temp_workspace) -> None:
+        workspace = Path(temp_workspace)
+        protected = workspace / "src" / "main.py"
+        original = protected.read_text(encoding="utf-8")
+        (workspace / "AGENTS.md").write_text("禁止修改 src/main.py\n", encoding="utf-8")
+
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        result = executor.execute("write_file", {"file": "src/main.py", "content": "def foo():\n    return 1\n"})
+
+        assert result["ok"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        assert result["director_policy"]["allowed"] is False
+        assert protected.read_text(encoding="utf-8") == original
+
+    def test_write_file_package_json_reports_structured_dependency_diff(self, temp_workspace) -> None:
+        workspace = Path(temp_workspace)
+        before = {
+            "scripts": {"test": "vitest run"},
+            "dependencies": {"react": "18.2.0"},
+        }
+        after = {
+            "scripts": {"test": "vitest run --coverage", "lint": "eslint ."},
+            "dependencies": {"react": "18.3.0"},
+            "devDependencies": {"vite": "6.4.1"},
+        }
+        (workspace / "package.json").write_text(json.dumps(before, ensure_ascii=False), encoding="utf-8")
+
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        result = executor.execute(
+            "write_file",
+            {"file": "package.json", "content": json.dumps(after, ensure_ascii=False)},
+        )
+
+        assert result["ok"] is True
+        policy = result["result"]["director_policy"]
+        package_diff = policy["package_diff"]
+        assert package_diff["sections"]["scripts"]["added"] == {"lint": "eslint ."}
+        assert package_diff["sections"]["scripts"]["changed"]["test"] == {
+            "before": "vitest run",
+            "after": "vitest run --coverage",
+        }
+        assert package_diff["sections"]["dependencies"]["changed"]["react"] == {
+            "before": "18.2.0",
+            "after": "18.3.0",
+        }
+        assert package_diff["sections"]["devDependencies"]["added"] == {"vite": "6.4.1"}
+
+    def test_repo_apply_diff_blocks_agents_forbidden_path_without_modifying_file(self, temp_workspace) -> None:
+        workspace = Path(temp_workspace)
+        protected = workspace / "src" / "main.py"
+        original = protected.read_text(encoding="utf-8")
+        (workspace / "AGENTS.md").write_text("禁止修改 src/main.py\n", encoding="utf-8")
+
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        read_result = executor.execute("repo_read_head", {"file": "src/main.py", "n": 5})
+        assert read_result["ok"] is True
+
+        diff = """--- a/src/main.py
++++ b/src/main.py
+@@ -1,3 +1,4 @@
+-def foo(): pass
++def foo():
++    return 1
+ class Bar: pass
+ def bar(): pass
+"""
+        result = executor.execute("repo_apply_diff", {"diff": diff})
+
+        assert result["ok"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        assert result["director_policy_denials"][0]["file"] == "src/main.py"
+        assert protected.read_text(encoding="utf-8") == original
+
+    def test_apply_patch_blocks_agents_forbidden_path_without_modifying_file(self, temp_workspace) -> None:
+        workspace = Path(temp_workspace)
+        protected = workspace / "src" / "main.py"
+        original = protected.read_text(encoding="utf-8")
+        (workspace / "AGENTS.md").write_text("禁止修改 src/main.py\n", encoding="utf-8")
+
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        patch = """*** Begin Patch
+*** Update File: src/main.py
+@@
+-def foo(): pass
++def foo():
++    return 1
+*** End Patch
+"""
+        result = executor.execute("apply_patch", {"patch": patch})
+
+        assert result["ok"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        assert result["director_policy_denials"][0]["file"] == "src/main.py"
+        assert protected.read_text(encoding="utf-8") == original
+
+    def test_apply_patch_package_json_reports_structured_dependency_diff(self, temp_workspace) -> None:
+        workspace = Path(temp_workspace)
+        before = {
+            "scripts": {"test": "vitest run"},
+            "dependencies": {"react": "18.2.0"},
+        }
+        after = {
+            "scripts": {"test": "vitest run --coverage", "lint": "eslint ."},
+            "dependencies": {"react": "18.3.0"},
+            "devDependencies": {"vite": "6.4.1"},
+        }
+        before_text = json.dumps(before, ensure_ascii=False, indent=2) + "\n"
+        after_text = json.dumps(after, ensure_ascii=False, indent=2) + "\n"
+        (workspace / "package.json").write_text(before_text, encoding="utf-8")
+
+        def _patch_lines(prefix: str, text: str) -> str:
+            return "".join(f"{prefix}{line}" for line in text.splitlines(keepends=True))
+
+        patch = (
+            "*** Begin Patch\n"
+            "*** Update File: package.json\n"
+            "@@\n"
+            f"{_patch_lines('-', before_text)}"
+            f"{_patch_lines('+', after_text)}"
+            "*** End Patch\n"
+        )
+
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        result = executor.execute("apply_patch", {"patch": patch})
+
+        assert result["ok"] is True
+        payload = result["result"]
+        policy = payload["results"][0]["director_policy"]
+        package_diff = policy["package_diff"]
+        assert package_diff["sections"]["scripts"]["added"] == {"lint": "eslint ."}
+        assert package_diff["sections"]["scripts"]["changed"]["test"] == {
+            "before": "vitest run",
+            "after": "vitest run --coverage",
+        }
+        assert package_diff["sections"]["dependencies"]["changed"]["react"] == {
+            "before": "18.2.0",
+            "after": "18.3.0",
+        }
+        assert package_diff["sections"]["devDependencies"]["added"] == {"vite": "6.4.1"}
+        assert json.loads((workspace / "package.json").read_text(encoding="utf-8")) == after
+
+    def test_apply_patch_create_and_delete_go_through_policy_gate(self, temp_workspace) -> None:
+        workspace = Path(temp_workspace)
+        delete_target = workspace / "src" / "nested" / "deep.py"
+        assert delete_target.exists()
+
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        patch = (
+            "*** Begin Patch\n"
+            "*** Add File: src/created.py\n"
+            "+def created():\n"
+            "+    return True\n"
+            "*** Delete File: src/nested/deep.py\n"
+            "*** End Patch\n"
+        )
+        result = executor.execute("apply_patch", {"patch": patch})
+
+        assert result["ok"] is True
+        payload = result["result"]
+        assert payload["files_ok"] == 2
+        assert (workspace / "src" / "created.py").read_text(encoding="utf-8") == "def created():\n    return True\n"
+        assert not delete_target.exists()
+        policies = [item["director_policy"] for item in payload["results"]]
+        assert all(policy["allowed"] is True for policy in policies)
+
+    def test_execute_command_redirect_blocks_agents_forbidden_path_without_modifying_file(
+        self,
+        temp_workspace,
+    ) -> None:
+        workspace = Path(temp_workspace)
+        protected = workspace / "src" / "main.py"
+        original = protected.read_text(encoding="utf-8")
+        (workspace / "AGENTS.md").write_text("禁止修改 src/main.py\n", encoding="utf-8")
+
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        result = executor.execute(
+            "execute_command",
+            {"command": "python --version > src/main.py"},
+        )
+
+        assert result["ok"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        assert result["director_policy"]["allowed"] is False
+        assert protected.read_text(encoding="utf-8") == original
+
+    def test_execute_command_redirect_package_json_reports_structured_dependency_diff(
+        self,
+        temp_workspace,
+    ) -> None:
+        workspace = Path(temp_workspace)
+        before = {
+            "scripts": {"test": "vitest run"},
+            "dependencies": {"react": "18.2.0"},
+        }
+        after = {
+            "scripts": {"test": "vitest run --coverage", "lint": "eslint ."},
+            "dependencies": {"react": "18.3.0"},
+            "devDependencies": {"vite": "6.4.1"},
+        }
+        (workspace / "package.json").write_text(json.dumps(before, ensure_ascii=False), encoding="utf-8")
+
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        emit_script = workspace / "emit_package.py"
+        emit_script.write_text(
+            f"import json\npayload = {after!r}\nprint(json.dumps(payload, ensure_ascii=False))\n",
+            encoding="utf-8",
+        )
+        command = "python emit_package.py > package.json"
+        result = executor.execute("execute_command", {"command": command})
+
+        assert result["ok"] is True
+        payload = result["result"]
+        policy = payload["director_policy"]
+        package_diff = policy["package_diff"]
+        assert package_diff["sections"]["scripts"]["added"] == {"lint": "eslint ."}
+        assert package_diff["sections"]["scripts"]["changed"]["test"] == {
+            "before": "vitest run",
+            "after": "vitest run --coverage",
+        }
+        assert package_diff["sections"]["dependencies"]["changed"]["react"] == {
+            "before": "18.2.0",
+            "after": "18.3.0",
+        }
+        assert package_diff["sections"]["devDependencies"]["added"] == {"vite": "6.4.1"}
+        assert payload["effect_receipt"]["director_policy"]["allowed"] is True
+
+
 class TestExecuteCommandSecurity:
     """Test execute_command security boundaries."""
 
@@ -471,7 +708,7 @@ class TestEdgeCases:
         result = executor.execute("repo_rg", {"pattern": "", "path": "src"})
 
         # Empty pattern should return error, not crash
-        assert result["ok"] is False or len(result["result"]["result"].get("results", [])) == 0
+        assert result["ok"] is False or len(_repo_rg_payload(result).get("results", [])) == 0
 
     def test_handles_nonexistent_path(self, temp_workspace) -> None:
         """Should handle nonexistent path gracefully."""
@@ -480,7 +717,7 @@ class TestEdgeCases:
 
         # Implementation returns ok=True with empty results for nonexistent path
         assert result["ok"] is True
-        assert result["result"]["result"]["total_results"] == 0
+        assert _repo_rg_payload(result)["total_results"] == 0
 
     def test_handles_binary_files(self, temp_workspace) -> None:
         """Should handle binary files without crashing."""

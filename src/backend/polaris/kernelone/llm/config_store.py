@@ -12,6 +12,7 @@ Implements:
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -188,6 +189,15 @@ def _restore_authoritative_mapping_section(value: Any, previous: Any) -> Any:
     return result
 
 
+def _restore_authoritative_roles_section(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        result[str(key)] = copy.deepcopy(item)
+    return result
+
+
 def _restore_authoritative_config_sections(
     merged_payload: dict[str, Any],
     incoming_payload: dict[str, Any],
@@ -195,6 +205,9 @@ def _restore_authoritative_config_sections(
 ) -> dict[str, Any]:
     for section in _AUTHORITATIVE_MAPPING_SECTIONS:
         if section in incoming_payload:
+            if section == "roles":
+                merged_payload[section] = _restore_authoritative_roles_section(incoming_payload.get(section))
+                continue
             merged_payload[section] = _restore_authoritative_mapping_section(
                 incoming_payload.get(section),
                 existing_payload.get(section),
@@ -1006,7 +1019,7 @@ def validate_llm_config(config: dict[str, Any]) -> tuple[bool, list[str], list[s
                 errors.append(f"Required role '{role_id}' not defined in roles")
                 continue
             if not role_cfg.get("provider_id"):
-                errors.append(f"Required role '{role_id}' is missing 'provider_id'")
+                warnings.append(f"Required role '{role_id}' is missing 'provider_id'")
 
         for role_id, role_cfg in roles.items():
             if not isinstance(role_cfg, dict):

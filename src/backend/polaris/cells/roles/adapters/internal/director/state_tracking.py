@@ -9,12 +9,15 @@ import hashlib
 import json
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
+from polaris.kernelone.fs.jsonl.ops import append_jsonl
 from polaris.kernelone.fs.text_ops import open_text_log_append
+from polaris.kernelone.storage import resolve_runtime_path
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +124,29 @@ class DirectorStateTracker:
             with open_text_log_append(str(log_path)) as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         except (OSError, TypeError, ValueError):
+            return
+
+    def append_director_llm_event(
+        self,
+        task_id: str,
+        event: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Append Director runtime event evidence to the canonical LLM event stream."""
+        try:
+            now = datetime.now(timezone.utc)
+            event_path = resolve_runtime_path(self.workspace, "runtime/events/director.llm.events.jsonl")
+            record = {
+                "ts_epoch": now.timestamp(),
+                "timestamp": now.isoformat(),
+                "event_id": uuid.uuid4().hex,
+                "name": str(event or "").strip() or "director_event",
+                "role": "director",
+                "task_id": str(task_id or "").strip(),
+                "payload": payload if isinstance(payload, dict) else {},
+            }
+            append_jsonl(event_path, record, buffered=False)
+        except (OSError, RuntimeError, TypeError, ValueError):
             return
 
     # -------------------------------------------------------------------------

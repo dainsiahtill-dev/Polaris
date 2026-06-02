@@ -18,11 +18,14 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _apply_deterministic_declared_scope_scaffold,
     _apply_deterministic_typescript_reexport_repair,
     _build_existing_workspace_task_evidence,
     _director_direct_text_patch_only_enabled,
     _director_existing_scope_preflight_enabled,
+    _has_deterministic_declared_scope_scaffold,
     _looks_like_typescript_reexport_failure,
+    _resolve_claim_external_task_id,
     _task_requires_fresh_materialization,
 )
 
@@ -326,12 +329,258 @@ class TestDirectorFailureClosure:
         assert adapter_result.get("new_file_count") == 1
         assert adapter_result.get("write_tool_evidence") is False
 
+    @pytest.mark.asyncio
+    async def test_execute_scaffolds_autofix_declared_scope_before_direct_fallback(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Implement interactive game renderer",
+            description="Quality gate repair task generated because the PM contract omitted renderer scope.",
+            metadata={
+                "scope_paths": ["src/renderer/game-view.tsx"],
+                "target_files": ["src/renderer/game-view.tsx"],
+                "autofix": True,
+                "autofix_reason": "game_pm_domain_coverage",
+            },
+        )
+
+        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("PM autofix declared-scope scaffold should run before LLM dialogue")
+
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("direct fallback should not run after deterministic declared-scope scaffold")
+
+        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-scaffold"},
+        )
+
+        target = tmp_path / "src" / "renderer" / "game-view.tsx"
+        assert result["success"] is True
+        assert result["materialization_mode"] == "deterministic_declared_scope_scaffold"
+        assert any(
+            signal.get("code") == "director.deterministic_declared_scope_scaffold_pre_llm"
+            for signal in result.get("decision_signals", [])
+            if isinstance(signal, dict)
+        )
+        assert target.is_file()
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("materialization_mode") == "deterministic_declared_scope_scaffold"
+        assert adapter_result.get("new_files") == ["src/renderer/game-view.tsx"]
+
+    @pytest.mark.asyncio
+    async def test_ready_queue_fallback_claim_preserves_selected_task_identity(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "combat" / "combat-system.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("export const combatReady = true;\n", encoding="utf-8")
+        adapter = _make_adapter(tmp_path)
+        combat = adapter.task_board.create(
+            subject="Implement turn based combat system",
+            description="Materialize combat scope.",
+            metadata={
+                "external_task_id": "PM-AUTO-COMBAT",
+                "source_task_id": "PM-AUTO-COMBAT",
+                "target_files": ["src/combat/combat-system.ts"],
+            },
+        )
+
+        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("existing scope preflight should finish before LLM dialogue")
+
+        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id="PM-AUTO-AI",
+            input_data={"task_id": "PM-AUTO-AI"},
+            context={"run_id": "run-director-identity"},
+        )
+
+        assert result["success"] is True
+        updated = adapter.task_board.get_task(str(combat.id))
+        assert updated is not None
+        metadata_raw = updated.get("metadata")
+        metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+        runtime_execution_raw = metadata.get("runtime_execution")
+        runtime_execution: dict[str, Any] = runtime_execution_raw if isinstance(runtime_execution_raw, dict) else {}
+        assert metadata["external_task_id"] == "PM-AUTO-COMBAT"
+        assert runtime_execution["external_task_id"] == "PM-AUTO-COMBAT"
+
+    def test_claim_external_task_id_prefers_selected_task_source(self) -> None:
+        assert (
+            _resolve_claim_external_task_id(
+                {
+                    "id": 4,
+                    "metadata": {
+                        "external_task_id": "PM-AUTO-AI",
+                        "source_task_id": "PM-AUTO-COMBAT",
+                    },
+                },
+                "PM-AUTO-AI",
+            )
+            == "PM-AUTO-COMBAT"
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_accepts_existing_autofix_scaffold_before_llm(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        seed_task = {
+            "subject": "Implement interactive game renderer",
+            "description": "Quality gate repair task generated because the PM contract omitted renderer scope.",
+            "scope_paths": ["src/renderer/game-view.tsx"],
+            "target_files": ["src/renderer/game-view.tsx"],
+            "metadata": {
+                "autofix": True,
+                "autofix_reason": "game_pm_domain_coverage",
+            },
+        }
+        _apply_deterministic_declared_scope_scaffold(
+            adapter,
+            task=seed_task,
+            task_id="seed-renderer",
+            current_files={},
+            workspace_name=tmp_path.name,
+        )
+        task = adapter.task_board.create(
+            subject=seed_task["subject"],
+            description=seed_task["description"],
+            metadata={
+                "scope_paths": ["src/renderer/game-view.tsx"],
+                "target_files": ["src/renderer/game-view.tsx"],
+                "autofix": True,
+                "autofix_reason": "game_pm_domain_coverage",
+            },
+        )
+
+        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("existing deterministic PM autofix scaffold should not call LLM dialogue")
+
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("direct fallback should not run after deterministic scaffold refresh")
+
+        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-existing-scaffold"},
+        )
+
+        assert result["success"] is True
+        assert result["materialization_mode"] == "deterministic_declared_scope_scaffold"
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("modified_files") == ["src/renderer/game-view.tsx"]
+
     def test_text_patch_mode_requests_parseable_file_blocks(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         msg = adapter._build_director_message({"subject": "T"}, text_patch_mode=True)
         assert "当前运行时要求纯文本补丁" in msg
         assert "relative/path.ext" in msg
         assert "path/to/file.py" not in msg
+
+
+# ---------------------------------------------------------------------------
+# Deterministic declared-scope scaffold
+# ---------------------------------------------------------------------------
+
+
+class TestDeterministicDeclaredScopeScaffold:
+    """Director may materialize narrow PM-autofix declared files without target code."""
+
+    def test_creates_missing_autofix_source_file(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = {
+            "subject": "Implement interactive game renderer",
+            "scope_paths": ["src/renderer/game-view.tsx"],
+            "target_files": ["src/renderer/game-view.tsx"],
+            "metadata": {
+                "autofix": True,
+                "autofix_reason": "game_pm_domain_coverage",
+            },
+        }
+
+        results = _apply_deterministic_declared_scope_scaffold(
+            adapter,
+            task=task,
+            task_id="task-renderer",
+            current_files={},
+            workspace_name=tmp_path.name,
+        )
+
+        target = tmp_path / "src" / "renderer" / "game-view.tsx"
+        assert target.is_file()
+        text = target.read_text(encoding="utf-8")
+        assert "createGameViewScaffoldState" in text
+        assert "deterministic-declared-scope-v1" in text
+        assert _has_deterministic_declared_scope_scaffold(results) is True
+        assert results[0]["tool"] == "write_file"
+
+    def test_rewrites_existing_autofix_repair_scope_file(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        target = tmp_path / "src" / "combat" / "combat-system.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("export const staleCombatScaffold = true;\n", encoding="utf-8")
+        task = {
+            "subject": "Implement turn based combat system",
+            "description": "Quality gate repair task generated because combat coverage is missing.",
+            "scope_paths": ["src/combat/combat-system.ts"],
+            "target_files": ["src/combat/combat-system.ts"],
+            "metadata": {
+                "autofix": True,
+                "autofix_reason": "game_pm_domain_coverage",
+            },
+        }
+
+        results = _apply_deterministic_declared_scope_scaffold(
+            adapter,
+            task=task,
+            task_id="task-combat",
+            current_files={"src/combat/combat-system.ts": "old-fingerprint"},
+            workspace_name=tmp_path.name,
+        )
+
+        text = target.read_text(encoding="utf-8")
+        assert "staleCombatScaffold" not in text
+        assert "createCombatSystemScaffoldState" in text
+        assert _has_deterministic_declared_scope_scaffold(results) is True
+        assert results[0]["result"]["operation"] == "modify"
+
+    def test_skips_non_autofix_tasks(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = {
+            "subject": "Implement feature",
+            "scope_paths": ["src/feature.ts"],
+            "target_files": ["src/feature.ts"],
+        }
+
+        results = _apply_deterministic_declared_scope_scaffold(
+            adapter,
+            task=task,
+            task_id="task-feature",
+            current_files={},
+            workspace_name=tmp_path.name,
+        )
+
+        assert results == []
+        assert not (tmp_path / "src" / "feature.ts").exists()
 
 
 # ---------------------------------------------------------------------------

@@ -59,6 +59,36 @@ class TestFileApplyService:
         )
         assert result == []
 
+    def test_write_files_blocks_agents_forbidden_path(self, tmp_path: Path) -> None:
+        """write_files must not bypass AGENTS.md policy."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        (tmp_path / "AGENTS.md").write_text("禁止修改 src/generated/schema.ts\n", encoding="utf-8")
+        service = FileApplyService(workspace=str(tmp_path))
+
+        result = service.write_files([{"path": "src/generated/schema.ts", "content": "export const schema = {};\n"}])
+
+        assert result == []
+        assert service._last_write_errors
+        assert "AGENTS.md forbids writing src/generated/schema.ts" in service._last_write_errors[0]
+        assert not (tmp_path / "src" / "generated" / "schema.ts").exists()
+
+    def test_apply_response_operations_reports_fenced_policy_denial(self, tmp_path: Path) -> None:
+        """Fenced direct writes should return policy errors instead of silent no_changes."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        (tmp_path / "AGENTS.md").write_text("禁止修改 src/generated/schema.ts\n", encoding="utf-8")
+        service = FileApplyService(workspace=str(tmp_path))
+
+        files, errors = service.apply_response_operations(
+            "```file: src/generated/schema.ts\nexport const schema = {};\n```",
+            task_id="task-policy-fenced",
+        )
+
+        assert files == []
+        assert any("AGENTS.md forbids writing src/generated/schema.ts" in error for error in errors)
+        assert not (tmp_path / "src" / "generated" / "schema.ts").exists()
+
     def test_collect_workspace_files_empty_list(self) -> None:
         """Test collect_workspace_files with empty list."""
         from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
@@ -230,7 +260,9 @@ class TestFileApplyService:
         )
 
         assert applied == []
-        assert any("package.json: invalid JSON" in error for error in errors)
+        assert any(
+            "package.json: invalid JSON" in error or "package.json structured diff failed" in error for error in errors
+        )
         assert package_path.read_text(encoding="utf-8") == original
 
     def test_apply_response_operations_accepts_nested_markdown_fences(self, tmp_path: Path) -> None:

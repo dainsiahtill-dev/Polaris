@@ -981,6 +981,7 @@ def normalize_pm_payload(
     raw_payload: Any,
     iteration: int,
     start_timestamp: str,
+    workspace_full: str = "",
 ) -> dict[str, Any]:
     """Normalize raw PM payload to canonical contract format.
 
@@ -989,7 +990,7 @@ def normalize_pm_payload(
     overall_goal, focus, tasks, notes fields.
     """
     if not isinstance(raw_payload, dict):
-        return {
+        payload = {
             "schema_version": 2,
             "run_id": f"pm-{iteration:05d}",
             "pm_iteration": iteration,
@@ -999,6 +1000,9 @@ def normalize_pm_payload(
             "tasks": [],
             "notes": "Invalid PM payload: not a dict",
         }
+        if workspace_full:
+            payload["workspace"] = workspace_full
+        return payload
 
     # Extract tasks
     raw_tasks = raw_payload.get("tasks")
@@ -1056,7 +1060,7 @@ def normalize_pm_payload(
     focus = str(raw_payload.get("focus") or "").strip()
     notes = str(raw_payload.get("notes") or "").strip()
 
-    return {
+    payload = {
         "schema_version": 2,
         "run_id": f"pm-{iteration:05d}",
         "pm_iteration": iteration,
@@ -1066,6 +1070,9 @@ def normalize_pm_payload(
         "tasks": tasks,
         "notes": notes,
     }
+    if workspace_full:
+        payload["workspace"] = workspace_full
+    return payload
 
 
 def _load_pm_schema_required_fields(workspace_full: str) -> list[str]:

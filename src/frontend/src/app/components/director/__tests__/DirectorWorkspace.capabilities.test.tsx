@@ -40,7 +40,11 @@ vi.mock('@/app/components/ai-dialogue', () => ({
 }));
 
 vi.mock('../RealTimeFileDiff', () => ({
-  RealTimeFileDiff: () => <div data-testid="real-time-file-diff" />,
+  RealTimeFileDiff: ({ filePath, patch }: { filePath?: string; patch?: string }) => (
+    <div data-testid="real-time-file-diff" data-file-path={filePath}>
+      {patch}
+    </div>
+  ),
 }));
 
 vi.mock('../DirectorWorkbenchPanel', () => ({
@@ -339,9 +343,12 @@ describe.sequential('Director capability desktop integration', () => {
     expect(screen.getByText('src/new.ts')).toBeInTheDocument();
     expect(screen.getAllByText('创建').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('修改').length).toBeGreaterThanOrEqual(1);
+    const defaultDiff = await screen.findByTestId('real-time-file-diff');
+    expect(defaultDiff).toHaveAttribute('data-file-path', 'src/new.ts');
+    expect(defaultDiff).toHaveTextContent('export const value = 1;');
 
     fireEvent.click(screen.getByText('src/app.ts'));
-    expect(screen.getByTestId('real-time-file-diff')).toBeInTheDocument();
+    expect(screen.getByTestId('real-time-file-diff')).toHaveAttribute('data-file-path', 'src/app.ts');
   });
 
   it('renders realtime file edit statistics when backend events do not include a patch', async () => {
@@ -372,10 +379,8 @@ describe.sequential('Director capability desktop integration', () => {
 
     expect(await screen.findByText('src/generated.ts')).toBeInTheDocument();
     expect(screen.getByText('统计')).toBeInTheDocument();
-    expect(screen.getByText('+4')).toBeInTheDocument();
-    expect(screen.getByText('-1')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText('src/generated.ts'));
+    expect(screen.getAllByText('+4').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('-1').length).toBeGreaterThanOrEqual(1);
 
     expect(screen.getByTestId('director-file-edit-summary')).toBeInTheDocument();
     expect(screen.getByText('未收到 diff patch，已显示文件变更统计。')).toBeInTheDocument();
@@ -423,6 +428,68 @@ describe.sequential('Director capability desktop integration', () => {
 
     expect(screen.getByTestId('director-file-edit-summary')).toBeInTheDocument();
     expect(screen.getByText('来源: task-runtime-snapshot')).toBeInTheDocument();
+  });
+
+  it('auto-opens the newest patch diff when realtime diff arrives after snapshot statistics', async () => {
+    const completedTask = {
+      id: 6,
+      title: 'Implement interactive game renderer',
+      status: 'completed',
+      metadata: {
+        pm_task_id: 'PM-AUTO-RENDERER',
+        adapter_result: {
+          modified_files: ['src/ai/enemy_ai.py'],
+          tools_executed: 1,
+        },
+        runtime_execution: {
+          last_result_summary: 'changed_files=1; tools_executed=1',
+        },
+      },
+    } as unknown as PmTask;
+
+    const baseProps = {
+      workspace: 'C:/Temp/Product',
+      onBackToMain: vi.fn(),
+      tasks: [completedTask],
+      directorRunning: false,
+      onToggleDirector: vi.fn(),
+    };
+
+    const { rerender } = render(
+      <DirectorWorkspace
+        {...baseProps}
+        fileEditEvents={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('director-nav-代码'));
+
+    expect(await screen.findByTestId('director-file-edit-summary')).toHaveTextContent('来源: task-runtime-snapshot');
+
+    rerender(
+      <DirectorWorkspace
+        {...baseProps}
+        fileEditEvents={[
+          {
+            id: 'renderer-diff',
+            filePath: 'src/renderer/game-view.tsx',
+            operation: 'create',
+            contentSize: 693,
+            taskId: '6',
+            patch: '--- /dev/null\n+++ b/src/renderer/game-view.tsx\n@@ -0,0 +1 @@\n+export const GameView = () => null;',
+            timestamp: '2026-06-02T21:25:49.000Z',
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('real-time-file-diff')).toHaveAttribute(
+        'data-file-path',
+        'src/renderer/game-view.tsx',
+      );
+    });
+    expect(screen.queryByTestId('director-file-edit-summary')).not.toBeInTheDocument();
   });
 
   it('renders Director readiness diagnostics from the backend route', async () => {
@@ -869,11 +936,55 @@ describe.sequential('Director capability desktop integration', () => {
     );
 
     fireEvent.click(screen.getByTitle('终端'));
-    expect(await screen.findByText(/Director 运行中: Run target/)).toBeInTheDocument();
+    expect(await screen.findByTestId('director-terminal-output')).toHaveTextContent(/Director 运行中: Run target/);
 
     fireEvent.click(screen.getByTestId('director-terminal-clear'));
 
-    expect(screen.getByText('等待执行...')).toBeInTheDocument();
+    expect(screen.getByTestId('director-terminal-empty')).toHaveTextContent('等待执行...');
+  });
+
+  it('renders execution and process stream evidence in the Director terminal panel', async () => {
+    serviceMocks.getDirectorCapabilities.mockResolvedValueOnce({
+      ok: true,
+      data: { ok: true, role: 'director', capabilities: { electron_workbench: ['read_files'] } },
+    });
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+        executionLogs={[
+          {
+            id: 'exec-1',
+            timestamp: '2000-01-01T00:00:00.000Z',
+            level: 'exec',
+            source: 'director',
+            message: 'pytest passed',
+          },
+        ]}
+        processStreamEvents={[
+          {
+            id: 'proc-1',
+            timestamp: '2000-01-01T00:00:01.000Z',
+            level: 'info',
+            source: 'stdout',
+            message: 'writing src/generated.ts',
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle('终端'));
+    const output = await screen.findByTestId('director-terminal-output');
+    expect(output).toHaveTextContent('pytest passed');
+    expect(output).toHaveTextContent('writing src/generated.ts');
+
+    fireEvent.click(screen.getByTestId('director-terminal-clear'));
+
+    await waitFor(() => expect(screen.getByTestId('director-terminal-empty')).toHaveTextContent('等待执行...'));
   });
 
   it('wires Director debug panel actions to task inspection and cancellation', async () => {

@@ -97,6 +97,104 @@ def _write_temp_verify_rename(
         return {"ok": False, "error": f"Failed to write file: {exc}"}
 
 
+def _read_workspace_agents_policy_text(self: AgentAccelToolExecutor, rel: str = "") -> str:
+    """Read root and nested AGENTS.md files that apply to a workspace-relative path."""
+    normalized_rel = str(rel or "").replace("\\", "/").strip("/")
+    candidates = ["AGENTS.md"]
+    parent_parts = [part for part in normalized_rel.split("/")[:-1] if part]
+    for index in range(1, len(parent_parts) + 1):
+        candidates.append("/".join([*parent_parts[:index], "AGENTS.md"]))
+
+    texts: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            if self._kernel_fs.workspace_exists(candidate) and self._kernel_fs.workspace_is_file(candidate):
+                texts.append(self._kernel_fs.workspace_read_text(candidate, encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+    return "\n".join(texts)
+
+
+def _coerce_policy_scope_list(value: Any) -> list[str]:
+    """Normalize an optional scope-like tool argument into a string list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item or "").strip()]
+    return []
+
+
+def _director_write_allowed_scope(tool_kwargs: dict[str, Any] | None) -> list[str]:
+    """Extract an explicit Director write scope if the call carries one."""
+    kwargs = tool_kwargs or {}
+    for key in (
+        "allowed_scope",
+        "allowed_scope_paths",
+        "scope_paths",
+        "target_files",
+        "pm_target_files",
+        "act_files",
+    ):
+        scope = _coerce_policy_scope_list(kwargs.get(key))
+        if scope:
+            return scope
+    return []
+
+
+def _validate_director_policy_for_write(
+    self: AgentAccelToolExecutor,
+    *,
+    rel: str,
+    old_content: str,
+    new_content: str,
+    operation: str,
+    tool_kwargs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate a pending workspace write and return structured policy evidence."""
+    from polaris.domain.verification.director_policy_gate import validate_director_write_policy
+
+    normalized_rel = str(rel or "").replace("\\", "/").strip("/")
+    package_write = normalized_rel == "package.json" or normalized_rel.endswith("/package.json")
+    verdict = validate_director_write_policy(
+        changed_files=[normalized_rel] if normalized_rel else [],
+        allowed_scope=_director_write_allowed_scope(tool_kwargs),
+        agents_md=_read_workspace_agents_policy_text(self, normalized_rel),
+        operation=operation,
+        package_before=old_content if package_write else None,
+        package_after=new_content if package_write else None,
+        require_change=True,
+    )
+    evidence = verdict.to_dict()
+    if verdict.allowed:
+        return {"ok": True, "director_policy": evidence}
+
+    reason = "; ".join(verdict.reasons) or "Director write policy denied the write"
+    return {
+        "ok": False,
+        "error": f"Director write policy denied: {reason}",
+        "error_type": "director_write_policy_denied",
+        "blocked": True,
+        "director_policy": evidence,
+    }
+
+
+def _attach_director_policy_evidence(result: dict[str, Any], evidence: dict[str, Any] | None) -> dict[str, Any]:
+    """Attach policy evidence to a tool result and its effect receipt."""
+    if not evidence:
+        return result
+    result["director_policy"] = evidence
+    receipt = result.get("effect_receipt")
+    if isinstance(receipt, dict):
+        receipt["director_policy"] = evidence
+    return result
+
+
 def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     """Handle write_file tool call.
 
@@ -186,6 +284,16 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
         return {"ok": False, "error": normalized.error}
 
     text = str(normalized.content or "")
+    policy_result = _validate_director_policy_for_write(
+        self,
+        rel=rel,
+        old_content=old_content,
+        new_content=text,
+        operation=f"write_file:{operation}",
+        tool_kwargs=kwargs,
+    )
+    if not policy_result.get("ok"):
+        return policy_result
 
     # ========================================================================
     # PRE-WRITE VALIDATION GATE - Validate code syntax before writing
@@ -252,7 +360,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
     if normalized.normalized_patch_like:
         result["normalized_patch_like_write"] = True
 
-    return result
+    return _attach_director_policy_evidence(result, policy_result.get("director_policy"))
 
 
 def _handle_read_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
@@ -496,6 +604,17 @@ def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
             "suggestion": suggestion,
         }
 
+    policy_result = _validate_director_policy_for_write(
+        self,
+        rel=rel,
+        old_content=content,
+        new_content=new_content,
+        operation="search_replace",
+        tool_kwargs=kwargs,
+    )
+    if not policy_result.get("ok"):
+        return policy_result
+
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, new_content, encoding="utf-8")
     if not write_result.get("ok"):
@@ -509,16 +628,19 @@ def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
         new_content=new_content,
     )
 
-    return {
-        "ok": True,
-        "file": rel,
-        "replacements_count": replacements,
-        "effect_receipt": {
+    return _attach_director_policy_evidence(
+        {
+            "ok": True,
             "file": rel,
             "replacements_count": replacements,
-            "operation": "modify",
+            "effect_receipt": {
+                "file": rel,
+                "replacements_count": replacements,
+                "operation": "modify",
+            },
         },
-    }
+        policy_result.get("director_policy"),
+    )
 
 
 def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
@@ -562,11 +684,11 @@ def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
 
     # Line range mode
     if start_line is not None or end_line is not None:
-        return _edit_file_line_mode(self, rel, lines, start_line, end_line, content or "")
+        return _edit_file_line_mode(self, rel, lines, start_line, end_line, content or "", tool_kwargs=kwargs)
 
     # Text replace mode
     if search is not None:
-        return _edit_file_replace_mode(self, rel, file_content, search, replace or "", regex)
+        return _edit_file_replace_mode(self, rel, file_content, search, replace or "", regex, tool_kwargs=kwargs)
 
     return {"ok": False, "error": "Must specify either line range (start_line/end_line) or search/replace"}
 
@@ -779,6 +901,42 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
             "suggestion": "Check that SEARCH text exactly matches file content (including whitespace). Use repo_read_slice to verify exact content.",
         }
 
+    policy_evidence_by_file: dict[str, dict[str, Any]] = {}
+    policy_denials: list[dict[str, Any]] = []
+    for block_rel, (original, new_content) in file_contents.items():
+        if original == new_content:
+            continue
+        policy_result = _validate_director_policy_for_write(
+            self,
+            rel=block_rel,
+            old_content=original,
+            new_content=new_content,
+            operation="edit_blocks",
+            tool_kwargs=kwargs,
+        )
+        if policy_result.get("ok"):
+            policy_evidence = policy_result.get("director_policy")
+            if isinstance(policy_evidence, dict):
+                policy_evidence_by_file[block_rel] = policy_evidence
+            continue
+        policy_denials.append(
+            {
+                "file": block_rel,
+                "error": policy_result.get("error", "Director write policy denied"),
+                "director_policy": policy_result.get("director_policy"),
+            }
+        )
+
+    if policy_denials:
+        return {
+            "ok": False,
+            "error": f"Director write policy denied {len(policy_denials)} file(s). No files were modified.",
+            "error_type": "director_write_policy_denied",
+            "blocked": True,
+            "director_policy_denials": policy_denials,
+            "validation_results": validation_results,
+        }
+
     # ========================================================================
     # PHASE 2: EXECUTION - All blocks valid, now actually write files
     # ========================================================================
@@ -811,6 +969,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
             {
                 "file": block_rel,
                 "bytes_changed": len(new_content) - len(original),
+                "director_policy": policy_evidence_by_file.get(block_rel),
             }
         )
 
@@ -833,6 +992,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         response["effect_receipt"] = {
             "files_modified": [r["file"] for r in results],
             "operation": "modify",
+            "director_policy": policy_evidence_by_file,
         }
 
     return response
@@ -845,6 +1005,8 @@ def _edit_file_line_mode(
     start_line: int | None,
     end_line: int | None,
     content: str,
+    *,
+    tool_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute line range edit mode."""
     total_lines = len(lines)
@@ -863,6 +1025,16 @@ def _edit_file_line_mode(
 
     new_content = "".join(new_lines)
     old_content = "".join(lines)
+    policy_result = _validate_director_policy_for_write(
+        self,
+        rel=rel,
+        old_content=old_content,
+        new_content=new_content,
+        operation="edit_file:line_range",
+        tool_kwargs=tool_kwargs,
+    )
+    if not policy_result.get("ok"):
+        return policy_result
 
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, new_content, encoding="utf-8")
@@ -877,17 +1049,20 @@ def _edit_file_line_mode(
         new_content=new_content,
     )
 
-    return {
-        "ok": True,
-        "file": rel,
-        "mode": "line_range",
-        "lines_affected": end - start + 1 if end >= start else 0,
-        "effect_receipt": {
+    return _attach_director_policy_evidence(
+        {
+            "ok": True,
             "file": rel,
             "mode": "line_range",
-            "operation": "modify",
+            "lines_affected": end - start + 1 if end >= start else 0,
+            "effect_receipt": {
+                "file": rel,
+                "mode": "line_range",
+                "operation": "modify",
+            },
         },
-    }
+        policy_result.get("director_policy"),
+    )
 
 
 def _edit_file_replace_mode(
@@ -897,6 +1072,8 @@ def _edit_file_replace_mode(
     search: str,
     replace: str,
     regex: bool,
+    *,
+    tool_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute text replace edit mode with fuzzy matching fallback."""
     import re
@@ -940,6 +1117,17 @@ def _edit_file_replace_mode(
             "suggestion": suggestion,
         }
 
+    policy_result = _validate_director_policy_for_write(
+        self,
+        rel=rel,
+        old_content=content,
+        new_content=new_content,
+        operation="edit_file:text_replace",
+        tool_kwargs=tool_kwargs,
+    )
+    if not policy_result.get("ok"):
+        return policy_result
+
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, new_content, encoding="utf-8")
     if not write_result.get("ok"):
@@ -974,7 +1162,7 @@ def _edit_file_replace_mode(
         new_content=new_content,
     )
 
-    return result
+    return _attach_director_policy_evidence(result, policy_result.get("director_policy"))
 
 
 def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
@@ -1007,6 +1195,16 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
                 "error": f"File not found: {file}",
                 "suggestion": "Use repo_tree() or repo_rg() to explore workspace structure first. Do not assume files exist - always verify with exploration tools.",
             }
+        policy_result = _validate_director_policy_for_write(
+            self,
+            rel=rel,
+            old_content="",
+            new_content=content_text,
+            operation="append_to_file:create",
+            tool_kwargs=kwargs,
+        )
+        if not policy_result.get("ok"):
+            return policy_result
         full_path = str(self._kernel_fs.resolve_workspace_path(rel))
         write_result = _write_temp_verify_rename(full_path, content_text, encoding="utf-8")
         if not write_result.get("ok"):
@@ -1018,17 +1216,20 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
             old_content="",
             new_content=content_text,
         )
-        return {
-            "ok": True,
-            "file": rel,
-            "bytes_appended": len(content_text.encode("utf-8")),
-            "created": True,
-            "effect_receipt": {
+        return _attach_director_policy_evidence(
+            {
+                "ok": True,
                 "file": rel,
                 "bytes_appended": len(content_text.encode("utf-8")),
-                "operation": "create",
+                "created": True,
+                "effect_receipt": {
+                    "file": rel,
+                    "bytes_appended": len(content_text.encode("utf-8")),
+                    "operation": "create",
+                },
             },
-        }
+            policy_result.get("director_policy"),
+        )
 
     if not self._kernel_fs.workspace_is_file(rel):
         return {"ok": False, "error": f"Path is not a file: {file}"}
@@ -1043,6 +1244,16 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
         existing_content += "\n"
 
     new_content = existing_content + content_text
+    policy_result = _validate_director_policy_for_write(
+        self,
+        rel=rel,
+        old_content=old_content,
+        new_content=new_content,
+        operation="append_to_file:modify",
+        tool_kwargs=kwargs,
+    )
+    if not policy_result.get("ok"):
+        return policy_result
 
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, new_content, encoding="utf-8")
@@ -1057,17 +1268,20 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
         new_content=new_content,
     )
 
-    return {
-        "ok": True,
-        "file": rel,
-        "bytes_appended": len(content_text.encode("utf-8")),
-        "created": False,
-        "effect_receipt": {
+    return _attach_director_policy_evidence(
+        {
+            "ok": True,
             "file": rel,
             "bytes_appended": len(content_text.encode("utf-8")),
-            "operation": "modify",
+            "created": False,
+            "effect_receipt": {
+                "file": rel,
+                "bytes_appended": len(content_text.encode("utf-8")),
+                "operation": "modify",
+            },
         },
-    }
+        policy_result.get("director_policy"),
+    )
 
 
 def _emit_file_written_event(

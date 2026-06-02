@@ -18,6 +18,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -396,7 +397,7 @@ class TestSaveWithSecurityFeatures:
                 time.sleep(0.05)
                 return True
 
-            def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+            def __exit__(self, exc_type: object, exc: object, traceback: object) -> Literal[False]:
                 del exc_type, exc, traceback
                 if self.acquired:
                     with guard:
@@ -578,6 +579,52 @@ class TestSaveWithSecurityFeatures:
         # Secret should be restored, timeout should be updated
         assert result["providers"]["test"]["api_key"] == "my-secret-key-12345"
         assert result["providers"]["test"]["timeout"] == 120
+
+    def test_save_roles_are_authoritative_when_provider_binding_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Removing a role binding must not restore a stale provider_id from the previous config."""
+        from polaris.kernelone.llm.config_store import save_llm_config
+
+        config_path = str(tmp_path / "llm_config.json")
+
+        def mock_config_path(workspace: str, cache_root: str) -> str:
+            del workspace, cache_root
+            return config_path
+
+        monkeypatch.setattr("polaris.kernelone.llm.config_store.llm_config_path", mock_config_path)
+
+        initial_config = {
+            "schema_version": 2,
+            "providers": {
+                "keep": {"type": "openai_compat", "base_url": "http://127.0.0.1:9/v1", "model": "keep"},
+                "deleted": {"type": "openai_compat", "base_url": "http://127.0.0.1:9/v1", "model": "deleted"},
+            },
+            "roles": {
+                "pm": {"provider_id": "deleted", "model": "deleted", "profile": "pm-default"},
+                "director": {"provider_id": "keep", "model": "keep", "profile": "director-default"},
+            },
+            "policies": {"required_ready_roles": ["pm", "director"]},
+        }
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(initial_config, f)
+
+        update = {
+            "schema_version": 2,
+            "providers": {
+                "keep": {"type": "openai_compat", "base_url": "http://127.0.0.1:9/v1", "model": "keep"},
+            },
+            "roles": {
+                "pm": {"profile": "pm-default"},
+                "director": {"provider_id": "keep", "model": "keep", "profile": "director-default"},
+            },
+            "policies": {"required_ready_roles": ["pm", "director"]},
+        }
+
+        result = save_llm_config(".", ".", update)
+
+        assert "deleted" not in result["providers"]
+        assert result["roles"]["pm"] == {"profile": "pm-default"}
 
 
 class TestValidateLlmConfig:

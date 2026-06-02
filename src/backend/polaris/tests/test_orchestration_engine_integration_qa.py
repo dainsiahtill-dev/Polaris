@@ -91,17 +91,36 @@ def test_integration_qa_runs_and_passes_when_all_director_tasks_done(tmp_path):
         ],
         run_events=str(tmp_path / "events.jsonl"),
         dialogue_full=str(tmp_path / "dialogue.jsonl"),
-        verify_runner=lambda workspace: (True, "integration checks passed", []),
+        verify_runner=lambda workspace: (True, "Integration verification passed: npm run test -- --watch=false", []),
     )
 
     assert payload["ran"] is True
     assert payload["passed"] is True
     assert payload["reason"] == "integration_qa_passed"
+    assert payload["evidence_grade"] == "real_command_passed"
     stored = json.loads(Path(payload["result_path"]).read_text(encoding="utf-8"))
     assert stored["passed"] is True
-    assert stored["summary"] == "integration checks passed"
+    assert stored["summary"] == "Integration verification passed: npm run test -- --watch=false"
+    assert stored["evidence_grade"] == "real_command_passed"
     runtime_stored = json.loads(Path(payload["runtime_result_path"]).read_text(encoding="utf-8"))
     assert runtime_stored["reason"] == "integration_qa_passed"
+    assert runtime_stored["evidence_grade"] == "real_command_passed"
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    qa_event = next(item for item in events if item.get("name") == "integration_qa_complete")
+    qa_output = qa_event.get("output") if isinstance(qa_event.get("output"), dict) else {}
+    assert qa_output["evidence_grade"] == "real_command_passed"
+    assert qa_output["reason"] == "integration_qa_passed"
+    dialogue_events = [
+        json.loads(line)
+        for line in (tmp_path / "dialogue.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    qa_dialogue = next(item for item in dialogue_events if item.get("speaker") == "QA")
+    assert qa_dialogue["meta"]["evidence_grade"] == "real_command_passed"
 
 
 def test_integration_qa_runs_and_fails_on_verify_error(tmp_path):
@@ -136,8 +155,43 @@ def test_integration_qa_runs_and_fails_on_verify_error(tmp_path):
     assert payload["ran"] is True
     assert payload["passed"] is False
     assert payload["reason"] == "integration_qa_failed"
+    assert payload["evidence_grade"] == "real_command_failed"
     assert payload["errors"] == ["missing symbol"]
     assert Path(payload["runtime_result_path"]).is_file()
+
+
+def test_integration_qa_marks_missing_node_dependencies_as_blocked(tmp_path):
+    mod = _load_orchestration_engine()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    payload = mod.run_post_dispatch_integration_qa(
+        args=SimpleNamespace(integration_qa=True),
+        workspace_full=str(tmp_path),
+        cache_root_full="",
+        run_dir=str(run_dir),
+        run_id="pm-00003b",
+        iteration=3,
+        tasks=[
+            {
+                "id": "TASK-A",
+                "assigned_to": "Director",
+                "status": "done",
+            }
+        ],
+        run_events=str(tmp_path / "events.jsonl"),
+        dialogue_full=str(tmp_path / "dialogue.jsonl"),
+        verify_runner=lambda workspace: (
+            False,
+            "Node dependencies are declared but not installed",
+            ["Set KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK=1 to allow static fallback."],
+        ),
+    )
+
+    assert payload["ran"] is True
+    assert payload["passed"] is False
+    assert payload["reason"] == "integration_qa_failed"
+    assert payload["evidence_grade"] == "blocked_missing_dependencies"
 
 
 def test_integration_qa_uses_default_runner_when_verify_runner_missing(tmp_path, monkeypatch):

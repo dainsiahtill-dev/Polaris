@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -101,6 +102,49 @@ async def test_edit_file_tool_broadcasts_modify_event(tmp_path: Path) -> None:
     assert payload["operation"] == "modify"
     assert payload["task_id"] == "task-2"
     assert "export const value = 2;" in payload["patch"]
+
+
+def test_write_file_tool_blocks_agents_forbidden_path(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("禁止修改 src/generated/schema.ts\n", encoding="utf-8")
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "write_file",
+        {"file": "src/generated/schema.ts", "content": "export const schema = {};\n"},
+        task_id="task-policy-1",
+    )
+
+    assert result["ok"] is False
+    assert result["blocked"] is True
+    assert result["error_type"] == "director_write_policy_denied"
+    assert "AGENTS.md forbids writing src/generated/schema.ts" in result["error"]
+    assert not (tmp_path / "src" / "generated" / "schema.ts").exists()
+    assert result["director_policy"]["allowed"] is False
+
+
+def test_write_file_tool_records_nested_package_manifest_diff(tmp_path: Path) -> None:
+    target = tmp_path / "packages" / "web" / "package.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps({"scripts": {"test": "vitest run"}}, ensure_ascii=False), encoding="utf-8")
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "file": "packages/web/package.json",
+            "content": json.dumps({"scripts": {"test": "vitest run --coverage"}}, ensure_ascii=False),
+            "target_files": ["packages/web/package.json"],
+        },
+        task_id="task-policy-2",
+    )
+
+    assert result["ok"] is True
+    package_diff = result["director_policy"]["package_diff"]
+    assert package_diff["has_changes"] is True
+    assert package_diff["sections"]["scripts"]["changed"]["test"] == {
+        "before": "vitest run",
+        "after": "vitest run --coverage",
+    }
 
 
 @pytest.mark.asyncio

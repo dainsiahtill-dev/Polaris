@@ -848,6 +848,21 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "required_any": [["diff", "patch"]],
         "required_doc": "args.file + (args.diff or args.patch)",
     },
+    "apply_patch": {
+        "category": "write",
+        "description": "Apply Codex-style *** Begin Patch formatted edits with create, update, move, and delete operations.",
+        "aliases": [],
+        "arg_aliases": {"diff": "patch", "content": "patch", "text": "patch"},
+        "arguments": [
+            {"name": "patch", "type": "string", "required": True},
+            {"name": "diff", "type": "string", "required": False},
+            {"name": "content", "type": "string", "required": False},
+            {"name": "text", "type": "string", "required": False},
+        ],
+        "response_format_hint": "Patch application result with per-file Director policy evidence",
+        "required_any": [("patch",)],
+        "required_doc": "args.patch required (*** Begin Patch format)",
+    },
     "treesitter_replace_node": {
         "category": "write",
         "description": "Replace an AST node identified by symbol name using tree-sitter.",

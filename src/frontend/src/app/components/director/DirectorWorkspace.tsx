@@ -54,6 +54,11 @@ import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import { AIDialoguePanel } from '@/app/components/ai-dialogue';
 import { RealTimeFileDiff } from './RealTimeFileDiff';
+import {
+  compareFileEditEventsForCodePanel,
+  hasRenderablePatch,
+  selectDefaultCodePanelEvent,
+} from './directorCodeEvents';
 import { resolveDirectorOpenTarget } from './directorFileActions';
 import { TaskTraceTimeline } from '../common/TaskTraceTimeline';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
@@ -829,6 +834,64 @@ function formatKernelPercent(value: unknown): string {
   return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-';
 }
 
+function logTimestampMs(entry: LogEntry): number | null {
+  const timestamp = String(entry.timestamp || '').trim();
+  if (!timestamp) {
+    return null;
+  }
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatTerminalTimestamp(entry: LogEntry): string {
+  const parsed = logTimestampMs(entry);
+  if (parsed !== null) {
+    return new Date(parsed).toLocaleTimeString();
+  }
+  return String(entry.timestamp || '').trim();
+}
+
+function formatTerminalLogEntry(entry: LogEntry, fallbackSource: string): string {
+  const timestamp = formatTerminalTimestamp(entry);
+  const source = String(entry.source || fallbackSource).trim();
+  const level = String(entry.level || 'info').trim();
+  const body = [
+    String(entry.title || '').trim(),
+    String(entry.message || '').trim(),
+    String(entry.details || '').trim(),
+  ].filter(Boolean).join(' | ');
+  const prefix = [
+    timestamp ? `[${timestamp}]` : '',
+    source ? source : fallbackSource,
+    level ? `<${level}>` : '',
+  ].filter(Boolean).join(' ');
+  return `${prefix}${body ? ` ${body}` : ''}`.trim();
+}
+
+function formatDirectorTerminalStreamOutput(
+  executionLogs: LogEntry[],
+  processStreamEvents: LogEntry[],
+  hiddenBeforeMs: number,
+): string {
+  const keyed = new Map<string, { entry: LogEntry; source: string; timestampMs: number }>();
+  for (const [source, rows] of [['process', processStreamEvents], ['execution', executionLogs]] as const) {
+    rows.forEach((entry, index) => {
+      const timestampMs = logTimestampMs(entry);
+      if (hiddenBeforeMs > 0 && (timestampMs === null || timestampMs <= hiddenBeforeMs)) {
+        return;
+      }
+      const key = entry.id || `${source}:${entry.timestamp}:${entry.message}:${index}`;
+      keyed.set(key, { entry, source, timestampMs: timestampMs ?? Number.MAX_SAFE_INTEGER });
+    });
+  }
+  return Array.from(keyed.values())
+    .sort((left, right) => left.timestampMs - right.timestampMs)
+    .slice(-200)
+    .map(({ entry, source }) => formatTerminalLogEntry(entry, source))
+    .filter(Boolean)
+    .join('\n');
+}
+
 function readKernelEventText(event: RoleKernelLLMEvent | null | undefined, keys: string[]): string {
   if (!event) {
     return '';
@@ -1513,6 +1576,7 @@ export function DirectorWorkspace({
   });
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string>('');
+  const [terminalClearedAt, setTerminalClearedAt] = useState(0);
   const [fallbackTasks, setFallbackTasks] = useState<PmTask[]>([]);
   const [backendWorkers, setBackendWorkers] = useState<RuntimeWorkerState[]>([]);
   const [workerFallbackError, setWorkerFallbackError] = useState<string | null>(null);
@@ -2617,10 +2681,12 @@ export function DirectorWorkspace({
   const handleReset = useCallback(() => {
     setSelectedTaskId(null);
     setTerminalOutput('');
+    setTerminalClearedAt(Date.now());
   }, []);
 
   const handleClearTerminal = useCallback(() => {
     setTerminalOutput('');
+    setTerminalClearedAt(Date.now());
   }, []);
 
   useEffect(() => {
@@ -2646,6 +2712,15 @@ export function DirectorWorkspace({
       });
     }
   }, [currentTaskId, currentTaskStatus, currentTaskTitle, directorRunning]);
+
+  const terminalStreamOutput = useMemo(
+    () => formatDirectorTerminalStreamOutput(executionLogs, processStreamEvents, terminalClearedAt),
+    [executionLogs, processStreamEvents, terminalClearedAt],
+  );
+  const terminalPanelOutput = useMemo(
+    () => [terminalOutput.trimEnd(), terminalStreamOutput].filter(Boolean).join('\n'),
+    [terminalOutput, terminalStreamOutput],
+  );
 
   const runningTasks = executionTasks.filter(t => t.status === 'running').length;
   const completedTasks = executionTasks.filter(t => t.status === 'completed').length;
@@ -3052,7 +3127,7 @@ export function DirectorWorkspace({
                 <DirectorCodePanel workspace={workspace} fileEditEvents={fileEditEvents} tasks={executionTasks} />
               )}
               {activeView === 'terminal' && (
-                <DirectorTerminalPanel output={terminalOutput} onClear={handleClearTerminal} />
+                <DirectorTerminalPanel output={terminalPanelOutput} onClear={handleClearTerminal} />
               )}
               {activeView === 'debug' && (
                 <DirectorDebugPanel
@@ -4010,12 +4085,33 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
   };
 
   const codePanelEvents = useMemo(() => mergeCodePanelEvents(fileEditEvents, tasks), [fileEditEvents, tasks]);
-  // 只显示最近的 20 个事件，按时间倒序
-  const recentEvents = useMemo(() => [...codePanelEvents].reverse().slice(0, 20), [codePanelEvents]);
-  const selectedOpenEvent = useMemo(
-    () => recentEvents.find((event) => event.id === expandedEventId) ?? recentEvents[0] ?? null,
-    [expandedEventId, recentEvents],
+  const recentEvents = useMemo(
+    () => [...codePanelEvents].sort(compareFileEditEventsForCodePanel).slice(0, 20),
+    [codePanelEvents],
   );
+  useEffect(() => {
+    if (recentEvents.length === 0) {
+      setExpandedEventId(null);
+      return;
+    }
+    const defaultEvent = selectDefaultCodePanelEvent(recentEvents);
+    setExpandedEventId((previous) => {
+      const previousEvent = recentEvents.find((event) => event.id === previous);
+      if (!previousEvent) {
+        return defaultEvent?.id ?? null;
+      }
+      if (defaultEvent && !hasRenderablePatch(previousEvent) && hasRenderablePatch(defaultEvent)) {
+        return defaultEvent.id;
+      }
+      return previous;
+    });
+  }, [recentEvents]);
+  const defaultCodePanelEvent = useMemo(() => selectDefaultCodePanelEvent(recentEvents), [recentEvents]);
+  const selectedOpenEvent = useMemo(
+    () => recentEvents.find((event) => event.id === expandedEventId) ?? defaultCodePanelEvent,
+    [defaultCodePanelEvent, expandedEventId, recentEvents],
+  );
+  const defaultCodePanelEventId = defaultCodePanelEvent?.id ?? null;
 
   const toggleExpand = (eventId: string) => {
     setExpandedEventId(prev => prev === eventId ? null : eventId);
@@ -4100,16 +4196,30 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
             </div>
           ) : (
             <div data-testid="director-code-event-list" className="space-y-2">
-              {recentEvents.map((event, index) => {
-                const hasPatch = Boolean(event.patch);
+              {recentEvents.map((event) => {
+                const hasPatch = hasRenderablePatch(event);
                 const { stats, hasStats } = renderLineStats(event);
                 const sourceLabel = event.provenance || event.sourceChannel || event.eventKind || 'runtime';
+                const noContentChange = !hasPatch && event.patchUnavailableReason === 'no_content_change';
+                const emptyFile = !hasPatch && event.patchUnavailableReason === 'empty_file';
+                const fallbackBadge = noContentChange ? '无变化' : '统计';
+                const fallbackAction = noContentChange || emptyFile ? '查看状态' : '展开统计';
+                const fallbackTitle = noContentChange
+                  ? '文件内容未变化，未生成 diff patch。'
+                  : emptyFile
+                    ? '空文件写入未生成 diff patch。'
+                    : '未收到 diff patch，已显示文件变更统计。';
                 return (
                 <div key={event.id}>
                   <div
+                    data-testid="director-code-event-row"
+                    data-file-path={event.filePath}
+                    data-event-id={event.id}
                     className={cn(
                       'p-3 rounded-xl border transition-all cursor-pointer',
-                      index === 0 ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-white/5 border-white/5 hover:border-white/10',
+                      hasPatch && event.id === defaultCodePanelEventId
+                        ? 'bg-indigo-500/10 border-indigo-500/30'
+                        : 'bg-white/5 border-white/5 hover:border-white/10',
                       expandedEventId === event.id && 'ring-1 ring-indigo-500/30'
                     )}
                     onClick={() => toggleExpand(event.id)}
@@ -4132,10 +4242,14 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
                           <span
                             className={cn(
                               'text-[10px] px-1.5 py-0.5 rounded',
-                              hasPatch ? 'bg-cyan-500/20 text-cyan-400' : 'bg-amber-500/15 text-amber-300',
+                              hasPatch
+                                ? 'bg-cyan-500/20 text-cyan-400'
+                                : noContentChange || emptyFile
+                                  ? 'bg-slate-500/15 text-slate-300'
+                                  : 'bg-amber-500/15 text-amber-300',
                             )}
                           >
-                            {hasPatch ? 'Diff' : '统计'}
+                            {hasPatch ? 'Diff' : fallbackBadge}
                           </span>
                         </div>
                         <div className="mt-1 flex items-center gap-3 text-[10px] text-slate-500">
@@ -4152,7 +4266,7 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
                             {new Date(event.timestamp).toLocaleTimeString()}
                           </span>
                           <span className={hasPatch ? 'text-cyan-400' : 'text-amber-300'}>
-                            {expandedEventId === event.id ? '▼ 收起' : hasPatch ? '▶ 展开 Diff' : '▶ 展开统计'}
+                            {expandedEventId === event.id ? '▼ 收起' : hasPatch ? '▶ 展开 Diff' : `▶ ${fallbackAction}`}
                           </span>
                         </div>
                       </div>
@@ -4171,18 +4285,27 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
                         />
                       ) : (
                         <div
-                          className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-100"
+                          className={cn(
+                            'rounded-lg border p-3 text-xs',
+                            noContentChange || emptyFile
+                              ? 'border-slate-500/20 bg-slate-500/5 text-slate-200'
+                              : 'border-amber-500/20 bg-amber-500/5 text-amber-100',
+                          )}
                           data-testid="director-file-edit-summary"
                         >
-                          <div className="font-medium">未收到 diff patch，已显示文件变更统计。</div>
+                          <div className="font-medium">{fallbackTitle}</div>
                           <div className="mt-2 flex flex-wrap gap-2 font-mono">
                             <span className="rounded bg-white/5 px-2 py-1 text-emerald-300">+{stats.added}</span>
                             <span className="rounded bg-white/5 px-2 py-1 text-red-300">-{stats.deleted}</span>
                             <span className="rounded bg-white/5 px-2 py-1 text-blue-300">~{stats.modified}</span>
                             <span className="rounded bg-white/5 px-2 py-1 text-slate-300">{event.contentSize} bytes</span>
                           </div>
-                          <div className="mt-2 text-[11px] text-amber-200/70">
+                          <div className={cn(
+                            'mt-2 text-[11px]',
+                            noContentChange || emptyFile ? 'text-slate-400' : 'text-amber-200/70',
+                          )}>
                             来源: {sourceLabel}
+                            {event.patchUnavailableReason ? ` · 原因: ${event.patchUnavailableReason}` : ''}
                           </div>
                         </div>
                       )}
@@ -4243,7 +4366,7 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
 // Terminal Panel
 function DirectorTerminalPanel({ output, onClear }: { output: string; onClear: () => void }) {
   return (
-    <div className="h-full flex flex-col">
+    <div data-testid="director-terminal-panel" className="h-full flex flex-col">
       <div className="h-12 flex items-center justify-between px-4 border-b border-white/5">
         <h2 className="text-sm font-medium text-slate-200">执行终端</h2>
         <Button
@@ -4261,9 +4384,9 @@ function DirectorTerminalPanel({ output, onClear }: { output: string; onClear: (
       <div className="flex-1 p-4">
         <div className="h-full rounded-xl border border-white/10 bg-slate-950 p-4 font-mono text-xs overflow-auto">
           {output ? (
-            <pre className="text-slate-300 whitespace-pre-wrap">{output}</pre>
+            <pre data-testid="director-terminal-output" className="text-slate-300 whitespace-pre-wrap">{output}</pre>
           ) : (
-            <div className="text-slate-600">等待执行...</div>
+            <div data-testid="director-terminal-empty" className="text-slate-600">等待执行...</div>
           )}
         </div>
       </div>
@@ -4284,13 +4407,13 @@ function DirectorDebugPanel({
   onCancelTask: (taskId: string) => void;
 }) {
   return (
-    <div className="h-full flex flex-col">
+    <div data-testid="director-debug-panel" className="h-full flex flex-col">
       <div className="h-12 flex items-center px-4 border-b border-white/5">
         <h2 className="text-sm font-medium text-slate-200">调试中心</h2>
       </div>
       <div className="flex-1 overflow-auto p-4">
         {tasks.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-slate-500">
+          <div data-testid="director-debug-empty" className="h-full flex flex-col items-center justify-center text-slate-500">
             <CheckCircle2 className="w-12 h-12 mb-4 text-blue-500/30" />
             <p>没有需要调试的问题</p>
           </div>
@@ -4299,6 +4422,7 @@ function DirectorDebugPanel({
             {tasks.map((task) => (
               <div
                 key={task.id}
+                data-testid="director-debug-task"
                 className="p-4 rounded-xl border border-red-500/20 bg-red-500/5"
               >
                 <div className="flex items-center gap-2 mb-2">

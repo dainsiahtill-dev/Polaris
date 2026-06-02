@@ -18,6 +18,7 @@ import { isCLIProviderType } from '@/app/components/llm/types';
 import type { TestEvent, TestResult, TestSuiteSummary, TestUsageSummary } from '@/app/components/llm/test/types';
 import type { InteractiveInterviewReport } from '@/app/components/llm/interview/InteractiveInterviewHall';
 import { runStreamingTest } from '@/app/components/llm/test/streamingTest';
+import { sanitizeLlmConfigForSave } from '@/app/components/llm/utils/configSanitizer';
 import { resolveProviderAwareRoleModel } from '@/app/components/llm/utils/providerModelResolver';
 
 const SETTINGS_MODAL_SIZE_KEY = 'polaris:ui:settings_modal:size';
@@ -680,8 +681,10 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
       llmErrorRef.current = null;
       let success = true;
       while (llmSavePendingRef.current) {
-        const configToSave = llmSavePendingRef.current;
+        const configToSave = sanitizeLlmConfigForSave(llmSavePendingRef.current);
         llmSavePendingRef.current = null;
+        setLLMConfig(configToSave);
+        llmConfigRef.current = configToSave;
         try {
           const res = await apiFetch('/v2/llm/config', {
             method: 'POST',
@@ -812,7 +815,10 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
         const nextRoles = { ...(current.roles || {}) };
         Object.entries(nextRoles).forEach(([roleId, roleCfg]) => {
           if (roleCfg?.provider_id === providerId) {
-            nextRoles[roleId] = { ...roleCfg, provider_id: '', model: '' };
+            const nextRoleCfg = { ...(roleCfg || {}) };
+            delete nextRoleCfg.provider_id;
+            delete nextRoleCfg.model;
+            nextRoles[roleId] = nextRoleCfg;
           }
         });
         return { ...current, providers: nextProviders, roles: nextRoles };
@@ -2014,6 +2020,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                     <input
                       type="checkbox"
                       id="close-to-tray"
+                      data-testid="settings-close-to-tray-checkbox"
                       checked={closeToTray}
                       onChange={(e) => setCloseToTray(e.target.checked)}
                       className="mt-0.5 w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent checked:border-accent focus:ring-accent/50 text-accent transition-colors"

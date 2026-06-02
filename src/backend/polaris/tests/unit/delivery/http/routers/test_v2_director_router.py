@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from polaris.bootstrap.config import Settings
 from polaris.cells.runtime.state_owner.public.service import AppState
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.kernelone.storage import resolve_runtime_path
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -171,6 +174,7 @@ def _patch_director_blueprint_persistence(payload_by_id: dict[str, dict[str, obj
     """Patch Director's read-only CE blueprint persistence probe."""
 
     persistence = MagicMock()
+    persistence.list_all.return_value = list(payload_by_id.keys())
     persistence.load.side_effect = lambda blueprint_id: payload_by_id.get(str(blueprint_id))
     return patch("polaris.delivery.http.v2.director.BlueprintPersistence", return_value=persistence)
 
@@ -706,6 +710,172 @@ async def test_director_diagnostics_blocks_workflow_ready_tasks_without_blueprin
 
 
 @pytest.mark.asyncio
+async def test_director_diagnostics_accepts_matching_chief_engineer_blueprint_store_evidence(
+    client: AsyncClient,
+) -> None:
+    """Workflow rows without inline blueprint refs can use CE store evidence keyed by PM task id."""
+    mock_idle_worker = MagicMock()
+    mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.list_workers = AsyncMock(return_value=[mock_idle_worker])
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[
+                {
+                    "id": "director-ready-from-ce-store",
+                    "subject": "Ready via CE store",
+                    "status": "PENDING",
+                    "metadata": {"pm_task_id": "PM-ready"},
+                }
+            ],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        _patch_director_blueprint_persistence(
+            {"bp-PM-ready": {"blueprint_id": "bp-PM-ready", "task_id": "PM-ready", "status": "generated"}}
+        ),
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "IDLE"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tasks"]["source"] == "workflow"
+    assert data["tasks"]["ready_to_execute"] == 1
+    assert data["tasks"]["ready_task_ids"] == ["director-ready-from-ce-store"]
+    assert data["tasks"]["blueprint_ready_task_ids"] == ["director-ready-from-ce-store"]
+    assert data["tasks"]["missing_blueprint_task_ids"] == []
+    assert data["tasks"]["invalid_blueprint_task_ids"] == []
+    assert data["can_execute"] is True
+    assert data["execution_blockers"] == []
+    mock_director.list_tasks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_director_diagnostics_does_not_count_expired_runtime_session_as_running(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Projection RUNNING rows must be normalized by canonical runtime lease state."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    mock_settings.workspace = str(workspace)
+    mock_settings.workspace_path = ""
+
+    task_runtime = TaskRuntimeService(str(workspace))
+    task = task_runtime.create(
+        subject="Recover expired Director task",
+        description="The projection row is stale but runtime lease has expired.",
+        metadata={"pm_task_id": "PM-expired-runtime"},
+    )
+    claimed = task_runtime.claim_execution(
+        task.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-expired-runtime",
+        lease_ttl_seconds=60,
+        selection_source="unit",
+        external_task_id="PM-expired-runtime",
+    )
+    assert claimed["success"] is True
+
+    session_path = Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task.id}.session.json"))
+    session_payload = json.loads(session_path.read_text(encoding="utf-8"))
+    expired_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    session_payload["last_heartbeat_at"] = (datetime.now(timezone.utc) - timedelta(minutes=7)).isoformat()
+    session_payload["lease_expires_at"] = expired_at
+    session_path.write_text(json.dumps(session_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    mock_idle_worker = MagicMock()
+    mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.list_workers = AsyncMock(return_value=[mock_idle_worker])
+    mock_director.config.workspace = str(workspace)
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[
+                {
+                    "id": str(task.id),
+                    "subject": "Recover expired Director task",
+                    "status": "RUNNING",
+                    "claimed_by": "director",
+                    "metadata": {
+                        "pm_task_id": "PM-expired-runtime",
+                        "runtime_execution": {
+                            "status": "active",
+                            "effective_status": "in_progress",
+                        },
+                    },
+                }
+            ],
+        ),
+        patch("polaris.delivery.http.v2.director.build_workflow_task_rows", return_value=[]),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        _patch_director_blueprint_persistence(
+            {"bp-expired-runtime": {"blueprint_id": "bp-expired-runtime", "task_id": "PM-expired-runtime"}}
+        ),
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "IDLE"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tasks"]["source"] == "workflow"
+    assert data["tasks"]["claimed"] == 0
+    assert data["tasks"]["running"] == 0
+    assert data["tasks"]["pending"] == 1
+    assert data["tasks"]["ready_to_execute"] == 1
+    assert data["tasks"]["ready_task_ids"] == [str(task.id)]
+    assert data["can_execute"] is True
+    assert data["execution_blockers"] == []
+    mock_director.list_tasks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_director_diagnostics_blocks_workflow_tasks_with_invalid_blueprint_artifacts(
     client: AsyncClient,
 ) -> None:
@@ -920,6 +1090,163 @@ async def test_director_diagnostics_marks_workflow_task_ready_when_dependencies_
     assert data["can_execute"] is True
     assert data["execution_blockers"] == []
     assert data["issues"] == []
+    mock_director.list_tasks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_director_diagnostics_includes_unmaterialized_pm_contract_dependents(
+    client: AsyncClient,
+) -> None:
+    """Director diagnostics must not declare terminal while PM contract tasks remain unmaterialized."""
+    mock_idle_worker = MagicMock()
+    mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.list_workers = AsyncMock(return_value=[mock_idle_worker])
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[
+                {
+                    "id": "runtime-base",
+                    "subject": "Base task",
+                    "status": "COMPLETED",
+                    "metadata": {"pm_task_id": "PM-base"},
+                }
+            ],
+        ),
+        patch(
+            "polaris.delivery.http.v2.director.build_workflow_task_rows",
+            return_value=[
+                {
+                    "id": "PM-base",
+                    "subject": "Base task",
+                    "status": "COMPLETED",
+                    "metadata": {"pm_task_id": "PM-base"},
+                },
+                {
+                    "id": "PM-dependent",
+                    "subject": "Dependent task",
+                    "status": "PENDING",
+                    "dependencies": ["PM-base"],
+                    "metadata": {"pm_task_id": "PM-dependent"},
+                },
+            ],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        _patch_director_blueprint_persistence(
+            {"bp-dependent": {"blueprint_id": "bp-dependent", "task_id": "PM-dependent"}}
+        ),
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "IDLE"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tasks"]["total"] == 2
+    assert data["tasks"]["completed"] == 1
+    assert data["tasks"]["pending"] == 1
+    assert data["tasks"]["ready_to_execute"] == 1
+    assert data["tasks"]["ready_task_ids"] == ["PM-dependent"]
+    assert data["tasks"]["blueprint_ready_task_ids"] == ["PM-dependent"]
+    assert data["can_execute"] is True
+    assert data["execution_blockers"] == []
+    assert data["issues"] == []
+    mock_director.list_tasks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_director_diagnostics_blocks_pending_workflow_task_when_dependency_failed(
+    client: AsyncClient,
+) -> None:
+    """Pending workflow tasks blocked by failed dependencies must be terminal blockers, not ready work."""
+    mock_idle_worker = MagicMock()
+    mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.list_workers = AsyncMock(return_value=[mock_idle_worker])
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[
+                {
+                    "id": "director-failed",
+                    "subject": "Failed task",
+                    "status": "FAILED",
+                    "metadata": {"pm_task_id": "PM-failed"},
+                },
+                {
+                    "id": "director-dependent",
+                    "subject": "Dependent task",
+                    "status": "PENDING",
+                    "dependencies": ["PM-failed"],
+                    "metadata": {
+                        "pm_task_id": "PM-dependent",
+                        "blueprint_id": "bp-dependent",
+                    },
+                },
+            ],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        _patch_director_blueprint_persistence(
+            {"bp-dependent": {"blueprint_id": "bp-dependent", "task_id": "PM-dependent"}}
+        ),
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "IDLE"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tasks"]["total"] == 2
+    assert data["tasks"]["failed"] == 1
+    assert data["tasks"]["blocked"] == 1
+    assert data["tasks"]["pending"] == 0
+    assert data["tasks"]["ready_to_execute"] == 0
+    assert data["tasks"]["ready_task_ids"] == []
+    assert data["tasks"]["blocked_task_ids"] == ["director-dependent"]
+    assert data["can_execute"] is False
+    assert data["execution_blockers"] == ["director_tasks_blocked", "director_tasks_failed"]
+    assert data["issues"] == ["director_tasks_blocked", "director_tasks_failed"]
     mock_director.list_tasks.assert_not_awaited()
 
 

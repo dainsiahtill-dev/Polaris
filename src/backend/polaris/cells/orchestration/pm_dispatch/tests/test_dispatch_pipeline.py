@@ -14,6 +14,7 @@ from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
     _build_director_workflow_result,
     _build_post_dispatch_integration_qa_result,
     _build_workflow_input,
+    _classify_integration_qa_evidence,
     _mainline_publish_dispatch_tasks_to_task_market,
     _resolve_workflow_submit_fn,
     _run_inline_task_market_consumers,
@@ -722,5 +723,45 @@ def test_build_post_dispatch_result() -> None:
     assert result["enabled"] is True
     assert result["ran"] is False
     assert result["passed"] is None
+    assert result["evidence_grade"] == "not_run"
     assert result["pm_iteration"] == 2
     assert result["docs_stage"]["enabled"] is False
+
+
+def test_classify_integration_qa_evidence_real_command_passed() -> None:
+    assert (
+        _classify_integration_qa_evidence(
+            ran=True,
+            passed=True,
+            reason="integration_qa_passed",
+            summary="Integration verification passed: npm run test -- --watch=false",
+            errors=[],
+        )
+        == "real_command_passed"
+    )
+
+
+def test_classify_integration_qa_evidence_static_fallback() -> None:
+    assert (
+        _classify_integration_qa_evidence(
+            ran=True,
+            passed=True,
+            reason="integration_qa_passed",
+            summary="Node static verification passed while dependencies are not installed (source_files=8, tests=present).",
+            errors=[],
+        )
+        == "structural_fallback_passed"
+    )
+
+
+def test_classify_integration_qa_evidence_dependency_blocked() -> None:
+    assert (
+        _classify_integration_qa_evidence(
+            ran=True,
+            passed=False,
+            reason="integration_qa_failed",
+            summary="Integration verification blocked: Node dependencies are declared but not installed for command: npm test",
+            errors=[],
+        )
+        == "blocked_missing_dependencies"
+    )

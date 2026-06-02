@@ -1,4 +1,5 @@
 import { existsSync, promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { type Locator, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
@@ -11,7 +12,12 @@ type SettingsPayload = {
   director_model?: string;
   pm_runs_director?: boolean;
 };
-type RuntimeLayoutPayload = { runtime_root?: string; workspace?: string };
+type RuntimeLayoutPayload = {
+  runtime_root?: string;
+  workspace?: string;
+  workspace_persistent_root?: string;
+  project_persistent_root?: string;
+};
 type PmStatusPayload = {
   running?: boolean;
   status?: string | null;
@@ -51,7 +57,16 @@ type DirectorIntegrationQaPayload = {
   result?: IntegrationQaArtifact;
   director_result?: DirectorResultArtifact | null;
 };
-type IntegrationQaArtifact = { reason?: string; passed?: boolean | null; failed?: number };
+type IntegrationQaArtifact = {
+  reason?: string;
+  passed?: boolean | null;
+  failed?: number;
+  evidence_grade?: string;
+  qa_path?: string;
+  summary?: string;
+  result_path?: string;
+  runtime_result_path?: string;
+};
 type DirectorResultArtifact = {
   status?: string;
   successes?: number;
@@ -59,7 +74,23 @@ type DirectorResultArtifact = {
   failures?: number;
   blocked?: number;
   error?: string;
+  source?: string;
+  task_results?: Array<{
+    task_id?: string;
+    changed_files?: unknown;
+    tools_executed?: unknown;
+    adapter_result?: {
+      changed_files?: unknown;
+      new_files?: unknown;
+      modified_files?: unknown;
+      tools_executed?: unknown;
+      write_tool_evidence?: unknown;
+      materialization_mode?: unknown;
+    };
+  }>;
 };
+type DirectorResultSource = "existing_artifact" | "reconciled_terminal" | "executed" | "waited_artifact";
+type RuntimeArtifactRef = { runtimeRoot: string; artifactPath: string; mtimeMs: number };
 type ChiefEngineerDiagnosticsPayload = {
   ok?: boolean;
   can_handoff?: boolean;
@@ -103,6 +134,7 @@ type LlmStatusPayload = {
   }>;
 };
 type PmContractPayload = {
+  workspace?: string;
   quality_gate?: { score?: number; critical_issue_count?: number; summary?: string };
   notes?: string;
   schema_warnings?: unknown[];
@@ -122,6 +154,12 @@ type PmContractPayload = {
     acceptance?: unknown[];
   }>;
 };
+type PmContractAudit = {
+  invalidTaskCount: number;
+  issues: string[];
+  coveredGameDomains: string[];
+  missingGameDomains: string[];
+};
 type RuntimeEvent = { ts_epoch?: number; event_id?: string; name?: string };
 type ImageDimensions = { width: number; height: number };
 
@@ -131,6 +169,59 @@ type ComplexityMetrics = {
   moduleCount: number;
   configFileCount: number;
   testFileCount: number;
+};
+type ProjectFileSnapshot = Record<string, { sha256: string; size: number; codeLines: number }>;
+type RuntimeContributionMetrics = {
+  baselineFileCount: number;
+  finalFileCount: number;
+  addedFiles: string[];
+  modifiedFiles: string[];
+  deletedFiles: string[];
+  addedCodeLines: number;
+  removedCodeLines: number;
+};
+type SnapshotSummaryMetrics = {
+  fileCount: number;
+  codeLineCount: number;
+};
+type PmPlanningContribution = {
+  source: "executed_pm_round" | "resumed_existing_pm_contract";
+  round: number;
+  taskCount: number;
+  qualityScore: number;
+  criticalIssueCount: number;
+  invalidTaskCount: number;
+  autofixTaskCount: number;
+  coveredGameDomains: string[];
+  missingGameDomains: string[];
+  evidencePath: string;
+};
+type ComplexityContributionBreakdown = {
+  scenario_seed_definition: ComplexityMetrics;
+  current_run_baseline: {
+    all_files: ComplexityMetrics;
+    contribution_scope: SnapshotSummaryMetrics;
+    includes_previous_run_contributions: boolean;
+  };
+  pm_planning_delta: PmPlanningContribution | null;
+  director_runtime_delta: RuntimeContributionMetrics & {
+    source: string;
+    evidencePath: string;
+    changedFileCount: number;
+  };
+  final_total: {
+    all_files: ComplexityMetrics;
+    contribution_scope: SnapshotSummaryMetrics;
+  };
+  ratios: {
+    baseline_contribution_file_share_of_final: number;
+    baseline_contribution_code_line_share_of_final: number;
+    director_changed_file_share_of_final: number;
+    director_added_code_line_share_of_final: number;
+    scenario_seed_file_share_of_final_all_files: number;
+    scenario_seed_code_line_share_of_final_all_files: number;
+  };
+  notes: string[];
 };
 
 type FullChainProjectScenario = {
@@ -143,9 +234,32 @@ type FullChainProjectScenario = {
   testFiles: string[];
   files: Record<string, string>;
 };
+type ResumePlanningTaskSeed = {
+  id: string;
+  domain: string;
+  title: string;
+  scopePaths: string[];
+  acceptance: string[];
+};
+type ResumePlanningSeed = {
+  generatedAt: string;
+  requirementsMarkdown: string;
+  planMarkdown: string;
+  pipelinePayload: Record<string, unknown>;
+  progressPayload: Record<string, unknown>;
+  tasks: ResumePlanningTaskSeed[];
+};
+type ResumePlanningWriteResult = {
+  writtenPaths: string[];
+  runtimeRequirementsPath: string;
+  runtimePlanPath: string;
+  pipelinePath: string;
+  progressPath: string;
+};
 
 type ToolAuditPayload = {
   total_calls: number;
+  policy_evidence_count: number;
   unauthorized_blocked: number;
   dangerous_commands: number;
   findings: Array<{ type: string; evidence: string }>;
@@ -234,6 +348,8 @@ function positiveIntFromEnv(name: string, fallback: number): number {
 }
 
 const PM_FINISH_TIMEOUT_MS = positiveIntFromEnv("KERNELONE_E2E_PM_FINISH_TIMEOUT_MS", 45 * 60 * 1000);
+const GAME_PM_MIN_TASKS = 6;
+const GAME_PM_REQUIRED_DOMAINS = ["engine", "world", "combat", "ai", "persistence", "renderer", "tests"] as const;
 const FULL_CHAIN_START_PHASES = ["court", "pm", "chief", "director", "qa"] as const;
 type FullChainStartPhase = (typeof FULL_CHAIN_START_PHASES)[number];
 const FULL_CHAIN_PHASE_ORDER: Record<FullChainStartPhase, number> = {
@@ -250,6 +366,108 @@ function toPosixPath(filePath: string): string {
 
 function optionalEnvValue(name: string): string {
   return String(process.env[name] || "").trim();
+}
+
+function contractStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function workspacePathPrefix(workspace: string): string {
+  return path.resolve(workspace).toLowerCase().replace(/[\\/]+$/, "");
+}
+
+function isWorkspaceBoundPath(candidate: string, workspace: string): boolean {
+  const raw = String(candidate || "").trim();
+  if (!raw) return false;
+  const normalizedToken = raw.replace(/\\/g, "/");
+  if (normalizedToken.split("/").some((part) => part === "..")) return false;
+  const workspacePrefix = workspacePathPrefix(workspace);
+  const resolved = path.resolve(path.isAbsolute(raw) ? raw : path.join(workspace, raw)).toLowerCase();
+  return resolved === workspacePrefix || resolved.startsWith(`${workspacePrefix}${path.sep.toLowerCase()}`);
+}
+
+function hasExecutableOrFileAcceptance(acceptanceItems: string[]): boolean {
+  const commandPattern = /\b(curl|wget|httpie|npm|pnpm|yarn|npx|node|python|pytest|go\s+test|mvn|gradle|dotnet|cargo|powershell|pwsh)\b/i;
+  const fileEvidencePattern = /\b(verify|assert|expect|should|must|exists?|contains?|校验|验证|断言|存在|包含)\b.*(?:[A-Za-z]:[\\/]|[\w.-]+[\\/][\w./\\-]+\.[A-Za-z0-9]+)/i;
+  return acceptanceItems.some((item) => {
+    const text = String(item || "").trim();
+    if (!text) return false;
+    return commandPattern.test(text) || fileEvidencePattern.test(text);
+  });
+}
+
+function normalizeCoveragePath(candidate: string, workspace: string): string {
+  const raw = String(candidate || "").trim();
+  if (!raw) return "";
+  const workspacePrefix = workspacePathPrefix(workspace).replace(/\\/g, "/");
+  const normalized = raw.replace(/\\/g, "/").toLowerCase();
+  if (path.isAbsolute(raw)) {
+    const resolved = path.resolve(raw).replace(/\\/g, "/").toLowerCase();
+    if (resolved === workspacePrefix) return "";
+    if (resolved.startsWith(`${workspacePrefix}/`)) {
+      return resolved.slice(workspacePrefix.length + 1);
+    }
+    return "";
+  }
+  return normalized.replace(/^\.\//, "");
+}
+
+function auditPmContract(pmContract: PmContractPayload, workspace: string, scenario: FullChainProjectScenario): PmContractAudit {
+  const issues: string[] = [];
+  const tasks = Array.isArray(pmContract?.tasks) ? pmContract.tasks : [];
+  const contractWorkspace = String(pmContract?.workspace || "").trim();
+  if (workspacePathPrefix(contractWorkspace) !== workspacePathPrefix(workspace)) {
+    issues.push(`pm_contract_workspace_mismatch:${contractWorkspace || "(missing)"}`);
+  }
+  if (scenario.key === "game" && tasks.length < GAME_PM_MIN_TASKS) {
+    issues.push(`game_pm_task_count_too_low:${tasks.length}<${GAME_PM_MIN_TASKS}`);
+  }
+
+  const coveragePaths: string[] = [];
+  let invalidTaskCount = 0;
+  tasks.forEach((task, index) => {
+    const taskId = String(task.id || task.task_id || `task_${index + 1}`).trim();
+    const hasGoal = String(task.goal || "").trim().length > 0;
+    const scopePaths = contractStringList(task.scope_paths);
+    const targetFiles = contractStringList(task.target_files);
+    const hasScope = scopePaths.length > 0 || targetFiles.length > 0;
+    const hasSteps = contractStringList(task.execution_checklist).length > 0;
+    const acceptance = contractStringList(Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : task.acceptance);
+    const hasAcceptance = acceptance.length > 0;
+    const hasExecutableAcceptance = hasAcceptance && hasExecutableOrFileAcceptance(acceptance);
+    const pathFields = [...scopePaths, ...targetFiles];
+    const unsafePaths = pathFields.filter((item) => !isWorkspaceBoundPath(item, workspace));
+    coveragePaths.push(...pathFields.map((item) => normalizeCoveragePath(item, workspace)).filter(Boolean));
+
+    const taskIssues = [
+      ...(hasGoal ? [] : ["missing_goal"]),
+      ...(hasScope ? [] : ["missing_scope"]),
+      ...(hasSteps ? [] : ["missing_execution_checklist"]),
+      ...(hasAcceptance ? [] : ["missing_acceptance"]),
+      ...(hasExecutableAcceptance ? [] : ["acceptance_without_command_or_file_evidence"]),
+      ...unsafePaths.map((item) => `path_not_workspace_bound:${item}`),
+    ];
+    if (taskIssues.length > 0) {
+      invalidTaskCount += 1;
+      issues.push(`${taskId}:${taskIssues.join(",")}`);
+    }
+  });
+
+  const coveredGameDomains = scenario.key === "game"
+    ? GAME_PM_REQUIRED_DOMAINS.filter((domain) => {
+      if (domain === "tests") return coveragePaths.some((item) => item === "tests" || item.startsWith("tests/"));
+      return coveragePaths.some((item) => item === `src/${domain}` || item.startsWith(`src/${domain}/`));
+    })
+    : [];
+  const missingGameDomains = scenario.key === "game"
+    ? GAME_PM_REQUIRED_DOMAINS.filter((domain) => !coveredGameDomains.includes(domain))
+    : [];
+  if (missingGameDomains.length > 0) {
+    issues.push(`game_pm_missing_domains:${missingGameDomains.join(",")}`);
+  }
+
+  return { invalidTaskCount, issues, coveredGameDomains, missingGameDomains };
 }
 
 function withGoalOverride(scenario: FullChainProjectScenario): FullChainProjectScenario {
@@ -314,6 +532,299 @@ function buildFullChainSettingsPayload(workspace: string): SettingsPayload {
     payload.director_model = directorModel;
   }
   return payload;
+}
+
+function buildResumePlanningTaskSeeds(scenario: FullChainProjectScenario): ResumePlanningTaskSeed[] {
+  if (scenario.key === "game") {
+    return [
+      {
+        id: "GAME-ENGINE",
+        domain: "engine",
+        title: "Extend deterministic game loop and state transitions",
+        scopePaths: ["src/engine/game-loop.ts", "src/engine/state.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/engine/game-loop.ts and src/engine/state.ts remain non-empty.",
+          "Run `npm run test` and verify turn/state invariants are still covered.",
+        ],
+      },
+      {
+        id: "GAME-WORLD",
+        domain: "world",
+        title: "Extend seed-driven map and encounter generation",
+        scopePaths: ["src/world/procedural-map.ts", "src/world/encounter-table.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/world/procedural-map.ts and src/world/encounter-table.ts exist.",
+          "Run `npm run test` and verify generated-world behavior is covered without magic-number PRNG assertions.",
+        ],
+      },
+      {
+        id: "GAME-COMBAT",
+        domain: "combat",
+        title: "Extend turn-based combat and action queue behavior",
+        scopePaths: ["src/combat/combat-system.ts", "src/combat/action-queue.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/combat/combat-system.ts and src/combat/action-queue.ts exist.",
+          "Run `npm run test` and verify combat behavior invariants are covered.",
+        ],
+      },
+      {
+        id: "GAME-AI-CONTENT",
+        domain: "ai",
+        title: "Extend enemy director AI and content tables",
+        scopePaths: ["src/ai/director-ai.ts", "src/content/cards.ts", "src/content/relics.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/ai/director-ai.ts, src/content/cards.ts, and src/content/relics.ts exist.",
+          "Run `npm run test` and verify AI/content behavior is exercised by the existing test suite.",
+        ],
+      },
+      {
+        id: "GAME-PERSISTENCE",
+        domain: "persistence",
+        title: "Extend save/load and progress persistence",
+        scopePaths: ["src/persistence/save-system.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/persistence/save-system.ts exists.",
+          "Run `npm run test` and verify save/load behavior is represented in integration coverage.",
+        ],
+      },
+      {
+        id: "GAME-RENDERER",
+        domain: "renderer",
+        title: "Extend browser-facing HUD and input rendering",
+        scopePaths: ["src/renderer/hud.ts", "src/renderer/input-controller.ts", "src/main.ts", "index.html"],
+        acceptance: [
+          "Run `npm run build` and verify src/renderer/hud.ts, src/renderer/input-controller.ts, src/main.ts, and index.html exist.",
+          "Run `npm run test` and verify renderer-facing integration behavior remains covered.",
+        ],
+      },
+      {
+        id: "GAME-TESTS",
+        domain: "tests",
+        title: "Strengthen unit and integration tests for current-run game changes",
+        scopePaths: ["tests/unit/combat-system.test.ts", "tests/integration/game-session.test.ts"],
+        acceptance: [
+          "Run `npm run test` and verify tests/unit/combat-system.test.ts contains describe/expect coverage.",
+          "Run `npm run test` and verify tests/integration/game-session.test.ts contains describe/expect coverage.",
+        ],
+      },
+    ];
+  }
+
+  return [
+    {
+      id: "ENT-MODEL",
+      domain: "models",
+      title: "Extend task domain model and validation contracts",
+      scopePaths: ["src/models/task.ts", "src/utils/validation.ts"],
+      acceptance: ["Run `npm run build` and verify src/models/task.ts and src/utils/validation.ts exist."],
+    },
+    {
+      id: "ENT-REPOSITORY",
+      domain: "repository",
+      title: "Extend repository persistence behavior",
+      scopePaths: ["src/repositories/task-repository.ts"],
+      acceptance: ["Run `npm run build` and verify src/repositories/task-repository.ts exists."],
+    },
+    {
+      id: "ENT-SERVICE",
+      domain: "service",
+      title: "Extend task orchestration service behavior",
+      scopePaths: ["src/services/task-service.ts"],
+      acceptance: ["Run `npm run build` and verify src/services/task-service.ts exists."],
+    },
+    {
+      id: "ENT-API",
+      domain: "api",
+      title: "Extend server API and auth boundary",
+      scopePaths: ["src/server/app.ts", "src/middleware/auth.ts"],
+      acceptance: ["Run `npm run build` and verify src/server/app.ts and src/middleware/auth.ts exist."],
+    },
+    {
+      id: "ENT-TESTS",
+      domain: "tests",
+      title: "Strengthen unit and integration tests",
+      scopePaths: ["tests/unit/task-service.test.ts", "tests/integration/api.test.ts"],
+      acceptance: ["Run `npm run test` and verify both task-service and API tests contain describe/expect coverage."],
+    },
+    {
+      id: "ENT-VERIFY",
+      domain: "verification",
+      title: "Preserve structural build and test verification",
+      scopePaths: ["scripts/build.mjs", "scripts/test.mjs", "package.json"],
+      acceptance: ["Run `npm run build` and `npm run test` using the existing package scripts."],
+    },
+  ];
+}
+
+function markdownList(items: string[]): string {
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
+function buildResumePlanningSeed(workspace: string, scenario: FullChainProjectScenario): ResumePlanningSeed {
+  const generatedAt = new Date().toISOString();
+  const tasks = buildResumePlanningTaskSeeds(scenario);
+  const requiredDomains = scenario.key === "game" ? GAME_PM_REQUIRED_DOMAINS.join(", ") : "models, repository, service, api, tests, verification";
+  const taskRows = tasks.map((task) => (
+    `| ${task.id} | ${task.domain} | ${task.title} | ${task.scopePaths.map((item) => `\`${item}\``).join(", ")} | ${task.acceptance.join(" ")} |`
+  )).join("\n");
+  const taskDetails = tasks.map((task) => [
+    `## ${task.id}: ${task.title}`,
+    "",
+    `- Domain: ${task.domain}`,
+    `- Scope paths: ${task.scopePaths.map((item) => `\`${item}\``).join(", ")}`,
+    "- Acceptance:",
+    markdownList(task.acceptance),
+  ].join("\n")).join("\n\n");
+  const requirementsMarkdown = [
+    "# Polaris Full-Chain Resume Requirements",
+    "",
+    `Generated at: ${generatedAt}`,
+    `Current workspace: \`${workspace}\``,
+    `Scenario: ${scenario.key}`,
+    "",
+    "## Goal",
+    scenario.goal,
+    "",
+    "## Hard PM Contract Rules",
+    "",
+    `- Every PM task must be bound to the current workspace: \`${workspace}\`.`,
+    "- Use relative paths shown below or absolute paths under the current workspace only.",
+    "- Do not use placeholder paths such as `C:/Temp/roguelike`, `/tmp/roguelike`, `../`, or another project root.",
+    "- Every task must include a concrete goal, scope_paths or target_files, execution_checklist, and acceptance_criteria.",
+    "- Every acceptance_criteria entry must include an executable command (`npm run build` / `npm run test`) or a verifiable file evidence path.",
+    "- The mandatory decomposition below must become Director implementation tasks, not documentation-editing tasks.",
+    "- Do not create tasks whose target_files are only requirements.md, plan.md, workspace/docs, or other Polaris planning documents.",
+    `- Required domain coverage for this resume run: ${requiredDomains}.`,
+    "- Existing seed complexity is only baseline evidence. PM and Director must plan current-run changes; final complexity alone is not sufficient.",
+    "",
+    "## Mandatory Decomposition",
+    "",
+    "| Task seed | Domain | Required purpose | Required scope paths | Required acceptance anchors |",
+    "|---|---|---|---|---|",
+    taskRows,
+    "",
+    "## Additional Constraints",
+    "",
+    "- Preserve existing package scripts; do not introduce a new package manager or external build/test dependency.",
+    "- For game scenarios, do not add Rust/Cargo, Webpack, Jest, Vite, or Vitest.",
+    "- For game PRNG work, test same-seed reproducibility, range, and distribution invariants only; do not assert unverified magic-number outputs.",
+    "- Prefer modifying or extending the listed seed files so current-run contribution is auditable.",
+  ].join("\n");
+  const planMarkdown = [
+    "# Polaris Full-Chain Resume Plan",
+    "",
+    `Generated at: ${generatedAt}`,
+    `Workspace: \`${workspace}\``,
+    "",
+    "## Phase Plan",
+    "",
+    "- PM must produce a workspace-bound contract from the mandatory decomposition below.",
+    "- Chief Engineer must be able to derive handoff-ready blueprints from each PM task.",
+    "- Director must apply current-run file changes and surface the latest diff automatically.",
+    "- QA must pass with `evidence_grade=real_command_passed` from real verification commands.",
+    "",
+    taskDetails,
+    "",
+    "## Verification Matrix",
+    "",
+    "- `npm run build` proves required files are present and non-empty.",
+    "- `npm run test` proves unit/integration test structure remains valid.",
+    "- Runtime contribution evidence must show added, modified, or deleted files from this run.",
+  ].join("\n");
+
+  return {
+    generatedAt,
+    requirementsMarkdown,
+    planMarkdown,
+    pipelinePayload: {
+      schema_version: 1,
+      generated_at: generatedAt,
+      source: "full-chain-audit.resume-planning-seed",
+      disabled_reason: "resume-from-pm uses runtime/contracts/requirements.md and plan.md directly",
+      single_doc_per_iteration: false,
+      advance_rule: "disabled_for_resume_seed",
+      stages: [],
+    },
+    progressPayload: {
+      schema_version: 1,
+      active_stage_index: 0,
+      active_stage_id: "E2E-RESUME-REQ-01",
+      last_planned_stage_id: "",
+      last_planned_iteration: 0,
+      last_tasks_signature_before_plan: "",
+      advanced: false,
+      advance_reason: "e2e_resume_seed_reset",
+      updated_at: generatedAt,
+    },
+    tasks,
+  };
+}
+
+async function writeWorkspacePlanningDocs(workspace: string, seed: ResumePlanningSeed): Promise<string[]> {
+  const requirementsPath = path.join(workspace, "docs", "product", "requirements.md");
+  const planPath = path.join(workspace, "docs", "product", "plan.md");
+  const legacyRequirementsPath = path.join(workspace, "docs", "10_requirements.md");
+  await writeUtf8File(requirementsPath, seed.requirementsMarkdown);
+  await writeUtf8File(planPath, seed.planMarkdown);
+  await writeUtf8File(legacyRequirementsPath, seed.requirementsMarkdown);
+  return [requirementsPath, planPath, legacyRequirementsPath];
+}
+
+function workspacePersistentRootFromLayout(layout: RuntimeLayoutPayload, workspace: string): string {
+  return String(layout.workspace_persistent_root || layout.project_persistent_root || "").trim()
+    || path.join(workspace, ".polaris");
+}
+
+async function writeRuntimePlanningSeed(
+  layout: RuntimeLayoutPayload,
+  workspace: string,
+  seed: ResumePlanningSeed,
+): Promise<ResumePlanningWriteResult> {
+  const runtimeRoot = String(layout.runtime_root || "").trim();
+  if (!runtimeRoot) {
+    throw new Error("runtime_root is required before writing resume planning seed");
+  }
+  const persistentRoot = workspacePersistentRootFromLayout(layout, workspace);
+  const runtimeRequirementsPath = path.join(runtimeRoot, "contracts", "requirements.md");
+  const runtimePlanPath = path.join(runtimeRoot, "contracts", "plan.md");
+  const persistentRequirementsPath = path.join(persistentRoot, "docs", "product", "requirements.md");
+  const persistentPlanPath = path.join(persistentRoot, "docs", "product", "plan.md");
+  const pipelinePath = path.join(runtimeRoot, "contracts", "architect.docs_pipeline.json");
+  const progressPath = path.join(runtimeRoot, "state", "pm.docs_progress.json");
+  const markerPath = path.join(runtimeRoot, "contracts", "e2e.resume_planning_seed.json");
+  const markerPayload = {
+    generated_at: seed.generatedAt,
+    workspace,
+    runtime_requirements_path: runtimeRequirementsPath,
+    runtime_plan_path: runtimePlanPath,
+    persistent_requirements_path: persistentRequirementsPath,
+    persistent_plan_path: persistentPlanPath,
+    mandatory_tasks: seed.tasks,
+  };
+
+  await writeUtf8File(runtimeRequirementsPath, seed.requirementsMarkdown);
+  await writeUtf8File(runtimePlanPath, seed.planMarkdown);
+  await writeUtf8File(persistentRequirementsPath, seed.requirementsMarkdown);
+  await writeUtf8File(persistentPlanPath, seed.planMarkdown);
+  await writeUtf8File(pipelinePath, JSON.stringify(seed.pipelinePayload, null, 2));
+  await writeUtf8File(progressPath, JSON.stringify(seed.progressPayload, null, 2));
+  await writeUtf8File(markerPath, JSON.stringify(markerPayload, null, 2));
+
+  return {
+    writtenPaths: [
+      runtimeRequirementsPath,
+      runtimePlanPath,
+      persistentRequirementsPath,
+      persistentPlanPath,
+      pipelinePath,
+      progressPath,
+      markerPath,
+    ],
+    runtimeRequirementsPath,
+    runtimePlanPath,
+    pipelinePath,
+    progressPath,
+  };
 }
 
 async function setReviewViewport(window: Page): Promise<void> {
@@ -494,7 +1005,8 @@ async function waitForRuntimeArtifact(
   window: Page,
   relPath: string,
   timeoutMs: number,
-): Promise<{ runtimeRoot: string; artifactPath: string }> {
+  options?: { minMtimeMs?: number },
+): Promise<RuntimeArtifactRef> {
   const normalizedRel = relPath.split(/[\\/]+/).filter(Boolean);
   const deadline = Date.now() + timeoutMs;
   let lastRuntimeRoot = "";
@@ -509,7 +1021,10 @@ async function waitForRuntimeArtifact(
     if (lastRuntimeRoot) {
       lastArtifactPath = path.join(lastRuntimeRoot, ...normalizedRel);
       if (await pathExists(lastArtifactPath)) {
-        return { runtimeRoot: lastRuntimeRoot, artifactPath: lastArtifactPath };
+        const stat = await fs.stat(lastArtifactPath);
+        if (!options?.minMtimeMs || stat.mtimeMs >= options.minMtimeMs) {
+          return { runtimeRoot: lastRuntimeRoot, artifactPath: lastArtifactPath, mtimeMs: stat.mtimeMs };
+        }
       }
     }
     if (Date.now() % 10_000 < 1200) {
@@ -547,14 +1062,17 @@ async function waitForRuntimeArtifact(
 async function tryRuntimeArtifact(
   window: Page,
   relPath: string,
-): Promise<{ runtimeRoot: string; artifactPath: string } | null> {
+  options?: { minMtimeMs?: number },
+): Promise<RuntimeArtifactRef | null> {
   const normalizedRel = relPath.split(/[\\/]+/).filter(Boolean);
   const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
   const runtimeRoot = String(layout.runtime_root || "").trim();
   if (!runtimeRoot) return null;
   const artifactPath = path.join(runtimeRoot, ...normalizedRel);
   if (!await pathExists(artifactPath)) return null;
-  return { runtimeRoot, artifactPath };
+  const stat = await fs.stat(artifactPath);
+  if (options?.minMtimeMs && stat.mtimeMs < options.minMtimeMs) return null;
+  return { runtimeRoot, artifactPath, mtimeMs: stat.mtimeMs };
 }
 
 async function dismissEngineFailureDialog(window: Page): Promise<void> {
@@ -1013,9 +1531,21 @@ async function createComplexProject(
   return { workspace, metrics };
 }
 
+function isAuditableCodeFile(filePath: string): boolean {
+  return /\.(ts|tsx|js|jsx|mjs|cjs|py|css|html)$/i.test(filePath);
+}
+
+function isAuditableTestFile(filePath: string): boolean {
+  const normalized = toPosixPath(filePath).toLowerCase();
+  return (
+    /(?:^|\/)test_[^/]+\.py$/i.test(normalized)
+    || /\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(normalized)
+  );
+}
+
 async function measureComplexity(workspace: string): Promise<ComplexityMetrics> {
   const allFiles = await listFilesRecursive(workspace);
-  const codeFiles = allFiles.filter((filePath) => /\.(ts|js|py)$/i.test(filePath));
+  const codeFiles = allFiles.filter(isAuditableCodeFile);
   let codeLineCount = 0;
   for (const codeFile of codeFiles) {
     codeLineCount += (await fs.readFile(codeFile, "utf-8")).split(/\r?\n/).length;
@@ -1038,7 +1568,45 @@ async function measureComplexity(workspace: string): Promise<ComplexityMetrics> 
     codeLineCount,
     moduleCount,
     configFileCount,
-    testFileCount: allFiles.filter((filePath) => /\.test\.ts$/i.test(filePath)).length,
+    testFileCount: allFiles.filter(isAuditableTestFile).length,
+  };
+}
+
+function measureScenarioDefinitionComplexity(scenario: FullChainProjectScenario): ComplexityMetrics {
+  const entries = Object.entries(scenario.files).map(([relativePath, content]) => ({
+    relativePath: toPosixPath(relativePath),
+    content,
+  }));
+  const relativePaths = entries.map((entry) => entry.relativePath);
+  const codeLineCount = entries.reduce((total, entry) => {
+    if (!isAuditableCodeFile(entry.relativePath)) {
+      return total;
+    }
+    return total + String(entry.content || "").split(/\r?\n/).length;
+  }, 0);
+  const modules = new Set<string>();
+  for (const filePath of relativePaths) {
+    const parts = filePath.split("/");
+    if (parts[0] === "src" && parts[1]) {
+      modules.add(parts[1]);
+    }
+  }
+  const normalized = new Set(relativePaths.map((filePath) => filePath.toLowerCase()));
+  const configFileCount = [
+    "package.json",
+    "tsconfig.json",
+    "jest.config.ts",
+    ".env.example",
+    "docker-compose.yml",
+    "scripts/build.mjs",
+  ].filter((item) => normalized.has(item.toLowerCase())).length;
+
+  return {
+    fileCount: relativePaths.length,
+    codeLineCount,
+    moduleCount: modules.size,
+    configFileCount,
+    testFileCount: relativePaths.filter(isAuditableTestFile).length,
   };
 }
 
@@ -1055,6 +1623,172 @@ async function findLatestEventsPath(runtimeRoot: string): Promise<string | null>
   }
   candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
   return candidates[0]?.filePath || null;
+}
+
+function shouldIncludeContributionFile(relativePath: string): boolean {
+  const normalized = toPosixPath(relativePath).toLowerCase();
+  if (!normalized || normalized.endsWith("/")) return false;
+  const parts = normalized.split("/");
+  const excludedRoots = new Set([".git", ".polaris", "runtime", "node_modules", "dist", "build", "coverage"]);
+  return !parts.some((part) => excludedRoots.has(part));
+}
+
+function isCodeContributionFile(relativePath: string): boolean {
+  return isAuditableCodeFile(relativePath);
+}
+
+async function snapshotProjectFiles(workspace: string): Promise<ProjectFileSnapshot> {
+  const files = await listFilesRecursive(workspace);
+  const snapshot: ProjectFileSnapshot = {};
+  for (const filePath of files) {
+    const relativePath = toPosixPath(path.relative(workspace, filePath));
+    if (!shouldIncludeContributionFile(relativePath)) continue;
+    const bytes = await fs.readFile(filePath);
+    let codeLines = 0;
+    if (isCodeContributionFile(relativePath)) {
+      codeLines = (await fs.readFile(filePath, "utf-8")).split(/\r?\n/).length;
+    }
+    snapshot[relativePath] = {
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      size: bytes.length,
+      codeLines,
+    };
+  }
+  return snapshot;
+}
+
+function summarizeProjectSnapshot(snapshot: ProjectFileSnapshot): SnapshotSummaryMetrics {
+  return {
+    fileCount: Object.keys(snapshot).length,
+    codeLineCount: Object.values(snapshot).reduce((total, item) => total + item.codeLines, 0),
+  };
+}
+
+function compareProjectSnapshots(
+  baseline: ProjectFileSnapshot,
+  finalSnapshot: ProjectFileSnapshot,
+): RuntimeContributionMetrics {
+  const addedFiles = Object.keys(finalSnapshot).filter((filePath) => !baseline[filePath]).sort();
+  const deletedFiles = Object.keys(baseline).filter((filePath) => !finalSnapshot[filePath]).sort();
+  const modifiedFiles = Object.keys(finalSnapshot)
+    .filter((filePath) => Boolean(baseline[filePath]) && baseline[filePath].sha256 !== finalSnapshot[filePath].sha256)
+    .sort();
+  const addedCodeLines = addedFiles.reduce((total, filePath) => total + finalSnapshot[filePath].codeLines, 0);
+  const removedCodeLines = deletedFiles.reduce((total, filePath) => total + baseline[filePath].codeLines, 0);
+  return {
+    baselineFileCount: Object.keys(baseline).length,
+    finalFileCount: Object.keys(finalSnapshot).length,
+    addedFiles,
+    modifiedFiles,
+    deletedFiles,
+    addedCodeLines,
+    removedCodeLines,
+  };
+}
+
+function countPmAutofixTasks(tasks: NonNullable<PmContractPayload["tasks"]>): number {
+  return tasks.filter((task) => {
+    const record = task as Record<string, unknown>;
+    const metadata = record.metadata && typeof record.metadata === "object"
+      ? record.metadata as Record<string, unknown>
+      : {};
+    return Boolean(record.autofix || metadata.autofix || record.autofix_reason || metadata.autofix_reason);
+  }).length;
+}
+
+function buildPmPlanningContribution(
+  source: PmPlanningContribution["source"],
+  round: number,
+  pmContract: PmContractPayload,
+  pmAudit: PmContractAudit,
+  evidencePath: string,
+): PmPlanningContribution {
+  const tasks = Array.isArray(pmContract.tasks) ? pmContract.tasks : [];
+  return {
+    source,
+    round,
+    taskCount: tasks.length,
+    qualityScore: Number(pmContract?.quality_gate?.score || 0),
+    criticalIssueCount: Number(pmContract?.quality_gate?.critical_issue_count || 0),
+    invalidTaskCount: pmAudit.invalidTaskCount,
+    autofixTaskCount: countPmAutofixTasks(tasks),
+    coveredGameDomains: pmAudit.coveredGameDomains,
+    missingGameDomains: pmAudit.missingGameDomains,
+    evidencePath: toPosixPath(evidencePath),
+  };
+}
+
+function contributionRatio(numerator: number, denominator: number): number {
+  if (denominator <= 0) {
+    return 0;
+  }
+  return Number((numerator / denominator).toFixed(6));
+}
+
+function buildComplexityContributionBreakdown(params: {
+  scenarioSeedMetrics: ComplexityMetrics;
+  startPhase: FullChainStartPhase;
+  currentRunBaselineMetrics: ComplexityMetrics;
+  baselineSnapshot: ProjectFileSnapshot;
+  finalMetrics: ComplexityMetrics;
+  finalSnapshot: ProjectFileSnapshot;
+  pmPlanningDelta: PmPlanningContribution | null;
+  directorResultSource: string;
+  directorContribution: RuntimeContributionMetrics;
+  contributionEvidencePath: string;
+}): ComplexityContributionBreakdown {
+  const baselineSummary = summarizeProjectSnapshot(params.baselineSnapshot);
+  const finalSummary = summarizeProjectSnapshot(params.finalSnapshot);
+  const changedFileCount = params.directorContribution.addedFiles.length
+    + params.directorContribution.modifiedFiles.length
+    + params.directorContribution.deletedFiles.length;
+
+  return {
+    scenario_seed_definition: params.scenarioSeedMetrics,
+    current_run_baseline: {
+      all_files: params.currentRunBaselineMetrics,
+      contribution_scope: baselineSummary,
+      includes_previous_run_contributions: params.startPhase !== "court",
+    },
+    pm_planning_delta: params.pmPlanningDelta,
+    director_runtime_delta: {
+      ...params.directorContribution,
+      source: params.directorResultSource || "unknown",
+      evidencePath: toPosixPath(params.contributionEvidencePath),
+      changedFileCount,
+    },
+    final_total: {
+      all_files: params.finalMetrics,
+      contribution_scope: finalSummary,
+    },
+    ratios: {
+      baseline_contribution_file_share_of_final: contributionRatio(baselineSummary.fileCount, finalSummary.fileCount),
+      baseline_contribution_code_line_share_of_final: contributionRatio(
+        baselineSummary.codeLineCount,
+        finalSummary.codeLineCount,
+      ),
+      director_changed_file_share_of_final: contributionRatio(changedFileCount, finalSummary.fileCount),
+      director_added_code_line_share_of_final: contributionRatio(
+        params.directorContribution.addedCodeLines,
+        finalSummary.codeLineCount,
+      ),
+      scenario_seed_file_share_of_final_all_files: contributionRatio(
+        params.scenarioSeedMetrics.fileCount,
+        params.finalMetrics.fileCount,
+      ),
+      scenario_seed_code_line_share_of_final_all_files: contributionRatio(
+        params.scenarioSeedMetrics.codeLineCount,
+        params.finalMetrics.codeLineCount,
+      ),
+    },
+    notes: [
+      "PM planning contribution is contract/task coverage, not file contribution.",
+      "Director runtime contribution is computed from current-run baseline to final workspace snapshot.",
+      params.startPhase !== "court"
+        ? "Resume runs may include previous run contributions in current_run_baseline."
+        : "Cold runs use the generated scenario seed as current_run_baseline.",
+    ],
+  };
 }
 
 async function findToolEventPaths(runtimeRoot: string): Promise<string[]> {
@@ -1136,7 +1870,13 @@ function detectPromptLeakage(text: string, evidencePath: string): Array<{ type: 
 }
 
 function analyzeToolAudit(events: RuntimeEvent[], startEpochSeconds: number): ToolAuditPayload {
-  const audit: ToolAuditPayload = { total_calls: 0, unauthorized_blocked: 0, dangerous_commands: 0, findings: [] };
+  const audit: ToolAuditPayload = {
+    total_calls: 0,
+    policy_evidence_count: 0,
+    unauthorized_blocked: 0,
+    dangerous_commands: 0,
+    findings: [],
+  };
   for (const event of events) {
     const epoch = Number(event.ts_epoch || 0);
     if (!Number.isFinite(epoch) || epoch < startEpochSeconds) continue;
@@ -1144,9 +1884,16 @@ function analyzeToolAudit(events: RuntimeEvent[], startEpochSeconds: number): To
     if (serialized.includes("tool_call") || serialized.includes("mcp_tool_call") || serialized.includes("command_execution")) {
       audit.total_calls += 1;
     }
+    if (serialized.includes("director_policy")) {
+      audit.policy_evidence_count += 1;
+    }
     if (/(unauthorized|permission denied|toolauthorizationerror)/i.test(serialized) && /(block|deny|reject|forbidden)/i.test(serialized)) {
       audit.unauthorized_blocked += 1;
       audit.findings.push({ type: "unauthorized_blocked", evidence: event.event_id || String(event.name || "unknown") });
+    }
+    if (/director_write_policy_denied|director_policy_denials/i.test(serialized)) {
+      audit.unauthorized_blocked += 1;
+      audit.findings.push({ type: "director_policy_denied", evidence: event.event_id || String(event.name || "unknown") });
     }
     if (/(dangerous command|path traversal|rm -rf|del \/s)/i.test(serialized)) {
       audit.dangerous_commands += 1;
@@ -1439,7 +2186,10 @@ async function verifyChiefEngineerPhase(
   return diagnostics;
 }
 
-async function runDirectorFromWorkspace(window: Page): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string }> {
+async function runDirectorFromWorkspace(
+  window: Page,
+  options?: { minMtimeMs?: number },
+): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string }> {
   await expect.poll(async () => {
     const tasks = await requestJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto");
     return Array.isArray(tasks)
@@ -1461,18 +2211,22 @@ async function runDirectorFromWorkspace(window: Page): Promise<{ linkedTaskCount
   await executeButton.click();
 
   await expect.poll(async () => {
+    const artifact = await tryRuntimeArtifact(window, "results/director.result.json", options);
+    if (artifact) return true;
     const diagnostics = await requestJson<DirectorDiagnosticsPayload>(window, "/v2/director/diagnostics");
     const taskState = diagnostics.tasks || {};
     const active = Number(taskState.running || 0) + Number(taskState.claimed || 0);
     const status = await requestJson<DirectorStatusPayload>(window, "/v2/director/status?source=auto");
     const state = String(status.state || "").trim().toUpperCase();
-    return active > 0 || /RUNNING|STARTING|QUEUED|BUSY/.test(state);
+    return active > 0 || /RUNNING|STARTING|QUEUED|BUSY/.test(state) || directorDiagnosticsTerminal(taskState);
   }, {
     timeout: 120_000,
     intervals: [500, 1000, 2000, 3000],
   }).toBeTruthy();
 
   await expect.poll(async () => {
+    const artifact = await tryRuntimeArtifact(window, "results/director.result.json", options);
+    if (artifact) return 0;
     const diagnostics = await requestJson<DirectorDiagnosticsPayload>(window, "/v2/director/diagnostics");
     const taskState = diagnostics.tasks || {};
     return Number(taskState.running || 0) + Number(taskState.claimed || 0);
@@ -1502,12 +2256,21 @@ function directorDiagnosticsTerminal(tasks: DirectorDiagnosticsPayload["tasks"])
 
 async function runDirectorUntilResultArtifact(
   window: Page,
-): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string; artifactPath: string; runtimeRoot: string }> {
+  options?: { minMtimeMs?: number },
+): Promise<{
+  linkedTaskCount: number;
+  uiTaskCount: number;
+  state: string;
+  artifactPath: string;
+  runtimeRoot: string;
+  mtimeMs: number;
+  source: DirectorResultSource;
+}> {
   let latestRun = { linkedTaskCount: 0, uiTaskCount: 0, state: "" };
   for (let attempt = 1; attempt <= 6; attempt += 1) {
-    const existing = await tryRuntimeArtifact(window, "results/director.result.json");
+    const existing = await tryRuntimeArtifact(window, "results/director.result.json", options);
     if (existing) {
-      return { ...latestRun, ...existing };
+      return { ...latestRun, ...existing, source: "existing_artifact" };
     }
 
     const diagnostics = await requestJson<DirectorDiagnosticsPayload>(window, "/v2/director/diagnostics");
@@ -1531,9 +2294,9 @@ async function runDirectorUntilResultArtifact(
         method: "POST",
         body: { run_id: `full-chain-director-${Date.now()}` },
       });
-      const reconciled = await tryRuntimeArtifact(window, "results/director.result.json");
+      const reconciled = await tryRuntimeArtifact(window, "results/director.result.json", options);
       if (reconciled) {
-        return { ...latestRun, ...reconciled };
+        return { ...latestRun, ...reconciled, source: "reconciled_terminal" };
       }
     }
 
@@ -1547,11 +2310,20 @@ async function runDirectorUntilResultArtifact(
       );
     }
 
-    latestRun = await runDirectorFromWorkspace(window);
+    latestRun = await runDirectorFromWorkspace(window, options);
+    const executed = await tryRuntimeArtifact(window, "results/director.result.json", options);
+    if (executed) {
+      return { ...latestRun, ...executed, source: "executed" };
+    }
   }
 
-  const artifact = await waitForRuntimeArtifact(window, "results/director.result.json", DIRECTOR_RESULT_TIMEOUT_MS);
-  return { ...latestRun, ...artifact };
+  const artifact = await waitForRuntimeArtifact(
+    window,
+    "results/director.result.json",
+    DIRECTOR_RESULT_TIMEOUT_MS,
+    options,
+  );
+  return { ...latestRun, ...artifact, source: "waited_artifact" };
 }
 
 function detectPmFallbackFailure(pmContract: PmContractPayload | null): string {
@@ -1594,6 +2366,45 @@ function directorFailureReason(directorResult: DirectorResultArtifact | null): s
   return "";
 }
 
+function stringArrayFromUnknown(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item || "").trim())
+    .filter((item) => item.length > 0);
+}
+
+function summarizeDirectorArtifactMaterialization(directorResult: DirectorResultArtifact | null): {
+  changedFileCount: number;
+  toolEvidenceCount: number;
+  materializedTaskCount: number;
+} {
+  const changedFiles = new Set<string>();
+  let toolEvidenceCount = 0;
+  let materializedTaskCount = 0;
+  for (const task of directorResult?.task_results || []) {
+    const adapter = task.adapter_result || {};
+    const taskChangedFiles = [
+      ...stringArrayFromUnknown(task.changed_files),
+      ...stringArrayFromUnknown(adapter.changed_files),
+      ...stringArrayFromUnknown(adapter.new_files),
+      ...stringArrayFromUnknown(adapter.modified_files),
+    ];
+    for (const filePath of taskChangedFiles) changedFiles.add(filePath);
+    const taskTools = Number(task.tools_executed || 0) + Number(adapter.tools_executed || 0);
+    if (taskTools > 0 || adapter.write_tool_evidence === true) {
+      toolEvidenceCount += 1;
+    }
+    if (taskChangedFiles.length > 0 || taskTools > 0 || adapter.write_tool_evidence === true) {
+      materializedTaskCount += 1;
+    }
+  }
+  return {
+    changedFileCount: changedFiles.size,
+    toolEvidenceCount,
+    materializedTaskCount,
+  };
+}
+
 test.setTimeout(70 * 60 * 1000);
 
 test("unattended full-chain audit with strong JSON evidence package", async ({ window, testEnv }, testInfo) => {
@@ -1610,6 +2421,17 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     pm_quality_history: Array<{ round: number; score: number; issues: string[] }>;
     leakage_findings: Array<{ type: string; evidence: string; fixed: boolean }>;
     director_tool_audit: ToolAuditPayload;
+    seed_metrics: ComplexityMetrics | null;
+    runtime_contribution: RuntimeContributionMetrics | null;
+    complexity_contribution_breakdown: ComplexityContributionBreakdown | null;
+    qa_gate: {
+      passed: boolean | null;
+      reason: string;
+      evidence_grade: string;
+      summary: string;
+      result_path: string;
+      runtime_result_path: string;
+    } | null;
     issues_fixed: Array<{ issue: string; root_cause: string; fix: string; verified: boolean }>;
     acceptance_results: {
       court_phase: "PASS" | "FAIL";
@@ -1626,7 +2448,17 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     rounds: 0,
     pm_quality_history: [],
     leakage_findings: [],
-    director_tool_audit: { total_calls: 0, unauthorized_blocked: 0, dangerous_commands: 0, findings: [] },
+    director_tool_audit: {
+      total_calls: 0,
+      policy_evidence_count: 0,
+      unauthorized_blocked: 0,
+      dangerous_commands: 0,
+      findings: [],
+    },
+    seed_metrics: null,
+    runtime_contribution: null,
+    complexity_contribution_breakdown: null,
+    qa_gate: null,
     issues_fixed: [],
     acceptance_results: {
       court_phase: "FAIL",
@@ -1641,7 +2473,10 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
 
   let runtimeRoot = "";
   let latestQaReason = "";
+  let latestQaEvidenceGrade = "";
   let latestEventsPath = "";
+  let baselineSnapshot: ProjectFileSnapshot = {};
+  let latestPmPlanningContribution: PmPlanningContribution | null = null;
 
   try {
     await setReviewViewport(window);
@@ -1662,7 +2497,16 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         metrics: await measureComplexity(path.resolve(resumeWorkspace)),
       }
       : await createComplexProject("C:/Temp", scenario);
+    const scenarioSeedMetrics = measureScenarioDefinitionComplexity(scenario);
     audit.workspace = project.workspace;
+    audit.seed_metrics = project.metrics;
+    const resumePlanningSeed = startPhase !== "court"
+      ? buildResumePlanningSeed(project.workspace, scenario)
+      : null;
+    const workspacePlanningSeedPaths = resumePlanningSeed
+      ? await writeWorkspacePlanningDocs(project.workspace, resumePlanningSeed)
+      : [];
+    baselineSnapshot = await snapshotProjectFiles(project.workspace);
     const scenarioPath = testInfo.outputPath("project.scenario.json");
     await writeUtf8File(scenarioPath, JSON.stringify({
       key: scenario.key,
@@ -1678,6 +2522,12 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     const complexityPath = testInfo.outputPath("complexity.metrics.json");
     await writeUtf8File(complexityPath, JSON.stringify(project.metrics, null, 2));
     audit.evidence_paths.snapshots.push(toPosixPath(complexityPath));
+    const scenarioSeedMetricsPath = testInfo.outputPath("scenario.seed-definition.metrics.json");
+    await writeUtf8File(scenarioSeedMetricsPath, JSON.stringify(scenarioSeedMetrics, null, 2));
+    audit.evidence_paths.snapshots.push(toPosixPath(scenarioSeedMetricsPath));
+    const baselineSnapshotPath = testInfo.outputPath("seed.file-snapshot.json");
+    await writeUtf8File(baselineSnapshotPath, JSON.stringify(baselineSnapshot, null, 2));
+    audit.evidence_paths.snapshots.push(toPosixPath(baselineSnapshotPath));
 
     expect(project.metrics.fileCount).toBeGreaterThanOrEqual(10);
     expect(project.metrics.codeLineCount).toBeGreaterThanOrEqual(500);
@@ -1712,6 +2562,39 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
     runtimeRoot = String(layout.runtime_root || "").trim();
     expect(runtimeRoot).not.toBe("");
+    if (resumePlanningSeed) {
+      const resetEvidencePath = testInfo.outputPath("resume.reset-tasks.json");
+      if (startPhase === "pm") {
+        const resetResponse = await requestJson<Record<string, unknown>>(window, "/v2/runtime/reset/tasks", {
+          method: "POST",
+        });
+        await writeUtf8File(resetEvidencePath, JSON.stringify(resetResponse, null, 2));
+        audit.evidence_paths.snapshots.push(toPosixPath(resetEvidencePath));
+      }
+
+      const resumeSeedResult = await writeRuntimePlanningSeed(layout, project.workspace, resumePlanningSeed);
+      const resumeSeedEvidencePath = testInfo.outputPath("resume.planning-seed.json");
+      await writeUtf8File(resumeSeedEvidencePath, JSON.stringify({
+        start_phase: startPhase,
+        workspace: project.workspace,
+        workspace_seed_paths: workspacePlanningSeedPaths.map(toPosixPath),
+        runtime_seed_paths: resumeSeedResult.writtenPaths.map(toPosixPath),
+        mandatory_tasks: resumePlanningSeed.tasks,
+      }, null, 2));
+      audit.evidence_paths.snapshots.push(toPosixPath(resumeSeedEvidencePath));
+      audit.evidence_paths.logs.push(
+        toPosixPath(resumeSeedResult.runtimeRequirementsPath),
+        toPosixPath(resumeSeedResult.runtimePlanPath),
+        toPosixPath(resumeSeedResult.pipelinePath),
+        toPosixPath(resumeSeedResult.progressPath),
+      );
+      audit.issues_fixed.push({
+        issue: `resume_planning_contract_seeded_before_${startPhase}`,
+        root_cause: "phase_reuse_context",
+        fix: `seeded current scenario requirements/plan into runtime contracts and workspace docs for ${project.workspace}`,
+        verified: true,
+      });
+    }
 
     const llmPreflight = await refreshRequiredLlmReadinessThroughSettings(window, testInfo);
     audit.evidence_paths.screenshots.push(...llmPreflight.screenshots);
@@ -1809,14 +2692,14 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       const pmFallbackFailure = detectPmFallbackFailure(pmContract);
 
       const tasks = Array.isArray(pmContract?.tasks) ? pmContract.tasks : [];
-      const invalidTasks = tasks.filter((task) => {
-        const hasGoal = String(task.goal || "").trim().length > 0;
-        const hasScope = Array.isArray(task.scope_paths) && task.scope_paths.length > 0;
-        const hasSteps = Array.isArray(task.execution_checklist) && task.execution_checklist.length > 0;
-        const acceptance = Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : (task.acceptance || []);
-        const hasAcceptance = Array.isArray(acceptance) && acceptance.length > 0;
-        return !(hasGoal && hasScope && hasSteps && hasAcceptance);
-      }).length;
+      const pmAudit = auditPmContract(pmContract, project.workspace, scenario);
+      latestPmPlanningContribution = buildPmPlanningContribution(
+        "executed_pm_round",
+        round,
+        pmContract,
+        pmAudit,
+        pmContractPath,
+      );
       const pmSnapshotGate = (
         (Array.isArray(snapshot.tasks) ? snapshot.tasks.length : 0) > 0
         && (Number(snapshot.pm_state?.["completed_task_count"] || 0) > 0 || tasks.length > 0)
@@ -1825,7 +2708,12 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       audit.pm_quality_history.push({
         round,
         score,
-        issues: [summary, ...(critical > 0 ? [`critical_issue_count=${critical}`] : []), ...(invalidTasks > 0 ? [`invalid_tasks=${invalidTasks}`] : [])].filter(Boolean),
+        issues: [
+          summary,
+          ...(critical > 0 ? [`critical_issue_count=${critical}`] : []),
+          ...(pmAudit.invalidTaskCount > 0 ? [`invalid_tasks=${pmAudit.invalidTaskCount}`] : []),
+          ...pmAudit.issues,
+        ].filter(Boolean),
       });
 
       const leakage = [
@@ -1866,7 +2754,20 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         );
       }
 
-      if (pmSnapshotGate && score >= 80 && critical === 0 && invalidTasks === 0) {
+      if (pmAudit.issues.length > 0) {
+        audit.issues_fixed.push({
+          issue: `round_${round}_pm_contract_quality_strict_failed`,
+          root_cause: "pm_contract_quality",
+          fix: `fail-fast on PM contract path, acceptance, workspace, and domain coverage issues (evidence: ${toPosixPath(pmContractPath)})`,
+          verified: false,
+        });
+        throw new Error(
+          `PM contract strict quality gate failed: ${pmAudit.issues.join("; ")}; `
+          + `contract=${toPosixPath(pmContractPath)}`,
+        );
+      }
+
+      if (pmSnapshotGate && score >= 80 && critical === 0 && pmAudit.issues.length === 0) {
         audit.acceptance_results.pm_phase = "PASS";
       }
 
@@ -1886,14 +2787,14 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         const score = Number(pmContract?.quality_gate?.score || 0);
         const critical = Number(pmContract?.quality_gate?.critical_issue_count || 0);
         const tasks = Array.isArray(pmContract?.tasks) ? pmContract.tasks : [];
-        const invalidTasks = tasks.filter((task) => {
-          const hasGoal = String(task.goal || "").trim().length > 0;
-          const hasScope = Array.isArray(task.scope_paths) && task.scope_paths.length > 0;
-          const hasSteps = Array.isArray(task.execution_checklist) && task.execution_checklist.length > 0;
-          const acceptance = Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : (task.acceptance || []);
-          const hasAcceptance = Array.isArray(acceptance) && acceptance.length > 0;
-          return !(hasGoal && hasScope && hasSteps && hasAcceptance);
-        }).length;
+        const pmAudit = auditPmContract(pmContract, project.workspace, scenario);
+        latestPmPlanningContribution = buildPmPlanningContribution(
+          "resumed_existing_pm_contract",
+          round,
+          pmContract,
+          pmAudit,
+          pmContractPath,
+        );
         const pmFallbackFailure = detectPmFallbackFailure(pmContract);
 
         audit.pm_quality_history.push({
@@ -1902,15 +2803,17 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
           issues: [
             `resumed_existing_pm_contract:${toPosixPath(pmContractPath)}`,
             ...(critical > 0 ? [`critical_issue_count=${critical}`] : []),
-            ...(invalidTasks > 0 ? [`invalid_tasks=${invalidTasks}`] : []),
+            ...(pmAudit.invalidTaskCount > 0 ? [`invalid_tasks=${pmAudit.invalidTaskCount}`] : []),
+            ...pmAudit.issues,
             ...(pmFallbackFailure ? [`fallback_failure=${pmFallbackFailure}`] : []),
           ],
         });
 
-        if (score < 80 || critical > 0 || invalidTasks > 0 || tasks.length === 0 || pmFallbackFailure) {
+        if (score < 80 || critical > 0 || pmAudit.issues.length > 0 || tasks.length === 0 || pmFallbackFailure) {
           throw new Error(
             `Resumed PM contract failed quality gate: score=${score} critical=${critical} `
-            + `tasks=${tasks.length} invalidTasks=${invalidTasks} fallback=${pmFallbackFailure || "none"} `
+            + `tasks=${tasks.length} invalidTasks=${pmAudit.invalidTaskCount} fallback=${pmFallbackFailure || "none"} `
+            + `strictIssues=${pmAudit.issues.join("; ") || "none"} `
             + `contract=${toPosixPath(pmContractPath)}`,
           );
         }
@@ -1944,20 +2847,26 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       let directorResultPath = "";
       let directorSuccesses = 0;
       let directorStatus = "";
+      let directorResultSource: DirectorResultSource | "" = "";
       let downstreamDirectorFailure = "";
 
       if (shouldRunFullChainPhase(startPhase, "director")) {
         await dismissEngineFailureDialog(window);
         await enterDirectorWorkspace(window);
         await expect(window.getByTestId("director-workspace")).toBeVisible();
-        const director = await runDirectorUntilResultArtifact(window);
+        const director = await runDirectorUntilResultArtifact(window, { minMtimeMs: startEpochSeconds * 1000 });
         if (director.linkedTaskCount > 0 && director.uiTaskCount > 0) {
           audit.acceptance_results.director_phase = "PASS";
         }
 
-        const directorResultArtifact = { runtimeRoot: director.runtimeRoot, artifactPath: director.artifactPath };
+        const directorResultArtifact = {
+          runtimeRoot: director.runtimeRoot,
+          artifactPath: director.artifactPath,
+          mtimeMs: director.mtimeMs,
+        };
         runtimeRoot = directorResultArtifact.runtimeRoot;
         directorResultPath = directorResultArtifact.artifactPath;
+        directorResultSource = director.source;
         directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
         audit.evidence_paths.logs.push(toPosixPath(directorResultPath));
         downstreamDirectorFailure = directorFailureReason(directorResult);
@@ -1995,6 +2904,15 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         }
         audit.acceptance_results.director_phase = "PASS";
 
+        if (directorResultSource === "existing_artifact" || directorResultSource === "reconciled_terminal") {
+          audit.issues_fixed.push({
+            issue: `round_${round}_director_result_reused_${directorResultSource}`,
+            root_cause: "resume_strategy",
+            fix: `KERNELONE_E2E_START_PHASE=${startPhase} reused fresh terminal Director evidence at ${toPosixPath(directorResultPath)} mtime=${new Date(directorResultArtifact.mtimeMs).toISOString()}`,
+            verified: true,
+          });
+        }
+
         await window.getByTestId("director-workspace-back").click();
         await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
       } else {
@@ -2015,6 +2933,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         }
         runtimeRoot = directorResultArtifact.runtimeRoot;
         directorResultPath = directorResultArtifact.artifactPath;
+        directorResultSource = "existing_artifact";
         directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
         audit.evidence_paths.logs.push(toPosixPath(directorResultPath));
         downstreamDirectorFailure = directorFailureReason(directorResult);
@@ -2030,11 +2949,80 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         audit.acceptance_results.director_phase = "PASS";
       }
 
+      const finalSnapshot = await snapshotProjectFiles(project.workspace);
+      const finalMetrics = await measureComplexity(project.workspace);
+      audit.runtime_contribution = compareProjectSnapshots(baselineSnapshot, finalSnapshot);
+      const directorArtifactMaterialization = summarizeDirectorArtifactMaterialization(directorResult);
+      const contributionPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.runtime-contribution.json`);
+      audit.complexity_contribution_breakdown = buildComplexityContributionBreakdown({
+        scenarioSeedMetrics,
+        startPhase,
+        currentRunBaselineMetrics: project.metrics,
+        baselineSnapshot,
+        finalMetrics,
+        finalSnapshot,
+        pmPlanningDelta: latestPmPlanningContribution,
+        directorResultSource: directorResultSource || "unknown",
+        directorContribution: audit.runtime_contribution,
+        contributionEvidencePath: contributionPath,
+      });
+      await writeUtf8File(contributionPath, JSON.stringify({
+        audit_start_epoch_seconds: startEpochSeconds,
+        director_result_source: directorResultSource || "unknown",
+        director_result_path: toPosixPath(directorResultPath),
+        director_result_mtime_ms: directorResultPath ? (await fs.stat(directorResultPath)).mtimeMs : null,
+        director_artifact_source: String(directorResult?.source || ""),
+        director_artifact_materialization: directorArtifactMaterialization,
+        baseline: baselineSnapshot,
+        final: finalSnapshot,
+        contribution: audit.runtime_contribution,
+        complexity_contribution_breakdown: audit.complexity_contribution_breakdown,
+      }, null, 2));
+      audit.evidence_paths.snapshots.push(toPosixPath(contributionPath));
+      if (directorSuccesses > 0) {
+        const changedFileCount = audit.runtime_contribution.addedFiles.length
+          + audit.runtime_contribution.modifiedFiles.length
+          + audit.runtime_contribution.deletedFiles.length;
+        if (shouldRunFullChainPhase(startPhase, "director")) {
+          const canReuseMaterializedArtifact = startPhase !== "court"
+            && changedFileCount === 0
+            && directorArtifactMaterialization.changedFileCount > 0
+            && directorArtifactMaterialization.toolEvidenceCount > 0;
+          if (canReuseMaterializedArtifact) {
+            audit.issues_fixed.push({
+              issue: `round_${round}_director_workspace_delta_zero_but_artifact_materialized`,
+              root_cause: "resume_strategy",
+              fix: `resume run accepted fresh Director artifact materialization evidence instead of forcing duplicate file writes; evidence=${toPosixPath(contributionPath)}`,
+              verified: true,
+            });
+          } else {
+            expect(
+              changedFileCount,
+              `Director phase success must produce auditable current-run contribution or resume artifact materialization; `
+              + `source=${directorResultSource || "unknown"} `
+              + `artifact_files=${directorArtifactMaterialization.changedFileCount} `
+              + `artifact_tools=${directorArtifactMaterialization.toolEvidenceCount} `
+              + `evidence=${toPosixPath(contributionPath)}`,
+            ).toBeGreaterThan(0);
+          }
+        } else {
+          audit.issues_fixed.push({
+            issue: `round_${round}_runtime_contribution_not_recomputed_for_${directorResultSource || "unknown"}`,
+            root_cause: "resume_strategy",
+            fix: `runtime contribution gate skipped because Director result came from ${directorResultSource || "unknown"}; evidence=${toPosixPath(contributionPath)}`,
+            verified: true,
+          });
+        }
+      }
+
       const existingQaArtifact = await tryRuntimeArtifact(window, "results/integration_qa.result.json");
       const existingQa = existingQaArtifact
         ? await readJsonFile<IntegrationQaArtifact>(existingQaArtifact.artifactPath)
         : null;
-      if (String(existingQa?.reason || "").trim() !== "integration_qa_passed") {
+      if (
+        String(existingQa?.reason || "").trim() !== "integration_qa_passed"
+        || String(existingQa?.evidence_grade || "").trim() !== "real_command_passed"
+      ) {
         await requestJson<DirectorIntegrationQaPayload>(window, "/v2/director/integration-qa", {
           method: "POST",
           body: { run_id: `full-chain-qa-${Date.now()}` },
@@ -2045,8 +3033,21 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       const qaPath = qaArtifact.artifactPath;
       const qa = await readJsonFile<IntegrationQaArtifact>(qaPath);
       latestQaReason = String(qa?.reason || "").trim();
+      latestQaEvidenceGrade = String(qa?.evidence_grade || "").trim();
+      audit.qa_gate = {
+        passed: typeof qa?.passed === "boolean" ? qa.passed : null,
+        reason: latestQaReason,
+        evidence_grade: latestQaEvidenceGrade || "unknown",
+        summary: String(qa?.summary || "").trim(),
+        result_path: String(qa?.result_path || "").trim(),
+        runtime_result_path: String(qa?.runtime_result_path || "").trim(),
+      };
       audit.evidence_paths.logs.push(toPosixPath(qaPath));
       if (latestQaReason === "integration_qa_passed") {
+        expect(
+          latestQaEvidenceGrade,
+          `Integration QA PASS must include strong evidence grade; qa=${toPosixPath(qaPath)} summary=${String(qa?.summary || "")}`,
+        ).toBe("real_command_passed");
         audit.acceptance_results.qa_phase = "PASS";
       } else {
         audit.issues_fixed.push({
@@ -2057,6 +3058,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         });
         const failureSignature = JSON.stringify({
           qa_reason: latestQaReason || "unknown",
+          qa_evidence_grade: latestQaEvidenceGrade || "unknown",
           director_status: directorStatus || "unknown",
           director_error: String(directorResult?.error || "").trim(),
           director_successes: directorSuccesses,
@@ -2097,6 +3099,17 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     if (audit.director_tool_audit.total_calls === 0) {
       audit.next_risks.push("No explicit tool-call evidence found in runtime events; keep monitoring telemetry coverage.");
     }
+    const runtimeContributionFileChanges = audit.runtime_contribution
+      ? audit.runtime_contribution.addedFiles.length
+        + audit.runtime_contribution.modifiedFiles.length
+        + audit.runtime_contribution.deletedFiles.length
+      : 0;
+    const directorPolicyEvidenceRequired = shouldRunFullChainPhase(startPhase, "director") && runtimeContributionFileChanges > 0;
+    if (directorPolicyEvidenceRequired && audit.director_tool_audit.policy_evidence_count === 0) {
+      audit.next_risks.push(
+        `Director changed ${runtimeContributionFileChanges} files but no director_policy evidence was found in runtime tool events.`,
+      );
+    }
     if (audit.leakage_findings.length > 0) {
       audit.next_risks.push("Prompt-leakage keywords detected in plan or PM contract.");
     }
@@ -2111,6 +3124,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       && audit.acceptance_results.director_phase === "PASS"
       && audit.acceptance_results.qa_phase === "PASS"
       && audit.leakage_findings.length === 0
+      && (!directorPolicyEvidenceRequired || audit.director_tool_audit.policy_evidence_count > 0)
       && audit.director_tool_audit.unauthorized_blocked === 0
       && audit.director_tool_audit.dangerous_commands === 0
     );

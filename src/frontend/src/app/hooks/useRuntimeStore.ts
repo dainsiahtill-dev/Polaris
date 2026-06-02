@@ -32,6 +32,9 @@ export interface FileEditEvent {
   taskId?: string;
   timestamp: string;
   patch?: string;
+  diffStatus?: string;
+  patchUnavailableReason?: string;
+  hasPatch?: boolean;
   addedLines?: number;
   deletedLines?: number;
   modifiedLines?: number;

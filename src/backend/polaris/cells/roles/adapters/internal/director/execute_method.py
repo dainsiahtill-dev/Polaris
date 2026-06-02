@@ -14,8 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from polaris.kernelone.events.file_event_broadcaster import write_file_with_broadcast
-
+from .execution_tools import DirectorToolExecutor
 from .helpers import (
     _DEFAULT_TASK_LEASE_TTL_SECONDS,
     _TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS,
@@ -285,6 +284,7 @@ async def _claim_task_with_retry(
     last_claim_result: dict[str, Any] = {}
 
     for attempt in range(1, max_attempts + 1):
+        claim_external_task_id = _resolve_claim_external_task_id(active_task, requested_task_id)
         claim_result = adapter.task_runtime.claim_execution(
             active_task_id,
             worker_id=adapter.role_id,
@@ -292,7 +292,7 @@ async def _claim_task_with_retry(
             run_id=run_id,
             lease_ttl_seconds=_DEFAULT_TASK_LEASE_TTL_SECONDS,
             selection_source=active_source,
-            external_task_id=requested_task_id,
+            external_task_id=claim_external_task_id,
             context_summary=str(active_task.get("subject") or active_task.get("title") or "").strip(),
             metadata={"adapter_phase": "claimed"},
         )
@@ -341,6 +341,21 @@ async def _claim_task_with_retry(
 
     snapshot = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)
     return active_task, active_task_id, active_source, False, snapshot, attempts, last_claim_result
+
+
+def _resolve_claim_external_task_id(task: dict[str, Any], requested_task_id: str) -> str:
+    """Return the canonical external id for the task that will actually be claimed."""
+
+    metadata_raw = task.get("metadata") if isinstance(task, dict) else {}
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    runtime_execution_raw = metadata.get("runtime_execution")
+    runtime_execution: dict[str, Any] = runtime_execution_raw if isinstance(runtime_execution_raw, dict) else {}
+    for source in (metadata, runtime_execution, task):
+        for key in ("source_task_id", "pm_task_id", "external_task_id", "task_id", "id"):
+            token = str(source.get(key) or "").strip()
+            if token:
+                return token
+    return str(requested_task_id or "").strip()
 
 
 async def _handle_claim_required(
@@ -420,6 +435,11 @@ async def _execute_standard_llm_flow(
     requires_fresh_materialization = _task_requires_fresh_materialization(task)
     workspace_name = Path(str(getattr(adapter, "workspace", "") or "")).resolve().name
     direct_fallback_summary: dict[str, Any] | None = None
+    tool_results: list[dict[str, Any]] = []
+    current_files: dict[str, str] = baseline_files
+    new_files: list[str] = []
+    modified_files: list[str] = []
+    all_affected_files: list[str] = []
     preflight_existing_contract_evidence = _build_existing_workspace_task_evidence(
         task=task,
         current_files=baseline_files,
@@ -473,41 +493,94 @@ async def _execute_standard_llm_flow(
             "existing_contract_evidence": preflight_existing_contract_evidence,
         }
 
-    if _director_direct_text_patch_only_enabled(context):
-        result = {
-            "content": "",
-            "success": False,
-            "error": "director_direct_text_patch_only",
-            "raw_response": {"direct_text_patch_only": True},
-        }
-    else:
-        result = await adapter._invoke_role_dialogue_with_timeout(
-            message,
-            context=None,
-            timeout_seconds=llm_call_timeout,
-            stage_label="first_call",
+    if requires_fresh_materialization:
+        deterministic_tool_results = _apply_deterministic_declared_scope_scaffold(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+            current_files=baseline_files,
+            workspace_name=workspace_name,
         )
-    content = result.get("content", "")
+        if deterministic_tool_results:
+            tool_results.extend(deterministic_tool_results)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+            )
+            if not all_affected_files:
+                new_files, modified_files, all_affected_files = _promote_deterministic_scaffold_evidence(
+                    deterministic_tool_results,
+                    current_files=current_files,
+                    baseline_files=baseline_files,
+                )
+            if all_affected_files:
+                decision_signals.append(
+                    {
+                        "code": "director.deterministic_declared_scope_scaffold_pre_llm",
+                        "severity": "info",
+                        "detail": (
+                            "PM autofix declared scope was materialized deterministically "
+                            "before invoking the LLM provider."
+                        ),
+                        "new_file_count": len(new_files),
+                        "modified_file_count": len(modified_files),
+                    }
+                )
 
-    # 执行工具
-    tool_results = adapter._execution.extract_kernel_tool_results(result)
-    if not tool_results or not has_successful_write_tool(tool_results):
-        fallback_tool_results = await adapter._execution.execute_tools(
-            content, target_task_id, adapter._update_task_progress
+    if not all_affected_files:
+        if _director_direct_text_patch_only_enabled(context):
+            result = {
+                "content": "",
+                "success": False,
+                "error": "director_direct_text_patch_only",
+                "raw_response": {"direct_text_patch_only": True},
+            }
+        else:
+            result = await adapter._invoke_role_dialogue_with_timeout(
+                message,
+                context=None,
+                timeout_seconds=llm_call_timeout,
+                stage_label="first_call",
+            )
+        content = result.get("content", "")
+
+        # 执行工具
+        extracted_tool_results = adapter._execution.extract_kernel_tool_results(result)
+        tool_results.extend(extracted_tool_results)
+        if not extracted_tool_results or not has_successful_write_tool(extracted_tool_results):
+            fallback_tool_results = await adapter._execution.execute_tools(
+                content, target_task_id, adapter._update_task_progress
+            )
+            if fallback_tool_results:
+                tool_results.extend(fallback_tool_results)
+
+        # 收集变更文件
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
         )
-        if fallback_tool_results:
-            tool_results.extend(fallback_tool_results)
 
-    # 收集变更文件
-    current_files = adapter._state_tracker.collect_workspace_code_files()
-    new_files = sorted(set(current_files.keys()) - set(baseline_files.keys()))
-    modified_files = [
-        rel_path
-        for rel_path, fingerprint in current_files.items()
-        if rel_path in baseline_files and baseline_files[rel_path] != fingerprint
-    ]
+    if not all_affected_files:
+        deterministic_tool_results = _apply_deterministic_declared_scope_scaffold(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+            current_files=current_files,
+            workspace_name=workspace_name,
+        )
+        if deterministic_tool_results:
+            tool_results.extend(deterministic_tool_results)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+            )
+            if not all_affected_files:
+                new_files, modified_files, all_affected_files = _promote_deterministic_scaffold_evidence(
+                    deterministic_tool_results,
+                    current_files=current_files,
+                    baseline_files=baseline_files,
+                )
 
-    all_affected_files = sorted(set(new_files + modified_files))
     if not all_affected_files:
         direct_message = adapter._build_director_message(task, text_patch_mode=True)
         direct_timeout = adapter._execution.resolve_direct_fallback_timeout_seconds(context, llm_call_timeout)
@@ -541,14 +614,10 @@ async def _execute_standard_llm_flow(
         if direct_tool_results:
             tool_results.extend(direct_tool_results)
 
-        current_files = adapter._state_tracker.collect_workspace_code_files()
-        new_files = sorted(set(current_files.keys()) - set(baseline_files.keys()))
-        modified_files = [
-            rel_path
-            for rel_path, fingerprint in current_files.items()
-            if rel_path in baseline_files and baseline_files[rel_path] != fingerprint
-        ]
-        all_affected_files = sorted(set(new_files + modified_files))
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+        )
 
     if not all_affected_files:
         deterministic_tool_results = _apply_deterministic_typescript_reexport_repair(
@@ -558,14 +627,10 @@ async def _execute_standard_llm_flow(
         )
         if deterministic_tool_results:
             tool_results.extend(deterministic_tool_results)
-            current_files = adapter._state_tracker.collect_workspace_code_files()
-            new_files = sorted(set(current_files.keys()) - set(baseline_files.keys()))
-            modified_files = [
-                rel_path
-                for rel_path, fingerprint in current_files.items()
-                if rel_path in baseline_files and baseline_files[rel_path] != fingerprint
-            ]
-            all_affected_files = sorted(set(new_files + modified_files))
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+            )
 
     existing_contract_evidence = _build_existing_workspace_task_evidence(
         task=task,
@@ -672,7 +737,11 @@ async def _execute_standard_llm_flow(
         }
 
     materialization_mode = (
-        "write_tool_and_workspace_diff" if write_tool_evidence else "workspace_diff_without_write_tool"
+        "deterministic_declared_scope_scaffold"
+        if _has_deterministic_declared_scope_scaffold(tool_results)
+        else "write_tool_and_workspace_diff"
+        if write_tool_evidence
+        else "workspace_diff_without_write_tool"
     )
     if all_affected_files and not write_tool_evidence:
         decision_signals.append(
@@ -725,6 +794,55 @@ async def _execute_standard_llm_flow(
         "artifacts": [],
         "materialization_mode": materialization_mode,
     }
+
+
+def _collect_workspace_code_diff(
+    adapter: Any,
+    baseline_files: dict[str, str],
+) -> tuple[dict[str, str], list[str], list[str], list[str]]:
+    """Collect workspace fingerprints and compute changed code files."""
+
+    current_files = adapter._state_tracker.collect_workspace_code_files()
+    new_files = sorted(set(current_files.keys()) - set(baseline_files.keys()))
+    modified_files = [
+        rel_path
+        for rel_path, fingerprint in current_files.items()
+        if rel_path in baseline_files and baseline_files[rel_path] != fingerprint
+    ]
+    all_affected_files = sorted(set(new_files + modified_files))
+    return current_files, new_files, modified_files, all_affected_files
+
+
+def _promote_deterministic_scaffold_evidence(
+    tool_results: list[dict[str, Any]],
+    *,
+    current_files: dict[str, str],
+    baseline_files: dict[str, str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Treat successful deterministic scaffold writes as materialization evidence.
+
+    A resumed PM-autofix task can already contain the exact deterministic content.
+    In that case the content fingerprint does not change, but the scoped write was
+    still authorized and refreshed. Avoid falling through to an expensive LLM retry
+    loop solely because the content hash is unchanged.
+    """
+
+    files: list[str] = []
+    for item in tool_results:
+        if not isinstance(item, dict) or not bool(item.get("success")):
+            continue
+        result = item.get("result")
+        if not isinstance(result, dict):
+            continue
+        if result.get("source_tool") != "deterministic_declared_scope_scaffold":
+            continue
+        rel_path = str(result.get("file") or "").replace("\\", "/").strip().lstrip("/")
+        if rel_path and rel_path in current_files:
+            files.append(rel_path)
+    affected_files = _dedupe_preserve_order(files)
+    new_files = [rel_path for rel_path in affected_files if rel_path not in baseline_files]
+    modified_files = [rel_path for rel_path in affected_files if rel_path in baseline_files]
+    return new_files, modified_files, affected_files
 
 
 async def _attach_director_file_event_bus(adapter: Any) -> None:
@@ -802,12 +920,13 @@ def _apply_deterministic_typescript_reexport_repair(
                 new_text = module_text.rstrip() + "\n" + export_line + "\n"
                 rel_module = module_path.relative_to(workspace_path).as_posix()
                 message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-                write_result = write_file_with_broadcast(
-                    workspace=str(workspace_path),
-                    file_path=rel_module,
-                    content=new_text,
+                write_result = DirectorToolExecutor(
+                    str(workspace_path),
                     message_bus=message_bus,
                     worker_id="director",
+                ).execute_tool(
+                    "write_file",
+                    {"file": rel_module, "content": new_text},
                     task_id=task_id,
                 )
                 if not bool(write_result.get("ok")):
@@ -824,13 +943,200 @@ def _apply_deterministic_typescript_reexport_repair(
                             "file": rel_module,
                             "symbol": symbol,
                             "reexport": export_line,
-                            "bytes_written": int(write_result.get("bytes") or len(new_text.encode("utf-8"))),
+                            "bytes_written": int(write_result.get("bytes_written") or len(new_text.encode("utf-8"))),
                             "operation": str(write_result.get("operation") or "modify"),
                             "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                            "director_policy": write_result.get("director_policy"),
                         },
                     }
                 ]
     return []
+
+
+def _apply_deterministic_declared_scope_scaffold(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    current_files: dict[str, str],
+    workspace_name: str,
+) -> list[dict[str, Any]]:
+    """Materialize narrow PM-autofix declared source files when LLM output is empty."""
+
+    if not _task_allows_deterministic_declared_scope_scaffold(task):
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    current = {str(path or "").replace("\\", "/").strip().lstrip("/") for path in current_files if str(path).strip()}
+    results: list[dict[str, Any]] = []
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    for rel_path in _declared_scope_scaffold_targets(task, current_files=current, workspace_name=workspace_name):
+        resolved = (workspace_path / rel_path).resolve()
+        if not _path_inside_workspace(resolved, workspace_path):
+            continue
+        content = _build_declared_scope_scaffold_content(rel_path, task)
+        if not content:
+            continue
+        write_result = DirectorToolExecutor(
+            str(workspace_path),
+            message_bus=message_bus,
+            worker_id="director",
+        ).execute_tool(
+            "write_file",
+            {"file": rel_path, "content": content},
+            task_id=task_id,
+        )
+        if not bool(write_result.get("ok")):
+            continue
+        current.add(rel_path)
+        append_llm_event = getattr(adapter._state_tracker, "append_director_llm_event", None)
+        if callable(append_llm_event):
+            append_llm_event(
+                task_id,
+                "director_policy.tool_call",
+                {
+                    "director_policy": {
+                        "gate": "declared_scope_scaffold",
+                        "decision": "allow",
+                        "source_tool": "deterministic_declared_scope_scaffold",
+                        "file": rel_path,
+                        "operation": str(write_result.get("operation") or "create"),
+                        "verdict": write_result.get("director_policy"),
+                    },
+                    "tool_call": {
+                        "tool": "write_file",
+                        "file": rel_path,
+                        "success": True,
+                    },
+                },
+            )
+        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+            adapter._update_task_progress(task_id, "executing", current_file=rel_path)
+        results.append(
+            {
+                "tool": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_declared_scope_scaffold",
+                    "file": rel_path,
+                    "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
+                    "operation": str(write_result.get("operation") or "create"),
+                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                    "director_policy": write_result.get("director_policy"),
+                },
+            }
+        )
+    return results
+
+
+def _task_allows_deterministic_declared_scope_scaffold(task: dict[str, Any]) -> bool:
+    raw_metadata = task.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_nested_metadata = metadata.get("metadata")
+    nested_metadata: dict[str, Any] = raw_nested_metadata if isinstance(raw_nested_metadata, dict) else {}
+    records: list[dict[str, Any]] = [task, metadata, nested_metadata]
+    if not any(bool(record.get("autofix")) for record in records):
+        return False
+    return any(str(record.get("autofix_reason") or "").strip() for record in records)
+
+
+def _declared_scope_scaffold_targets(
+    task: dict[str, Any],
+    *,
+    current_files: set[str],
+    workspace_name: str,
+) -> list[str]:
+    allow_existing_targets = _task_requires_fresh_materialization(task)
+    targets: list[str] = []
+    for candidate in _extract_task_path_candidates(task):
+        normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
+        if not normalized:
+            continue
+        if normalized in current_files and not allow_existing_targets:
+            continue
+        if any(ch in normalized for ch in ("*", "?")):
+            continue
+        if Path(normalized).suffix.lower() not in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".py"}:
+            continue
+        targets.append(normalized)
+    return _dedupe_preserve_order(targets)[:3]
+
+
+def _build_declared_scope_scaffold_content(rel_path: str, task: dict[str, Any]) -> str:
+    suffix = Path(rel_path).suffix.lower()
+    symbol = _pascal_case_identifier(Path(rel_path).stem)
+    title = str(task.get("subject") or task.get("title") or symbol).strip()
+    if suffix in {".ts", ".tsx"}:
+        camel = symbol[:1].lower() + symbol[1:]
+        return (
+            f"export type {symbol}ScaffoldState = {{\n"
+            "  readonly title: string;\n"
+            "  readonly status: string;\n"
+            "  readonly events: readonly string[];\n"
+            "};\n\n"
+            f"export function create{symbol}ScaffoldState(\n"
+            f"  title: string = {title!r},\n"
+            "  events: readonly string[] = [],\n"
+            f"): {symbol}ScaffoldState {{\n"
+            '  return { title, status: events.length > 0 ? "active" : "idle", events: [...events] };\n'
+            "}\n\n"
+            f"export function render{symbol}Scaffold(state: {symbol}ScaffoldState): string {{\n"
+            '  const eventSummary = state.events.length > 0 ? state.events.join(" | ") : "no events";\n'
+            "  return `${state.title} [${state.status}] ${eventSummary}`;\n"
+            "}\n\n"
+            f'export const {camel}ScaffoldVersion = "deterministic-declared-scope-v1";\n'
+        )
+    if suffix in {".js", ".jsx", ".mjs"}:
+        return (
+            f"export function create{symbol}ScaffoldState(title = {title!r}, events = []) {{\n"
+            '  return { title, status: events.length > 0 ? "active" : "idle", events: [...events] };\n'
+            "}\n\n"
+            f"export function render{symbol}Scaffold(state) {{\n"
+            '  const eventSummary = state.events.length > 0 ? state.events.join(" | ") : "no events";\n'
+            "  return `${state.title} [${state.status}] ${eventSummary}`;\n"
+            "}\n"
+        )
+    if suffix == ".py":
+        return (
+            "from __future__ import annotations\n\n"
+            "from dataclasses import dataclass, field\n\n\n"
+            "@dataclass(frozen=True)\n"
+            f"class {symbol}ScaffoldState:\n"
+            f"    title: str = {title!r}\n"
+            '    status: str = "idle"\n'
+            "    events: tuple[str, ...] = field(default_factory=tuple)\n\n\n"
+            f"def render_{_snake_case_identifier(symbol)}_scaffold(state: {symbol}ScaffoldState) -> str:\n"
+            '    event_summary = " | ".join(state.events) if state.events else "no events"\n'
+            '    return f"{state.title} [{state.status}] {event_summary}"\n'
+        )
+    return ""
+
+
+def _has_deterministic_declared_scope_scaffold(tool_results: list[dict[str, Any]]) -> bool:
+    for item in tool_results:
+        if not isinstance(item, dict) or not bool(item.get("success")):
+            continue
+        result = item.get("result")
+        if isinstance(result, dict) and result.get("source_tool") == "deterministic_declared_scope_scaffold":
+            return True
+    return False
+
+
+def _pascal_case_identifier(value: str) -> str:
+    parts = re.findall(r"[A-Za-z0-9]+", str(value or ""))
+    token = "".join(part[:1].upper() + part[1:] for part in parts) or "Generated"
+    if token[0].isdigit():
+        token = f"Generated{token}"
+    return token
+
+
+def _snake_case_identifier(value: str) -> str:
+    token = re.sub(r"(?<!^)([A-Z])", r"_\1", str(value or "generated")).lower()
+    token = re.sub(r"[^a-z0-9_]+", "_", token).strip("_")
+    return token or "generated"
 
 
 def _task_text_blob(task: dict[str, Any]) -> str:

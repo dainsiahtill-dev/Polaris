@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -73,6 +74,81 @@ class TestPathSecurity:
             # 不安全路径 - 穿越
             safe, _ = _is_path_safe(tmpdir, "../outside.py")
             assert safe is False
+
+
+class TestProtocolDirectorPolicyGate:
+    """Director write policy regressions for protocol-level writes."""
+
+    def test_apply_protocol_output_blocks_agents_forbidden_path(self, tmp_path: Path) -> None:
+        (tmp_path / "AGENTS.md").write_text("禁止修改 src/main.py\n", encoding="utf-8")
+
+        report = apply_protocol_output(
+            "FILE: src/main.py\nprint('blocked')\nEND FILE",
+            str(tmp_path),
+            strict=True,
+        )
+
+        assert report.success is False
+        assert report.ops_failed == 1
+        assert ErrorCode.PERMISSION_DENIED in report.error_codes
+        assert "AGENTS.md forbids writing src/main.py" in report.results[0].error_message
+        assert not (tmp_path / "src" / "main.py").exists()
+
+    def test_apply_protocol_output_blocks_invalid_nested_package_manifest_diff(self, tmp_path: Path) -> None:
+        target = tmp_path / "packages" / "web" / "package.json"
+        target.parent.mkdir(parents=True)
+        target.write_text('{"scripts":{"test":"vitest run"}}', encoding="utf-8")
+
+        report = apply_protocol_output(
+            "FILE: packages/web/package.json\nnot json\nEND FILE",
+            str(tmp_path),
+            strict=True,
+        )
+
+        assert report.success is False
+        assert report.ops_failed == 1
+        assert ErrorCode.PERMISSION_DENIED in report.error_codes
+        assert "package.json structured diff failed" in report.results[0].error_message
+        assert report.results[0].director_policy is not None
+        assert report.results[0].director_policy["allowed"] is False
+        assert report.results[0].director_policy["package_diff"]["parse_error"].startswith("invalid JSON")
+        assert report.to_dict()["results"][0]["director_policy"]["allowed"] is False
+        assert target.read_text(encoding="utf-8") == '{"scripts":{"test":"vitest run"}}'
+
+    def test_apply_protocol_output_package_manifest_reports_structured_policy_diff(self, tmp_path: Path) -> None:
+        before = {
+            "scripts": {"test": "vitest run"},
+            "dependencies": {"react": "18.2.0"},
+        }
+        after = {
+            "scripts": {"test": "vitest run --coverage", "lint": "eslint ."},
+            "dependencies": {"react": "18.3.0"},
+        }
+        target = tmp_path / "package.json"
+        target.write_text(json.dumps(before, ensure_ascii=False), encoding="utf-8")
+
+        report = apply_protocol_output(
+            "FILE: package.json\n" + json.dumps(after, ensure_ascii=False) + "\nEND FILE",
+            str(tmp_path),
+            strict=True,
+        )
+
+        assert report.success is True
+        assert report.ops_applied == 1
+        policy = report.results[0].director_policy
+        assert policy is not None
+        assert policy["allowed"] is True
+        package_diff = policy["package_diff"]
+        assert package_diff["sections"]["scripts"]["added"] == {"lint": "eslint ."}
+        assert package_diff["sections"]["scripts"]["changed"]["test"] == {
+            "before": "vitest run",
+            "after": "vitest run --coverage",
+        }
+        assert package_diff["sections"]["dependencies"]["changed"]["react"] == {
+            "before": "18.2.0",
+            "after": "18.3.0",
+        }
+        assert report.to_dict()["results"][0]["director_policy"]["package_diff"] == package_diff
 
 
 class TestProtocolParsing:

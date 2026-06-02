@@ -18,6 +18,7 @@ import type {
 } from '@/app/components/llm/types';
 import { isCLIProviderType } from '@/app/components/llm/types';
 import type { TestEvent, TestResult } from '@/app/components/llm/test/types';
+import { sanitizeLlmConfigForSave } from '@/app/components/llm/utils/configSanitizer';
 import type {
   InteractiveInterviewAnswer,
   InteractiveInterviewReport,
@@ -139,8 +140,10 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
       setLlmError(null);
       let success = true;
       while (llmSavePendingRef.current) {
-        const configToSave = llmSavePendingRef.current;
+        const configToSave = sanitizeLlmConfigForSave(llmSavePendingRef.current);
         llmSavePendingRef.current = null;
+        setLLMConfig(configToSave);
+        llmConfigRef.current = configToSave;
         try {
           const res = await apiFetch('/v2/llm/config', {
             method: 'POST',
@@ -234,7 +237,10 @@ export function LLMSettingsBridge({ onLlmStatusChange }: LLMSettingsBridgeProps)
           const nextRoles = { ...(current.roles || {}) };
           Object.entries(nextRoles).forEach(([roleId, roleCfg]) => {
             if (roleCfg?.provider_id === providerId) {
-              nextRoles[roleId] = { ...roleCfg, provider_id: '', model: '' };
+              const nextRoleCfg = { ...(roleCfg || {}) };
+              delete nextRoleCfg.provider_id;
+              delete nextRoleCfg.model;
+              nextRoles[roleId] = nextRoleCfg;
             }
           });
           return { ...current, providers: nextProviders, roles: nextRoles };

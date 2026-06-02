@@ -531,6 +531,10 @@ describe('PMWorkspace history panel', () => {
     expect(screen.getByTestId('pm-requirements-list-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/requirements');
     await waitFor(() => expect(screen.getByTestId('pm-requirements-count')).toHaveTextContent('1'));
     expect(screen.getByTestId('pm-requirements-list')).toHaveTextContent('Traceable requirement');
+    const matrix = screen.getByTestId('pm-requirement-matrix');
+    expect(matrix).toHaveTextContent('需求矩阵');
+    expect(screen.getByTestId('pm-requirement-matrix-row')).toHaveAttribute('data-requirement-id', 'REQ-1');
+    expect(screen.getByTestId('pm-requirement-matrix-source')).toHaveTextContent('docs/product/requirements.md');
     await waitFor(() => expect(getPmRequirementMock).toHaveBeenCalledWith('REQ-1', 'C:/Temp/Product'));
     await waitFor(() => expect(screen.getByTestId('pm-requirement-detail')).toHaveTextContent('Requirement detail payload'));
     const detail = screen.getByTestId('pm-requirement-detail');
@@ -539,6 +543,8 @@ describe('PMWorkspace history panel', () => {
     expect(screen.getByTestId('pm-requirement-detail-body-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/requirements/REQ-1');
     expect(detail).toHaveTextContent('Requirement accepted');
     expect(detail).toHaveTextContent('PM-1');
+    await waitFor(() => expect(screen.getByTestId('pm-requirement-matrix-acceptance')).toHaveTextContent('Requirement accepted'));
+    await waitFor(() => expect(screen.getByTestId('pm-requirement-matrix-related-task')).toHaveTextContent('PM-1'));
   });
 
   it('renders idle PM v2 empty projections without error banners', async () => {

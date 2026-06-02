@@ -158,6 +158,19 @@ class TestNormalizePmPayloadHappyPath:
         assert "doc_id" not in task
         assert "blueprint_id" not in task
 
+    def test_payload_can_bind_workspace(self) -> None:
+        raw = {
+            "tasks": [
+                {
+                    "title": "Build login",
+                    "goal": "Create login form",
+                    "acceptance_criteria": ["npm test passes"],
+                }
+            ],
+        }
+        result = normalize_pm_payload(raw, iteration=1, start_timestamp="t", workspace_full="C:/Temp/Product")
+        assert result["workspace"] == "C:/Temp/Product"
+
     def test_migrate_acceptance_alias(self) -> None:
         raw = {
             "tasks": [

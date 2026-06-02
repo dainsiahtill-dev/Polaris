@@ -1332,7 +1332,7 @@ export function InteractiveInterviewHall({
         <div className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden xl:order-2">
           <div
             data-testid="llm-interactive-center"
-            className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-2xl border border-cyan-500/20 bg-[linear-gradient(165deg,rgba(8,16,38,0.92),rgba(4,8,22,0.92))] shadow-[0_0_24px_rgba(34,211,238,0.12)] ${
+            className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-y-auto rounded-2xl border border-cyan-500/20 bg-[linear-gradient(165deg,rgba(8,16,38,0.92),rgba(4,8,22,0.92))] shadow-[0_0_24px_rgba(34,211,238,0.12)] custom-scrollbar ${
               compactMode ? 'gap-1.5 p-1.5' : 'gap-3 p-4'
             }`}
           >
@@ -1342,10 +1342,10 @@ export function InteractiveInterviewHall({
             </div>
 
             {showThinkingPanel ? (
-              <div data-testid="llm-interactive-stream-monitors" className={`grid min-h-0 min-w-0 shrink-0 gap-2 overflow-hidden ${
+              <div data-testid="llm-interactive-stream-monitors" className={`grid min-h-[84px] min-w-0 shrink-0 gap-2 overflow-hidden ${
                 compactMode
-                  ? 'max-h-[104px] grid-cols-1 lg:max-h-[72px] lg:grid-cols-2'
-                  : 'max-h-[320px] grid-cols-1 lg:max-h-[220px] lg:grid-cols-2'
+                  ? 'max-h-[120px] grid-cols-1 lg:max-h-[96px] lg:grid-cols-2'
+                  : 'max-h-[260px] grid-cols-1 lg:max-h-[180px] lg:grid-cols-2'
               }`}>
                 <RealtimeThinkingDisplay
                   events={displayedThinkingEvents}
@@ -1366,11 +1366,11 @@ export function InteractiveInterviewHall({
             ) : null}
 
             {messages.length === 0 ? (
-              <div data-testid="llm-interactive-messages" className="flex min-h-0 min-w-0 flex-1 items-center justify-center rounded-lg border border-white/10 bg-black/25 text-xs text-text-dim">
+              <div data-testid="llm-interactive-messages" className="flex min-h-[120px] min-w-0 flex-1 items-center justify-center rounded-lg border border-white/10 bg-black/25 text-xs text-text-dim">
                 暂无对话记录，请先选择模板问题或输入自定义问题。
               </div>
             ) : (
-              <div data-testid="llm-interactive-messages" className={`min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-cyan-500/15 bg-black/25 custom-scrollbar ${compactMode ? 'space-y-2 p-2 pr-1' : 'space-y-3 p-3 pr-2'}`}>
+              <div data-testid="llm-interactive-messages" className={`min-h-[120px] min-w-0 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-cyan-500/15 bg-black/25 custom-scrollbar ${compactMode ? 'space-y-2 p-2 pr-1' : 'space-y-3 p-3 pr-2'}`}>
                 {qaPairs.map((pair, index) => {
                   const question = pair.question;
                   const answer = pair.answer;

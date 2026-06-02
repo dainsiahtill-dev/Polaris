@@ -48,8 +48,9 @@ class UvicornServerHandle:
         self._server: Any | None = None
         self._task: asyncio.Task | None = None
         self._config: Any | None = None
+        self._startup_exception: BaseException | None = None
 
-    async def start(self) -> None:
+    async def start(self, startup_timeout: float = 10.0) -> None:
         """Start the uvicorn server.
 
         This method starts the server in a background task.
@@ -66,13 +67,33 @@ class UvicornServerHandle:
         )
 
         # Create server
-        self._server = uvicorn.Server(self._config)
+        server = uvicorn.Server(self._config)
+        self._server = server
+
+        async def run_server() -> None:
+            try:
+                await server.serve()
+            except BaseException as exc:  # noqa: BLE001
+                self._startup_exception = exc
 
         # Run in background task
-        self._task = asyncio.create_task(self._server.serve())
+        self._startup_exception = None
+        self._task = asyncio.create_task(run_server())
 
-        # Wait a moment for server to start
-        await asyncio.sleep(0.5)
+        deadline = asyncio.get_running_loop().time() + startup_timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if self._task.done():
+                exc = self._startup_exception
+                if exc is not None:
+                    raise OSError(
+                        f"uvicorn failed to start on {self.host}:{self.port}: {exc}",
+                    ) from exc
+                raise OSError(f"uvicorn stopped before listening on {self.host}:{self.port}")
+            if bool(getattr(self._server, "started", False)):
+                return
+            await asyncio.sleep(0.05)
+
+        raise TimeoutError(f"uvicorn did not start listening on {self.host}:{self.port} within {startup_timeout:.1f}s")
 
     async def stop(self, timeout: float = 10.0) -> bool:
         """Stop the server gracefully.

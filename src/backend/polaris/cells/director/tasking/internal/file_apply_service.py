@@ -12,9 +12,11 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 import tomllib
+from polaris.domain.verification.director_policy_gate import validate_director_write_policy
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,37 @@ _FENCED_FILE_BLOCK_RE = re.compile(
 _FENCED_FILE_HEADER_RE = re.compile(r"^```file:\s*([^`\r\n]+?)\s*$", re.IGNORECASE)
 _FENCE_CLOSE_RE = re.compile(r"^```\s*$")
 _PROTOCOL_PATH_RE = re.compile(r"(?im)^\s*(?:PATCH_FILE|FILE|DELETE(?:_FILE)?)\s*(?::|\s+)\s*([^\r\n]+?)\s*$")
+
+
+def _is_package_manifest_path(rel_path: str) -> bool:
+    normalized = str(rel_path or "").replace("\\", "/").strip("/").lower()
+    return normalized == "package.json" or normalized.endswith("/package.json")
+
+
+def _read_workspace_agents_policy_text(workspace: str, rel_path: str) -> str:
+    """Read root and nested AGENTS.md files that apply to a workspace-relative path."""
+    workspace_path = Path(workspace).resolve()
+    normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
+    candidates = ["AGENTS.md"]
+    parent_parts = [part for part in normalized_rel.split("/")[:-1] if part]
+    for index in range(1, len(parent_parts) + 1):
+        candidates.append("/".join([*parent_parts[:index], "AGENTS.md"]))
+
+    texts: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        target = (workspace_path / candidate).resolve()
+        if workspace_path not in target.parents and target != workspace_path:
+            continue
+        try:
+            if target.is_file():
+                texts.append(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError):
+            continue
+    return "\n".join(texts)
 
 
 def _next_nonempty_line_index(lines: list[str], start_index: int) -> int | None:
@@ -241,8 +274,34 @@ class FileApplyService:
         self.workspace = workspace
         self._bus = message_bus
         self._worker_id = worker_id
+        self._last_write_errors: list[str] = []
 
     # === File Writing ===
+
+    def _validate_director_policy_for_write(
+        self,
+        *,
+        rel_path: str,
+        old_content: str,
+        new_content: str,
+        operation: str,
+    ) -> str:
+        """Return a deterministic policy error for a pending file apply write."""
+        normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
+        package_write = _is_package_manifest_path(normalized_rel)
+        verdict = validate_director_write_policy(
+            changed_files=[normalized_rel] if normalized_rel else [],
+            allowed_scope=[],
+            agents_md=_read_workspace_agents_policy_text(self.workspace, normalized_rel),
+            operation=operation,
+            package_before=old_content if package_write else None,
+            package_after=new_content if package_write else None,
+            require_change=True,
+        )
+        if verdict.allowed:
+            return ""
+        reason = "; ".join(verdict.reasons) or "Director write policy denied the write"
+        return f"Director write policy denied: {reason}"
 
     def write_files(self, files: list[dict], task_id: str = "") -> list[dict]:
         """Write generated files to workspace with broadcast support.
@@ -255,6 +314,7 @@ class FileApplyService:
             List of successfully written file dictionaries
         """
         files_created: list[dict] = []
+        self._last_write_errors = []
 
         # Import here to avoid circular dependencies
         from polaris.kernelone.events.file_event_broadcaster import write_file_with_broadcast
@@ -265,6 +325,27 @@ class FileApplyService:
             if not file_path or not content:
                 continue
             try:
+                full_path = self._resolve_workspace_path(file_path)
+                if full_path is None:
+                    self._last_write_errors.append(f"Unsafe file path outside workspace: {file_path}")
+                    continue
+                old_content = ""
+                if os.path.isfile(full_path):
+                    try:
+                        with open(full_path, encoding="utf-8") as handle:
+                            old_content = handle.read()
+                    except OSError:
+                        old_content = ""
+                policy_error = self._validate_director_policy_for_write(
+                    rel_path=file_path,
+                    old_content=old_content,
+                    new_content=content,
+                    operation="file_apply_service.write_files",
+                )
+                if policy_error:
+                    self._last_write_errors.append(policy_error)
+                    logger.warning("Skip file '%s': %s", file_path, policy_error)
+                    continue
                 # Use unified broadcast-enabled write
                 result = write_file_with_broadcast(
                     workspace=self.workspace,
@@ -507,6 +588,8 @@ class FileApplyService:
                     task_id=task_id,
                 )
             )
+            if self._last_write_errors:
+                errors.extend(self._last_write_errors)
             if applied:
                 deduped: list[dict] = []
                 seen_paths: set[str] = set()

@@ -11,7 +11,7 @@ for candidate in (BACKEND_ROOT, SCRIPTS_ROOT, CORE_ROOT):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 
-from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
+from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (  # noqa: E402
     run_post_dispatch_integration_qa,
 )
 
@@ -48,6 +48,7 @@ def test_run_post_dispatch_integration_qa_accepts_args_keyword(tmp_path) -> None
     assert payload["ran"] is False
     assert payload["passed"] is None
     assert payload["reason"] == "pending_director_tasks"
+    assert payload["evidence_grade"] == "not_run"
     result_path = run_dir / "qa" / "integration_qa.result.json"
     assert result_path.is_file(), f"result file not found at {result_path}"
 
@@ -83,5 +84,6 @@ def test_run_post_dispatch_integration_qa_supports_calls_without_args(tmp_path) 
     assert payload["ran"] is False
     assert payload["passed"] is None
     assert payload["reason"] == "pending_director_tasks"
+    assert payload["evidence_grade"] == "not_run"
     result_path = run_dir / "qa" / "integration_qa.result.json"
     assert result_path.is_file(), f"result file not found at {result_path}"

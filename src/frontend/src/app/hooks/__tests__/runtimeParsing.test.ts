@@ -84,6 +84,31 @@ describe('runtimeParsing file edit event normalization', () => {
     expect(event?.deletedLines).toBe(2);
   });
 
+  it('preserves diff availability metadata from runtime file edit events', () => {
+    const event = extractRuntimeFileEditEvent({
+      schema_version: 'runtime.v2',
+      channel: 'event.file_edit',
+      kind: 'file_edit',
+      timestamp: '2026-05-07T03:30:00.000Z',
+      payload: {
+        raw: {
+          file_path: 'src/no-change.ts',
+          operation: 'modify',
+          content_size: 16,
+          diff_status: 'unavailable',
+          patch_unavailable_reason: 'no_content_change',
+          has_patch: false,
+        },
+      },
+    });
+
+    expect(event?.filePath).toBe('src/no-change.ts');
+    expect(event?.patch).toBeUndefined();
+    expect(event?.diffStatus).toBe('unavailable');
+    expect(event?.patchUnavailableReason).toBe('no_content_change');
+    expect(event?.hasPatch).toBe(false);
+  });
+
   it('accepts backend filepath and size_bytes aliases', () => {
     const event = extractRuntimeFileEditEvent({
       event: 'file_written',

@@ -33,6 +33,7 @@ def register_handlers() -> dict[str, Any]:
         "repo_map": _handle_repo_map,
         "repo_symbols_index": _handle_repo_symbols_index,
         "repo_apply_diff": _handle_repo_apply_diff,
+        "apply_patch": _handle_apply_patch,
         "precision_edit": _handle_precision_edit,
     }
 
@@ -883,6 +884,10 @@ def _handle_repo_apply_diff(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
     Returns:
         Execution result dict with applied changes
     """
+    from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
+        _emit_file_written_event,
+        _validate_director_policy_for_write,
+    )
     from polaris.kernelone.llm.toolkit.executor.utils import resolve_workspace_path, to_workspace_relative_path
 
     diff = kwargs.get("diff")
@@ -947,6 +952,7 @@ def _handle_repo_apply_diff(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
 
     # Apply each hunk
     results: list[dict[str, Any]] = []
+    director_policy_denials: list[dict[str, Any]] = []
     all_ok = True
 
     for hunk in hunks:
@@ -1025,13 +1031,47 @@ def _handle_repo_apply_diff(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
 
         # Write modified content only if at least one change was applied
         if file_write_needed:
+            policy_result = _validate_director_policy_for_write(
+                self,
+                rel=rel,
+                old_content=file_content,
+                new_content=modified_content,
+                operation="repo_apply_diff",
+                tool_kwargs=kwargs,
+            )
+            if not policy_result.get("ok"):
+                denial = {
+                    "file": file_path,
+                    "error": policy_result.get("error", "Director write policy denied"),
+                    "director_policy": policy_result.get("director_policy"),
+                }
+                director_policy_denials.append(denial)
+                results.append(
+                    {
+                        "file": file_path,
+                        "ok": False,
+                        "error": denial["error"],
+                        "error_type": "director_write_policy_denied",
+                        "director_policy": denial["director_policy"],
+                    }
+                )
+                all_ok = False
+                continue
             try:
                 self._kernel_fs.workspace_write_text(rel, modified_content, encoding="utf-8")
+                _emit_file_written_event(
+                    self,
+                    file_path=rel,
+                    operation="modify",
+                    old_content=file_content,
+                    new_content=modified_content,
+                )
                 results.append(
                     {
                         "file": file_path,
                         "ok": True,
                         "changes_applied": len(changes),
+                        "director_policy": policy_result.get("director_policy"),
                     }
                 )
             except (OSError, UnicodeDecodeError) as e:
@@ -1049,7 +1089,322 @@ def _handle_repo_apply_diff(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
         "files_processed": len(results),
         "files_ok": sum(1 for r in results if r.get("ok")),
         "results": results,
+        **({"director_policy_denials": director_policy_denials} if director_policy_denials else {}),
+        **({"error_type": "director_write_policy_denied", "blocked": True} if director_policy_denials else {}),
         **({} if all_ok else {"error": _summarize_errors(results)}),
+    }
+
+
+def _handle_apply_patch(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+    """Handle apply_patch formatted patch text through the unified write gate."""
+    from polaris.kernelone.editing.patch_engine import extract_apply_patch_operations
+    from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
+        _emit_file_written_event,
+        _validate_director_policy_for_write,
+    )
+    from polaris.kernelone.llm.toolkit.executor.utils import resolve_workspace_path, to_workspace_relative_path
+
+    patch = kwargs.get("patch") or kwargs.get("diff") or kwargs.get("content") or kwargs.get("text")
+    if not patch:
+        return {"ok": False, "error": "Missing required parameter: patch"}
+
+    operations = extract_apply_patch_operations(str(patch))
+    if not operations:
+        return {"ok": False, "error": "Invalid apply_patch format: no operations found"}
+
+    results: list[dict[str, Any]] = []
+    director_policy_denials: list[dict[str, Any]] = []
+    all_ok = True
+
+    for operation in operations:
+        result = _apply_routed_patch_operation(
+            self,
+            operation=operation,
+            tool_kwargs=kwargs,
+            resolve_workspace_path=resolve_workspace_path,
+            to_workspace_relative_path=to_workspace_relative_path,
+            validate_policy=_validate_director_policy_for_write,
+            emit_file_written=_emit_file_written_event,
+        )
+        results.append(result)
+        if not result.get("ok"):
+            all_ok = False
+            if result.get("error_type") == "director_write_policy_denied":
+                director_policy_denials.append(
+                    {
+                        "file": result.get("file", operation.path),
+                        "error": result.get("error", "Director write policy denied"),
+                        "director_policy": result.get("director_policy"),
+                    }
+                )
+
+    effect_receipt = {
+        "operation": "apply_patch",
+        "files_changed": [str(result.get("file")) for result in results if result.get("ok")],
+        "director_policy": {
+            str(result.get("file")): result.get("director_policy")
+            for result in results
+            if result.get("ok") and result.get("director_policy")
+        },
+    }
+    response = {
+        "ok": all_ok,
+        "operations": len(operations),
+        "files_ok": sum(1 for result in results if result.get("ok")),
+        "results": results,
+        "effect_receipt": effect_receipt,
+        **({"director_policy_denials": director_policy_denials} if director_policy_denials else {}),
+        **({"error_type": "director_write_policy_denied", "blocked": True} if director_policy_denials else {}),
+        **({} if all_ok else {"error": _summarize_errors(results)}),
+    }
+    return response
+
+
+def _apply_routed_patch_operation(
+    self: AgentAccelToolExecutor,
+    *,
+    operation: Any,
+    tool_kwargs: dict[str, Any],
+    resolve_workspace_path: Any,
+    to_workspace_relative_path: Any,
+    validate_policy: Any,
+    emit_file_written: Any,
+) -> dict[str, Any]:
+    """Apply one parsed apply_patch operation with policy validation."""
+    try:
+        target = resolve_workspace_path(self._kernel_fs, operation.path)
+        rel = to_workspace_relative_path(self._kernel_fs, target)
+    except (ValueError, OSError) as exc:
+        return {
+            "ok": False,
+            "file": operation.path,
+            "error": f"Invalid path: {operation.path}: {exc}",
+        }
+
+    if operation.kind == "create":
+        return _apply_patch_create(
+            self,
+            rel=rel,
+            content=str(operation.content or ""),
+            tool_kwargs=tool_kwargs,
+            validate_policy=validate_policy,
+            emit_file_written=emit_file_written,
+        )
+    if operation.kind == "search_replace":
+        return _apply_patch_update(
+            self,
+            rel=rel,
+            search=str(operation.search or ""),
+            replace=str(operation.replace or ""),
+            move_to=str(operation.move_to or ""),
+            tool_kwargs=tool_kwargs,
+            resolve_workspace_path=resolve_workspace_path,
+            to_workspace_relative_path=to_workspace_relative_path,
+            validate_policy=validate_policy,
+            emit_file_written=emit_file_written,
+        )
+    if operation.kind == "delete":
+        return _apply_patch_delete(
+            self,
+            rel=rel,
+            tool_kwargs=tool_kwargs,
+            validate_policy=validate_policy,
+            emit_file_written=emit_file_written,
+        )
+    return {
+        "ok": False,
+        "file": rel,
+        "error": f"Unsupported apply_patch operation kind: {operation.kind}",
+    }
+
+
+def _apply_patch_create(
+    self: AgentAccelToolExecutor,
+    *,
+    rel: str,
+    content: str,
+    tool_kwargs: dict[str, Any],
+    validate_policy: Any,
+    emit_file_written: Any,
+) -> dict[str, Any]:
+    if self._kernel_fs.workspace_exists(rel):
+        return {"ok": False, "file": rel, "error": f"File already exists: {rel}"}
+
+    policy_result = validate_policy(
+        self,
+        rel=rel,
+        old_content="",
+        new_content=content,
+        operation="apply_patch:create",
+        tool_kwargs=tool_kwargs,
+    )
+    if not policy_result.get("ok"):
+        return _apply_patch_policy_denial(rel, policy_result)
+
+    try:
+        receipt = self._kernel_fs.workspace_write_text(rel, content, encoding="utf-8")
+        emit_file_written(self, file_path=rel, operation="create", old_content="", new_content=content)
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "file": rel, "error": f"Failed to create file: {exc}"}
+
+    return {
+        "ok": True,
+        "file": rel,
+        "operation": "create",
+        "bytes_written": receipt.bytes_written,
+        "director_policy": policy_result.get("director_policy"),
+    }
+
+
+def _apply_patch_update(
+    self: AgentAccelToolExecutor,
+    *,
+    rel: str,
+    search: str,
+    replace: str,
+    move_to: str,
+    tool_kwargs: dict[str, Any],
+    resolve_workspace_path: Any,
+    to_workspace_relative_path: Any,
+    validate_policy: Any,
+    emit_file_written: Any,
+) -> dict[str, Any]:
+    if not self._kernel_fs.workspace_exists(rel) or not self._kernel_fs.workspace_is_file(rel):
+        return {"ok": False, "file": rel, "error": f"File not found: {rel}"}
+
+    try:
+        old_content = self._kernel_fs.workspace_read_text(rel, encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"ok": False, "file": rel, "error": f"Failed to read file: {exc}"}
+
+    if not search:
+        return {"ok": False, "file": rel, "error": "apply_patch update requires non-empty search content"}
+    if search not in old_content:
+        return {"ok": False, "file": rel, "error": f"Search text not found in file: {search[:50]}..."}
+
+    new_content = old_content.replace(search, replace, 1)
+    if not move_to:
+        policy_result = validate_policy(
+            self,
+            rel=rel,
+            old_content=old_content,
+            new_content=new_content,
+            operation="apply_patch:update",
+            tool_kwargs=tool_kwargs,
+        )
+        if not policy_result.get("ok"):
+            return _apply_patch_policy_denial(rel, policy_result)
+        try:
+            receipt = self._kernel_fs.workspace_write_text(rel, new_content, encoding="utf-8")
+            emit_file_written(self, file_path=rel, operation="modify", old_content=old_content, new_content=new_content)
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "file": rel, "error": f"Failed to update file: {exc}"}
+        return {
+            "ok": True,
+            "file": rel,
+            "operation": "modify",
+            "bytes_written": receipt.bytes_written,
+            "director_policy": policy_result.get("director_policy"),
+        }
+
+    try:
+        move_target = resolve_workspace_path(self._kernel_fs, move_to)
+        move_rel = to_workspace_relative_path(self._kernel_fs, move_target)
+    except (ValueError, OSError) as exc:
+        return {"ok": False, "file": move_to, "error": f"Invalid move target: {move_to}: {exc}"}
+    if self._kernel_fs.workspace_exists(move_rel):
+        return {"ok": False, "file": move_rel, "error": f"Move target already exists: {move_rel}"}
+
+    delete_policy = validate_policy(
+        self,
+        rel=rel,
+        old_content=old_content,
+        new_content="",
+        operation="apply_patch:move_delete",
+        tool_kwargs=tool_kwargs,
+    )
+    if not delete_policy.get("ok"):
+        return _apply_patch_policy_denial(rel, delete_policy)
+    create_policy = validate_policy(
+        self,
+        rel=move_rel,
+        old_content="",
+        new_content=new_content,
+        operation="apply_patch:move_create",
+        tool_kwargs=tool_kwargs,
+    )
+    if not create_policy.get("ok"):
+        return _apply_patch_policy_denial(move_rel, create_policy)
+
+    try:
+        receipt = self._kernel_fs.workspace_write_text(move_rel, new_content, encoding="utf-8")
+        self._kernel_fs.workspace_remove(rel, missing_ok=False)
+        emit_file_written(self, file_path=move_rel, operation="create", old_content="", new_content=new_content)
+        emit_file_written(self, file_path=rel, operation="delete", old_content=old_content, new_content="")
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "file": rel, "error": f"Failed to move file: {exc}"}
+
+    return {
+        "ok": True,
+        "file": move_rel,
+        "source_file": rel,
+        "operation": "move",
+        "bytes_written": receipt.bytes_written,
+        "director_policy": {
+            "delete": delete_policy.get("director_policy"),
+            "create": create_policy.get("director_policy"),
+        },
+    }
+
+
+def _apply_patch_delete(
+    self: AgentAccelToolExecutor,
+    *,
+    rel: str,
+    tool_kwargs: dict[str, Any],
+    validate_policy: Any,
+    emit_file_written: Any,
+) -> dict[str, Any]:
+    if not self._kernel_fs.workspace_exists(rel) or not self._kernel_fs.workspace_is_file(rel):
+        return {"ok": False, "file": rel, "error": f"File not found: {rel}"}
+    try:
+        old_content = self._kernel_fs.workspace_read_text(rel, encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"ok": False, "file": rel, "error": f"Failed to read file: {exc}"}
+
+    policy_result = validate_policy(
+        self,
+        rel=rel,
+        old_content=old_content,
+        new_content="",
+        operation="apply_patch:delete",
+        tool_kwargs=tool_kwargs,
+    )
+    if not policy_result.get("ok"):
+        return _apply_patch_policy_denial(rel, policy_result)
+
+    try:
+        self._kernel_fs.workspace_remove(rel, missing_ok=False)
+        emit_file_written(self, file_path=rel, operation="delete", old_content=old_content, new_content="")
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "file": rel, "error": f"Failed to delete file: {exc}"}
+
+    return {
+        "ok": True,
+        "file": rel,
+        "operation": "delete",
+        "director_policy": policy_result.get("director_policy"),
+    }
+
+
+def _apply_patch_policy_denial(rel: str, policy_result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "file": rel,
+        "error": policy_result.get("error", "Director write policy denied"),
+        "error_type": "director_write_policy_denied",
+        "blocked": True,
+        "director_policy": policy_result.get("director_policy"),
     }
 
 

@@ -91,6 +91,7 @@ _PM_MEASURABLE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+)",
 )
 _PM_MEASURABLE_BACKTICK_RE = re.compile(r"`[^`]{2,}`")
+_PM_EXECUTABLE_BACKTICK_RE = re.compile(r"`([^`]{2,})`")
 _PM_SCOPE_ROOTS = {
     "app",
     "backend",
@@ -131,6 +132,30 @@ _PM_SCOPE_SUFFIXES = {
     ".yml",
 }
 _PM_NON_PATH_TEXT_RE = re.compile(r"[\s,，、；;：:。]|[\u4e00-\u9fff]")
+_GAME_PM_MIN_TASKS = 6
+_GAME_PM_REQUIRED_DOMAINS = ("engine", "world", "combat", "ai", "persistence", "renderer", "tests")
+_GAME_PM_DOMAIN_SCOPE_PATHS = {
+    "engine": "src/engine/game-loop.ts",
+    "world": "src/world/map-generator.ts",
+    "combat": "src/combat/combat-system.ts",
+    "ai": "src/ai/enemy-ai.ts",
+    "persistence": "src/persistence/save-system.ts",
+    "renderer": "src/renderer/game-view.tsx",
+    "tests": "tests/integration/game-session.test.ts",
+}
+_GAME_PM_DOMAIN_TITLES = {
+    "engine": "Implement tactical game engine loop",
+    "world": "Implement procedural world generation",
+    "combat": "Implement turn based combat system",
+    "ai": "Implement enemy decision AI",
+    "persistence": "Implement save and load persistence",
+    "renderer": "Implement interactive game renderer",
+    "tests": "Add game integration test coverage",
+}
+_GAME_PM_HINT_RE = re.compile(
+    r"\b(game|roguelike|tactical|combat|renderer|gameplay|玩家|敌人|战斗|地图|世界|回合|存档)\b",
+    re.IGNORECASE,
+)
 
 
 def _strip_wrapping_quotes(token: str) -> str:
@@ -150,7 +175,8 @@ def _normalize_path_list(value: Any) -> list[str]:
     normalized: list[str] = []
     for item in entries:
         token = str(item).strip().replace("\\", "/")
-        token = token.lstrip("./")
+        while token.startswith("./"):
+            token = token[2:]
         token = re.sub(r"/+", "/", token)
         if token:
             normalized.append(token)
@@ -181,6 +207,10 @@ def _resolve_dependency_ref(token: str, tasks: list[dict[str, Any]], known_ids: 
     if token in known_ids:
         return token
     parts = token.split("-")
+    if len(parts) == 2 and parts[0].upper() == "PM" and parts[1].isdigit():
+        mapped = _task_id_at_position(tasks, int(parts[1]))
+        if mapped:
+            return mapped
     if len(parts) >= 3 and parts[0].upper() == "PM" and parts[-1].isdigit():
         mapped = _task_id_at_position(tasks, int(parts[-1]))
         if mapped:
@@ -238,7 +268,9 @@ def _normalize_text(value: Any) -> str:
 def _normalize_path(value: Any) -> str:
     token = str(value or "").strip().replace("\\", "/")
     token = re.sub(r"^[A-Za-z]:/", "", token)
-    token = token.lstrip("./").strip("/")
+    while token.startswith("./"):
+        token = token[2:]
+    token = token.strip("/")
     token = re.sub(r"/+", "/", token)
     return token.lower()
 
@@ -252,7 +284,10 @@ def _is_concrete_pm_scope_path(value: Any) -> bool:
     if _PM_NON_PATH_TEXT_RE.search(raw):
         return False
 
-    token = re.sub(r"/+", "/", raw.lstrip("./").strip("/"))
+    token = raw
+    while token.startswith("./"):
+        token = token[2:]
+    token = re.sub(r"/+", "/", token.strip("/"))
     if not token or token in {".", "*", "**"}:
         return False
     parts = [part for part in token.split("/") if part]
@@ -267,6 +302,381 @@ def _is_concrete_pm_scope_path(value: Any) -> bool:
     if parts[0] in _PM_SCOPE_ROOTS and (len(parts) > 1 or raw.endswith("/")):
         return True
     return token.rstrip("/") in _PM_SCOPE_ROOTS
+
+
+def _workspace_prefix(workspace_full: Any) -> str:
+    token = str(workspace_full or "").strip()
+    if not token:
+        return ""
+    try:
+        return os.path.normcase(os.path.abspath(token))
+    except (OSError, ValueError):
+        return ""
+
+
+def _path_parts_contain_parent(candidate: str) -> bool:
+    token = candidate.replace("\\", "/")
+    return any(part == ".." for part in token.split("/"))
+
+
+def _workspace_relative_path(candidate: Any, workspace_full: Any) -> str:
+    raw = _strip_wrapping_quotes(str(candidate or "").strip())
+    if not raw or raw.startswith("~") or _path_parts_contain_parent(raw):
+        return ""
+
+    workspace_prefix = _workspace_prefix(workspace_full)
+    if not workspace_prefix:
+        if os.path.isabs(raw):
+            return ""
+        relative = raw.replace("\\", "/")
+        while relative.startswith("./"):
+            relative = relative[2:]
+        return re.sub(r"/+", "/", relative.strip("/")).lower()
+
+    try:
+        resolved = os.path.abspath(raw if os.path.isabs(raw) else os.path.join(workspace_prefix, raw))
+        common = os.path.commonpath([workspace_prefix, os.path.normcase(resolved)])
+    except (OSError, ValueError):
+        return ""
+    if os.path.normcase(common) != workspace_prefix:
+        return ""
+    try:
+        relative = os.path.relpath(resolved, workspace_prefix)
+    except (OSError, ValueError):
+        return ""
+    if relative == ".":
+        return ""
+    return re.sub(r"/+", "/", relative.replace("\\", "/").strip("/")).lower()
+
+
+def _is_workspace_bound_concrete_path(candidate: Any, workspace_full: Any) -> bool:
+    relative = _workspace_relative_path(candidate, workspace_full)
+    if not relative:
+        return False
+    return _is_concrete_pm_scope_path(relative)
+
+
+def _coerce_pm_path_to_workspace_relative(candidate: Any, workspace_full: Any) -> tuple[str, str]:
+    """Coerce an LLM-provided PM path into a workspace-relative path.
+
+    PM contracts are executable handoffs. Absolute paths are not acceptable in
+    those contracts because Director write gates are scoped to the active
+    workspace. If a path is already inside the workspace, keep its true relative
+    form. If an LLM names a throwaway external project root such as
+    ``C:/Temp/roguelike-ts/src/app.ts``, preserve only the project-internal
+    suffix (``src/app.ts``). Parent traversal and non-concrete path text still
+    fail closed.
+    """
+    raw = _strip_wrapping_quotes(str(candidate or "").strip())
+    if not raw or raw.startswith("~") or _path_parts_contain_parent(raw):
+        return "", ""
+
+    relative = _workspace_relative_path(raw, workspace_full)
+    if relative and _is_concrete_pm_scope_path(relative):
+        return relative, ""
+
+    normalized_raw = raw.replace("\\", "/")
+    is_absolute = os.path.isabs(raw) or bool(re.match(r"^[A-Za-z]:[\\/]", raw)) or normalized_raw.startswith("/")
+    if not is_absolute:
+        token = _normalize_path(raw)
+        return (token, "") if token and _is_concrete_pm_scope_path(token) else ("", "")
+
+    without_drive = re.sub(r"^[A-Za-z]:/", "", normalized_raw).strip("/")
+    parts = [part for part in without_drive.split("/") if part]
+    if not parts:
+        return "", ""
+
+    suffix_candidates: list[tuple[list[str], str]] = []
+    for index, part in enumerate(parts):
+        if part.lower() in _PM_SCOPE_ROOTS:
+            suffix_candidates.append((parts[index:], "/".join(parts[:index])))
+            break
+
+    filename = parts[-1]
+    if filename in _PM_SCOPE_FILENAMES or os.path.splitext(filename)[1].lower() in _PM_SCOPE_SUFFIXES:
+        if len(parts) >= 3 and parts[0].lower() in {"temp", "tmp"}:
+            suffix_candidates.append((parts[2:], "/".join(parts[:2])))
+        if len(parts) >= 2:
+            suffix_candidates.append((parts[-2:], "/".join(parts[:-2])))
+        suffix_candidates.append(([filename], "/".join(parts[:-1])))
+
+    for suffix_parts, stripped_root in suffix_candidates:
+        token = _normalize_path("/".join(suffix_parts))
+        if token and _is_concrete_pm_scope_path(token):
+            suffix_text = "/".join(suffix_parts).strip("/")
+            original_root = stripped_root
+            if suffix_text and normalized_raw.lower().endswith("/" + suffix_text.lower()):
+                original_root = normalized_raw[: -len(suffix_text)].rstrip("/")
+            return token, original_root
+    return "", ""
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        token = str(path or "").strip()
+        key = token.lower()
+        if not token or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(token)
+    return deduped
+
+
+def _derive_scope_from_pm_targets(target_files: list[str]) -> list[str]:
+    scopes: list[str] = []
+    for target in target_files:
+        token = _normalize_path(target)
+        if not token:
+            continue
+        directory = os.path.dirname(token).replace("\\", "/").strip("/")
+        scope = directory or token
+        if scope and scope not in scopes:
+            scopes.append(scope)
+    return scopes
+
+
+def _replace_external_roots_in_text(value: Any, stripped_roots: set[str]) -> Any:
+    if not stripped_roots:
+        return value
+    if isinstance(value, str):
+        text = value
+        for root in sorted((item for item in stripped_roots if item), key=len, reverse=True):
+            root_slash = root.replace("\\", "/").strip("/")
+            if not root_slash:
+                continue
+            drive_variants = [root_slash]
+            if re.match(r"^[A-Za-z]:/", root_slash):
+                drive_variants.append(root_slash.replace("/", "\\"))
+            for variant in drive_variants:
+                text = text.replace(variant + "/", "")
+                text = text.replace(variant + "\\", "")
+                text = text.replace(variant, "workspace root")
+        return text
+    if isinstance(value, list):
+        return [_replace_external_roots_in_text(item, stripped_roots) for item in value]
+    if isinstance(value, dict):
+        return {key: _replace_external_roots_in_text(item, stripped_roots) for key, item in value.items()}
+    return value
+
+
+def _sanitize_pm_task_paths_in_place(tasks: list[dict[str, Any]], workspace_full: str) -> int:
+    normalized_count = 0
+    for task in tasks:
+        stripped_roots: set[str] = set()
+        for field in ("context_files", "target_files", "scope_paths"):
+            original_paths = _normalize_path_list(task.get(field) or [])
+            sanitized: list[str] = []
+            for raw_path in original_paths:
+                relative, stripped_root = _coerce_pm_path_to_workspace_relative(raw_path, workspace_full)
+                if not relative:
+                    continue
+                sanitized.append(relative)
+                if stripped_root:
+                    stripped_roots.add(stripped_root)
+            sanitized = _dedupe_paths(sanitized)
+            if sanitized != original_paths:
+                normalized_count += 1
+            task[field] = sanitized
+
+        if not task.get("scope_paths") and task.get("target_files"):
+            task["scope_paths"] = _derive_scope_from_pm_targets(
+                [str(item) for item in task.get("target_files") or [] if str(item).strip()]
+            )
+            normalized_count += 1
+
+        if stripped_roots:
+            for field in (
+                "title",
+                "goal",
+                "description",
+                "backlog_ref",
+                "acceptance",
+                "acceptance_criteria",
+                "execution_checklist",
+                "steps",
+            ):
+                if field in task:
+                    task[field] = _replace_external_roots_in_text(task.get(field), stripped_roots)
+    return normalized_count
+
+
+def _collect_task_scope_paths(task: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    paths.extend(_normalize_path_list(task.get("scope_paths") or []))
+    paths.extend(_normalize_path_list(task.get("target_files") or []))
+    paths.extend(_normalize_path_list(task.get("context_files") or []))
+    return paths
+
+
+def _is_game_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
+    text_parts = [
+        _normalize_text(normalized.get("overall_goal")),
+        _normalize_text(normalized.get("focus")),
+        _normalize_text(normalized.get("notes")),
+    ]
+    coverage_paths: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        text_parts.extend(
+            [
+                _normalize_text(task.get("title")),
+                _normalize_text(task.get("goal")),
+                _normalize_text(task.get("description")),
+            ]
+        )
+        coverage_paths.extend(_collect_task_scope_paths(task))
+
+    combined_text = " ".join(part for part in text_parts if part)
+    if _GAME_PM_HINT_RE.search(combined_text):
+        return True
+
+    normalized_paths = {_normalize_path(path) for path in coverage_paths if _normalize_path(path)}
+    covered_domains = sum(
+        1
+        for domain in _GAME_PM_REQUIRED_DOMAINS
+        if any(path == f"src/{domain}" or path.startswith(f"src/{domain}/") for path in normalized_paths)
+        or (domain == "tests" and any(path == "tests" or path.startswith("tests/") for path in normalized_paths))
+    )
+    return covered_domains >= 2
+
+
+def _covered_game_domains(tasks: list[Any], workspace_full: Any) -> list[str]:
+    coverage_paths: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        for path in _collect_task_scope_paths(task):
+            relative = _workspace_relative_path(path, workspace_full)
+            if relative:
+                coverage_paths.add(relative)
+
+    covered: list[str] = []
+    for domain in _GAME_PM_REQUIRED_DOMAINS:
+        if domain == "tests":
+            if any(path == "tests" or path.startswith("tests/") for path in coverage_paths):
+                covered.append(domain)
+            continue
+        if any(path == f"src/{domain}" or path.startswith(f"src/{domain}/") for path in coverage_paths):
+            covered.append(domain)
+    return covered
+
+
+def _last_task_id(tasks: list[dict[str, Any]]) -> str:
+    for task in reversed(tasks):
+        task_id = _normalize_text(task.get("id"))
+        if task_id:
+            return task_id
+    return ""
+
+
+def _unique_task_id(existing_ids: set[str], base: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_-]+", "-", base.strip()).strip("-").upper()
+    if not token:
+        token = "PM-AUTO-TASK"
+    candidate = token
+    suffix = 2
+    while candidate in existing_ids:
+        candidate = f"{token}-{suffix}"
+        suffix += 1
+    existing_ids.add(candidate)
+    return candidate
+
+
+def _build_game_domain_repair_task(
+    *,
+    domain: str,
+    task_id: str,
+    depends_on: str,
+    verify_command: str,
+    sequence: int,
+) -> dict[str, Any]:
+    scope_path = _GAME_PM_DOMAIN_SCOPE_PATHS.get(domain, f"src/{domain}/index.ts")
+    title = _GAME_PM_DOMAIN_TITLES.get(domain, f"Implement {domain} game capability")
+    task: dict[str, Any] = {
+        "id": task_id,
+        "title": title,
+        "goal": f"Add the missing {domain} capability so the PM contract covers the full game delivery scope.",
+        "description": (
+            f"Quality gate repair task generated because the PM contract omitted the {domain} "
+            "delivery domain required by the project goal."
+        ),
+        "assigned_to": "director",
+        "phase": "verification" if domain == "tests" else "implementation",
+        "priority": 5000 + sequence,
+        "scope_paths": [scope_path],
+        "target_files": [scope_path],
+        "acceptance_criteria": [
+            f"verify {scope_path} exists",
+            f"Run `{verify_command}` passes",
+        ],
+        "execution_checklist": [
+            "Review existing generated project structure",
+            f"Implement the missing {domain} capability in the scoped files",
+            "Run the acceptance command and record the result",
+        ],
+        "metadata": {
+            "autofix": True,
+            "autofix_reason": "game_pm_domain_coverage",
+            "domain": domain,
+        },
+    }
+    if depends_on:
+        task["depends_on"] = [depends_on]
+    else:
+        task["depends_on"] = []
+    return task
+
+
+def _append_missing_game_domain_tasks(
+    normalized: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    *,
+    workspace_full: str,
+    verify_command: str,
+) -> int:
+    if not _is_game_pm_contract(normalized, tasks):
+        return 0
+
+    covered_domains = set(_covered_game_domains(tasks, workspace_full))
+    missing_domains = [domain for domain in _GAME_PM_REQUIRED_DOMAINS if domain not in covered_domains]
+    if not missing_domains and len(tasks) >= _GAME_PM_MIN_TASKS:
+        return 0
+
+    existing_ids = {_normalize_text(task.get("id")) for task in tasks if _normalize_text(task.get("id"))}
+    dependency_anchor = _last_task_id(tasks)
+    added = 0
+    for domain in missing_domains:
+        task_id = _unique_task_id(existing_ids, f"PM-AUTO-{domain}")
+        tasks.append(
+            _build_game_domain_repair_task(
+                domain=domain,
+                task_id=task_id,
+                depends_on=dependency_anchor,
+                verify_command=verify_command,
+                sequence=added,
+            )
+        )
+        dependency_anchor = task_id
+        added += 1
+
+    while len(tasks) < _GAME_PM_MIN_TASKS:
+        task_id = _unique_task_id(existing_ids, "PM-AUTO-GAME-INTEGRATION")
+        tasks.append(
+            _build_game_domain_repair_task(
+                domain="tests",
+                task_id=task_id,
+                depends_on=dependency_anchor,
+                verify_command=verify_command,
+                sequence=added,
+            )
+        )
+        dependency_anchor = task_id
+        added += 1
+
+    return added
 
 
 def _contains_prompt_leakage(text: str) -> bool:
@@ -294,15 +704,39 @@ def _has_measurable_acceptance_anchor(acceptance_items: list[str]) -> bool:
     return False
 
 
+def _has_executable_or_file_acceptance_anchor(acceptance_items: list[str]) -> bool:
+    """Return True when acceptance proves an executable check or concrete file evidence.
+
+    ``_has_measurable_acceptance_anchor`` intentionally accepts observable outcomes
+    such as HTTP status codes. Director/ChiefEngineer handoff tasks need a stronger
+    anchor so a PM contract cannot pass with generic "it works" style acceptance.
+    """
+    for item in acceptance_items:
+        normalized = _normalize_text(item)
+        if not normalized:
+            continue
+        if _PM_MEASURABLE_COMMAND_RE.search(normalized):
+            return True
+        for match in _PM_EXECUTABLE_BACKTICK_RE.finditer(normalized):
+            if _PM_MEASURABLE_COMMAND_RE.search(match.group(1)):
+                return True
+        if _PM_MEASURABLE_ASSERT_RE.search(normalized) and _PM_MEASURABLE_PATH_RE.search(normalized):
+            return True
+    return False
+
+
 def evaluate_pm_task_quality(
     normalized: dict[str, Any],
     docs_stage: dict[str, Any] | None = None,
+    workspace_full: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate PM task quality and return quality report.
 
     Args:
         normalized: Normalized PM task payload with 'tasks' key
         docs_stage: Optional docs stage configuration
+        workspace_full: Optional current workspace root. Falls back to
+            normalized["workspace"] when available.
 
     Returns:
         Quality report with score, issues, warnings, and summary
@@ -321,6 +755,7 @@ def evaluate_pm_task_quality(
     backlog_trace_task_count = 0
 
     docs_stage_dict: dict[str, Any] = docs_stage if isinstance(docs_stage, dict) else {}
+    effective_workspace = str(workspace_full or normalized.get("workspace") or "").strip()
     docs_enabled = bool(docs_stage_dict.get("enabled"))
     active_doc = _normalize_path(docs_stage_dict.get("active_doc_path", ""))
     active_dir = _normalize_path(os.path.dirname(active_doc)) if active_doc else ""
@@ -355,10 +790,26 @@ def evaluate_pm_task_quality(
         acceptance_items = [_normalize_text(item) for item in (acceptance or []) if _normalize_text(item)]
         if not acceptance_items:
             critical_issues.append(f"{task_id}: acceptance criteria is missing")
+        elif not _has_executable_or_file_acceptance_anchor(acceptance_items):
+            critical_issues.append(f"{task_id}: acceptance requires executable command or file evidence")
         elif not _has_measurable_acceptance_anchor(acceptance_items):
             warnings.append(f"{task_id}: acceptance criteria lacks measurable anchors")
         else:
             measurable_acceptance_task_count += 1
+
+        task_paths = _collect_task_scope_paths(task)
+        concrete_workspace_paths = [
+            path for path in task_paths if _is_workspace_bound_concrete_path(path, effective_workspace)
+        ]
+        invalid_scope_paths = [path for path in task_paths if path not in concrete_workspace_paths]
+        if not task_paths:
+            critical_issues.append(f"{task_id}: task requires explicit scope")
+        elif not concrete_workspace_paths:
+            critical_issues.append(f"{task_id}: task requires concrete workspace-bound scope paths")
+        elif invalid_scope_paths:
+            critical_issues.append(
+                f"{task_id}: scope paths must stay inside workspace ({', '.join(invalid_scope_paths[:3])})"
+            )
 
         checklist = task.get("execution_checklist")
         checklist_items = []
@@ -390,15 +841,15 @@ def evaluate_pm_task_quality(
             backlog_trace_task_count += 1
 
         assigned_to = str(task.get("assigned_to") or "").strip()
-        if assigned_to in {"Director", "ChiefEngineer"}:
-            task_paths = _normalize_path_list(task.get("scope_paths") or [])
-            task_paths.extend(_normalize_path_list(task.get("target_files") or []))
-            task_paths.extend(_normalize_path_list(task.get("context_files") or []))
+        assigned_key = assigned_to.lower().replace("-", "_").replace(" ", "_")
+        if assigned_key in {"director", "chiefengineer", "chief_engineer"}:
+            if acceptance_items and not _has_executable_or_file_acceptance_anchor(acceptance_items):
+                critical_issues.append(
+                    f"{task_id}: assignee {assigned_to or assigned_key} requires executable command or file evidence in acceptance"
+                )
             concrete_task_paths = [path for path in task_paths if _is_concrete_pm_scope_path(path)]
             non_path_entries = [path for path in task_paths if path not in concrete_task_paths]
-            if not task_paths:
-                critical_issues.append(f"{task_id}: assignee {assigned_to} requires explicit scope")
-            elif not concrete_task_paths:
+            if task_paths and not concrete_task_paths:
                 critical_issues.append(f"{task_id}: assignee {assigned_to} requires concrete relative scope paths")
             elif non_path_entries:
                 warnings.append(f"{task_id}: non-path scope entries ignored ({', '.join(non_path_entries[:2])})")
@@ -450,6 +901,13 @@ def evaluate_pm_task_quality(
         critical_issues.append("docs-stage tasks missing metadata.doc_sections")
     if docs_enabled and task_count >= 2 and backlog_trace_task_count < max(1, task_count // 2):
         critical_issues.append("docs-stage tasks missing backlog traceability")
+    if _is_game_pm_contract(normalized, tasks):
+        if task_count < _GAME_PM_MIN_TASKS:
+            critical_issues.append(f"game PM decomposition requires at least {_GAME_PM_MIN_TASKS} tasks")
+        covered_domains = _covered_game_domains(tasks, effective_workspace)
+        missing_domains = [domain for domain in _GAME_PM_REQUIRED_DOMAINS if domain not in covered_domains]
+        if missing_domains:
+            critical_issues.append(f"game PM decomposition missing domains: {', '.join(missing_domains)}")
     if task_count >= 2:
         typed_tasks = [task for task in tasks if isinstance(task, dict)]
         critical_issues.extend(_unknown_dependency_refs(typed_tasks))
@@ -508,13 +966,23 @@ def autofix_pm_contract_for_quality(
         "deps_normalized": 0,
         "acceptance_added": 0,
         "descriptions_added": 0,
+        "game_domain_tasks_added": 0,
+        "paths_normalized": 0,
     }
     if not tasks:
         return stats
 
     verify_command = detect_integration_verify_command(workspace_full)
     normalized_tasks = [task for task in tasks if isinstance(task, dict)]
+    stats["paths_normalized"] += _sanitize_pm_task_paths_in_place(normalized_tasks, workspace_full)
     stats["deps_normalized"] += _normalize_dependency_refs_in_place(normalized_tasks)
+    stats["game_domain_tasks_added"] += _append_missing_game_domain_tasks(
+        normalized,
+        normalized_tasks,
+        workspace_full=workspace_full,
+        verify_command=verify_command,
+    )
+    stats["task_count"] = len(normalized_tasks)
     has_dependency = False
 
     for index, task in enumerate(normalized_tasks, start=1):

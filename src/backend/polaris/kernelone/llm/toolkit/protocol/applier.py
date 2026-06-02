@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.toolkit.protocol.constants import EditType, ErrorCode
 from polaris.kernelone.llm.toolkit.protocol.models import FileOperation, OperationResult
@@ -80,6 +80,22 @@ class StrictOperationApplier:
                 old_content = fs.workspace_read_text(rel, encoding="utf-8")
                 old_line_count = len(old_content.splitlines())
 
+            policy_error, director_policy = cls._director_policy_error(
+                workspace=workspace,
+                rel=rel,
+                old_content=old_content,
+                new_content="",
+                operation="protocol_delete",
+            )
+            if policy_error:
+                return OperationResult(
+                    operation=operation,
+                    success=False,
+                    error_code=ErrorCode.PERMISSION_DENIED,
+                    error_message=policy_error,
+                    director_policy=director_policy,
+                )
+
             fs.workspace_remove(rel, missing_ok=True)
 
             return OperationResult(
@@ -90,6 +106,7 @@ class StrictOperationApplier:
                 old_hash=hashlib.sha256(old_content.encode("utf-8")).hexdigest()[:16],
                 old_line_count=old_line_count,
                 new_line_count=0,
+                director_policy=director_policy,
             )
         except (RuntimeError, ValueError) as e:
             return OperationResult(
@@ -136,6 +153,22 @@ class StrictOperationApplier:
                 new_hash=hashlib.sha256(new_content.encode("utf-8")).hexdigest()[:16],
             )
 
+        policy_error, director_policy = cls._director_policy_error(
+            workspace=workspace,
+            rel=rel,
+            old_content=old_content,
+            new_content=new_content,
+            operation="protocol_full_file",
+        )
+        if policy_error:
+            return OperationResult(
+                operation=operation,
+                success=False,
+                error_code=ErrorCode.PERMISSION_DENIED,
+                error_message=policy_error,
+                director_policy=director_policy,
+            )
+
         # Write
         fs.workspace_write_text(rel, new_content, encoding="utf-8")
 
@@ -148,6 +181,7 @@ class StrictOperationApplier:
             new_hash=hashlib.sha256(new_content.encode("utf-8")).hexdigest()[:16],
             old_line_count=old_line_count,
             new_line_count=len(new_content.splitlines()),
+            director_policy=director_policy,
         )
 
     @classmethod
@@ -208,6 +242,21 @@ class StrictOperationApplier:
                             error_code=ErrorCode.NOOP,
                             changed=False,
                         )
+                    policy_error, director_policy = cls._director_policy_error(
+                        workspace=workspace,
+                        rel=rel,
+                        old_content=current_content,
+                        new_content=aider_content,
+                        operation="protocol_search_replace:fuzzy",
+                    )
+                    if policy_error:
+                        return OperationResult(
+                            operation=operation,
+                            success=False,
+                            error_code=ErrorCode.PERMISSION_DENIED,
+                            error_message=policy_error,
+                            director_policy=director_policy,
+                        )
                     fs.workspace_write_text(rel, aider_content, encoding="utf-8")
                     return OperationResult(
                         operation=operation,
@@ -218,6 +267,7 @@ class StrictOperationApplier:
                         new_hash=hashlib.sha256(aider_content.encode("utf-8")).hexdigest()[:16],
                         old_line_count=len(current_content.splitlines()),
                         new_line_count=len(aider_content.splitlines()),
+                        director_policy=director_policy,
                     )
 
                 # Try lightweight fuzzy matching
@@ -259,6 +309,22 @@ class StrictOperationApplier:
                 changed=False,
             )
 
+        policy_error, director_policy = cls._director_policy_error(
+            workspace=workspace,
+            rel=rel,
+            old_content=current_content,
+            new_content=new_content,
+            operation="protocol_search_replace",
+        )
+        if policy_error:
+            return OperationResult(
+                operation=operation,
+                success=False,
+                error_code=ErrorCode.PERMISSION_DENIED,
+                error_message=policy_error,
+                director_policy=director_policy,
+            )
+
         # Write
         fs.workspace_write_text(rel, new_content, encoding="utf-8")
 
@@ -271,6 +337,7 @@ class StrictOperationApplier:
             new_hash=hashlib.sha256(new_content.encode("utf-8")).hexdigest()[:16],
             old_line_count=len(current_content.splitlines()),
             new_line_count=len(new_content.splitlines()),
+            director_policy=director_policy,
         )
 
     @staticmethod
@@ -339,3 +406,58 @@ class StrictOperationApplier:
         from polaris.kernelone.fs.registry import get_default_adapter
 
         return KernelFileSystem(str(Path(workspace).resolve()), get_default_adapter())
+
+    @staticmethod
+    def _director_policy_error(
+        *,
+        workspace: str,
+        rel: str,
+        old_content: str,
+        new_content: str,
+        operation: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Return deterministic Director policy evidence for a pending protocol write."""
+        from polaris.domain.verification.director_policy_gate import validate_director_write_policy
+
+        normalized_rel = str(rel or "").replace("\\", "/").strip("/")
+        package_write = normalized_rel == "package.json" or normalized_rel.endswith("/package.json")
+        verdict = validate_director_write_policy(
+            changed_files=[normalized_rel] if normalized_rel else [],
+            allowed_scope=[],
+            agents_md=StrictOperationApplier._read_workspace_agents_policy_text(workspace, normalized_rel),
+            operation=operation,
+            package_before=old_content if package_write else None,
+            package_after=new_content if package_write else None,
+            require_change=True,
+        )
+        evidence = verdict.to_dict()
+        if verdict.allowed:
+            return "", evidence
+        reason = "; ".join(verdict.reasons) or "Director write policy denied the protocol write"
+        return f"Director write policy denied: {reason}", evidence
+
+    @staticmethod
+    def _read_workspace_agents_policy_text(workspace: str, rel: str) -> str:
+        """Read root and nested AGENTS.md files that apply to a workspace-relative path."""
+        workspace_path = Path(workspace).resolve()
+        normalized_rel = str(rel or "").replace("\\", "/").strip("/")
+        candidates = ["AGENTS.md"]
+        parent_parts = [part for part in normalized_rel.split("/")[:-1] if part]
+        for index in range(1, len(parent_parts) + 1):
+            candidates.append("/".join([*parent_parts[:index], "AGENTS.md"]))
+
+        texts: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            target = (workspace_path / candidate).resolve()
+            if workspace_path not in target.parents and target != workspace_path:
+                continue
+            try:
+                if target.is_file():
+                    texts.append(target.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError):
+                continue
+        return "\n".join(texts)

@@ -43,6 +43,59 @@ def test_build_director_result_waits_until_all_contract_tasks_terminal(monkeypat
     assert terminal is False
 
 
+def test_build_director_result_blocks_unmaterialized_dependents_after_failure(monkeypatch) -> None:
+    monkeypatch.setattr(artifacts, "TaskRuntimeService", _FakeTaskRuntimeService)
+    monkeypatch.setattr(
+        artifacts,
+        "_read_pm_contract_rows",
+        lambda _workspace: [
+            {"id": "T01", "title": "first", "assigned_to": "director"},
+            {
+                "id": "T02",
+                "title": "second",
+                "assigned_to": "director",
+                "depends_on": ["T01"],
+            },
+            {
+                "id": "T03",
+                "title": "third",
+                "assigned_to": "director",
+                "depends_on": ["T02"],
+            },
+        ],
+    )
+    _FakeTaskRuntimeService.rows = [
+        {
+            "id": 1,
+            "status": "completed",
+            "metadata": {"pm_task_id": "T01", "adapter_result": {"tools_executed": 2}},
+        },
+        {
+            "id": 2,
+            "status": "failed",
+            "metadata": {
+                "pm_task_id": "T02",
+                "runtime_execution": {"last_error": "director_no_materialized_changes"},
+            },
+        },
+    ]
+
+    payload, terminal = artifacts.build_director_result_from_runtime(workspace="C:/project", run_id="director-1")
+
+    assert terminal is True
+    assert payload is not None
+    assert payload["status"] == "failed"
+    assert payload["successes"] == 1
+    assert payload["failures"] == 1
+    assert payload["blocked"] == 1
+    assert payload["pending"] == 0
+    assert [item["status"] for item in payload["task_results"]] == ["completed", "failed", "blocked"]
+    blocked_result = payload["task_results"][2]
+    assert blocked_result["task_id"] == "T03"
+    assert blocked_result["blocked_by"] == ["T02"]
+    assert blocked_result["error"] == "blocked_by_failed_dependency"
+
+
 def test_persist_director_result_from_runtime_writes_success_artifact(tmp_path: Path, monkeypatch) -> None:
     result_path = tmp_path / "runtime" / "results" / "director.result.json"
     run_result_path = tmp_path / "runtime" / "runs" / "director-2" / "results" / "director.result.json"
@@ -95,6 +148,99 @@ def test_persist_director_result_from_runtime_writes_success_artifact(tmp_path: 
     assert persisted["task_results"][0]["changed_files"] == ["src/a.ts"]
     run_persisted = json.loads(run_result_path.read_text(encoding="utf-8"))
     assert run_persisted == persisted
+
+
+def test_build_director_result_ignores_conflicting_runtime_external_identity(monkeypatch) -> None:
+    monkeypatch.setattr(artifacts, "TaskRuntimeService", _FakeTaskRuntimeService)
+    monkeypatch.setattr(
+        artifacts,
+        "_read_pm_contract_rows",
+        lambda _workspace: [
+            {"id": "PM-AUTO-COMBAT", "title": "combat", "assigned_to": "director"},
+            {"id": "PM-AUTO-AI", "title": "ai", "assigned_to": "director"},
+        ],
+    )
+    _FakeTaskRuntimeService.rows = [
+        {
+            "id": 4,
+            "status": "completed",
+            "metadata": {
+                "external_task_id": "PM-AUTO-AI",
+                "source_task_id": "PM-AUTO-COMBAT",
+                "adapter_result": {"tools_executed": 1, "modified_files": ["src/combat/combat-system.ts"]},
+                "runtime_execution": {
+                    "external_task_id": "PM-AUTO-AI",
+                    "last_result_summary": "changed_files=1",
+                },
+            },
+        },
+        {
+            "id": 5,
+            "status": "completed",
+            "metadata": {
+                "external_task_id": "PM-AUTO-AI",
+                "source_task_id": "PM-AUTO-AI",
+                "adapter_result": {"tools_executed": 1, "new_files": ["src/ai/enemy-ai.ts"]},
+                "runtime_execution": {
+                    "external_task_id": "PM-AUTO-AI",
+                    "last_result_summary": "changed_files=1",
+                },
+            },
+        },
+    ]
+
+    payload, terminal = artifacts.build_director_result_from_runtime(workspace="C:/project", run_id="director-1")
+
+    assert terminal is True
+    assert payload is not None
+    results_by_task = {item["task_id"]: item for item in payload["task_results"]}
+    assert results_by_task["PM-AUTO-COMBAT"]["changed_files"] == ["src/combat/combat-system.ts"]
+    assert results_by_task["PM-AUTO-AI"]["changed_files"] == ["src/ai/enemy-ai.ts"]
+
+
+def test_build_director_result_prefers_current_run_rows(monkeypatch) -> None:
+    monkeypatch.setattr(artifacts, "TaskRuntimeService", _FakeTaskRuntimeService)
+    monkeypatch.setattr(
+        artifacts,
+        "_read_pm_contract_rows",
+        lambda _workspace: [
+            {"id": "PM-AUTO-AI", "title": "ai", "assigned_to": "director"},
+        ],
+    )
+    _FakeTaskRuntimeService.rows = [
+        {
+            "id": 4,
+            "status": "completed",
+            "metadata": {
+                "external_task_id": "PM-AUTO-AI",
+                "adapter_result": {"tools_executed": 1, "modified_files": ["src/combat/combat-system.ts"]},
+                "runtime_execution": {
+                    "run_id": "old-run",
+                    "last_result_summary": "changed_files=1",
+                },
+                "workflow_run_id": "old-run",
+            },
+        },
+        {
+            "id": 5,
+            "status": "completed",
+            "metadata": {
+                "external_task_id": "PM-AUTO-AI",
+                "adapter_result": {"tools_executed": 1, "new_files": ["src/ai/enemy-ai.ts"]},
+                "runtime_execution": {
+                    "run_id": "current-run",
+                    "last_result_summary": "changed_files=1",
+                },
+                "workflow_run_id": "current-run",
+            },
+        },
+    ]
+
+    payload, terminal = artifacts.build_director_result_from_runtime(workspace="C:/project", run_id="current-run")
+
+    assert terminal is True
+    assert payload is not None
+    assert payload["task_results"][0]["changed_files"] == ["src/ai/enemy-ai.ts"]
 
 
 def test_build_integration_qa_tasks_from_director_result_projects_director_schema() -> None:

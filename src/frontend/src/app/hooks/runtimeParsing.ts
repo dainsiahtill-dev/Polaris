@@ -434,6 +434,14 @@ export function parseFileEditEvent(
     taskId: taskId || readTaskIdValue(event) || undefined,
     timestamp,
     patch: readPatchValue(event) || undefined,
+    diffStatus: toStringValue(event.diffStatus) || toStringValue(event.diff_status) || undefined,
+    patchUnavailableReason:
+      toStringValue(event.patchUnavailableReason) || toStringValue(event.patch_unavailable_reason) || undefined,
+    hasPatch: typeof event.hasPatch === 'boolean'
+      ? event.hasPatch
+      : typeof event.has_patch === 'boolean'
+        ? event.has_patch
+        : undefined,
     addedLines: typeof addedLines === 'number' ? Math.max(0, addedLines) : undefined,
     deletedLines: typeof deletedLines === 'number' ? Math.max(0, deletedLines) : undefined,
     modifiedLines: typeof modifiedLines === 'number' ? Math.max(0, modifiedLines) : undefined,
@@ -505,6 +513,14 @@ export function extractFileEditEvents(payload: {
     taskId: readTaskIdValue(event) || undefined,
     timestamp,
     patch: readPatchValue(event) || undefined,
+    diffStatus: toStringValue(event.diffStatus) || toStringValue(event.diff_status) || undefined,
+    patchUnavailableReason:
+      toStringValue(event.patchUnavailableReason) || toStringValue(event.patch_unavailable_reason) || undefined,
+    hasPatch: typeof event.hasPatch === 'boolean'
+      ? event.hasPatch
+      : typeof event.has_patch === 'boolean'
+        ? event.has_patch
+        : undefined,
     addedLines: typeof addedLines === 'number' ? Math.max(0, addedLines) : undefined,
     deletedLines: typeof deletedLines === 'number' ? Math.max(0, deletedLines) : undefined,
     modifiedLines: typeof modifiedLines === 'number' ? Math.max(0, modifiedLines) : undefined,

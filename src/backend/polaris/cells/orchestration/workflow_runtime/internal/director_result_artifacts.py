@@ -86,6 +86,46 @@ def _identity_tokens(row: dict[str, Any]) -> set[str]:
     return tokens
 
 
+def _runtime_identity_tokens(row: dict[str, Any]) -> set[str]:
+    """Return stable identity tokens for matching runtime rows to PM contracts."""
+
+    metadata = _as_dict(row.get("metadata"))
+    runtime_execution = _as_dict(metadata.get("runtime_execution"))
+    canonical_tokens = {
+        str(value or "").strip()
+        for value in (
+            metadata.get("source_task_id"),
+            metadata.get("pm_task_id"),
+        )
+        if str(value or "").strip()
+    }
+    volatile_tokens = {
+        str(value or "").strip()
+        for value in (
+            metadata.get("external_task_id"),
+            runtime_execution.get("external_task_id"),
+        )
+        if str(value or "").strip()
+    }
+    tokens = _identity_tokens(row)
+    if canonical_tokens and volatile_tokens.difference(canonical_tokens):
+        tokens.difference_update(volatile_tokens)
+        tokens.update(canonical_tokens)
+    return tokens
+
+
+def _dependency_tokens(row: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    metadata = _as_dict(row.get("metadata"))
+    for source in (row, metadata):
+        for key in ("depends_on", "dependencies", "blocked_by", "blockedBy"):
+            for item in _as_list(source.get(key)):
+                token = str(item or "").strip()
+                if token:
+                    tokens.add(token)
+    return tokens
+
+
 def _row_status(row: dict[str, Any] | None) -> str:
     if row is None:
         return "pending"
@@ -96,7 +136,59 @@ def _row_status(row: dict[str, Any] | None) -> str:
     return effective or status or "pending"
 
 
-def _task_result_payload(contract: dict[str, Any], row: dict[str, Any] | None) -> dict[str, Any]:
+def _is_blocking_status(status: str) -> bool:
+    return status in _TERMINAL_FAILURE or status in _TERMINAL_BLOCKED
+
+
+def _blocking_identity_tokens(
+    contract_rows: list[dict[str, Any]],
+    statuses: list[str],
+) -> set[str]:
+    tokens: set[str] = set()
+    for index, status in enumerate(statuses):
+        if index < len(contract_rows) and _is_blocking_status(status):
+            tokens.update(_identity_tokens(contract_rows[index]))
+    return tokens
+
+
+def _propagate_dependency_blocks(
+    contract_rows: list[dict[str, Any]],
+    statuses: list[str],
+) -> tuple[list[str], list[list[str]]]:
+    """Mark pending contract tasks blocked when a dependency has failed or is blocked."""
+
+    resolved_statuses = list(statuses)
+    blocked_by: list[list[str]] = [[] for _ in contract_rows]
+    changed = True
+    while changed:
+        changed = False
+        blocking_tokens = _blocking_identity_tokens(contract_rows, resolved_statuses)
+        for index, contract in enumerate(contract_rows):
+            status = resolved_statuses[index]
+            if status in _TERMINAL_SUCCESS or _is_blocking_status(status):
+                continue
+            dependencies = _dependency_tokens(contract)
+            blocked_dependencies = sorted(dependencies.intersection(blocking_tokens))
+            if not blocked_dependencies:
+                continue
+            resolved_statuses[index] = "blocked"
+            blocked_by[index] = blocked_dependencies
+            changed = True
+
+    blocking_tokens = _blocking_identity_tokens(contract_rows, resolved_statuses)
+    for index, contract in enumerate(contract_rows):
+        if resolved_statuses[index] == "blocked" and not blocked_by[index]:
+            blocked_by[index] = sorted(_dependency_tokens(contract).intersection(blocking_tokens))
+    return resolved_statuses, blocked_by
+
+
+def _task_result_payload(
+    contract: dict[str, Any],
+    row: dict[str, Any] | None,
+    *,
+    status_override: str | None = None,
+    blocked_by: list[str] | None = None,
+) -> dict[str, Any]:
     metadata = _as_dict(row.get("metadata") if row else {})
     adapter_result = _as_dict(metadata.get("adapter_result"))
     runtime_execution = _as_dict(metadata.get("runtime_execution"))
@@ -104,21 +196,28 @@ def _task_result_payload(contract: dict[str, Any], row: dict[str, Any] | None) -
         *[str(item) for item in _as_list(adapter_result.get("new_files")) if str(item).strip()],
         *[str(item) for item in _as_list(adapter_result.get("modified_files")) if str(item).strip()],
     ]
+    status = str(status_override or _row_status(row)).strip().lower() or "pending"
+    blocked_dependencies = [str(item).strip() for item in (blocked_by or []) if str(item).strip()]
+    summary = str(
+        runtime_execution.get("last_result_summary")
+        or metadata.get("last_execution_summary")
+        or (row or {}).get("result_summary")
+        or ""
+    ).strip()
+    if not summary and status == "blocked" and blocked_dependencies:
+        summary = f"Blocked by failed dependency: {', '.join(blocked_dependencies)}"
     result: dict[str, Any] = {
         "task_id": str(
             contract.get("id") or contract.get("task_id") or contract.get("pm_task_id") or (row or {}).get("id") or ""
         ).strip(),
-        "status": _row_status(row),
+        "status": status,
         "title": str(contract.get("title") or contract.get("subject") or (row or {}).get("subject") or "").strip(),
-        "summary": str(
-            runtime_execution.get("last_result_summary")
-            or metadata.get("last_execution_summary")
-            or (row or {}).get("result_summary")
-            or ""
-        ).strip(),
+        "summary": summary,
         "changed_files": changed_files,
         "tools_executed": _safe_int(adapter_result.get("tools_executed")),
     }
+    if blocked_dependencies:
+        result["blocked_by"] = blocked_dependencies
     if adapter_result:
         result["adapter_result"] = adapter_result
     error_text = str(
@@ -127,15 +226,31 @@ def _task_result_payload(contract: dict[str, Any], row: dict[str, Any] | None) -
         or (row or {}).get("error_message")
         or ""
     ).strip()
+    if not error_text and status == "blocked" and blocked_dependencies:
+        error_text = "blocked_by_failed_dependency"
     if error_text:
         result["error"] = error_text
     return result
 
 
-def _index_runtime_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _row_matches_run_id(row: dict[str, Any], run_id: str) -> bool:
+    expected = str(run_id or "").strip()
+    if not expected:
+        return False
+    metadata = _as_dict(row.get("metadata"))
+    runtime_execution = _as_dict(metadata.get("runtime_execution"))
+    for source in (row, metadata, runtime_execution):
+        token = str(source.get("workflow_run_id") or source.get("run_id") or "").strip()
+        if token == expected:
+            return True
+    return False
+
+
+def _index_runtime_rows(rows: list[dict[str, Any]], *, run_id: str = "") -> dict[str, dict[str, Any]]:
     by_token: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        for token in _identity_tokens(row):
+    ordered_rows = sorted(rows, key=lambda row: 0 if _row_matches_run_id(row, run_id) else 1)
+    for row in ordered_rows:
+        for token in _runtime_identity_tokens(row):
             by_token.setdefault(token, row)
     return by_token
 
@@ -158,7 +273,7 @@ def build_director_result_from_runtime(
     runtime_rows = TaskRuntimeService(workspace_token).list_task_rows()
     runtime_rows = [dict(row) for row in runtime_rows if isinstance(row, dict)]
     contract_rows = _read_pm_contract_rows(workspace_token)
-    rows_by_token = _index_runtime_rows(runtime_rows)
+    rows_by_token = _index_runtime_rows(runtime_rows, run_id=run_id)
     if not contract_rows:
         contract_rows = [
             row for row in runtime_rows if str(_as_dict(row.get("metadata")).get("pm_task_id") or "").strip()
@@ -166,15 +281,27 @@ def build_director_result_from_runtime(
     if not contract_rows:
         return None, False
 
-    task_results: list[dict[str, Any]] = []
-    successes = failures = blocked = pending = 0
+    matched_rows: list[dict[str, Any] | None] = []
     for contract in contract_rows:
         matched_row = None
         for token in _identity_tokens(contract):
             matched_row = rows_by_token.get(token)
             if matched_row is not None:
                 break
-        status = _row_status(matched_row)
+        matched_rows.append(matched_row)
+
+    initial_statuses = [_row_status(row) for row in matched_rows]
+    statuses, blocked_by = _propagate_dependency_blocks(contract_rows, initial_statuses)
+
+    task_results: list[dict[str, Any]] = []
+    successes = failures = blocked = pending = 0
+    for contract, matched_row, status, blocked_dependencies in zip(
+        contract_rows,
+        matched_rows,
+        statuses,
+        blocked_by,
+        strict=True,
+    ):
         if status in _TERMINAL_SUCCESS:
             successes += 1
         elif status in _TERMINAL_FAILURE:
@@ -183,7 +310,14 @@ def build_director_result_from_runtime(
             blocked += 1
         else:
             pending += 1
-        task_results.append(_task_result_payload(contract, matched_row))
+        task_results.append(
+            _task_result_payload(
+                contract,
+                matched_row,
+                status_override=status,
+                blocked_by=blocked_dependencies,
+            )
+        )
 
     total = len(task_results)
     terminal = total > 0 and pending == 0

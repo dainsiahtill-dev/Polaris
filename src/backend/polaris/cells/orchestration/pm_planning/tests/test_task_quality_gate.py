@@ -10,6 +10,7 @@ from typing import Any
 
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
     _contains_prompt_leakage,
+    _has_executable_or_file_acceptance_anchor,
     _has_measurable_acceptance_anchor,
     _normalize_path,
     _normalize_path_list,
@@ -56,6 +57,10 @@ class TestNormalizePathList:
         result = _normalize_path_list(["./foo.py", "./bar"])
         assert "foo.py" in result
         assert "bar" in result
+
+    def test_preserves_parent_traversal_for_gate(self) -> None:
+        result = _normalize_path_list(["../outside.py"])
+        assert "../outside.py" in result
 
     def test_normalises_windows_backslashes(self) -> None:
         result = _normalize_path_list([r"src\foo.py"])
@@ -146,6 +151,18 @@ class TestHasMeasurableAcceptanceAnchor:
         assert _has_measurable_acceptance_anchor(["验证返回200状态码"]) is False
 
 
+class TestHasExecutableOrFileAcceptanceAnchor:
+    def test_executable_command_is_anchor(self) -> None:
+        assert _has_executable_or_file_acceptance_anchor(["`npm run test -- --watch=false` exits 0"]) is True
+        assert _has_executable_or_file_acceptance_anchor(["run pytest -q to verify"]) is True
+
+    def test_verified_file_path_is_anchor(self) -> None:
+        assert _has_executable_or_file_acceptance_anchor(["verify src/engine/game-loop.ts exists"]) is True
+
+    def test_status_only_is_not_anchor(self) -> None:
+        assert _has_executable_or_file_acceptance_anchor(["page returns 200"]) is False
+
+
 # ---------------------------------------------------------------------------
 # evaluate_pm_task_quality
 # ---------------------------------------------------------------------------
@@ -163,6 +180,7 @@ class TestEvaluatePmTaskQualityHappyPath:
                     "acceptance_criteria": [
                         "The form renders at /login",
                         "User can submit email and password",
+                        "`npm run test -- --watch=false` exits 0",
                     ],
                     "acceptance": None,
                     "phase": "bootstrap",
@@ -194,15 +212,17 @@ class TestEvaluatePmTaskQualityHappyPath:
                     "phase": "bootstrap",
                     "depends_on": [],
                     "execution_checklist": ["npm init", "npm install"],
+                    "scope_paths": ["package.json"],
                 },
                 {
                     "id": "T02",
                     "title": "Add login page",
                     "goal": "Implement the login page",
-                    "acceptance_criteria": ["page returns 200"],
+                    "acceptance_criteria": ["verify src/login.ts exists"],
                     "phase": "implementation",
                     "depends_on": ["T01"],
                     "execution_checklist": ["write file", "test"],
+                    "scope_paths": ["src/login.ts"],
                 },
             ]
         }
@@ -229,6 +249,174 @@ class TestEvaluatePmTaskQualityHappyPath:
         report = evaluate_pm_task_quality(payload)
         # Director task without scope_paths should be flagged
         assert any("scope" in i.lower() for i in report["critical_issues"])
+
+    def test_lowercase_director_task_requires_scope(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Implement login",
+                    "goal": "Build the login feature",
+                    "acceptance_criteria": ["`pytest` passes"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["write code"],
+                    "scope_paths": [],
+                }
+            ]
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert any("requires explicit scope" in i for i in report["critical_issues"])
+
+    def test_director_task_requires_executable_acceptance_or_file_evidence(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Implement login",
+                    "goal": "Build the login feature",
+                    "acceptance_criteria": ["page returns 200"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["write code"],
+                    "scope_paths": ["src/login.ts"],
+                }
+            ]
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert any("requires executable command or file evidence" in i for i in report["critical_issues"])
+
+    def test_director_task_accepts_verified_file_evidence(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Implement login",
+                    "goal": "Build the login feature",
+                    "acceptance_criteria": ["verify src/login.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["write code"],
+                    "scope_paths": ["src/login.ts"],
+                }
+            ]
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert not any("requires executable command or file evidence" in i for i in report["critical_issues"])
+
+    def test_every_task_requires_executable_acceptance_or_file_evidence(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Validate planning status",
+                    "goal": "Confirm the PM planning status is observable.",
+                    "acceptance_criteria": ["page returns 200"],
+                    "assigned_to": "pm",
+                    "phase": "verification",
+                    "depends_on": [],
+                    "execution_checklist": ["Open status view", "Record result"],
+                    "scope_paths": ["src/status.ts"],
+                }
+            ]
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert any("acceptance requires executable command or file evidence" in i for i in report["critical_issues"])
+
+    def test_every_task_requires_explicit_scope(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Validate planning status",
+                    "goal": "Confirm the PM planning status is observable.",
+                    "acceptance_criteria": ["verify src/status.ts exists"],
+                    "assigned_to": "pm",
+                    "phase": "verification",
+                    "depends_on": [],
+                    "execution_checklist": ["Open status view", "Record result"],
+                    "scope_paths": [],
+                }
+            ]
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert any("task requires explicit scope" in i for i in report["critical_issues"])
+
+    def test_task_scope_must_stay_inside_workspace(self) -> None:
+        payload = {
+            "workspace": r"C:\Temp\Polaris_Game_Stress_E2E_fresh6",
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Implement game engine",
+                    "goal": "Implement the tactical game engine entry point.",
+                    "acceptance_criteria": ["verify src/engine/game-loop.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Read files", "Write engine", "Verify"],
+                    "scope_paths": [r"C:\Temp\roguelike\src\engine\game-loop.ts"],
+                }
+            ],
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert any("concrete workspace-bound scope paths" in i for i in report["critical_issues"])
+
+    def test_task_scope_rejects_parent_traversal(self) -> None:
+        payload = {
+            "workspace": r"C:\Temp\Polaris_Game_Stress_E2E_fresh6",
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Implement game engine",
+                    "goal": "Implement the tactical game engine entry point.",
+                    "acceptance_criteria": ["verify src/engine/game-loop.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Read files", "Write engine", "Verify"],
+                    "scope_paths": ["../roguelike/src/engine/game-loop.ts"],
+                }
+            ],
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert any("concrete workspace-bound scope paths" in i for i in report["critical_issues"])
+
+    def test_game_contract_requires_domain_coverage_and_minimum_tasks(self) -> None:
+        payload = {
+            "workspace": r"C:\Temp\Polaris_Game_Stress_E2E_fresh6",
+            "overall_goal": "Build a tactical roguelike game.",
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Implement engine loop",
+                    "goal": "Implement the tactical game engine loop.",
+                    "acceptance_criteria": ["verify src/engine/game-loop.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/engine/game-loop.ts"],
+                },
+                {
+                    "id": "T02",
+                    "title": "Implement world generator",
+                    "goal": "Implement the tactical game world generator.",
+                    "acceptance_criteria": ["verify src/world/map-generator.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["T01"],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/world/map-generator.ts"],
+                },
+            ],
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert any("game PM decomposition requires at least 6 tasks" in i for i in report["critical_issues"])
+        assert any("game PM decomposition missing domains" in i for i in report["critical_issues"])
 
 
 class TestEvaluatePmTaskQualityEdgeCases:
@@ -490,7 +678,7 @@ class TestAutofixPmContractForQuality:
         assert stats["deps_added"] == 1
 
     def test_normalizes_pm_ordinal_dependency_refs(self) -> None:
-        payload = {
+        payload: dict[str, Any] = {
             "tasks": [
                 {"id": "T01-mvp", "title": "First", "goal": "Goal1", "phase": "r"},
                 {
@@ -507,6 +695,65 @@ class TestAutofixPmContractForQuality:
 
         assert stats["deps_normalized"] >= 1
         assert payload["tasks"][1]["dependencies"] == ["T01-mvp"]
+
+    def test_normalizes_pm_base_ordinal_dependency_refs(self) -> None:
+        payload: dict[str, Any] = {
+            "tasks": [
+                {"id": "T01-engine", "title": "Engine", "goal": "Goal1", "phase": "r"},
+                {"id": "T01-world", "title": "World", "goal": "Goal2", "phase": "i"},
+                {
+                    "id": "T01-combat",
+                    "title": "Combat",
+                    "goal": "Goal3",
+                    "phase": "i",
+                    "dependencies": ["PM-0001", "PM-0002"],
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+
+        assert stats["deps_normalized"] == 2
+        assert payload["tasks"][2]["dependencies"] == ["T01-engine", "T01-world"]
+
+    def test_autofix_rewrites_external_absolute_task_paths_to_workspace_relative(self, tmp_path: Any) -> None:
+        payload: dict[str, Any] = {
+            "workspace": str(tmp_path),
+            "overall_goal": "Build a Node command line utility.",
+            "tasks": [
+                {
+                    "id": "T01-bootstrap",
+                    "title": "Initialize project scaffold",
+                    "goal": "Create C:/Temp/roguelike-ts/package.json and scripts so the project can run.",
+                    "target_files": [
+                        "C:/Temp/roguelike-ts/package.json",
+                        "C:/Temp/roguelike-ts/scripts/build.mjs",
+                    ],
+                    "scope_paths": ["C:"],
+                    "acceptance_criteria": ["Run `npm run test` exits 0"],
+                    "assigned_to": "director",
+                    "phase": "bootstrap",
+                    "depends_on": [],
+                    "execution_checklist": [
+                        "Create C:/Temp/roguelike-ts/package.json",
+                        "Create C:/Temp/roguelike-ts/scripts/build.mjs",
+                    ],
+                }
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        task = payload["tasks"][0]
+        assert stats["paths_normalized"] >= 1
+        assert task["target_files"] == ["package.json", "scripts/build.mjs"]
+        assert task["scope_paths"] == ["package.json", "scripts"]
+        assert "C:/Temp/roguelike-ts" not in " ".join(task["execution_checklist"])
+        assert "C:/Temp/roguelike-ts" not in task["goal"]
+
+        report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
+        assert not any("workspace-bound scope paths" in item for item in report["critical_issues"])
+        assert not any("concrete relative scope paths" in item for item in report["critical_issues"])
 
     def test_unknown_dependencies_are_critical(self) -> None:
         payload = {
@@ -535,6 +782,95 @@ class TestAutofixPmContractForQuality:
 
         assert report["ok"] is False
         assert any("unknown dependency `MISSING`" in item for item in report["critical_issues"])
+
+    def test_adds_missing_game_domain_tasks(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": "Build a tactical roguelike game with combat, AI, renderer, persistence, and tests.",
+            "tasks": [
+                {
+                    "id": "T01-engine",
+                    "title": "Implement engine loop",
+                    "goal": "Implement the tactical game engine loop.",
+                    "acceptance_criteria": ["verify src/engine/game-loop.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/engine/game-loop.ts"],
+                },
+                {
+                    "id": "T02-world",
+                    "title": "Implement world generator",
+                    "goal": "Implement the procedural game world generator.",
+                    "acceptance_criteria": ["verify src/world/map-generator.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["T01-engine"],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/world/map-generator.ts"],
+                },
+                {
+                    "id": "T03-combat",
+                    "title": "Implement combat system",
+                    "goal": "Implement the turn based tactical combat system.",
+                    "acceptance_criteria": ["verify src/combat/combat-system.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["T02-world"],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/combat/combat-system.ts"],
+                },
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert any("game PM decomposition missing domains" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+
+        assert stats["game_domain_tasks_added"] == 4
+        assert len(payload["tasks"]) == 7
+        target_files: set[str] = set()
+        for task in payload["tasks"]:
+            if not isinstance(task, dict):
+                continue
+            for path in task.get("target_files", []):
+                if isinstance(path, str):
+                    target_files.add(path)
+        assert "src/ai/enemy-ai.ts" in target_files
+        assert "src/persistence/save-system.ts" in target_files
+        assert "src/renderer/game-view.tsx" in target_files
+        assert "tests/integration/game-session.test.ts" in target_files
+
+        report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert report["ok"] is True
+        assert not any("game PM decomposition" in item for item in report["critical_issues"])
+
+    def test_non_game_contract_is_not_domain_expanded(self, tmp_path: Any) -> None:
+        payload: dict[str, Any] = {
+            "workspace": str(tmp_path),
+            "overall_goal": "Build a REST API service.",
+            "tasks": [
+                {
+                    "id": "T01-api",
+                    "title": "Implement API route",
+                    "goal": "Implement the service API route.",
+                    "acceptance_criteria": ["verify src/api/routes.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/api/routes.ts"],
+                }
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        assert stats["game_domain_tasks_added"] == 0
+        assert len(payload["tasks"]) == 1
 
     def test_empty_tasks_returns_empty_stats(self) -> None:
         payload: dict[str, Any] = {"tasks": []}

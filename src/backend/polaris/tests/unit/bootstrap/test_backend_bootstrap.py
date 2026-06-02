@@ -7,6 +7,8 @@ sequence, port selection, and environment setup logic.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,6 +17,7 @@ from polaris.bootstrap.backend_bootstrap import (
     BootstrapError,
     bootstrap_backend,
 )
+from polaris.bootstrap.contracts.backend_launch import BackendLaunchRequest
 
 
 class TestBackendBootstrapperInit:
@@ -111,6 +114,22 @@ class TestBackendBootstrapperPortSelection:
         result = bootstrapper._select_port(port)
         assert result == port
 
+    def test_select_port_checks_preferred_port_on_requested_host(self) -> None:
+        """Should validate the preferred port against the actual bind host."""
+        bootstrapper = BackendBootstrapper()
+        calls: list[tuple[int, str]] = []
+
+        def fake_is_port_available(port: int, *, host: str = "127.0.0.1") -> bool:
+            calls.append((port, host))
+            return True
+
+        bootstrapper._is_port_available = fake_is_port_available  # type: ignore[method-assign]
+
+        result = bootstrapper._select_port(58123, host="127.0.0.1")
+
+        assert result == 58123
+        assert calls == [(58123, "127.0.0.1")]
+
     def test_select_port_preferred_unavailable(self) -> None:
         """Should find alternative if preferred unavailable."""
         bootstrapper = BackendBootstrapper()
@@ -140,6 +159,43 @@ class TestBackendBootstrapperBootstrap:
         # The error is raised before we even call bootstrap due to the guard check
         # Let's test the state directly instead
         assert bootstrapper._bootstrap_succeeded is True
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_reports_actual_server_handle_port(self, tmp_path: Path) -> None:
+        """Should publish the port that the server handle actually bound."""
+        bootstrapper = BackendBootstrapper()
+        selected_port = 58123
+        actual_port = 58124
+        emitted_events: list[tuple[int, bool, str]] = []
+        fake_config = MagicMock()
+        fake_config.get_typed.side_effect = lambda key, _type, default=None: (
+            "127.0.0.1" if key == "server.host" else default
+        )
+
+        bootstrapper._setup_utf8_environment = lambda: None  # type: ignore[method-assign]
+        bootstrapper._load_configuration = AsyncMock(return_value=fake_config)  # type: ignore[method-assign]
+        bootstrapper._validate_workspace_policy = lambda _config: ""  # type: ignore[method-assign]
+        bootstrapper._setup_environment_variables = lambda _config, _request: None  # type: ignore[method-assign]
+        bootstrapper._configure_debug_tracing = lambda _config: None  # type: ignore[method-assign]
+        bootstrapper._create_application = AsyncMock(return_value=object())  # type: ignore[method-assign]
+        bootstrapper._select_port = MagicMock(return_value=selected_port)  # type: ignore[method-assign]
+        bootstrapper._create_server = AsyncMock(return_value=SimpleNamespace(port=actual_port))  # type: ignore[method-assign]
+
+        def capture_startup_event(port: int, success: bool, error: str = "") -> None:
+            emitted_events.append((port, success, error))
+
+        bootstrapper._emit_startup_event = capture_startup_event  # type: ignore[method-assign]
+
+        result = await bootstrapper.bootstrap(
+            BackendLaunchRequest(host="127.0.0.1", port=selected_port, workspace=tmp_path),
+        )
+
+        assert result.is_success()
+        assert result.port == actual_port
+        assert actual_port in bootstrapper._running_servers
+        assert selected_port not in bootstrapper._running_servers
+        assert emitted_events == [(actual_port, True, "")]
+        bootstrapper._select_port.assert_called_once_with(selected_port, host="127.0.0.1")
 
 
 class TestBootstrapError:

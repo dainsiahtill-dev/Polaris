@@ -110,6 +110,47 @@ def _get_shared_quality() -> tuple[Callable, Callable]:
     return detect_integration_verify_command, run_integration_verify_runner
 
 
+def _classify_integration_qa_evidence(
+    *,
+    ran: bool,
+    passed: bool | None,
+    reason: str,
+    summary: str,
+    errors: list[str],
+) -> str:
+    """Classify integration QA evidence strength for audit consumers."""
+    if not ran:
+        return "not_run"
+    normalized_reason = str(reason or "").strip().lower()
+    normalized_summary = str(summary or "").strip().lower()
+    normalized_errors = " ".join(str(item or "").strip().lower() for item in errors)
+    if normalized_reason in {"docs_only", "docs_stage_docs_only"}:
+        return "not_run_docs_only"
+    if normalized_reason in {
+        "integration_qa_disabled",
+        "no_tasks",
+        "no_director_tasks",
+        "pending_director_tasks",
+        "incomplete_tasks",
+        "director_failures_present",
+    }:
+        return "not_run"
+    if "node static verification passed" in normalized_summary:
+        return "structural_fallback_passed" if passed is True else "structural_fallback_failed"
+    if (
+        "node dependencies are declared but not installed" in normalized_summary
+        or "node dependencies are declared but not installed" in normalized_errors
+    ):
+        return "blocked_missing_dependencies"
+    if "integration verification passed:" in normalized_summary:
+        return "real_command_passed" if passed is True else "real_command_failed"
+    if "integration verification failed:" in normalized_summary or normalized_errors:
+        return "real_command_failed" if passed is False else "unknown"
+    if normalized_reason == "integration_qa_error":
+        return "qa_error"
+    return "unknown"
+
+
 def _get_io_utils() -> tuple[Callable, Callable]:
     """Lazy import for events to avoid circular imports."""
     from polaris.kernelone.events import emit_dialogue, emit_event
@@ -1499,6 +1540,7 @@ def run_integration_qa(
         "reason": "",
         "summary": "",
         "errors": [],
+        "evidence_grade": "not_run",
         "run_id": run_id,
         "pm_iteration": int(iteration or 0),
         "director_task_status": status_summary,
@@ -1511,17 +1553,38 @@ def run_integration_qa(
     if not enabled:
         result["reason"] = "integration_qa_disabled"
         result["summary"] = "Integration QA is disabled"
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=False,
+            passed=None,
+            reason=str(result["reason"]),
+            summary=str(result["summary"]),
+            errors=[],
+        )
         return result
 
     if not tasks:
         result["reason"] = "no_tasks"
         result["summary"] = "No tasks to verify"
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=False,
+            passed=None,
+            reason=str(result["reason"]),
+            summary=str(result["summary"]),
+            errors=[],
+        )
         return result
 
     all_done = all(str(task.get("status", "")).lower() in ("done", "completed", "success") for task in tasks)
     if not all_done:
         result["reason"] = "incomplete_tasks"
         result["summary"] = "Not all tasks completed, skipping integration QA"
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=False,
+            passed=None,
+            reason=str(result["reason"]),
+            summary=str(result["summary"]),
+            errors=[],
+        )
         return result
 
     if _tasks_touch_docs_only(tasks):
@@ -1529,6 +1592,13 @@ def run_integration_qa(
         result["summary"] = "All tasks are docs-only, skipping integration QA"
         result["ran"] = True
         result["passed"] = True
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=True,
+            passed=True,
+            reason=str(result["reason"]),
+            summary=str(result["summary"]),
+            errors=[],
+        )
         return result
 
     result["ran"] = True
@@ -1540,11 +1610,25 @@ def run_integration_qa(
         result["summary"] = summary
         result["errors"] = errors
         result["reason"] = "integration_qa_passed" if passed else "integration_qa_failed"
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=True,
+            passed=bool(passed),
+            reason=str(result["reason"]),
+            summary=str(summary or ""),
+            errors=[str(item).strip() for item in (errors or []) if str(item).strip()],
+        )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         result["passed"] = False
         result["reason"] = "integration_qa_error"
         result["summary"] = f"Integration QA error: {exc}"
         result["errors"] = [str(exc)]
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=True,
+            passed=False,
+            reason=str(result["reason"]),
+            summary=str(result["summary"]),
+            errors=[str(exc)],
+        )
 
     return result
 
@@ -1618,6 +1702,7 @@ def _build_post_dispatch_integration_qa_result(
         "reason": "",
         "summary": "",
         "errors": [],
+        "evidence_grade": "not_run",
         "run_id": run_id,
         "pm_iteration": int(iteration or 0),
         "director_task_status": status_summary,
@@ -1643,13 +1728,34 @@ def _apply_post_dispatch_skip_reason(
     """Set a deterministic skip reason. Returns True when execution should stop."""
     if not bool(result.get("enabled")):
         result["reason"] = "integration_qa_disabled"
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=False,
+            passed=None,
+            reason=str(result["reason"]),
+            summary=str(result.get("summary") or ""),
+            errors=[],
+        )
         return True
     if int(status_summary.get("total") or 0) <= 0:
         result["reason"] = "no_director_tasks"
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=False,
+            passed=None,
+            reason=str(result["reason"]),
+            summary=str(result.get("summary") or ""),
+            errors=[],
+        )
         return True
     if bool(docs_stage_payload.get("enabled")) and _tasks_touch_docs_only(tasks):
         result["reason"] = "docs_stage_docs_only"
         result["summary"] = "Integration QA skipped for docs-only stage tasks."
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=False,
+            passed=None,
+            reason=str(result["reason"]),
+            summary=str(result["summary"]),
+            errors=[],
+        )
         return True
     if (
         int(status_summary.get("todo") or 0)
@@ -1658,11 +1764,25 @@ def _apply_post_dispatch_skip_reason(
         + int(status_summary.get("needs_continue") or 0)
     ) > 0:
         result["reason"] = "pending_director_tasks"
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=False,
+            passed=None,
+            reason=str(result["reason"]),
+            summary=str(result.get("summary") or ""),
+            errors=[],
+        )
         return True
     if int(status_summary.get("failed") or 0) > 0 or int(status_summary.get("blocked") or 0) > 0:
         result["reason"] = "director_failures_present"
         result["passed"] = False
         result["summary"] = "Integration QA cannot run because Director produced failed or blocked tasks."
+        result["evidence_grade"] = _classify_integration_qa_evidence(
+            ran=False,
+            passed=False,
+            reason=str(result["reason"]),
+            summary=str(result["summary"]),
+            errors=[],
+        )
         return True
     return False
 
@@ -1694,6 +1814,13 @@ def _execute_post_dispatch_integration_qa(
     result["summary"] = str(summary or "").strip()
     result["errors"] = [str(item).strip() for item in (errors or []) if str(item).strip()][:20]
     result["reason"] = "integration_qa_passed" if success else "integration_qa_failed"
+    result["evidence_grade"] = _classify_integration_qa_evidence(
+        ran=True,
+        passed=bool(success),
+        reason=str(result["reason"]),
+        summary=str(result["summary"]),
+        errors=list(result["errors"]),
+    )
 
 
 def _persist_post_dispatch_integration_qa_result(
@@ -1758,7 +1885,11 @@ def _emit_post_dispatch_integration_qa_result(
         output={
             "summary": result.get("summary"),
             "reason": result.get("reason"),
+            "passed": bool(result.get("passed") is True),
+            "evidence_grade": str(result.get("evidence_grade") or "unknown"),
             "errors_count": len(result.get("errors") or []),
+            "result_path": result.get("result_path"),
+            "runtime_result_path": result.get("runtime_result_path"),
         },
         error="" if result.get("passed") is True else "INTEGRATION_QA_FAILED",
     )
@@ -1777,6 +1908,7 @@ def _emit_post_dispatch_integration_qa_result(
         meta={
             "passed": bool(result.get("passed") is True),
             "reason": str(result.get("reason") or ""),
+            "evidence_grade": str(result.get("evidence_grade") or "unknown"),
         },
     )
 

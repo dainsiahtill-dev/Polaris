@@ -1,12 +1,17 @@
 /**
  * DirectorCodePanel - 代码面板展示组件
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { openPath } from '@/api';
 import { FilePlus, FileX, FileEdit, FileCode } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import { RealTimeFileDiff } from './RealTimeFileDiff';
+import {
+  compareFileEditEventsForCodePanel,
+  hasRenderablePatch,
+  selectDefaultCodePanelEvent,
+} from './directorCodeEvents';
 import { resolveDirectorOpenTarget } from './directorFileActions';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 
@@ -60,10 +65,29 @@ export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePan
     }
   };
 
-  // 只显示最近的 20 个事件，按时间倒序
-  const recentEvents = useMemo(() => [...fileEditEvents].reverse().slice(0, 20), [fileEditEvents]);
+  const recentEvents = useMemo(
+    () => [...fileEditEvents].sort(compareFileEditEventsForCodePanel).slice(0, 20),
+    [fileEditEvents],
+  );
+  useEffect(() => {
+    if (recentEvents.length === 0) {
+      setExpandedEventId(null);
+      return;
+    }
+    const defaultEvent = selectDefaultCodePanelEvent(recentEvents);
+    setExpandedEventId((previous) => {
+      const previousEvent = recentEvents.find((event) => event.id === previous);
+      if (!previousEvent) {
+        return defaultEvent?.id ?? null;
+      }
+      if (defaultEvent && !hasRenderablePatch(previousEvent) && hasRenderablePatch(defaultEvent)) {
+        return defaultEvent.id;
+      }
+      return previous;
+    });
+  }, [recentEvents]);
   const selectedOpenEvent = useMemo(
-    () => recentEvents.find((event) => event.id === expandedEventId) ?? recentEvents[0] ?? null,
+    () => recentEvents.find((event) => event.id === expandedEventId) ?? selectDefaultCodePanelEvent(recentEvents),
     [expandedEventId, recentEvents],
   );
 
@@ -95,7 +119,7 @@ export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePan
   }, [selectedOpenEvent, workspace]);
 
   return (
-    <div className="h-full flex flex-col">
+    <div data-testid="director-code-panel" className="h-full flex flex-col">
       <div className="h-12 flex items-center justify-between px-4 border-b border-white/5">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-medium text-slate-200">实时代码变更</h2>
@@ -137,16 +161,19 @@ export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePan
         {/* 文件变更列表 + Diff 详情 */}
         <div className="flex-1 overflow-auto p-4">
           {recentEvents.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-500">
+            <div data-testid="director-code-empty" className="h-full flex flex-col items-center justify-center text-slate-500">
               <FileCode className="w-12 h-12 mb-4 text-indigo-500/30" />
               <p>等待代码变更...</p>
               <p className="text-xs mt-2 opacity-70">Director 执行时将实时显示文件修改</p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div data-testid="director-code-event-list" className="space-y-2">
               {recentEvents.map((event, index) => (
                 <div key={event.id}>
                   <div
+                    data-testid="director-code-event-row"
+                    data-file-path={event.filePath}
+                    data-event-id={event.id}
                     className={cn(
                       'p-3 rounded-xl border transition-all cursor-pointer',
                       index === 0 ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-white/5 border-white/5 hover:border-white/10',
@@ -169,7 +196,7 @@ export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePan
                           >
                             {getOperationLabel(event.operation)}
                           </span>
-                          {event.patch && (
+                          {hasRenderablePatch(event) && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400">
                               Diff
                             </span>
@@ -181,7 +208,7 @@ export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePan
                           <span className="text-slate-600">
                             {new Date(event.timestamp).toLocaleTimeString()}
                           </span>
-                          {event.patch && (
+                          {hasRenderablePatch(event) && (
                             <span className="text-cyan-400">
                               {expandedEventId === event.id ? '▼ 收起' : '▶ 展开 Diff'}
                             </span>
@@ -192,7 +219,7 @@ export function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePan
                   </div>
 
                   {/* 展开的 Diff 详情 */}
-                  {expandedEventId === event.id && event.patch && (
+                  {expandedEventId === event.id && hasRenderablePatch(event) && (
                     <div className="mt-2">
                       <RealTimeFileDiff
                         filePath={event.filePath}

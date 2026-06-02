@@ -171,18 +171,38 @@ def broadcast_file_written(
 
         import asyncio
 
+        operation = str(operation or "modify").strip().lower()
+        if operation not in {"create", "modify", "delete"}:
+            operation = "modify"
+        patch_text = str(patch or "")
+        patch_available = bool(patch_text.strip())
+        patch_unavailable_reason = ""
+        if not patch_available:
+            if operation == "create" and content_size == 0:
+                patch_unavailable_reason = "empty_file"
+            elif operation == "modify":
+                patch_unavailable_reason = "no_content_change"
+            elif operation == "delete":
+                patch_unavailable_reason = "empty_delete"
+            else:
+                patch_unavailable_reason = "patch_empty"
+
         payload = {
             "file_path": file_path,
             "operation": operation,
             "content_size": content_size,
             "task_id": task_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "diff_status": "available" if patch_available else "unavailable",
+            "has_patch": patch_available,
         }
 
-        if patch:
-            payload["patch"] = patch
+        if patch_available:
+            payload["patch"] = patch_text
+        else:
+            payload["patch_unavailable_reason"] = patch_unavailable_reason
         added_lines, deleted_lines, modified_lines = _calculate_line_stats(
-            patch,
+            patch_text,
             operation,
         )
         payload["added_lines"] = int(added_lines)
