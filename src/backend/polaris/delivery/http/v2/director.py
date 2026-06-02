@@ -608,6 +608,22 @@ class DirectorOrchestrationResponse(BaseModel):
     message: str
 
 
+class DirectorIntegrationQaRequest(BaseModel):
+    """Run post-Director integration QA for a workspace."""
+
+    workspace: str = Field(default="", description="工作区路径；为空时使用当前活动工作区")
+    run_id: str | None = Field(default=None, description="可选运行 ID；为空时生成 QA 运行 ID")
+    iteration: int = Field(default=0, ge=0, description="PM/QA 迭代号")
+
+
+class DirectorIntegrationQaResponse(BaseModel):
+    ok: bool
+    workspace: str
+    run_id: str
+    director_result: dict[str, Any] | None = None
+    result: dict[str, Any]
+
+
 def _director_snapshot_status(snapshot: Any) -> str:
     status_value = getattr(snapshot, "status", None)
     value = getattr(status_value, "value", status_value)
@@ -903,6 +919,13 @@ def _task_diagnostics_from_rows(
     blocked_task_ids: list[str] = []
     running_task_ids: list[str] = []
     requires_blueprint_evidence = source == "workflow"
+    completed_identity_tokens: set[str] = set()
+
+    for row in rows:
+        task_id = _task_id_from_row(row)
+        details = _task_details(row)
+        if str(details["status"]) == "COMPLETED":
+            completed_identity_tokens.update(_task_identity_tokens(task_id, details))
 
     for row in rows:
         task_id = _task_id_from_row(row)
@@ -922,7 +945,12 @@ def _task_diagnostics_from_rows(
 
         if status_token == "PENDING":
             pending += 1
-            if not dependencies and task_id:
+            unmet_dependencies = [
+                str(dependency or "").strip()
+                for dependency in dependencies
+                if str(dependency or "").strip() and str(dependency or "").strip() not in completed_identity_tokens
+            ]
+            if not unmet_dependencies and task_id:
                 if blueprint_state == "missing":
                     missing_blueprint_task_ids.append(task_id)
                 elif blueprint_state == "invalid":
@@ -1733,6 +1761,71 @@ async def clear_cache() -> dict[str, Any]:
     cache = get_global_llm_cache()
     cache.clear()
     return {"ok": True, "message": "Cache cleared"}
+
+
+@router.post(
+    "/integration-qa",
+    response_model=DirectorIntegrationQaResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def director_run_integration_qa(
+    request: Request,
+    payload: DirectorIntegrationQaRequest,
+) -> DirectorIntegrationQaResponse:
+    """Run the canonical post-dispatch integration QA after Director reaches terminal state."""
+    try:
+        from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
+            run_post_dispatch_integration_qa,
+        )
+        from polaris.cells.orchestration.workflow_runtime.internal.director_result_artifacts import (
+            build_integration_qa_tasks_from_director_result,
+            persist_director_result_from_runtime,
+        )
+
+        settings = request.app.state.app_state.settings
+        workspace = requested_or_active_workspace(settings, payload.workspace)
+        run_id = str(payload.run_id or "").strip() or f"director-qa-{int(time.time())}"
+        director_result = persist_director_result_from_runtime(workspace=workspace, run_id=run_id)
+        if director_result is None:
+            raise StructuredHTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                code="director_result_not_terminal",
+                message="Director tasks are not terminal; integration QA cannot run yet.",
+                details={"workspace": workspace, "run_id": run_id},
+            )
+
+        task_rows = build_integration_qa_tasks_from_director_result(director_result)
+        run_dir = resolve_artifact_path(workspace, "", f"runtime/runs/{run_id}")
+        os.makedirs(run_dir, exist_ok=True)
+        run_events = resolve_artifact_path(workspace, "", f"runtime/runs/{run_id}/events/runtime.events.jsonl")
+        dialogue_full = resolve_artifact_path(workspace, "", "runtime/events/dialogue.transcript.jsonl")
+        qa_result = await asyncio.to_thread(
+            run_post_dispatch_integration_qa,
+            args=SimpleNamespace(integration_qa=True),
+            workspace_full=workspace,
+            cache_root_full="",
+            run_dir=run_dir,
+            run_id=run_id,
+            iteration=int(payload.iteration or 0),
+            tasks=task_rows,
+            run_events=run_events,
+            dialogue_full=dialogue_full,
+        )
+        return DirectorIntegrationQaResponse(
+            ok=bool(qa_result.get("passed") is True),
+            workspace=workspace,
+            run_id=run_id,
+            director_result=director_result,
+            result=qa_result,
+        )
+    except StructuredHTTPException:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.error("Failed to run Director integration QA: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="internal error",
+        ) from exc
 
 
 @router.get("/token-budget-stats", dependencies=[Depends(require_auth)])

@@ -344,6 +344,87 @@ describe.sequential('Director capability desktop integration', () => {
     expect(screen.getByTestId('real-time-file-diff')).toBeInTheDocument();
   });
 
+  it('renders realtime file edit statistics when backend events do not include a patch', async () => {
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+        fileEditEvents={[
+          {
+            id: 'file-without-patch',
+            filePath: 'src/generated.ts',
+            operation: 'modify',
+            contentSize: 96,
+            taskId: 'director-task-2',
+            timestamp: '2026-06-02T00:00:02.000Z',
+            addedLines: 4,
+            deletedLines: 1,
+            sourceChannel: 'event.file_edit',
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('director-nav-代码'));
+
+    expect(await screen.findByText('src/generated.ts')).toBeInTheDocument();
+    expect(screen.getByText('统计')).toBeInTheDocument();
+    expect(screen.getByText('+4')).toBeInTheDocument();
+    expect(screen.getByText('-1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('src/generated.ts'));
+
+    expect(screen.getByTestId('director-file-edit-summary')).toBeInTheDocument();
+    expect(screen.getByText('未收到 diff patch，已显示文件变更统计。')).toBeInTheDocument();
+    expect(screen.getByText('来源: event.file_edit')).toBeInTheDocument();
+  });
+
+  it('renders task snapshot file changes in the code view when realtime events are unavailable', async () => {
+    const completedTask = {
+      id: 42,
+      title: 'Generate implementation files',
+      status: 'completed',
+      metadata: {
+        pm_task_id: 'PM-1',
+        adapter_result: {
+          new_files: ['src/new.ts'],
+          modified_files: ['src/generated.ts'],
+          tools_executed: 2,
+        },
+        runtime_execution: {
+          last_result_summary: 'changed_files=2; tools_executed=2',
+        },
+      },
+    } as unknown as PmTask;
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[completedTask]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+        fileEditEvents={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('director-nav-代码'));
+
+    expect(await screen.findByTestId('director-code-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('director-code-empty')).not.toBeInTheDocument();
+    expect(screen.getByText('2 个文件')).toBeInTheDocument();
+    expect(screen.getByText('src/generated.ts')).toBeInTheDocument();
+    expect(screen.getByText('src/new.ts')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('src/generated.ts'));
+
+    expect(screen.getByTestId('director-file-edit-summary')).toBeInTheDocument();
+    expect(screen.getByText('来源: task-runtime-snapshot')).toBeInTheDocument();
+  });
+
   it('renders Director readiness diagnostics from the backend route', async () => {
     serviceMocks.getDirectorDiagnostics.mockResolvedValueOnce({
       ok: true,

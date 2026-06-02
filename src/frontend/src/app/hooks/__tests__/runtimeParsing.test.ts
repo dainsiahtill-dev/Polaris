@@ -98,4 +98,44 @@ describe('runtimeParsing file edit event normalization', () => {
     expect(event?.filePath).toBe('src/alias.ts');
     expect(event?.contentSize).toBe(256);
   });
+
+  it('accepts path, diff, and nested metadata task aliases', () => {
+    const event = extractFileEditEvents({
+      timestamp: '2026-05-07T05:00:00.000Z',
+      event: {
+        path: 'src/from-path.ts',
+        operation: 'modify',
+        diff: '--- a/src/from-path.ts\n+++ b/src/from-path.ts\n@@ -1 +1 @@\n-old\n+new',
+        metadata: {
+          pm_task_id: 'PM-4',
+        },
+      },
+    });
+
+    expect(event?.filePath).toBe('src/from-path.ts');
+    expect(event?.taskId).toBe('PM-4');
+    expect(event?.patch).toContain('+new');
+  });
+
+  it('does not let object-valued event envelopes hide scalar file edit tokens', () => {
+    const event = extractRuntimeFileEditEvent({
+      event: { envelope: true },
+      name: 'file_written',
+      timestamp: '2026-05-07T06:00:00.000Z',
+      payload: {
+        filename: 'src/from-name.ts',
+        operation: 'create',
+        patch_text: 'export const fromName = true;\n',
+        metadata: {
+          director_task_id: 'director-task-4',
+        },
+      },
+    });
+
+    expect(event?.filePath).toBe('src/from-name.ts');
+    expect(event?.operation).toBe('create');
+    expect(event?.taskId).toBe('director-task-4');
+    expect(event?.patch).toContain('fromName');
+    expect(event?.eventKind).toBe('file_written');
+  });
 });

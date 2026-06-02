@@ -258,6 +258,7 @@ class CodeGenerationEngine:
             "_transaction_kernel_forced_tool_choice": "none",
         }
         user_message = "[mode:propose] Do not call tools. Please complete the assigned implementation task."
+        proposal_prompt = self._normalize_proposal_prompt(prompt)
         appendix = (
             "Polaris Director proposal-to-apply bridge. This runtime bridge validates "
             "and applies the returned file blocks through FileApplyService. Return "
@@ -267,7 +268,7 @@ class CodeGenerationEngine:
             "commands, SESSION_PATCH, status updates, or tool-call text. The "
             "response must contain at least one parsable file operation."
             "\n\n"
-            f"{prompt}"
+            f"{proposal_prompt}"
         )
         return await asyncio.wait_for(
             generate_role_response(
@@ -283,6 +284,19 @@ class CodeGenerationEngine:
             ),
             timeout=max(1.0, float(timeout)),
         )
+
+    @staticmethod
+    def _normalize_proposal_prompt(prompt: str) -> str:
+        """Ensure projected task prompts still carry the proposal/no-tools contract."""
+        text = str(prompt or "").strip()
+        lowered = text.lower()
+        prefix: list[str] = []
+        if "[mode:propose]" not in lowered and "[mode:propose_patch]" not in lowered:
+            prefix.append("[mode:propose]")
+        if "do not call tools" not in lowered:
+            prefix.append("Do not call tools. Return only parsable PATCH_FILE blocks or fenced file sections.")
+        parts = [*prefix, text]
+        return "\n".join(part for part in parts if part).strip()
 
     @staticmethod
     def _extract_response_text(response: dict[str, Any]) -> str:

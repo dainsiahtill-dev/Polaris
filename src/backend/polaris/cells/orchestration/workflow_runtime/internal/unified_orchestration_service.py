@@ -468,6 +468,7 @@ class UnifiedOrchestrationService(OrchestrationService):
 
             snapshot.completed_at = datetime.now(timezone.utc)
             await self._update_snapshot(snapshot)
+            self._persist_director_result_if_terminal(request, snapshot)
 
             # Phase 3.1: Trigger run archive on terminal state (async, non-blocking)
             # Archive source: runtime/runs/<run_id>/*
@@ -591,6 +592,35 @@ class UnifiedOrchestrationService(OrchestrationService):
                 ready.append(task)
 
         return ready
+
+    def _persist_director_result_if_terminal(
+        self,
+        request: OrchestrationRunRequest,
+        snapshot: OrchestrationSnapshot,
+    ) -> None:
+        """Reconcile Director-only task-runtime completion into the canonical result artifact."""
+
+        pipeline = request.pipeline_spec
+        if pipeline is None or not pipeline.tasks:
+            return
+        role_ids = {str(task.role_entry.role_id or "").strip().lower() for task in pipeline.tasks}
+        if role_ids != {"director"}:
+            return
+        if snapshot.status not in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.BLOCKED, RunStatus.CANCELLED}:
+            return
+        try:
+            from polaris.cells.orchestration.workflow_runtime.internal.director_result_artifacts import (
+                persist_director_result_from_runtime,
+            )
+
+            persist_director_result_from_runtime(workspace=str(request.workspace), run_id=str(request.run_id))
+        except (OSError, RuntimeError, TypeError, ValueError):
+            logger.debug(
+                "Failed to reconcile Director result artifact for run_id=%s workspace=%s",
+                request.run_id,
+                request.workspace,
+                exc_info=True,
+            )
 
     async def _update_task_status(
         self,

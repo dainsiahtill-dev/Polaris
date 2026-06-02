@@ -2018,6 +2018,15 @@ export function DirectorWorkspace({
 
   const executionTasks: ExecutionTask[] = visibleTasks.map((task) => {
     const metadata = readTaskMetadata(task);
+    const adapterResult = (metadata.adapter_result && typeof metadata.adapter_result === 'object')
+      ? metadata.adapter_result as Record<string, unknown>
+      : {};
+    const adapterChangedFiles = [
+      ...readStringList(adapterResult.new_files),
+      ...readStringList(adapterResult.modified_files),
+      ...readStringList(adapterResult.deleted_files),
+      ...readStringList(adapterResult.changed_files),
+    ].filter((item, index, all) => Boolean(item) && all.indexOf(item) === index);
     const taskId = String(task.id || '').trim();
     const rawStatus = String(task.status || task.state || '').trim().toLowerCase();
     const isCurrent = currentTaskId
@@ -2076,6 +2085,7 @@ export function DirectorWorkspace({
     const telemetry = taskRealtimeTelemetry.get(taskId);
     const filesModified = Math.max(
       Number(task.files_modified || metadata.files_modified || 0) || 0,
+      adapterChangedFiles.length,
       telemetry?.filesTouchedCount || 0,
     );
     const retries = Number(
@@ -2107,7 +2117,7 @@ export function DirectorWorkspace({
         : undefined;
 
     return {
-      id: task.id || title,
+      id: String(task.id || title),
       name: title,
       rawStatus,
       goal,
@@ -2141,11 +2151,14 @@ export function DirectorWorkspace({
         ...readStringList(task.acceptance),
         ...readTaskStringList(task, ['acceptance_criteria', 'acceptanceCriteria', 'acceptance']),
       ].filter((item, index, all) => all.indexOf(item) === index),
-      targetFiles: readTaskStringList(task, ['target_files', 'scope_paths', 'files', 'targetFiles']),
+      targetFiles: [
+        ...readTaskStringList(task, ['target_files', 'scope_paths', 'files', 'targetFiles']),
+        ...adapterChangedFiles,
+      ].filter((item, index, all) => all.indexOf(item) === index),
       // Progress tracking from telemetry (merged from taskProgressMap and fileEditEvents)
       retries: telemetry?.retryCount ?? retries,
       maxRetries: telemetry?.maxRetries,
-      currentFilePath: telemetry?.currentFilePath || readTaskString(task, ['current_file', 'current_file_path']),
+      currentFilePath: telemetry?.currentFilePath || readTaskString(task, ['current_file', 'current_file_path']) || adapterChangedFiles.at(-1),
       activityUpdatedAt: telemetry?.activityUpdatedAt,
       lineStats: telemetry?.lineStats || (metadata.line_stats as TaskLineStats | undefined),
       operationStats: telemetry?.operationStats || (metadata.operation_stats as TaskOperationStats | undefined),
@@ -3036,7 +3049,7 @@ export function DirectorWorkspace({
                 />
               )}
               {activeView === 'code' && (
-                <DirectorCodePanel workspace={workspace} fileEditEvents={fileEditEvents} />
+                <DirectorCodePanel workspace={workspace} fileEditEvents={fileEditEvents} tasks={executionTasks} />
               )}
               {activeView === 'terminal' && (
                 <DirectorTerminalPanel output={terminalOutput} onClear={handleClearTerminal} />
@@ -3895,9 +3908,63 @@ function DetailBlock({ title, children }: { title: string; children: React.React
 interface DirectorCodePanelProps {
   workspace: string;
   fileEditEvents: FileEditEvent[];
+  tasks: ExecutionTask[];
 }
 
-function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps) {
+function buildTaskSnapshotFileEditEvents(tasks: ExecutionTask[]): FileEditEvent[] {
+  const fallbackEvents: FileEditEvent[] = [];
+
+  for (const task of tasks) {
+    if ((task.taskScopedFileEvents?.length || 0) > 0) {
+      continue;
+    }
+    const files = [
+      task.currentFilePath,
+      ...(task.targetFiles || []),
+    ].filter((item, index, all): item is string => {
+      const value = String(item || "").trim();
+      return Boolean(value) && all.indexOf(item) === index;
+    });
+    if (files.length === 0 || (task.filesModified || 0) <= 0) {
+      continue;
+    }
+    const timestamp = task.completedAt || task.activityUpdatedAt || task.startedAt || task.createdAt || new Date(0).toISOString();
+    const taskId = String(task.id || "");
+    files.slice(0, 20).forEach((filePath, index) => {
+      fallbackEvents.push({
+        id: `task-snapshot-${taskId}-${index}-${filePath}`,
+        filePath,
+        operation: "modify",
+        contentSize: 0,
+        taskId,
+        timestamp,
+        addedLines: index === 0 ? task.lineStats?.added : undefined,
+        deletedLines: index === 0 ? task.lineStats?.deleted : undefined,
+        modifiedLines: index === 0 ? task.lineStats?.modified : undefined,
+        sourceChannel: "task-runtime",
+        eventKind: "task_snapshot_file_change",
+        provenance: "task-runtime-snapshot",
+      });
+    });
+  }
+
+  return fallbackEvents;
+}
+
+function mergeCodePanelEvents(fileEditEvents: FileEditEvent[], tasks: ExecutionTask[]): FileEditEvent[] {
+  const merged = [...fileEditEvents];
+  const seen = new Set(merged.map((event) => `${event.taskId || ""}:${event.filePath}`));
+  for (const event of buildTaskSnapshotFileEditEvents(tasks)) {
+    const key = `${event.taskId || ""}:${event.filePath}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(event);
+    }
+  }
+  return merged;
+}
+
+function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePanelProps) {
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const [openFileStatus, setOpenFileStatus] = useState<{
     kind: 'idle' | 'loading' | 'success' | 'error';
@@ -3942,8 +4009,9 @@ function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps
     }
   };
 
+  const codePanelEvents = useMemo(() => mergeCodePanelEvents(fileEditEvents, tasks), [fileEditEvents, tasks]);
   // 只显示最近的 20 个事件，按时间倒序
-  const recentEvents = useMemo(() => [...fileEditEvents].reverse().slice(0, 20), [fileEditEvents]);
+  const recentEvents = useMemo(() => [...codePanelEvents].reverse().slice(0, 20), [codePanelEvents]);
   const selectedOpenEvent = useMemo(
     () => recentEvents.find((event) => event.id === expandedEventId) ?? recentEvents[0] ?? null,
     [expandedEventId, recentEvents],
@@ -3951,6 +4019,12 @@ function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps
 
   const toggleExpand = (eventId: string) => {
     setExpandedEventId(prev => prev === eventId ? null : eventId);
+  };
+
+  const renderLineStats = (event: FileEditEvent) => {
+    const stats = resolveEventLineStats(event);
+    const hasStats = stats.added > 0 || stats.deleted > 0 || stats.modified > 0;
+    return { stats, hasStats };
   };
 
   const handleOpenFile = useCallback(async () => {
@@ -3977,13 +4051,13 @@ function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps
   }, [selectedOpenEvent, workspace]);
 
   return (
-    <div className="h-full flex flex-col">
+    <div data-testid="director-code-panel" className="h-full flex flex-col">
       <div className="h-12 flex items-center justify-between px-4 border-b border-white/5">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-medium text-slate-200">实时代码变更</h2>
-          {fileEditEvents.length > 0 && (
+          {codePanelEvents.length > 0 && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400">
-              {fileEditEvents.length} 个文件
+              {codePanelEvents.length} 个文件
             </span>
           )}
         </div>
@@ -4019,14 +4093,18 @@ function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps
         {/* 文件变更列表 + Diff 详情 */}
         <div className="flex-1 overflow-auto p-4">
           {recentEvents.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-500">
+            <div data-testid="director-code-empty" className="h-full flex flex-col items-center justify-center text-slate-500">
               <FileCode className="w-12 h-12 mb-4 text-indigo-500/30" />
               <p>等待代码变更...</p>
               <p className="text-xs mt-2 opacity-70">Director 执行时将实时显示文件修改</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {recentEvents.map((event, index) => (
+            <div data-testid="director-code-event-list" className="space-y-2">
+              {recentEvents.map((event, index) => {
+                const hasPatch = Boolean(event.patch);
+                const { stats, hasStats } = renderLineStats(event);
+                const sourceLabel = event.provenance || event.sourceChannel || event.eventKind || 'runtime';
+                return (
                 <div key={event.id}>
                   <div
                     className={cn(
@@ -4051,41 +4129,68 @@ function DirectorCodePanel({ workspace, fileEditEvents }: DirectorCodePanelProps
                           >
                             {getOperationLabel(event.operation)}
                           </span>
-                          {event.patch && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400">
-                              Diff
-                            </span>
-                          )}
+                          <span
+                            className={cn(
+                              'text-[10px] px-1.5 py-0.5 rounded',
+                              hasPatch ? 'bg-cyan-500/20 text-cyan-400' : 'bg-amber-500/15 text-amber-300',
+                            )}
+                          >
+                            {hasPatch ? 'Diff' : '统计'}
+                          </span>
                         </div>
                         <div className="mt-1 flex items-center gap-3 text-[10px] text-slate-500">
                           <span>{event.contentSize} bytes</span>
-                          {event.taskId && <span className="text-slate-600">任务: {event.taskId.slice(0, 8)}</span>}
+                          {event.taskId && <span className="text-slate-600">任务: {String(event.taskId).slice(0, 8)}</span>}
+                          {hasStats && (
+                            <span className="flex items-center gap-1.5 font-mono">
+                              {stats.added > 0 && <span className="text-emerald-400">+{stats.added}</span>}
+                              {stats.deleted > 0 && <span className="text-red-400">-{stats.deleted}</span>}
+                              {stats.modified > 0 && <span className="text-blue-400">~{stats.modified}</span>}
+                            </span>
+                          )}
                           <span className="text-slate-600">
                             {new Date(event.timestamp).toLocaleTimeString()}
                           </span>
-                          {event.patch && (
-                            <span className="text-cyan-400">
-                              {expandedEventId === event.id ? '▼ 收起' : '▶ 展开 Diff'}
-                            </span>
-                          )}
+                          <span className={hasPatch ? 'text-cyan-400' : 'text-amber-300'}>
+                            {expandedEventId === event.id ? '▼ 收起' : hasPatch ? '▶ 展开 Diff' : '▶ 展开统计'}
+                          </span>
                         </div>
                       </div>
                     </div>
                   </div>
 
                   {/* 展开的 Diff 详情 */}
-                  {expandedEventId === event.id && event.patch && (
+                  {expandedEventId === event.id && (
                     <div className="mt-2">
-                      <RealTimeFileDiff
-                        filePath={event.filePath}
-                        operation={event.operation}
-                        patch={event.patch}
-                        compact
-                      />
+                      {hasPatch ? (
+                        <RealTimeFileDiff
+                          filePath={event.filePath}
+                          operation={event.operation}
+                          patch={event.patch}
+                          compact
+                        />
+                      ) : (
+                        <div
+                          className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-100"
+                          data-testid="director-file-edit-summary"
+                        >
+                          <div className="font-medium">未收到 diff patch，已显示文件变更统计。</div>
+                          <div className="mt-2 flex flex-wrap gap-2 font-mono">
+                            <span className="rounded bg-white/5 px-2 py-1 text-emerald-300">+{stats.added}</span>
+                            <span className="rounded bg-white/5 px-2 py-1 text-red-300">-{stats.deleted}</span>
+                            <span className="rounded bg-white/5 px-2 py-1 text-blue-300">~{stats.modified}</span>
+                            <span className="rounded bg-white/5 px-2 py-1 text-slate-300">{event.contentSize} bytes</span>
+                          </div>
+                          <div className="mt-2 text-[11px] text-amber-200/70">
+                            来源: {sourceLabel}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </div>

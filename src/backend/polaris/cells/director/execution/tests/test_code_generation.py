@@ -662,9 +662,13 @@ class TestBlockedEntryPoints:
         assert (
             captured["message"] == "[mode:propose] Do not call tools. Please complete the assigned implementation task."
         )
-        assert "Create src/app.py" in str(captured["prompt_appendix"])
-        assert "write_file" not in str(captured["prompt_appendix"])
-        assert "Command:" in str(captured["prompt_appendix"])
+        prompt_appendix = str(captured["prompt_appendix"])
+        assert "[mode:propose]" in prompt_appendix
+        assert "Do not call tools." in prompt_appendix
+        assert "Create src/app.py" in prompt_appendix
+        assert prompt_appendix.index("[mode:propose]") < prompt_appendix.index("Create src/app.py")
+        assert "write_file" not in prompt_appendix
+        assert "Command:" in prompt_appendix
         assert captured["validate_output"] is False
         assert captured["max_retries"] == 0
         assert captured["enable_cognitive"] is False

@@ -848,6 +848,82 @@ async def test_director_diagnostics_accepts_runtime_blueprint_task_update_map(
 
 
 @pytest.mark.asyncio
+async def test_director_diagnostics_marks_workflow_task_ready_when_dependencies_completed(
+    client: AsyncClient,
+) -> None:
+    """Workflow dependencies are blockers only while their referenced tasks are unfinished."""
+    mock_idle_worker = MagicMock()
+    mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.list_workers = AsyncMock(return_value=[mock_idle_worker])
+    mock_director.config.workspace = "."
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[
+                {
+                    "id": "director-base",
+                    "subject": "Base task",
+                    "status": "COMPLETED",
+                    "metadata": {"pm_task_id": "PM-base"},
+                },
+                {
+                    "id": "director-dependent",
+                    "subject": "Dependent task",
+                    "status": "PENDING",
+                    "dependencies": ["PM-base"],
+                    "metadata": {
+                        "pm_task_id": "PM-dependent",
+                        "blueprint_id": "bp-dependent",
+                    },
+                },
+            ],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        _patch_director_blueprint_persistence(
+            {"bp-dependent": {"blueprint_id": "bp-dependent", "task_id": "PM-dependent"}}
+        ),
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "IDLE"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tasks"]["total"] == 2
+    assert data["tasks"]["completed"] == 1
+    assert data["tasks"]["pending"] == 1
+    assert data["tasks"]["ready_to_execute"] == 1
+    assert data["tasks"]["ready_task_ids"] == ["director-dependent"]
+    assert data["tasks"]["blueprint_ready_task_ids"] == ["director-dependent"]
+    assert data["tasks"]["missing_blueprint_task_ids"] == []
+    assert data["tasks"]["invalid_blueprint_task_ids"] == []
+    assert data["can_execute"] is True
+    assert data["execution_blockers"] == []
+    assert data["issues"] == []
+    mock_director.list_tasks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_director_diagnostics_falls_back_to_local_tasks_when_projection_empty(
     client: AsyncClient,
 ) -> None:

@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import type { Locator, Page, TestInfo } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
@@ -11,11 +12,135 @@ function actionableConsoleErrors(errors: string[]): string[] {
   return errors.filter((error) => !ignoredConsoleErrorPatterns.some((pattern) => pattern.test(error)));
 }
 
+type BackendInfo = { baseUrl?: string; token?: string };
+type ImageDimensions = { width: number; height: number };
+
+function readJpegDimensions(filePath: string): ImageDimensions {
+  const bytes = fs.readFileSync(filePath);
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+    throw new Error(`not a JPEG file: ${filePath}`);
+  }
+
+  let offset = 2;
+  while (offset + 9 < bytes.length) {
+    while (offset < bytes.length && bytes[offset] === 0xff) {
+      offset += 1;
+    }
+    const marker = bytes[offset];
+    offset += 1;
+
+    if (marker === 0xd9 || marker === 0xda) {
+      break;
+    }
+    if (offset + 2 > bytes.length) {
+      break;
+    }
+
+    const segmentLength = bytes.readUInt16BE(offset);
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) {
+      break;
+    }
+
+    const isStartOfFrame = marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+    if (isStartOfFrame) {
+      return {
+        height: bytes.readUInt16BE(offset + 3),
+        width: bytes.readUInt16BE(offset + 5),
+      };
+    }
+
+    offset += segmentLength;
+  }
+
+  throw new Error(`JPEG dimensions not found: ${filePath}`);
+}
+
+async function getBackendInfo(window: Page): Promise<Required<BackendInfo>> {
+  const backend = await window.evaluate(async () => {
+    const api = (window as unknown as { polaris?: { getBackendInfo?: () => Promise<BackendInfo> } }).polaris;
+    if (!api?.getBackendInfo) {
+      throw new Error("polaris.getBackendInfo missing");
+    }
+    return await api.getBackendInfo();
+  });
+  if (!backend.baseUrl || !backend.token) {
+    throw new Error(`backend info incomplete: ${JSON.stringify(backend)}`);
+  }
+  return { baseUrl: backend.baseUrl, token: backend.token };
+}
+
+async function backendJson<T>(
+  window: Page,
+  endpoint: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<T> {
+  const backend = await getBackendInfo(window);
+  return await window.evaluate(
+    async ({ baseUrl, token, apiPath, method, body }) => {
+      const response = await fetch(`${baseUrl}${apiPath}`, {
+        method,
+        cache: "no-store",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(`${method} ${apiPath} failed: ${response.status} ${await response.text()}`);
+      }
+      return (await response.json()) as unknown;
+    },
+    {
+      baseUrl: backend.baseUrl,
+      token: backend.token,
+      apiPath: endpoint,
+      method: init.method || "GET",
+      body: init.body,
+    },
+  ) as T;
+}
+
+async function activateResumeWorkspaceIfRequested(window: Page): Promise<void> {
+  const resumeWorkspace = String(process.env.KERNELONE_E2E_RESUME_WORKSPACE || "").trim();
+  if (!resumeWorkspace) {
+    return;
+  }
+  const workspace = path.resolve(resumeWorkspace);
+  await backendJson(window, "/settings", {
+    method: "POST",
+    body: { workspace },
+  });
+  await expect.poll(async () => {
+    const settings = await backendJson<{ workspace?: string }>(window, "/settings");
+    return path.resolve(String(settings.workspace || ""));
+  }, {
+    timeout: 90_000,
+    intervals: [500, 1000, 2000, 3000],
+  }).toBe(workspace);
+  await window.reload({ waitUntil: "domcontentloaded" });
+  await expect(window.locator("#root")).toHaveCount(1);
+  await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+}
+
 async function attachScreenshot(window: Page, testInfo: TestInfo, name: string): Promise<void> {
   const screenshotPath = testInfo.outputPath(`${name}.png`);
   await window.screenshot({ path: screenshotPath, fullPage: true });
   await testInfo.attach(name, { path: screenshotPath, contentType: "image/png" });
   expect(fs.existsSync(screenshotPath)).toBe(true);
+
+  const reviewPath = testInfo.outputPath(`${name}.review.jpg`);
+  await window.screenshot({ path: reviewPath, type: "jpeg", quality: 80, fullPage: false });
+  await testInfo.attach(`${name}.review`, { path: reviewPath, contentType: "image/jpeg" });
+  expect(fs.existsSync(reviewPath)).toBe(true);
+  expect(fs.statSync(reviewPath).size, `${name}.review.jpg should not be empty`).toBeGreaterThan(1024);
+  const dimensions = readJpegDimensions(reviewPath);
+  expect(dimensions.width, `${name}.review.jpg width should stay review-sized`).toBeLessThanOrEqual(2000);
+  expect(dimensions.height, `${name}.review.jpg height should stay review-sized`).toBeLessThanOrEqual(2000);
+  expect(dimensions.width, `${name}.review.jpg width should be visible`).toBeGreaterThan(0);
+  expect(dimensions.height, `${name}.review.jpg height should be visible`).toBeGreaterThan(0);
 }
 
 async function openMoreMenu(window: Page): Promise<void> {
@@ -158,8 +283,65 @@ async function expectRoleSessionStripContained(workspace: Locator, label: string
   expect(metrics.actionsScrollWidth, `${label} RoleSession actions should remain contained`).toBeLessThanOrEqual(metrics.actionsClientWidth + 4);
 }
 
+type ScrollCapturePosition = "start" | "middle" | "end";
+
+async function scrollRegionTo(
+  locator: Locator,
+  label: string,
+  position: ScrollCapturePosition,
+): Promise<void> {
+  await expect(locator, `${label} scroll region should be visible`).toBeVisible();
+  const metrics = await locator.evaluate((element, targetPosition) => {
+    const html = element as HTMLElement;
+    const maxScrollTop = Math.max(0, html.scrollHeight - html.clientHeight);
+    const targetScrollTop = targetPosition === "end"
+      ? maxScrollTop
+      : targetPosition === "middle"
+        ? Math.round(maxScrollTop / 2)
+        : 0;
+    html.scrollTop = targetScrollTop;
+    return {
+      clientHeight: html.clientHeight,
+      scrollHeight: html.scrollHeight,
+      scrollTop: html.scrollTop,
+      maxScrollTop,
+      targetScrollTop,
+    };
+  }, position);
+
+  expect(metrics.clientHeight, `${label} should have measurable height`).toBeGreaterThan(0);
+  expect(metrics.scrollHeight, `${label} should have measurable content`).toBeGreaterThan(0);
+  if (position !== "start" && metrics.maxScrollTop > 8) {
+    expect(
+      metrics.scrollTop,
+      `${label} should scroll to ${position}: ${JSON.stringify(metrics)}`,
+    ).toBeGreaterThan(0);
+  }
+}
+
+async function captureScrollableRegionPositions(
+  window: Page,
+  testInfo: TestInfo,
+  locator: Locator,
+  label: string,
+  screenshotPrefix: string,
+  positions: ScrollCapturePosition[],
+): Promise<void> {
+  for (const position of positions) {
+    await scrollRegionTo(locator, label, position);
+    await window.waitForTimeout(100);
+    await expectNoDocumentHorizontalOverflow(window, `${label} ${position}`);
+    await attachScreenshot(window, testInfo, `${screenshotPrefix}-${position}`);
+  }
+}
+
 async function clickWorkspaceTab(window: Page, workspace: Locator, label: string): Promise<void> {
-  await workspace.locator(`nav button[title="${label}"]`).click();
+  const tabButton = workspace.locator(`nav button[title="${label}"]`);
+  await expect(tabButton, `${label} tab button should exist`).toBeVisible();
+  await tabButton.click();
+  await expect(tabButton, `${label} tab should become active`).toHaveClass(/bg-(amber|indigo)-500\/15/, {
+    timeout: 5_000,
+  });
   await window.waitForTimeout(100);
 }
 
@@ -178,7 +360,7 @@ async function exerciseWorkspaceTabs(
   }
 }
 
-test("PM and Director deep workspace tabs remain contained", async ({ window }, testInfo) => {
+test("PM, Chief Engineer, and Director deep workspace tabs remain contained", async ({ window }, testInfo) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   const failedResponses: string[] = [];
@@ -200,6 +382,7 @@ test("PM and Director deep workspace tabs remain contained", async ({ window }, 
   await window.setViewportSize({ width: 1280, height: 720 });
   await expect(window.locator("#root")).toHaveCount(1);
   await expect(window.getByTestId("project-progress-panel")).toBeVisible();
+  await activateResumeWorkspaceIfRequested(window);
 
   await openMoreMenu(window);
   await window.getByTestId("enter-pm-workspace").click();
@@ -216,6 +399,53 @@ test("PM and Director deep workspace tabs remain contained", async ({ window }, 
   ]);
   await window.getByTestId("pm-workspace-back").click();
   await expect(pmWorkspace).toHaveCount(0);
+
+  await openMoreMenu(window);
+  await window.getByTestId("enter-chief-engineer-workspace").click();
+  const chiefWorkspace = window.getByTestId("chief-engineer-workspace");
+  await expect(chiefWorkspace).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-backend-strip")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-diagnostics")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-director-task-pool")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-toggle-workbench")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-toggle-dialogue")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-open-settings")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-start-director")).toBeVisible();
+  await expect(window.getByTestId("chief-engineer-enter-director")).toBeVisible();
+  await expectNoDocumentHorizontalOverflow(window, "Chief Engineer control");
+  await expectRoleSessionStripContained(chiefWorkspace, "Chief Engineer control");
+  await attachScreenshot(window, testInfo, "chief-engineer-control");
+  const chiefControlMain = chiefWorkspace.locator("main").first();
+  const chiefBlueprintPane = chiefControlMain.locator(":scope > section").first();
+  const chiefSideRail = chiefControlMain.locator(":scope > aside").first();
+  await captureScrollableRegionPositions(window, testInfo, chiefBlueprintPane, "Chief Engineer blueprint pane", "chief-engineer-blueprints", [
+    "start",
+    "end",
+  ]);
+  await captureScrollableRegionPositions(window, testInfo, chiefSideRail, "Chief Engineer side rail", "chief-engineer-side-rail", [
+    "start",
+    "middle",
+    "end",
+  ]);
+  await window.getByTestId("chief-engineer-toggle-workbench").click();
+  await expect(window.getByTestId("chief-engineer-workbench-panel")).toBeVisible({ timeout: 15_000 });
+  await expectNoDocumentHorizontalOverflow(window, "Chief Engineer workbench");
+  await expectRoleSessionStripContained(chiefWorkspace, "Chief Engineer workbench");
+  await attachScreenshot(window, testInfo, "chief-engineer-workbench");
+  const chiefDialogueToggle = window.getByTestId("chief-engineer-toggle-dialogue");
+  if (await chiefDialogueToggle.isEnabled()) {
+    await chiefDialogueToggle.click();
+    await expect(window.getByTestId("chief-engineer-dialogue")).toBeVisible({ timeout: 15_000 });
+    await expectNoDocumentHorizontalOverflow(window, "Chief Engineer dialogue");
+    await expectRoleSessionStripContained(chiefWorkspace, "Chief Engineer dialogue");
+    await attachScreenshot(window, testInfo, "chief-engineer-dialogue");
+  } else {
+    await expect(chiefDialogueToggle).toHaveAttribute("title", /工作台内置对话面板/);
+    await expect(window.getByTestId("chief-engineer-workbench-panel")).toBeVisible();
+    await attachScreenshot(window, testInfo, "chief-engineer-dialogue-embedded");
+  }
+  await window.getByTestId("chief-engineer-workspace-back").click();
+  await expect(chiefWorkspace).toHaveCount(0);
 
   await openMoreMenu(window);
   await window.getByTestId("enter-director-workspace").click();

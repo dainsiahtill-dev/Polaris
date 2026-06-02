@@ -36,6 +36,43 @@ export function toNumberValue(value: unknown): number | undefined {
   return undefined;
 }
 
+const FILE_PATH_KEYS = ['filePath', 'file_path', 'filepath', 'path', 'file', 'filename'] as const;
+const PATCH_KEYS = ['patch', 'diff', 'unified_diff', 'patch_text', 'diff_text'] as const;
+const TASK_ID_KEYS = ['taskId', 'task_id', 'pm_task_id', 'director_task_id'] as const;
+const EVENT_TOKEN_KEYS = ['event', 'name', 'kind', 'type', 'event_name'] as const;
+
+function readFirstString(source: Record<string, unknown> | null | undefined, keys: readonly string[]): string {
+  if (!source) return '';
+  for (const key of keys) {
+    const value = toStringValue(source[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+function readNestedMetadata(source: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!source) return null;
+  return isRecord(source.metadata) ? source.metadata : null;
+}
+
+function readFilePathValue(source: Record<string, unknown> | null | undefined): string {
+  return readFirstString(source, FILE_PATH_KEYS);
+}
+
+function readPatchValue(source: Record<string, unknown> | null | undefined): string {
+  return readFirstString(source, PATCH_KEYS);
+}
+
+function readTaskIdValue(source: Record<string, unknown> | null | undefined): string {
+  const direct = readFirstString(source, TASK_ID_KEYS);
+  if (direct) return direct;
+  return readFirstString(readNestedMetadata(source), TASK_ID_KEYS);
+}
+
+function readEventTokenValue(source: Record<string, unknown> | null | undefined): string {
+  return readFirstString(source, EVENT_TOKEN_KEYS);
+}
+
 // ============================================================
 // 阶段标准化
 // ============================================================
@@ -371,10 +408,7 @@ export function parseFileEditEvent(
   timestamp: string,
   taskId?: string,
 ): FileEditEvent | null {
-  const filePath =
-    toStringValue(event.filePath) ||
-    toStringValue(event.file_path) ||
-    toStringValue(event.filepath);
+  const filePath = readFilePathValue(event);
   if (!filePath) return null;
   
   const rawOperation = toStringValue(event.operation).toLowerCase();
@@ -397,9 +431,9 @@ export function parseFileEditEvent(
     filePath,
     operation,
     contentSize,
-    taskId,
+    taskId: taskId || readTaskIdValue(event) || undefined,
     timestamp,
-    patch: toStringValue(event.patch) || undefined,
+    patch: readPatchValue(event) || undefined,
     addedLines: typeof addedLines === 'number' ? Math.max(0, addedLines) : undefined,
     deletedLines: typeof deletedLines === 'number' ? Math.max(0, deletedLines) : undefined,
     modifiedLines: typeof modifiedLines === 'number' ? Math.max(0, modifiedLines) : undefined,
@@ -421,10 +455,7 @@ function readFileEditSchemaMetadata(event: Record<string, unknown>): Pick<
     toStringValue(event.category);
   const eventKind =
     toStringValue(event.eventKind) ||
-    toStringValue(event.kind) ||
-    toStringValue(event.event) ||
-    toStringValue(event.name) ||
-    toStringValue(event.type);
+    readEventTokenValue(event);
   const provenance =
     toStringValue(event.provenance) ||
     toStringValue(event.source) ||
@@ -446,10 +477,7 @@ export function extractFileEditEvents(payload: {
   const event = isRecord(payload.event) ? payload.event : null;
   if (!event) return null;
   
-  const filePath =
-    toStringValue(event.filePath) ||
-    toStringValue(event.file_path) ||
-    toStringValue(event.filepath);
+  const filePath = readFilePathValue(event);
   if (!filePath) return null;
   
   const rawOperation = toStringValue(event.operation).toLowerCase();
@@ -474,9 +502,9 @@ export function extractFileEditEvents(payload: {
     filePath,
     operation,
     contentSize,
-    taskId: toStringValue(event.taskId) || toStringValue(event.task_id) || undefined,
+    taskId: readTaskIdValue(event) || undefined,
     timestamp,
-    patch: toStringValue(event.patch) || undefined,
+    patch: readPatchValue(event) || undefined,
     addedLines: typeof addedLines === 'number' ? Math.max(0, addedLines) : undefined,
     deletedLines: typeof deletedLines === 'number' ? Math.max(0, deletedLines) : undefined,
     modifiedLines: typeof modifiedLines === 'number' ? Math.max(0, modifiedLines) : undefined,
@@ -485,8 +513,7 @@ export function extractFileEditEvents(payload: {
 }
 
 function fileEditCandidateFromRuntimeEvent(event: Record<string, unknown>): Record<string, unknown> | null {
-  const eventToken = toStringValue(event.event || event.name || event.kind || event.type || event.event_name)
-    .toLowerCase();
+  const eventToken = readEventTokenValue(event).toLowerCase();
   const channelToken = toStringValue(event.channel || event.category).toLowerCase();
   const domainToken = toStringValue(event.domain).toLowerCase();
   const payload = isRecord(event.payload) ? event.payload : null;
@@ -505,7 +532,7 @@ function fileEditCandidateFromRuntimeEvent(event: Record<string, unknown>): Reco
   ].filter((item): item is Record<string, unknown> => Boolean(item));
 
   const hasFileEditShape = candidates.some((candidate) => {
-    return Boolean(toStringValue(candidate.filePath) || toStringValue(candidate.file_path) || toStringValue(candidate.filepath));
+    return Boolean(readFilePathValue(candidate));
   });
   if (!hasFileEditShape) return null;
 
@@ -515,15 +542,20 @@ function fileEditCandidateFromRuntimeEvent(event: Record<string, unknown>): Reco
     domainToken === 'file_edit' ||
     eventToken === 'file_edit' ||
     eventToken === 'file_written' ||
+    eventToken === 'file_changed' ||
+    eventToken === 'file_change' ||
     eventToken === 'file.write' ||
+    eventToken === 'file.change' ||
+    eventToken === 'file.modified' ||
+    eventToken === 'file.created' ||
+    eventToken === 'file.deleted' ||
     eventToken === 'file_written_event' ||
     eventToken.endsWith('.file_edit') ||
+    eventToken.endsWith('.file_change') ||
     eventToken.endsWith('.file_written');
 
   if (!isFileEditEvent) return null;
-  return candidates.find((candidate) =>
-    Boolean(toStringValue(candidate.filePath) || toStringValue(candidate.file_path) || toStringValue(candidate.filepath))
-  ) || null;
+  return candidates.find((candidate) => Boolean(readFilePathValue(candidate))) || null;
 }
 
 export function extractRuntimeFileEditEvent(event: Record<string, unknown>): FileEditEvent | null {
@@ -534,6 +566,7 @@ export function extractRuntimeFileEditEvent(event: Record<string, unknown>): Fil
     toStringValue(event.timestamp) ||
     toStringValue(event.ts) ||
     new Date().toISOString();
+  const eventKind = readEventTokenValue(candidate) || readEventTokenValue(event);
   return extractFileEditEvents({
     event: {
       ...event,
@@ -541,7 +574,7 @@ export function extractRuntimeFileEditEvent(event: Record<string, unknown>): Fil
       schema_version: candidate.schema_version || event.schema_version,
       event_schema: candidate.event_schema || event.event_schema,
       channel: candidate.channel || event.channel || event.category,
-      kind: candidate.kind || event.kind || event.event || event.name,
+      kind: eventKind,
       source: candidate.source || event.source,
     },
     timestamp,

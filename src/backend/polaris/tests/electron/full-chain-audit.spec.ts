@@ -27,6 +27,30 @@ type PmStatusPayload = {
 type SnapshotPayload = { tasks?: unknown[]; pm_state?: Record<string, unknown> | null };
 type DirectorStatusPayload = { state?: string };
 type DirectorTaskPayload = { status?: string; metadata?: { pm_task_id?: string } };
+type DirectorDiagnosticsPayload = {
+  can_execute?: boolean;
+  execution_blockers?: string[];
+  issues?: string[];
+  tasks?: {
+    total?: number;
+    pending?: number;
+    claimed?: number;
+    running?: number;
+    blocked?: number;
+    failed?: number;
+    completed?: number;
+    cancelled?: number;
+    ready_to_execute?: number;
+    ready_task_ids?: string[];
+    blueprint_ready_task_ids?: string[];
+  };
+};
+type DirectorIntegrationQaPayload = {
+  ok?: boolean;
+  run_id?: string;
+  result?: IntegrationQaArtifact;
+  director_result?: DirectorResultArtifact | null;
+};
 type IntegrationQaArtifact = { reason?: string; passed?: boolean | null; failed?: number };
 type DirectorResultArtifact = {
   status?: string;
@@ -141,7 +165,10 @@ const CHINESE_PROMPT_LEAKAGE_PATTERNS = [
   /提示词注入/i,
   /提示词内容/i,
 ];
-const DIRECTOR_RESULT_TIMEOUT_MS = 10 * 60 * 1000;
+const DIRECTOR_RESULT_TIMEOUT_MS = positiveIntFromEnv(
+  "KERNELONE_E2E_DIRECTOR_RESULT_TIMEOUT_MS",
+  10 * 60 * 1000,
+);
 const REVIEW_SCREENSHOT_WIDTH = 1920;
 const REVIEW_SCREENSHOT_HEIGHT = 1080;
 
@@ -156,6 +183,15 @@ function positiveIntFromEnv(name: string, fallback: number): number {
 }
 
 const PM_FINISH_TIMEOUT_MS = positiveIntFromEnv("KERNELONE_E2E_PM_FINISH_TIMEOUT_MS", 45 * 60 * 1000);
+const FULL_CHAIN_START_PHASES = ["court", "pm", "chief", "director", "qa"] as const;
+type FullChainStartPhase = (typeof FULL_CHAIN_START_PHASES)[number];
+const FULL_CHAIN_PHASE_ORDER: Record<FullChainStartPhase, number> = {
+  court: 0,
+  pm: 1,
+  chief: 2,
+  director: 3,
+  qa: 4,
+};
 
 function toPosixPath(filePath: string): string {
   return String(filePath || "").split(path.sep).join("/");
@@ -163,6 +199,21 @@ function toPosixPath(filePath: string): string {
 
 function optionalEnvValue(name: string): string {
   return String(process.env[name] || "").trim();
+}
+
+function resolveFullChainStartPhase(): FullChainStartPhase {
+  const raw = optionalEnvValue("KERNELONE_E2E_START_PHASE").toLowerCase();
+  if (!raw) return "court";
+  if ((FULL_CHAIN_START_PHASES as readonly string[]).includes(raw)) {
+    return raw as FullChainStartPhase;
+  }
+  throw new Error(
+    `Unsupported KERNELONE_E2E_START_PHASE=${raw}; supported=${FULL_CHAIN_START_PHASES.join(", ")}`,
+  );
+}
+
+function shouldRunFullChainPhase(startPhase: FullChainStartPhase, phase: FullChainStartPhase): boolean {
+  return FULL_CHAIN_PHASE_ORDER[phase] >= FULL_CHAIN_PHASE_ORDER[startPhase];
 }
 
 function buildFullChainSettingsPayload(workspace: string): SettingsPayload {
@@ -188,6 +239,12 @@ async function setReviewViewport(window: Page): Promise<void> {
     width: Math.min(REVIEW_SCREENSHOT_WIDTH, 2000),
     height: Math.min(REVIEW_SCREENSHOT_HEIGHT, 2000),
   });
+}
+
+async function reloadRendererAfterWorkspaceSwitch(window: Page): Promise<void> {
+  await window.reload({ waitUntil: "domcontentloaded" });
+  await expect(window.locator("#root")).toHaveCount(1);
+  await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
 }
 
 async function captureAuditScreenshot(
@@ -396,6 +453,19 @@ async function waitForRuntimeArtifact(
     + `last_director_status=${lastDirectorStatus || "(unavailable)"} `
     + `diagnostics=${lastDiagnostics || "(unavailable)"}`,
   );
+}
+
+async function tryRuntimeArtifact(
+  window: Page,
+  relPath: string,
+): Promise<{ runtimeRoot: string; artifactPath: string } | null> {
+  const normalizedRel = relPath.split(/[\\/]+/).filter(Boolean);
+  const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
+  const runtimeRoot = String(layout.runtime_root || "").trim();
+  if (!runtimeRoot) return null;
+  const artifactPath = path.join(runtimeRoot, ...normalizedRel);
+  if (!await pathExists(artifactPath)) return null;
+  return { runtimeRoot, artifactPath };
 }
 
 async function dismissEngineFailureDialog(window: Page): Promise<void> {
@@ -1013,6 +1083,22 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   await directorMenuItem.click();
 }
 
+async function inspectDirectorCodeChanges(window: Page): Promise<{ eventCount: number; empty: boolean }> {
+  const codeNav = window.getByTestId("director-nav-代码");
+  await expect(codeNav).toBeVisible({ timeout: 30_000 });
+  await codeNav.click();
+  await expect(window.getByTestId("director-code-panel")).toBeVisible({ timeout: 30_000 });
+  await expect(window.getByTestId("director-code-open-file")).toBeVisible();
+  const eventList = window.getByTestId("director-code-event-list");
+  const empty = await window.getByTestId("director-code-empty").isVisible().catch(() => false);
+  const eventCount = await eventList.locator(":scope > div").count().catch(() => 0);
+  expect(
+    eventCount > 0 || empty,
+    `Director code panel should expose either file changes or an explicit empty state: eventCount=${eventCount} empty=${empty}`,
+  ).toBe(true);
+  return { eventCount, empty };
+}
+
 async function enterChiefEngineerWorkspace(window: Page): Promise<void> {
   const directEntry = await tryResolveVisibleLocator(window, [
     () => window.getByTestId("enter-chief-engineer-workspace"),
@@ -1123,12 +1209,25 @@ async function runDirectorFromWorkspace(window: Page): Promise<{ linkedTaskCount
   await executeButton.click();
 
   await expect.poll(async () => {
+    const diagnostics = await requestJson<DirectorDiagnosticsPayload>(window, "/v2/director/diagnostics");
+    const taskState = diagnostics.tasks || {};
+    const active = Number(taskState.running || 0) + Number(taskState.claimed || 0);
     const status = await requestJson<DirectorStatusPayload>(window, "/v2/director/status?source=auto");
-    return String(status.state || "").trim().toUpperCase();
+    const state = String(status.state || "").trim().toUpperCase();
+    return active > 0 || /RUNNING|STARTING|QUEUED|BUSY/.test(state);
   }, {
     timeout: 120_000,
     intervals: [500, 1000, 2000, 3000],
-  }).toMatch(/RUNNING|STARTING|QUEUED|BUSY/);
+  }).toBeTruthy();
+
+  await expect.poll(async () => {
+    const diagnostics = await requestJson<DirectorDiagnosticsPayload>(window, "/v2/director/diagnostics");
+    const taskState = diagnostics.tasks || {};
+    return Number(taskState.running || 0) + Number(taskState.claimed || 0);
+  }, {
+    timeout: DIRECTOR_RESULT_TIMEOUT_MS,
+    intervals: [1000, 2000, 5000, 10_000],
+  }).toBe(0);
 
   const tasks = await requestJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto");
   const linkedTaskCount = Array.isArray(tasks)
@@ -1137,6 +1236,70 @@ async function runDirectorFromWorkspace(window: Page): Promise<{ linkedTaskCount
   const uiTaskCount = await window.getByTestId("director-task-item").count();
   const status = await requestJson<DirectorStatusPayload>(window, "/v2/director/status?source=auto");
   return { linkedTaskCount, uiTaskCount, state: String(status.state || "").trim().toUpperCase() };
+}
+
+function directorDiagnosticsTerminal(tasks: DirectorDiagnosticsPayload["tasks"]): boolean {
+  if (!tasks) return false;
+  const total = Number(tasks.total || 0);
+  const terminal = Number(tasks.completed || 0)
+    + Number(tasks.failed || 0)
+    + Number(tasks.blocked || 0)
+    + Number(tasks.cancelled || 0);
+  return total > 0 && terminal >= total;
+}
+
+async function runDirectorUntilResultArtifact(
+  window: Page,
+): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string; artifactPath: string; runtimeRoot: string }> {
+  let latestRun = { linkedTaskCount: 0, uiTaskCount: 0, state: "" };
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const existing = await tryRuntimeArtifact(window, "results/director.result.json");
+    if (existing) {
+      return { ...latestRun, ...existing };
+    }
+
+    const diagnostics = await requestJson<DirectorDiagnosticsPayload>(window, "/v2/director/diagnostics");
+    const taskState = diagnostics.tasks || {};
+    const ready = Number(taskState.ready_to_execute || 0);
+    const active = Number(taskState.running || 0) + Number(taskState.claimed || 0);
+    if (active > 0) {
+      await expect.poll(async () => {
+        const current = await requestJson<DirectorDiagnosticsPayload>(window, "/v2/director/diagnostics");
+        const tasks = current.tasks || {};
+        return Number(tasks.running || 0) + Number(tasks.claimed || 0);
+      }, {
+        timeout: DIRECTOR_RESULT_TIMEOUT_MS,
+        intervals: [1000, 2000, 5000, 10_000],
+      }).toBe(0);
+      continue;
+    }
+
+    if (directorDiagnosticsTerminal(taskState)) {
+      await requestJson<DirectorIntegrationQaPayload>(window, "/v2/director/integration-qa", {
+        method: "POST",
+        body: { run_id: `full-chain-director-${Date.now()}` },
+      });
+      const reconciled = await tryRuntimeArtifact(window, "results/director.result.json");
+      if (reconciled) {
+        return { ...latestRun, ...reconciled };
+      }
+    }
+
+    if (ready <= 0 && !diagnostics.can_execute) {
+      throw new Error(
+        `Director has no executable tasks: ${JSON.stringify({
+          tasks: taskState,
+          issues: diagnostics.issues || [],
+          execution_blockers: diagnostics.execution_blockers || [],
+        })}`,
+      );
+    }
+
+    latestRun = await runDirectorFromWorkspace(window);
+  }
+
+  const artifact = await waitForRuntimeArtifact(window, "results/director.result.json", DIRECTOR_RESULT_TIMEOUT_MS);
+  return { ...latestRun, ...artifact };
 }
 
 function detectPmFallbackFailure(pmContract: PmContractPayload | null): string {
@@ -1164,7 +1327,7 @@ function directorFailureReason(directorResult: DirectorResultArtifact | null): s
   const successes = Number(directorResult?.successes || 0);
   const failures = Number(directorResult?.failures || 0);
   const blocked = Number(directorResult?.blocked || 0);
-  if (status !== "success") {
+  if (!["success", "completed", "passed", "succeeded"].includes(status)) {
     return `director_status_${status || "missing"}`;
   }
   if (total <= 0) {
@@ -1233,7 +1396,19 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     await dismissEngineFailureDialog(window);
     await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
 
-    const project = await createComplexProject("C:/Temp");
+    const startPhase = resolveFullChainStartPhase();
+    const resumeWorkspace = optionalEnvValue("KERNELONE_E2E_RESUME_WORKSPACE");
+    if (startPhase !== "court" && !resumeWorkspace) {
+      throw new Error(
+        `KERNELONE_E2E_RESUME_WORKSPACE is required when KERNELONE_E2E_START_PHASE=${startPhase}`,
+      );
+    }
+    const project = resumeWorkspace
+      ? {
+        workspace: path.resolve(resumeWorkspace),
+        metrics: await measureComplexity(path.resolve(resumeWorkspace)),
+      }
+      : await createComplexProject("C:/Temp");
     audit.workspace = project.workspace;
     const complexityPath = testInfo.outputPath("complexity.metrics.json");
     await writeUtf8File(complexityPath, JSON.stringify(project.metrics, null, 2));
@@ -1266,6 +1441,8 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       timeout: 90_000,
       intervals: [500, 1000, 2000, 3000],
     }).toBe(project.workspace.toLowerCase());
+    await reloadRendererAfterWorkspaceSwitch(window);
+    await dismissEngineFailureDialog(window);
 
     const layout = await requestJson<RuntimeLayoutPayload>(window, "/runtime/storage-layout");
     runtimeRoot = String(layout.runtime_root || "").trim();
@@ -1289,38 +1466,50 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       });
     }
 
-    const courtFlow = await runCourtFlow(window);
-    await dismissEngineFailureDialog(window);
+    let planPath = "";
+    if (shouldRunFullChainPhase(startPhase, "court")) {
+      const courtFlow = await runCourtFlow(window);
+      await dismissEngineFailureDialog(window);
 
-    const courtShot = await captureAuditScreenshot(window, testInfo, "court-phase");
-    audit.evidence_paths.screenshots.push(toPosixPath(courtShot.pngPath), toPosixPath(courtShot.reviewJpgPath));
+      const courtShot = await captureAuditScreenshot(window, testInfo, "court-phase");
+      audit.evidence_paths.screenshots.push(toPosixPath(courtShot.pngPath), toPosixPath(courtShot.reviewJpgPath));
 
-    if (!courtFlow.dialogueReady || courtFlow.fallbackUsed) {
+      if (!courtFlow.dialogueReady || courtFlow.fallbackUsed) {
+        audit.issues_fixed.push({
+          issue: "court_dialogue_not_ready",
+          root_cause: "architect_dialogue",
+          fix: "strict full-chain audit now fails instead of drafting from an incomplete Architect dialogue",
+          verified: false,
+        });
+        throw new Error(
+          `Court phase failed strict dialogue gate: dialogueReady=${courtFlow.dialogueReady} `
+          + `fallbackUsed=${courtFlow.fallbackUsed} screenshot=${toPosixPath(courtShot.reviewJpgPath)}`,
+        );
+      }
+
+      const docsRoots = [
+        path.join(project.workspace, "docs"),
+        path.join(project.workspace, ".polaris", "docs"),
+      ];
+      let docsCount = 0;
+      for (const docsRoot of docsRoots) {
+        docsCount += (await listFilesRecursive(docsRoot)).length;
+      }
+      expect(docsCount).toBeGreaterThan(0);
+    } else {
+      const resumeShot = await captureAuditScreenshot(window, testInfo, `resume-before-${startPhase}`);
+      audit.evidence_paths.screenshots.push(toPosixPath(resumeShot.pngPath), toPosixPath(resumeShot.reviewJpgPath));
       audit.issues_fixed.push({
-        issue: "court_dialogue_not_ready",
-        root_cause: "architect_dialogue",
-        fix: "strict full-chain audit now fails instead of drafting from an incomplete Architect dialogue",
-        verified: false,
+        issue: `court_phase_resumed_before_${startPhase}`,
+        root_cause: "resume_strategy",
+        fix: `KERNELONE_E2E_START_PHASE=${startPhase} reused workspace ${project.workspace}`,
+        verified: true,
       });
-      throw new Error(
-        `Court phase failed strict dialogue gate: dialogueReady=${courtFlow.dialogueReady} `
-        + `fallbackUsed=${courtFlow.fallbackUsed} screenshot=${toPosixPath(courtShot.reviewJpgPath)}`,
-      );
     }
-
-    const docsRoots = [
-      path.join(project.workspace, "docs"),
-      path.join(project.workspace, ".polaris", "docs"),
-    ];
-    let docsCount = 0;
-    for (const docsRoot of docsRoots) {
-      docsCount += (await listFilesRecursive(docsRoot)).length;
-    }
-    expect(docsCount).toBeGreaterThan(0);
 
     const planArtifact = await waitForRuntimeArtifact(window, "contracts/plan.md", 120_000);
     runtimeRoot = planArtifact.runtimeRoot;
-    const planPath = planArtifact.artifactPath;
+    planPath = planArtifact.artifactPath;
     expect((await fs.readFile(planPath, "utf-8")).trim().length).toBeGreaterThan(0);
     audit.acceptance_results.court_phase = "PASS";
     audit.evidence_paths.logs.push(toPosixPath(planPath));
@@ -1330,6 +1519,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       audit.rounds += 1;
       const round = audit.rounds;
 
+      if (shouldRunFullChainPhase(startPhase, "pm")) {
       await dismissEngineFailureDialog(window);
       await enterPmWorkspace(window);
       await expect(window.getByTestId("pm-workspace")).toBeVisible();
@@ -1417,58 +1607,170 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
 
       await window.getByTestId("pm-workspace-back").click();
       await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+      } else {
+        const snapshot = await requestJson<SnapshotPayload>(window, "/state/snapshot");
+        const snapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.snapshot.resumed.json`);
+        await writeUtf8File(snapshotPath, JSON.stringify(snapshot, null, 2));
+        audit.evidence_paths.snapshots.push(toPosixPath(snapshotPath));
 
-      await dismissEngineFailureDialog(window);
-      const chiefDiagnostics = await verifyChiefEngineerPhase(window);
-      const chiefSnapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.chief-engineer-diagnostics.json`);
-      await writeUtf8File(chiefSnapshotPath, JSON.stringify(chiefDiagnostics, null, 2));
-      audit.evidence_paths.snapshots.push(toPosixPath(chiefSnapshotPath));
-      audit.acceptance_results.chief_engineer_phase = "PASS";
-      const chiefShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.chief-engineer`);
-      audit.evidence_paths.screenshots.push(toPosixPath(chiefShot.pngPath), toPosixPath(chiefShot.reviewJpgPath));
-      await window.getByTestId("chief-engineer-workspace-back").click();
-      await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+        const pmContractArtifact = await waitForRuntimeArtifact(window, "contracts/pm_tasks.contract.json", 120_000);
+        runtimeRoot = pmContractArtifact.runtimeRoot;
+        const pmContractPath = pmContractArtifact.artifactPath;
+        const pmContract = await readJsonFile<PmContractPayload>(pmContractPath);
+        audit.evidence_paths.logs.push(toPosixPath(pmContractPath));
+        const score = Number(pmContract?.quality_gate?.score || 0);
+        const critical = Number(pmContract?.quality_gate?.critical_issue_count || 0);
+        const tasks = Array.isArray(pmContract?.tasks) ? pmContract.tasks : [];
+        const invalidTasks = tasks.filter((task) => {
+          const hasGoal = String(task.goal || "").trim().length > 0;
+          const hasScope = Array.isArray(task.scope_paths) && task.scope_paths.length > 0;
+          const hasSteps = Array.isArray(task.execution_checklist) && task.execution_checklist.length > 0;
+          const acceptance = Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : (task.acceptance || []);
+          const hasAcceptance = Array.isArray(acceptance) && acceptance.length > 0;
+          return !(hasGoal && hasScope && hasSteps && hasAcceptance);
+        }).length;
+        const pmFallbackFailure = detectPmFallbackFailure(pmContract);
 
-      await dismissEngineFailureDialog(window);
-      await enterDirectorWorkspace(window);
-      await expect(window.getByTestId("director-workspace")).toBeVisible();
-      const director = await runDirectorFromWorkspace(window);
-      if (director.linkedTaskCount > 0 && director.uiTaskCount > 0) {
+        audit.pm_quality_history.push({
+          round,
+          score,
+          issues: [
+            `resumed_existing_pm_contract:${toPosixPath(pmContractPath)}`,
+            ...(critical > 0 ? [`critical_issue_count=${critical}`] : []),
+            ...(invalidTasks > 0 ? [`invalid_tasks=${invalidTasks}`] : []),
+            ...(pmFallbackFailure ? [`fallback_failure=${pmFallbackFailure}`] : []),
+          ],
+        });
+
+        if (score < 80 || critical > 0 || invalidTasks > 0 || tasks.length === 0 || pmFallbackFailure) {
+          throw new Error(
+            `Resumed PM contract failed quality gate: score=${score} critical=${critical} `
+            + `tasks=${tasks.length} invalidTasks=${invalidTasks} fallback=${pmFallbackFailure || "none"} `
+            + `contract=${toPosixPath(pmContractPath)}`,
+          );
+        }
+        audit.acceptance_results.pm_phase = "PASS";
+      }
+
+      if (shouldRunFullChainPhase(startPhase, "chief")) {
+        await dismissEngineFailureDialog(window);
+        const chiefDiagnostics = await verifyChiefEngineerPhase(window);
+        const chiefSnapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.chief-engineer-diagnostics.json`);
+        await writeUtf8File(chiefSnapshotPath, JSON.stringify(chiefDiagnostics, null, 2));
+        audit.evidence_paths.snapshots.push(toPosixPath(chiefSnapshotPath));
+        audit.acceptance_results.chief_engineer_phase = "PASS";
+        const chiefShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.chief-engineer`);
+        audit.evidence_paths.screenshots.push(toPosixPath(chiefShot.pngPath), toPosixPath(chiefShot.reviewJpgPath));
+        await window.getByTestId("chief-engineer-workspace-back").click();
+        await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+      } else {
+        const chiefDiagnostics = await requestJson<ChiefEngineerDiagnosticsPayload>(window, "/v2/chief-engineer/diagnostics");
+        const chiefSnapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.chief-engineer-diagnostics.resumed.json`);
+        await writeUtf8File(chiefSnapshotPath, JSON.stringify(chiefDiagnostics, null, 2));
+        audit.evidence_paths.snapshots.push(toPosixPath(chiefSnapshotPath));
+        expect(
+          chiefEngineerHandoffReady(chiefDiagnostics),
+          `resumed ChiefEngineer diagnostics must be handoff-ready; evidence=${toPosixPath(chiefSnapshotPath)}`,
+        ).toBeTruthy();
+        audit.acceptance_results.chief_engineer_phase = "PASS";
+      }
+
+      let directorResult: DirectorResultArtifact | null = null;
+      let directorResultPath = "";
+      let directorSuccesses = 0;
+      let directorStatus = "";
+      let downstreamDirectorFailure = "";
+
+      if (shouldRunFullChainPhase(startPhase, "director")) {
+        await dismissEngineFailureDialog(window);
+        await enterDirectorWorkspace(window);
+        await expect(window.getByTestId("director-workspace")).toBeVisible();
+        const director = await runDirectorUntilResultArtifact(window);
+        if (director.linkedTaskCount > 0 && director.uiTaskCount > 0) {
+          audit.acceptance_results.director_phase = "PASS";
+        }
+
+        const directorResultArtifact = { runtimeRoot: director.runtimeRoot, artifactPath: director.artifactPath };
+        runtimeRoot = directorResultArtifact.runtimeRoot;
+        directorResultPath = directorResultArtifact.artifactPath;
+        directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
+        audit.evidence_paths.logs.push(toPosixPath(directorResultPath));
+        downstreamDirectorFailure = directorFailureReason(directorResult);
+        directorSuccesses = Number(directorResult?.successes || 0);
+        directorStatus = String(directorResult?.status || "").trim();
+
+        const directorCodeEvidence = await inspectDirectorCodeChanges(window);
+        if (directorSuccesses > 0) {
+          expect(
+            directorCodeEvidence.eventCount,
+            `Director code change view should show task-runtime or realtime file changes after successful execution; result=${toPosixPath(directorResultPath)}`,
+          ).toBeGreaterThan(0);
+        }
+        const dirCodeShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.director-code`);
+        audit.evidence_paths.screenshots.push(toPosixPath(dirCodeShot.pngPath), toPosixPath(dirCodeShot.reviewJpgPath));
+
+        const dirShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.director`);
+        audit.evidence_paths.screenshots.push(toPosixPath(dirShot.pngPath), toPosixPath(dirShot.reviewJpgPath));
+
+        if (downstreamDirectorFailure) {
+          audit.issues_fixed.push({
+            issue: `round_${round}_${downstreamDirectorFailure}`,
+            root_cause: "director_execution",
+            fix: `fail-fast on Director terminal failure instead of returning to PM (evidence: ${toPosixPath(directorResultPath)})`,
+            verified: false,
+          });
+          throw new Error(
+            `Director phase failed closed: ${downstreamDirectorFailure}; `
+            + `result=${toPosixPath(directorResultPath)} screenshot=${toPosixPath(dirShot.reviewJpgPath)}`,
+          );
+        }
+        audit.acceptance_results.director_phase = "PASS";
+
+        await window.getByTestId("director-workspace-back").click();
+        await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+      } else {
+        let directorResultArtifact = await tryRuntimeArtifact(window, "results/director.result.json");
+        if (!directorResultArtifact) {
+          await requestJson<DirectorIntegrationQaPayload>(window, "/v2/director/integration-qa", {
+            method: "POST",
+            body: { run_id: `full-chain-resumed-director-${Date.now()}` },
+          });
+          directorResultArtifact = await tryRuntimeArtifact(window, "results/director.result.json");
+        }
+        if (!directorResultArtifact) {
+          directorResultArtifact = await waitForRuntimeArtifact(
+            window,
+            "results/director.result.json",
+            120_000,
+          );
+        }
+        runtimeRoot = directorResultArtifact.runtimeRoot;
+        directorResultPath = directorResultArtifact.artifactPath;
+        directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
+        audit.evidence_paths.logs.push(toPosixPath(directorResultPath));
+        downstreamDirectorFailure = directorFailureReason(directorResult);
+        directorSuccesses = Number(directorResult?.successes || 0);
+        directorStatus = String(directorResult?.status || "").trim();
+
+        if (downstreamDirectorFailure) {
+          throw new Error(
+            `Resumed Director result failed: ${downstreamDirectorFailure}; `
+            + `result=${toPosixPath(directorResultPath)}`,
+          );
+        }
         audit.acceptance_results.director_phase = "PASS";
       }
 
-      const directorResultArtifact = await waitForRuntimeArtifact(
-        window,
-        "results/director.result.json",
-        DIRECTOR_RESULT_TIMEOUT_MS,
-      );
-      runtimeRoot = directorResultArtifact.runtimeRoot;
-      const directorResultPath = directorResultArtifact.artifactPath;
-      const directorResult = await readJsonFile<DirectorResultArtifact>(directorResultPath);
-      audit.evidence_paths.logs.push(toPosixPath(directorResultPath));
-      const downstreamDirectorFailure = directorFailureReason(directorResult);
-      const directorSuccesses = Number(directorResult?.successes || 0);
-      const directorStatus = String(directorResult?.status || "").trim();
-
-      const dirShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.director`);
-      audit.evidence_paths.screenshots.push(toPosixPath(dirShot.pngPath), toPosixPath(dirShot.reviewJpgPath));
-
-      if (downstreamDirectorFailure) {
-        audit.issues_fixed.push({
-          issue: `round_${round}_${downstreamDirectorFailure}`,
-          root_cause: "director_execution",
-          fix: `fail-fast on Director terminal failure instead of returning to PM (evidence: ${toPosixPath(directorResultPath)})`,
-          verified: false,
+      const existingQaArtifact = await tryRuntimeArtifact(window, "results/integration_qa.result.json");
+      const existingQa = existingQaArtifact
+        ? await readJsonFile<IntegrationQaArtifact>(existingQaArtifact.artifactPath)
+        : null;
+      if (String(existingQa?.reason || "").trim() !== "integration_qa_passed") {
+        await requestJson<DirectorIntegrationQaPayload>(window, "/v2/director/integration-qa", {
+          method: "POST",
+          body: { run_id: `full-chain-qa-${Date.now()}` },
         });
-        throw new Error(
-          `Director phase failed closed: ${downstreamDirectorFailure}; `
-          + `result=${toPosixPath(directorResultPath)} screenshot=${toPosixPath(dirShot.reviewJpgPath)}`,
-        );
       }
-
-      await window.getByTestId("director-workspace-back").click();
-      await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
-
       const qaArtifact = await waitForRuntimeArtifact(window, "results/integration_qa.result.json", 120_000);
       runtimeRoot = qaArtifact.runtimeRoot;
       const qaPath = qaArtifact.artifactPath;
