@@ -115,6 +115,48 @@ class TestDirectorExecutionConsumerPollOnce:
         assert ack_call.metadata["director_evidence_status"] == "changed_files_reported"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_direct_route_uses_pm_contract_without_blueprint(self, mock_get_svc: MagicMock) -> None:
+        """Direct PM->Director work should not require ChiefEngineer blueprint metadata."""
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-direct-1"
+        claim_result.lease_token = "lease-direct"
+        claim_result.payload = {
+            "route": "direct_to_director",
+            "blueprint_required": False,
+            "scope_paths": ["src/main.py"],
+        }
+
+        ack_result = MagicMock()
+        ack_result.ok = True
+        ack_result.status = "pending_qa"
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.acknowledge_task_stage.return_value = ack_result
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+        with patch.object(
+            consumer,
+            "_execute_task",
+            return_value={"changed_files": ["src/main.py"], "duration": 1, "side_effects": []},
+        ):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is True
+        mock_svc.fail_task_stage.assert_not_called()
+        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
+        assert ack_call.next_stage == "pending_qa"
+        assert ack_call.metadata["blueprint_id"] == "pm-direct::task-direct-1"
+        assert ack_call.metadata["route"] == "direct_to_director"
+        assert ack_call.metadata["blueprint_required"] is False
+        assert ack_call.metadata["director_execution_authority"] == "pm_task_contract"
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_no_execution_evidence_requeues_pending_exec(self, mock_get_svc: MagicMock) -> None:
         """Placeholder/no-evidence execution must not advance to QA."""
         mock_svc = MagicMock()

@@ -1,0 +1,66 @@
+card_id: "vc-20260603-pm-game-contract-scope-gate"
+bug_summary: >
+  PM planning could collapse a complex game project plan into a narrow PRNG-only
+  task contract, or emit dependency/tooling instructions that polluted the target
+  workspace package policy. That weakened downstream Chief Engineer, Director,
+  and QA evidence because Director only received a partial or dependency-mutating
+  contract.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+  method: "autofix_pm_contract_for_quality"
+  symptom: >
+    Complex game scenarios with backlog/plan evidence were not always expanded
+    to the required domain coverage, and package-manager/test-runner instructions
+    could reach Director tasks.
+
+assumptions:
+  - id: "A1"
+    statement: "Game planning scope can be inferred from the PM payload and from runtime planning docs when the PM payload is too narrow."
+    status: verified_true
+    evidence: "Workspace plan hints from runtime/contracts/plan.md are attached before game-domain autofix."
+  - id: "A2"
+    statement: "Game contracts must cover engine, world, combat, AI, content, progression, economy, persistence, renderer, audio, tooling, and tests before Director runs."
+    status: verified_true
+    evidence: "Unit tests and Electron E2E assert 12 required game domains and 12+ task coverage."
+  - id: "A3"
+    statement: "Package-manager and external test-runner instructions are unsafe for this deterministic no-dependency game scenario."
+    status: verified_true
+    evidence: "The sanitizer removes package.json targets and replaces npm-install/Jest/Vitest instructions with existing script verification commands."
+
+pre_mortem:
+  failure_point: >
+    If game detection only checks English keywords or only checks PM output,
+    Chinese game briefs and Court/Architect backlog evidence can be missed,
+    allowing an underspecified contract into Director.
+  risk_zone:
+    - "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    - "polaris/tests/electron/full-chain-audit.spec.ts"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/orchestration/pm_planning/tests/test_task_quality_gate.py"
+      description: "Validate game hint detection, domain expansion, path policy cleanup, and dependency-policy sanitization."
+      expected: "Quality gate reports no critical game decomposition issue after autofix and no forbidden package/test-runner instructions remain."
+      status: new
+  integration_tests:
+    - description: "Resume from previously failed PRNG-only PM workspace."
+      command: "KERNELONE_E2E_START_PHASE=pm KERNELONE_E2E_RESUME_WORKSPACE=C:\\Temp\\Polaris_Game_Complex_Blueprint_E2E_20260603_053629 npm run test:e2e -- src/backend/polaris/tests/electron/full-chain-audit.spec.ts --grep \"unattended full-chain audit\""
+      expected: "PM expands to game domain coverage and full chain passes."
+      status: new
+    - description: "Cold full-chain game audit."
+      command: "KERNELONE_E2E_PROJECT_SCENARIO=game npm run test:e2e -- src/backend/polaris/tests/electron/full-chain-audit.spec.ts --grep \"unattended full-chain audit\""
+      expected: "Court, PM, Chief Engineer, Director, and QA all pass with real command QA evidence."
+      status: new
+  manual_check:
+    - "Inspect compressed review screenshots for PM, Chief Engineer, Director code diff, Director, and QA."
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-06-03"
+  verified_by: "codex"
+  verified_at: "2026-06-03"

@@ -19,6 +19,52 @@ from polaris.cells.runtime.task_market.public.service import get_task_market_ser
 
 logger = logging.getLogger(__name__)
 
+_ROUTE_DIRECT_TO_DIRECTOR = "direct_to_director"
+_ROUTE_CHIEF_BLUEPRINT_REQUIRED = "chief_blueprint_required"
+
+
+def _normalize_task_market_route(payload: dict[str, Any]) -> str:
+    metadata_raw = payload.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    for container in (payload, metadata):
+        for key in ("task_market_route", "route", "routing", "dispatch_route", "execution_route"):
+            token = str(container.get(key) or "").strip().lower().replace("-", "_").replace(" ", "_")
+            if token in {
+                _ROUTE_DIRECT_TO_DIRECTOR,
+                "direct",
+                "director",
+                "director_direct",
+                "direct_director",
+                "pending_exec",
+                "exec",
+                "execution",
+            }:
+                return _ROUTE_DIRECT_TO_DIRECTOR
+            if token in {
+                _ROUTE_CHIEF_BLUEPRINT_REQUIRED,
+                "chief",
+                "chief_engineer",
+                "chiefengineer",
+                "blueprint",
+                "blueprint_required",
+                "requires_blueprint",
+                "pending_design",
+                "design",
+            }:
+                return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
+        for key in ("blueprint_required", "requires_blueprint", "chief_engineer_required"):
+            value = container.get(key)
+            if isinstance(value, bool):
+                return _ROUTE_CHIEF_BLUEPRINT_REQUIRED if value else _ROUTE_DIRECT_TO_DIRECTOR
+            if isinstance(value, str):
+                bool_token = value.strip().lower()
+                if bool_token in {"1", "true", "yes", "y", "on"}:
+                    return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
+                if bool_token in {"0", "false", "no", "n", "off"}:
+                    return _ROUTE_DIRECT_TO_DIRECTOR
+    return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
+
+
 _NO_CHANGE_FLAGS = frozenset(
     {
         "allow_no_changes",
@@ -265,10 +311,12 @@ class DirectorExecutionConsumer:
         task_id = claim.task_id
         lease_token = claim.lease_token
         payload = dict(claim.payload) if claim.payload else {}
+        route = _normalize_task_market_route(payload)
 
-        # Validate blueprint_id exists
+        # Blueprint-mediated work must carry ChiefEngineer evidence. Direct PM
+        # execution work uses the PM task contract as the execution authority.
         blueprint_id = payload.get("blueprint_id")
-        if not blueprint_id:
+        if not blueprint_id and route != _ROUTE_DIRECT_TO_DIRECTOR:
             self._svc.fail_task_stage(
                 FailTaskStageCommandV1(
                     workspace=self._workspace,
@@ -280,6 +328,8 @@ class DirectorExecutionConsumer:
                 )
             )
             return {"task_id": task_id, "ok": False, "reason": "missing_blueprint"}
+        if not blueprint_id:
+            blueprint_id = f"pm-direct::{task_id}"
 
         # Safe parallel conflict check
         if self._enable_safe_parallel:
@@ -335,6 +385,12 @@ class DirectorExecutionConsumer:
                     summary=f"Execution complete for {task_id}",
                     metadata={
                         "blueprint_id": blueprint_id,
+                        "route": route,
+                        "task_market_route": route,
+                        "blueprint_required": route != _ROUTE_DIRECT_TO_DIRECTOR,
+                        "director_execution_authority": (
+                            "pm_task_contract" if route == _ROUTE_DIRECT_TO_DIRECTOR else "chief_engineer_blueprint"
+                        ),
                         "changed_files": changed_files,
                         "director_evidence_status": (
                             "changed_files_reported" if changed_files else "explicit_no_changes"

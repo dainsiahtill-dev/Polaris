@@ -112,6 +112,12 @@ class TestCEConsumerPollOnce:
         assert ack_call_args is not None
         cmd = ack_call_args[0][0]
         assert cmd.next_stage == "pending_exec"
+        assert cmd.metadata["blueprint_id"] == "bp-task-42"
+        assert cmd.metadata["blueprint_path"] == "runtime/blueprints/bp-task-42.json"
+        assert cmd.metadata["runtime_blueprint_path"] == "runtime/blueprints/bp-task-42.json"
+        assert cmd.metadata["route"] == "chief_blueprint_required"
+        assert cmd.metadata["blueprint_required"] is True
+        assert cmd.metadata["target_files"] == ["/src/main.py"]
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     def test_claim_then_preflight_failure_requeues(self, mock_get_svc: MagicMock) -> None:

@@ -28,6 +28,22 @@ def test_parse_agents_write_policy_extracts_forbidden_files() -> None:
     assert "webpack.config.js" in paths
 
 
+def test_parse_agents_write_policy_derives_forbidden_language_artifacts() -> None:
+    policy = parse_agents_write_policy(
+        "Do not introduce Rust, Cargo, Go, Python, Webpack, Jest, Vite, Vitest, or any new dependency."
+    )
+
+    patterns = {rule.pattern for rule in policy.forbidden_file_patterns}
+
+    assert "Cargo.toml" in patterns
+    assert "*.rs" in patterns
+    assert "go.mod" in patterns
+    assert "*.go" in patterns
+    assert "*.py" in patterns
+    assert "jest.config.js" in patterns
+    assert "vite.config.ts" in patterns
+
+
 def test_diff_package_manifest_reports_scripts_and_dependencies() -> None:
     before = json.dumps(
         {
@@ -72,6 +88,21 @@ def test_validate_director_write_policy_blocks_scope_and_agents_forbidden_paths(
     assert any("AGENTS.md forbids writing src/generated/schema.ts" in reason for reason in verdict.reasons)
     assert any("exceed" in reason or "not within" in reason for reason in verdict.reasons)
     assert "src/other.ts" in verdict.extra_files
+
+
+def test_validate_director_write_policy_blocks_derived_forbidden_artifacts() -> None:
+    verdict = validate_director_write_policy(
+        changed_files=["Cargo.toml", "src/splitmix64.rs", "src/tool.py", "src/allowed.ts"],
+        allowed_scope=["Cargo.toml", "src/splitmix64.rs", "src/tool.py", "src/allowed.ts"],
+        agents_md="Do not introduce Rust, Cargo, Go, Python, Webpack, Jest, Vite, Vitest, or any new dependency.",
+        operation="tool_write",
+    )
+
+    assert verdict.allowed is False
+    assert any("AGENTS.md forbids writing Cargo.toml" in reason for reason in verdict.reasons)
+    assert any("AGENTS.md forbids writing src/splitmix64.rs" in reason for reason in verdict.reasons)
+    assert any("AGENTS.md forbids writing src/tool.py" in reason for reason in verdict.reasons)
+    assert not any("src/allowed.ts" in reason for reason in verdict.reasons)
 
 
 def test_validate_director_write_policy_requires_package_before_after() -> None:

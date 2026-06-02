@@ -415,7 +415,7 @@ class TestEvaluatePmTaskQualityHappyPath:
             ],
         }
         report = evaluate_pm_task_quality(payload)
-        assert any("game PM decomposition requires at least 6 tasks" in i for i in report["critical_issues"])
+        assert any("game PM decomposition requires at least 12 tasks" in i for i in report["critical_issues"])
         assert any("game PM decomposition missing domains" in i for i in report["critical_issues"])
 
 
@@ -787,7 +787,10 @@ class TestAutofixPmContractForQuality:
         workspace = str(tmp_path)
         payload: dict[str, Any] = {
             "workspace": workspace,
-            "overall_goal": "Build a tactical roguelike game with combat, AI, renderer, persistence, and tests.",
+            "overall_goal": (
+                "Build a tactical roguelike game with combat, AI, content, progression, economy, "
+                "audio, tooling, renderer, persistence, and tests."
+            ),
             "tasks": [
                 {
                     "id": "T01-engine",
@@ -804,12 +807,12 @@ class TestAutofixPmContractForQuality:
                     "id": "T02-world",
                     "title": "Implement world generator",
                     "goal": "Implement the procedural game world generator.",
-                    "acceptance_criteria": ["verify src/world/map-generator.ts exists"],
+                    "acceptance_criteria": ["verify src/world/procedural-map.ts exists"],
                     "assigned_to": "director",
                     "phase": "implementation",
                     "depends_on": ["T01-engine"],
                     "execution_checklist": ["Read", "Implement", "Verify"],
-                    "scope_paths": ["src/world/map-generator.ts"],
+                    "scope_paths": ["src/world/procedural-map.ts"],
                 },
                 {
                     "id": "T03-combat",
@@ -830,8 +833,8 @@ class TestAutofixPmContractForQuality:
 
         stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
 
-        assert stats["game_domain_tasks_added"] == 4
-        assert len(payload["tasks"]) == 7
+        assert stats["game_domain_tasks_added"] == 9
+        assert len(payload["tasks"]) == 12
         target_files: set[str] = set()
         for task in payload["tasks"]:
             if not isinstance(task, dict):
@@ -839,12 +842,263 @@ class TestAutofixPmContractForQuality:
             for path in task.get("target_files", []):
                 if isinstance(path, str):
                     target_files.add(path)
-        assert "src/ai/enemy-ai.ts" in target_files
+        assert "src/ai/director-ai.ts" in target_files
+        assert "src/content/cards.ts" in target_files
+        assert "src/progression/campaign.ts" in target_files
+        assert "src/economy/loot-table.ts" in target_files
         assert "src/persistence/save-system.ts" in target_files
-        assert "src/renderer/game-view.tsx" in target_files
+        assert "src/renderer/scene-view.ts" in target_files
+        assert "src/audio/sound-events.ts" in target_files
+        assert "src/tools/balance-report.ts" in target_files
         assert "tests/integration/game-session.test.ts" in target_files
 
         report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert report["ok"] is True
+        assert not any("game PM decomposition" in item for item in report["critical_issues"])
+
+    def test_sanitizes_fragile_prng_acceptance(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": "Build a tactical roguelike game with deterministic PRNG systems.",
+            "tasks": [
+                {
+                    "id": "T01-prng",
+                    "title": "Implement deterministic PRNG",
+                    "goal": "Implement deterministic game random number generation.",
+                    "acceptance_criteria": [
+                        "verify src/engine/prng.ts exists",
+                        "1000次序列生成与参考序列逐位一致",
+                        "卡方检验p>0.01",
+                        "执行 npm test -- --testPathPattern prng 通过，验证快照序列",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/engine/prng.ts"],
+                    "target_files": ["C:/Temp/src/engine/prng.ts"],
+                    "backlog_ref": "Implement C:/Temp/src/engine/prng.ts without brittle snapshots or hard-coded expected values",
+                }
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert any("fragile random-sequence assertions" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+
+        task = payload["tasks"][0]
+        acceptance = "\n".join(str(item) for item in task["acceptance_criteria"])
+        assert stats["acceptance_sanitized"] == 1
+        assert "参考序列" not in acceptance
+        assert "卡方" not in acceptance
+        assert "快照序列" not in acceptance
+        assert "literal output snapshots" in acceptance
+        assert task["target_files"] == ["src/engine/prng.ts"]
+        assert "C:/Temp" not in str(task["backlog_ref"])
+
+    def test_mixed_chinese_roguelike_goal_is_game_expanded(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": "构建可执行、可测试、可审计的中大型Web战术Roguelike游戏",
+            "focus": "搭建项目基础并实现确定性PRNG引擎",
+            "tasks": [
+                {
+                    "id": "T01-esm",
+                    "title": "搭建项目骨架与ESM模块结构",
+                    "goal": "创建package.json、TypeScript配置、基础源码与测试占位，确保npm build和test骨架可运行",
+                    "acceptance_criteria": [
+                        "npm install 成功无错误退出",
+                        "npm run build 生成dist/目录，包含index.js",
+                        "npm test 执行至少一个占位测试并通过",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": [
+                        "Initialize package.json with devDependencies",
+                        "安装TypeScript和测试运行器(如vitest)为devDependencies",
+                        "Create build.mjs and test.mjs in the workspace root",
+                    ],
+                    "scope_paths": ["package.json", "src", "build.mjs", "test.mjs"],
+                    "target_files": ["package.json", "src/index.ts", "test/index.test.ts", "build.mjs", "test.mjs"],
+                },
+                {
+                    "id": "T01-prng",
+                    "title": "实现确定性PRNG与种子一致性测试",
+                    "goal": "实现xorshift PRNG，并通过1000步序列比对验证给定种子的确定性输出",
+                    "acceptance_criteria": [
+                        "执行 npm test -- --testPathPattern prng 通过，验证快照序列",
+                        "PRNG模块导出的类能够从其他模块导入",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["T01-esm"],
+                    "execution_checklist": [
+                        "在test/prng.test.ts编写测试",
+                        "硬编码1000个预期值数组，断言deepStrictEqual",
+                    ],
+                    "scope_paths": ["src"],
+                    "target_files": ["src/prng.ts", "test/prng.test.ts"],
+                },
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert any(
+            "game PM decomposition requires at least 12 tasks" in item for item in initial_report["critical_issues"]
+        )
+        assert any("fragile random-sequence assertions" in item for item in initial_report["critical_issues"])
+        assert any("no-external-dependency policy" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+
+        assert stats["game_policy_tasks_removed"] == 2
+        assert stats["game_domain_tasks_added"] == 12
+        assert len(payload["tasks"]) == 12
+        assert {task["id"] for task in payload["tasks"] if isinstance(task, dict)}.isdisjoint({"T01-esm", "T01-prng"})
+        assert all(
+            "package.json" not in task.get("target_files", []) for task in payload["tasks"] if isinstance(task, dict)
+        )
+        serialized = str(payload["tasks"]).lower()
+        assert "npm install" not in serialized
+        assert "vitest" not in serialized
+        assert "jest" not in serialized
+        report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert report["ok"] is True
+        assert not any("game PM decomposition" in item for item in report["critical_issues"])
+
+    def test_removes_legacy_narrow_game_contract_tasks_before_domain_repair(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": (
+                "Build a tactical roguelike game with engine, world, combat, AI, content, progression, "
+                "economy, persistence, renderer, audio, tooling, and tests while preserving existing scripts."
+            ),
+            "focus": "Bootstrap project files, then implement xorshift128+ PRNG, then map generation with A* connectivity.",
+            "tasks": [
+                {
+                    "id": "T01-initialize_project_s",
+                    "title": "Initialize project scaffold and build system",
+                    "goal": (
+                        "Create package.json, src structure, and test harness so that `npm run build` "
+                        "and `npm test` execute successfully."
+                    ),
+                    "acceptance_criteria": [
+                        "npm run build exits 0",
+                        "npm test exits 0",
+                        "package.json contains type: module and build/test scripts",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "bootstrap",
+                    "depends_on": [],
+                    "execution_checklist": [
+                        "Create package.json",
+                        "Create src/index.mjs as placeholder entry file",
+                    ],
+                    "scope_paths": ["src", "tests"],
+                    "target_files": ["src/index.mjs", "tests/placeholder.test.mjs", "package.json"],
+                },
+                {
+                    "id": "T01-implement_xorshift12",
+                    "title": "Implement xorshift128+ PRNG engine with seed string hashing",
+                    "goal": "Deliver a PRNG module exposing next(), nextRange(), getState(), setState().",
+                    "acceptance_criteria": [
+                        "Run npm test -- tests/prng.test.mjs exits 0",
+                        "Same seed yields identical calling sequence",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["T01-initialize_project_s"],
+                    "execution_checklist": ["Implement src/prng.mjs", "Write tests/prng.test.mjs"],
+                    "scope_paths": ["src", "tests"],
+                    "target_files": ["src/prng.mjs", "tests/prng.test.mjs"],
+                },
+                {
+                    "id": "T01-implement_procedural",
+                    "title": "Implement procedural room placement with A* connectivity",
+                    "goal": "Generate maps with rooms, corridors, and a single connected component.",
+                    "acceptance_criteria": [
+                        "Run npm test -- tests/map.test.mjs exits 0",
+                        "Same seed generates identical serialized output",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["T01-implement_xorshift12"],
+                    "execution_checklist": ["Implement src/map.mjs", "Write tests/map.test.mjs"],
+                    "scope_paths": ["src", "tests"],
+                    "target_files": ["src/map.mjs", "tests/map.test.mjs"],
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+
+        assert stats["game_policy_tasks_removed"] == 3
+        assert stats["game_domain_tasks_added"] == 12
+        remaining_ids = {task["id"] for task in payload["tasks"] if isinstance(task, dict)}
+        assert remaining_ids.isdisjoint(
+            {
+                "T01-initialize_project_s",
+                "T01-implement_xorshift12",
+                "T01-implement_procedural",
+            }
+        )
+        serialized = str(payload["tasks"]).lower()
+        assert "package.json contains" not in serialized
+        assert "xorshift" not in serialized
+        assert "src/map.mjs" not in serialized
+
+        report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert report["ok"] is True
+
+    def test_workspace_plan_hints_expand_prng_only_pm_output(self, tmp_path: Any) -> None:
+        plan_dir = tmp_path / "runtime" / "contracts"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan.md").write_text(
+            "\n".join(
+                [
+                    "# Plan",
+                    "- PRNG-001: Implement seedable xorshift128+",
+                    "- MAP-001: Design hex grid coordinate system",
+                    "- COM-001: Build action point economy",
+                    "- AI-001: Design behavior tree parser",
+                    "- MAP-002: Implement terrain generation and encounter placement",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        payload: dict[str, Any] = {
+            "workspace": str(tmp_path),
+            "overall_goal": "Establish project scaffolding and implement deterministic PRNG engine",
+            "focus": "Bootstrap npm project and first core module",
+            "tasks": [
+                {
+                    "id": "T01-prng",
+                    "title": "Implement seedable PRNG module",
+                    "goal": "Create deterministic PRNG with seed and range tests.",
+                    "acceptance_criteria": ["Run `node src/prng/xorshift128.test.js` passes"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Create PRNG", "Run test"],
+                    "scope_paths": ["src/prng"],
+                    "target_files": ["src/prng/xorshift128.js", "src/prng/xorshift128.test.js"],
+                }
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
+        assert not any("game PM decomposition" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        assert stats["game_context_attached"] == 1
+        assert stats["game_domain_tasks_added"] >= 10
+        report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
         assert report["ok"] is True
         assert not any("game PM decomposition" in item for item in report["critical_issues"])
 

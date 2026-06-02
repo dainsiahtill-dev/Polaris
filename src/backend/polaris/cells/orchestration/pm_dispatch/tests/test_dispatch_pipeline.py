@@ -141,13 +141,15 @@ def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
     assert first.kwargs["task_id"] == "T01"
     assert first.kwargs["stage"] == "pending_exec"
     assert first.kwargs["metadata"]["dispatch_mode"] == "shadow"
+    assert first.kwargs["metadata"]["route"] == "direct_to_director"
+    assert first.kwargs["metadata"]["blueprint_required"] is False
     assert first.kwargs["plan_id"]
     assert first.kwargs["plan_revision_id"].startswith("rev-")
     assert second.kwargs["trace_id"] == "trace-2"
 
 
-def test_mainline_publish_emits_pending_design_stage(monkeypatch) -> None:
-    """In mainline mode, tasks are published to PENDING_DESIGN for CE consumption."""
+def test_mainline_publish_routes_tasks_by_contract(monkeypatch) -> None:
+    """In mainline mode, PM records per-task task-market routing."""
     monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline")
 
     captured: list[object] = []
@@ -183,14 +185,22 @@ def test_mainline_publish_emits_pending_design_stage(monkeypatch) -> None:
         run_id="run-3",
         tasks=[
             {"id": "T01", "title": "Task 1"},
-            {"id": "T02", "goal": "Task 2 Goal"},
+            {"id": "T02", "goal": "Task 2 Goal", "task_market_route": "direct_to_director"},
         ],
     )
     assert len(captured) == 2
     first = captured[0]
+    second = captured[1]
     assert isinstance(first, _PublishCommand)
-    # mainline publishes to pending_design (not pending_exec)
+    assert isinstance(second, _PublishCommand)
+    # Default mainline tasks go through ChiefEngineer blueprint generation.
     assert first.kwargs["stage"] == "pending_design"
+    assert first.kwargs["metadata"]["route"] == "chief_blueprint_required"
+    assert first.kwargs["metadata"]["blueprint_required"] is True
+    # PM can still explicitly send narrow work directly to Director.
+    assert second.kwargs["stage"] == "pending_exec"
+    assert second.kwargs["metadata"]["route"] == "direct_to_director"
+    assert second.kwargs["metadata"]["blueprint_required"] is False
     assert first.kwargs["metadata"]["dispatch_mode"] == "mainline"
     assert first.kwargs["metadata"]["published_via"] == "mainline"
     assert first.kwargs["plan_id"]
@@ -199,7 +209,10 @@ def test_mainline_publish_emits_pending_design_stage(monkeypatch) -> None:
     assert len(results) == 2
     assert results[0]["task_id"] == "T01"
     assert results[0]["ok"] is True
+    assert results[0]["route"] == "chief_blueprint_required"
     assert results[1]["task_id"] == "T02"
+    assert results[1]["stage"] == "pending_exec"
+    assert results[1]["route"] == "direct_to_director"
 
 
 def test_mainline_design_alias_publishes_pending_design(monkeypatch) -> None:

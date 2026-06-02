@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
 import logging
 import os
 import threading
 from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.internal.adr_store import ADRStore
+from polaris.cells.chief_engineer.blueprint.internal.blueprint_persistence import (
+    BlueprintPersistence,
+)
 from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight import (
     PreflightContext,
     run_pre_dispatch_chief_engineer_ctx,
-)
-from polaris.cells.chief_engineer.blueprint.internal.director_pool import (
-    DirectorPool,
-    DirectorPoolConflictError,
 )
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
@@ -26,6 +23,26 @@ from polaris.cells.runtime.task_market.public.contracts import (
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
 
 logger = logging.getLogger(__name__)
+
+
+def _blueprint_runtime_path(blueprint_id: str) -> str:
+    return f"runtime/blueprints/{blueprint_id}.json"
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        token = value.strip()
+        return [token] if token else []
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return []
+    rows: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        token = str(item or "").strip()
+        if token and token not in seen:
+            seen.add(token)
+            rows.append(token)
+    return rows
 
 
 class CEConsumer:
@@ -41,7 +58,7 @@ class CEConsumer:
         visibility_timeout_seconds: How long a claimed task is locked before it
             becomes visible to other workers again on failure.
         poll_interval: Seconds to sleep between poll cycles when no task is found.
-        enable_director_pool: Whether to enable DirectorPool and ADRStore integration.
+        enable_director_pool: Legacy flag for ADRStore-backed blueprint persistence.
     """
 
     def __init__(
@@ -63,14 +80,9 @@ class CEConsumer:
         self._stop_event = threading.Event()
         self._svc = get_task_market_service()
         self._enable_director_pool = bool(enable_director_pool)
-        self._director_pool: DirectorPool | None = None
         self._adr_store: ADRStore | None = None
-        self._async_thread: threading.Thread | None = None
-        self._async_loop: asyncio.AbstractEventLoop | None = None
         if self._enable_director_pool:
-            self._director_pool = DirectorPool(workspace=self._workspace)
             self._adr_store = ADRStore(workspace=self._workspace)
-            self._start_async_loop()
 
     def poll_once(self) -> list[dict[str, Any]]:
         """Poll once for PENDING_DESIGN tasks.
@@ -113,58 +125,61 @@ class CEConsumer:
             blueprint_result = self._run_ce_preflight(task_id, payload)
 
             blueprint_id = str(blueprint_result.get("blueprint_id", f"bp-{task_id}"))
+            scope_paths = _string_list(blueprint_result.get("scope_paths")) or _string_list(payload.get("scope_paths"))
+            target_files = (
+                _string_list(blueprint_result.get("target_files"))
+                or _string_list(payload.get("target_files"))
+                or list(scope_paths)
+            )
+            blueprint_path = _blueprint_runtime_path(blueprint_id)
             ack_payload: dict[str, Any] = {
                 "blueprint_id": blueprint_id,
+                "blueprint_path": blueprint_path,
+                "runtime_blueprint_path": blueprint_path,
                 "context_snapshot_ref": str(payload.get("context_snapshot_ref", "")),
                 "guardrails": blueprint_result.get("guardrails", []),
                 "no_touch_zones": blueprint_result.get("no_touch_zones", []),
-                "scope_paths": blueprint_result.get("scope_paths", payload.get("scope_paths", [])),
+                "scope_paths": scope_paths,
+                "target_files": target_files,
+                "route": "chief_blueprint_required",
+                "task_market_route": "chief_blueprint_required",
+                "blueprint_required": True,
             }
 
-            if self._enable_director_pool and self._adr_store is not None and self._director_pool is not None:
+            if self._enable_director_pool and self._adr_store is not None:
                 self._adr_store.create_blueprint(
                     blueprint_id,
                     {
                         "task_id": task_id,
+                        "run_id": str(payload.get("run_id", "")),
+                        "route": "chief_blueprint_required",
                         "preflight_result": blueprint_result,
-                        "scope_paths": ack_payload["scope_paths"],
+                        "scope_paths": scope_paths,
+                        "target_files": target_files,
                         "guardrails": ack_payload["guardrails"],
                         "no_touch_zones": ack_payload["no_touch_zones"],
                     },
                 )
                 self._adr_store.compile(blueprint_id)
 
-                try:
-                    self._run_async(
-                        self._director_pool.assign_task(
-                            _TaskStub(
-                                task_id=task_id,
-                                scope_paths=payload.get("scope_paths", []),
-                                title=payload.get("title", task_id),
-                                goal=payload.get("goal", ""),
-                                payload=payload,
-                                run_id=payload.get("run_id", ""),
-                            ),
-                            _BlueprintStub(blueprint_id),
-                        )
-                    )
-                    ack_payload["director_pool_assigned"] = True
-                except DirectorPoolConflictError:
-                    self._svc.fail_task_stage(
-                        FailTaskStageCommandV1(
-                            workspace=self._workspace,
-                            task_id=task_id,
-                            lease_token=lease_token,
-                            error_code="CE_director_pool_conflict",
-                            error_message="Director pool conflict: no director assigned.",
-                            requeue_stage="pending_design",
-                        )
-                    )
-                    return {
+                ack_payload["director_pool_assignment"] = "deferred_to_task_market"
+            else:
+                BlueprintPersistence(self._workspace).save(
+                    blueprint_id,
+                    {
+                        "schema_version": "chief_engineer.blueprint.v1",
+                        "blueprint_id": blueprint_id,
+                        "status": "approved",
                         "task_id": task_id,
-                        "ok": False,
-                        "reason": "director_pool_conflict",
-                    }
+                        "run_id": str(payload.get("run_id", "")),
+                        "route": "chief_blueprint_required",
+                        "scope_paths": scope_paths,
+                        "target_files": target_files,
+                        "guardrails": ack_payload["guardrails"],
+                        "no_touch_zones": ack_payload["no_touch_zones"],
+                        "preflight_result": blueprint_result,
+                    },
+                )
 
             ack = self._svc.acknowledge_task_stage(
                 AcknowledgeTaskStageCommandV1(
@@ -279,69 +294,6 @@ class CEConsumer:
     def stop(self) -> None:
         """Signal the consumer to stop after the current poll cycle."""
         self._stop_event.set()
-        self._stop_async_loop()
-
-    def _start_async_loop(self) -> None:
-        """Start a background daemon thread running an asyncio event loop."""
-        self._async_loop = asyncio.new_event_loop()
-
-        def _loop_runner() -> None:
-            loop = self._async_loop
-            assert loop is not None
-            asyncio.set_event_loop(loop)
-            loop.run_forever()
-
-        self._async_thread = threading.Thread(target=_loop_runner, daemon=True)
-        self._async_thread.start()
-
-    def _stop_async_loop(self) -> None:
-        """Stop the background event loop and join the thread."""
-        if self._async_loop is not None:
-            self._async_loop.call_soon_threadsafe(self._async_loop.stop)
-        if self._async_thread is not None:
-            self._async_thread.join(timeout=5.0)
-            self._async_thread = None
-        if self._async_loop is not None:
-            self._async_loop.close()
-            self._async_loop = None
-
-    def _run_async(self, coro: Any) -> Any:
-        if self._async_loop is not None:
-            future = asyncio.run_coroutine_threadsafe(coro, self._async_loop)
-            return future.result()
-        try:
-            return asyncio.run(coro)
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                return pool.submit(loop.run_until_complete, coro).result()
-
-
-class _TaskStub:
-    """Minimal task stub for DirectorPool assignment."""
-
-    def __init__(
-        self,
-        task_id: str,
-        scope_paths: Any,
-        title: str = "",
-        goal: str = "",
-        payload: dict[str, Any] | None = None,
-        run_id: str = "",
-    ) -> None:
-        self.id = task_id
-        self.target_files = scope_paths if isinstance(scope_paths, list) else []
-        self.title = title or task_id
-        self.goal = goal
-        self.payload = dict(payload) if isinstance(payload, dict) else {}
-        self.run_id = run_id
-
-
-class _BlueprintStub:
-    """Minimal blueprint stub for DirectorPool assignment."""
-
-    def __init__(self, blueprint_id: str) -> None:
-        self.blueprint_id = blueprint_id
 
 
 __all__ = ["CEConsumer"]

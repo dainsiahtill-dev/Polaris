@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.internal.dependency_validator import (
@@ -132,15 +133,33 @@ _PM_SCOPE_SUFFIXES = {
     ".yml",
 }
 _PM_NON_PATH_TEXT_RE = re.compile(r"[\s,，、；;：:。]|[\u4e00-\u9fff]")
-_GAME_PM_MIN_TASKS = 6
-_GAME_PM_REQUIRED_DOMAINS = ("engine", "world", "combat", "ai", "persistence", "renderer", "tests")
+_GAME_PM_MIN_TASKS = 12
+_GAME_PM_REQUIRED_DOMAINS = (
+    "engine",
+    "world",
+    "combat",
+    "ai",
+    "content",
+    "progression",
+    "economy",
+    "persistence",
+    "renderer",
+    "audio",
+    "tooling",
+    "tests",
+)
 _GAME_PM_DOMAIN_SCOPE_PATHS = {
     "engine": "src/engine/game-loop.ts",
-    "world": "src/world/map-generator.ts",
+    "world": "src/world/procedural-map.ts",
     "combat": "src/combat/combat-system.ts",
-    "ai": "src/ai/enemy-ai.ts",
+    "ai": "src/ai/director-ai.ts",
+    "content": "src/content/cards.ts",
+    "progression": "src/progression/campaign.ts",
+    "economy": "src/economy/loot-table.ts",
     "persistence": "src/persistence/save-system.ts",
-    "renderer": "src/renderer/game-view.tsx",
+    "renderer": "src/renderer/scene-view.ts",
+    "audio": "src/audio/sound-events.ts",
+    "tooling": "src/tools/balance-report.ts",
     "tests": "tests/integration/game-session.test.ts",
 }
 _GAME_PM_DOMAIN_TITLES = {
@@ -148,13 +167,38 @@ _GAME_PM_DOMAIN_TITLES = {
     "world": "Implement procedural world generation",
     "combat": "Implement turn based combat system",
     "ai": "Implement enemy decision AI",
+    "content": "Implement game content catalog",
+    "progression": "Implement campaign progression",
+    "economy": "Implement loot and shop economy",
     "persistence": "Implement save and load persistence",
     "renderer": "Implement interactive game renderer",
+    "audio": "Implement audio event state",
+    "tooling": "Implement balance reporting tooling",
     "tests": "Add game integration test coverage",
 }
 _GAME_PM_HINT_RE = re.compile(
-    r"\b(game|roguelike|tactical|combat|renderer|gameplay|玩家|敌人|战斗|地图|世界|回合|存档)\b",
+    r"(game|roguelike|tactical|combat|renderer|gameplay|content|progression|economy|audio|tooling|游戏|玩家|敌人|战斗|地图|世界|回合|存档|内容|进度|经济|音频|工具)",
     re.IGNORECASE,
+)
+_GAME_PM_FRAGILE_ACCEPTANCE_RE = re.compile(
+    r"(参考序列|逐位一致|卡方|固定序列|魔法数字|快照序列|硬编码.*预期值|magic[- ]?number|golden[- ]?sequence|chi[- ]?square|snapshot[- ]?sequence|hard[- ]?coded.*expected)",
+    re.IGNORECASE,
+)
+_GAME_PM_FORBIDDEN_DEPENDENCY_POLICY_RE = re.compile(
+    r"(npm\s+install|pnpm\s+install|yarn\s+install|package\.json|tsconfig\.json|devdependencies|dev\s+dependencies|vitest|jest|webpack|cargo|rust|\btsc\b)",
+    re.IGNORECASE,
+)
+_GAME_PM_OFF_DOMAIN_CORE_RE = re.compile(
+    r"(prng|xorshift|procedural\s+map|map\s+generation|room\s+placement|a\*\s+connectivity)",
+    re.IGNORECASE,
+)
+_GAME_PM_WORKSPACE_SIGNAL_PATTERNS = (
+    re.compile(r"\bMAP-\d+\b", re.IGNORECASE),
+    re.compile(r"\bCOM-\d+\b", re.IGNORECASE),
+    re.compile(r"\bAI-\d+\b", re.IGNORECASE),
+    re.compile(r"\bPRNG-\d+\b", re.IGNORECASE),
+    re.compile(r"(terrain|encounter|combat|action point|behavior tree|enemy|loot|map generation)", re.IGNORECASE),
+    re.compile(r"(地形|遭遇|战斗|行动点|行为树|敌人|掉落|地图生成)", re.IGNORECASE),
 )
 
 
@@ -273,6 +317,26 @@ def _normalize_path(value: Any) -> str:
     token = token.strip("/")
     token = re.sub(r"/+", "/", token)
     return token.lower()
+
+
+def _game_domain_path_roots(domain: str) -> set[str]:
+    if domain == "tests":
+        return {"tests"}
+    roots = {f"src/{domain}"}
+    primary = _normalize_path(_GAME_PM_DOMAIN_SCOPE_PATHS.get(domain, f"src/{domain}/index.ts"))
+    if primary:
+        roots.add(primary)
+        parent = os.path.dirname(primary).replace("\\", "/").strip("/")
+        if parent:
+            roots.add(parent)
+    return {root for root in roots if root}
+
+
+def _path_matches_game_domain(path: str, domain: str) -> bool:
+    normalized = _normalize_path(path)
+    if not normalized:
+        return False
+    return any(normalized == root or normalized.startswith(f"{root}/") for root in _game_domain_path_roots(domain))
 
 
 def _is_concrete_pm_scope_path(value: Any) -> bool:
@@ -502,6 +566,185 @@ def _sanitize_pm_task_paths_in_place(tasks: list[dict[str, Any]], workspace_full
     return normalized_count
 
 
+def _normalize_game_policy_path(path: str) -> str:
+    normalized = _normalize_path(path)
+    if normalized == "package.json":
+        return ""
+    if normalized == "build.mjs":
+        return "scripts/build.mjs"
+    if normalized == "test.mjs":
+        return "scripts/test.mjs"
+    if normalized.startswith("test/"):
+        return f"tests/{normalized.removeprefix('test/')}"
+    return normalized
+
+
+def _sanitize_game_policy_paths_in_place(task: dict[str, Any]) -> int:
+    normalized_count = 0
+    for field in ("context_files", "target_files", "scope_paths"):
+        original_paths = _normalize_path_list(task.get(field) or [])
+        if not original_paths:
+            continue
+        sanitized = _dedupe_paths([mapped for path in original_paths if (mapped := _normalize_game_policy_path(path))])
+        if sanitized != original_paths:
+            task[field] = sanitized
+            normalized_count += 1
+    return normalized_count
+
+
+def _sanitize_game_dependency_policy_value(value: Any, verify_command: str) -> tuple[Any, int]:
+    replacements = [
+        "Preserve the existing package.json scripts and do not add external test/build dependencies",
+        "Run `node scripts/build.mjs` passes",
+        f"Run `{verify_command}` passes",
+    ]
+    if isinstance(value, str):
+        if not _GAME_PM_FORBIDDEN_DEPENDENCY_POLICY_RE.search(value):
+            return value, 0
+        return "Preserve existing no-external-dependency Node build/test scripts", 1
+    if isinstance(value, list):
+        normalized_items = [_normalize_text(item) for item in value if _normalize_text(item)]
+        if not any(_GAME_PM_FORBIDDEN_DEPENDENCY_POLICY_RE.search(item) for item in normalized_items):
+            return value, 0
+        kept = [item for item in normalized_items if not _GAME_PM_FORBIDDEN_DEPENDENCY_POLICY_RE.search(item)]
+        return _dedupe_text_items([*kept, *replacements]), 1
+    return value, 0
+
+
+def _sanitize_game_dependency_policy_in_place(task: dict[str, Any], verify_command: str) -> int:
+    sanitized_count = _sanitize_game_policy_paths_in_place(task)
+    for field in ("acceptance", "acceptance_criteria", "execution_checklist", "steps", "goal", "description"):
+        if field not in task:
+            continue
+        sanitized_value, changed = _sanitize_game_dependency_policy_value(task.get(field), verify_command)
+        if changed:
+            task[field] = sanitized_value
+            sanitized_count += changed
+    return sanitized_count
+
+
+def _has_forbidden_game_dependency_policy(task: dict[str, Any]) -> bool:
+    parts: list[str] = []
+    for field in ("acceptance", "acceptance_criteria", "execution_checklist", "steps", "goal", "description"):
+        value = task.get(field)
+        if isinstance(value, list):
+            parts.extend(_normalize_text(item) for item in value if _normalize_text(item))
+        elif isinstance(value, str):
+            parts.append(_normalize_text(value))
+    parts.extend(_normalize_path_list(task.get("target_files") or []))
+    return any(_GAME_PM_FORBIDDEN_DEPENDENCY_POLICY_RE.search(part) for part in parts) or any(
+        _normalize_path(path) == "package.json" for path in _normalize_path_list(task.get("target_files") or [])
+    )
+
+
+def _game_domains_for_task(task: dict[str, Any], workspace_full: Any) -> list[str]:
+    coverage_paths: set[str] = set()
+    for path in _collect_task_scope_paths(task):
+        relative = _workspace_relative_path(path, workspace_full)
+        if relative:
+            coverage_paths.add(relative)
+            continue
+        normalized = _normalize_path(path)
+        if normalized:
+            coverage_paths.add(normalized)
+
+    domains: list[str] = []
+    for domain in _GAME_PM_REQUIRED_DOMAINS:
+        if any(_path_matches_game_domain(path, domain) for path in coverage_paths):
+            domains.append(domain)
+    return domains
+
+
+def _game_task_has_policy_risk(task: dict[str, Any]) -> bool:
+    acceptance = task.get("acceptance_criteria")
+    if not isinstance(acceptance, list):
+        acceptance = task.get("acceptance")
+    acceptance_items = [_normalize_text(item) for item in (acceptance or []) if _normalize_text(item)]
+    text_parts = [
+        _normalize_text(task.get("title")),
+        _normalize_text(task.get("goal")),
+        _normalize_text(task.get("description")),
+        _normalize_text(task.get("backlog_ref")),
+    ]
+    return (
+        _has_forbidden_game_dependency_policy(task)
+        or _game_task_has_non_seed_stack_path(task)
+        or _has_fragile_game_acceptance(acceptance_items)
+        or _GAME_PM_OFF_DOMAIN_CORE_RE.search(" ".join(part for part in text_parts if part)) is not None
+    )
+
+
+def _game_task_has_non_seed_stack_path(task: dict[str, Any]) -> bool:
+    """Return True when a game task targets paths outside the seed TS stack."""
+    for path in _collect_task_scope_paths(task):
+        normalized = _normalize_path(path)
+        if not normalized:
+            continue
+        if normalized in {"src", "tests"}:
+            return True
+        if normalized in {"package.json", "tsconfig.json"}:
+            return True
+        if normalized.startswith("src/") and not normalized.endswith((".ts", ".tsx")):
+            return True
+        if normalized.startswith("tests/") and not normalized.endswith((".ts", ".tsx")):
+            return True
+    return False
+
+
+def _remove_game_policy_incompatible_tasks_in_place(tasks: list[dict[str, Any]], workspace_full: str) -> int:
+    """Remove narrow or stack-mutating tasks from game contracts.
+
+    The game scenario seed already owns package/test-runner scaffolding. PM may
+    still emit a narrow bootstrap/PRNG/map plan from a stale or incomplete
+    prompt. Sanitizing those tasks is not enough because they can still give
+    Director authority to replace the project stack. Keep risky tasks only when
+    their scope is anchored to one of the allowed game delivery domains, where
+    later sanitizers can safely normalize acceptance text.
+    """
+    kept: list[dict[str, Any]] = []
+    removed = 0
+    for task in tasks:
+        implementation_domains = [
+            domain for domain in _game_domains_for_task(task, workspace_full) if domain != "tests"
+        ]
+        if _game_task_has_non_seed_stack_path(task):
+            removed += 1
+            continue
+        if _game_task_has_policy_risk(task) and not implementation_domains:
+            removed += 1
+            continue
+        kept.append(task)
+    if removed:
+        tasks[:] = kept
+    return removed
+
+
+def _drop_unknown_dependency_refs_in_place(tasks: list[dict[str, Any]]) -> int:
+    known_ids = {_normalize_text(task.get("id")) for task in tasks if _normalize_text(task.get("id"))}
+    normalized_count = 0
+    for task in tasks:
+        task_id = _normalize_text(task.get("id"))
+        target_key = "depends_on"
+        raw_deps = task.get(target_key)
+        if not isinstance(raw_deps, list):
+            target_key = "dependencies"
+            raw_deps = task.get(target_key)
+        deps = _normalize_dep_list(raw_deps)
+        if not deps:
+            continue
+        kept: list[str] = []
+        seen: set[str] = set()
+        for dep in deps:
+            if dep not in known_ids or dep == task_id or dep in seen:
+                normalized_count += 1
+                continue
+            seen.add(dep)
+            kept.append(dep)
+        if kept != deps:
+            task[target_key] = kept
+    return normalized_count
+
+
 def _collect_task_scope_paths(task: dict[str, Any]) -> list[str]:
     paths: list[str] = []
     paths.extend(_normalize_path_list(task.get("scope_paths") or []))
@@ -515,6 +758,7 @@ def _is_game_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
         _normalize_text(normalized.get("overall_goal")),
         _normalize_text(normalized.get("focus")),
         _normalize_text(normalized.get("notes")),
+        _normalize_text(normalized.get("_quality_gate_game_context")),
     ]
     coverage_paths: list[str] = []
     for task in tasks:
@@ -537,10 +781,50 @@ def _is_game_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
     covered_domains = sum(
         1
         for domain in _GAME_PM_REQUIRED_DOMAINS
-        if any(path == f"src/{domain}" or path.startswith(f"src/{domain}/") for path in normalized_paths)
-        or (domain == "tests" and any(path == "tests" or path.startswith("tests/") for path in normalized_paths))
+        if any(_path_matches_game_domain(path, domain) for path in normalized_paths)
     )
     return covered_domains >= 2
+
+
+def _read_workspace_planning_hint_text(workspace_full: str) -> str:
+    workspace = Path(str(workspace_full or "").strip())
+    if not workspace:
+        return ""
+    candidates = (
+        workspace / "runtime" / "contracts" / "plan.md",
+        workspace / "runtime" / "contracts" / "requirements.md",
+        workspace / ".polaris" / "docs" / "30_backlog.md",
+        workspace / ".polaris" / "docs" / "10_requirements.md",
+        workspace / ".polaris" / "docs" / "product" / "plan.md",
+        workspace / ".polaris" / "docs" / "product" / "requirements.md",
+    )
+    chunks: list[str] = []
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                chunks.append(candidate.read_text(encoding="utf-8", errors="replace")[:12_000])
+        except OSError:
+            continue
+    return "\n".join(chunks)
+
+
+def _workspace_has_game_planning_hints(workspace_full: str) -> bool:
+    hint_text = _read_workspace_planning_hint_text(workspace_full)
+    if not hint_text:
+        return False
+    if _GAME_PM_HINT_RE.search(hint_text):
+        return True
+    signal_count = sum(1 for pattern in _GAME_PM_WORKSPACE_SIGNAL_PATTERNS if pattern.search(hint_text))
+    return signal_count >= 3
+
+
+def _attach_workspace_game_context_if_needed(normalized: dict[str, Any], tasks: list[Any], workspace_full: str) -> bool:
+    if _is_game_pm_contract(normalized, tasks):
+        return False
+    if not _workspace_has_game_planning_hints(workspace_full):
+        return False
+    normalized["_quality_gate_game_context"] = "game workspace_planning_hints"
+    return True
 
 
 def _covered_game_domains(tasks: list[Any], workspace_full: Any) -> list[str]:
@@ -555,11 +839,7 @@ def _covered_game_domains(tasks: list[Any], workspace_full: Any) -> list[str]:
 
     covered: list[str] = []
     for domain in _GAME_PM_REQUIRED_DOMAINS:
-        if domain == "tests":
-            if any(path == "tests" or path.startswith("tests/") for path in coverage_paths):
-                covered.append(domain)
-            continue
-        if any(path == f"src/{domain}" or path.startswith(f"src/{domain}/") for path in coverage_paths):
+        if any(_path_matches_game_domain(path, domain) for path in coverage_paths):
             covered.append(domain)
     return covered
 
@@ -725,6 +1005,52 @@ def _has_executable_or_file_acceptance_anchor(acceptance_items: list[str]) -> bo
     return False
 
 
+def _has_fragile_game_acceptance(acceptance_items: list[str]) -> bool:
+    return any(_GAME_PM_FRAGILE_ACCEPTANCE_RE.search(_normalize_text(item)) for item in acceptance_items)
+
+
+def _dedupe_text_items(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        token = _normalize_text(item)
+        key = token.lower()
+        if not token or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(token)
+    return deduped
+
+
+def _primary_task_evidence_path(task: dict[str, Any]) -> str:
+    for path in _collect_task_scope_paths(task):
+        normalized = _normalize_path(path)
+        if normalized and _is_concrete_pm_scope_path(normalized):
+            return normalized
+    return _GAME_PM_DOMAIN_SCOPE_PATHS["engine"]
+
+
+def _sanitize_fragile_game_acceptance_in_place(task: dict[str, Any], verify_command: str) -> int:
+    """Replace brittle game-randomness acceptance with invariant checks."""
+    normalized_fields = 0
+    replacement = [
+        f"verify {_primary_task_evidence_path(task)} exists",
+        f"Run `{verify_command}` passes",
+        "Randomness coverage checks deterministic repeatability, numeric bounds, and state restoration without literal output snapshots",
+    ]
+    for field in ("acceptance_criteria", "acceptance"):
+        raw_items = task.get(field)
+        if not isinstance(raw_items, list):
+            continue
+        normalized_items = [_normalize_text(item) for item in raw_items if _normalize_text(item)]
+        if not _has_fragile_game_acceptance(normalized_items):
+            continue
+        kept = [item for item in normalized_items if not _GAME_PM_FRAGILE_ACCEPTANCE_RE.search(item)]
+        task[field] = _dedupe_text_items([*kept, *replacement])
+        normalized_fields += 1
+    return normalized_fields
+
+
 def evaluate_pm_task_quality(
     normalized: dict[str, Any],
     docs_stage: dict[str, Any] | None = None,
@@ -759,6 +1085,7 @@ def evaluate_pm_task_quality(
     docs_enabled = bool(docs_stage_dict.get("enabled"))
     active_doc = _normalize_path(docs_stage_dict.get("active_doc_path", ""))
     active_dir = _normalize_path(os.path.dirname(active_doc)) if active_doc else ""
+    is_game_contract = _is_game_pm_contract(normalized, tasks)
 
     for index, task in enumerate(tasks, start=1):
         if not isinstance(task, dict):
@@ -783,6 +1110,8 @@ def evaluate_pm_task_quality(
             warnings.append(f"{task_id}: goal is too short")
         if _contains_prompt_leakage(combined_text):
             critical_issues.append(f"{task_id}: detected role/prompt leakage markers in task content")
+        if is_game_contract and _has_forbidden_game_dependency_policy(task):
+            critical_issues.append(f"{task_id}: game task violates no-external-dependency policy")
 
         acceptance = task.get("acceptance_criteria")
         if not isinstance(acceptance, list):
@@ -790,6 +1119,8 @@ def evaluate_pm_task_quality(
         acceptance_items = [_normalize_text(item) for item in (acceptance or []) if _normalize_text(item)]
         if not acceptance_items:
             critical_issues.append(f"{task_id}: acceptance criteria is missing")
+        elif _has_fragile_game_acceptance(acceptance_items):
+            critical_issues.append(f"{task_id}: acceptance uses fragile random-sequence assertions")
         elif not _has_executable_or_file_acceptance_anchor(acceptance_items):
             critical_issues.append(f"{task_id}: acceptance requires executable command or file evidence")
         elif not _has_measurable_acceptance_anchor(acceptance_items):
@@ -901,7 +1232,7 @@ def evaluate_pm_task_quality(
         critical_issues.append("docs-stage tasks missing metadata.doc_sections")
     if docs_enabled and task_count >= 2 and backlog_trace_task_count < max(1, task_count // 2):
         critical_issues.append("docs-stage tasks missing backlog traceability")
-    if _is_game_pm_contract(normalized, tasks):
+    if is_game_contract:
         if task_count < _GAME_PM_MIN_TASKS:
             critical_issues.append(f"game PM decomposition requires at least {_GAME_PM_MIN_TASKS} tasks")
         covered_domains = _covered_game_domains(tasks, effective_workspace)
@@ -965,8 +1296,12 @@ def autofix_pm_contract_for_quality(
         "deps_added": 0,
         "deps_normalized": 0,
         "acceptance_added": 0,
+        "acceptance_sanitized": 0,
         "descriptions_added": 0,
         "game_domain_tasks_added": 0,
+        "game_context_attached": 0,
+        "game_dependency_policy_sanitized": 0,
+        "game_policy_tasks_removed": 0,
         "paths_normalized": 0,
     }
     if not tasks:
@@ -975,6 +1310,17 @@ def autofix_pm_contract_for_quality(
     verify_command = detect_integration_verify_command(workspace_full)
     normalized_tasks = [task for task in tasks if isinstance(task, dict)]
     stats["paths_normalized"] += _sanitize_pm_task_paths_in_place(normalized_tasks, workspace_full)
+    if _attach_workspace_game_context_if_needed(normalized, normalized_tasks, workspace_full):
+        stats["game_context_attached"] += 1
+    if _is_game_pm_contract(normalized, normalized_tasks):
+        stats["game_policy_tasks_removed"] += _remove_game_policy_incompatible_tasks_in_place(
+            normalized_tasks,
+            workspace_full,
+        )
+        if stats["game_policy_tasks_removed"]:
+            stats["deps_normalized"] += _drop_unknown_dependency_refs_in_place(normalized_tasks)
+        for task in normalized_tasks:
+            stats["game_dependency_policy_sanitized"] += _sanitize_game_dependency_policy_in_place(task, verify_command)
     stats["deps_normalized"] += _normalize_dependency_refs_in_place(normalized_tasks)
     stats["game_domain_tasks_added"] += _append_missing_game_domain_tasks(
         normalized,
@@ -1003,6 +1349,12 @@ def autofix_pm_contract_for_quality(
             ]
             stats["checklists_added"] += 1
 
+        acceptance = task.get("acceptance_criteria")
+        if not isinstance(acceptance, list):
+            acceptance = task.get("acceptance")
+        acceptance_items = acceptance if isinstance(acceptance, list) else []
+
+        stats["acceptance_sanitized"] += _sanitize_fragile_game_acceptance_in_place(task, verify_command)
         acceptance = task.get("acceptance_criteria")
         if not isinstance(acceptance, list):
             acceptance = task.get("acceptance")

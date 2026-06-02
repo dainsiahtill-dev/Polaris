@@ -1,0 +1,69 @@
+card_id: "vc-20260603-pm-chief-director-task-market-routing"
+bug_summary: >
+  PM direct-to-Director dispatch and PM-to-ChiefEngineer blueprint dispatch were
+  represented as separate rollout behaviors instead of a single per-task routing
+  contract. This made complex full-chain execution hard to audit and could leave
+  the Director UI without visible task-market work even when PM and ChiefEngineer
+  had produced valid work items.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+  method: "_mainline_publish_dispatch_tasks_to_task_market"
+  symptom: >
+    Mainline dispatch routed every task to pending_design, while shadow dispatch
+    routed every task to pending_exec. The route was not encoded as auditable
+    per-task metadata.
+
+assumptions:
+  - id: "A1"
+    statement: "PM direct-to-Director and PM-to-ChiefEngineer routes are both valid and must coexist."
+    status: verified_true
+    evidence: "execution_governance_pipeline.yaml defines runtime.task_market as the broker between PM, ChiefEngineer, and Director."
+  - id: "A2"
+    statement: "Complex game/full-chain work must complete ChiefEngineer blueprint evidence before Director writes code."
+    status: verified_true
+    evidence: "User objective requires all planning and blueprints before generating a large Director task batch."
+  - id: "A3"
+    statement: "Director must claim executable work from pending_exec regardless of whether PM or ChiefEngineer published it."
+    status: verified_true
+    evidence: "Task-market FSM and DirectorExecutionConsumer already use pending_exec as the execution queue."
+
+pre_mortem:
+  failure_point: >
+    If only PM dispatch is changed, ChiefEngineer may still omit blueprint
+    metadata on ack, leaving Director unable to prove blueprint readiness.
+  risk_zone:
+    - "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    - "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    - "polaris/delivery/http/v2/director.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/orchestration/pm_dispatch/tests/test_dispatch_pipeline.py"
+      description: "Validate per-task pending_design vs pending_exec route decisions and metadata."
+      expected: "Complex tasks route to ChiefEngineer; explicit direct tasks route to Director."
+      status: passed
+    - file: "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py"
+      description: "Validate CE ack emits blueprint metadata and advances to pending_exec."
+      expected: "Director-claimable work item contains blueprint_id and scope metadata."
+      status: passed
+    - file: "polaris/tests/unit/delivery/http/routers/test_v2_director_router.py"
+      description: "Validate task-market pending_exec rows are visible through Director task APIs."
+      expected: "Director task response includes route and blueprint evidence."
+      status: passed
+  integration_tests:
+    - description: "Full-chain complex game audit via Electron."
+      command: "KERNELONE_E2E_PROJECT_SCENARIO=game npm run test:e2e -- src/backend/polaris/tests/electron/full-chain-audit.spec.ts --grep \"unattended full-chain audit\""
+      expected: "PM, ChiefEngineer, Director, and QA evidence all pass with visible Director task batch."
+      status: pending
+
+related_adrs:
+  - "src/backend/docs/governance/decisions/adr-0088-pm-chief-director-task-market-routing.md"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-06-03"
+  verified_by: "codex"
+  verified_at: "2026-06-03"

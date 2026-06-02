@@ -38,13 +38,28 @@ class ForbiddenPathRule:
 
 
 @dataclass(frozen=True)
+class ForbiddenFilePatternRule:
+    """A forbidden file pattern derived from AGENTS.md language/tooling policy."""
+
+    pattern: str
+    source_line: str
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class DirectorPolicyObject:
     """Structured policy object derived from project guidance."""
 
     forbidden_paths: tuple[ForbiddenPathRule, ...] = field(default_factory=tuple)
+    forbidden_file_patterns: tuple[ForbiddenFilePatternRule, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"forbidden_paths": [rule.to_dict() for rule in self.forbidden_paths]}
+        return {
+            "forbidden_paths": [rule.to_dict() for rule in self.forbidden_paths],
+            "forbidden_file_patterns": [rule.to_dict() for rule in self.forbidden_file_patterns],
+        }
 
 
 @dataclass(frozen=True)
@@ -111,7 +126,9 @@ class DirectorWritePolicyVerdict:
 def parse_agents_write_policy(agents_md: str | None) -> DirectorPolicyObject:
     """Parse forbidden file/path rules from AGENTS.md text."""
     rules: list[ForbiddenPathRule] = []
+    pattern_rules: list[ForbiddenFilePatternRule] = []
     seen: set[str] = set()
+    seen_patterns: set[str] = set()
     for raw_line in str(agents_md or "").splitlines():
         line = raw_line.strip()
         if not line or not _FORBIDDEN_LINE_RE.search(line):
@@ -123,7 +140,15 @@ def parse_agents_write_policy(agents_md: str | None) -> DirectorPolicyObject:
                 continue
             seen.add(normalized)
             rules.append(ForbiddenPathRule(path=normalized, source_line=line))
-    return DirectorPolicyObject(forbidden_paths=tuple(rules))
+        for pattern in _derived_forbidden_file_patterns(line):
+            if pattern in seen_patterns:
+                continue
+            seen_patterns.add(pattern)
+            pattern_rules.append(ForbiddenFilePatternRule(pattern=pattern, source_line=line))
+    return DirectorPolicyObject(
+        forbidden_paths=tuple(rules),
+        forbidden_file_patterns=tuple(pattern_rules),
+    )
 
 
 def diff_package_manifest(before_text: str | None, after_text: str | None) -> PackageManifestDiff:
@@ -174,9 +199,12 @@ def validate_director_write_policy(
         reasons.append(write_gate.reason)
 
     for changed in normalized_changed:
-        for rule in policy.forbidden_paths:
-            if _matches_forbidden_path(changed, rule.path):
-                reasons.append(f"AGENTS.md forbids writing {changed} (rule: {rule.path})")
+        for path_rule in policy.forbidden_paths:
+            if _matches_forbidden_path(changed, path_rule.path):
+                reasons.append(f"AGENTS.md forbids writing {changed} (rule: {path_rule.path})")
+        for pattern_rule in policy.forbidden_file_patterns:
+            if _matches_forbidden_file_pattern(changed, pattern_rule.pattern):
+                reasons.append(f"AGENTS.md forbids writing {changed} (rule: {pattern_rule.pattern})")
 
     package_diff: PackageManifestDiff | None = None
     if any(_is_package_manifest_path(path) for path in normalized_changed):
@@ -229,6 +257,36 @@ def _matches_forbidden_path(candidate: str, forbidden: str) -> bool:
     if not changed or not rule:
         return False
     return changed == rule or changed.startswith(rule + "/")
+
+
+def _matches_forbidden_file_pattern(candidate: str, pattern: str) -> bool:
+    changed = _normalize_policy_path(candidate).lower()
+    rule = str(pattern or "").strip().lower()
+    if not changed or not rule:
+        return False
+    if rule.startswith("*."):
+        return changed.endswith(rule[1:])
+    return changed == rule or changed.endswith(f"/{rule}")
+
+
+def _derived_forbidden_file_patterns(line: str) -> tuple[str, ...]:
+    lowered = str(line or "").lower()
+    patterns: list[str] = []
+    if "rust" in lowered or "cargo" in lowered:
+        patterns.extend(["Cargo.toml", "*.rs"])
+    if re.search(r"\bgo\b|golang|go modules?", lowered):
+        patterns.extend(["go.mod", "go.sum", "*.go"])
+    if "python" in lowered:
+        patterns.extend(["*.py", "requirements.txt", "pyproject.toml", "setup.py"])
+    if "webpack" in lowered:
+        patterns.append("webpack.config.js")
+    if "jest" in lowered:
+        patterns.append("jest.config.js")
+    if "vite" in lowered:
+        patterns.append("vite.config.ts")
+    if "vitest" in lowered:
+        patterns.append("vitest.config.ts")
+    return tuple(dict.fromkeys(patterns))
 
 
 def _is_package_manifest_path(path: str) -> bool:

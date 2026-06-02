@@ -19,6 +19,8 @@ import re
 import time
 from typing import Any, NoReturn
 
+from polaris.domain.verification.director_policy_gate import parse_agents_write_policy
+
 logger = logging.getLogger(__name__)
 
 CODE_WRITING_FORBIDDEN_WARNING = (
@@ -296,7 +298,8 @@ class CodeGenerationEngine:
 
     def _proposal_policy_violations(self, response_text: str) -> list[str]:
         """Return proposal violations against local workspace rules before applying writes."""
-        rules = self._workspace_rules_text().lower()
+        rules_text = self._workspace_rules_text()
+        rules = rules_text.lower()
         text = str(response_text or "")
         lowered = text.lower()
         violations: list[str] = []
@@ -309,6 +312,13 @@ class CodeGenerationEngine:
         for name in self._forbidden_workspace_file_names(rules):
             if self._proposal_mentions_path(text, name):
                 violations.append(f"workspace_policy_violation:forbidden_file:{name}")
+        policy = parse_agents_write_policy(rules_text)
+        for rule in policy.forbidden_paths:
+            if self._proposal_mentions_path(text, rule.path):
+                violations.append(f"workspace_policy_violation:forbidden_file:{rule.path}")
+        for rule in policy.forbidden_file_patterns:
+            if self._proposal_mentions_file_pattern(text, rule.pattern):
+                violations.append(f"workspace_policy_violation:forbidden_file:{rule.pattern}")
         return violations
 
     @staticmethod
@@ -342,6 +352,7 @@ class CodeGenerationEngine:
         snapshot = package_snapshot or self._workspace_package_policy_snapshot()
         violations: list[str] = []
         forbidden_names = self._forbidden_workspace_file_names(rules)
+        policy = parse_agents_write_policy(self._workspace_rules_text())
         preserve_scripts = "preserve package.json scripts" in rules
         protect_dependencies = "external build/test dependency" in rules or "do not introduce" in rules
 
@@ -352,6 +363,13 @@ class CodeGenerationEngine:
             for name in forbidden_names:
                 if relative_path == name or relative_path.endswith(f"/{name}"):
                     violations.append(f"workspace_policy_violation:forbidden_file:{name}")
+            for rule in policy.forbidden_paths:
+                path_rule = str(rule.path or "").strip().replace("\\", "/").lower()
+                if relative_path == path_rule or relative_path.startswith(f"{path_rule}/"):
+                    violations.append(f"workspace_policy_violation:forbidden_file:{rule.path}")
+            for rule in policy.forbidden_file_patterns:
+                if self._path_matches_forbidden_file_pattern(relative_path, rule.pattern):
+                    violations.append(f"workspace_policy_violation:forbidden_file:{rule.pattern}")
 
             if relative_path != "package.json":
                 continue
@@ -396,6 +414,27 @@ class CodeGenerationEngine:
                 str(response_text or "").replace("\\", "/"),
             )
         )
+
+    @staticmethod
+    def _path_matches_forbidden_file_pattern(relative_path: str, pattern: str) -> bool:
+        path = str(relative_path or "").strip().replace("\\", "/").lower()
+        rule = str(pattern or "").strip().lower()
+        if not path or not rule:
+            return False
+        if rule.startswith("*."):
+            return path.endswith(rule[1:])
+        return path == rule or path.endswith(f"/{rule}")
+
+    @classmethod
+    def _proposal_mentions_file_pattern(cls, response_text: str, pattern: str) -> bool:
+        text = str(response_text or "").replace("\\", "/")
+        rule = str(pattern or "").strip()
+        if not text or not rule:
+            return False
+        if rule.startswith("*."):
+            suffix = re.escape(rule[1:])
+            return bool(re.search(rf"(?im)^\s*(?:`{{3}}\s*)?(?:patch_file|file)\s*:\s*\S+{suffix}\b", text))
+        return cls._proposal_mentions_path(text, rule)
 
     async def _invoke_director_role_response(
         self,

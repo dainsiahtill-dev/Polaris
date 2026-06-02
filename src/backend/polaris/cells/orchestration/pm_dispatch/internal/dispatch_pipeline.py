@@ -287,6 +287,104 @@ def _extract_task_dependencies(task: dict[str, Any]) -> tuple[str, ...]:
     return tuple(deduped)
 
 
+_TASK_ROUTE_DIRECT_TO_DIRECTOR = "direct_to_director"
+_TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED = "chief_blueprint_required"
+
+
+def _task_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "y", "on"}:
+            return True
+        if token in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
+def _normalize_task_market_route(value: Any) -> str:
+    token = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if token in {
+        _TASK_ROUTE_DIRECT_TO_DIRECTOR,
+        "direct",
+        "director",
+        "director_direct",
+        "direct_director",
+        "pending_exec",
+        "exec",
+        "execution",
+    }:
+        return _TASK_ROUTE_DIRECT_TO_DIRECTOR
+    if token in {
+        _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED,
+        "chief",
+        "chief_engineer",
+        "chiefengineer",
+        "blueprint",
+        "blueprint_required",
+        "requires_blueprint",
+        "pending_design",
+        "design",
+    }:
+        return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
+    return ""
+
+
+def _task_market_route_for_task(task: dict[str, Any]) -> str:
+    metadata_raw = task.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    for container in (task, metadata):
+        for key in (
+            "task_market_route",
+            "route",
+            "routing",
+            "dispatch_route",
+            "execution_route",
+            "handoff_route",
+        ):
+            route = _normalize_task_market_route(container.get(key))
+            if route:
+                return route
+        for key in (
+            "requires_blueprint",
+            "blueprint_required",
+            "chief_engineer_required",
+            "requires_chief_engineer",
+            "requires_design",
+        ):
+            explicit = _task_bool(container.get(key))
+            if explicit is True:
+                return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
+            if explicit is False:
+                return _TASK_ROUTE_DIRECT_TO_DIRECTOR
+
+    role_values = (
+        task.get("assigned_to"),
+        task.get("assignee"),
+        task.get("owner_role"),
+        task.get("role"),
+        metadata.get("assigned_to"),
+        metadata.get("owner_role"),
+        metadata.get("role"),
+    )
+    role_tokens = {str(value or "").strip().lower().replace(" ", "_") for value in role_values if str(value or "")}
+    if role_tokens & {"chief", "chief_engineer", "chiefengineer"}:
+        return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
+
+    # Mainline defaults to the governed design route. PM can still explicitly
+    # mark narrow, already-scoped work as direct_to_director.
+    return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
+
+
+def _task_market_stage_for_route(route: str) -> str:
+    if route == _TASK_ROUTE_DIRECT_TO_DIRECTOR:
+        return "pending_exec"
+    return "pending_design"
+
+
 def _sync_revision_and_change_order(
     *,
     service: Any,
@@ -660,6 +758,9 @@ def _mainline_publish_dispatch_tasks_to_task_market(
         if not task_id:
             continue
         trace_id = str(task.get("trace_id") or run_id).strip() or run_id
+        task_route = _task_market_route_for_task(task)
+        task_stage = _task_market_stage_for_route(task_route)
+        blueprint_required = task_route == _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
         payload = {
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
             "goal": str(task.get("goal") or task.get("title") or "").strip(),
@@ -675,6 +776,9 @@ def _mainline_publish_dispatch_tasks_to_task_market(
             "cache_root": cache_root_full,
             "run_id": run_id,
             "pm_iteration": iteration,
+            "route": task_route,
+            "task_market_route": task_route,
+            "blueprint_required": blueprint_required,
         }
         try:
             command = publish_contract_type(
@@ -682,13 +786,16 @@ def _mainline_publish_dispatch_tasks_to_task_market(
                 trace_id=trace_id,
                 run_id=run_id,
                 task_id=task_id,
-                stage="pending_design",
+                stage=task_stage,
                 source_role="PM",
                 payload=payload,
                 metadata={
                     "dispatch_mode": mode,
                     "dispatch_rollout_mode": rollout_mode,
                     "published_via": "mainline",
+                    "route": task_route,
+                    "task_market_route": task_route,
+                    "blueprint_required": blueprint_required,
                     "plan_id": revision_context["plan_id"],
                     "plan_revision_id": revision_context["plan_revision_id"],
                 },
@@ -709,6 +816,8 @@ def _mainline_publish_dispatch_tasks_to_task_market(
                     "task_id": task_id,
                     "ok": result.ok,
                     "status": result.status,
+                    "stage": task_stage,
+                    "route": task_route,
                     "reason": result.reason,
                 }
             )
@@ -788,6 +897,7 @@ def _shadow_publish_dispatch_tasks_to_task_market(
         if not task_id:
             continue
         trace_id = str(task.get("trace_id") or run_id).strip() or run_id
+        task_route = _TASK_ROUTE_DIRECT_TO_DIRECTOR
         payload = {
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
             "goal": str(task.get("goal") or task.get("title") or "").strip(),
@@ -797,6 +907,9 @@ def _shadow_publish_dispatch_tasks_to_task_market(
                 task.get("acceptance_criteria") if isinstance(task.get("acceptance_criteria"), list) else []
             ),
             "task": dict(task),
+            "route": task_route,
+            "task_market_route": task_route,
+            "blueprint_required": False,
         }
         try:
             command = publish_contract_type(
@@ -809,6 +922,9 @@ def _shadow_publish_dispatch_tasks_to_task_market(
                 payload=payload,
                 metadata={
                     "dispatch_mode": mode,
+                    "route": task_route,
+                    "task_market_route": task_route,
+                    "blueprint_required": False,
                     "plan_id": revision_context["plan_id"],
                     "plan_revision_id": revision_context["plan_revision_id"],
                 },

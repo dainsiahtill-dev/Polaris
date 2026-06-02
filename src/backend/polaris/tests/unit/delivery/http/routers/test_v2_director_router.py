@@ -117,6 +117,8 @@ def _director_run_diagnostics(
     workspace: str = ".",
     can_execute: bool = True,
     execution_blockers: list[str] | None = None,
+    ready_task_ids: list[str] | None = None,
+    blueprint_ready_task_ids: list[str] | None = None,
 ) -> object:
     """Build a Director diagnostics response for /run preflight tests."""
 
@@ -148,7 +150,8 @@ def _director_run_diagnostics(
             total=1,
             pending=1,
             ready_to_execute=1,
-            ready_task_ids=["PM-42"],
+            ready_task_ids=list(ready_task_ids or ["PM-42"]),
+            blueprint_ready_task_ids=list(blueprint_ready_task_ids or []),
         ),
         workers=DirectorDiagnosticsWorkerSection(
             ok=True,
@@ -1868,6 +1871,8 @@ async def test_director_list_tasks(client: AsyncClient) -> None:
     mock_director = MagicMock()
     mock_director.list_tasks = AsyncMock(return_value=[])
     mock_director.config.workspace = "."
+    mock_task_market = MagicMock()
+    mock_task_market.query_status.return_value = MagicMock(items=())
 
     with (
         patch(
@@ -1878,6 +1883,7 @@ async def test_director_list_tasks(client: AsyncClient) -> None:
             "polaris.delivery.http.v2.director.select_task_rows_from_projection",
             return_value=[],
         ),
+        patch("polaris.delivery.http.v2.director.get_task_market_service", return_value=mock_task_market),
         patch(
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
@@ -1913,6 +1919,8 @@ async def test_director_list_tasks_auto_falls_back_to_local_queue(client: AsyncC
     mock_director = MagicMock()
     mock_director.list_tasks = AsyncMock(return_value=[mock_task])
     mock_director.config.workspace = "."
+    mock_task_market = MagicMock()
+    mock_task_market.query_status.return_value = MagicMock(items=())
 
     with (
         patch(
@@ -1923,6 +1931,7 @@ async def test_director_list_tasks_auto_falls_back_to_local_queue(client: AsyncC
             "polaris.delivery.http.v2.director.select_task_rows_from_projection",
             return_value=[],
         ),
+        patch("polaris.delivery.http.v2.director.get_task_market_service", return_value=mock_task_market),
         patch(
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
@@ -1944,6 +1953,71 @@ async def test_director_list_tasks_auto_falls_back_to_local_queue(client: AsyncC
     assert data[0]["pm_task_id"] == "PM-local"
     assert data[0]["blueprint_id"] == "BP-local"
     mock_director.list_tasks.assert_awaited_once_with(status=None)
+
+
+@pytest.mark.asyncio
+async def test_director_list_tasks_uses_task_market_execution_rows(client: AsyncClient) -> None:
+    """Task-market pending_exec rows should be visible before runtime projection exists."""
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.config.workspace = "."
+    mock_task_market = MagicMock()
+    mock_task_market.query_status.return_value = MagicMock(
+        items=(
+            {
+                "task_id": "PM-100",
+                "stage": "pending_exec",
+                "status": "pending_exec",
+                "priority": "high",
+                "claimed_by": "",
+                "depends_on": [],
+                "payload": {
+                    "title": "Implement combat loop",
+                    "goal": "Create deterministic combat loop",
+                    "target_files": ["src/combat.ts"],
+                    "scope_paths": ["src/combat.ts"],
+                    "blueprint_id": "bp-PM-100",
+                    "blueprint_path": "runtime/blueprints/bp-PM-100.json",
+                    "runtime_blueprint_path": "runtime/blueprints/bp-PM-100.json",
+                    "route": "chief_blueprint_required",
+                    "blueprint_required": True,
+                },
+                "metadata": {"route": "chief_blueprint_required"},
+            },
+        )
+    )
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[],
+        ),
+        patch("polaris.delivery.http.v2.director.get_task_market_service", return_value=mock_task_market),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.workflow_archive = None
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/tasks?source=auto")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["id"] == "PM-100"
+    assert data[0]["subject"] == "Implement combat loop"
+    assert data[0]["status"] == "PENDING"
+    assert data[0]["blueprint_id"] == "bp-PM-100"
+    assert data[0]["metadata"]["route"] == "chief_blueprint_required"
+    mock_director.list_tasks.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -3223,6 +3297,60 @@ async def test_director_run_orchestration_uses_diagnostics_ready_tasks_when_no_t
         assert kwargs["options"]["metadata"]["task_selection_source"] == "diagnostics_ready"
         assert kwargs["options"]["metadata"]["selected_task_ids"] == ["PM-42"]
         assert response.json()["tasks_queued"] == 1
+        mock_preflight.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_director_run_orchestration_merges_direct_and_blueprint_ready_tasks(
+    client: AsyncClient,
+) -> None:
+    """Director run should not hide direct PM tasks when CE blueprint tasks are also ready."""
+    mock_result = MagicMock()
+    mock_result.run_id = "run-mixed-ready"
+    mock_result.status = "running"
+    mock_result.message = "Director started for mixed ready tasks"
+    mock_result.metadata = {"tasks_queued": 2, "task_ids": ["chief-1", "direct-1"]}
+
+    with (
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
+        ) as mock_service_cls,
+        patch(
+            "polaris.delivery.http.v2.director.get_orchestration_service",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.delivery.http.v2.director._build_director_diagnostics_for_request",
+            new_callable=AsyncMock,
+        ) as mock_preflight,
+        patch(
+            "polaris.cells.roles.adapters.public.service.register_all_adapters",
+        ),
+    ):
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(return_value=mock_result)
+        mock_service_cls.return_value = mock_service
+        mock_preflight.return_value = _director_run_diagnostics(
+            workspace=".",
+            ready_task_ids=["direct-1", "chief-1"],
+            blueprint_ready_task_ids=["chief-1"],
+        )
+
+        response = await client.post(
+            "/v2/director/run",
+            json={
+                "workspace": ".",
+                "execution_mode": "parallel",
+            },
+        )
+
+        assert response.status_code == 200
+        _, kwargs = mock_service.execute_director_run.await_args
+        assert kwargs["tasks"] == ["chief-1", "direct-1"]
+        assert kwargs["options"]["task_filter"] is None
+        assert kwargs["options"]["metadata"]["task_selection_source"] == "diagnostics_mixed_ready"
+        assert kwargs["options"]["metadata"]["selected_task_ids"] == ["chief-1", "direct-1"]
+        assert response.json()["tasks_queued"] == 2
         mock_preflight.assert_awaited_once()
 
 

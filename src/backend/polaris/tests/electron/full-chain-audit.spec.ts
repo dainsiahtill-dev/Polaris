@@ -32,7 +32,16 @@ type PmStatusPayload = {
 };
 type SnapshotPayload = { tasks?: unknown[]; pm_state?: Record<string, unknown> | null };
 type DirectorStatusPayload = { state?: string };
-type DirectorTaskPayload = { status?: string; metadata?: { pm_task_id?: string } };
+type DirectorTaskPayload = {
+  id?: string;
+  task_id?: string;
+  status?: string;
+  metadata?: {
+    pm_task_id?: string;
+    source_task_id?: string;
+    external_task_id?: string;
+  };
+};
 type DirectorDiagnosticsPayload = {
   can_execute?: boolean;
   execution_blockers?: string[];
@@ -348,8 +357,38 @@ function positiveIntFromEnv(name: string, fallback: number): number {
 }
 
 const PM_FINISH_TIMEOUT_MS = positiveIntFromEnv("KERNELONE_E2E_PM_FINISH_TIMEOUT_MS", 45 * 60 * 1000);
-const GAME_PM_MIN_TASKS = 6;
-const GAME_PM_REQUIRED_DOMAINS = ["engine", "world", "combat", "ai", "persistence", "renderer", "tests"] as const;
+const GAME_PM_MIN_TASKS = 12;
+const GAME_PM_REQUIRED_DOMAINS = [
+  "engine",
+  "world",
+  "combat",
+  "ai",
+  "content",
+  "progression",
+  "economy",
+  "persistence",
+  "renderer",
+  "audio",
+  "tooling",
+  "tests",
+] as const;
+type GameDomain = (typeof GAME_PM_REQUIRED_DOMAINS)[number];
+const GAME_PM_DOMAIN_ROOTS: Record<GameDomain, readonly string[]> = {
+  engine: ["src/engine"],
+  world: ["src/world"],
+  combat: ["src/combat"],
+  ai: ["src/ai"],
+  content: ["src/content"],
+  progression: ["src/progression"],
+  economy: ["src/economy"],
+  persistence: ["src/persistence"],
+  renderer: ["src/renderer"],
+  audio: ["src/audio"],
+  tooling: ["src/tools"],
+  tests: ["tests"],
+};
+const GAME_PM_FRAGILE_ACCEPTANCE_RE = /(参考序列|逐位一致|卡方|固定序列|魔法数字|快照序列|硬编码.*预期值|magic[- ]?number|golden[- ]?sequence|chi[- ]?square|snapshot[- ]?sequence|hard[- ]?coded.*expected)/i;
+const GAME_FORBIDDEN_RUNTIME_ARTIFACT_RE = /(^|\/)(package\.json|Cargo\.toml|go\.(?:mod|sum)|requirements\.txt|pyproject\.toml|setup\.py|webpack\.config\.[cm]?[jt]s|jest\.config\.[cm]?[jt]s|vite\.config\.[cm]?ts|vitest\.config\.[cm]?ts)$|(\.rs|\.go|\.py)$/i;
 const FULL_CHAIN_START_PHASES = ["court", "pm", "chief", "director", "qa"] as const;
 type FullChainStartPhase = (typeof FULL_CHAIN_START_PHASES)[number];
 const FULL_CHAIN_PHASE_ORDER: Record<FullChainStartPhase, number> = {
@@ -413,6 +452,12 @@ function normalizeCoveragePath(candidate: string, workspace: string): string {
   return normalized.replace(/^\.\//, "");
 }
 
+function pathMatchesGameDomain(candidate: string, domain: GameDomain): boolean {
+  const normalized = String(candidate || "").replace(/\\/g, "/").toLowerCase().replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!normalized) return false;
+  return GAME_PM_DOMAIN_ROOTS[domain].some((root) => normalized === root || normalized.startsWith(`${root}/`));
+}
+
 function auditPmContract(pmContract: PmContractPayload, workspace: string, scenario: FullChainProjectScenario): PmContractAudit {
   const issues: string[] = [];
   const tasks = Array.isArray(pmContract?.tasks) ? pmContract.tasks : [];
@@ -436,6 +481,8 @@ function auditPmContract(pmContract: PmContractPayload, workspace: string, scena
     const acceptance = contractStringList(Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : task.acceptance);
     const hasAcceptance = acceptance.length > 0;
     const hasExecutableAcceptance = hasAcceptance && hasExecutableOrFileAcceptance(acceptance);
+    const hasFragileGameAcceptance = scenario.key === "game"
+      && acceptance.some((item) => GAME_PM_FRAGILE_ACCEPTANCE_RE.test(item));
     const pathFields = [...scopePaths, ...targetFiles];
     const unsafePaths = pathFields.filter((item) => !isWorkspaceBoundPath(item, workspace));
     coveragePaths.push(...pathFields.map((item) => normalizeCoveragePath(item, workspace)).filter(Boolean));
@@ -446,6 +493,7 @@ function auditPmContract(pmContract: PmContractPayload, workspace: string, scena
       ...(hasSteps ? [] : ["missing_execution_checklist"]),
       ...(hasAcceptance ? [] : ["missing_acceptance"]),
       ...(hasExecutableAcceptance ? [] : ["acceptance_without_command_or_file_evidence"]),
+      ...(hasFragileGameAcceptance ? ["fragile_random_acceptance"] : []),
       ...unsafePaths.map((item) => `path_not_workspace_bound:${item}`),
     ];
     if (taskIssues.length > 0) {
@@ -456,8 +504,7 @@ function auditPmContract(pmContract: PmContractPayload, workspace: string, scena
 
   const coveredGameDomains = scenario.key === "game"
     ? GAME_PM_REQUIRED_DOMAINS.filter((domain) => {
-      if (domain === "tests") return coveragePaths.some((item) => item === "tests" || item.startsWith("tests/"));
-      return coveragePaths.some((item) => item === `src/${domain}` || item.startsWith(`src/${domain}/`));
+      return coveragePaths.some((item) => pathMatchesGameDomain(item, domain));
     })
     : [];
   const missingGameDomains = scenario.key === "game"
@@ -568,13 +615,43 @@ function buildResumePlanningTaskSeeds(scenario: FullChainProjectScenario): Resum
         ],
       },
       {
-        id: "GAME-AI-CONTENT",
+        id: "GAME-AI",
         domain: "ai",
-        title: "Extend enemy director AI and content tables",
-        scopePaths: ["src/ai/director-ai.ts", "src/content/cards.ts", "src/content/relics.ts"],
+        title: "Extend enemy director AI and tactical decision behavior",
+        scopePaths: ["src/ai/director-ai.ts", "src/ai/behavior-tree.ts"],
         acceptance: [
-          "Run `npm run build` and verify src/ai/director-ai.ts, src/content/cards.ts, and src/content/relics.ts exist.",
-          "Run `npm run test` and verify AI/content behavior is exercised by the existing test suite.",
+          "Run `npm run build` and verify src/ai/director-ai.ts and src/ai/behavior-tree.ts exist.",
+          "Run `npm run test` and verify AI behavior is exercised by the existing test suite.",
+        ],
+      },
+      {
+        id: "GAME-CONTENT",
+        domain: "content",
+        title: "Extend cards, relics, enemies, and encounter content tables",
+        scopePaths: ["src/content/cards.ts", "src/content/relics.ts", "src/content/enemies.ts"],
+        acceptance: [
+          "Run `npm run build` and verify content tables exist under src/content.",
+          "Run `npm run test` and verify content references remain structurally valid.",
+        ],
+      },
+      {
+        id: "GAME-PROGRESSION",
+        domain: "progression",
+        title: "Extend campaign progression, quests, and unlock state",
+        scopePaths: ["src/progression/campaign.ts", "src/progression/quest-log.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/progression/campaign.ts and src/progression/quest-log.ts exist.",
+          "Run `npm run test` and verify progression behavior is represented in integration coverage.",
+        ],
+      },
+      {
+        id: "GAME-ECONOMY",
+        domain: "economy",
+        title: "Extend loot, rewards, and shop economy rules",
+        scopePaths: ["src/economy/loot-table.ts", "src/economy/shop.ts"],
+        acceptance: [
+          "Run `npm run build` and verify economy modules exist.",
+          "Run `npm run test` and verify loot/reward behavior is covered without brittle random constants.",
         ],
       },
       {
@@ -591,20 +668,46 @@ function buildResumePlanningTaskSeeds(scenario: FullChainProjectScenario): Resum
         id: "GAME-RENDERER",
         domain: "renderer",
         title: "Extend browser-facing HUD and input rendering",
-        scopePaths: ["src/renderer/hud.ts", "src/renderer/input-controller.ts", "src/main.ts", "index.html"],
+        scopePaths: ["src/renderer/hud.ts", "src/renderer/input-controller.ts", "src/renderer/scene-view.ts", "src/main.ts", "index.html"],
         acceptance: [
-          "Run `npm run build` and verify src/renderer/hud.ts, src/renderer/input-controller.ts, src/main.ts, and index.html exist.",
+          "Run `npm run build` and verify renderer modules, src/main.ts, and index.html exist.",
           "Run `npm run test` and verify renderer-facing integration behavior remains covered.",
+        ],
+      },
+      {
+        id: "GAME-AUDIO",
+        domain: "audio",
+        title: "Extend audio event routing and feedback cues",
+        scopePaths: ["src/audio/sound-events.ts", "src/audio/music-state.ts"],
+        acceptance: [
+          "Run `npm run build` and verify audio modules exist.",
+          "Run `npm run test` and verify audio state contracts are represented structurally.",
+        ],
+      },
+      {
+        id: "GAME-TOOLING",
+        domain: "tooling",
+        title: "Extend local balance-report tooling without changing package scripts",
+        scopePaths: ["src/tools/balance-report.ts", "scripts/build.mjs", "scripts/test.mjs", "package.json"],
+        acceptance: [
+          "Run `npm run build` and verify src/tools/balance-report.ts exists.",
+          "Run `npm run test` and verify package scripts remain node scripts/build.mjs and node scripts/test.mjs.",
         ],
       },
       {
         id: "GAME-TESTS",
         domain: "tests",
         title: "Strengthen unit and integration tests for current-run game changes",
-        scopePaths: ["tests/unit/combat-system.test.ts", "tests/integration/game-session.test.ts"],
+        scopePaths: [
+          "tests/unit/combat-system.test.ts",
+          "tests/unit/procedural-map.test.ts",
+          "tests/integration/game-session.test.ts",
+          "tests/integration/save-restore.test.ts",
+          "tests/e2e/gameplay-loop.test.ts",
+        ],
         acceptance: [
-          "Run `npm run test` and verify tests/unit/combat-system.test.ts contains describe/expect coverage.",
-          "Run `npm run test` and verify tests/integration/game-session.test.ts contains describe/expect coverage.",
+          "Run `npm run test` and verify all unit, integration, and e2e test files contain describe/expect coverage.",
+          "Run `npm run build` and verify test additions do not require external dependencies.",
         ],
       },
     ];
@@ -1406,12 +1509,35 @@ function buildGameProjectScenario(): FullChainProjectScenario {
     "package.json",
     "tsconfig.json",
     "src/engine/game-loop.ts",
+    "src/engine/state.ts",
     "src/world/procedural-map.ts",
+    "src/world/encounter-table.ts",
     "src/combat/combat-system.ts",
+    "src/combat/action-queue.ts",
     "src/ai/director-ai.ts",
+    "src/ai/behavior-tree.ts",
+    "src/content/cards.ts",
+    "src/content/relics.ts",
+    "src/content/enemies.ts",
+    "src/progression/campaign.ts",
+    "src/progression/quest-log.ts",
+    "src/economy/loot-table.ts",
+    "src/economy/shop.ts",
+    "src/persistence/save-system.ts",
     "src/renderer/hud.ts",
+    "src/renderer/input-controller.ts",
+    "src/renderer/scene-view.ts",
+    "src/audio/sound-events.ts",
+    "src/audio/music-state.ts",
+    "src/tools/balance-report.ts",
   ];
-  const testFiles = ["tests/unit/combat-system.test.ts", "tests/integration/game-session.test.ts"];
+  const testFiles = [
+    "tests/unit/combat-system.test.ts",
+    "tests/unit/procedural-map.test.ts",
+    "tests/integration/game-session.test.ts",
+    "tests/integration/save-restore.test.ts",
+    "tests/e2e/gameplay-loop.test.ts",
+  ];
   const files: Record<string, string> = {
     "package.json": JSON.stringify({
       name: "polaris-tactical-game-e2e",
@@ -1469,11 +1595,21 @@ function buildGameProjectScenario(): FullChainProjectScenario {
     "src/combat/combat-system.ts": makeLargeTsModule("combat-system", 40),
     "src/combat/action-queue.ts": makeLargeTsModule("action-queue", 30),
     "src/ai/director-ai.ts": makeLargeTsModule("enemy-director-ai", 34),
+    "src/ai/behavior-tree.ts": makeLargeTsModule("behavior-tree", 32),
     "src/content/cards.ts": makeLargeTsModule("card-content", 32),
     "src/content/relics.ts": makeLargeTsModule("relic-content", 24),
+    "src/content/enemies.ts": makeLargeTsModule("enemy-content", 28),
+    "src/progression/campaign.ts": makeLargeTsModule("campaign-progression", 34),
+    "src/progression/quest-log.ts": makeLargeTsModule("quest-log", 28),
+    "src/economy/loot-table.ts": makeLargeTsModule("loot-table", 32),
+    "src/economy/shop.ts": makeLargeTsModule("shop-economy", 28),
     "src/persistence/save-system.ts": makeLargeTsModule("save-system", 30),
     "src/renderer/hud.ts": makeLargeTsModule("hud-renderer", 32),
     "src/renderer/input-controller.ts": makeLargeTsModule("input-controller", 28),
+    "src/renderer/scene-view.ts": makeLargeTsModule("scene-view", 30),
+    "src/audio/sound-events.ts": makeLargeTsModule("sound-events", 24),
+    "src/audio/music-state.ts": makeLargeTsModule("music-state", 24),
+    "src/tools/balance-report.ts": makeLargeTsModule("balance-report", 26),
     "src/main.ts": [
       "export const bootMessage = \"Polaris tactical roguelike ready\";",
       "export function boot(): string {",
@@ -1481,7 +1617,10 @@ function buildGameProjectScenario(): FullChainProjectScenario {
       "}",
     ].join("\n"),
     "tests/unit/combat-system.test.ts": makeTestModule("combat-system-unit", 18),
+    "tests/unit/procedural-map.test.ts": makeTestModule("procedural-map-unit", 18),
     "tests/integration/game-session.test.ts": makeTestModule("game-session-integration", 18),
+    "tests/integration/save-restore.test.ts": makeTestModule("save-restore-integration", 18),
+    "tests/e2e/gameplay-loop.test.ts": makeTestModule("gameplay-loop-e2e", 18),
     "docs/README.md": "# Tactical Roguelike Game Docs\n\nInitial docs marker for Polaris full-chain game audit.",
     "README.md": "# Tactical Roguelike Game\n\nGenerated by Polaris full-chain game audit.",
   };
@@ -1491,16 +1630,17 @@ function buildGameProjectScenario(): FullChainProjectScenario {
     workspacePrefix: "Polaris_Game_Stress_E2E",
     packageName: "polaris-tactical-game-e2e",
     goal: [
-      "构建一个中大型 Web 战术 Roguelike 游戏项目，要求可执行、可测试、可审计。",
-      "游戏必须包含随机种子地图生成、回合制战斗、卡牌/技能系统、敌人 AI、存档恢复、关卡进度、前端渲染和测试。",
-      "项目必须落在当前 C:/Temp 工作区内，至少 3 个模块、500+ 行代码、单元测试和集成测试，并提供 npm run build / npm run test 验收命令。",
+      "构建一个中大型 Web 战术 Roguelike 游戏项目，要求可执行、可测试、可审计，并且必须先完成完整计划和 Chief Engineer 全量蓝图，再交给 Director 落地代码。",
+      "游戏必须包含随机种子地图生成、回合制战斗、卡牌/技能系统、敌人 AI、内容表、战役进度、经济/掉落、存档恢复、音频事件、前端渲染、平衡报告工具和测试。",
+      "PM 必须拆出至少 12 个可执行任务，覆盖 engine、world、combat、ai、content、progression、economy、persistence、renderer、audio、tooling、tests 等领域，每个任务都要有目标、作用域、执行清单和可测验收。",
+      "项目必须落在当前 C:/Temp 工作区内，至少 8 个模块、1200+ 行代码、单元测试、集成测试和 e2e 结构化测试，并提供 npm run build / npm run test 验收命令。",
       "必须保留现有 node scripts/build.mjs 与 scripts/test.mjs 结构化验收脚本，禁止引入 Rust/Cargo、Webpack/Jest/Vite/Vitest 或任何新外部依赖。",
       "如果实现 PRNG，不允许写固定魔法数期望测试，只能测试同 seed 序列一致性、范围和分布稳定性。",
     ].join(" "),
     replies: [
       "",
-      "补充：游戏要支持浏览器端 Canvas 或 DOM 渲染、回合制行动队列、随机种子地图、敌人 AI、卡牌/技能内容表、存档恢复和本地排行榜接口。只能使用当前 TypeScript 文件和内置 node 结构化验收脚本，不要更换技术栈或包管理方案。",
-      "补充：请拆成 engine、world、combat、ai、content、persistence、renderer、tests 等可交付模块，每个任务必须包含目标、作用域、执行清单和可测验收。测试必须验证行为不变量，禁止把未经计算核对的随机数常量写成验收期望；禁止新增 Cargo.toml、webpack.config.js、jest.config.js 等非当前 seed 所需配置。",
+      "补充：游戏要支持浏览器端 Canvas 或 DOM 渲染、回合制行动队列、随机种子地图、敌人 AI、卡牌/技能/敌人内容表、战役进度、经济掉落、音频事件、存档恢复、本地排行榜接口和平衡报告工具。只能使用当前 TypeScript 文件和内置 node 结构化验收脚本，不要更换技术栈或包管理方案。",
+      "补充：请拆成至少 12 个 Director 可执行任务，覆盖 engine、world、combat、ai、content、progression、economy、persistence、renderer、audio、tooling、tests。必须先让 Chief Engineer 为全部 PM 任务生成可交付蓝图且 handoff-ready，再允许 Director 执行。测试必须验证行为不变量，禁止把未经计算核对的随机数常量写成验收期望；禁止新增 Cargo.toml、webpack.config.js、jest.config.js 等非当前 seed 所需配置。",
     ],
     buildRequiredFiles,
     testFiles,
@@ -1511,7 +1651,7 @@ function buildGameProjectScenario(): FullChainProjectScenario {
 async function createComplexProject(
   baseRoot: string,
   scenario: FullChainProjectScenario,
-): Promise<{ workspace: string; metrics: ComplexityMetrics }> {
+): Promise<{ workspace: string; metrics: ComplexityMetrics; scenario: FullChainProjectScenario }> {
   const workspace = path.join(baseRoot, resolveSafeWorkspaceName(scenario.workspacePrefix));
   const resolvedBase = path.resolve(baseRoot);
   const resolvedWorkspace = path.resolve(workspace);
@@ -1528,7 +1668,7 @@ async function createComplexProject(
   );
 
   const metrics = await measureComplexity(workspace);
-  return { workspace, metrics };
+  return { workspace, metrics, scenario };
 }
 
 function isAuditableCodeFile(filePath: string): boolean {
@@ -1684,6 +1824,23 @@ function compareProjectSnapshots(
     addedCodeLines,
     removedCodeLines,
   };
+}
+
+function findForbiddenRuntimeArtifacts(
+  scenario: FullChainProjectScenario,
+  contribution: RuntimeContributionMetrics,
+): string[] {
+  if (scenario.key !== "game") {
+    return [];
+  }
+  const changedFiles = [
+    ...contribution.addedFiles.map((filePath) => `added:${filePath}`),
+    ...contribution.modifiedFiles.map((filePath) => `modified:${filePath}`),
+  ];
+  return changedFiles.filter((entry) => {
+    const filePath = entry.replace(/^(?:added|modified):/, "");
+    return GAME_FORBIDDEN_RUNTIME_ARTIFACT_RE.test(toPosixPath(filePath));
+  });
 }
 
 function countPmAutofixTasks(tasks: NonNullable<PmContractPayload["tasks"]>): number {
@@ -2235,12 +2392,40 @@ async function runDirectorFromWorkspace(
     intervals: [1000, 2000, 5000, 10_000],
   }).toBe(0);
 
-  const tasks = await requestJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto");
-  const linkedTaskCount = Array.isArray(tasks)
-    ? tasks.filter((item) => String(item?.metadata?.pm_task_id || "").trim().length > 0).length
+  const executed = await tryRuntimeArtifact(window, "results/director.result.json", options);
+  return await collectDirectorTaskExposure(window, executed || undefined);
+}
+
+async function readDirectorResultTaskCount(artifact: RuntimeArtifactRef | null | undefined): Promise<number> {
+  if (!artifact?.artifactPath) return 0;
+  const payload = await readJsonFile<DirectorResultArtifact>(artifact.artifactPath);
+  const taskResults = Array.isArray(payload?.task_results) ? payload.task_results.length : 0;
+  const total = Number(payload?.total || 0);
+  const terminal = Number(payload?.successes || 0) + Number(payload?.failures || 0) + Number(payload?.blocked || 0);
+  return Math.max(taskResults, total, terminal);
+}
+
+async function collectDirectorTaskExposure(
+  window: Page,
+  artifact?: RuntimeArtifactRef | null,
+): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string }> {
+  const tasks = await requestJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto").catch(() => []);
+  const linkedByApi = Array.isArray(tasks)
+    ? tasks.filter((item) => {
+      const metadata = item?.metadata || {};
+      return [
+        metadata.pm_task_id,
+        metadata.source_task_id,
+        metadata.external_task_id,
+        item?.id,
+        item?.task_id,
+      ].some((value) => String(value || "").trim().length > 0);
+    }).length
     : 0;
-  const uiTaskCount = await window.getByTestId("director-task-item").count();
-  const status = await requestJson<DirectorStatusPayload>(window, "/v2/director/status?source=auto");
+  const resultTaskCount = await readDirectorResultTaskCount(artifact);
+  const linkedTaskCount = Math.max(linkedByApi, resultTaskCount);
+  const uiTaskCount = await window.getByTestId("director-task-item").count().catch(() => 0);
+  const status = await requestJson<DirectorStatusPayload>(window, "/v2/director/status?source=auto").catch(() => ({}));
   return { linkedTaskCount, uiTaskCount, state: String(status.state || "").trim().toUpperCase() };
 }
 
@@ -2270,6 +2455,7 @@ async function runDirectorUntilResultArtifact(
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     const existing = await tryRuntimeArtifact(window, "results/director.result.json", options);
     if (existing) {
+      latestRun = await collectDirectorTaskExposure(window, existing);
       return { ...latestRun, ...existing, source: "existing_artifact" };
     }
 
@@ -2296,6 +2482,7 @@ async function runDirectorUntilResultArtifact(
       });
       const reconciled = await tryRuntimeArtifact(window, "results/director.result.json", options);
       if (reconciled) {
+        latestRun = await collectDirectorTaskExposure(window, reconciled);
         return { ...latestRun, ...reconciled, source: "reconciled_terminal" };
       }
     }
@@ -2313,6 +2500,7 @@ async function runDirectorUntilResultArtifact(
     latestRun = await runDirectorFromWorkspace(window, options);
     const executed = await tryRuntimeArtifact(window, "results/director.result.json", options);
     if (executed) {
+      latestRun = await collectDirectorTaskExposure(window, executed);
       return { ...latestRun, ...executed, source: "executed" };
     }
   }
@@ -2495,6 +2683,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       ? {
         workspace: path.resolve(resumeWorkspace),
         metrics: await measureComplexity(path.resolve(resumeWorkspace)),
+        scenario,
       }
       : await createComplexProject("C:/Temp", scenario);
     const scenarioSeedMetrics = measureScenarioDefinitionComplexity(scenario);
@@ -2534,6 +2723,12 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     expect(project.metrics.moduleCount).toBeGreaterThanOrEqual(3);
     expect(project.metrics.configFileCount).toBeGreaterThanOrEqual(3);
     expect(project.metrics.testFileCount).toBeGreaterThanOrEqual(2);
+    if (scenario.key === "game") {
+      expect(project.metrics.fileCount).toBeGreaterThanOrEqual(30);
+      expect(project.metrics.codeLineCount).toBeGreaterThanOrEqual(1200);
+      expect(project.metrics.moduleCount).toBeGreaterThanOrEqual(10);
+      expect(project.metrics.testFileCount).toBeGreaterThanOrEqual(5);
+    }
 
     const initialSettings = await requestJson<SettingsPayload>(window, "/settings");
     const settingsPayload = buildFullChainSettingsPayload(project.workspace);
@@ -2826,6 +3021,18 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         const chiefSnapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.chief-engineer-diagnostics.json`);
         await writeUtf8File(chiefSnapshotPath, JSON.stringify(chiefDiagnostics, null, 2));
         audit.evidence_paths.snapshots.push(toPosixPath(chiefSnapshotPath));
+        if (scenario.key === "game") {
+          const plannedBlueprints = Number(chiefDiagnostics.blueprints?.planned_tasks || 0);
+          const coveredBlueprints = Number(chiefDiagnostics.blueprints?.covered_tasks || 0);
+          expect(
+            plannedBlueprints,
+            `Chief Engineer must produce a large batch of blueprints before Director handoff; evidence=${toPosixPath(chiefSnapshotPath)}`,
+          ).toBeGreaterThanOrEqual(GAME_PM_MIN_TASKS);
+          expect(
+            coveredBlueprints,
+            `Chief Engineer must cover every planned blueprint before Director handoff; evidence=${toPosixPath(chiefSnapshotPath)}`,
+          ).toBeGreaterThanOrEqual(plannedBlueprints);
+        }
         audit.acceptance_results.chief_engineer_phase = "PASS";
         const chiefShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.chief-engineer`);
         audit.evidence_paths.screenshots.push(toPosixPath(chiefShot.pngPath), toPosixPath(chiefShot.reviewJpgPath));
@@ -2855,6 +3062,16 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         await enterDirectorWorkspace(window);
         await expect(window.getByTestId("director-workspace")).toBeVisible();
         const director = await runDirectorUntilResultArtifact(window, { minMtimeMs: startEpochSeconds * 1000 });
+        if (scenario.key === "game") {
+          expect(
+            director.linkedTaskCount,
+            "Director must receive the large PM task batch only after Chief Engineer blueprints are handoff-ready",
+          ).toBeGreaterThanOrEqual(GAME_PM_MIN_TASKS);
+          expect(
+            director.uiTaskCount,
+            "Director workspace must visibly expose the large task batch before execution",
+          ).toBeGreaterThanOrEqual(GAME_PM_MIN_TASKS);
+        }
         if (director.linkedTaskCount > 0 && director.uiTaskCount > 0) {
           audit.acceptance_results.director_phase = "PASS";
         }
@@ -2952,6 +3169,12 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       const finalSnapshot = await snapshotProjectFiles(project.workspace);
       const finalMetrics = await measureComplexity(project.workspace);
       audit.runtime_contribution = compareProjectSnapshots(baselineSnapshot, finalSnapshot);
+      const forbiddenRuntimeArtifacts = findForbiddenRuntimeArtifacts(project.scenario, audit.runtime_contribution);
+      expect(
+        forbiddenRuntimeArtifacts,
+        `Game scenario Director output must preserve the seed Node/TypeScript stack and must not introduce forbidden runtime artifacts; `
+        + `artifacts=${JSON.stringify(forbiddenRuntimeArtifacts)}`,
+      ).toEqual([]);
       const directorArtifactMaterialization = summarizeDirectorArtifactMaterialization(directorResult);
       const contributionPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.runtime-contribution.json`);
       audit.complexity_contribution_breakdown = buildComplexityContributionBreakdown({

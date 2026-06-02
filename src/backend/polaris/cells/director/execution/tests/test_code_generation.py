@@ -331,11 +331,14 @@ class TestBlockedEntryPoints:
         engine = CodeGenerationEngine(str(tmp_path), Mock())
 
         violations = engine._proposal_policy_violations(
-            "```file: webpack.config.js\nmodule.exports = {};\n```\n\nPATCH_FILE: Cargo.toml\n[package]\n"
+            "```file: webpack.config.js\nmodule.exports = {};\n```\n\n"
+            "PATCH_FILE: Cargo.toml\n[package]\n\n"
+            "PATCH_FILE: src/splitmix64.rs\npub struct SplitMix64;\n"
         )
 
         assert "workspace_policy_violation:forbidden_file:webpack.config.js" in violations
         assert "workspace_policy_violation:forbidden_file:cargo.toml" in violations
+        assert "workspace_policy_violation:forbidden_file:*.rs" in violations
 
     def test_file_policy_violations_rejects_package_script_and_dependency_changes(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text(
@@ -385,10 +388,14 @@ class TestBlockedEntryPoints:
         engine = CodeGenerationEngine(str(tmp_path), Mock())
 
         violations = engine._file_policy_violations(
-            [{"path": "config/jest.config.js", "content": "export default {};"}],
+            [
+                {"path": "config/jest.config.js", "content": "export default {};"},
+                {"path": "src/splitmix64.rs", "content": "pub struct SplitMix64;"},
+            ],
         )
 
-        assert violations == ["workspace_policy_violation:forbidden_file:jest.config.js"]
+        assert "workspace_policy_violation:forbidden_file:jest.config.js" in violations
+        assert "workspace_policy_violation:forbidden_file:*.rs" in violations
 
     def test_recover_response_text_from_director_llm_events(self, tmp_path):
         workspace = tmp_path / "workspace"

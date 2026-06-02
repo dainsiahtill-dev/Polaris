@@ -40,6 +40,8 @@ from polaris.cells.runtime.projection.public.service import (
     merge_director_status,
     select_task_rows_from_projection,
 )
+from polaris.cells.runtime.task_market.public.contracts import QueryTaskMarketStatusV1
+from polaris.cells.runtime.task_market.public.service import get_task_market_service
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.http.dependencies import (
     get_director_service as get_director_service_dep,
@@ -161,18 +163,25 @@ def _director_run_task_ids_from_diagnostics(
         ("diagnostics_ready", getattr(task_section, "ready_task_ids", None)),
     )
     seen: set[str] = set()
+    selected: list[str] = []
+    selected_sources: list[str] = []
     for source, values in candidate_sources:
         if not isinstance(values, list):
             continue
-        selected: list[str] = []
+        added_from_source = False
         for item in values:
             token = str(item or "").strip()
             if not token or token in seen:
                 continue
             seen.add(token)
             selected.append(token)
-        if selected:
-            return selected, source
+            added_from_source = True
+        if added_from_source:
+            selected_sources.append(source)
+    if selected:
+        if len(selected_sources) == 1:
+            return selected, selected_sources[0]
+        return selected, "diagnostics_mixed_ready"
     return [], "none"
 
 
@@ -214,6 +223,125 @@ def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
             }
         )
     return fallback_rows
+
+
+def _task_market_row_to_director_task_row(item: dict[str, Any]) -> dict[str, Any] | None:
+    task_id = str(item.get("task_id") or item.get("id") or "").strip()
+    if not task_id:
+        return None
+    payload = _as_dict(item.get("payload"))
+    item_metadata = _as_dict(item.get("metadata"))
+    metadata = dict(item_metadata)
+    metadata.setdefault("pm_task_id", task_id)
+    metadata.setdefault("source_task_id", task_id)
+    metadata.setdefault("task_market_stage", str(item.get("stage") or "").strip())
+    metadata.setdefault("task_market_status", str(item.get("status") or "").strip())
+    metadata.setdefault("task_market_source", "runtime.task_market")
+    for key in (
+        "route",
+        "task_market_route",
+        "blueprint_required",
+        "blueprint_id",
+        "blueprint_path",
+        "runtime_blueprint_path",
+        "scope_paths",
+        "target_files",
+        "acceptance_criteria",
+    ):
+        if key in payload and key not in metadata:
+            metadata[key] = payload[key]
+
+    return {
+        "id": task_id,
+        "task_id": task_id,
+        "pm_task_id": task_id,
+        "subject": str(payload.get("title") or item.get("title") or task_id).strip(),
+        "title": str(payload.get("title") or task_id).strip(),
+        "description": str(payload.get("goal") or payload.get("description") or "").strip(),
+        "goal": str(payload.get("goal") or "").strip(),
+        "status": str(item.get("status") or item.get("stage") or "pending_exec").strip(),
+        "priority": str(item.get("priority") or "MEDIUM").strip() or "MEDIUM",
+        "claimed_by": item.get("claimed_by"),
+        "worker": item.get("claimed_by"),
+        "target_files": payload.get("target_files") if isinstance(payload.get("target_files"), list) else [],
+        "scope_paths": payload.get("scope_paths") if isinstance(payload.get("scope_paths"), list) else [],
+        "acceptance_criteria": (
+            payload.get("acceptance_criteria") if isinstance(payload.get("acceptance_criteria"), list) else []
+        ),
+        "depends_on": item.get("depends_on") if isinstance(item.get("depends_on"), list) else [],
+        "blueprint_id": payload.get("blueprint_id") or metadata.get("blueprint_id"),
+        "blueprint_path": payload.get("blueprint_path") or metadata.get("blueprint_path"),
+        "runtime_blueprint_path": payload.get("runtime_blueprint_path") or metadata.get("runtime_blueprint_path"),
+        "result": None,
+        "metadata": metadata,
+    }
+
+
+def _task_market_execution_rows_for_workspace(workspace: str) -> list[dict[str, Any]]:
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return []
+    try:
+        status = get_task_market_service().query_status(
+            QueryTaskMarketStatusV1(
+                workspace=workspace_token,
+                stage="pending_exec",
+                include_payload=True,
+                limit=5000,
+            )
+        )
+    except (RuntimeError, OSError, TypeError, ValueError):
+        logger.debug("Director task-market rows unavailable for workspace=%s", workspace_token, exc_info=True)
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in getattr(status, "items", ()) or ():
+        if not isinstance(item, dict):
+            continue
+        row = _task_market_row_to_director_task_row(item)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _merge_task_rows_by_identity(
+    primary_rows: list[dict[str, Any]],
+    overlay_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not primary_rows:
+        return list(overlay_rows)
+    if not overlay_rows:
+        return list(primary_rows)
+
+    merged_rows: list[dict[str, Any]] = [dict(row) for row in primary_rows]
+    index_by_token: dict[str, int] = {}
+    for index, row in enumerate(merged_rows):
+        details = _task_details(row)
+        for token in _task_identity_tokens(_task_id_from_row(row), details):
+            index_by_token.setdefault(token, index)
+
+    for overlay in overlay_rows:
+        overlay_id = _task_id_from_row(overlay)
+        overlay_details = _task_details(overlay)
+        target_index = None
+        for token in _task_identity_tokens(overlay_id, overlay_details):
+            if token in index_by_token:
+                target_index = index_by_token[token]
+                break
+        if target_index is None:
+            index_by_token[overlay_id] = len(merged_rows)
+            merged_rows.append(dict(overlay))
+            continue
+
+        current = merged_rows[target_index]
+        merged = dict(current)
+        merged.update(overlay)
+        current_metadata = _as_dict(current.get("metadata"))
+        overlay_metadata = _as_dict(overlay.get("metadata"))
+        metadata = dict(current_metadata)
+        metadata.update(overlay_metadata)
+        merged["metadata"] = metadata
+        merged_rows[target_index] = merged
+    return merged_rows
 
 
 def _contract_backed_task_rows(
@@ -447,13 +575,18 @@ async def _projected_task_response(request: Request, task_id: str, workspace: st
     state = getattr(request.app.state, "app_state", None) or request.app.state
     resolved_workspace = _workspace_from_request(request, workspace)
 
+    projection_rows: list[dict[str, Any]] = []
     try:
         projection = await RuntimeProjectionService.build_async(resolved_workspace, state=state)
     except (RuntimeError, ValueError, TypeError, AttributeError):
         logger.debug("Failed to build Director task projection for task_id=%s", task_id, exc_info=True)
-        return None
+    else:
+        projection_rows = _projection_task_rows(projection)
 
-    for row in _projection_task_rows(projection):
+    for row in projection_rows:
+        if _task_row_matches_id(row, task_id):
+            return _task_response_from_row(row)
+    for row in _task_market_execution_rows_for_workspace(resolved_workspace):
         if _task_row_matches_id(row, task_id):
             return _task_response_from_row(row)
     return None
@@ -524,8 +657,14 @@ def _normalize_task_status_token(value: Any) -> str:
         "QUEUED": "PENDING",
         "READY": "PENDING",
         "PENDING": "PENDING",
+        "PENDING_EXEC": "PENDING",
+        "PENDING_DESIGN": "PENDING",
+        "PENDING_QA": "PENDING",
         "CLAIMED": "CLAIMED",
         "IN_PROGRESS": "RUNNING",
+        "IN_EXECUTION": "RUNNING",
+        "IN_DESIGN": "RUNNING",
+        "IN_QA": "RUNNING",
         "RUNNING": "RUNNING",
         "EXECUTING": "RUNNING",
         "ACTIVE": "RUNNING",
@@ -666,6 +805,46 @@ def _task_details(row: dict[str, Any]) -> dict[str, Any]:
             metadata.get("blueprint_path"),
         ),
     }
+
+
+def _row_requires_blueprint_evidence(row: dict[str, Any], *, source: str) -> bool:
+    metadata = _as_dict(row.get("metadata"))
+    payload = _as_dict(row.get("payload"))
+    for container in (row, metadata, payload):
+        route = (
+            str(
+                container.get("task_market_route")
+                or container.get("route")
+                or container.get("routing")
+                or container.get("dispatch_route")
+                or ""
+            )
+            .strip()
+            .lower()
+            .replace("-", "_")
+            .replace(" ", "_")
+        )
+        if route in {"direct_to_director", "direct", "director", "director_direct", "pending_exec"}:
+            return False
+        if route in {
+            "chief_blueprint_required",
+            "chief",
+            "chief_engineer",
+            "blueprint",
+            "blueprint_required",
+            "pending_design",
+        }:
+            return True
+        raw_required = container.get("blueprint_required")
+        if isinstance(raw_required, bool):
+            return raw_required
+        if isinstance(raw_required, str):
+            token = raw_required.strip().lower()
+            if token in {"1", "true", "yes", "y", "on"}:
+                return True
+            if token in {"0", "false", "no", "n", "off"}:
+                return False
+    return source == "workflow"
 
 
 def _task_response_from_row(row: dict[str, Any]) -> TaskResponse:
@@ -960,6 +1139,11 @@ def _payload_task_identity_values(payload: dict[str, Any]) -> set[str]:
         if token:
             values.add(token)
 
+    for nested_key in ("base_schema", "preflight_result"):
+        nested_payload = payload.get(nested_key)
+        if isinstance(nested_payload, dict):
+            values.update(_payload_task_identity_values(nested_payload))
+
     task_update_map = payload.get("task_update_map")
     if isinstance(task_update_map, dict):
         for key, item in task_update_map.items():
@@ -1111,8 +1295,7 @@ def _task_diagnostics_from_rows(
     invalid_blueprint_task_ids: list[str] = []
     blocked_task_ids: list[str] = []
     running_task_ids: list[str] = []
-    requires_blueprint_evidence = source == "workflow"
-    blueprint_payloads = _load_all_blueprint_payloads(workspace) if requires_blueprint_evidence else []
+    blueprint_payloads = _load_all_blueprint_payloads(workspace) if source == "workflow" else []
     completed_identity_tokens: set[str] = set()
     blocking_identity_tokens: set[str] = set()
     row_details: list[tuple[str, dict[str, Any]]] = []
@@ -1147,6 +1330,7 @@ def _task_diagnostics_from_rows(
         details = _task_details(row)
         status_token = str(details["status"])
         dependencies = details["dependencies"]
+        requires_blueprint_evidence = _row_requires_blueprint_evidence(row, source=source)
         blueprint_state = (
             _blueprint_artifact_state(
                 workspace=workspace,
@@ -1553,6 +1737,9 @@ async def _build_director_diagnostics(
         if task_rows:
             task_rows = _runtime_backed_task_rows(task_rows, workspace=workspace)
             task_rows = _contract_backed_task_rows(task_rows, workspace=workspace, cache_root=cache_root)
+        task_market_rows = _task_market_execution_rows_for_workspace(workspace)
+        if task_market_rows:
+            task_rows = _merge_task_rows_by_identity(task_rows, task_market_rows)
         projected_workers = _worker_rows_from_projection(projection)
         task_source = "workflow" if task_rows else "empty"
     except (RuntimeError, ValueError) as exc:
@@ -1560,19 +1747,27 @@ async def _build_director_diagnostics(
         status_section.error = str(exc)
 
     if not task_rows:
-        try:
-            task_rows = _task_rows_from_local_tasks(await service.list_tasks(status=None))
-            task_source = "local" if task_rows else "empty"
-        except (RuntimeError, ValueError, AttributeError) as exc:
-            logger.debug("Director diagnostics local task queue unavailable", exc_info=True)
-            task_section = DirectorDiagnosticsTaskSection(
-                ok=False,
-                source="error",
-                error=str(exc),
+        task_market_rows = _task_market_execution_rows_for_workspace(workspace)
+        if task_market_rows:
+            task_rows = task_market_rows
+            task_source = "workflow"
+            task_section = _task_diagnostics_from_rows(
+                task_rows, task_source, workspace=workspace, cache_root=cache_root
             )
         else:
-            task_rows = _runtime_backed_task_rows(task_rows, workspace=workspace)
-            task_section = _task_diagnostics_from_rows(task_rows, task_source, workspace=workspace, cache_root="")
+            try:
+                task_rows = _task_rows_from_local_tasks(await service.list_tasks(status=None))
+                task_source = "local" if task_rows else "empty"
+            except (RuntimeError, ValueError, AttributeError) as exc:
+                logger.debug("Director diagnostics local task queue unavailable", exc_info=True)
+                task_section = DirectorDiagnosticsTaskSection(
+                    ok=False,
+                    source="error",
+                    error=str(exc),
+                )
+            else:
+                task_rows = _runtime_backed_task_rows(task_rows, workspace=workspace)
+                task_section = _task_diagnostics_from_rows(task_rows, task_source, workspace=workspace, cache_root="")
     else:
         task_section = _task_diagnostics_from_rows(
             task_rows,
@@ -1825,6 +2020,9 @@ async def list_tasks(
             used_projection = True
 
             tasks = _projection_task_rows(projection)
+            task_market_rows = _task_market_execution_rows_for_workspace(resolved_workspace)
+            if task_market_rows:
+                tasks = _merge_task_rows_by_identity(tasks, task_market_rows)
             if source == "auto" and not tasks:
                 tasks = _task_rows_from_local_tasks(await service.list_tasks(status=None))
                 used_local_fallback = True
