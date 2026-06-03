@@ -222,7 +222,17 @@ def _string_list(value: Any) -> list[str]:
         if isinstance(item, str):
             token = item.strip()
         elif isinstance(item, dict):
-            token = str(item.get("path") or item.get("file") or item.get("name") or item.get("id") or "").strip()
+            token = str(
+                item.get("path")
+                or item.get("file")
+                or item.get("description")
+                or item.get("text")
+                or item.get("title")
+                or item.get("name")
+                or item.get("id")
+                or item.get("value")
+                or ""
+            ).strip()
         else:
             token = str(item or "").strip()
         if token:
@@ -352,6 +362,58 @@ def _blueprint_task_id(payload: dict[str, Any]) -> str:
             if token:
                 return token
     return ""
+
+
+def _dict_value(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _blueprint_contract_list(payload: dict[str, Any], *keys: str) -> list[str]:
+    base_schema = _dict_value(payload, "base_schema")
+    context = _dict_value(payload, "context") or _dict_value(base_schema, "context")
+    pm_task = _dict_value(payload, "pm_task") or _dict_value(base_schema, "pm_task") or _dict_value(context, "task")
+    qa_contract = _dict_value(pm_task, "qa_contract")
+    for key in keys:
+        for source in (payload, base_schema, context, pm_task, qa_contract):
+            rows = _string_list(source.get(key))
+            if rows:
+                return rows
+    return []
+
+
+def _blueprint_handoff_missing_fields(payload: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    target_files = _blueprint_contract_list(payload, "target_files", "scope_paths", "files", "affected_files")
+    acceptance = _blueprint_contract_list(payload, "acceptance_criteria", "acceptance")
+    execution_checklist = _blueprint_contract_list(payload, "execution_checklist", "steps")
+    if not target_files:
+        missing.append("target_files")
+    if not acceptance:
+        missing.append("acceptance_criteria")
+    if not execution_checklist:
+        missing.append("execution_checklist")
+    return missing
+
+
+def _blueprint_payload_is_handoff_ready(payload: dict[str, Any]) -> bool:
+    if _blueprint_payload_is_traceability_only(payload):
+        return False
+    completeness = payload.get("contract_completeness")
+    if isinstance(completeness, dict):
+        missing_fields = _string_list(completeness.get("missing_fields"))
+        if completeness.get("handoff_ready") is False or missing_fields:
+            return False
+    if not _blueprint_task_id(payload):
+        return False
+    return not _blueprint_handoff_missing_fields(payload)
+
+
+def _blueprint_payload_is_traceability_only(payload: dict[str, Any]) -> bool:
+    if payload.get("traceability_only") is True:
+        return True
+    source = str(payload.get("source") or "").strip().lower()
+    return source.startswith("pm_dispatch.traceability")
 
 
 def _blueprint_id_from_payload(payload: dict[str, Any], fallback: str) -> str:
@@ -668,8 +730,10 @@ def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBluep
                 if updated_at:
                     updated_tokens.append(updated_at)
                 task_id = _blueprint_task_id(payload)
-                if task_id:
+                if task_id and _blueprint_payload_is_handoff_ready(payload):
                     covered_task_ids.add(task_id)
+                elif task_id and not _blueprint_payload_is_traceability_only(payload):
+                    invalid_payloads += 1
             else:
                 invalid_payloads += 1
     except (OSError, RuntimeError, ValueError) as exc:
@@ -695,10 +759,10 @@ def _build_blueprint_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsBluep
         ready_task_ids = planned_task_ids or []
         missing_task_ids = [task_id for task_id in ready_task_ids if task_id not in covered_task_ids]
         covered_tasks = len(ready_task_ids) - len(missing_task_ids)
-        director_handoff_ready = bool(ready_task_ids) and not missing_task_ids and invalid_payloads == 0
+        director_handoff_ready = bool(ready_task_ids) and not missing_task_ids
 
     return ChiefEngineerDiagnosticsBlueprintStatus(
-        ok=plan_probe.status == "ready" and invalid_payloads == 0 and not missing_task_ids,
+        ok=plan_probe.status == "ready" and not missing_task_ids,
         status=status,
         plan_status=plan_probe.status,
         plan_path=plan_probe.path,
@@ -730,7 +794,7 @@ def _diagnostic_issues(
         issues.append("blueprint_task_plan_empty")
     if blueprints.status == "error":
         issues.append("blueprint_store_unreadable")
-    if blueprints.invalid_payloads:
+    if blueprints.invalid_payloads and not blueprints.director_handoff_ready:
         issues.append("blueprint_payload_invalid")
     if blueprints.missing_task_ids:
         issues.append("blueprint_coverage_incomplete")
@@ -766,7 +830,7 @@ def _handoff_blockers(
         blockers.append("blueprint_task_plan_empty")
     if blueprints.status == "error":
         blockers.append("blueprint_store_unreadable")
-    if blueprints.invalid_payloads:
+    if blueprints.invalid_payloads and not blueprints.director_handoff_ready:
         blockers.append("blueprint_payload_invalid")
     if blueprints.missing_task_ids:
         blockers.append("blueprint_coverage_incomplete")

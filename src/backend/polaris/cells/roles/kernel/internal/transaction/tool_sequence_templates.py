@@ -98,7 +98,9 @@ def build_sequence_template(
                 lines.append(
                     "TEMPLATE [Edit-Then-Verify]: "
                     "Step 1: read_file the target file to confirm exact content. "
-                    "Step 2: Use precision_edit/append_to_file/edit_blocks to make changes. "
+                    "Step 2: Use edit_blocks/edit_file/search_replace/repo_apply_diff for existing content changes; "
+                    "use precision_edit only when exact search text is already verified. "
+                    "use append_to_file only when the task explicitly requires appending content at the end. "
                     "Step 3: read_file again to verify the modification succeeded. "
                     "All three steps must be in the SAME batch if the benchmark contract requires single-batch completion."
                 )
@@ -134,7 +136,10 @@ def build_sequence_template(
         lines.append(
             "TEMPLATE [General-Mutation]: "
             "Step 1: read_file to confirm exact content. "
-            "Step 2: Use the safest available write tool (append_to_file > precision_edit > edit_file). "
+            "Step 2: For existing files, use edit_blocks/edit_file/search_replace/repo_apply_diff; "
+            "for create-file or full replacement tasks, use write_file; "
+            "use precision_edit only after exact search text has been verified; "
+            "use append_to_file only for explicit append-at-end tasks. "
             "Step 3: read_file again to verify."
         )
 
@@ -166,7 +171,16 @@ def build_recovery_protocol(
     if has_edit:
         # 构建降级路径字符串
         fallback_order = []
-        for t in ("append_to_file", "precision_edit", "edit_file", "search_replace", "write_file"):
+        for t in (
+            "edit_blocks",
+            "edit_file",
+            "search_replace",
+            "repo_apply_diff",
+            "write_file",
+            "create_file",
+            "precision_edit",
+            "append_to_file",
+        ):
             if t in available_write_tools:
                 fallback_order.append(t)
         fallback_str = " -> ".join(fallback_order) if fallback_order else "append_to_file"
@@ -175,8 +189,9 @@ def build_recovery_protocol(
             f"1. EDIT FAILURE (no match / search not found): "
             f"→ Immediately call read_file() on the target file. "
             f"→ Copy the EXACT text character-by-character from the file output. "
-            f"→ Retry with precision_edit using the verified text. "
-            f"→ If precision_edit still fails, downgrade to: {fallback_str}. "
+            f"→ Retry with edit_blocks/edit_file using the verified text, or write_file for whole-file replacement. "
+            f"→ If the edit still fails, downgrade to: {fallback_str}. "
+            f"→ append_to_file is only valid for explicit append-at-end tasks, not replace/delete cleanup. "
             f"→ NEVER retry edit_blocks with the same incorrect search string."
         )
 

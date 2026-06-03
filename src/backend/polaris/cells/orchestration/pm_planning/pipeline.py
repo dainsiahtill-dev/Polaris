@@ -26,6 +26,13 @@ from polaris.cells.orchestration.pm_planning.internal.shared_quality import (
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality as evaluate_shared_pm_task_quality,
 )
+from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+    _CARD3D_PM_DOMAIN_SCOPE_PATHS,
+    _CARD3D_PM_DOMAIN_TARGET_FILES,
+    _CARD3D_PM_REQUIRED_DOMAINS,
+    _GAME_PM_DOMAIN_SCOPE_PATHS,
+    _GAME_PM_REQUIRED_DOMAINS,
+)
 
 if TYPE_CHECKING:
     import argparse
@@ -152,6 +159,27 @@ def _resolve_pm_task_quality_retries() -> int:
     return max(0, min(4, value))
 
 
+def _autofix_domain_coverage_critical_issues(autofix_stats: dict[str, Any]) -> list[str]:
+    """Return hard quality failures when PM domain coverage was synthesized."""
+
+    issues: list[str] = []
+    card3d_added = int(autofix_stats.get("card3d_domain_tasks_added") or 0)
+    game_added = int(autofix_stats.get("game_domain_tasks_added") or 0)
+    if card3d_added > 0:
+        issues.append(
+            "PM omitted multiplayer card3d delivery domains; "
+            f"quality autofix synthesized {card3d_added} card3d task(s). "
+            "Regenerate the PM contract so those Director tasks come from PM planning."
+        )
+    if game_added > 0:
+        issues.append(
+            "PM omitted required game delivery domains; "
+            f"quality autofix synthesized {game_added} game task(s). "
+            "Regenerate the PM contract so those Director tasks come from PM planning."
+        )
+    return issues
+
+
 def _normalize_quality_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
@@ -179,6 +207,64 @@ def _count_normalized_pm_tasks(payload: dict[str, Any] | None) -> int:
     return sum(1 for task in tasks if isinstance(task, dict))
 
 
+def _is_autofix_pm_task(task: dict[str, Any]) -> bool:
+    task_id = _normalize_quality_text(task.get("id")).upper()
+    if task_id.startswith("PM-AUTO-"):
+        return True
+    if bool(task.get("autofix")) or bool(task.get("autofix_reason")):
+        return True
+    raw_metadata = task.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    return bool(metadata.get("autofix")) or bool(metadata.get("autofix_reason"))
+
+
+def _count_real_pm_tasks(payload: dict[str, Any] | None) -> int:
+    if not isinstance(payload, dict):
+        return 0
+    tasks_raw = payload.get("tasks")
+    tasks: list[Any] = tasks_raw if isinstance(tasks_raw, list) else []
+    return sum(1 for task in tasks if isinstance(task, dict) and not _is_autofix_pm_task(task))
+
+
+def _pm_quality_autofix_synthesized_domain_tasks(quality: dict[str, Any] | None) -> bool:
+    if not isinstance(quality, dict):
+        return False
+    evidence_parts: list[str] = []
+    critical_issues = quality.get("critical_issues")
+    if isinstance(critical_issues, list):
+        evidence_parts.extend(_normalize_quality_text(issue) for issue in critical_issues)
+    evidence_parts.append(_normalize_quality_text(quality.get("summary")))
+    evidence = " ".join(part for part in evidence_parts if part).lower()
+    return "quality autofix synthesized" in evidence or "autofix_domain_coverage_failed" in evidence
+
+
+def _count_pm_quality_critical_issues(quality: dict[str, Any] | None) -> int:
+    if not isinstance(quality, dict):
+        return 0
+    critical_issues = quality.get("critical_issues")
+    if not isinstance(critical_issues, list):
+        return 0
+    return sum(1 for issue in critical_issues if _normalize_quality_text(issue))
+
+
+def _pm_quality_candidate_rank(
+    payload: dict[str, Any] | None,
+    quality: dict[str, Any] | None,
+) -> tuple[int, int, int, int, int, int, int]:
+    """Rank PM retry candidates by delivery value, not raw task count."""
+
+    quality_payload: dict[str, Any] = quality if isinstance(quality, dict) else {}
+    return (
+        1 if bool(quality_payload.get("ok")) else 0,
+        0 if _pm_quality_autofix_synthesized_domain_tasks(quality_payload) else 1,
+        0 if _is_parse_failed_pm_payload(payload) else 1,
+        _count_real_pm_tasks(payload),
+        -_count_pm_quality_critical_issues(quality_payload),
+        int(quality_payload.get("score") or 0),
+        _count_normalized_pm_tasks(payload),
+    )
+
+
 def _is_parse_failed_pm_payload(payload: dict[str, Any] | None) -> bool:
     if not isinstance(payload, dict):
         return True
@@ -200,27 +286,10 @@ def _should_promote_pm_quality_candidate(
     if not isinstance(current_best, dict) or not current_best:
         return True
 
-    candidate_task_count = _count_normalized_pm_tasks(candidate)
-    current_task_count = _count_normalized_pm_tasks(current_best)
-    if candidate_task_count != current_task_count:
-        return candidate_task_count > current_task_count
-
-    candidate_ok = bool((candidate_quality or {}).get("ok"))
-    current_ok = bool((current_best_quality or {}).get("ok"))
-    if candidate_ok != current_ok:
-        return candidate_ok
-
-    candidate_parse_failed = _is_parse_failed_pm_payload(candidate)
-    current_parse_failed = _is_parse_failed_pm_payload(current_best)
-    if candidate_parse_failed != current_parse_failed:
-        return not candidate_parse_failed
-
-    candidate_score = int((candidate_quality or {}).get("score") or 0)
-    current_score = int((current_best_quality or {}).get("score") or 0)
-    if candidate_score != current_score:
-        return candidate_score > current_score
-
-    return False
+    return _pm_quality_candidate_rank(candidate, candidate_quality) > _pm_quality_candidate_rank(
+        current_best,
+        current_best_quality,
+    )
 
 
 def _looks_like_placeholder_task(*parts: str) -> bool:
@@ -297,6 +366,57 @@ def _build_pm_json_retry_prompt(invalid_output: str) -> str:
     )
 
 
+def _build_domain_retry_guidance(critical_issues: list[str]) -> str:
+    joined = "\n".join(critical_issues).lower()
+    if "card3d" in joined:
+        lines = [
+            "CARD3D HARD CONTRACT:",
+            "The tasks array MUST contain one Director task for EVERY row below.",
+            "Do not group multiple domains into one task. Do not omit any row. Do not replace this table with bootstrap-only tasks.",
+            f"Required task count: at least {len(_CARD3D_PM_REQUIRED_DOMAINS)}.",
+            "Use the listed id, metadata.domain, target_files, scope_paths, and measurable acceptance for each task:",
+        ]
+        for index, domain in enumerate(_CARD3D_PM_REQUIRED_DOMAINS, start=1):
+            target_files = _CARD3D_PM_DOMAIN_TARGET_FILES.get(
+                domain,
+                (_CARD3D_PM_DOMAIN_SCOPE_PATHS[domain],),
+            )
+            task_id = f"PM-CARD3D-{domain.upper()}-{index:02d}"
+            primary_scope = _CARD3D_PM_DOMAIN_SCOPE_PATHS[domain]
+            lines.append(
+                f"- id={task_id}; metadata.domain={domain}; scope_paths=[{primary_scope}]; "
+                f"target_files=[{', '.join(target_files)}]; "
+                "acceptance must include `npm run build`, `npm run test -- --watch=false`, "
+                "and explicit verification that target files contain no audit-seed or planning scenario markers."
+            )
+        lines.extend(
+            [
+                "Use depends_on to form a safe implementation chain.",
+                "For the tests domain, acceptance and execution_checklist must explicitly require replacing/removing existing trivial arithmetic placeholder tests; appending new tests while leaving old placeholder cases is invalid.",
+                "Do not output package.json, tsconfig.json, dependency-install, or framework migration tasks.",
+                "If you output fewer than the required domain rows above, the contract is invalid even if bootstrap tasks exist.",
+            ]
+        )
+        return "\n".join(lines)
+    if "game pm decomposition" in joined or "game_domain" in joined:
+        lines = [
+            "GAME HARD CONTRACT:",
+            "Generate one Director task per required delivery domain. Do not group multiple domains into one task.",
+            f"Required task count: at least {len(_GAME_PM_REQUIRED_DOMAINS)}.",
+            "Each task must include exactly one primary target_files entry from this table:",
+        ]
+        for domain in _GAME_PM_REQUIRED_DOMAINS:
+            lines.append(f"- {domain}: {_GAME_PM_DOMAIN_SCOPE_PATHS[domain]}")
+        lines.extend(
+            [
+                "Use depends_on to form a safe implementation chain.",
+                "Do not output package.json, tsconfig.json, dependency-install, or framework migration tasks.",
+            ]
+        )
+        return "\n".join(lines)
+    return ""
+
+
 def _build_pm_quality_retry_prompt(
     *,
     base_prompt: str,
@@ -317,6 +437,15 @@ def _build_pm_quality_retry_prompt(
 
     violation_lines = "\n".join(f"- {item}" for item in critical) or "- quality gate reported critical issues."
     warning_lines = "\n".join(f"- {item}" for item in warnings) or "- none"
+    domain_guidance = _build_domain_retry_guidance(critical)
+    domain_section = f"\nDomain-specific hard contract:\n{domain_guidance}\n" if domain_guidance else ""
+    final_domain_reminder = (
+        "\nFINAL NON-NEGOTIABLE DOMAIN CONTRACT:\n"
+        f"{domain_guidance}\n"
+        "Return JSON now. The `tasks` array must satisfy the domain contract above.\n"
+        if domain_guidance
+        else ""
+    )
     return (
         f"{base_prompt}\n\n"
         "QUALITY GATE RETRY (mandatory):\n"
@@ -333,8 +462,10 @@ def _build_pm_quality_retry_prompt(
         f"{violation_lines}\n"
         "Warnings to improve:\n"
         f"{warning_lines}\n"
+        f"{domain_section}"
         "Previous payload preview (for correction only):\n"
         f"{preview}\n"
+        f"{final_domain_reminder}"
     )
 
 
@@ -665,6 +796,7 @@ def run_pm_planning_iteration(
                     "acceptance_added",
                     "descriptions_added",
                     "game_domain_tasks_added",
+                    "card3d_domain_tasks_added",
                 )
             )
             > 0
@@ -686,6 +818,21 @@ def run_pm_planning_iteration(
             docs_stage=docs_stage if isinstance(docs_stage, dict) else {},
             workspace_full=workspace_full,
         )
+        autofix_critical_issues = _autofix_domain_coverage_critical_issues(autofix_stats)
+        if autofix_critical_issues:
+            critical_issues = [
+                str(item).strip() for item in (quality_report.get("critical_issues") or []) if str(item).strip()
+            ]
+            critical_issues.extend(autofix_critical_issues)
+            summary = str(quality_report.get("summary") or "").strip()
+            autofix_summary = "autofix_domain_coverage_failed=" + ",".join(autofix_critical_issues)
+            quality_report = {
+                **quality_report,
+                "ok": False,
+                "score": min(int(quality_report.get("score") or 0), 60),
+                "critical_issues": critical_issues,
+                "summary": f"{summary}; {autofix_summary}" if summary else autofix_summary,
+            }
         merged_warnings = []
         seen_warnings = set()
         for item in (

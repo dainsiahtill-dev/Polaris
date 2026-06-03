@@ -38,11 +38,103 @@ def _string_list(value: Any) -> list[str]:
     rows: list[str] = []
     seen: set[str] = set()
     for item in value:
-        token = str(item or "").strip()
+        if isinstance(item, dict):
+            token = str(
+                item.get("path")
+                or item.get("file")
+                or item.get("description")
+                or item.get("text")
+                or item.get("title")
+                or item.get("name")
+                or item.get("id")
+                or item.get("value")
+                or ""
+            ).strip()
+        else:
+            token = str(item or "").strip()
         if token and token not in seen:
             seen.add(token)
             rows.append(token)
     return rows
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _first_string_list(*values: Any) -> list[str]:
+    for value in values:
+        rows = _string_list(value)
+        if rows:
+            return rows
+    return []
+
+
+def _payload_task(payload: dict[str, Any]) -> dict[str, Any]:
+    return _mapping(payload.get("pm_contract")) or _mapping(payload.get("task"))
+
+
+def _contract_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    task = _payload_task(payload)
+    qa_contract = _mapping(task.get("qa_contract")) or _mapping(payload.get("qa_contract"))
+    acceptance_criteria = _first_string_list(
+        payload.get("acceptance_criteria"),
+        payload.get("acceptance"),
+        task.get("acceptance_criteria"),
+        task.get("acceptance"),
+        qa_contract.get("acceptance_criteria"),
+        qa_contract.get("acceptance"),
+    )
+    execution_checklist = _first_string_list(
+        payload.get("execution_checklist"),
+        payload.get("steps"),
+        task.get("execution_checklist"),
+        task.get("steps"),
+    )
+    dependencies = _first_string_list(
+        payload.get("dependencies"),
+        payload.get("depends_on"),
+        payload.get("blocked_by"),
+        task.get("dependencies"),
+        task.get("depends_on"),
+        task.get("blocked_by"),
+    )
+    constraints = _mapping(payload.get("constraints")) or _mapping(task.get("constraints"))
+    risks = _first_string_list(
+        payload.get("risks"),
+        payload.get("risk_flags"),
+        task.get("risks"),
+        task.get("risk_flags"),
+    )
+    return {
+        "task": task,
+        "qa_contract": qa_contract,
+        "acceptance_criteria": acceptance_criteria,
+        "execution_checklist": execution_checklist,
+        "dependencies": dependencies,
+        "constraints": constraints,
+        "risks": risks,
+    }
+
+
+def _contract_completeness(
+    *,
+    target_files: list[str],
+    acceptance_criteria: list[str],
+    execution_checklist: list[str],
+) -> dict[str, Any]:
+    missing_fields: list[str] = []
+    if not target_files:
+        missing_fields.append("target_files")
+    if not acceptance_criteria:
+        missing_fields.append("acceptance_criteria")
+    if not execution_checklist:
+        missing_fields.append("execution_checklist")
+    return {
+        "handoff_ready": not missing_fields,
+        "missing_fields": missing_fields,
+        "requires": ["target_files", "acceptance_criteria", "execution_checklist"],
+    }
 
 
 class CEConsumer:
@@ -131,6 +223,17 @@ class CEConsumer:
                 or _string_list(payload.get("target_files"))
                 or list(scope_paths)
             )
+            contract = _contract_fields(payload)
+            acceptance_criteria = list(contract["acceptance_criteria"])
+            execution_checklist = list(contract["execution_checklist"])
+            dependencies = list(contract["dependencies"])
+            constraints = dict(contract["constraints"])
+            risks = list(contract["risks"])
+            contract_completeness = _contract_completeness(
+                target_files=target_files,
+                acceptance_criteria=acceptance_criteria,
+                execution_checklist=execution_checklist,
+            )
             blueprint_path = _blueprint_runtime_path(blueprint_id)
             ack_payload: dict[str, Any] = {
                 "blueprint_id": blueprint_id,
@@ -141,6 +244,15 @@ class CEConsumer:
                 "no_touch_zones": blueprint_result.get("no_touch_zones", []),
                 "scope_paths": scope_paths,
                 "target_files": target_files,
+                "acceptance_criteria": acceptance_criteria,
+                "execution_checklist": execution_checklist,
+                "dependencies": dependencies,
+                "constraints": constraints,
+                "risks": risks,
+                "pm_contract": dict(contract["task"]),
+                "qa_contract": dict(contract["qa_contract"]),
+                "contract_completeness": contract_completeness,
+                "handoff_ready": bool(contract_completeness["handoff_ready"]),
                 "route": "chief_blueprint_required",
                 "task_market_route": "chief_blueprint_required",
                 "blueprint_required": True,
@@ -156,6 +268,15 @@ class CEConsumer:
                         "preflight_result": blueprint_result,
                         "scope_paths": scope_paths,
                         "target_files": target_files,
+                        "acceptance_criteria": acceptance_criteria,
+                        "execution_checklist": execution_checklist,
+                        "dependencies": dependencies,
+                        "constraints": constraints,
+                        "risks": risks,
+                        "pm_task": dict(contract["task"]),
+                        "qa_contract": dict(contract["qa_contract"]),
+                        "contract_completeness": contract_completeness,
+                        "handoff_ready": bool(contract_completeness["handoff_ready"]),
                         "guardrails": ack_payload["guardrails"],
                         "no_touch_zones": ack_payload["no_touch_zones"],
                     },
@@ -175,6 +296,15 @@ class CEConsumer:
                         "route": "chief_blueprint_required",
                         "scope_paths": scope_paths,
                         "target_files": target_files,
+                        "acceptance_criteria": acceptance_criteria,
+                        "execution_checklist": execution_checklist,
+                        "dependencies": dependencies,
+                        "constraints": constraints,
+                        "risks": risks,
+                        "pm_task": dict(contract["task"]),
+                        "qa_contract": dict(contract["qa_contract"]),
+                        "contract_completeness": contract_completeness,
+                        "handoff_ready": bool(contract_completeness["handoff_ready"]),
                         "guardrails": ack_payload["guardrails"],
                         "no_touch_zones": ack_payload["no_touch_zones"],
                         "preflight_result": blueprint_result,

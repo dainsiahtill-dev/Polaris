@@ -476,6 +476,10 @@ async def _generate_with_kernel(
         tool_feedback = _build_tool_feedback(current_tool_results)
         current_tool_signatures = _normalize_tool_call_signatures(last_result)
         missing_read_paths = _collect_missing_read_paths(current_tool_results)
+        result_metadata = getattr(last_result, "metadata", None)
+        needs_followup_workflow = isinstance(result_metadata, dict) and bool(
+            result_metadata.get("needs_followup_workflow")
+        )
         if current_tool_signatures and current_tool_signatures == last_tool_signatures:
             repeated_tool_signature_rounds += 1
         else:
@@ -494,6 +498,12 @@ async def _generate_with_kernel(
                 f"你对不存在的文件执行了 read_file（{joined_paths}）。"
                 "这些路径当前不存在。禁止继续对同路径 read_file。"
                 "若任务需要这些文件，请改用 write_file 直接创建，然后输出最终答案。"
+            )
+        elif needs_followup_workflow:
+            follow_up_instruction = (
+                "上一轮没有满足落盘义务。请基于已有工具结果继续完成原始请求；"
+                "必须调用 write_file、edit_file、repo_apply_diff 或等价写工具产生文件变更。"
+                "在成功写入前不要输出最终答案。"
             )
         elif loop_on_readonly_tools:
             follow_up_instruction = (
@@ -580,6 +590,9 @@ async def _generate_with_kernel(
         response["tool_policy_id"] = last_result.tool_policy_id
         response["metadata"] = dict(last_result.metadata or {})
         response["execution_stats"] = dict(last_result.execution_stats or {})
+        batch_receipt = getattr(last_result, "batch_receipt", None)
+        if isinstance(batch_receipt, dict) and batch_receipt:
+            response["batch_receipt"] = dict(batch_receipt)
         if last_result.turn_events_metadata:
             response["turn_events_metadata"] = [dict(item) for item in last_result.turn_events_metadata]
 

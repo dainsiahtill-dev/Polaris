@@ -45,13 +45,30 @@ DIVIDER_PATTERNS = [
 ]
 
 UPDATED_PATTERNS = [
-    r"^>{4,9}\s*REPLACE\s*$",  # >>>> REPLACE
-    r"^>{4,9}\s*UPDATED\s*$",  # >>>> UPDATED
-    r"^>{4,9}\s*RESULT\s*$",  # >>>> RESULT
+    r"^>{4,9}\s*REPLACE(?:\s*[:\[][^\n]*\]?)?\s*$",  # >>>> REPLACE[:filename]
+    r"^>{4,9}\s*UPDATED(?:\s*[:\[][^\n]*\]?)?\s*$",  # >>>> UPDATED[:filename]
+    r"^>{4,9}\s*RESULT(?:\s*[:\[][^\n]*\]?)?\s*$",  # >>>> RESULT[:filename]
 ]
 
 # 省略号锚点模式
 ELLIPSIS_PATTERN = re.compile(r"^(\s*)\.\.\.(\s*)$")
+
+
+def _normalize_filename_annotation(filename: str) -> str:
+    """Normalize common model-emitted file annotations.
+
+    Models often copy the documentation literal ``SEARCH[:filepath]`` and
+    produce ``[:src/app.ts]`` or ``[src/app.ts]`` as the captured filename.
+    The editing contract treats those brackets as syntax, not as path bytes.
+    """
+    candidate = filename.strip()
+    if candidate.startswith("[:") and candidate.endswith("]"):
+        return candidate[2:-1].strip()
+    if candidate.startswith("[") and candidate.endswith("]"):
+        return candidate[1:-1].strip()
+    if candidate.startswith(":"):
+        return candidate[1:].strip()
+    return candidate
 
 
 class EditBlock:
@@ -94,7 +111,7 @@ def strip_filename(filename: str, fence: tuple[str, str] = DEFAULT_FENCE) -> str
     Returns:
         清理后的文件名或 None
     """
-    candidate = filename.strip()
+    candidate = _normalize_filename_annotation(filename)
     if not candidate or candidate == "...":
         return None
 
@@ -196,7 +213,7 @@ def _extract_filename_from_header(line: str) -> str | None:
     for pattern in HEAD_PATTERNS:
         match = re.match(pattern, line.strip())
         if match:
-            filename = match.group(1).strip()
+            filename = strip_filename(match.group(1).strip())
             if filename:
                 return filename
     return None

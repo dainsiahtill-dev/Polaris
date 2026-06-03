@@ -1,20 +1,11 @@
-import importlib.util
+import importlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 
 def _load_loop_pm():
-    repo_root = Path(__file__).resolve().parents[1]
-    module_path = repo_root / "src" / "backend" / "scripts" / "loop-pm.py"
-    if not module_path.is_file():
-        raise RuntimeError(f"Failed to locate loop-pm.py: {module_path}")
-    spec = importlib.util.spec_from_file_location("loop_pm", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Failed to load loop-pm.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("polaris.delivery.cli.pm.harborpilot_engine")
 
 
 def test_engine_dispatch_director_tasks_with_multi_config(tmp_path):
@@ -122,7 +113,7 @@ def test_engine_dispatch_director_tasks_with_multi_config(tmp_path):
     assert status_payload["roles"]["QA"]["status"] == "completed"
 
 
-def test_engine_preflight_auto_creates_plan_and_dispatches(tmp_path):
+def test_engine_preflight_missing_plan_fails_closed(tmp_path):
     loop_pm = _load_loop_pm()
 
     def _fake_runner(args, workspace_full, iteration, **kwargs):
@@ -180,8 +171,8 @@ def test_engine_preflight_auto_creates_plan_and_dispatches(tmp_path):
         "tasks": [
             {
                 "id": "TASK-PLAN-AUTO",
-                "title": "Task plan auto-create",
-                "goal": "Exercise preflight auto-fix path",
+                "title": "Task missing plan",
+                "goal": "Exercise preflight fail-closed path",
                 "status": "todo",
                 "priority": 1,
                 "assigned_to": "Director",
@@ -200,14 +191,15 @@ def test_engine_preflight_auto_creates_plan_and_dispatches(tmp_path):
         runtime_status_path=str(runtime_engine_status),
     )
 
-    assert result["hard_failure"] is False
-    assert result["summary"]["successes"] == 1
+    assert result["hard_failure"] is True
+    assert result["summary"]["failures"] == 1
     preflight = result["summary"]["preflight"]
-    assert preflight["ok"] is True
-    assert "contracts/plan.md" in preflight.get("autofixed", [])
-    assert Path(preflight["resolved_plan_path"]).is_file()
+    assert preflight["ok"] is False
+    assert "contracts/plan.md" in preflight["missing"]
+    assert preflight.get("autofixed", []) == []
+    assert result["records"] == []
     status_payload = json.loads(runtime_engine_status.read_text(encoding="utf-8"))
-    assert status_payload["phase"] == "completed"
+    assert status_payload["phase"] == "failed"
 
 
 def test_engine_needs_continue_is_non_terminal(tmp_path):
@@ -368,9 +360,8 @@ def test_engine_preflight_failure_is_reported(tmp_path):
     preflight = result["summary"]["preflight"]
     assert preflight["ok"] is False
     assert "contracts/pm_tasks.contract.json" in preflight["missing"]
-    assert "contracts/plan.md" not in preflight["missing"]
-    assert "contracts/plan.md" in preflight.get("autofixed", [])
-    assert Path(preflight["resolved_plan_path"]).is_file()
+    assert "contracts/plan.md" in preflight["missing"]
+    assert preflight.get("autofixed", []) == []
     assert result["records"] == []
 
 
@@ -678,9 +669,7 @@ def test_engine_delivery_floor_passes_substantive_stress_project(tmp_path, monke
     assert status_payload["error"] == ""
 
 
-def test_engine_delivery_floor_uses_workspace_lines_and_target_files_when_result_is_sparse(
-    tmp_path, monkeypatch
-):
+def test_engine_delivery_floor_uses_workspace_lines_and_target_files_when_result_is_sparse(tmp_path, monkeypatch):
     loop_pm = _load_loop_pm()
 
     def _fake_runner(args, workspace_full, iteration, **kwargs):
@@ -982,9 +971,7 @@ def test_engine_qa_failed_final_writes_human_queue(tmp_path, monkeypatch):
 
     human_queue_path = run_dir / "engine" / "queues" / "human_queue.jsonl"
     assert human_queue_path.is_file()
-    lines = [
-        line for line in human_queue_path.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
+    lines = [line for line in human_queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert lines, "human queue should have at least one entry"
     entry = json.loads(lines[-1])
     assert entry["task_id"] == "TASK-QA-FINAL"
@@ -1293,7 +1280,7 @@ def test_engine_single_task_contract_strips_runtime_dependencies(tmp_path):
                 "depends_on": ["TASK-DEP-PARENT"],
                 "dependencies": ["TASK-DEP-PARENT"],
                 "deps": ["TASK-DEP-PARENT", "TASK-DEP-PARENT"],
-            }
+            },
         ],
     }
 
@@ -1315,16 +1302,10 @@ def test_engine_single_task_contract_strips_runtime_dependencies(tmp_path):
     assert dispatched_task.get("depends_on") == []
     assert dispatched_task.get("dependencies") == []
     assert dispatched_task.get("deps") == []
-    metadata = (
-        dispatched_task.get("metadata")
-        if isinstance(dispatched_task.get("metadata"), dict)
-        else {}
-    )
+    metadata = dispatched_task.get("metadata") if isinstance(dispatched_task.get("metadata"), dict) else {}
     assert metadata.get("engine_dispatch_depends_on") == ["TASK-DEP-PARENT"]
     dispatch_meta = (
-        dispatched_payload.get("engine_dispatch")
-        if isinstance(dispatched_payload.get("engine_dispatch"), dict)
-        else {}
+        dispatched_payload.get("engine_dispatch") if isinstance(dispatched_payload.get("engine_dispatch"), dict) else {}
     )
     assert dispatch_meta.get("depends_on") == ["TASK-DEP-PARENT"]
 

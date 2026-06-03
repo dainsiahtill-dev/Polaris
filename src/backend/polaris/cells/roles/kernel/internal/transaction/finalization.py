@@ -174,8 +174,13 @@ class FinalizationHandler:
                 }
             )
 
-        # === Inline Patch Escape 检测（LLM_ONCE 收口阶段兜底）===
-        if ledger.delivery_contract.must_materialize and not ledger.mutation_obligation.mutation_satisfied:
+        # === Materialization gate（LLM_ONCE 收口阶段兜底）===
+        phase_timeout = ledger.mutation_obligation.blocked_reason == BlockedReason.PHASE_TIMEOUT
+        if (
+            ledger.delivery_contract.must_materialize
+            and not ledger.mutation_obligation.mutation_satisfied
+            and not phase_timeout
+        ):
             escape_result = detect_inline_patch_escape(finalization_output.content)
             if escape_result["is_escape"]:
                 _logger = logging.getLogger(__name__)
@@ -204,49 +209,68 @@ class FinalizationHandler:
                     f"token density ratio={escape_result['ratio']:.2f}. "
                     "MATERIALIZE_CHANGES mode requires write tools, not inline code blocks.",
                 )
-                state_machine.transition_to(TurnState.COMPLETED)
-                ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
-                ledger.finalize()
-                self.emit_event(
-                    CompletionEvent(
-                        turn_id=turn_id,
-                        status="failed",
-                        duration_ms=ledger.get_duration_ms(),
-                        llm_calls=len(ledger.llm_calls),
-                        tool_calls=len(ledger.tool_executions),
-                    )
+                final_kind = "inline_patch_escape_blocked"
+            else:
+                ledger.mutation_obligation.mark_blocked(
+                    BlockedReason.NO_WRITE_TOOL_AVAILABLE,
+                    detail=(
+                        "MATERIALIZE_CHANGES mode requires at least one successful write tool invocation "
+                        "before LLM_ONCE finalization. Current batch only produced non-write receipts."
+                    ),
                 )
-                _metrics: dict[str, float] = {
-                    "duration_ms": float(ledger.get_duration_ms()),
-                    "llm_calls": float(len(ledger.llm_calls)),
-                    "tool_calls": float(len(ledger.tool_executions)),
-                }
-                _metrics.update(ledger.build_monitoring_metrics(final_kind="inline_patch_escape_blocked"))
-                return {
-                    "turn_id": turn_id,
-                    "kind": "inline_patch_escape_blocked",
-                    "visible_content": finalization_output.content,
-                    "decision": {
-                        "kind": decision.get("kind").value
-                        if hasattr(decision.get("kind"), "value")
-                        else str(decision.get("kind", "")),
-                        "finalize_mode": decision.get("finalize_mode").value
-                        if hasattr(decision.get("finalize_mode"), "value")
-                        else str(decision.get("finalize_mode", "")),
-                    },
-                    "metrics": _metrics,
-                    "batch_receipt": {"results": [r for receipt in receipts for r in receipt.get("results", [])]},
-                    "finalization": {
+                ledger.anomaly_flags.append(
+                    {
+                        "type": "MATERIALIZE_WITHOUT_WRITE_FINALIZATION",
                         "turn_id": turn_id,
-                        "mode": "blocked",
-                        "blocked_reason": ledger.mutation_obligation.blocked_reason.value
-                        if ledger.mutation_obligation.blocked_reason
-                        else None,
-                        "blocked_detail": ledger.mutation_obligation.blocked_detail,
-                        "needs_followup_workflow": True,
-                        "workflow_reason": "inline_patch_escape_blocked",
-                    },
-                }
+                        "phase": "finalization",
+                    }
+                )
+                final_kind = "mutation_bypass_blocked"
+
+            state_machine.transition_to(TurnState.COMPLETED)
+            ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
+            ledger.finalize()
+            self.emit_event(
+                CompletionEvent(
+                    turn_id=turn_id,
+                    status="failed",
+                    duration_ms=ledger.get_duration_ms(),
+                    llm_calls=len(ledger.llm_calls),
+                    tool_calls=len(ledger.tool_executions),
+                )
+            )
+            _metrics: dict[str, float] = {
+                "duration_ms": float(ledger.get_duration_ms()),
+                "llm_calls": float(len(ledger.llm_calls)),
+                "tool_calls": float(len(ledger.tool_executions)),
+            }
+            _metrics.update(ledger.build_monitoring_metrics(final_kind=final_kind))
+            blocked_reason = ledger.mutation_obligation.blocked_reason
+            blocked_detail = ledger.mutation_obligation.blocked_detail
+            return {
+                "turn_id": turn_id,
+                "kind": final_kind,
+                "visible_content": finalization_output.content
+                or f"[MUTATION_CONTINUE] {blocked_reason.value if blocked_reason else 'unknown'}: {blocked_detail}",
+                "decision": {
+                    "kind": decision.get("kind").value
+                    if hasattr(decision.get("kind"), "value")
+                    else str(decision.get("kind", "")),
+                    "finalize_mode": decision.get("finalize_mode").value
+                    if hasattr(decision.get("finalize_mode"), "value")
+                    else str(decision.get("finalize_mode", "")),
+                },
+                "metrics": _metrics,
+                "batch_receipt": {"results": [r for receipt in receipts for r in receipt.get("results", [])]},
+                "finalization": {
+                    "turn_id": turn_id,
+                    "mode": "blocked",
+                    "blocked_reason": blocked_reason.value if blocked_reason else None,
+                    "blocked_detail": blocked_detail,
+                    "needs_followup_workflow": True,
+                    "workflow_reason": final_kind,
+                },
+            }
 
         state_machine.transition_to(TurnState.COMPLETED)
         ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))

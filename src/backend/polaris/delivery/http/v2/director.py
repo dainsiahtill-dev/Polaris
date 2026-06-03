@@ -627,10 +627,13 @@ def _string_list(value: Any) -> list[str]:
         if isinstance(item, dict):
             item_text = _first_text(
                 item.get("description"),
+                item.get("text"),
                 item.get("title"),
                 item.get("name"),
                 item.get("path"),
+                item.get("file"),
                 item.get("id"),
+                item.get("value"),
             )
         else:
             item_text = _text_or_none(item)
@@ -1165,12 +1168,57 @@ def _payload_task_identity_values(payload: dict[str, Any]) -> set[str]:
 def _blueprint_payload_matches_task(payload: dict[str, Any], identities: set[str]) -> bool:
     if not identities:
         return False
+    if _blueprint_payload_is_traceability_only(payload):
+        return False
     if bool(payload.get("hard_failure")):
         return False
     status_token = str(payload.get("status") or "").strip().lower()
     if status_token in {"failed", "failure", "error", "rejected", "blocked"}:
         return False
+    if not _blueprint_payload_is_handoff_ready(payload):
+        return False
     return bool(_payload_task_identity_values(payload) & identities)
+
+
+def _blueprint_contract_list(payload: dict[str, Any], *keys: str) -> list[str]:
+    base_schema = _as_dict(payload.get("base_schema"))
+    context = _as_dict(payload.get("context")) or _as_dict(base_schema.get("context"))
+    pm_task = _as_dict(payload.get("pm_task")) or _as_dict(base_schema.get("pm_task")) or _as_dict(context.get("task"))
+    qa_contract = _as_dict(pm_task.get("qa_contract"))
+    for key in keys:
+        for source in (payload, base_schema, context, pm_task, qa_contract):
+            rows = _string_list(source.get(key))
+            if rows:
+                return rows
+    return []
+
+
+def _blueprint_handoff_missing_fields(payload: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    if not _blueprint_contract_list(payload, "target_files", "scope_paths", "files", "affected_files"):
+        missing.append("target_files")
+    if not _blueprint_contract_list(payload, "acceptance_criteria", "acceptance"):
+        missing.append("acceptance_criteria")
+    if not _blueprint_contract_list(payload, "execution_checklist", "steps"):
+        missing.append("execution_checklist")
+    return missing
+
+
+def _blueprint_payload_is_handoff_ready(payload: dict[str, Any]) -> bool:
+    if _blueprint_payload_is_traceability_only(payload):
+        return False
+    completeness = _as_dict(payload.get("contract_completeness"))
+    missing_fields = _string_list(completeness.get("missing_fields"))
+    if completeness.get("handoff_ready") is False or missing_fields:
+        return False
+    return not _blueprint_handoff_missing_fields(payload)
+
+
+def _blueprint_payload_is_traceability_only(payload: dict[str, Any]) -> bool:
+    if payload.get("traceability_only") is True:
+        return True
+    source = str(payload.get("source") or "").strip().lower()
+    return source.startswith("pm_dispatch.traceability")
 
 
 def _load_blueprint_payload_by_id(workspace: str, blueprint_id: str) -> dict[str, Any] | None:
@@ -2020,6 +2068,13 @@ async def list_tasks(
             used_projection = True
 
             tasks = _projection_task_rows(projection)
+            if tasks:
+                ramdisk_root = str(
+                    getattr(state.settings, "ramdisk_root", "") or resolve_env_str("ramdisk_root") or ""
+                ).strip()
+                cache_root = build_cache_root(ramdisk_root, resolved_workspace)
+                tasks = _runtime_backed_task_rows(tasks, workspace=resolved_workspace)
+                tasks = _contract_backed_task_rows(tasks, workspace=resolved_workspace, cache_root=cache_root)
             task_market_rows = _task_market_execution_rows_for_workspace(resolved_workspace)
             if task_market_rows:
                 tasks = _merge_task_rows_by_identity(tasks, task_market_rows)

@@ -322,6 +322,35 @@ new
         assert "old" in search
         assert "new" in replace
 
+    def test_extract_normalizes_bracketed_search_filename(self):
+        """Models often copy SEARCH[:filepath] literally."""
+        content = """
+<<<< SEARCH[:src/server/app.ts]
+// TODO: implement
+====
+export const ready = true;
+>>>> REPLACE[:src/server/app.ts]
+"""
+        blocks = extract_edit_blocks(content)
+        assert len(blocks) == 1
+        filepath, search, replace = blocks[0]
+        assert filepath == "src/server/app.ts"
+        assert "TODO" in search
+        assert "ready" in replace
+
+    def test_extract_normalizes_square_bracket_search_filename(self):
+        """Accept SEARCH[path] emitted by native tool-call arguments."""
+        content = """
+<<<< SEARCH[src/server/realtime-gateway.ts]
+// TODO: implement realtime gateway
+====
+export class RealtimeGateway {}
+>>>> REPLACE
+"""
+        blocks = extract_edit_blocks(content)
+        assert len(blocks) == 1
+        assert blocks[0][0] == "src/server/realtime-gateway.ts"
+
 
 class TestEdgeCases:
     """测试边界情况"""

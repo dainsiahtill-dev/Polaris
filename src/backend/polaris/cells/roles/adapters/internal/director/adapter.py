@@ -39,6 +39,65 @@ from .state_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_director_role_response(role_response: Any) -> dict[str, Any]:
+    """Normalize role-kernel output without hiding provider/runtime failures."""
+
+    response_payload: dict[str, Any] = role_response if isinstance(role_response, dict) else {}
+    content = (
+        str(response_payload.get("response") or response_payload.get("reply") or response_payload.get("content") or "")
+        if response_payload
+        else str(role_response or "")
+    )
+    content = content.strip()
+    explicit_error = str(response_payload.get("error") or "").strip() if response_payload else ""
+    runtime_error = _extract_director_role_runtime_error(response_payload, content)
+    error = explicit_error or runtime_error
+    if not error and response_payload.get("success") is False:
+        error = "role_response_unsuccessful"
+    provider = str(response_payload.get("provider") or response_payload.get("provider_id") or "").strip()
+    model = str(response_payload.get("model") or "").strip()
+    metadata_raw = response_payload.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    execution_stats_raw = response_payload.get("execution_stats")
+    execution_stats: dict[str, Any] = execution_stats_raw if isinstance(execution_stats_raw, dict) else {}
+    batch_receipt_raw = response_payload.get("batch_receipt")
+    batch_receipt: dict[str, Any] | None = batch_receipt_raw if isinstance(batch_receipt_raw, dict) else None
+    if not provider:
+        provider = str(metadata.get("provider_id") or metadata.get("provider") or "").strip()
+    if not model:
+        model = str(metadata.get("model") or execution_stats.get("model") or "").strip()
+    return {
+        "content": content,
+        "success": not bool(error),
+        "error": error,
+        "raw_response": role_response,
+        "provider": provider,
+        "model": model,
+        "execution_stats": dict(execution_stats),
+        "batch_receipt": dict(batch_receipt) if batch_receipt else None,
+    }
+
+
+def _extract_director_role_runtime_error(response_payload: dict[str, Any], content: str) -> str:
+    """Return a non-empty error when role output is a runtime failure wrapper."""
+
+    if content.startswith("[ROLE_EXECUTION_ERROR]"):
+        return content
+    if content.startswith("[Cognitive Blocked]"):
+        return content
+    metadata = response_payload.get("metadata") if isinstance(response_payload, dict) else {}
+    if isinstance(metadata, dict):
+        metadata_error = str(metadata.get("error") or metadata.get("error_message") or "").strip()
+        if metadata_error:
+            return metadata_error
+    validation = response_payload.get("validation") if isinstance(response_payload, dict) else {}
+    if isinstance(validation, dict) and validation.get("success") is False:
+        errors = validation.get("errors")
+        if isinstance(errors, list) and errors:
+            return "; ".join(str(item) for item in errors[:3] if str(item).strip())
+    return ""
+
+
 class DirectorAdapter(BaseRoleAdapter):
     """Director 角色适配器
 
@@ -293,16 +352,10 @@ class DirectorAdapter(BaseRoleAdapter):
             context=context,
             validate_output=False,
             max_retries=llm_max_retries,
+            enable_cognitive=False,
         )
-        primary = {
-            "content": str(primary_response.get("response") or "")
-            if isinstance(primary_response, dict)
-            else str(primary_response or ""),
-            "success": True,
-            "error": "",
-            "raw_response": primary_response,
-        }
-        if is_empty_role_response(primary):
+        primary = _normalize_director_role_response(primary_response)
+        if not bool(primary.get("success")) or is_empty_role_response(primary):
             fallback_response = await generate_role_response(
                 workspace=self.workspace,
                 settings=settings,
@@ -311,21 +364,17 @@ class DirectorAdapter(BaseRoleAdapter):
                 context=context,
                 validate_output=True,
                 max_retries=max(1, llm_max_retries),
+                enable_cognitive=False,
             )
-            fallback = {
-                "content": str(fallback_response.get("response") or "")
-                if isinstance(fallback_response, dict)
-                else str(fallback_response or ""),
-                "success": True,
-                "error": "",
-                "raw_response": fallback_response,
-            }
-            if not is_empty_role_response(fallback):
+            fallback = _normalize_director_role_response(fallback_response)
+            if bool(fallback.get("success")) and not is_empty_role_response(fallback):
                 return fallback
             try:
                 return await self._invoke_direct_runtime_provider(message)
             except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
-                fallback["error"] = str(fallback.get("error") or f"director_empty_role_response:{exc}")
+                fallback_error = str(fallback.get("error") or primary.get("error") or "").strip()
+                fallback["error"] = fallback_error or f"director_empty_role_response:{exc}"
+                fallback["success"] = False
                 return fallback
         return primary
 
@@ -471,6 +520,42 @@ class DirectorAdapter(BaseRoleAdapter):
             input_data = {}
         input_metadata_raw = input_data.get("metadata")
         input_metadata: dict[str, Any] = input_metadata_raw if isinstance(input_metadata_raw, dict) else {}
+
+        def _list_or_empty(value: Any) -> list[Any]:
+            return list(value) if isinstance(value, list) else []
+
+        scope_paths = (
+            input_data.get("scope_paths")
+            if isinstance(input_data.get("scope_paths"), list)
+            else input_metadata.get("scope_paths")
+            if isinstance(input_metadata.get("scope_paths"), list)
+            else []
+        )
+        target_files = (
+            input_data.get("target_files")
+            if isinstance(input_data.get("target_files"), list)
+            else input_metadata.get("target_files")
+            if isinstance(input_metadata.get("target_files"), list)
+            else []
+        )
+        execution_checklist = (
+            input_data.get("execution_checklist")
+            if isinstance(input_data.get("execution_checklist"), list)
+            else input_metadata.get("execution_checklist")
+            if isinstance(input_metadata.get("execution_checklist"), list)
+            else []
+        )
+        acceptance_criteria = (
+            input_data.get("acceptance_criteria")
+            if isinstance(input_data.get("acceptance_criteria"), list)
+            else input_metadata.get("acceptance_criteria")
+            if isinstance(input_metadata.get("acceptance_criteria"), list)
+            else input_data.get("acceptance")
+            if isinstance(input_data.get("acceptance"), list)
+            else input_metadata.get("acceptance")
+            if isinstance(input_metadata.get("acceptance"), list)
+            else []
+        )
         metadata: dict[str, Any] = {
             "goal": str(input_data.get("goal") or input_metadata.get("goal") or "").strip(),
             "scope": str(input_data.get("scope") or input_metadata.get("scope") or "").strip(),
@@ -479,7 +564,7 @@ class DirectorAdapter(BaseRoleAdapter):
                 if isinstance(input_data.get("steps"), list)
                 else input_metadata.get("steps")
                 if isinstance(input_metadata.get("steps"), list)
-                else []
+                else execution_checklist
             ),
             "phase": str(input_data.get("phase") or input_metadata.get("phase") or "implementation").strip(),
             "pm_task_id": str(
@@ -490,11 +575,20 @@ class DirectorAdapter(BaseRoleAdapter):
                 or requested_task_id
             ).strip(),
             "source": "director_adapter.materialized_orchestration_task",
+            "scope_paths": _list_or_empty(scope_paths),
+            "target_files": _list_or_empty(target_files),
+            "execution_checklist": _list_or_empty(execution_checklist),
+            "acceptance_criteria": _list_or_empty(acceptance_criteria),
+            "acceptance": _list_or_empty(acceptance_criteria),
         }
         input_metadata_no_proj = (
             {k: v for k, v in input_metadata.items() if k != "projection"} if input_metadata else {}
         )
         metadata.update(input_metadata_no_proj)
+        for key in ("scope_paths", "target_files", "execution_checklist", "acceptance_criteria", "acceptance"):
+            metadata[key] = _list_or_empty(metadata.get(key))
+        if not isinstance(metadata.get("steps"), list):
+            metadata["steps"] = list(metadata["execution_checklist"])
         return metadata
 
     # -------------------------------------------------------------------------
@@ -547,10 +641,24 @@ class DirectorAdapter(BaseRoleAdapter):
         raw_metadata = task.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         goal = str(metadata.get("goal") or task.get("goal") or "").strip()
-        scope = metadata.get("scope", task.get("scope", ""))
-        steps = metadata.get("steps") if isinstance(metadata.get("steps"), list) else task.get("steps")
+        scope = metadata.get("scope") or task.get("scope")
+        steps = (
+            metadata.get("steps")
+            if isinstance(metadata.get("steps"), list)
+            else task.get("steps")
+            if isinstance(task.get("steps"), list)
+            else metadata.get("execution_checklist")
+            if isinstance(metadata.get("execution_checklist"), list)
+            else task.get("execution_checklist")
+        )
         acceptance = (
-            metadata.get("acceptance") if isinstance(metadata.get("acceptance"), list) else task.get("acceptance")
+            metadata.get("acceptance")
+            if isinstance(metadata.get("acceptance"), list)
+            else task.get("acceptance")
+            if isinstance(task.get("acceptance"), list)
+            else metadata.get("acceptance_criteria")
+            if isinstance(metadata.get("acceptance_criteria"), list)
+            else task.get("acceptance_criteria")
         )
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
@@ -566,6 +674,23 @@ class DirectorAdapter(BaseRoleAdapter):
             return [part.strip() for part in token.split(",") if part.strip()] or [token]
 
         scope_items = _stringify_list(scope)
+        target_file_items = _stringify_list(
+            metadata.get("target_files")
+            if isinstance(metadata.get("target_files"), list)
+            else task.get("target_files")
+            if isinstance(task.get("target_files"), list)
+            else []
+        )
+        scope_path_items = _stringify_list(
+            metadata.get("scope_paths")
+            if isinstance(metadata.get("scope_paths"), list)
+            else task.get("scope_paths")
+            if isinstance(task.get("scope_paths"), list)
+            else []
+        )
+        for item in [*scope_path_items, *target_file_items]:
+            if item not in scope_items:
+                scope_items.append(item)
         step_items = _stringify_list(steps)
         acceptance_items = _stringify_list(acceptance)
         qa_rework_items = _stringify_list(qa_rework_evidence)
@@ -577,6 +702,7 @@ class DirectorAdapter(BaseRoleAdapter):
             "",
             f"目标: {goal}" if goal else "",
             f"范围: {', '.join(scope_items)}" if scope_items else "",
+            f"目标文件: {', '.join(target_file_items)}" if target_file_items else "",
             "",
             "执行步骤:",
             *[f"- {item}" for item in step_items],

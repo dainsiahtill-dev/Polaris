@@ -9,13 +9,18 @@ from __future__ import annotations
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+    _CARD3D_PM_REQUIRED_DOMAINS,
+    _card3d_domains_for_task,
     _contains_prompt_leakage,
     _has_executable_or_file_acceptance_anchor,
     _has_measurable_acceptance_anchor,
+    _is_card3d_pm_contract,
     _normalize_path,
     _normalize_path_list,
     _normalize_text,
+    _path_matches_card3d_domain,
     _strip_wrapping_quotes,
+    _title_is_too_short,
     autofix_pm_contract_for_quality,
     check_quality_promote_candidate,
     evaluate_pm_task_quality,
@@ -75,6 +80,13 @@ class TestNormalizePathList:
         assert _normalize_path_list(12345) == []
 
 
+class TestTitleQuality:
+    def test_cjk_delivery_title_is_not_too_short(self) -> None:
+        assert _title_is_too_short("实现匹配队列") is False
+        assert _title_is_too_short("实现实时网关") is False
+        assert _title_is_too_short("x") is True
+
+
 class TestNormalizeText:
     def test_collapse_whitespace(self) -> None:
         assert _normalize_text("  hello   world  ") == "hello world"
@@ -97,6 +109,28 @@ class TestNormalizePath:
 
     def test_lowercase(self) -> None:
         assert _normalize_path("SRC/APP.py") == "src/app.py"
+
+
+class TestCard3dDomainMatching:
+    def test_exact_client_scene_does_not_cover_sibling_client_domains(self) -> None:
+        assert _path_matches_card3d_domain("src/client/three-scene.ts", "client3d") is True
+        assert _path_matches_card3d_domain("src/client/three-scene.ts", "table") is False
+        assert _path_matches_card3d_domain("src/client/three-scene.ts", "networking") is False
+
+    def test_explicit_client_directory_scope_covers_client_card3d_domains(self) -> None:
+        task = {"scope_paths": ["src/client"]}
+        assert _card3d_domains_for_task(task, workspace_full=None) == ["client3d", "table", "networking"]
+
+    def test_generic_server_and_tests_paths_do_not_identify_card3d_contract(self) -> None:
+        payload = {
+            "overall_goal": "Build a TypeScript REST API with tests.",
+            "tasks": [
+                {"id": "T1", "scope_paths": ["src/server"], "target_files": ["src/server/app.ts"]},
+                {"id": "T2", "scope_paths": ["tests"], "target_files": ["tests/task-service.test.ts"]},
+            ],
+        }
+        tasks = payload["tasks"]
+        assert _is_card3d_pm_contract(payload, tasks) is False
 
 
 class TestContainsPromptLeakage:
@@ -855,6 +889,364 @@ class TestAutofixPmContractForQuality:
         report = evaluate_pm_task_quality(payload, workspace_full=workspace)
         assert report["ok"] is True
         assert not any("game PM decomposition" in item for item in report["critical_issues"])
+
+    def test_adds_missing_card3d_domain_tasks_without_roguelike_repair(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": (
+                "Build a multiplayer online creative card game with a TypeScript Three.js 3D client "
+                "and a Node.js backend for realtime rooms, matchmaking, deck building, and sync."
+            ),
+            "tasks": [
+                {
+                    "id": "CARD3D-CLIENT",
+                    "title": "Implement Three.js card scene",
+                    "goal": "Implement the browser Three.js scene for the multiplayer creative card table.",
+                    "acceptance_criteria": ["verify src/client/three-scene.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/client/three-scene.ts"],
+                },
+                {
+                    "id": "CARD3D-SERVER",
+                    "title": "Implement Node backend",
+                    "goal": "Implement the Node.js backend entrypoint for multiplayer card sessions.",
+                    "acceptance_criteria": ["verify src/server/app.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["CARD3D-CLIENT"],
+                    "execution_checklist": ["Read", "Implement", "Verify"],
+                    "scope_paths": ["src/server/app.ts"],
+                },
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert any("card3d PM decomposition missing domains" in item for item in initial_report["critical_issues"])
+        assert not any("game PM decomposition" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+
+        assert stats["card3d_domain_tasks_added"] == len(_CARD3D_PM_REQUIRED_DOMAINS) - 2
+        assert stats["game_domain_tasks_added"] == 0
+        target_files: set[str] = set()
+        for task in payload["tasks"]:
+            if not isinstance(task, dict):
+                continue
+            for path in task.get("scope_paths", []):
+                if isinstance(path, str):
+                    target_files.add(path)
+            for path in task.get("target_files", []):
+                if isinstance(path, str):
+                    target_files.add(path)
+        expected_target_files = {
+            "src/client/three-scene.ts",
+            "src/client/card-table.ts",
+            "src/client/network-client.ts",
+            "src/server/app.ts",
+            "src/server/realtime-gateway.ts",
+            "src/server/matchmaking.ts",
+            "src/server/room-state.ts",
+            "src/game/card-catalog.ts",
+            "src/game/deck-builder.ts",
+            "src/game/rules-engine.ts",
+            "src/shared/protocol.ts",
+            "src/server/session-store.ts",
+            "src/server/moderation.ts",
+            "src/shared/player-presence.ts",
+            "src/shared/telemetry.ts",
+            "src/auth/session-auth.ts",
+            "src/lobby/lobby-service.ts",
+            "src/assets/card-assets.ts",
+            "src/animation/card-animations.ts",
+            "src/physics/table-layout.ts",
+            "src/analytics/match-analytics.ts",
+            "tests/unit/card-rules.test.ts",
+            "tests/unit/deck-builder.test.ts",
+            "tests/integration/multiplayer-flow.test.ts",
+            "tests/integration/realtime-sync.test.ts",
+            "tests/e2e/card-table-3d.test.ts",
+        }
+        assert expected_target_files.issubset(target_files)
+        assert "src/world/procedural-map.ts" not in target_files
+        assert "src/combat/combat-system.ts" not in target_files
+
+        report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert report["ok"] is True
+        assert not any("card3d PM decomposition" in item for item in report["critical_issues"])
+        assert not any("game PM decomposition" in item for item in report["critical_issues"])
+
+    def test_card3d_tasks_with_exact_targets_survive_broad_scope_paths(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": (
+                "Build a multiplayer online creative card game with a TypeScript Three.js 3D client "
+                "and a Node.js backend for realtime rooms, matchmaking, deck building, and sync."
+            ),
+            "tasks": [
+                {
+                    "id": "PM-0001-1",
+                    "title": "Implement Card3D client table",
+                    "goal": "Implement the browser Three.js card scene, card table, and network client.",
+                    "target_files": [
+                        "src/client/three-scene.ts",
+                        "src/client/card-table.ts",
+                        "src/client/network-client.ts",
+                    ],
+                    "scope_paths": ["src"],
+                    "acceptance_criteria": [
+                        "Run `npm run build` exits 0.",
+                        "Files src/client/three-scene.ts and src/client/card-table.ts exist.",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": [
+                        "Read existing client files and shared protocol.",
+                        "Implement the 3D card table rendering and interaction flow.",
+                        "Run npm run build and record the result.",
+                    ],
+                },
+                {
+                    "id": "PM-0002-1",
+                    "title": "Implement Card3D realtime server",
+                    "goal": "Implement backend app, realtime gateway, matchmaking, and room state.",
+                    "target_files": [
+                        "src/server/app.ts",
+                        "src/server/realtime-gateway.ts",
+                        "src/server/matchmaking.ts",
+                        "src/server/room-state.ts",
+                    ],
+                    "scope_paths": ["src"],
+                    "acceptance_criteria": [
+                        "Run `npm run build` exits 0.",
+                        "Files src/server/app.ts and src/server/room-state.ts exist.",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["PM-0001-1"],
+                    "execution_checklist": [
+                        "Read client network contract.",
+                        "Implement realtime room lifecycle and matchmaking.",
+                        "Run npm run build and record the result.",
+                    ],
+                },
+                {
+                    "id": "PM-0003-1",
+                    "title": "Implement Card3D game model and tests",
+                    "goal": "Implement card catalog, deck builder, rules engine, protocol, session store, moderation, and tests.",
+                    "target_files": [
+                        "src/game/card-catalog.ts",
+                        "src/game/deck-builder.ts",
+                        "src/game/rules-engine.ts",
+                        "src/shared/protocol.ts",
+                        "src/server/session-store.ts",
+                        "src/server/moderation.ts",
+                        "src/shared/player-presence.ts",
+                        "src/shared/telemetry.ts",
+                        "src/auth/session-auth.ts",
+                        "src/lobby/lobby-service.ts",
+                        "src/assets/card-assets.ts",
+                        "src/animation/card-animations.ts",
+                        "src/physics/table-layout.ts",
+                        "src/analytics/match-analytics.ts",
+                        "tests/integration/multiplayer-flow.test.ts",
+                    ],
+                    "scope_paths": ["src", "tests"],
+                    "acceptance_criteria": [
+                        "Run `npm run build` exits 0.",
+                        "Run `npm test` exits 0.",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "verification",
+                    "depends_on": ["PM-0002-1"],
+                    "execution_checklist": [
+                        "Read server and client contracts.",
+                        "Implement game rules, persistence-facing session behavior, and integration test.",
+                        "Run npm run build and npm test.",
+                    ],
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+
+        assert stats["game_policy_tasks_removed"] == 0
+        assert stats["card3d_domain_tasks_added"] == 0
+        remaining_ids = {task["id"] for task in payload["tasks"] if isinstance(task, dict)}
+        assert {"PM-0001-1", "PM-0002-1", "PM-0003-1"}.issubset(remaining_ids)
+
+        report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert any("card3d PM decomposition requires at least" in item for item in report["critical_issues"])
+        assert any(
+            "card3d tests task must target all required test files" in item for item in report["critical_issues"]
+        )
+        assert not any("unknown dependency" in item for item in report["critical_issues"])
+        assert not any("stack mutation" in item.lower() for item in report["critical_issues"])
+
+    def test_card3d_tests_task_requires_all_seed_test_targets(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": (
+                "Build a multiplayer online creative card game with a TypeScript Three.js 3D client "
+                "and a Node.js backend."
+            ),
+            "tasks": [
+                {
+                    "id": "PM-CARD3D-TESTS",
+                    "title": "Add multiplayer card integration tests",
+                    "goal": "Replace placeholder tests with meaningful multiplayer card coverage.",
+                    "target_files": ["tests/integration/multiplayer-flow.test.ts"],
+                    "scope_paths": ["tests"],
+                    "acceptance_criteria": ["Run `npm test` exits 0."],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": [
+                        "Read all seed test files.",
+                        "Replace placeholder arithmetic tests.",
+                        "Run npm test.",
+                    ],
+                }
+            ],
+        }
+
+        report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+
+        assert any(
+            "card3d tests task must target all required test files" in item for item in report["critical_issues"]
+        )
+        assert "tests/unit/card-rules.test.ts" in "\n".join(report["critical_issues"])
+
+    def test_card3d_tests_task_requires_placeholder_cleanup_contract(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": (
+                "Build a multiplayer online creative card game with a TypeScript Three.js 3D client "
+                "and a Node.js backend."
+            ),
+            "tasks": [
+                {
+                    "id": "PM-CARD3D-TESTS",
+                    "title": "Add multiplayer card integration tests",
+                    "goal": "Add meaningful multiplayer card coverage.",
+                    "target_files": [
+                        "tests/unit/card-rules.test.ts",
+                        "tests/unit/deck-builder.test.ts",
+                        "tests/integration/multiplayer-flow.test.ts",
+                        "tests/integration/realtime-sync.test.ts",
+                        "tests/e2e/card-table-3d.test.ts",
+                    ],
+                    "scope_paths": ["tests"],
+                    "acceptance_criteria": ["Run `npm test` exits 0."],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": [
+                        "Read all seed test files.",
+                        "Add multiplayer coverage.",
+                        "Run npm test.",
+                    ],
+                }
+            ],
+        }
+
+        report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+
+        assert any(
+            "card3d tests task must require replacing/removing trivial arithmetic placeholder tests" in item
+            for item in report["critical_issues"]
+        )
+
+    def test_card3d_autofix_removes_unanchored_requirements_fallback_tasks(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": "Build Typescript api from requirements.",
+            "focus": "Recover from PM invalid output and continue delivery safely.",
+            "tasks": [
+                {
+                    "id": "PM-0001-F1",
+                    "title": "Requirements bootstrap (Typescript Api)",
+                    "goal": "Create initial project files derived from requirements. Use Typescript conventions.",
+                    "target_files": [
+                        "package.json",
+                        "Temp/docs/architect-plan.md",
+                        "Temp/docs/chief-engineer-blueprint.md",
+                        "Three.js",
+                        "Node.js",
+                    ],
+                    "scope_paths": ["Temp/docs"],
+                    "acceptance_criteria": [
+                        "verify: Bootstrap target files are created and syntactically valid.",
+                        "At least one verification command is runnable: npm test",
+                    ],
+                    "assigned_to": "Director",
+                    "phase": "bootstrap",
+                    "depends_on": [],
+                    "execution_checklist": ["Create bootstrap files", "Run npm test"],
+                    "description": (
+                        "Technology Stack: Typescript\nProject Type: Api\nRequirements Summary: "
+                        "构建多人在线创意卡牌游戏，交付 TypeScript + Three.js 3D 牌桌客户端、"
+                        "Node.js 后端、实时网关、匹配、房间状态、牌组构筑和同步协议。"
+                    ),
+                },
+                {
+                    "id": "PM-0001-F2",
+                    "title": "Requirements implementation (Typescript Api)",
+                    "goal": "Implement core module files derived from requirements. Use Typescript conventions.",
+                    "target_files": ["Three.js", "Node.js"],
+                    "scope_paths": ["Three.js", "Node.js"],
+                    "acceptance_criteria": [
+                        "verify: Core module files are implemented with coherent behavior.",
+                        "Primary implementation file contains non-trivial business logic.",
+                    ],
+                    "assigned_to": "Director",
+                    "phase": "implementation",
+                    "depends_on": ["PM-0001-F1"],
+                    "execution_checklist": ["Implement core module files", "Verify behavior"],
+                    "description": (
+                        "Technology Stack: Typescript\nProject Type: Api\nRequirements Summary: "
+                        "多人在线创意卡牌游戏需要 Three.js 3D 牌桌、Node.js 后端、"
+                        "WebSocket 实时同步、matchmaking、rooms、cards、rules 和 tests。"
+                    ),
+                },
+                {
+                    "id": "PM-0001-F3",
+                    "title": "Requirements tests (Typescript Api)",
+                    "goal": "Create or update tests derived from requirements. Use Typescript conventions.",
+                    "target_files": ["tests/service.test.ts"],
+                    "scope_paths": ["tests"],
+                    "acceptance_criteria": [
+                        "verify: At least one test file exists and validates core behavior.",
+                        "Verification command passes: npm test",
+                    ],
+                    "assigned_to": "Director",
+                    "phase": "verification",
+                    "depends_on": ["PM-0001-F2"],
+                    "execution_checklist": ["Create tests", "Run npm test"],
+                    "description": "Validate the multiplayer creative card game realtime flow.",
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+
+        assert stats["game_policy_tasks_removed"] == 3
+        assert stats["card3d_domain_tasks_added"] == len(_CARD3D_PM_REQUIRED_DOMAINS)
+        remaining_ids = {task["id"] for task in payload["tasks"] if isinstance(task, dict)}
+        assert remaining_ids.isdisjoint({"PM-0001-F1", "PM-0001-F2", "PM-0001-F3"})
+        assert len(payload["tasks"]) == len(_CARD3D_PM_REQUIRED_DOMAINS)
+
+        report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert report["ok"] is True
+        assert not report["critical_issues"]
 
     def test_sanitizes_fragile_prng_acceptance(self, tmp_path: Any) -> None:
         workspace = str(tmp_path)

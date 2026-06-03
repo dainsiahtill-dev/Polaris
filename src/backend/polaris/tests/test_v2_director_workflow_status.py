@@ -305,6 +305,59 @@ def test_list_tasks_returns_director_task_pool_contract_fields(monkeypatch) -> N
     assert task.pm_task_id == "PM-42"
 
 
+def test_list_tasks_workflow_enriches_rows_with_contract_scope(monkeypatch) -> None:
+    workflow_tasks: list[dict[str, object]] = [
+        {
+            "id": "PM-CARD3D-1",
+            "subject": "Implement card table",
+            "description": "from workflow queue",
+            "status": "PENDING",
+            "priority": "MEDIUM",
+            "metadata": {"pm_task_id": "PM-CARD3D-1"},
+        }
+    ]
+    service = _FakeDirectorService(
+        status={"workspace": "X:\\workspace", "state": "IDLE"},
+        local_tasks=[],
+    )
+
+    from polaris.cells.runtime.projection.internal.runtime_projection_service import RuntimeProjection
+
+    async def _fake_build_async(workspace, cache_root=None, state=None):
+        return RuntimeProjection(
+            pm_local={},
+            director_local={},
+            workflow_archive={"status": {"tasks": {"task_rows": workflow_tasks}}},
+            engine_fallback=None,
+            task_rows=workflow_tasks,
+        )
+
+    def _fake_contract_backed_task_rows(task_rows, *, workspace, cache_root):
+        del workspace, cache_root
+        enriched = []
+        for row in task_rows:
+            next_row = dict(row)
+            metadata = dict(next_row.get("metadata") or {})
+            metadata["target_files"] = ["src/client/card-table.ts"]
+            next_row["metadata"] = metadata
+            enriched.append(next_row)
+        return enriched
+
+    monkeypatch.setattr(v2_director.RuntimeProjectionService, "build_async", _fake_build_async)
+    monkeypatch.setattr(v2_director, "_contract_backed_task_rows", _fake_contract_backed_task_rows)
+
+    payload = asyncio.run(
+        v2_director.list_tasks(
+            request=_build_fake_request(),
+            source="workflow",
+            service=service,
+        )
+    )
+
+    assert len(payload) == 1
+    assert payload[0].target_files == ["src/client/card-table.ts"]
+
+
 def test_list_tasks_normalizes_director_task_pool_statuses_and_filter(monkeypatch) -> None:
     workflow_tasks: list[dict[str, object]] = [
         {"id": "pending-1", "subject": "Ready", "status": "READY", "priority": "MEDIUM", "metadata": {}},

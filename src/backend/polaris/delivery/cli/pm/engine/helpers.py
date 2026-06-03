@@ -82,9 +82,11 @@ def _is_running_status(status: str) -> bool:
 
 def _safe_int(value: Any, *, default: int = 0) -> int:
     """Parse integer with fallback default."""
+    if value is None:
+        return int(default)
     try:
         return int(value)
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, TypeError, ValueError) as exc:
         logger.warning(
             "Failed to parse int from %r, using default %d: %s",
             value,

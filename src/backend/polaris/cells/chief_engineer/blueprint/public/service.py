@@ -45,7 +45,17 @@ def _string_list(value: Any) -> list[str]:
         if isinstance(item, str):
             token = item.strip()
         elif isinstance(item, dict):
-            token = str(item.get("path") or item.get("file") or item.get("name") or item.get("id") or "").strip()
+            token = str(
+                item.get("path")
+                or item.get("file")
+                or item.get("description")
+                or item.get("text")
+                or item.get("title")
+                or item.get("name")
+                or item.get("id")
+                or item.get("value")
+                or ""
+            ).strip()
         else:
             token = str(item or "").strip()
         if token:
@@ -53,12 +63,98 @@ def _string_list(value: Any) -> list[str]:
     return rows
 
 
-def _target_files_from_context(context: dict[str, Any]) -> list[str]:
-    for key in ("target_files", "scope_paths", "files", "affected_files"):
-        rows = _string_list(context.get(key))
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _first_string_list(*values: Any) -> list[str]:
+    for value in values:
+        rows = _string_list(value)
         if rows:
             return rows
     return []
+
+
+def _task_payload_from_context(context: dict[str, Any]) -> dict[str, Any]:
+    for key in ("task", "pm_task", "source_task", "contract_task"):
+        nested = _mapping(context.get(key))
+        if nested:
+            return nested
+    return {}
+
+
+def _target_files_from_context(context: dict[str, Any]) -> list[str]:
+    task_payload = _task_payload_from_context(context)
+    for key in ("target_files", "scope_paths", "files", "affected_files"):
+        rows = _first_string_list(context.get(key), task_payload.get(key))
+        if rows:
+            return rows
+    return []
+
+
+def _qa_acceptance_from_task(task_payload: dict[str, Any]) -> list[str]:
+    qa_contract = _mapping(task_payload.get("qa_contract"))
+    return _first_string_list(qa_contract.get("acceptance_criteria"), qa_contract.get("acceptance"))
+
+
+def _blueprint_contract_fields(context: dict[str, Any]) -> dict[str, Any]:
+    task_payload = _task_payload_from_context(context)
+    acceptance_criteria = _first_string_list(
+        context.get("acceptance_criteria"),
+        context.get("acceptance"),
+        task_payload.get("acceptance_criteria"),
+        task_payload.get("acceptance"),
+        _qa_acceptance_from_task(task_payload),
+    )
+    execution_checklist = _first_string_list(
+        context.get("execution_checklist"),
+        context.get("steps"),
+        task_payload.get("execution_checklist"),
+        task_payload.get("steps"),
+    )
+    scope_paths = _first_string_list(
+        context.get("scope_paths"),
+        context.get("scope"),
+        task_payload.get("scope_paths"),
+        task_payload.get("scope"),
+    )
+    dependencies = _first_string_list(
+        context.get("dependencies"),
+        context.get("depends_on"),
+        context.get("blocked_by"),
+        task_payload.get("dependencies"),
+        task_payload.get("depends_on"),
+        task_payload.get("blocked_by"),
+    )
+    risks = _first_string_list(context.get("risks"), task_payload.get("risks"))
+    return {
+        "task": task_payload,
+        "acceptance_criteria": acceptance_criteria,
+        "execution_checklist": execution_checklist,
+        "scope_paths": scope_paths,
+        "dependencies": dependencies,
+        "risks": risks,
+    }
+
+
+def _contract_completeness(
+    *,
+    target_files: list[str],
+    acceptance_criteria: list[str],
+    execution_checklist: list[str],
+) -> dict[str, Any]:
+    missing_fields: list[str] = []
+    if not target_files:
+        missing_fields.append("target_files")
+    if not acceptance_criteria:
+        missing_fields.append("acceptance_criteria")
+    if not execution_checklist:
+        missing_fields.append("execution_checklist")
+    return {
+        "handoff_ready": not missing_fields,
+        "missing_fields": missing_fields,
+        "requires": ["target_files", "acceptance_criteria", "execution_checklist"],
+    }
 
 
 def _tuple_from_payload(value: Any) -> tuple[str, ...]:
@@ -96,14 +192,29 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     blueprint_id = f"ce_{_safe_token(command.task_id)}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
     context = dict(command.context)
     constraints = dict(command.constraints)
+    contract_fields = _blueprint_contract_fields(context)
     target_files = _target_files_from_context(context)
     title = str(context.get("task_title") or context.get("title") or command.objective).strip()
     summary = f"Chief Engineer blueprint for {command.task_id}: {command.objective}"
+    acceptance_criteria = list(contract_fields["acceptance_criteria"])
+    execution_checklist = list(contract_fields["execution_checklist"])
+    scope_paths = list(contract_fields["scope_paths"])
+    dependencies = list(contract_fields["dependencies"])
+    contract_completeness = _contract_completeness(
+        target_files=target_files,
+        acceptance_criteria=acceptance_criteria,
+        execution_checklist=execution_checklist,
+    )
+    context.setdefault("acceptance_criteria", acceptance_criteria)
+    context.setdefault("execution_checklist", execution_checklist)
+    context.setdefault("target_files", target_files)
+    context.setdefault("scope_paths", scope_paths)
+    context.setdefault("dependencies", dependencies)
     recommendations = (
         "Validate PM acceptance criteria before Director execution.",
         "Keep implementation scope within the recorded target files.",
     )
-    risks = tuple(_string_list(context.get("risks")))
+    risks = tuple(contract_fields["risks"])
     payload: dict[str, Any] = {
         "schema_version": "chief_engineer.blueprint.v1",
         "role": "ChiefEngineer",
@@ -116,8 +227,15 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "status": "generated",
         "source": "chief_engineer.generate_task_blueprint",
         "target_files": target_files,
+        "scope_paths": scope_paths,
+        "acceptance_criteria": acceptance_criteria,
+        "execution_checklist": execution_checklist,
+        "dependencies": dependencies,
         "constraints": constraints,
         "context": context,
+        "pm_task": contract_fields["task"],
+        "contract_completeness": contract_completeness,
+        "handoff_ready": bool(contract_completeness["handoff_ready"]),
         "recommendations": list(recommendations),
         "risks": list(risks),
         "created_at": now,

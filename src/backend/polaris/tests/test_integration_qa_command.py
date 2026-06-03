@@ -111,6 +111,138 @@ def test_run_integration_verify_runner_blocks_node_static_fallback_by_default(
     assert any("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK=1" in error for error in errors)
 
 
+def test_run_integration_verify_runner_runs_self_contained_node_script_with_declared_dependencies(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/test.mjs"},"dependencies":{"three":"^0.165.0"}}\n',
+        encoding="utf-8",
+    )
+    (scripts_dir / "test.mjs").write_text("console.log('STRUCTURAL_TEST_PASS');\n", encoding="utf-8")
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is True
+    assert summary == "Integration verification passed: npm run test -- --watch=false"
+    assert errors == []
+
+
+def test_run_integration_verify_runner_fails_on_deterministic_scaffold_marker(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    source_dir = tmp_path / "src" / "client"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/test.mjs"}}\n',
+        encoding="utf-8",
+    )
+    (scripts_dir / "test.mjs").write_text("console.log('PASS');\n", encoding="utf-8")
+    (source_dir / "three-scene.ts").write_text(
+        'export const scaffoldVersion = "deterministic-declared-scope-v1";\n',
+        encoding="utf-8",
+    )
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is False
+    assert "artifact quality scan" in summary
+    assert any("deterministic scaffold marker" in error for error in errors)
+
+
+def test_run_integration_verify_runner_fails_on_audit_seed_scenario_scaffold(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    source_dir = tmp_path / "src" / "game"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/test.mjs"}}\n',
+        encoding="utf-8",
+    )
+    (scripts_dir / "test.mjs").write_text("console.log('PASS');\n", encoding="utf-8")
+    (source_dir / "rules-engine.ts").write_text(
+        "\n".join(
+            [
+                "export const cardRulesEngineScenario0 = {",
+                '  title: "card-rules-engine planning scenario 0",',
+                '  tags: ["planning", "draft", "audit-seed"],',
+                "};",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is False
+    assert "artifact quality scan" in summary
+    assert any("audit-seed" in error or "planning scenario" in error for error in errors)
+
+
+def test_run_integration_verify_runner_fails_on_structural_verification_script(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    source_dir = tmp_path / "src"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/test.mjs"}}\n',
+        encoding="utf-8",
+    )
+    (source_dir / "index.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    (scripts_dir / "test.mjs").write_text(
+        "const tests = [];\nconsole.log(`test verification completed: ${tests.length} files`);\n",
+        encoding="utf-8",
+    )
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is False
+    assert "artifact quality scan" in summary
+    assert any("test verification completed" in error for error in errors)
+
+
+def test_run_integration_verify_runner_fails_on_trivial_arithmetic_placeholder_tests(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/test.mjs"}}\n',
+        encoding="utf-8",
+    )
+    (scripts_dir / "test.mjs").write_text("console.log('PASS');\n", encoding="utf-8")
+    (tests_dir / "multiplayer-flow.test.ts").write_text(
+        "\n".join(
+            [
+                "describe('placeholder', () => {",
+                "  it('does arithmetic', () => {",
+                "    expect(1 + 1).toBe(2);",
+                "    expect(2 + 2).toBe(4);",
+                "    expect(3 + 3).toBe(6);",
+                "  });",
+                "});",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is False
+    assert "artifact quality scan" in summary
+    assert any("trivial arithmetic placeholder" in error for error in errors)
+
+
 def test_run_integration_verify_runner_allows_explicit_node_static_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

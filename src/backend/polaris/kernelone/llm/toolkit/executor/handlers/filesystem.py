@@ -195,6 +195,59 @@ def _attach_director_policy_evidence(result: dict[str, Any], evidence: dict[str,
     return result
 
 
+def _is_placeholder_search_text(search_text: str) -> bool:
+    """Return true when SEARCH is a model shorthand for a placeholder file."""
+    lines = [line.strip() for line in str(search_text or "").splitlines() if line.strip()]
+    if not lines or len(lines) > 3:
+        return False
+    compact = " ".join(lines).lower()
+    if len(compact) > 180:
+        return False
+    return bool(
+        re.search(
+            r"\b(todo|fixme|placeholder|not\s+implemented|implement(?:ation)?|stub|scaffold)\b",
+            compact,
+        )
+    )
+
+
+def _looks_like_complete_file_replacement(replace_text: str, rel: str) -> bool:
+    """Conservatively detect a complete file body rather than a tiny fragment."""
+    content = str(replace_text or "").strip()
+    if len(content) < 200:
+        return False
+    lines = [line for line in content.splitlines() if line.strip()]
+    if len(lines) < 8:
+        return False
+    suffix = os.path.splitext(rel)[1].lower()
+    if suffix in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}:
+        return bool(
+            re.search(
+                r"^\s*(import|export|type|interface|class|function|const|let|var)\b",
+                content,
+                flags=re.MULTILINE,
+            )
+        )
+    if suffix in {".py", ".pyw"}:
+        return bool(re.search(r"^\s*(from|import|class|def)\b", content, flags=re.MULTILINE))
+    return True
+
+
+def _should_use_whole_file_placeholder_replacement(
+    *,
+    search_text: str,
+    replace_text: str,
+    rel: str,
+    block_count: int,
+) -> bool:
+    """Allow a controlled whole-file replacement for common LLM edit-block shorthand."""
+    return (
+        block_count == 1
+        and _is_placeholder_search_text(search_text)
+        and _looks_like_complete_file_replacement(replace_text, rel)
+    )
+
+
 def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     """Handle write_file tool call.
 
@@ -877,6 +930,22 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
                     "valid": True,
                     "similarity": metadata.get("similarity", 1.0),
                     "fixes": metadata.get("fixes_applied", []),
+                }
+            )
+        elif _should_use_whole_file_placeholder_replacement(
+            search_text=block.search_text,
+            replace_text=block.replace_text,
+            rel=block_rel,
+            block_count=len(blocks),
+        ):
+            file_contents[block_rel] = (original, block.replace_text)
+            validation_results.append(
+                {
+                    "index": i,
+                    "file": block_file,
+                    "valid": True,
+                    "mode": "whole_file_placeholder_replacement",
+                    "search_preview": block.search_text[:100] if block.search_text else "",
                 }
             )
         else:

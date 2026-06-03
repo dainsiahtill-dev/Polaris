@@ -1,0 +1,9 @@
+{
+  "runId": "20260603-095241",
+  "pid": 6236,
+  "logDir": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\runtime\\full-chain-runs\\20260603-095241",
+  "stdout": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\runtime\\full-chain-runs\\20260603-095241\\playwright.stdout.log",
+  "stderr": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\runtime\\full-chain-runs\\20260603-095241\\playwright.stderr.log",
+  "workspace": "C:\\Temp\\Polaris_Card3D_Multiplayer_E2E_20260603-095241",
+  "startedAt": "2026-06-03T09:52:41.5824615+08:00"
+}

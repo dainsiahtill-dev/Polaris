@@ -16,6 +16,7 @@ from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
     get_quality_gate_config,
 )
 from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
+from polaris.kernelone.quality import scan_workspace_artifact_quality
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,42 @@ def _node_dependencies_missing(workspace_full: str, package_payload: dict[str, A
     return not os.path.isdir(os.path.join(workspace_full, "node_modules"))
 
 
+_NODE_SCRIPT_DEPENDENCY_TOOL_RE = re.compile(
+    r"(^|[;&|]\s*)(babel|eslint|jest|mocha|rollup|ts-node|tsc|tsx|vite|vitest|webpack)\b",
+    re.IGNORECASE,
+)
+
+
+def _node_package_script_name(command_args: list[str]) -> str:
+    if not command_args:
+        return ""
+    executable = str(command_args[0] or "").strip().lower()
+    args = [str(item or "").strip() for item in command_args[1:] if str(item or "").strip()]
+    if executable == "npm":
+        if args and args[0] == "run" and len(args) >= 2:
+            return args[1]
+        if args and args[0] in {"test", "start"}:
+            return args[0]
+    if executable in {"pnpm", "yarn"}:
+        if args and args[0] == "run" and len(args) >= 2:
+            return args[1]
+        if args:
+            return args[0]
+    return ""
+
+
+def _node_missing_dependencies_should_block(
+    workspace_full: str,
+    package_payload: dict[str, Any],
+    command_args: list[str],
+) -> bool:
+    if not _node_dependencies_missing(workspace_full, package_payload):
+        return False
+    script_name = _node_package_script_name(command_args)
+    script_command = _read_package_scripts(package_payload).get(script_name, "")
+    return not (script_command and not _NODE_SCRIPT_DEPENDENCY_TOOL_RE.search(script_command))
+
+
 def _node_static_fallback_allowed() -> bool:
     raw = str(os.environ.get("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
@@ -265,6 +302,13 @@ def _run_node_static_verify_runner(workspace_full: str, package_payload: dict[st
         errors.append("Node static verification failed: package has a test script but no test/spec files exist")
     if errors:
         return False, "Node static verification failed while dependencies are not installed", errors
+    artifact_errors = scan_workspace_artifact_quality(workspace_full)
+    if artifact_errors:
+        return (
+            False,
+            "Node static verification failed artifact quality scan while dependencies are not installed",
+            artifact_errors[:20],
+        )
     summary = (
         "Node static verification passed while dependencies are not installed "
         f"(source_files={source_count}, tests={'present' if has_tests else 'not-required'})."
@@ -368,7 +412,11 @@ def run_integration_verify_runner(workspace_full: str) -> tuple[bool, str, list[
         return False, summary, [summary]
 
     package_payload = _read_package_json(workspace_full)
-    if _is_node_package_command(command_args) and _node_dependencies_missing(workspace_full, package_payload):
+    if _is_node_package_command(command_args) and _node_missing_dependencies_should_block(
+        workspace_full,
+        package_payload,
+        command_args,
+    ):
         if not _node_static_fallback_allowed():
             summary = (
                 "Integration verification blocked: Node dependencies are declared but not installed "
@@ -401,6 +449,10 @@ def run_integration_verify_runner(workspace_full: str) -> tuple[bool, str, list[
     stdout_tail = _tail_non_empty_lines(result.get("stdout", ""), limit=6)
     stderr_tail = _tail_non_empty_lines(result.get("stderr", ""), limit=6)
     if int(result.get("returncode", -1)) == 0:
+        artifact_errors = scan_workspace_artifact_quality(workspace_full)
+        if artifact_errors:
+            summary = f"Integration verification failed artifact quality scan after command passed: {command}"
+            return False, summary, artifact_errors[:20]
         summary = f"Integration verification passed: {command}"
         return True, summary, []
 
@@ -435,4 +487,5 @@ __all__ = [
     "evaluate_pm_task_quality",
     "get_quality_gate_config",
     "run_integration_verify_runner",
+    "scan_workspace_artifact_quality",
 ]

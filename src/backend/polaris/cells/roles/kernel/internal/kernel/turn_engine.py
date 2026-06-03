@@ -632,6 +632,7 @@ class TurnEngineExecutor:
             tool_runtime=tool_runtime,
             config=TransactionConfig(
                 domain="code" if role in {"director", "chief_engineer"} else "document",
+                mutation_guard_mode="strict" if role == "director" else "warn",
             ),
             workflow_runtime=workflow_runtime,
             llm_provider_stream=llm_provider_stream,
@@ -693,6 +694,7 @@ class TurnEngineExecutor:
             visible_content = str(parsed.clean_content or "")
             thinking_text = parsed.thinking
         batch_receipt = tk_result.get("batch_receipt")
+        normalized_batch_receipt = dict(batch_receipt) if isinstance(batch_receipt, dict) else None
         finalization = tk_result.get("finalization")
         workflow_context = tk_result.get("workflow_context")
         metrics = tk_result.get("metrics", {})
@@ -713,9 +715,14 @@ class TurnEngineExecutor:
                 tool_results.append(
                     {
                         "tool": result.get("tool_name", ""),
+                        "tool_name": result.get("tool_name", ""),
                         "result": result.get("result"),
                         "success": result.get("status") == "success",
+                        "status": result.get("status"),
                         "call_id": result.get("call_id", ""),
+                        "arguments": result.get("arguments"),
+                        "effect_receipt": result.get("effect_receipt"),
+                        "raw_result": dict(result),
                     }
                 )
 
@@ -747,6 +754,23 @@ class TurnEngineExecutor:
         if kind == "ask_user" and isinstance(finalization, dict):
             error_msg = finalization.get("error") or finalization.get("suspended_reason")
             is_complete = False
+        if isinstance(finalization, dict) and bool(finalization.get("needs_followup_workflow")):
+            workflow_reason = str(finalization.get("workflow_reason") or kind or "").strip()
+            metadata["transaction_kind"] = str(kind or workflow_reason)
+            metadata["needs_followup_workflow"] = True
+            metadata["workflow_reason"] = workflow_reason
+            metadata["blocked_reason"] = finalization.get("blocked_reason")
+            metadata["blocked_detail"] = finalization.get("blocked_detail")
+            error_msg = (
+                str(
+                    finalization.get("error")
+                    or finalization.get("blocked_reason")
+                    or workflow_reason
+                    or "needs_followup_workflow"
+                ).strip()
+                or None
+            )
+            is_complete = False
 
         final_thinking = thinking_text
         if final_thinking is None and isinstance(finalization, dict):
@@ -775,6 +799,7 @@ class TurnEngineExecutor:
             structured_output=structured_output,
             tool_calls=tool_calls,
             tool_results=tool_results,
+            batch_receipt=normalized_batch_receipt,
             profile_version=profile.version,
             prompt_fingerprint=fingerprint,
             tool_policy_id=profile.tool_policy.policy_id,
@@ -939,6 +964,9 @@ class TurnEngineExecutor:
                     thinking=final_thinking,
                     tool_calls=stream_tool_calls,
                     tool_results=stream_tool_results,
+                    batch_receipt=dict(event.batch_receipt)
+                    if isinstance(getattr(event, "batch_receipt", None), dict)
+                    else None,
                     profile_version=profile.version,
                     prompt_fingerprint=fingerprint,
                     tool_policy_id=profile.tool_policy.policy_id,

@@ -34,6 +34,7 @@ _PM_CHINESE_PROMPT_LEAK_TOKENS = (
     "提示词泄漏",
     "提示词注入",
 )
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u9fff]")
 _PM_ACTION_TOKENS = (
     "add",
     "build",
@@ -103,6 +104,7 @@ _PM_SCOPE_ROOTS = {
     "lib",
     "packages",
     "scripts",
+    "services",
     "src",
     "tests",
     "workspace",
@@ -148,6 +150,30 @@ _GAME_PM_REQUIRED_DOMAINS = (
     "tooling",
     "tests",
 )
+_CARD3D_PM_REQUIRED_DOMAINS = (
+    "client3d",
+    "table",
+    "networking",
+    "server",
+    "realtime",
+    "matchmaking",
+    "rooms",
+    "cards",
+    "deckbuilder",
+    "rules",
+    "sync",
+    "persistence",
+    "moderation",
+    "presence",
+    "telemetry",
+    "auth",
+    "lobby",
+    "assets",
+    "animation",
+    "physics",
+    "analytics",
+    "tests",
+)
 _GAME_PM_DOMAIN_SCOPE_PATHS = {
     "engine": "src/engine/game-loop.ts",
     "world": "src/world/procedural-map.ts",
@@ -161,6 +187,162 @@ _GAME_PM_DOMAIN_SCOPE_PATHS = {
     "audio": "src/audio/sound-events.ts",
     "tooling": "src/tools/balance-report.ts",
     "tests": "tests/integration/game-session.test.ts",
+}
+_CARD3D_PM_DOMAIN_SCOPE_PATHS = {
+    "client3d": "src/client/three-scene.ts",
+    "table": "src/client/card-table.ts",
+    "networking": "src/client/network-client.ts",
+    "server": "src/server/app.ts",
+    "realtime": "src/server/realtime-gateway.ts",
+    "matchmaking": "src/server/matchmaking.ts",
+    "rooms": "src/server/room-state.ts",
+    "cards": "src/game/card-catalog.ts",
+    "deckbuilder": "src/game/deck-builder.ts",
+    "rules": "src/game/rules-engine.ts",
+    "sync": "src/shared/protocol.ts",
+    "persistence": "src/server/session-store.ts",
+    "moderation": "src/server/moderation.ts",
+    "presence": "src/shared/player-presence.ts",
+    "telemetry": "src/shared/telemetry.ts",
+    "auth": "src/auth/session-auth.ts",
+    "lobby": "src/lobby/lobby-service.ts",
+    "assets": "src/assets/card-assets.ts",
+    "animation": "src/animation/card-animations.ts",
+    "physics": "src/physics/table-layout.ts",
+    "analytics": "src/analytics/match-analytics.ts",
+    "tests": "tests/integration/multiplayer-flow.test.ts",
+}
+_CARD3D_PM_TEST_TARGET_FILES = (
+    "tests/unit/card-rules.test.ts",
+    "tests/unit/deck-builder.test.ts",
+    "tests/integration/multiplayer-flow.test.ts",
+    "tests/integration/realtime-sync.test.ts",
+    "tests/e2e/card-table-3d.test.ts",
+)
+_CARD3D_PM_DOMAIN_TARGET_FILES: dict[str, tuple[str, ...]] = {
+    domain: (scope_path,) for domain, scope_path in _CARD3D_PM_DOMAIN_SCOPE_PATHS.items()
+}
+_CARD3D_PM_DOMAIN_TARGET_FILES["tests"] = _CARD3D_PM_TEST_TARGET_FILES
+_CARD3D_PM_DOMAIN_SCOPE_ALIASES = {
+    "client3d": (
+        "src/client/three-scene.ts",
+        "src/client/scene.ts",
+        "src/client/app.tsx",
+        "src/client/main.ts",
+    ),
+    "table": (
+        "src/client/card-table.ts",
+        "src/client/table.ts",
+        "src/client/tabletop.ts",
+    ),
+    "networking": (
+        "src/client/network-client.ts",
+        "src/client/network.ts",
+        "src/client/realtime-client.ts",
+    ),
+    "server": (
+        "src/server/app.ts",
+        "src/server/index.ts",
+        "src/server/server.ts",
+    ),
+    "realtime": (
+        "src/server/realtime-gateway.ts",
+        "src/server/websocket.ts",
+        "src/server/ws-gateway.ts",
+    ),
+    "matchmaking": (
+        "src/server/matchmaking.ts",
+        "src/server/matchmaker.ts",
+    ),
+    "rooms": (
+        "src/server/room-state.ts",
+        "src/server/rooms.ts",
+    ),
+    "cards": (
+        "src/game/card-catalog.ts",
+        "src/game/cards.ts",
+    ),
+    "deckbuilder": (
+        "src/game/deck-builder.ts",
+        "src/game/deckbuilder.ts",
+    ),
+    "rules": (
+        "src/game/rules-engine.ts",
+        "src/game/rules.ts",
+    ),
+    "sync": (
+        "src/shared/protocol.ts",
+        "src/shared/sync-protocol.ts",
+    ),
+    "persistence": (
+        "src/server/session-store.ts",
+        "src/server/persistence.ts",
+    ),
+    "moderation": (
+        "src/server/moderation.ts",
+        "src/server/safety.ts",
+    ),
+    "presence": (
+        "src/shared/player-presence.ts",
+        "src/shared/presence.ts",
+    ),
+    "telemetry": (
+        "src/shared/telemetry.ts",
+        "src/shared/events.ts",
+    ),
+    "auth": (
+        "src/auth/session-auth.ts",
+        "src/auth/auth.ts",
+    ),
+    "lobby": (
+        "src/lobby/lobby-service.ts",
+        "src/lobby/index.ts",
+    ),
+    "assets": (
+        "src/assets/card-assets.ts",
+        "src/assets/assets.ts",
+    ),
+    "animation": (
+        "src/animation/card-animations.ts",
+        "src/animation/animations.ts",
+    ),
+    "physics": (
+        "src/physics/table-layout.ts",
+        "src/physics/layout.ts",
+    ),
+    "analytics": (
+        "src/analytics/match-analytics.ts",
+        "src/analytics/analytics.ts",
+    ),
+    "tests": (
+        "tests",
+        "tests/integration/multiplayer-flow.test.ts",
+    ),
+}
+_CARD3D_PM_DIRECTORY_SCOPE_DOMAINS = {
+    "src/client": ("client3d", "table", "networking"),
+    "src/server": ("server", "realtime", "matchmaking", "rooms", "persistence", "moderation"),
+    "src/game": ("cards", "deckbuilder", "rules"),
+    "src/shared": ("sync", "presence", "telemetry"),
+    "src/auth": ("auth",),
+    "src/lobby": ("lobby",),
+    "src/assets": ("assets",),
+    "src/animation": ("animation",),
+    "src/physics": ("physics",),
+    "src/analytics": ("analytics",),
+    "tests": ("tests",),
+}
+_CARD3D_PM_DETECTION_CORE_DOMAINS = {
+    "client3d",
+    "table",
+    "networking",
+    "cards",
+    "deckbuilder",
+    "rules",
+    "sync",
+    "presence",
+    "auth",
+    "lobby",
 }
 _GAME_PM_DOMAIN_TITLES = {
     "engine": "Implement tactical game engine loop",
@@ -176,8 +358,37 @@ _GAME_PM_DOMAIN_TITLES = {
     "tooling": "Implement balance reporting tooling",
     "tests": "Add game integration test coverage",
 }
+_CARD3D_PM_DOMAIN_TITLES = {
+    "client3d": "Implement Three.js client scene",
+    "table": "Implement interactive 3D card table",
+    "networking": "Implement browser networking client",
+    "server": "Implement Node.js backend entrypoint",
+    "realtime": "Implement realtime gateway",
+    "matchmaking": "Implement multiplayer matchmaking",
+    "rooms": "Implement authoritative room state",
+    "cards": "Implement creative card catalog",
+    "deckbuilder": "Implement deck builder rules",
+    "rules": "Implement card rules engine",
+    "sync": "Implement shared sync protocol",
+    "persistence": "Implement session persistence",
+    "moderation": "Implement safety and moderation rules",
+    "presence": "Implement shared player presence",
+    "telemetry": "Implement gameplay telemetry events",
+    "auth": "Implement session authentication",
+    "lobby": "Implement multiplayer lobby service",
+    "assets": "Implement card asset registry",
+    "animation": "Implement card animation timeline",
+    "physics": "Implement table layout physics",
+    "analytics": "Implement match analytics",
+    "tests": "Add multiplayer card integration tests",
+}
 _GAME_PM_HINT_RE = re.compile(
     r"(game|roguelike|tactical|combat|renderer|gameplay|content|progression|economy|audio|tooling|游戏|玩家|敌人|战斗|地图|世界|回合|存档|内容|进度|经济|音频|工具)",
+    re.IGNORECASE,
+)
+_CARD3D_PM_CORE_HINT_RE = re.compile(r"(card|deck|tabletop|卡牌|牌组|卡组|牌桌|桌游)", re.IGNORECASE)
+_CARD3D_PM_STACK_HINT_RE = re.compile(
+    r"(multiplayer|online|three(?:\.js|3d)?|webgl|node(?:\.js|js)?|websocket|realtime|lobby|room|creative|多人|在线|创意|三维|3d|房间|实时|后端|前端)",
     re.IGNORECASE,
 )
 _GAME_PM_FRAGILE_ACCEPTANCE_RE = re.compile(
@@ -199,6 +410,12 @@ _GAME_PM_WORKSPACE_SIGNAL_PATTERNS = (
     re.compile(r"\bPRNG-\d+\b", re.IGNORECASE),
     re.compile(r"(terrain|encounter|combat|action point|behavior tree|enemy|loot|map generation)", re.IGNORECASE),
     re.compile(r"(地形|遭遇|战斗|行动点|行为树|敌人|掉落|地图生成)", re.IGNORECASE),
+)
+_CARD3D_PM_WORKSPACE_SIGNAL_PATTERNS = (
+    re.compile(r"(three(?:\.js|3d)?|webgl|3d scene|card table|deck builder)", re.IGNORECASE),
+    re.compile(r"(multiplayer|matchmaking|room state|websocket|realtime gateway)", re.IGNORECASE),
+    re.compile(r"(creative card|card catalog|rules engine|sync protocol)", re.IGNORECASE),
+    re.compile(r"(多人|在线|创意卡牌|牌桌|房间状态|实时网关|匹配|规则引擎)", re.IGNORECASE),
 )
 
 
@@ -319,17 +536,36 @@ def _normalize_path(value: Any) -> str:
     return token.lower()
 
 
-def _game_domain_path_roots(domain: str) -> set[str]:
+def _domain_path_roots(domain: str, scope_paths: dict[str, str]) -> set[str]:
     if domain == "tests":
         return {"tests"}
-    roots = {f"src/{domain}"}
-    primary = _normalize_path(_GAME_PM_DOMAIN_SCOPE_PATHS.get(domain, f"src/{domain}/index.ts"))
+    primary = _normalize_path(scope_paths.get(domain, f"src/{domain}/index.ts"))
+    parent = os.path.dirname(primary).replace("\\", "/").strip("/") if primary else ""
+    roots = {parent or f"src/{domain}"}
     if primary:
         roots.add(primary)
-        parent = os.path.dirname(primary).replace("\\", "/").strip("/")
         if parent:
             roots.add(parent)
     return {root for root in roots if root}
+
+
+def _game_domain_path_roots(domain: str) -> set[str]:
+    return _domain_path_roots(domain, _GAME_PM_DOMAIN_SCOPE_PATHS)
+
+
+def _card3d_domain_path_roots(domain: str) -> set[str]:
+    aliases = _CARD3D_PM_DOMAIN_SCOPE_ALIASES.get(
+        domain,
+        (_CARD3D_PM_DOMAIN_SCOPE_PATHS.get(domain, f"src/{domain}/index.ts"),),
+    )
+    return {root for root in (_normalize_path(alias) for alias in aliases) if root}
+
+
+def _card3d_domain_target_files(domain: str) -> tuple[str, ...]:
+    return _CARD3D_PM_DOMAIN_TARGET_FILES.get(
+        domain,
+        (_CARD3D_PM_DOMAIN_SCOPE_PATHS.get(domain, f"src/{domain}/index.ts"),),
+    )
 
 
 def _path_matches_game_domain(path: str, domain: str) -> bool:
@@ -337,6 +573,23 @@ def _path_matches_game_domain(path: str, domain: str) -> bool:
     if not normalized:
         return False
     return any(normalized == root or normalized.startswith(f"{root}/") for root in _game_domain_path_roots(domain))
+
+
+def _path_matches_card3d_domain(path: str, domain: str) -> bool:
+    normalized = _normalize_path(path)
+    if not normalized:
+        return False
+    directory_domains = _CARD3D_PM_DIRECTORY_SCOPE_DOMAINS.get(normalized)
+    if directory_domains is not None:
+        return domain in directory_domains
+    return any(normalized == root or normalized.startswith(f"{root}/") for root in _card3d_domain_path_roots(domain))
+
+
+def _path_matches_card3d_detection_domain(path: str, domain: str) -> bool:
+    normalized = _normalize_path(path)
+    if not normalized:
+        return False
+    return any(normalized == root or normalized.startswith(f"{root}/") for root in _card3d_domain_path_roots(domain))
 
 
 def _is_concrete_pm_scope_path(value: Any) -> bool:
@@ -655,6 +908,24 @@ def _game_domains_for_task(task: dict[str, Any], workspace_full: Any) -> list[st
     return domains
 
 
+def _card3d_domains_for_task(task: dict[str, Any], workspace_full: Any) -> list[str]:
+    coverage_paths: set[str] = set()
+    for path in _collect_task_scope_paths(task):
+        relative = _workspace_relative_path(path, workspace_full)
+        if relative:
+            coverage_paths.add(relative)
+            continue
+        normalized = _normalize_path(path)
+        if normalized:
+            coverage_paths.add(normalized)
+
+    domains: list[str] = []
+    for domain in _CARD3D_PM_REQUIRED_DOMAINS:
+        if any(_path_matches_card3d_domain(path, domain) for path in coverage_paths):
+            domains.append(domain)
+    return domains
+
+
 def _game_task_has_policy_risk(task: dict[str, Any]) -> bool:
     acceptance = task.get("acceptance_criteria")
     if not isinstance(acceptance, list):
@@ -674,21 +945,87 @@ def _game_task_has_policy_risk(task: dict[str, Any]) -> bool:
     )
 
 
-def _game_task_has_non_seed_stack_path(task: dict[str, Any]) -> bool:
-    """Return True when a game task targets paths outside the seed TS stack."""
-    for path in _collect_task_scope_paths(task):
+def _is_game_stack_mutating_path(normalized: str) -> bool:
+    if not normalized:
+        return False
+    if normalized in {"src", "tests"}:
+        return True
+    if normalized in {"package.json", "tsconfig.json"}:
+        return True
+    if normalized.startswith("src/") and not normalized.endswith((".ts", ".tsx")):
+        return True
+    return normalized.startswith("tests/") and not normalized.endswith((".ts", ".tsx"))
+
+
+def _task_has_exact_seed_stack_targets(task: dict[str, Any]) -> bool:
+    for path in _normalize_path_list(task.get("target_files") or []):
         normalized = _normalize_path(path)
-        if not normalized:
-            continue
-        if normalized in {"src", "tests"}:
-            return True
-        if normalized in {"package.json", "tsconfig.json"}:
-            return True
-        if normalized.startswith("src/") and not normalized.endswith((".ts", ".tsx")):
-            return True
-        if normalized.startswith("tests/") and not normalized.endswith((".ts", ".tsx")):
+        if normalized.startswith(("src/", "tests/")) and normalized.endswith((".ts", ".tsx")):
             return True
     return False
+
+
+def _game_task_has_non_seed_stack_path(task: dict[str, Any]) -> bool:
+    """Return True when a game task targets paths outside the seed TS stack."""
+    for field in ("target_files", "context_files"):
+        for path in _normalize_path_list(task.get(field) or []):
+            if _is_game_stack_mutating_path(_normalize_path(path)):
+                return True
+
+    has_exact_seed_targets = _task_has_exact_seed_stack_targets(task)
+    for path in _normalize_path_list(task.get("scope_paths") or []):
+        normalized = _normalize_path(path)
+        if not _is_game_stack_mutating_path(normalized):
+            continue
+        if has_exact_seed_targets and normalized not in {"package.json", "tsconfig.json"}:
+            continue
+        return True
+    return False
+
+
+def _card3d_task_is_unanchored_fallback(task: dict[str, Any], workspace_full: str) -> bool:
+    """Return True for generic fallback rows that cannot guide card3d delivery."""
+    domains = _card3d_domains_for_task(task, workspace_full)
+    if any(domain != "tests" for domain in domains):
+        return False
+
+    task_id = _normalize_text(task.get("id")).upper()
+    task_text = " ".join(
+        _normalize_text(task.get(field))
+        for field in ("title", "goal", "description")
+        if _normalize_text(task.get(field))
+    ).lower()
+    if re.match(r"^PM-\d{4}-F\d+$", task_id) or "fallback" in task_text or "requirements " in task_text:
+        return True
+
+    acceptance = task.get("acceptance_criteria")
+    if not isinstance(acceptance, list):
+        acceptance = task.get("acceptance")
+    acceptance_items = [_normalize_text(item) for item in (acceptance or []) if _normalize_text(item)]
+    return not _has_executable_or_file_acceptance_anchor(acceptance_items)
+
+
+def _remove_card3d_policy_incompatible_tasks_in_place(tasks: list[dict[str, Any]], workspace_full: str) -> int:
+    """Remove stack-mutating tasks from card3d contracts before domain repair."""
+    kept: list[dict[str, Any]] = []
+    removed = 0
+    for task in tasks:
+        implementation_domains = [
+            domain for domain in _card3d_domains_for_task(task, workspace_full) if domain != "tests"
+        ]
+        if _game_task_has_non_seed_stack_path(task):
+            removed += 1
+            continue
+        if _card3d_task_is_unanchored_fallback(task, workspace_full):
+            removed += 1
+            continue
+        if _game_task_has_policy_risk(task) and not implementation_domains:
+            removed += 1
+            continue
+        kept.append(task)
+    if removed:
+        tasks[:] = kept
+    return removed
 
 
 def _remove_game_policy_incompatible_tasks_in_place(tasks: list[dict[str, Any]], workspace_full: str) -> int:
@@ -753,7 +1090,51 @@ def _collect_task_scope_paths(task: dict[str, Any]) -> list[str]:
     return paths
 
 
+def _has_card3d_text_hints(text: str) -> bool:
+    if not text:
+        return False
+    if _CARD3D_PM_CORE_HINT_RE.search(text) and _CARD3D_PM_STACK_HINT_RE.search(text):
+        return True
+    stack_hits = len({match.group(0).lower() for match in _CARD3D_PM_STACK_HINT_RE.finditer(text)})
+    return stack_hits >= 2 and _CARD3D_PM_CORE_HINT_RE.search(text) is not None
+
+
+def _is_card3d_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
+    text_parts = [
+        _normalize_text(normalized.get("overall_goal")),
+        _normalize_text(normalized.get("focus")),
+        _normalize_text(normalized.get("notes")),
+        _normalize_text(normalized.get("_quality_gate_card3d_context")),
+    ]
+    coverage_paths: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        text_parts.extend(
+            [
+                _normalize_text(task.get("title")),
+                _normalize_text(task.get("goal")),
+                _normalize_text(task.get("description")),
+            ]
+        )
+        coverage_paths.extend(_collect_task_scope_paths(task))
+
+    combined_text = " ".join(part for part in text_parts if part)
+    if _has_card3d_text_hints(combined_text):
+        return True
+
+    normalized_paths = {_normalize_path(path) for path in coverage_paths if _normalize_path(path)}
+    covered_domains = {
+        domain
+        for domain in _CARD3D_PM_REQUIRED_DOMAINS
+        if any(_path_matches_card3d_detection_domain(path, domain) for path in normalized_paths)
+    }
+    return len(covered_domains) >= 2 and bool(covered_domains & _CARD3D_PM_DETECTION_CORE_DOMAINS)
+
+
 def _is_game_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
+    if _is_card3d_pm_contract(normalized, tasks):
+        return False
     text_parts = [
         _normalize_text(normalized.get("overall_goal")),
         _normalize_text(normalized.get("focus")),
@@ -818,13 +1199,109 @@ def _workspace_has_game_planning_hints(workspace_full: str) -> bool:
     return signal_count >= 3
 
 
+def _workspace_has_card3d_planning_hints(workspace_full: str) -> bool:
+    hint_text = _read_workspace_planning_hint_text(workspace_full)
+    if not hint_text:
+        return False
+    if _has_card3d_text_hints(hint_text):
+        return True
+    signal_count = sum(1 for pattern in _CARD3D_PM_WORKSPACE_SIGNAL_PATTERNS if pattern.search(hint_text))
+    return signal_count >= 2
+
+
 def _attach_workspace_game_context_if_needed(normalized: dict[str, Any], tasks: list[Any], workspace_full: str) -> bool:
+    if _is_card3d_pm_contract(normalized, tasks):
+        return False
+    if _workspace_has_card3d_planning_hints(workspace_full):
+        normalized["_quality_gate_card3d_context"] = "card3d workspace_planning_hints"
+        return True
     if _is_game_pm_contract(normalized, tasks):
         return False
     if not _workspace_has_game_planning_hints(workspace_full):
         return False
     normalized["_quality_gate_game_context"] = "game workspace_planning_hints"
     return True
+
+
+def _covered_card3d_domains(tasks: list[Any], workspace_full: Any) -> list[str]:
+    coverage_paths: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        for path in _collect_task_scope_paths(task):
+            relative = _workspace_relative_path(path, workspace_full)
+            if relative:
+                coverage_paths.add(relative)
+
+    covered: list[str] = []
+    for domain in _CARD3D_PM_REQUIRED_DOMAINS:
+        if any(_path_matches_card3d_domain(path, domain) for path in coverage_paths):
+            covered.append(domain)
+    return covered
+
+
+def _missing_card3d_required_test_targets(tasks: list[Any]) -> list[str]:
+    declared_targets: set[str] = set()
+    has_tests_domain = False
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if "tests" not in _card3d_domains_for_task(task, workspace_full=None):
+            continue
+        has_tests_domain = True
+        declared_targets.update(_normalize_path(path) for path in _normalize_path_list(task.get("target_files") or []))
+    if not has_tests_domain:
+        return []
+    return [path for path in _CARD3D_PM_TEST_TARGET_FILES if _normalize_path(path) not in declared_targets]
+
+
+def _card3d_tests_task_has_placeholder_cleanup_contract(tasks: list[Any]) -> bool:
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if "tests" not in _card3d_domains_for_task(task, workspace_full=None):
+            continue
+        text_parts = [
+            _normalize_text(task.get("title")),
+            _normalize_text(task.get("goal")),
+            _normalize_text(task.get("description")),
+            _normalize_text(task.get("backlog_ref")),
+        ]
+        for field in ("acceptance_criteria", "acceptance", "execution_checklist"):
+            values = task.get(field)
+            if isinstance(values, list):
+                text_parts.extend(_normalize_text(item) for item in values)
+        token = " ".join(part for part in text_parts if part).lower()
+        has_cleanup = any(
+            hint in token
+            for hint in (
+                "replace",
+                "remove",
+                "delete",
+                "clear",
+                "overwrite",
+                "替换",
+                "移除",
+                "删除",
+                "清理",
+                "覆盖",
+            )
+        )
+        has_placeholder = any(
+            hint in token
+            for hint in (
+                "placeholder",
+                "arithmetic",
+                "case 1",
+                "case 18",
+                "占位",
+                "算术",
+                "占位测试",
+            )
+        )
+        if has_cleanup and has_placeholder:
+            return True
+    return False
 
 
 def _covered_game_domains(tasks: list[Any], workspace_full: Any) -> list[str]:
@@ -910,6 +1387,92 @@ def _build_game_domain_repair_task(
     return task
 
 
+def _build_card3d_domain_repair_task(
+    *,
+    domain: str,
+    task_id: str,
+    depends_on: str,
+    verify_command: str,
+    sequence: int,
+) -> dict[str, Any]:
+    scope_path = _CARD3D_PM_DOMAIN_SCOPE_PATHS.get(domain, f"src/{domain}/index.ts")
+    target_files = list(_card3d_domain_target_files(domain))
+    title = _CARD3D_PM_DOMAIN_TITLES.get(domain, f"Implement {domain} multiplayer card capability")
+    acceptance_criteria = [
+        f"verify {', '.join(target_files)} exist",
+        f"verify {', '.join(target_files)} contain no audit-seed or planning scenario markers",
+        f"Run `{verify_command}` passes",
+    ]
+    execution_checklist = [
+        "Review the existing TypeScript Three.js client and Node.js backend seed",
+        f"Replace the seed placeholder content with the missing {domain} capability in the scoped files",
+        "Run the acceptance command and record the result",
+    ]
+    if domain == "tests":
+        acceptance_criteria.insert(1, "verify trivial arithmetic placeholder test cases are replaced or removed")
+        execution_checklist.insert(
+            1, "Replace or remove existing trivial arithmetic placeholder tests instead of appending around them"
+        )
+    task: dict[str, Any] = {
+        "id": task_id,
+        "title": title,
+        "goal": f"Add the missing {domain} capability for the multiplayer Three.js card game scope.",
+        "description": (
+            f"Quality gate repair task generated because the PM contract omitted the {domain} "
+            "delivery domain required by the multiplayer creative card game goal."
+        ),
+        "assigned_to": "director",
+        "phase": "verification" if domain == "tests" else "implementation",
+        "priority": 6000 + sequence,
+        "scope_paths": ["tests"] if domain == "tests" else [scope_path],
+        "target_files": target_files,
+        "acceptance_criteria": acceptance_criteria,
+        "execution_checklist": execution_checklist,
+        "metadata": {
+            "autofix": True,
+            "autofix_reason": "card3d_pm_domain_coverage",
+            "domain": domain,
+        },
+    }
+    task["depends_on"] = [depends_on] if depends_on else []
+    return task
+
+
+def _append_missing_card3d_domain_tasks(
+    normalized: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    *,
+    workspace_full: str,
+    verify_command: str,
+) -> int:
+    if not _is_card3d_pm_contract(normalized, tasks):
+        return 0
+
+    covered_domains = set(_covered_card3d_domains(tasks, workspace_full))
+    missing_domains = [domain for domain in _CARD3D_PM_REQUIRED_DOMAINS if domain not in covered_domains]
+    if not missing_domains:
+        return 0
+
+    existing_ids = {_normalize_text(task.get("id")) for task in tasks if _normalize_text(task.get("id"))}
+    dependency_anchor = _last_task_id(tasks)
+    added = 0
+    for domain in missing_domains:
+        task_id = _unique_task_id(existing_ids, f"PM-AUTO-CARD3D-{domain}")
+        tasks.append(
+            _build_card3d_domain_repair_task(
+                domain=domain,
+                task_id=task_id,
+                depends_on=dependency_anchor,
+                verify_command=verify_command,
+                sequence=added,
+            )
+        )
+        dependency_anchor = task_id
+        added += 1
+
+    return added
+
+
 def _append_missing_game_domain_tasks(
     normalized: dict[str, Any],
     tasks: list[dict[str, Any]],
@@ -922,7 +1485,7 @@ def _append_missing_game_domain_tasks(
 
     covered_domains = set(_covered_game_domains(tasks, workspace_full))
     missing_domains = [domain for domain in _GAME_PM_REQUIRED_DOMAINS if domain not in covered_domains]
-    if not missing_domains and len(tasks) >= _GAME_PM_MIN_TASKS:
+    if not missing_domains:
         return 0
 
     existing_ids = {_normalize_text(task.get("id")) for task in tasks if _normalize_text(task.get("id"))}
@@ -942,20 +1505,6 @@ def _append_missing_game_domain_tasks(
         dependency_anchor = task_id
         added += 1
 
-    while len(tasks) < _GAME_PM_MIN_TASKS:
-        task_id = _unique_task_id(existing_ids, "PM-AUTO-GAME-INTEGRATION")
-        tasks.append(
-            _build_game_domain_repair_task(
-                domain="tests",
-                task_id=task_id,
-                depends_on=dependency_anchor,
-                verify_command=verify_command,
-                sequence=added,
-            )
-        )
-        dependency_anchor = task_id
-        added += 1
-
     return added
 
 
@@ -966,6 +1515,15 @@ def _contains_prompt_leakage(text: str) -> bool:
     if any(token in lowered for token in _PM_PROMPT_LEAK_TOKENS):
         return True
     return any(token in lowered for token in _PM_CHINESE_PROMPT_LEAK_TOKENS)
+
+
+def _title_is_too_short(title: str) -> bool:
+    if not title:
+        return True
+    cjk_count = len(_CJK_CHAR_RE.findall(title))
+    if cjk_count >= 5:
+        return False
+    return len(title) < 10
 
 
 def _has_measurable_acceptance_anchor(acceptance_items: list[str]) -> bool:
@@ -1085,6 +1643,7 @@ def evaluate_pm_task_quality(
     docs_enabled = bool(docs_stage_dict.get("enabled"))
     active_doc = _normalize_path(docs_stage_dict.get("active_doc_path", ""))
     active_dir = _normalize_path(os.path.dirname(active_doc)) if active_doc else ""
+    is_card3d_contract = _is_card3d_pm_contract(normalized, tasks)
     is_game_contract = _is_game_pm_contract(normalized, tasks)
 
     for index, task in enumerate(tasks, start=1):
@@ -1104,13 +1663,13 @@ def evaluate_pm_task_quality(
                 critical_issues.append(f"{task_id}: duplicated title/goal signature")
             seen_signatures.add(signature)
 
-        if len(title) < 10:
+        if _title_is_too_short(title):
             warnings.append(f"{task_id}: title is too short")
         if len(goal) < 18:
             warnings.append(f"{task_id}: goal is too short")
         if _contains_prompt_leakage(combined_text):
             critical_issues.append(f"{task_id}: detected role/prompt leakage markers in task content")
-        if is_game_contract and _has_forbidden_game_dependency_policy(task):
+        if (is_card3d_contract or is_game_contract) and _has_forbidden_game_dependency_policy(task):
             critical_issues.append(f"{task_id}: game task violates no-external-dependency policy")
 
         acceptance = task.get("acceptance_criteria")
@@ -1232,7 +1791,27 @@ def evaluate_pm_task_quality(
         critical_issues.append("docs-stage tasks missing metadata.doc_sections")
     if docs_enabled and task_count >= 2 and backlog_trace_task_count < max(1, task_count // 2):
         critical_issues.append("docs-stage tasks missing backlog traceability")
-    if is_game_contract:
+    if is_card3d_contract:
+        if task_count < _GAME_PM_MIN_TASKS:
+            critical_issues.append(f"card3d PM decomposition requires at least {_GAME_PM_MIN_TASKS} tasks")
+        covered_domains = _covered_card3d_domains(tasks, effective_workspace)
+        missing_domains = [domain for domain in _CARD3D_PM_REQUIRED_DOMAINS if domain not in covered_domains]
+        if missing_domains:
+            critical_issues.append(f"card3d PM decomposition missing domains: {', '.join(missing_domains)}")
+        missing_test_targets = _missing_card3d_required_test_targets(tasks)
+        if missing_test_targets:
+            critical_issues.append(
+                "card3d tests task must target all required test files: " + ", ".join(missing_test_targets)
+            )
+        if (
+            "tests" not in missing_domains
+            and not missing_test_targets
+            and not _card3d_tests_task_has_placeholder_cleanup_contract(tasks)
+        ):
+            critical_issues.append(
+                "card3d tests task must require replacing/removing trivial arithmetic placeholder tests"
+            )
+    elif is_game_contract:
         if task_count < _GAME_PM_MIN_TASKS:
             critical_issues.append(f"game PM decomposition requires at least {_GAME_PM_MIN_TASKS} tasks")
         covered_domains = _covered_game_domains(tasks, effective_workspace)
@@ -1299,6 +1878,7 @@ def autofix_pm_contract_for_quality(
         "acceptance_sanitized": 0,
         "descriptions_added": 0,
         "game_domain_tasks_added": 0,
+        "card3d_domain_tasks_added": 0,
         "game_context_attached": 0,
         "game_dependency_policy_sanitized": 0,
         "game_policy_tasks_removed": 0,
@@ -1312,7 +1892,17 @@ def autofix_pm_contract_for_quality(
     stats["paths_normalized"] += _sanitize_pm_task_paths_in_place(normalized_tasks, workspace_full)
     if _attach_workspace_game_context_if_needed(normalized, normalized_tasks, workspace_full):
         stats["game_context_attached"] += 1
-    if _is_game_pm_contract(normalized, normalized_tasks):
+    if _is_card3d_pm_contract(normalized, normalized_tasks):
+        normalized.setdefault("_quality_gate_card3d_context", "card3d task_or_workspace_hints")
+        stats["game_policy_tasks_removed"] += _remove_card3d_policy_incompatible_tasks_in_place(
+            normalized_tasks,
+            workspace_full,
+        )
+        if stats["game_policy_tasks_removed"]:
+            stats["deps_normalized"] += _drop_unknown_dependency_refs_in_place(normalized_tasks)
+        for task in normalized_tasks:
+            stats["game_dependency_policy_sanitized"] += _sanitize_game_dependency_policy_in_place(task, verify_command)
+    elif _is_game_pm_contract(normalized, normalized_tasks):
         stats["game_policy_tasks_removed"] += _remove_game_policy_incompatible_tasks_in_place(
             normalized_tasks,
             workspace_full,
@@ -1322,6 +1912,12 @@ def autofix_pm_contract_for_quality(
         for task in normalized_tasks:
             stats["game_dependency_policy_sanitized"] += _sanitize_game_dependency_policy_in_place(task, verify_command)
     stats["deps_normalized"] += _normalize_dependency_refs_in_place(normalized_tasks)
+    stats["card3d_domain_tasks_added"] += _append_missing_card3d_domain_tasks(
+        normalized,
+        normalized_tasks,
+        workspace_full=workspace_full,
+        verify_command=verify_command,
+    )
     stats["game_domain_tasks_added"] += _append_missing_game_domain_tasks(
         normalized,
         normalized_tasks,

@@ -57,6 +57,17 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 
 logger = logging.getLogger(__name__)
 
+_BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS: tuple[str, ...] = (
+    "audit-seed",
+    "planning scenario",
+    "build verification completed",
+    "test verification completed",
+    "notimplemented",
+    "not implemented",
+    "todo:",
+    "fixme:",
+)
+
 
 # ---------------------------------------------------------------------------
 # 模型覆盖与上下文构建
@@ -99,7 +110,7 @@ def build_contract_retry_context(
 ) -> list[dict]:
     """构建突变合约违反后的 retry 上下文。"""
     latest_user = extract_latest_user_message(context)
-    target_file_tokens = [
+    raw_target_file_tokens = [
         token.strip()
         for token in re.findall(
             r"\b[\w./\\-]+\.(?:py|md|txt|json|ya?ml|js|ts|tsx|jsx|css|html)\b",
@@ -108,6 +119,14 @@ def build_contract_retry_context(
         )
         if token.strip()
     ]
+    target_file_tokens: list[str] = []
+    for token in raw_target_file_tokens:
+        normalized = token.replace("\\", "/")
+        name = normalized.rsplit("/", 1)[-1]
+        suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if "/" not in normalized and suffix == "js" and name[:1].isupper():
+            continue
+        target_file_tokens.append(token)
     write_candidates = set(WRITE_TOOLS)
     write_tools: list[str] = []
     for item in tool_definitions:
@@ -130,9 +149,14 @@ def build_contract_retry_context(
     if write_tools:
         retry_lines.append("Allowed write tools in this turn: " + ", ".join(write_tools) + ".")
         retry_lines.append("Include at least one of the allowed write tools in the emitted batch.")
+        retry_lines.append(
+            "Do not guess precision_edit/search_replace search text. "
+            "For create-file or whole-file replacement tasks, prefer write_file. "
+            "For existing targeted edits, prefer edit_blocks or edit_file after verifying exact content."
+        )
     if forced_write_tool_name:
         retry_lines.append(f"MANDATORY: your batch must include write tool `{forced_write_tool_name}`.")
-        retry_lines.append("Do not output read/list-only batches before this mandatory write tool.")
+        retry_lines.append("Do not output read/list-only batches; the emitted batch must include this write tool.")
     if target_file_tokens:
         retry_lines.append(
             "Mutation target files detected from user request: "
@@ -266,32 +290,75 @@ def build_retry_tool_definitions_for_mutation(
 
 
 def select_retry_forced_write_tool_name(tool_definitions: list[dict]) -> str | None:
-    # BUG-NEW-2 fix: write_file was ranked first, causing destructive full-file
-    # overwrites when the task only requires appending or editing a few lines.
-    # Reordered so that safe incremental tools are tried first:
-    #   append_to_file  — appends without touching existing content (safest)
-    #   precision_edit  — targeted line/block edits
-    #   edit_file       — structured file editing
-    #   search_replace  — targeted search-and-replace
-    #   repo_apply_diff — diff-based patching
-    #   edit_blocks     — block-level edits
-    #   write_file      — OVERWRITES entire file (last resort, destructive!)
-    #   create_file     — only for brand-new files
+    # Prefer tools that are robust when the retry context is incomplete. The
+    # retry path is entered after a failed/non-mutating first attempt, so forcing
+    # precision_edit first is brittle: it requires exact pre-read search text and
+    # commonly degenerates into guessed no-match replacements. Whole-file and
+    # block-edit tools are safer general recovery choices; append remains last
+    # because it can leave stale placeholder code in place.
     priority_order = (
-        "append_to_file",
-        "precision_edit",
+        "edit_blocks",
+        "write_file",
         "edit_file",
         "search_replace",
         "repo_apply_diff",
-        "edit_blocks",
-        "write_file",
+        "precision_edit",
         "create_file",
+        "append_to_file",
     )
     available = extract_allowed_tool_names_from_definitions(tool_definitions)
     for tool_name in priority_order:
         if tool_name in available:
             return tool_name
     return None
+
+
+def bootstrap_receipt_contains_whole_file_replacement_marker(bootstrap_receipt: Mapping[str, Any]) -> bool:
+    """Return True when bootstrap content is scaffold-like enough to replace whole files.
+
+    The marker check is intentionally narrow. It targets deterministic seed /
+    placeholder output that should be replaced wholesale by Director, while
+    avoiding a blanket escalation from precise edits to full-file overwrites.
+    """
+    marker_candidates: list[str] = []
+    for item in list(bootstrap_receipt.get("results", []) or []):
+        if not isinstance(item, Mapping):
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status and status != "success":
+            continue
+        payload = item.get("result")
+        if isinstance(payload, Mapping):
+            for key in ("content", "text", "body", "data"):
+                value = payload.get(key)
+                if isinstance(value, str) and value:
+                    marker_candidates.append(value)
+        elif isinstance(payload, str) and payload:
+            marker_candidates.append(payload)
+    combined = "\n".join(marker_candidates).lower()
+    return any(marker in combined for marker in _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS)
+
+
+def select_bootstrap_followup_write_tool_name(
+    *,
+    allowed_tool_names: set[str],
+    default_write_tool_name: str | None,
+    bootstrap_receipt: Mapping[str, Any],
+    failed_bootstrap_files: list[str],
+) -> str | None:
+    """Select the write tool for the post-bootstrap implementation stage."""
+    if failed_bootstrap_files:
+        for creation_candidate in ("write_file", "create_file", "append_to_file"):
+            if creation_candidate in allowed_tool_names:
+                return creation_candidate
+        return default_write_tool_name
+
+    if bootstrap_receipt_contains_whole_file_replacement_marker(bootstrap_receipt):
+        for replacement_candidate in ("write_file", "edit_file", "repo_apply_diff", "edit_blocks"):
+            if replacement_candidate in allowed_tool_names:
+                return replacement_candidate
+
+    return default_write_tool_name
 
 
 def build_forced_write_only_retry_tool_definitions(
@@ -399,6 +466,11 @@ def build_retry_write_after_bootstrap_context(
     if failed_files:
         retry_system += "\nDo NOT edit unresolved paths (read failed): " + ", ".join(failed_files) + "."
         retry_system += "\nFor unresolved files that must be newly created, use write_file/create_file/append_to_file instead of edit_file."
+    if forced_write_tool_name == "write_file":
+        retry_system += (
+            "\nUse write_file for a complete production implementation of the selected target file. "
+            "Do not preserve deterministic scaffold, audit seed, TODO, or placeholder-only code."
+        )
     return [
         {"role": "system", "content": retry_system},
         {"role": "user", "content": latest_user},
@@ -588,16 +660,16 @@ class RetryOrchestrator:
             forbidden_tool_names=_forbidden,
         )
         strict_allowed_retry_tool_names = extract_allowed_tool_names_from_definitions(_strict_retry_tool_definitions)
+        # The first retry must not force a single write tool. The model still
+        # receives a write-inclusive contract and the narrowed tool set, but it
+        # can choose write_file/edit_blocks/edit_file based on the task. Strict
+        # tool_choice forcing is reserved for escalation attempts and bootstrap
+        # follow-up where context has already been collected.
         forced_tool_choice: dict[str, Any] | None = None
-        if forced_write_tool_name:
-            forced_tool_choice = {
-                "type": "function",
-                "function": {"name": forced_write_tool_name},
-            }
         retry_context = build_contract_retry_context(
             context,
             retry_tool_definitions,
-            forced_write_tool_name=forced_write_tool_name,
+            forced_write_tool_name=None,
         )
         logger.warning(
             "mutation-contract retry scope: turn_id=%s allowed_tools=%s strict_allowed_tools=%s forced_tool=%s",
@@ -688,10 +760,10 @@ class RetryOrchestrator:
             retry_tool_definitions,
             retry_context,
             allowed_retry_tool_names,
-            strict_allowed_retry_tool_names,
+            _strict_allowed_retry_tool_names,
             forced_write_tool_name,
             forced_tool_choice,
-            strict_retry_tool_defs,
+            _strict_retry_tool_defs,
         ) = self._build_retry_context(
             turn_id=turn_id,
             context=context,
@@ -706,18 +778,20 @@ class RetryOrchestrator:
             attempt_tool_definitions = retry_tool_definitions
             attempt_allowed_tool_names = allowed_retry_tool_names
             attempt_context = retry_context
-            attempt_tool_choice_override: Any | None = forced_tool_choice
+            attempt_tool_choice_override: Any | None = None
             retry_llm_call_ordinal += 1
             attempt_model_override = resolve_retry_model_override(retry_llm_call_ordinal)
-            if attempt_index > 0 and forced_write_tool_name and strict_retry_tool_defs:
-                attempt_tool_definitions = strict_retry_tool_defs
-                attempt_allowed_tool_names = strict_allowed_retry_tool_names
-            if attempt_index > 0 and forced_write_tool_name:
+            if attempt_index > 0:
+                # Keep the write-inclusive hard gate, but do not force a single
+                # write tool. Real-world retries need to recover from a failed
+                # edit_blocks/search_replace attempt by switching to write_file
+                # or edit_file; forcing the previous selected tool traps the
+                # model in the same failure mode.
                 attempt_context = append_retry_enforcement_hint(
                     retry_context,
                     allowed_tool_names=attempt_allowed_tool_names,
                     reason="escalation: enforce write-inclusive batch in retry scope",
-                    forced_write_tool_name=forced_write_tool_name,
+                    forced_write_tool_name=None,
                 )
 
             retry_response = await self._execute_retry_batch(
@@ -762,7 +836,7 @@ class RetryOrchestrator:
                         retry_context,
                         allowed_tool_names=attempt_allowed_tool_names,
                         reason="retry decision did not produce a valid tool batch",
-                        forced_write_tool_name=forced_write_tool_name,
+                        forced_write_tool_name=None,
                     )
                     continue
                 raise RuntimeError(
@@ -841,7 +915,7 @@ class RetryOrchestrator:
                     retry_context,
                     allowed_tool_names=attempt_allowed_tool_names,
                     reason=f"{retry_exc!s} (attempt {attempt_index + 1}/{max_retry_attempts})",
-                    forced_write_tool_name=forced_write_tool_name,
+                    forced_write_tool_name=None,
                 )
                 continue
 
@@ -862,12 +936,12 @@ class RetryOrchestrator:
             if bootstrap_receipt is None:
                 raise RuntimeError("single_batch_contract_violation_retry_failed: bootstrap read receipt missing")
             failed_bootstrap_files = extract_failed_files_from_bootstrap_receipt(bootstrap_receipt)
-            followup_forced_write_tool_name = forced_write_tool_name
-            if failed_bootstrap_files:
-                for creation_candidate in ("write_file", "create_file", "append_to_file"):
-                    if creation_candidate in allowed_retry_tool_names:
-                        followup_forced_write_tool_name = creation_candidate
-                        break
+            followup_forced_write_tool_name = select_bootstrap_followup_write_tool_name(
+                allowed_tool_names=allowed_retry_tool_names,
+                default_write_tool_name=forced_write_tool_name,
+                bootstrap_receipt=bootstrap_receipt,
+                failed_bootstrap_files=failed_bootstrap_files,
+            )
             write_context = build_retry_write_after_bootstrap_context(
                 original_context=context,
                 bootstrap_receipt=bootstrap_receipt,

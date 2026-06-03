@@ -9,8 +9,12 @@ for candidate in (BACKEND_ROOT,):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 
+from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (  # noqa: E402
+    _CARD3D_PM_REQUIRED_DOMAINS,
+)
 from polaris.cells.orchestration.pm_planning.public.service import evaluate_pm_task_quality  # noqa: E402
 from polaris.delivery.cli.pm.orchestration_engine import (  # noqa: E402
+    _apply_quality_gate_to_requirements_fallback,
     _apply_requirements_fallback_for_empty_tasks,
     _build_pm_failure_detail,
     _downgrade_recovered_pm_invoke_error,
@@ -386,6 +390,51 @@ def test_empty_tasks_fallback_recovers_empty_parse_output() -> None:
     joined_warnings = "\n".join(str(item) for item in warnings)
     assert "upstream payload was empty" in joined_warnings
     assert "deterministic requirements fallback used" in joined_warnings
+
+
+def test_card3d_empty_tasks_fallback_runs_quality_gate_before_persist(tmp_path: Path) -> None:
+    normalized = {
+        "tasks": [],
+        "notes": "PM JSON parse failed.",
+        "schema_warnings": ["upstream payload was empty"],
+    }
+
+    exit_code, payload, tasks, fallback_applied = _apply_requirements_fallback_for_empty_tasks(
+        exit_code=1,
+        normalized=normalized,
+        normalized_tasks=[],
+        requirements="""
+        # Product Requirements
+        构建多人在线创意卡牌游戏。
+        前端必须基于 TypeScript + Three.js 3D 牌桌，后端必须基于 Node.js。
+        覆盖 realtime gateway、matchmaking、rooms、creative cards、deck builder、rules、sync、persistence、moderation 和 tests。
+        """,
+        iteration=12,
+        timestamp="2026-05-06 00:00:00",
+        plan_text="",
+        docs_stage={},
+        run_id="pm-00012",
+    )
+
+    assert fallback_applied is True
+    assert exit_code == 0
+    assert len(tasks) == 3
+
+    quality_exit_code, repaired_tasks, quality_payload = _apply_quality_gate_to_requirements_fallback(
+        normalized=payload,
+        workspace_full=str(tmp_path),
+        docs_stage={},
+    )
+
+    assert quality_exit_code == 0
+    assert len(repaired_tasks) == len(_CARD3D_PM_REQUIRED_DOMAINS)
+    assert quality_payload["autofix_stats"]["card3d_domain_tasks_added"] == len(_CARD3D_PM_REQUIRED_DOMAINS)
+    assert quality_payload["quality"]["ok"] is True
+    assert {task["id"] for task in repaired_tasks}.isdisjoint({"PM-0001-F1", "PM-0001-F2", "PM-0001-F3"})
+    assert payload["quality_gate"]["passed"] is True
+
+    report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
+    assert report["ok"] is True
 
 
 def test_recovered_pm_invoke_error_remains_fatal(tmp_path: Path) -> None:

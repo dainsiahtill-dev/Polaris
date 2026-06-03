@@ -26,7 +26,12 @@ from polaris.cells.orchestration.pm_planning.internal.pipeline_ports import (
     normalize_pm_payload,
     normalize_priority,
 )
-from polaris.cells.orchestration.pm_planning.pipeline import _merge_engine_config
+from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import _CARD3D_PM_REQUIRED_DOMAINS
+from polaris.cells.orchestration.pm_planning.pipeline import (
+    _autofix_domain_coverage_critical_issues,
+    _build_pm_quality_retry_prompt,
+    _merge_engine_config,
+)
 
 # ---------------------------------------------------------------------------
 # normalize_priority
@@ -52,6 +57,41 @@ class TestNormalizePriority:
 
     def test_invalid_fallback(self) -> None:
         assert normalize_priority("not a number", fallback=3) == 3
+
+
+class TestAutofixDomainCoverageCriticalIssues:
+    def test_card3d_domain_autofix_is_hard_quality_evidence(self) -> None:
+        issues = _autofix_domain_coverage_critical_issues(
+            {"card3d_domain_tasks_added": len(_CARD3D_PM_REQUIRED_DOMAINS), "game_domain_tasks_added": 0}
+        )
+
+        assert len(issues) == 1
+        assert "card3d" in issues[0]
+        assert "Regenerate the PM contract" in issues[0]
+
+    def test_card3d_retry_prompt_includes_exact_domain_contract(self) -> None:
+        prompt = _build_pm_quality_retry_prompt(
+            base_prompt="Return PM JSON.",
+            previous_payload={"overall_goal": "Build Card3D", "tasks": []},
+            quality_report={
+                "summary": "failed",
+                "critical_issues": [
+                    "card3d domain autofix added "
+                    f"{len(_CARD3D_PM_REQUIRED_DOMAINS)} tasks; PM decomposition was insufficient."
+                ],
+                "warnings": [],
+            },
+        )
+
+        assert "CARD3D HARD CONTRACT" in prompt
+        assert "Do not group multiple domains into one task" in prompt
+        assert "FINAL NON-NEGOTIABLE DOMAIN CONTRACT" in prompt
+        assert "PM-CARD3D-CLIENT3D-01" in prompt
+        assert "metadata.domain=client3d" in prompt
+        assert "scope_paths=[src/client/three-scene.ts]" in prompt
+        assert "tests/unit/card-rules.test.ts" in prompt
+        assert "tests/e2e/card-table-3d.test.ts" in prompt
+        assert "replacing/removing existing trivial arithmetic placeholder tests" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +262,36 @@ class TestNormalizePmPayloadHappyPath:
         task = result["tasks"][0]
         assert task["target_files"] == ["src/shared/generationSpec.ts", "package.json"]
         assert task["scope_paths"] == ["src/renderer"]
+
+    def test_preserves_explicit_pm_ids_and_dependency_refs(self) -> None:
+        raw = {
+            "tasks": [
+                {
+                    "id": "PM-0001-1",
+                    "title": "Implement client scene",
+                    "goal": "Implement the Three.js card table client scene.",
+                    "target_files": ["src/client/three-scene.ts"],
+                    "phase": "implementation",
+                    "acceptance_criteria": ["Run `npm run build` exits 0"],
+                    "execution_checklist": ["Read existing files", "Implement client scene", "Run npm run build"],
+                },
+                {
+                    "id": "PM-0002-1",
+                    "title": "Implement realtime backend",
+                    "goal": "Implement the Node.js realtime backend.",
+                    "target_files": ["src/server/app.ts"],
+                    "phase": "implementation",
+                    "depends_on": ["PM-0001-1"],
+                    "acceptance_criteria": ["Run `npm run build` exits 0"],
+                    "execution_checklist": ["Read client protocol", "Implement backend", "Run npm run build"],
+                },
+            ]
+        }
+
+        result = normalize_pm_payload(raw, iteration=3, start_timestamp="t")
+
+        assert [task["id"] for task in result["tasks"]] == ["PM-0001-1", "PM-0002-1"]
+        assert result["tasks"][1]["dependencies"] == ["PM-0001-1"]
 
 
 class TestNormalizePmPayloadEdgeCases:

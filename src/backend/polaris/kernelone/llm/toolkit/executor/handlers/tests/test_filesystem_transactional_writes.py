@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
+    _should_use_whole_file_placeholder_replacement,
     _write_temp_verify_rename,
 )
 
@@ -76,3 +77,61 @@ class TestWriteTempVerifyRename:
 
         assert result["ok"] is True
         assert result["bytes_written"] == 3
+
+
+class TestEditBlocksPlaceholderFallback:
+    """Test controlled whole-file fallback for edit_blocks shorthand."""
+
+    def test_allows_placeholder_search_with_complete_typescript_replacement(self) -> None:
+        replacement = "\n".join(
+            [
+                "import http from 'http';",
+                "",
+                "export interface HealthResponse {",
+                "  status: 'ok';",
+                "}",
+                "",
+                "export function createServer(): http.Server {",
+                "  return http.createServer((_req, res) => {",
+                "    res.statusCode = 200;",
+                "    res.end(JSON.stringify({ status: 'ok' }));",
+                "  });",
+                "}",
+            ]
+        )
+
+        assert (
+            _should_use_whole_file_placeholder_replacement(
+                search_text="// TODO: implement app",
+                replace_text=replacement,
+                rel="src/server/app.ts",
+                block_count=1,
+            )
+            is True
+        )
+
+    def test_rejects_non_placeholder_search_text(self) -> None:
+        replacement = "\n".join(["export const value = 1;"] * 12)
+
+        assert (
+            _should_use_whole_file_placeholder_replacement(
+                search_text="export const oldValue = 0;",
+                replace_text=replacement,
+                rel="src/server/app.ts",
+                block_count=1,
+            )
+            is False
+        )
+
+    def test_rejects_multiblock_placeholder_fallback(self) -> None:
+        replacement = "\n".join(["export const value = 1;"] * 12)
+
+        assert (
+            _should_use_whole_file_placeholder_replacement(
+                search_text="// TODO: implement",
+                replace_text=replacement,
+                rel="src/server/app.ts",
+                block_count=2,
+            )
+            is False
+        )

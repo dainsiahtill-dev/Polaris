@@ -35,6 +35,10 @@ from polaris.cells.orchestration.pm_dispatch.public import (
 from polaris.cells.orchestration.pm_planning.public.pipeline import (
     run_pm_planning_iteration,
 )
+from polaris.cells.orchestration.pm_planning.public.service import (
+    autofix_pm_contract_for_quality,
+    evaluate_pm_task_quality,
+)
 
 # Import from refactored app.orchestration modules (via public boundary)
 from polaris.cells.orchestration.workflow_runtime.public import (
@@ -345,6 +349,67 @@ def _apply_requirements_fallback_for_empty_tasks(
 
     recovered_exit_code = 0 if fallback_tasks else exit_code
     return recovered_exit_code, fallback_payload, fallback_tasks, bool(fallback_tasks)
+
+
+def _resolve_outer_pm_task_quality_mode() -> str:
+    raw = str(os.environ.get(_PM_TASK_QUALITY_MODE_ENV, _PM_TASK_QUALITY_DEFAULT_MODE) or "").strip().lower()
+    if raw not in _PM_TASK_QUALITY_MODES:
+        return _PM_TASK_QUALITY_DEFAULT_MODE
+    return raw
+
+
+def _apply_quality_gate_to_requirements_fallback(
+    *,
+    normalized: dict[str, Any],
+    workspace_full: str,
+    docs_stage: dict[str, Any],
+) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
+    autofix_stats = autofix_pm_contract_for_quality(normalized, workspace_full=workspace_full)
+    quality_report = evaluate_pm_task_quality(
+        normalized,
+        docs_stage=docs_stage if isinstance(docs_stage, dict) else {},
+        workspace_full=workspace_full,
+    )
+    quality_mode = _resolve_outer_pm_task_quality_mode()
+    normalized["quality_gate"] = {
+        "mode": quality_mode,
+        "attempt": "requirements_fallback",
+        "max_attempts": "requirements_fallback",
+        "passed": bool(quality_report.get("ok")),
+        "score": int(quality_report.get("score") or 0),
+        "summary": str(quality_report.get("summary") or "").strip(),
+        "critical_issue_count": len(quality_report.get("critical_issues") or []),
+        "warning_count": len(quality_report.get("warnings") or []),
+    }
+
+    if not bool(quality_report.get("ok")):
+        raw_schema_warnings = normalized.get("schema_warnings")
+        schema_warnings = (
+            [str(item) for item in raw_schema_warnings if str(item).strip()]
+            if isinstance(raw_schema_warnings, list)
+            else []
+        )
+        for item in quality_report.get("critical_issues") or []:
+            token = str(item).strip()
+            if token:
+                schema_warnings.append(f"PM quality issue: {token}")
+        normalized["schema_warnings"] = schema_warnings
+        normalized["schema_warning_count"] = len(schema_warnings)
+        normalized["terminal_error_code"] = "PM_TASK_QUALITY_FAILED"
+        normalized["terminal_error"] = str(quality_report.get("summary") or "").strip()
+
+    exit_code = 0 if bool(quality_report.get("ok")) or quality_mode in {"off", "warn"} else 1
+    quality_payload = {
+        "autofix_stats": autofix_stats,
+        "quality": {
+            "ok": bool(quality_report.get("ok")),
+            "score": int(quality_report.get("score") or 0),
+            "summary": str(quality_report.get("summary") or "").strip(),
+            "critical_issues": list(quality_report.get("critical_issues") or [])[:8],
+            "warnings": list(quality_report.get("warnings") or [])[:8],
+        },
+    }
+    return exit_code, _extract_normalized_tasks(normalized), quality_payload
 
 
 def _downgrade_recovered_pm_invoke_error(
@@ -821,20 +886,27 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
             )
 
         if fallback_applied:
+            exit_code, normalized_tasks, fallback_quality_payload = _apply_quality_gate_to_requirements_fallback(
+                normalized=normalized,
+                workspace_full=workspace_full,
+                docs_stage=docs_stage,
+            )
             emit_event(
                 run_events,
                 kind="status",
                 actor="PM",
-                name="pm_zero_tasks_autofallback",
+                name="pm_zero_tasks_autofallback_quality_gate",
                 refs={"run_id": run_id, "phase": "planning"},
-                summary="PM zero-task output replaced with requirements-derived fallback tasks",
-                ok=True,
+                summary="PM zero-task fallback repaired and evaluated by the PM task quality gate",
+                ok=(exit_code == 0),
                 output={
                     "requirements_non_empty": True,
                     "original_exit_code": original_exit_code,
                     "fallback_from_failure": original_exit_code != 0,
                     "task_count": len(normalized_tasks),
+                    **fallback_quality_payload,
                 },
+                error="" if exit_code == 0 else "PM_TASK_QUALITY_FAILED",
             )
             if original_exit_code != 0 and exit_code == 0:
                 downgraded_pm_invoke_error = _downgrade_recovered_pm_invoke_error(

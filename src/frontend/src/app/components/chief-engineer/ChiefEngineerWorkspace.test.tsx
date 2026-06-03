@@ -589,7 +589,9 @@ describe('ChiefEngineerWorkspace', () => {
         status: TaskStatus.PENDING,
         done: false,
         priority: 1,
-        acceptance: ['Director 可追踪'],
+        acceptance: [{ description: 'Director 可追踪' }],
+        acceptance_criteria: ['Director 可追踪'],
+        execution_checklist: ['生成蓝图', '校验交接字段'],
         metadata: { target_files: ['src/app.tsx'] },
       },
     ];
@@ -608,7 +610,15 @@ describe('ChiefEngineerWorkspace', () => {
       objective: '这里不是 Chief Engineer 蓝图',
       context: {
         target_files: ['src/app.tsx'],
+        acceptance_criteria: ['Director 可追踪'],
         acceptance: ['Director 可追踪'],
+        execution_checklist: ['生成蓝图', '校验交接字段'],
+        steps: ['生成蓝图', '校验交接字段'],
+        task: expect.objectContaining({
+          id: 'PM-summary-only',
+          acceptance_criteria: ['Director 可追踪'],
+          execution_checklist: ['生成蓝图', '校验交接字段'],
+        }),
       },
     });
     expect(await screen.findByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('Generated Director TaskBoard blueprint');
@@ -687,7 +697,9 @@ describe('ChiefEngineerWorkspace', () => {
         status: TaskStatus.PENDING,
         done: false,
         priority: 1,
-        acceptance: ['first acceptance'],
+        acceptance: [{ description: 'first acceptance' }],
+        acceptance_criteria: ['first acceptance'],
+        execution_checklist: ['first step'],
         metadata: { target_files: ['src/one.tsx'] },
       },
       {
@@ -697,7 +709,9 @@ describe('ChiefEngineerWorkspace', () => {
         status: TaskStatus.PENDING,
         done: false,
         priority: 1,
-        acceptance: ['second acceptance'],
+        acceptance: [{ description: 'second acceptance' }],
+        acceptance_criteria: ['second acceptance'],
+        execution_checklist: ['second step'],
         metadata: { target_files: ['src/two.tsx'] },
       },
     ];
@@ -722,7 +736,9 @@ describe('ChiefEngineerWorkspace', () => {
           objective: 'Generate first blueprint',
           context: {
             target_files: ['src/one.tsx'],
+            acceptance_criteria: ['first acceptance'],
             acceptance: ['first acceptance'],
+            execution_checklist: ['first step'],
           },
         },
         {
@@ -730,7 +746,9 @@ describe('ChiefEngineerWorkspace', () => {
           objective: 'Generate second blueprint',
           context: {
             target_files: ['src/two.tsx'],
+            acceptance_criteria: ['second acceptance'],
             acceptance: ['second acceptance'],
+            execution_checklist: ['second step'],
           },
         },
       ],
@@ -741,6 +759,124 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByText('Bulk blueprint one')).toBeInTheDocument();
     expect(screen.getByText('Bulk blueprint two')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-blueprint-detail')).toHaveTextContent('Bulk generated blueprint one');
+  });
+
+  it('allows diagnostics to regenerate tasks with stale blueprint references', async () => {
+    const defaultApiFetch = apiFetchMock.getMockImplementation();
+    apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: false,
+            role: 'chief_engineer',
+            can_handoff: false,
+            can_generate: true,
+            generated_at: '2026-05-23T08:00:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            blueprints: {
+              ok: true,
+              status: 'ready',
+              source: 'runtime/blueprints',
+              total: 1,
+              loadable: 1,
+              invalid_payloads: 1,
+              planned_tasks: 1,
+              covered_tasks: 0,
+              missing_task_ids: ['PM-stale-blueprint'],
+              director_handoff_ready: false,
+              latest_updated_at: '2026-05-23T08:00:00Z',
+              error: null,
+            },
+            issues: ['blueprint_coverage_incomplete'],
+            generate_blockers: [],
+            handoff_blockers: ['blueprint_coverage_incomplete'],
+          }),
+        });
+      }
+      if (path === cePath('/v2/chief-engineer/blueprints/bulk') && init?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            workspace: 'C:/Temp/Product',
+            total: 1,
+            generated: 1,
+            failed: 0,
+            results: [
+              {
+                ok: true,
+                task_id: 'PM-stale-blueprint',
+                workspace: 'C:/Temp/Product',
+                status: 'generated',
+                blueprint_id: 'ce_PM-stale-blueprint',
+                blueprint_path: 'runtime/blueprints/ce_PM-stale-blueprint.json',
+                source: 'runtime/blueprints',
+                summary: 'Regenerated stale blueprint',
+                recommendations: [],
+                risks: [],
+                blueprint: {
+                  blueprint_id: 'ce_PM-stale-blueprint',
+                  task_id: 'PM-stale-blueprint',
+                  title: 'Regenerated stale blueprint',
+                  summary: 'Regenerated stale blueprint',
+                  status: 'generated',
+                  target_files: ['src/stale.ts'],
+                },
+              },
+            ],
+            errors: [],
+          }),
+        });
+      }
+      return defaultApiFetch
+        ? defaultApiFetch(path, init)
+        : Promise.resolve({ ok: true, json: async () => ({ ready: true }) });
+    });
+    const tasks: PmTask[] = [
+      {
+        id: 'PM-stale-blueprint',
+        title: 'Stale blueprint source',
+        summary: 'Regenerate stale blueprint',
+        status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [{ description: 'stale acceptance' }],
+        acceptance_criteria: ['stale acceptance'],
+        execution_checklist: ['stale step'],
+        metadata: {
+          target_files: ['src/stale.ts'],
+          blueprint_id: 'old-hollow-blueprint',
+          runtime_blueprint_path: 'runtime/blueprints/old-hollow-blueprint.json',
+        },
+      },
+    ];
+
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={tasks} />);
+
+    const generateAll = await screen.findByTestId('chief-engineer-blueprint-generate-all');
+    expect(generateAll).not.toBeDisabled();
+    fireEvent.click(generateAll);
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(
+      cePath('/v2/chief-engineer/blueprints/bulk'),
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    const postCall = apiFetchMock.mock.calls.find((call) => (
+      call[0] === cePath('/v2/chief-engineer/blueprints/bulk') && call[1]?.method === 'POST'
+    ));
+    const body = JSON.parse(String(postCall?.[1]?.body || '{}'));
+    expect(body.tasks).toHaveLength(1);
+    expect(body.tasks[0]).toMatchObject({
+      task_id: 'PM-stale-blueprint',
+      objective: 'Regenerate stale blueprint',
+      context: {
+        target_files: ['src/stale.ts'],
+        acceptance_criteria: ['stale acceptance'],
+        execution_checklist: ['stale step'],
+      },
+    });
+    expect(await screen.findByTestId('chief-engineer-blueprint-bulk-evidence')).toHaveTextContent('generated 1/1');
   });
 
   it('disables blueprint generation when Chief Engineer LLM diagnostics are blocked', async () => {

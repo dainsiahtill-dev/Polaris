@@ -7,6 +7,7 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from polaris.cells.director.task_consumer.internal.director_consumer import (
     DirectorExecutionConsumer,
     ScopeConflictDetector,
@@ -190,6 +191,108 @@ class TestDirectorExecutionConsumerPollOnce:
         assert fail_call.error_code == "EXEC_NO_EVIDENCE"
         assert fail_call.requeue_stage == "pending_exec"
         assert fail_call.metadata["target_files"] == ["src/main.py"]
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execute_task_delegates_to_director_adapter_for_existing_workspace(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+
+        class FakeDirectorAdapter:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, Any],
+                context: dict[str, Any],
+            ) -> dict[str, Any]:
+                assert task_id == "task-real"
+                assert input_data["task_id"] == "task-real"
+                assert input_data["pm_task_id"] == "pm-1"
+                assert context["metadata"]["task_market_stage"] == "pending_exec"
+                return {
+                    "success": True,
+                    "task_id": task_id,
+                    "tools_executed": 1,
+                    "materialization_mode": "unit_test",
+                    "tool_results": [
+                        {
+                            "tool_name": "write_file",
+                            "status": "success",
+                            "effect_receipt": {
+                                "file": "src/main.py",
+                                "bytes_written": 12,
+                                "changed": True,
+                            },
+                        }
+                    ],
+                }
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.adapter.DirectorAdapter",
+            FakeDirectorAdapter,
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        result = consumer._execute_task(
+            "task-real",
+            {
+                "source_pm_task_id": "pm-1",
+                "title": "Create module",
+                "goal": "Create a real module",
+                "target_files": ["src/main.py"],
+            },
+            "lease-real",
+        )
+
+        assert result["changed_files"] == ["src/main.py"]
+        assert result["duration"] >= 0
+        assert result["side_effects"] == []
+        assert result["director_adapter_result"]["success"] is True
+        assert result["director_adapter_result"]["materialization_mode"] == "unit_test"
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execute_task_requeues_failed_director_adapter(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+
+        class FakeDirectorAdapter:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, Any],
+                context: dict[str, Any],
+            ) -> dict[str, Any]:
+                return {
+                    "success": False,
+                    "task_id": task_id,
+                    "error": "director_no_materialized_changes",
+                    "failure_stage": "director_materialization",
+                }
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.adapter.DirectorAdapter",
+            FakeDirectorAdapter,
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+
+        with pytest.raises(RuntimeError, match="director_no_materialized_changes"):
+            consumer._execute_task("task-failed", {"title": "Bad task"}, "lease-failed")
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_successful_execution_registers_and_commits_compensation_actions(self, mock_get_svc: MagicMock) -> None:

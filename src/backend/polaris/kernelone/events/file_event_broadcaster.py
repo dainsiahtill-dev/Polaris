@@ -6,6 +6,7 @@
 """
 
 import difflib
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -127,6 +128,85 @@ def _calculate_line_stats(patch: str, operation: str) -> tuple[int, int, int]:
     return added, deleted, modified
 
 
+def _build_file_written_payload(
+    *,
+    file_path: str,
+    operation: str,
+    content_size: int,
+    task_id: str,
+    patch: str,
+) -> dict[str, Any] | None:
+    """Build the canonical payload shared by realtime and durable event sinks."""
+    file_lower = str(file_path or "").lower()
+    if any(file_lower.endswith(ext) or ext in file_lower for ext in _BROADCAST_SKIP_PATTERNS):
+        return None
+    if content_size > _BROADCAST_MAX_SIZE:
+        return None
+
+    normalized_operation = str(operation or "modify").strip().lower()
+    if normalized_operation not in {"create", "modify", "delete"}:
+        normalized_operation = "modify"
+    patch_text = str(patch or "")
+    patch_available = bool(patch_text.strip())
+    patch_unavailable_reason = ""
+    if not patch_available:
+        if normalized_operation == "create" and content_size == 0:
+            patch_unavailable_reason = "empty_file"
+        elif normalized_operation == "modify":
+            patch_unavailable_reason = "no_content_change"
+        elif normalized_operation == "delete":
+            patch_unavailable_reason = "empty_delete"
+        else:
+            patch_unavailable_reason = "patch_empty"
+
+    payload: dict[str, Any] = {
+        "file_path": file_path,
+        "operation": normalized_operation,
+        "content_size": content_size,
+        "task_id": task_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "diff_status": "available" if patch_available else "unavailable",
+        "has_patch": patch_available,
+    }
+    if patch_available:
+        payload["patch"] = patch_text
+    else:
+        payload["patch_unavailable_reason"] = patch_unavailable_reason
+
+    added_lines, deleted_lines, modified_lines = _calculate_line_stats(
+        patch_text,
+        normalized_operation,
+    )
+    payload["added_lines"] = int(added_lines)
+    payload["deleted_lines"] = int(deleted_lines)
+    payload["modified_lines"] = int(modified_lines)
+    return payload
+
+
+def _append_durable_file_edit_event(workspace: str | None, payload: dict[str, Any]) -> bool:
+    """Persist FILE_WRITTEN evidence for snapshot/UI fallback and audits."""
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return False
+    try:
+        event_dir = Path(workspace_token).resolve() / ".polaris" / "runtime" / "file-edits"
+        event_dir.mkdir(parents=True, exist_ok=True)
+        event = {
+            "schema_version": "runtime.v2",
+            "event_schema": "runtime.event.file_edit.v1",
+            "channel": "event.file_edit",
+            "kind": "file_edit",
+            "source": "file_event_broadcaster",
+            "payload": payload,
+        }
+        with (event_dir / "events.jsonl").open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+        return True
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.warning("Failed to persist FILE_WRITTEN event: %s", exc)
+        return False
+
+
 # File extension patterns to skip from broadcasting
 _BROADCAST_SKIP_PATTERNS: tuple[str, ...] = (".tmp", ".log", ".cache", ".pyc", "__pycache__")
 # Maximum file size (1MB) above which we skip broadcasting
@@ -141,6 +221,7 @@ def broadcast_file_written(
     patch: str = "",
     message_bus=None,
     worker_id: str = "standalone",
+    event_log_workspace: str | None = None,
 ) -> bool:
     """广播文件写入事件到前端
 
@@ -156,58 +237,25 @@ def broadcast_file_written(
     Returns:
         是否成功广播
     """
-    if not message_bus:
+    payload = _build_file_written_payload(
+        file_path=file_path,
+        operation=operation,
+        content_size=content_size,
+        task_id=task_id,
+        patch=patch,
+    )
+    if payload is None:
         return False
 
-    # Skip broadcasting for certain file types and sizes
-    file_lower = file_path.lower()
-    if any(file_lower.endswith(ext) or ext in file_lower for ext in _BROADCAST_SKIP_PATTERNS):
-        return False
-    if content_size > _BROADCAST_MAX_SIZE:
+    _append_durable_file_edit_event(event_log_workspace, payload)
+
+    if not message_bus:
         return False
 
     try:
         _message_bus_cls, _msg_type = _get_message_bus_imports()
 
         import asyncio
-
-        operation = str(operation or "modify").strip().lower()
-        if operation not in {"create", "modify", "delete"}:
-            operation = "modify"
-        patch_text = str(patch or "")
-        patch_available = bool(patch_text.strip())
-        patch_unavailable_reason = ""
-        if not patch_available:
-            if operation == "create" and content_size == 0:
-                patch_unavailable_reason = "empty_file"
-            elif operation == "modify":
-                patch_unavailable_reason = "no_content_change"
-            elif operation == "delete":
-                patch_unavailable_reason = "empty_delete"
-            else:
-                patch_unavailable_reason = "patch_empty"
-
-        payload = {
-            "file_path": file_path,
-            "operation": operation,
-            "content_size": content_size,
-            "task_id": task_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "diff_status": "available" if patch_available else "unavailable",
-            "has_patch": patch_available,
-        }
-
-        if patch_available:
-            payload["patch"] = patch_text
-        else:
-            payload["patch_unavailable_reason"] = patch_unavailable_reason
-        added_lines, deleted_lines, modified_lines = _calculate_line_stats(
-            patch_text,
-            operation,
-        )
-        payload["added_lines"] = int(added_lines)
-        payload["deleted_lines"] = int(deleted_lines)
-        payload["modified_lines"] = int(modified_lines)
 
         # 尝试获取 event loop
         try:
@@ -293,6 +341,7 @@ def write_file_with_broadcast(
         patch=patch,
         message_bus=message_bus,
         worker_id=worker_id,
+        event_log_workspace=workspace,
     )
     if message_bus is not None and not broadcast_ok:
         logger.warning("FILE_WRITTEN broadcast failed; continuing file write: %s", rel_path)
@@ -360,6 +409,7 @@ def append_file_with_broadcast(
         patch=patch,
         message_bus=message_bus,
         worker_id=worker_id,
+        event_log_workspace=workspace,
     )
 
     return {
@@ -431,6 +481,7 @@ def replace_in_file_with_broadcast(
         patch=patch,
         message_bus=message_bus,
         worker_id=worker_id,
+        event_log_workspace=workspace,
     )
 
     replacements = min(replace_limit, old_content.count(old_text))
@@ -514,6 +565,7 @@ def apply_patch_with_broadcast(
             patch=diff_patch,
             message_bus=message_bus,
             worker_id=worker_id,
+            event_log_workspace=workspace,
         )
 
         return {

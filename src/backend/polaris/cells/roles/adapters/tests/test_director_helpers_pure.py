@@ -251,9 +251,12 @@ class TestHasSuccessfulWriteTool:
         assert has_successful_write_tool([]) is False
 
     def test_successful_write(self) -> None:
-        assert has_successful_write_tool([{"tool": "write_file", "success": True}]) is True
-        assert has_successful_write_tool([{"tool": "edit_file", "success": True}]) is True
-        assert has_successful_write_tool([{"tool": "patch_apply", "success": True}]) is True
+        assert has_successful_write_tool([{"tool": "write_file", "success": True, "result": {"path": "a.py"}}]) is True
+        assert has_successful_write_tool([{"tool": "edit_file", "success": True, "result": {"path": "a.py"}}]) is True
+        assert has_successful_write_tool([{"tool": "patch_apply", "success": True, "result": {"path": "a.py"}}]) is True
+
+    def test_plain_tool_call_request_is_not_write_evidence(self) -> None:
+        assert has_successful_write_tool([{"tool": "write_file", "success": True}]) is False
 
     def test_unsuccessful_write(self) -> None:
         assert has_successful_write_tool([{"tool": "write_file", "success": False}]) is False
@@ -357,6 +360,47 @@ class TestExtractKernelToolResults:
         resp = {"raw_response": {"tool_results": [{"tool": "x", "success": True}]}}
         result = extract_kernel_tool_results(resp)
         assert len(result) == 1
+
+    def test_from_batch_receipt_top_level(self) -> None:
+        resp = {
+            "batch_receipt": {
+                "results": [
+                    {
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "call_id": "call-1",
+                        "arguments": {"path": "src/app.ts", "content": "x"},
+                        "effect_receipt": {"path": "src/app.ts", "bytes_written": 1},
+                        "result": {"path": "src/app.ts"},
+                    }
+                ]
+            }
+        }
+        result = extract_kernel_tool_results(resp)
+        assert len(result) == 1
+        assert result[0]["tool"] == "write_file"
+        assert result[0]["success"] is True
+        assert result[0]["effect_receipt"] == {"path": "src/app.ts", "bytes_written": 1}
+        assert has_successful_write_tool(result) is True
+
+    def test_from_raw_response_batch_receipt(self) -> None:
+        resp = {
+            "raw_response": {
+                "batch_receipt": {
+                    "results": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "success",
+                            "result": {"content": "x"},
+                        }
+                    ]
+                }
+            }
+        }
+        result = extract_kernel_tool_results(resp)
+        assert len(result) == 1
+        assert result[0]["tool"] == "read_file"
+        assert has_successful_write_tool(result) is False
 
     def test_skips_non_dict_items(self) -> None:
         resp = {"tool_results": ["bad", {"tool": "ok", "success": True}]}

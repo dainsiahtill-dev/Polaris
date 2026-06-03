@@ -36,10 +36,14 @@ type DirectorTaskPayload = {
   id?: string;
   task_id?: string;
   status?: string;
+  scope_paths?: unknown;
+  target_files?: unknown;
   metadata?: {
     pm_task_id?: string;
     source_task_id?: string;
     external_task_id?: string;
+    scope_paths?: unknown;
+    target_files?: unknown;
   };
 };
 type DirectorDiagnosticsPayload = {
@@ -193,6 +197,12 @@ type SnapshotSummaryMetrics = {
   fileCount: number;
   codeLineCount: number;
 };
+type ScenarioSeedResidue = {
+  filePath: string;
+  marker: string;
+  line: number;
+  excerpt: string;
+};
 type PmPlanningContribution = {
   source: "executed_pm_round" | "resumed_existing_pm_contract";
   round: number;
@@ -234,7 +244,7 @@ type ComplexityContributionBreakdown = {
 };
 
 type FullChainProjectScenario = {
-  key: "enterprise" | "game";
+  key: "enterprise" | "game" | "card3d";
   workspacePrefix: string;
   packageName: string;
   goal: string;
@@ -373,6 +383,31 @@ const GAME_PM_REQUIRED_DOMAINS = [
   "tests",
 ] as const;
 type GameDomain = (typeof GAME_PM_REQUIRED_DOMAINS)[number];
+const CARD3D_PM_REQUIRED_DOMAINS = [
+  "client3d",
+  "table",
+  "networking",
+  "server",
+  "realtime",
+  "matchmaking",
+  "rooms",
+  "cards",
+  "deckbuilder",
+  "rules",
+  "sync",
+  "persistence",
+  "moderation",
+  "presence",
+  "telemetry",
+  "auth",
+  "lobby",
+  "assets",
+  "animation",
+  "physics",
+  "analytics",
+  "tests",
+] as const;
+type Card3dDomain = (typeof CARD3D_PM_REQUIRED_DOMAINS)[number];
 const GAME_PM_DOMAIN_ROOTS: Record<GameDomain, readonly string[]> = {
   engine: ["src/engine"],
   world: ["src/world"],
@@ -385,6 +420,43 @@ const GAME_PM_DOMAIN_ROOTS: Record<GameDomain, readonly string[]> = {
   renderer: ["src/renderer"],
   audio: ["src/audio"],
   tooling: ["src/tools"],
+  tests: ["tests"],
+};
+const CARD3D_PM_DOMAIN_ROOTS: Record<Card3dDomain, readonly string[]> = {
+  client3d: ["src/client/three-scene.ts", "src/client/scene.ts", "src/client/app.tsx", "src/client/main.ts"],
+  table: ["src/client/card-table.ts", "src/client/table.ts", "src/client/tabletop.ts"],
+  networking: ["src/client/network-client.ts", "src/client/network.ts", "src/client/realtime-client.ts"],
+  server: ["src/server/app.ts", "src/server/index.ts", "src/server/server.ts"],
+  realtime: ["src/server/realtime-gateway.ts", "src/server/websocket.ts", "src/server/ws-gateway.ts"],
+  matchmaking: ["src/server/matchmaking.ts", "src/server/matchmaker.ts"],
+  rooms: ["src/server/room-state.ts", "src/server/rooms.ts"],
+  cards: ["src/game/card-catalog.ts", "src/game/cards.ts"],
+  deckbuilder: ["src/game/deck-builder.ts", "src/game/deckbuilder.ts"],
+  rules: ["src/game/rules-engine.ts", "src/game/rules.ts"],
+  sync: ["src/shared/protocol.ts", "src/shared/sync-protocol.ts"],
+  persistence: ["src/server/session-store.ts", "src/server/persistence.ts"],
+  moderation: ["src/server/moderation.ts", "src/server/safety.ts"],
+  presence: ["src/shared/player-presence.ts", "src/shared/presence.ts"],
+  telemetry: ["src/shared/telemetry.ts", "src/shared/events.ts"],
+  auth: ["src/auth/session-auth.ts", "src/auth/auth.ts"],
+  lobby: ["src/lobby/lobby-service.ts", "src/lobby/index.ts"],
+  assets: ["src/assets/card-assets.ts", "src/assets/assets.ts"],
+  animation: ["src/animation/card-animations.ts", "src/animation/animations.ts"],
+  physics: ["src/physics/table-layout.ts", "src/physics/layout.ts"],
+  analytics: ["src/analytics/match-analytics.ts", "src/analytics/analytics.ts"],
+  tests: ["tests", "tests/integration/multiplayer-flow.test.ts"],
+};
+const CARD3D_PM_DIRECTORY_SCOPE_DOMAINS: Record<string, readonly Card3dDomain[]> = {
+  "src/client": ["client3d", "table", "networking"],
+  "src/server": ["server", "realtime", "matchmaking", "rooms", "persistence", "moderation"],
+  "src/game": ["cards", "deckbuilder", "rules"],
+  "src/shared": ["sync", "presence", "telemetry"],
+  "src/auth": ["auth"],
+  "src/lobby": ["lobby"],
+  "src/assets": ["assets"],
+  "src/animation": ["animation"],
+  "src/physics": ["physics"],
+  "src/analytics": ["analytics"],
   tests: ["tests"],
 };
 const GAME_PM_FRAGILE_ACCEPTANCE_RE = /(参考序列|逐位一致|卡方|固定序列|魔法数字|快照序列|硬编码.*预期值|magic[- ]?number|golden[- ]?sequence|chi[- ]?square|snapshot[- ]?sequence|hard[- ]?coded.*expected)/i;
@@ -412,6 +484,15 @@ function contractStringList(value: unknown): string[] {
   return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
+function unknownStringList(value: unknown): string[] {
+  if (typeof value === "string") {
+    const token = value.trim();
+    return token ? [token] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
 function workspacePathPrefix(workspace: string): string {
   return path.resolve(workspace).toLowerCase().replace(/[\\/]+$/, "");
 }
@@ -427,7 +508,7 @@ function isWorkspaceBoundPath(candidate: string, workspace: string): boolean {
 }
 
 function hasExecutableOrFileAcceptance(acceptanceItems: string[]): boolean {
-  const commandPattern = /\b(curl|wget|httpie|npm|pnpm|yarn|npx|node|python|pytest|go\s+test|mvn|gradle|dotnet|cargo|powershell|pwsh)\b/i;
+  const commandPattern = /\b(curl|wget|httpie|npm|pnpm|yarn|npx|node|python|pytest|go\s+test|mvn|gradle|dotnet|cargo|grep|jq|awk|sed|powershell|pwsh)\b/i;
   const fileEvidencePattern = /\b(verify|assert|expect|should|must|exists?|contains?|校验|验证|断言|存在|包含)\b.*(?:[A-Za-z]:[\\/]|[\w.-]+[\\/][\w./\\-]+\.[A-Za-z0-9]+)/i;
   return acceptanceItems.some((item) => {
     const text = String(item || "").trim();
@@ -458,6 +539,54 @@ function pathMatchesGameDomain(candidate: string, domain: GameDomain): boolean {
   return GAME_PM_DOMAIN_ROOTS[domain].some((root) => normalized === root || normalized.startsWith(`${root}/`));
 }
 
+function pathMatchesCard3dDomain(candidate: string, domain: Card3dDomain): boolean {
+  const normalized = String(candidate || "").replace(/\\/g, "/").toLowerCase().replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!normalized) return false;
+  const directoryDomains = CARD3D_PM_DIRECTORY_SCOPE_DOMAINS[normalized];
+  if (directoryDomains) return directoryDomains.includes(domain);
+  return CARD3D_PM_DOMAIN_ROOTS[domain].some((root) => normalized === root || normalized.startsWith(`${root}/`));
+}
+
+function scenarioMinTaskCount(scenario: FullChainProjectScenario): number {
+  return scenario.key === "game" || scenario.key === "card3d" ? GAME_PM_MIN_TASKS : 0;
+}
+
+function scenarioRequiredDomains(scenario: FullChainProjectScenario): readonly string[] {
+  if (scenario.key === "game") return GAME_PM_REQUIRED_DOMAINS;
+  if (scenario.key === "card3d") return CARD3D_PM_REQUIRED_DOMAINS;
+  return [];
+}
+
+function scenarioCoveredDomains(
+  scenario: FullChainProjectScenario,
+  coveragePaths: string[],
+): string[] {
+  if (scenario.key === "game") {
+    return GAME_PM_REQUIRED_DOMAINS.filter((domain) => coveragePaths.some((item) => pathMatchesGameDomain(item, domain)));
+  }
+  if (scenario.key === "card3d") {
+    return CARD3D_PM_REQUIRED_DOMAINS.filter((domain) => coveragePaths.some((item) => pathMatchesCard3dDomain(item, domain)));
+  }
+  return [];
+}
+
+function scenarioRequiresGameLikeBatch(scenario: FullChainProjectScenario): boolean {
+  return scenario.key === "game" || scenario.key === "card3d";
+}
+
+function directorTaskCoveragePaths(tasks: DirectorTaskPayload[]): string[] {
+  const paths: string[] = [];
+  for (const task of tasks) {
+    paths.push(
+      ...unknownStringList(task.scope_paths),
+      ...unknownStringList(task.target_files),
+      ...unknownStringList(task.metadata?.scope_paths),
+      ...unknownStringList(task.metadata?.target_files),
+    );
+  }
+  return Array.from(new Set(paths.map((item) => item.trim()).filter(Boolean)));
+}
+
 function auditPmContract(pmContract: PmContractPayload, workspace: string, scenario: FullChainProjectScenario): PmContractAudit {
   const issues: string[] = [];
   const tasks = Array.isArray(pmContract?.tasks) ? pmContract.tasks : [];
@@ -465,8 +594,9 @@ function auditPmContract(pmContract: PmContractPayload, workspace: string, scena
   if (workspacePathPrefix(contractWorkspace) !== workspacePathPrefix(workspace)) {
     issues.push(`pm_contract_workspace_mismatch:${contractWorkspace || "(missing)"}`);
   }
-  if (scenario.key === "game" && tasks.length < GAME_PM_MIN_TASKS) {
-    issues.push(`game_pm_task_count_too_low:${tasks.length}<${GAME_PM_MIN_TASKS}`);
+  const minTaskCount = scenarioMinTaskCount(scenario);
+  if (minTaskCount > 0 && tasks.length < minTaskCount) {
+    issues.push(`${scenario.key}_pm_task_count_too_low:${tasks.length}<${minTaskCount}`);
   }
 
   const coveragePaths: string[] = [];
@@ -481,7 +611,7 @@ function auditPmContract(pmContract: PmContractPayload, workspace: string, scena
     const acceptance = contractStringList(Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : task.acceptance);
     const hasAcceptance = acceptance.length > 0;
     const hasExecutableAcceptance = hasAcceptance && hasExecutableOrFileAcceptance(acceptance);
-    const hasFragileGameAcceptance = scenario.key === "game"
+    const hasFragileGameAcceptance = scenarioRequiresGameLikeBatch(scenario)
       && acceptance.some((item) => GAME_PM_FRAGILE_ACCEPTANCE_RE.test(item));
     const pathFields = [...scopePaths, ...targetFiles];
     const unsafePaths = pathFields.filter((item) => !isWorkspaceBoundPath(item, workspace));
@@ -502,16 +632,10 @@ function auditPmContract(pmContract: PmContractPayload, workspace: string, scena
     }
   });
 
-  const coveredGameDomains = scenario.key === "game"
-    ? GAME_PM_REQUIRED_DOMAINS.filter((domain) => {
-      return coveragePaths.some((item) => pathMatchesGameDomain(item, domain));
-    })
-    : [];
-  const missingGameDomains = scenario.key === "game"
-    ? GAME_PM_REQUIRED_DOMAINS.filter((domain) => !coveredGameDomains.includes(domain))
-    : [];
+  const coveredGameDomains = scenarioCoveredDomains(scenario, coveragePaths);
+  const missingGameDomains = scenarioRequiredDomains(scenario).filter((domain) => !coveredGameDomains.includes(domain));
   if (missingGameDomains.length > 0) {
-    issues.push(`game_pm_missing_domains:${missingGameDomains.join(",")}`);
+    issues.push(`${scenario.key}_pm_missing_domains:${missingGameDomains.join(",")}`);
   }
 
   return { invalidTaskCount, issues, coveredGameDomains, missingGameDomains };
@@ -533,8 +657,11 @@ function resolveProjectScenario(): FullChainProjectScenario {
   if (raw === "game" || raw === "tactical-game") {
     return withGoalOverride(buildGameProjectScenario());
   }
+  if (raw === "card3d" || raw === "multiplayer-card" || raw === "three-card") {
+    return withGoalOverride(buildCard3dProjectScenario());
+  }
   throw new Error(
-    `Unsupported KERNELONE_E2E_PROJECT_SCENARIO=${raw}; supported=enterprise, game`,
+    `Unsupported KERNELONE_E2E_PROJECT_SCENARIO=${raw}; supported=enterprise, game, card3d`,
   );
 }
 
@@ -582,6 +709,156 @@ function buildFullChainSettingsPayload(workspace: string): SettingsPayload {
 }
 
 function buildResumePlanningTaskSeeds(scenario: FullChainProjectScenario): ResumePlanningTaskSeed[] {
+  if (scenario.key === "card3d") {
+    return [
+      {
+        id: "CARD3D-CLIENT3D",
+        domain: "client3d",
+        title: "Extend TypeScript Three.js scene runtime",
+        scopePaths: ["src/client/three-scene.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/client/three-scene.ts exists.",
+          "Run `npm run test` and verify client scene contracts remain covered.",
+        ],
+      },
+      {
+        id: "CARD3D-TABLE",
+        domain: "table",
+        title: "Extend interactive 3D card table",
+        scopePaths: ["src/client/card-table.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/client/card-table.ts exists.",
+          "Run `npm run test` and verify card table interaction contracts remain covered.",
+        ],
+      },
+      {
+        id: "CARD3D-NETWORKING",
+        domain: "networking",
+        title: "Extend browser networking client",
+        scopePaths: ["src/client/network-client.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/client/network-client.ts exists.",
+          "Run `npm run test` and verify networking protocol coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-SERVER",
+        domain: "server",
+        title: "Extend Node.js backend entrypoint",
+        scopePaths: ["src/server/app.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/server/app.ts exists.",
+          "Run `npm run test` and verify backend route coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-REALTIME",
+        domain: "realtime",
+        title: "Extend realtime gateway",
+        scopePaths: ["src/server/realtime-gateway.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/server/realtime-gateway.ts exists.",
+          "Run `npm run test` and verify realtime message coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-MATCHMAKING",
+        domain: "matchmaking",
+        title: "Extend matchmaking queue",
+        scopePaths: ["src/server/matchmaking.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/server/matchmaking.ts exists.",
+          "Run `npm run test` and verify matchmaking coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-ROOMS",
+        domain: "rooms",
+        title: "Extend authoritative room state",
+        scopePaths: ["src/server/room-state.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/server/room-state.ts exists.",
+          "Run `npm run test` and verify room state coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-CARDS",
+        domain: "cards",
+        title: "Extend creative card catalog",
+        scopePaths: ["src/game/card-catalog.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/game/card-catalog.ts exists.",
+          "Run `npm run test` and verify card catalog coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-DECKBUILDER",
+        domain: "deckbuilder",
+        title: "Extend deck builder rules",
+        scopePaths: ["src/game/deck-builder.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/game/deck-builder.ts exists.",
+          "Run `npm run test` and verify deck builder coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-RULES",
+        domain: "rules",
+        title: "Extend card rules engine",
+        scopePaths: ["src/game/rules-engine.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/game/rules-engine.ts exists.",
+          "Run `npm run test` and verify rules engine coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-SYNC",
+        domain: "sync",
+        title: "Extend shared sync protocol",
+        scopePaths: ["src/shared/protocol.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/shared/protocol.ts exists.",
+          "Run `npm run test` and verify sync protocol coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-PERSISTENCE",
+        domain: "persistence",
+        title: "Extend multiplayer session persistence",
+        scopePaths: ["src/server/session-store.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/server/session-store.ts exists.",
+          "Run `npm run test` and verify persistence coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-MODERATION",
+        domain: "moderation",
+        title: "Extend room safety and moderation",
+        scopePaths: ["src/server/moderation.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/server/moderation.ts exists.",
+          "Run `npm run test` and verify moderation coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-TESTS",
+        domain: "tests",
+        title: "Strengthen multiplayer card integration tests",
+        scopePaths: [
+          "tests/unit/card-rules.test.ts",
+          "tests/unit/deck-builder.test.ts",
+          "tests/integration/multiplayer-flow.test.ts",
+          "tests/integration/realtime-sync.test.ts",
+          "tests/e2e/card-table-3d.test.ts",
+        ],
+        acceptance: [
+          "Run `npm run test` and verify all multiplayer card tests contain describe/expect coverage.",
+          "Run `npm run build` and verify tests do not require external runners.",
+        ],
+      },
+    ];
+  }
   if (scenario.key === "game") {
     return [
       {
@@ -766,7 +1043,12 @@ function markdownList(items: string[]): string {
 function buildResumePlanningSeed(workspace: string, scenario: FullChainProjectScenario): ResumePlanningSeed {
   const generatedAt = new Date().toISOString();
   const tasks = buildResumePlanningTaskSeeds(scenario);
-  const requiredDomains = scenario.key === "game" ? GAME_PM_REQUIRED_DOMAINS.join(", ") : "models, repository, service, api, tests, verification";
+  const requiredDomains = scenarioRequiredDomains(scenario).length > 0
+    ? scenarioRequiredDomains(scenario).join(", ")
+    : "models, repository, service, api, tests, verification";
+  const placeholderPathExamples = scenario.key === "card3d"
+    ? "`C:/Temp/card3d-placeholder`, `/tmp/card3d-placeholder`, `../`, or another project root"
+    : "`C:/Temp/roguelike`, `/tmp/roguelike`, `../`, or another project root";
   const taskRows = tasks.map((task) => (
     `| ${task.id} | ${task.domain} | ${task.title} | ${task.scopePaths.map((item) => `\`${item}\``).join(", ")} | ${task.acceptance.join(" ")} |`
   )).join("\n");
@@ -792,13 +1074,14 @@ function buildResumePlanningSeed(workspace: string, scenario: FullChainProjectSc
     "",
     `- Every PM task must be bound to the current workspace: \`${workspace}\`.`,
     "- Use relative paths shown below or absolute paths under the current workspace only.",
-    "- Do not use placeholder paths such as `C:/Temp/roguelike`, `/tmp/roguelike`, `../`, or another project root.",
+    `- Do not use placeholder paths such as ${placeholderPathExamples}.`,
     "- Every task must include a concrete goal, scope_paths or target_files, execution_checklist, and acceptance_criteria.",
     "- Every acceptance_criteria entry must include an executable command (`npm run build` / `npm run test`) or a verifiable file evidence path.",
     "- The mandatory decomposition below must become Director implementation tasks, not documentation-editing tasks.",
     "- Do not create tasks whose target_files are only requirements.md, plan.md, workspace/docs, or other Polaris planning documents.",
     `- Required domain coverage for this resume run: ${requiredDomains}.`,
     "- Existing seed complexity is only baseline evidence. PM and Director must plan current-run changes; final complexity alone is not sufficient.",
+    "- Final source/test/config files must not retain audit-seed or planning scenario markers.",
     "",
     "## Mandatory Decomposition",
     "",
@@ -810,6 +1093,7 @@ function buildResumePlanningSeed(workspace: string, scenario: FullChainProjectSc
     "",
     "- Preserve existing package scripts; do not introduce a new package manager or external build/test dependency.",
     "- For game scenarios, do not add Rust/Cargo, Webpack, Jest, Vite, or Vitest.",
+    "- For card3d scenarios, preserve the TypeScript + Three.js client and Node.js backend stack; do not replace it with another framework.",
     "- For game PRNG work, test same-seed reproducibility, range, and distribution invariants only; do not assert unverified magic-number outputs.",
     "- Prefer modifying or extending the listed seed files so current-run contribution is auditable.",
   ].join("\n");
@@ -1187,7 +1471,7 @@ async function dismissEngineFailureDialog(window: Page): Promise<void> {
   }
 }
 
-const FULL_CHAIN_REQUIRED_LLM_ROLES = ["pm", "chief_engineer", "director", "qa"] as const;
+const FULL_CHAIN_REQUIRED_LLM_ROLES = ["architect", "pm", "chief_engineer", "director", "qa"] as const;
 
 function normalizeLlmRole(role: string): string {
   const normalized = String(role || "").trim().toLowerCase();
@@ -1363,28 +1647,90 @@ function makeLargeTsModule(moduleName: string, helperCount: number): string {
     .filter(Boolean)
     .map((item) => item[0].toUpperCase() + item.slice(1))
     .join("");
+  const variable = symbol[0].toLowerCase() + symbol.slice(1);
+  const statuses = ["draft", "active", "blocked", "archived"];
+  const lanes = ["planning", "runtime", "quality", "delivery"];
 
   const lines: string[] = [
-    `export type ${symbol}Item = { id: string; tenantId: string; payload: string; index: number };`,
+    `export type ${symbol}Status = "${statuses.join("\" | \"")}";`,
+    `export type ${symbol}Lane = "${lanes.join("\" | \"")}";`,
+    `export interface ${symbol}Item {`,
+    "  id: string;",
+    "  tenantId: string;",
+    "  title: string;",
+    `  status: ${symbol}Status;`,
+    `  lane: ${symbol}Lane;`,
+    "  priority: number;",
+    "  tags: string[];",
+    "  updatedAt: string;",
+    "}",
+    "",
+    `export interface ${symbol}Summary {`,
+    "  total: number;",
+    "  active: number;",
+    "  blocked: number;",
+    "  averagePriority: number;",
+    "  lanes: Record<string, number>;",
+    "}",
     "",
     `export class ${symbol}Store {`,
     `  private readonly items = new Map<string, ${symbol}Item[]>();`,
     "  list(tenantId: string): " + symbol + "Item[] {",
-    "    return (this.items.get(tenantId) || []).map((item) => ({ ...item }));",
+    "    return (this.items.get(tenantId) || []).map((item) => ({ ...item, tags: [...item.tags] }));",
     "  }",
-    "  create(tenantId: string, payload: string): " + symbol + "Item {",
+    `  upsert(tenantId: string, item: Omit<${symbol}Item, "tenantId" | "updatedAt">): ${symbol}Item {`,
     "    const current = this.items.get(tenantId) || [];",
-    "    const next = { id: `${tenantId}-${current.length + 1}`, tenantId, payload, index: current.length + 1 };",
-    "    this.items.set(tenantId, [...current, next]);",
-    "    return { ...next };",
+    "    const next = { ...item, tenantId, updatedAt: new Date(0).toISOString(), tags: [...item.tags] };",
+    "    const others = current.filter((entry) => entry.id !== next.id);",
+    "    this.items.set(tenantId, [...others, next].sort((a, b) => b.priority - a.priority));",
+    "    return { ...next, tags: [...next.tags] };",
+    "  }",
+    `  summarize(tenantId: string): ${symbol}Summary {`,
+    "    const rows = this.list(tenantId);",
+    "    const lanes = rows.reduce<Record<string, number>>((acc, item) => {",
+    "      acc[item.lane] = (acc[item.lane] || 0) + 1;",
+    "      return acc;",
+    "    }, {});",
+    "    const priorityTotal = rows.reduce((total, item) => total + item.priority, 0);",
+    "    return {",
+    "      total: rows.length,",
+    "      active: rows.filter((item) => item.status === \"active\").length,",
+    "      blocked: rows.filter((item) => item.status === \"blocked\").length,",
+    "      averagePriority: rows.length === 0 ? 0 : Number((priorityTotal / rows.length).toFixed(2)),",
+    "      lanes,",
+    "    };",
     "  }",
     "}",
+    "",
+    `export const ${variable}PolicyWeights: Record<${symbol}Status, number> = {`,
+    "  draft: 1,",
+    "  active: 3,",
+    "  blocked: -2,",
+    "  archived: 0,",
+    "};",
     "",
   ];
 
   for (let index = 0; index < helperCount; index += 1) {
-    lines.push(`export function ${symbol}Helper${index}(value: number): number {`);
-    lines.push(`  return value + ${index};`);
+    const status = statuses[index % statuses.length];
+    const lane = lanes[index % lanes.length];
+    const priority = 1 + (index % 9);
+    lines.push(`export const ${variable}Scenario${index}: ${symbol}Item = {`);
+    lines.push(`  id: "${moduleName}-${index}",`);
+    lines.push(`  tenantId: "seed-${moduleName}",`);
+    lines.push(`  title: "${moduleName} ${lane} scenario ${index}",`);
+    lines.push(`  status: "${status}",`);
+    lines.push(`  lane: "${lane}",`);
+    lines.push(`  priority: ${priority},`);
+    lines.push(`  tags: ["${lane}", "${status}", "audit-seed"],`);
+    lines.push("  updatedAt: \"1970-01-01T00:00:00.000Z\",");
+    lines.push("};");
+    lines.push("");
+    lines.push(`export function score${symbol}Scenario${index}(item: ${symbol}Item): number {`);
+    lines.push(`  const statusWeight = ${variable}PolicyWeights[item.status] ?? 0;`);
+    lines.push(`  const laneWeight = item.lane === "${lane}" ? ${index % 5 + 1} : 1;`);
+    lines.push("  const tagWeight = item.tags.includes(\"audit-seed\") ? 2 : 0;");
+    lines.push("  return item.priority * statusWeight + laneWeight + tagWeight;");
     lines.push("}");
     lines.push("");
   }
@@ -1396,11 +1742,25 @@ function makeTestModule(suiteName: string, caseCount: number): string {
   const lines: string[] = [
     "import { describe, expect, it } from \"@jest/globals\";",
     "",
-    `describe("${suiteName}", () => {`,
+    "const coverageCases = [",
   ];
   for (let index = 0; index < caseCount; index += 1) {
+    const lane = index % 3 === 0 ? "unit" : index % 3 === 1 ? "integration" : "e2e";
+    lines.push(
+      `  { id: "${suiteName}-case-${index + 1}", lane: "${lane}", priority: ${1 + (index % 7)}, tags: ["${suiteName}", "${lane}"] },`,
+    );
+  }
+  lines.push("];");
+  lines.push("");
+  lines.push(
+    `describe("${suiteName}", () => {`,
+  );
+  for (let index = 0; index < caseCount; index += 1) {
     lines.push(`  it("case ${index + 1}", () => {`);
-    lines.push(`    expect(${index} + ${index + 1}).toBe(${index + index + 1});`);
+    lines.push(`    const item = coverageCases[${index}];`);
+    lines.push(`    expect(item.id).toBe("${suiteName}-case-${index + 1}");`);
+    lines.push("    expect(item.priority).toBeGreaterThan(0);");
+    lines.push("    expect(item.tags).toContain(item.lane);");
     lines.push("  });");
   }
   lines.push("});");
@@ -1415,10 +1775,14 @@ function makeStructuralBuildScript(requiredFiles: string[]): string {
     "",
     "for (const file of required) {",
     "  if (!existsSync(file)) throw new Error(`missing ${file}`);",
-    "  if (readFileSync(file, \"utf-8\").trim().length === 0) throw new Error(`empty ${file}`);",
+    "  const text = readFileSync(file, \"utf-8\");",
+    "  if (text.trim().length === 0) throw new Error(`empty ${file}`);",
+    "  if (/function\\s+\\w+Helper\\d+\\s*\\(value:\\s*number\\):\\s*number\\s*\\{\\s*return\\s+value\\s*\\+\\s*\\d+;\\s*\\}/.test(text)) {",
+    "    throw new Error(`numeric helper filler ${file}`);",
+    "  }",
     "}",
     "",
-    "console.log(`structural build passed: ${required.length} files`);",
+    "console.log(`build verification completed: ${required.length} files`);",
   ].join("\n");
 }
 
@@ -1433,9 +1797,12 @@ function makeStructuralTestScript(testFiles: string[]): string {
     "  if (!text.includes(\"describe(\") || !text.includes(\"expect(\")) {",
     "    throw new Error(`invalid test structure ${file}`);",
     "  }",
+    "  if (/expect\\(\\s*\\d+\\s*(?:[+\\-*/])\\s*\\d+\\s*\\)\\.to(?:Be|Equal)\\(\\s*\\d+\\s*\\)/.test(text)) {",
+    "    throw new Error(`trivial arithmetic placeholder test ${file}`);",
+    "  }",
     "}",
     "",
-    "console.log(`structural tests passed: ${tests.length} files`);",
+    "console.log(`test verification completed: ${tests.length} files`);",
   ].join("\n");
 }
 
@@ -1648,6 +2015,149 @@ function buildGameProjectScenario(): FullChainProjectScenario {
   };
 }
 
+function buildCard3dProjectScenario(): FullChainProjectScenario {
+  const buildRequiredFiles = [
+    "package.json",
+    "tsconfig.json",
+    "index.html",
+    "src/client/three-scene.ts",
+    "src/client/card-table.ts",
+    "src/client/network-client.ts",
+    "src/server/app.ts",
+    "src/server/realtime-gateway.ts",
+    "src/server/matchmaking.ts",
+    "src/server/room-state.ts",
+    "src/server/session-store.ts",
+    "src/server/moderation.ts",
+    "src/game/card-catalog.ts",
+    "src/game/deck-builder.ts",
+    "src/game/rules-engine.ts",
+    "src/shared/protocol.ts",
+  ];
+  const testFiles = [
+    "tests/unit/card-rules.test.ts",
+    "tests/unit/deck-builder.test.ts",
+    "tests/integration/multiplayer-flow.test.ts",
+    "tests/integration/realtime-sync.test.ts",
+    "tests/e2e/card-table-3d.test.ts",
+  ];
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "polaris-card3d-multiplayer-e2e",
+      version: "1.0.0",
+      private: true,
+      type: "module",
+      scripts: {
+        build: "node scripts/build.mjs",
+        start: "node dist/server/app.js",
+        test: "node scripts/test.mjs",
+      },
+      dependencies: {
+        three: "^0.165.0",
+      },
+    }, null, 2),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+        rootDir: ".",
+        outDir: "dist",
+      },
+      include: ["src/**/*.ts", "tests/**/*.ts"],
+    }, null, 2),
+    "AGENTS.md": [
+      "# Card3D Workspace Rules",
+      "",
+      "All text files must be read and written with explicit UTF-8.",
+      "This workspace is a TypeScript multiplayer creative card game seed project.",
+      "The browser client is based on Three.js / WebGL concepts, and the backend is Node.js.",
+      "Do not introduce Rust, Cargo, Go, Python, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
+      "Preserve package.json scripts: build must remain `node scripts/build.mjs`, and test must remain `node scripts/test.mjs`.",
+      "Preserve the existing Three.js dependency declaration; do not rewrite package.json during implementation.",
+      "Use the existing structural verification scripts for acceptance.",
+    ].join("\n"),
+    "index.html": [
+      "<!doctype html>",
+      "<html lang=\"en\">",
+      "  <head>",
+      "    <meta charset=\"UTF-8\" />",
+      "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />",
+      "    <title>Polaris Card3D Multiplayer</title>",
+      "  </head>",
+      "  <body>",
+      "    <canvas id=\"card3d-stage\"></canvas>",
+      "    <script type=\"module\" src=\"/src/client/three-scene.ts\"></script>",
+      "  </body>",
+      "</html>",
+    ].join("\n"),
+    ".env.example": "CARD3D_PORT=4188\nCARD3D_ROOM_LIMIT=8\nCARD3D_MATCHMAKING_SEED=polaris-card3d",
+    "docker-compose.yml": "version: \"3.9\"\nservices:\n  card3d-redis:\n    image: redis:7\n    ports:\n      - \"6381:6379\"",
+    "scripts/build.mjs": makeStructuralBuildScript(buildRequiredFiles),
+    "scripts/test.mjs": makeStructuralTestScript(testFiles),
+    "src/client/three-scene.ts": [
+      "import type { PerspectiveCamera, Scene, WebGLRenderer } from \"three\";",
+      "export type ThreeSceneHandles = { scene?: Scene; camera?: PerspectiveCamera; renderer?: WebGLRenderer };",
+      makeLargeTsModule("three-scene", 38),
+    ].join("\n\n"),
+    "src/client/card-table.ts": makeLargeTsModule("card-table", 34),
+    "src/client/network-client.ts": makeLargeTsModule("network-client", 32),
+    "src/server/app.ts": [
+      "import type { IncomingMessage, ServerResponse } from \"node:http\";",
+      "export type NodeCardServerHandler = (request: IncomingMessage, response: ServerResponse) => void;",
+      makeLargeTsModule("node-card-server", 34),
+    ].join("\n\n"),
+    "src/server/realtime-gateway.ts": makeLargeTsModule("realtime-gateway", 34),
+    "src/server/matchmaking.ts": makeLargeTsModule("matchmaking-queue", 30),
+    "src/server/room-state.ts": makeLargeTsModule("room-state", 32),
+    "src/server/session-store.ts": makeLargeTsModule("session-store", 28),
+    "src/server/moderation.ts": makeLargeTsModule("moderation-rules", 26),
+    "src/game/card-catalog.ts": makeLargeTsModule("creative-card-catalog", 34),
+    "src/game/deck-builder.ts": makeLargeTsModule("deck-builder", 32),
+    "src/game/rules-engine.ts": makeLargeTsModule("card-rules-engine", 34),
+    "src/shared/protocol.ts": makeLargeTsModule("sync-protocol", 30),
+    "src/shared/player-presence.ts": makeLargeTsModule("player-presence", 24),
+    "src/shared/telemetry.ts": makeLargeTsModule("client-server-telemetry", 24),
+    "src/auth/session-auth.ts": makeLargeTsModule("session-auth", 24),
+    "src/lobby/lobby-service.ts": makeLargeTsModule("lobby-service", 24),
+    "src/assets/card-assets.ts": makeLargeTsModule("card-assets", 24),
+    "src/animation/card-animations.ts": makeLargeTsModule("card-animations", 24),
+    "src/physics/table-layout.ts": makeLargeTsModule("table-layout", 24),
+    "src/analytics/match-analytics.ts": makeLargeTsModule("match-analytics", 24),
+    "tests/unit/card-rules.test.ts": makeTestModule("card-rules-unit", 18),
+    "tests/unit/deck-builder.test.ts": makeTestModule("deck-builder-unit", 18),
+    "tests/integration/multiplayer-flow.test.ts": makeTestModule("multiplayer-flow-integration", 18),
+    "tests/integration/realtime-sync.test.ts": makeTestModule("realtime-sync-integration", 18),
+    "tests/e2e/card-table-3d.test.ts": makeTestModule("card-table-3d-e2e", 18),
+    "docs/README.md": "# Card3D Multiplayer Docs\n\nInitial docs marker for Polaris full-chain card3d audit.",
+    "README.md": "# Card3D Multiplayer\n\nGenerated by Polaris full-chain card3d audit.",
+  };
+
+  return {
+    key: "card3d",
+    workspacePrefix: "Polaris_Card3D_Multiplayer_E2E",
+    packageName: "polaris-card3d-multiplayer-e2e",
+    goal: [
+      "构建一个中大型多人在线创意卡牌游戏项目，前端必须基于 TypeScript + Three.js / three3d 3D 牌桌，后端必须基于 Node.js。",
+      "必须可执行、可测试、可审计，并且必须先完成完整 Architect 计划和 Chief Engineer 全量蓝图，再交给 Director 落地代码。",
+      "项目必须包含 3D 客户端场景、交互式卡牌桌、浏览器网络客户端、Node 后端、实时网关、匹配队列、房间状态、创意卡牌目录、牌组构筑、规则引擎、共享同步协议、会话持久化、内容安全/房间治理、玩家在线状态、遥测、认证、大厅、资产、动画、桌面布局物理、对局分析和测试。",
+      "PM 必须拆出至少 22 个可执行任务，覆盖 client3d、table、networking、server、realtime、matchmaking、rooms、cards、deckbuilder、rules、sync、persistence、moderation、presence、telemetry、auth、lobby、assets、animation、physics、analytics、tests。",
+      "每个任务都要有目标、作用域、执行清单和可测验收；必须使用当前 C:/Temp 工作区内的 TypeScript 文件和内置 node scripts/build.mjs / scripts/test.mjs 验收。",
+      "所有 seed 文件必须被真实业务实现替换，最终源码/测试/配置中不得保留 audit-seed 或 planning scenario 标记。",
+      "禁止引入 Rust/Cargo、Go、Python、Webpack、Jest、Vite、Vitest 或任何新外部构建/测试依赖；禁止重写 package.json。",
+    ].join(" "),
+    replies: [
+      "",
+      "补充：前端必须体现 Three.js/WebGL 3D 牌桌、相机/场景/渲染器概念；后端必须体现 Node.js 多人房间、实时消息、匹配和会话状态。不要把它做成普通 roguelike 或单机卡牌 demo。",
+      "补充：请先完成所有计划和 Chief Engineer 蓝图，确认 22+ 个任务全部 handoff-ready 后才允许 Director 执行。Director 需要修改当前 seed 中的 TypeScript 客户端/后端/规则/测试文件，并在代码变更视图展示红绿 diff。",
+    ],
+    buildRequiredFiles,
+    testFiles,
+    files,
+  };
+}
+
 async function createComplexProject(
   baseRoot: string,
   scenario: FullChainProjectScenario,
@@ -1777,6 +2287,51 @@ function isCodeContributionFile(relativePath: string): boolean {
   return isAuditableCodeFile(relativePath);
 }
 
+function isScenarioSeedResidueFile(relativePath: string): boolean {
+  const normalized = toPosixPath(relativePath);
+  if (!shouldIncludeContributionFile(normalized)) return false;
+  return /\.(ts|tsx|js|jsx|mjs|cjs|json|md|html|css|ya?ml)$/i.test(normalized);
+}
+
+async function findScenarioSeedResidue(workspace: string, scenario: FullChainProjectScenario): Promise<ScenarioSeedResidue[]> {
+  if (!scenarioRequiresGameLikeBatch(scenario)) {
+    return [];
+  }
+  const files = await listFilesRecursive(workspace);
+  const residues: ScenarioSeedResidue[] = [];
+  const markerPatterns: Array<{ marker: string; pattern: RegExp }> = [
+    { marker: "audit-seed", pattern: /\baudit-seed\b/i },
+    { marker: "planning scenario", pattern: /\bplanning scenario\b/i },
+  ];
+
+  for (const filePath of files) {
+    const relativePath = toPosixPath(path.relative(workspace, filePath));
+    if (!isScenarioSeedResidueFile(relativePath)) continue;
+
+    let text = "";
+    try {
+      text = await fs.readFile(filePath, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const lines = text.split(/\r?\n/);
+    for (const [index, line] of lines.entries()) {
+      const marker = markerPatterns.find((item) => item.pattern.test(line));
+      if (!marker) continue;
+      residues.push({
+        filePath: relativePath,
+        marker: marker.marker,
+        line: index + 1,
+        excerpt: line.trim().slice(0, 180),
+      });
+      break;
+    }
+  }
+
+  return residues.sort((left, right) => left.filePath.localeCompare(right.filePath));
+}
+
 async function snapshotProjectFiles(workspace: string): Promise<ProjectFileSnapshot> {
   const files = await listFilesRecursive(workspace);
   const snapshot: ProjectFileSnapshot = {};
@@ -1830,7 +2385,7 @@ function findForbiddenRuntimeArtifacts(
   scenario: FullChainProjectScenario,
   contribution: RuntimeContributionMetrics,
 ): string[] {
-  if (scenario.key !== "game") {
+  if (!scenarioRequiresGameLikeBatch(scenario)) {
     return [];
   }
   const changedFiles = [
@@ -2408,7 +2963,7 @@ async function readDirectorResultTaskCount(artifact: RuntimeArtifactRef | null |
 async function collectDirectorTaskExposure(
   window: Page,
   artifact?: RuntimeArtifactRef | null,
-): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string }> {
+): Promise<{ linkedTaskCount: number; uiTaskCount: number; state: string; coveragePaths: string[] }> {
   const tasks = await requestJson<DirectorTaskPayload[]>(window, "/v2/director/tasks?source=auto").catch(() => []);
   const linkedByApi = Array.isArray(tasks)
     ? tasks.filter((item) => {
@@ -2422,11 +2977,12 @@ async function collectDirectorTaskExposure(
       ].some((value) => String(value || "").trim().length > 0);
     }).length
     : 0;
+  const coveragePaths = Array.isArray(tasks) ? directorTaskCoveragePaths(tasks) : [];
   const resultTaskCount = await readDirectorResultTaskCount(artifact);
   const linkedTaskCount = Math.max(linkedByApi, resultTaskCount);
   const uiTaskCount = await window.getByTestId("director-task-item").count().catch(() => 0);
   const status = await requestJson<DirectorStatusPayload>(window, "/v2/director/status?source=auto").catch(() => ({}));
-  return { linkedTaskCount, uiTaskCount, state: String(status.state || "").trim().toUpperCase() };
+  return { linkedTaskCount, uiTaskCount, state: String(status.state || "").trim().toUpperCase(), coveragePaths };
 }
 
 function directorDiagnosticsTerminal(tasks: DirectorDiagnosticsPayload["tasks"]): boolean {
@@ -2446,12 +3002,13 @@ async function runDirectorUntilResultArtifact(
   linkedTaskCount: number;
   uiTaskCount: number;
   state: string;
+  coveragePaths: string[];
   artifactPath: string;
   runtimeRoot: string;
   mtimeMs: number;
   source: DirectorResultSource;
 }> {
-  let latestRun = { linkedTaskCount: 0, uiTaskCount: 0, state: "" };
+  let latestRun = { linkedTaskCount: 0, uiTaskCount: 0, state: "", coveragePaths: [] as string[] };
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     const existing = await tryRuntimeArtifact(window, "results/director.result.json", options);
     if (existing) {
@@ -2723,7 +3280,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     expect(project.metrics.moduleCount).toBeGreaterThanOrEqual(3);
     expect(project.metrics.configFileCount).toBeGreaterThanOrEqual(3);
     expect(project.metrics.testFileCount).toBeGreaterThanOrEqual(2);
-    if (scenario.key === "game") {
+    if (scenarioRequiresGameLikeBatch(scenario)) {
       expect(project.metrics.fileCount).toBeGreaterThanOrEqual(30);
       expect(project.metrics.codeLineCount).toBeGreaterThanOrEqual(1200);
       expect(project.metrics.moduleCount).toBeGreaterThanOrEqual(10);
@@ -3021,13 +3578,14 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         const chiefSnapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.chief-engineer-diagnostics.json`);
         await writeUtf8File(chiefSnapshotPath, JSON.stringify(chiefDiagnostics, null, 2));
         audit.evidence_paths.snapshots.push(toPosixPath(chiefSnapshotPath));
-        if (scenario.key === "game") {
+        if (scenarioRequiresGameLikeBatch(scenario)) {
           const plannedBlueprints = Number(chiefDiagnostics.blueprints?.planned_tasks || 0);
           const coveredBlueprints = Number(chiefDiagnostics.blueprints?.covered_tasks || 0);
+          const expectedBlueprints = Math.max(GAME_PM_MIN_TASKS, scenarioRequiredDomains(scenario).length);
           expect(
             plannedBlueprints,
             `Chief Engineer must produce a large batch of blueprints before Director handoff; evidence=${toPosixPath(chiefSnapshotPath)}`,
-          ).toBeGreaterThanOrEqual(GAME_PM_MIN_TASKS);
+          ).toBeGreaterThanOrEqual(expectedBlueprints);
           expect(
             coveredBlueprints,
             `Chief Engineer must cover every planned blueprint before Director handoff; evidence=${toPosixPath(chiefSnapshotPath)}`,
@@ -3062,15 +3620,33 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         await enterDirectorWorkspace(window);
         await expect(window.getByTestId("director-workspace")).toBeVisible();
         const director = await runDirectorUntilResultArtifact(window, { minMtimeMs: startEpochSeconds * 1000 });
-        if (scenario.key === "game") {
+        if (scenarioRequiresGameLikeBatch(scenario)) {
+          const expectedDirectorTasks = Math.max(GAME_PM_MIN_TASKS, scenarioRequiredDomains(scenario).length);
           expect(
             director.linkedTaskCount,
             "Director must receive the large PM task batch only after Chief Engineer blueprints are handoff-ready",
-          ).toBeGreaterThanOrEqual(GAME_PM_MIN_TASKS);
+          ).toBeGreaterThanOrEqual(expectedDirectorTasks);
           expect(
             director.uiTaskCount,
             "Director workspace must visibly expose the large task batch before execution",
-          ).toBeGreaterThanOrEqual(GAME_PM_MIN_TASKS);
+          ).toBeGreaterThanOrEqual(expectedDirectorTasks);
+          if (scenario.key === "card3d") {
+            const directorCoveragePaths = director.coveragePaths
+              .map((item) => normalizeCoveragePath(item, project.workspace))
+              .filter(Boolean);
+            const directorCoveredDomains = scenarioCoveredDomains(scenario, directorCoveragePaths);
+            const missingDirectorDomains = scenarioRequiredDomains(scenario)
+              .filter((domain) => !directorCoveredDomains.includes(domain));
+            expect(
+              director.coveragePaths.length,
+              "Director task exposure must include scope/target paths for card3d domain audit",
+            ).toBeGreaterThan(0);
+            expect(
+              missingDirectorDomains,
+              `Director task batch must cover every card3d domain before execution; `
+              + `paths=${JSON.stringify(directorCoveragePaths)}`,
+            ).toEqual([]);
+          }
         }
         if (director.linkedTaskCount > 0 && director.uiTaskCount > 0) {
           audit.acceptance_results.director_phase = "PASS";
@@ -3172,11 +3748,24 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
       const forbiddenRuntimeArtifacts = findForbiddenRuntimeArtifacts(project.scenario, audit.runtime_contribution);
       expect(
         forbiddenRuntimeArtifacts,
-        `Game scenario Director output must preserve the seed Node/TypeScript stack and must not introduce forbidden runtime artifacts; `
+        `Game-like scenario Director output must preserve the seed Node/TypeScript stack and must not introduce forbidden runtime artifacts; `
         + `artifacts=${JSON.stringify(forbiddenRuntimeArtifacts)}`,
       ).toEqual([]);
       const directorArtifactMaterialization = summarizeDirectorArtifactMaterialization(directorResult);
       const contributionPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.runtime-contribution.json`);
+      const seedResidue = await findScenarioSeedResidue(project.workspace, project.scenario);
+      const seedResiduePath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.seed-residue.json`);
+      await writeUtf8File(seedResiduePath, JSON.stringify({
+        workspace: toPosixPath(project.workspace),
+        scenario: project.scenario.key,
+        residue_count: seedResidue.length,
+        residues: seedResidue,
+      }, null, 2));
+      audit.evidence_paths.snapshots.push(toPosixPath(seedResiduePath));
+      expect(
+        seedResidue,
+        `Game-like scenario final source must not retain audit seed markers; evidence=${toPosixPath(seedResiduePath)}`,
+      ).toEqual([]);
       audit.complexity_contribution_breakdown = buildComplexityContributionBreakdown({
         scenarioSeedMetrics,
         startPhase,
@@ -3199,6 +3788,9 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         baseline: baselineSnapshot,
         final: finalSnapshot,
         contribution: audit.runtime_contribution,
+        seed_residue_path: toPosixPath(seedResiduePath),
+        seed_residue_count: seedResidue.length,
+        seed_residue: seedResidue,
         complexity_contribution_breakdown: audit.complexity_contribution_breakdown,
       }, null, 2));
       audit.evidence_paths.snapshots.push(toPosixPath(contributionPath));
@@ -3286,7 +3878,13 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         audit.acceptance_results.qa_phase = "PASS";
 
         let qaEvidenceBadge = window.getByTestId("qa-evidence-grade");
-        if (!await qaEvidenceBadge.isVisible({ timeout: 5_000 }).catch(() => false)) {
+        const qaBadgeVisible = await qaEvidenceBadge.isVisible({ timeout: 5_000 }).catch(() => false);
+        const qaBadgeText = qaBadgeVisible ? String(await qaEvidenceBadge.textContent().catch(() => "") || "") : "";
+        if (
+          !qaBadgeVisible
+          || !qaBadgeText.includes("real command passed")
+          || !qaBadgeText.includes("integration_qa_passed")
+        ) {
           await reloadRendererAfterWorkspaceSwitch(window);
           qaEvidenceBadge = window.getByTestId("qa-evidence-grade");
         }

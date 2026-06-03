@@ -92,7 +92,7 @@ class DirectorPatchExecutor:
                 continue
             return max(0.1, min(value, primary_timeout, 300.0))
 
-        return max(0.1, min(primary_timeout, 240.0))
+        return max(0.1, min(primary_timeout, 60.0))
 
     # -------------------------------------------------------------------------
     # Tool Execution (delegated to DirectorToolExecutor)
@@ -281,10 +281,23 @@ class DirectorPatchExecutor:
                     source_tool = "delete_file"
                 else:
                     source_tool = "write_file"
+                effect_receipt = {
+                    "path": file_path,
+                    "file": file_path,
+                    "bytes_written": bytes_written,
+                    "changed": changed,
+                    "operation": operation_kind,
+                    "broadcast_ok": broadcast_ok,
+                }
                 results.append(
                     {
                         "tool": "patch_apply",
+                        "tool_name": "patch_apply",
                         "success": True,
+                        "status": "success",
+                        "file": file_path,
+                        "path": file_path,
+                        "effect_receipt": effect_receipt,
                         "result": {
                             "ok": True,
                             "source_tool": source_tool,
@@ -356,15 +369,30 @@ class DirectorPatchExecutor:
                 )
             if not bool(tool_result.get("ok")):
                 raise RuntimeError(str(tool_result.get("error") or "Patch apply failed"))
+            operation = str(tool_result.get("operation") or "modify")
+            bytes_written = int(tool_result.get("bytes_written") or len(new_content.encode("utf-8")))
+            effect_receipt = {
+                "path": file_path,
+                "file": file_path,
+                "bytes_written": bytes_written,
+                "changed": True,
+                "operation": operation,
+                "broadcast_ok": bool(tool_result.get("broadcast_ok")),
+            }
             return {
                 "tool": "patch_apply",
+                "tool_name": "patch_apply",
                 "success": True,
+                "status": "success",
+                "file": file_path,
+                "path": file_path,
+                "effect_receipt": effect_receipt,
                 "result": {
                     "ok": True,
                     "source_tool": tool_name,
                     "file": file_path,
-                    "bytes_written": int(tool_result.get("bytes_written") or len(new_content.encode("utf-8"))),
-                    "operation": str(tool_result.get("operation") or "modify"),
+                    "bytes_written": bytes_written,
+                    "operation": operation,
                     "broadcast_ok": bool(tool_result.get("broadcast_ok")),
                 },
             }
@@ -390,6 +418,7 @@ class DirectorPatchExecutor:
             patch=patch,
             message_bus=self._message_bus,
             worker_id=self._worker_id,
+            event_log_workspace=self.workspace,
         )
 
     @staticmethod

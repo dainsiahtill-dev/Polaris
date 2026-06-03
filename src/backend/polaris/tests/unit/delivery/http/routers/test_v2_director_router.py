@@ -182,6 +182,23 @@ def _patch_director_blueprint_persistence(payload_by_id: dict[str, dict[str, obj
     return patch("polaris.delivery.http.v2.director.BlueprintPersistence", return_value=persistence)
 
 
+def _ready_blueprint(blueprint_id: str, task_id: str, *, status: str = "generated") -> dict[str, object]:
+    return {
+        "blueprint_id": blueprint_id,
+        "task_id": task_id,
+        "status": status,
+        "target_files": [f"src/{task_id.lower()}.ts"],
+        "acceptance_criteria": [f"{task_id} acceptance is implemented"],
+        "execution_checklist": [f"Implement {task_id}", f"Verify {task_id}"],
+        "contract_completeness": {
+            "handoff_ready": True,
+            "missing_fields": [],
+            "requires": ["target_files", "acceptance_criteria", "execution_checklist"],
+        },
+        "handoff_ready": True,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Director Lifecycle
 # ---------------------------------------------------------------------------
@@ -464,7 +481,7 @@ async def test_director_diagnostics_reports_ready_queue_and_workers(client: Asyn
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence({"bp-PM-1": {"blueprint_id": "bp-PM-1", "task_id": "PM-1"}}),
+        _patch_director_blueprint_persistence({"bp-PM-1": _ready_blueprint("bp-PM-1", "PM-1")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -549,7 +566,7 @@ async def test_director_diagnostics_accepts_workspace_query_override(
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence({"bp-PM-1": {"blueprint_id": "bp-PM-1", "task_id": "PM-1"}}),
+        _patch_director_blueprint_persistence({"bp-PM-1": _ready_blueprint("bp-PM-1", "PM-1")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -627,7 +644,7 @@ async def test_director_diagnostics_blocks_when_llm_role_not_ready(client: Async
                 "state": "READY",
             },
         ),
-        _patch_director_blueprint_persistence({"bp-PM-1": {"blueprint_id": "bp-PM-1", "task_id": "PM-1"}}),
+        _patch_director_blueprint_persistence({"bp-PM-1": _ready_blueprint("bp-PM-1", "PM-1")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -685,7 +702,7 @@ async def test_director_diagnostics_blocks_workflow_ready_tasks_without_blueprin
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence({"bp-PM-1": {"blueprint_id": "bp-PM-1", "task_id": "PM-1"}}),
+        _patch_director_blueprint_persistence({"bp-PM-1": _ready_blueprint("bp-PM-1", "PM-1")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -746,7 +763,7 @@ async def test_director_diagnostics_accepts_matching_chief_engineer_blueprint_st
             new_callable=AsyncMock,
         ) as mock_container,
         _patch_director_blueprint_persistence(
-            {"bp-PM-ready": {"blueprint_id": "bp-PM-ready", "task_id": "PM-ready", "status": "generated"}}
+            {"bp-PM-ready": _ready_blueprint("bp-PM-ready", "PM-ready", status="generated")}
         ),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
@@ -849,7 +866,7 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
             new_callable=AsyncMock,
         ) as mock_container,
         _patch_director_blueprint_persistence(
-            {"bp-expired-runtime": {"blueprint_id": "bp-expired-runtime", "task_id": "PM-expired-runtime"}}
+            {"bp-expired-runtime": _ready_blueprint("bp-expired-runtime", "PM-expired-runtime")}
         ),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
@@ -942,6 +959,68 @@ async def test_director_diagnostics_blocks_workflow_tasks_with_invalid_blueprint
 
 
 @pytest.mark.asyncio
+async def test_director_diagnostics_rejects_traceability_only_blueprint_artifacts(
+    client: AsyncClient,
+) -> None:
+    """Traceability-only PM mirrors must not authorize Director execution."""
+    mock_idle_worker = MagicMock()
+    mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
+
+    mock_director = MagicMock()
+    mock_director.list_tasks = AsyncMock(return_value=[])
+    mock_director.list_workers = AsyncMock(return_value=[mock_idle_worker])
+    mock_director.config.workspace = "."
+    traceability_blueprint = _ready_blueprint("bp-trace", "PM-1")
+    traceability_blueprint["source"] = "pm_dispatch.traceability_reference"
+    traceability_blueprint["traceability_only"] = True
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.director.RuntimeProjectionService.build_async",
+            new_callable=AsyncMock,
+        ) as mock_build,
+        patch(
+            "polaris.delivery.http.v2.director.select_task_rows_from_projection",
+            return_value=[
+                {
+                    "id": "director-traceability-only",
+                    "subject": "Traceability-only CE reference",
+                    "status": "PENDING",
+                    "metadata": {
+                        "pm_task_id": "PM-1",
+                        "blueprint_id": "bp-trace",
+                    },
+                }
+            ],
+        ),
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        _patch_director_blueprint_persistence({"bp-trace": traceability_blueprint}),
+    ):
+        mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
+        mock_projection = MagicMock()
+        mock_projection.task_rows = []
+        mock_projection.director_local = {"running": False, "status": {"state": "IDLE"}}
+        mock_projection.director_merged = {
+            "running": False,
+            "source": "workflow",
+            "status": {"state": "IDLE"},
+        }
+        mock_build.return_value = mock_projection
+
+        response = await client.get("/v2/director/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["tasks"]["ready_to_execute"] == 0
+    assert data["tasks"]["invalid_blueprint_task_ids"] == ["director-traceability-only"]
+    assert data["can_execute"] is False
+    assert data["execution_blockers"] == ["director_ready_tasks_invalid_blueprints"]
+
+
+@pytest.mark.asyncio
 async def test_director_diagnostics_accepts_runtime_blueprint_task_update_map(
     client: AsyncClient,
     mock_settings: Settings,
@@ -957,6 +1036,10 @@ async def test_director_diagnostics_accepts_runtime_blueprint_task_update_map(
                 "schema_version": 1,
                 "role": "ChiefEngineer",
                 "hard_failure": False,
+                "task_id": "PM-1",
+                "target_files": ["src/pm-1.ts"],
+                "acceptance_criteria": ["PM-1 acceptance is implemented"],
+                "execution_checklist": ["Implement PM-1", "Verify PM-1"],
                 "task_update_map": {"PM-1": {"task_id": "PM-1", "verify_ready": True}},
             },
             ensure_ascii=False,
@@ -995,7 +1078,7 @@ async def test_director_diagnostics_accepts_runtime_blueprint_task_update_map(
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence({"bp-PM-1": {"blueprint_id": "bp-PM-1", "task_id": "PM-1"}}),
+        _patch_director_blueprint_persistence({"bp-PM-1": _ready_blueprint("bp-PM-1", "PM-1")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -1063,9 +1146,7 @@ async def test_director_diagnostics_marks_workflow_task_ready_when_dependencies_
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence(
-            {"bp-dependent": {"blueprint_id": "bp-dependent", "task_id": "PM-dependent"}}
-        ),
+        _patch_director_blueprint_persistence({"bp-dependent": _ready_blueprint("bp-dependent", "PM-dependent")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -1147,9 +1228,7 @@ async def test_director_diagnostics_includes_unmaterialized_pm_contract_dependen
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence(
-            {"bp-dependent": {"blueprint_id": "bp-dependent", "task_id": "PM-dependent"}}
-        ),
+        _patch_director_blueprint_persistence({"bp-dependent": _ready_blueprint("bp-dependent", "PM-dependent")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -1269,7 +1348,7 @@ async def test_director_diagnostics_runtime_overlay_filters_workflow_shell(
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence({"bp-T03": {"blueprint_id": "bp-T03", "task_id": "T03"}}),
+        _patch_director_blueprint_persistence({"bp-T03": _ready_blueprint("bp-T03", "T03")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -1345,9 +1424,7 @@ async def test_director_diagnostics_blocks_pending_workflow_task_when_dependency
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence(
-            {"bp-dependent": {"blueprint_id": "bp-dependent", "task_id": "PM-dependent"}}
-        ),
+        _patch_director_blueprint_persistence({"bp-dependent": _ready_blueprint("bp-dependent", "PM-dependent")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -1412,7 +1489,7 @@ async def test_director_diagnostics_falls_back_to_local_tasks_when_projection_em
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence({"bp-PM-1": {"blueprint_id": "bp-PM-1", "task_id": "PM-1"}}),
+        _patch_director_blueprint_persistence({"bp-PM-1": _ready_blueprint("bp-PM-1", "PM-1")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -1469,7 +1546,7 @@ async def test_director_diagnostics_uses_projection_workers_when_local_pool_empt
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence({"bp-PM-1": {"blueprint_id": "bp-PM-1", "task_id": "PM-1"}}),
+        _patch_director_blueprint_persistence({"bp-PM-1": _ready_blueprint("bp-PM-1", "PM-1")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()
@@ -1539,7 +1616,7 @@ async def test_director_diagnostics_allows_start_when_worker_pool_not_initialize
             "polaris.delivery.http.dependencies.get_container",
             new_callable=AsyncMock,
         ) as mock_container,
-        _patch_director_blueprint_persistence({"bp-PM-1": {"blueprint_id": "bp-PM-1", "task_id": "PM-1"}}),
+        _patch_director_blueprint_persistence({"bp-PM-1": _ready_blueprint("bp-PM-1", "PM-1")}),
     ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_director)
         mock_projection = MagicMock()

@@ -415,19 +415,24 @@ def _dispatch_director_tasks_impl(
             board = taskboard_runtime.get("board")
             module = taskboard_runtime.get("module")
             if board is not None and module is not None:
-                if pm_status == "done":
-                    board.complete(board_id)
-                elif pm_status == "needs_continue":
+                # PM dispatch owns a projection of Director outcomes, not the
+                # canonical task lifecycle. Terminal writes flow through
+                # runtime.task_runtime to avoid failed->completed double writes.
+                metadata = {
+                    "last_pm_status": pm_status,
+                    "pm_dispatch_terminal_projection": pm_status in {"done", "failed", "blocked"},
+                }
+                if pm_status == "needs_continue":
                     board.update(
                         board_id,
                         status=module.TaskStatus.PENDING,
                         assignee="",
-                        metadata={"last_pm_status": pm_status},
+                        metadata=metadata,
                     )
                 else:
-                    board.fail(
+                    board.update(
                         board_id,
-                        _normalize_failure_detail(record.get("failure_detail") or pm_status),
+                        metadata=metadata,
                     )
 
     # Dispatch loop

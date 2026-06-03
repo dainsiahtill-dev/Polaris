@@ -11,6 +11,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
 )
 from polaris.cells.chief_engineer.blueprint.public.service import (
+    BlueprintPersistence,
     generate_task_blueprint,
     get_blueprint_status,
 )
@@ -226,7 +227,14 @@ class TestChiefEngineerBlueprintPublicService:
             constraints={"guardrail": "no target project writes"},
             context={
                 "task_title": "Director board",
+                "acceptance_criteria": ["Task board shows claimed/running/completed states"],
+                "execution_checklist": ["Create component", "Wire state", "Add focused tests"],
                 "target_files": ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"],
+                "task": {
+                    "id": "PM-42",
+                    "acceptance_criteria": ["Task board shows claimed/running/completed states"],
+                    "execution_checklist": ["Create component", "Wire state", "Add focused tests"],
+                },
             },
         )
 
@@ -236,6 +244,13 @@ class TestChiefEngineerBlueprintPublicService:
         assert result.blueprint_id is not None
         assert result.status == "generated"
         assert result.blueprint_path == f"runtime/blueprints/{result.blueprint_id}.json"
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["target_files"] == ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"]
+        assert persisted["acceptance_criteria"] == ["Task board shows claimed/running/completed states"]
+        assert persisted["execution_checklist"] == ["Create component", "Wire state", "Add focused tests"]
+        assert persisted["pm_task"]["id"] == "PM-42"
+        assert persisted["contract_completeness"]["handoff_ready"] is True
 
         status = get_blueprint_status(
             GetBlueprintStatusQueryV1(

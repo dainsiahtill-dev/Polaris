@@ -874,6 +874,13 @@ def _split_target_files_and_directory_scopes(target_files: list[str]) -> tuple[l
 
 def _generate_task_id(task: dict[str, Any], iteration: int, index: int) -> str:
     """Generate a stable task ID."""
+    explicit_id = str(task.get("id") or "").strip()
+    if explicit_id:
+        normalized_id = re.sub(r"\s+", "-", explicit_id)
+        normalized_id = re.sub(r"[^A-Za-z0-9_.:-]+", "-", normalized_id).strip("-")
+        if normalized_id:
+            return normalized_id[:96]
+
     title = str(task.get("title") or task.get("goal") or "").strip()
     if title:
         slug = re.sub(r"[^a-z0-9]+", "_", title.lower())

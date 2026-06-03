@@ -192,6 +192,26 @@ class TestUnifiedOrchestrationService:
         assert canonical.pipeline_spec is not None
         assert len(canonical.pipeline_spec.tasks) == 1
 
+    def test_canonicalize_director_parallel_fanout(self, service: UnifiedOrchestrationService, tmp_path: Path) -> None:
+        req = OrchestrationRunRequest(
+            run_id="r1",
+            workspace=tmp_path,
+            mode=OrchestrationMode.WORKFLOW,
+            role_entries=[
+                RoleEntrySpec(role_id="director", input="task 1"),
+                RoleEntrySpec(role_id="director", input="task 2"),
+                RoleEntrySpec(role_id="director", input="task 3"),
+            ],
+            metadata={"execution_mode": "parallel", "max_workers": 2},
+        )
+
+        canonical = service._canonicalize_workflow_request(req)
+
+        assert canonical.pipeline_spec is not None
+        assert canonical.pipeline_spec.max_concurrency == 2
+        assert [task.depends_on for task in canonical.pipeline_spec.tasks] == [[], [], []]
+        assert [task.max_concurrency for task in canonical.pipeline_spec.tasks] == [2, 2, 2]
+
 
 class TestSingleton:
     @pytest.mark.asyncio

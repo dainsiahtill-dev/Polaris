@@ -176,7 +176,17 @@ function readStringList(value: unknown): string[] {
       if (typeof item === 'string') return item.trim();
       if (item && typeof item === 'object') {
         const record = item as Record<string, unknown>;
-        return String(record.path || record.file || record.name || record.title || record.id || '').trim();
+        return String(
+          record.path
+          || record.file
+          || record.description
+          || record.text
+          || record.title
+          || record.name
+          || record.id
+          || record.value
+          || '',
+        ).trim();
       }
       return String(item || '').trim();
     })
@@ -193,6 +203,22 @@ function readTaskStringList(task: TaskEvidenceRow, keys: string[]): string[] {
     if (metadataList.length > 0) return metadataList;
   }
   return [];
+}
+
+function readTaskRecord(task: TaskEvidenceRow, keys: string[]): Record<string, unknown> {
+  const metadata = metadataOf(task);
+  const direct = task as unknown as Record<string, unknown>;
+  for (const key of keys) {
+    const directValue = direct[key];
+    if (directValue && typeof directValue === 'object' && !Array.isArray(directValue)) {
+      return directValue as Record<string, unknown>;
+    }
+    const metadataValue = metadata[key];
+    if (metadataValue && typeof metadataValue === 'object' && !Array.isArray(metadataValue)) {
+      return metadataValue as Record<string, unknown>;
+    }
+  }
+  return {};
 }
 
 function readWorkerText(record: Record<string, unknown>, keys: string[]): string {
@@ -550,16 +576,37 @@ function blueprintSummaryFromResult(
 
 function blueprintPayloadFromTask(task: TaskEvidenceRow): GenerateChiefEngineerBlueprintPayload {
   const taskId = taskHandoffId(task);
+  const acceptanceCriteria = readTaskStringList(task, ['acceptance_criteria', 'acceptance']);
+  const executionChecklist = readTaskStringList(task, ['execution_checklist', 'steps']);
+  const targetFiles = readTaskStringList(task, ['target_files', 'scope_paths', 'files']);
+  const scopePaths = readTaskStringList(task, ['scope_paths', 'scope']);
+  const dependencies = readTaskStringList(task, ['dependencies', 'depends_on', 'blocked_by']);
+  const constraints = readTaskRecord(task, ['constraints']);
+  const qaContract = readTaskRecord(task, ['qa_contract']);
+  const taskRecord = task as unknown as Record<string, unknown>;
   return {
     task_id: taskId,
     objective: taskObjective(task),
+    constraints,
     context: {
       source: 'chief_engineer_desktop',
+      task_id: taskId,
+      source_pm_task_id: taskId,
       task_title: taskTitle(task),
       goal: readString(task, ['goal']),
       summary: readString(task, ['summary']),
-      acceptance: readTaskStringList(task, ['acceptance']),
-      target_files: readTaskStringList(task, ['target_files', 'scope_paths', 'files']),
+      acceptance_criteria: acceptanceCriteria,
+      acceptance: acceptanceCriteria,
+      execution_checklist: executionChecklist,
+      steps: executionChecklist,
+      target_files: targetFiles,
+      scope_paths: scopePaths,
+      dependencies,
+      qa_contract: qaContract,
+      task: {
+        ...taskRecord,
+        metadata: metadataOf(task),
+      },
     },
   };
 }
@@ -872,6 +919,10 @@ export function ChiefEngineerWorkspace({
     [workers, backendDirectorWorkers],
   );
   const lastDirectorStatus = String(pmState?.last_director_status || '').trim();
+  const diagnosticMissingBlueprintTaskIds = useMemo(
+    () => new Set((diagnostics?.blueprints.missing_task_ids ?? []).map((taskId) => String(taskId || '').trim()).filter(Boolean)),
+    [diagnostics],
+  );
   const missingBlueprintHandoffTasks = useMemo(
     () => {
       const evidenceTaskIds = new Set(
@@ -884,14 +935,18 @@ export function ChiefEngineerWorkspace({
         .filter((task) => {
           const taskId = taskHandoffId(task);
           if (!taskId || seen.has(taskId)) return false;
-          if (taskHasBlueprintEvidence(task) || evidenceTaskIds.has(taskId) || taskStatus(task) === 'completed') {
+          const diagnosticsRequiresRegeneration = diagnosticMissingBlueprintTaskIds.has(taskId);
+          if (
+            !diagnosticsRequiresRegeneration
+            && (taskHasBlueprintEvidence(task) || evidenceTaskIds.has(taskId) || taskStatus(task) === 'completed')
+          ) {
             return false;
           }
           seen.add(taskId);
           return true;
         })
     },
-    [blueprintEvidence, directorTaskEvidenceRows],
+    [blueprintEvidence, diagnosticMissingBlueprintTaskIds, directorTaskEvidenceRows],
   );
   const blueprintCandidateTasks = useMemo(
     () => missingBlueprintHandoffTasks.slice(0, 4),

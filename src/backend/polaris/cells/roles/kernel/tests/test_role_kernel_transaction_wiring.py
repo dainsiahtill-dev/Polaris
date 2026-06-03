@@ -8,6 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
+from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
+from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 
 
@@ -419,6 +424,60 @@ class TestExecuteTransactionKernelTurn:
         assert len(result.tool_results) == 2
         assert result.tool_results[0]["success"] is True
         assert result.tool_results[1]["success"] is False
+        assert result.batch_receipt == mock_tk_result["batch_receipt"]
+
+    @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_preserves_followup_workflow(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="director")
+        request = _MockRequest(run_id="run_123")
+        fingerprint = _MockFingerprint()
+
+        mock_tk_result = {
+            "turn_id": "turn_tools",
+            "kind": "mutation_bypass_blocked",
+            "visible_content": "[MUTATION_CONTINUE] no write receipt",
+            "batch_receipt": {
+                "results": [
+                    {"tool_name": "read_file", "call_id": "c1", "status": "success", "result": "file content"},
+                ],
+            },
+            "finalization": {
+                "mode": "blocked",
+                "blocked_reason": "no_write_tool_available",
+                "blocked_detail": "MATERIALIZE_CHANGES requires write receipts.",
+                "needs_followup_workflow": True,
+                "workflow_reason": "mutation_bypass_blocked",
+            },
+            "metrics": {"duration_ms": 200, "llm_calls": 1, "tool_calls": 1},
+        }
+
+        with (
+            patch.object(
+                kernel,
+                "_create_transaction_kernel",
+                return_value=MagicMock(execute=AsyncMock(return_value=mock_tk_result)),
+            ),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
+            ),
+        ):
+            result = await kernel._execute_transaction_kernel_turn(
+                role="director",
+                profile=profile,
+                request=request,
+                system_prompt="sys",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        assert result.is_complete is False
+        assert result.error == "no_write_tool_available"
+        assert result.metadata["needs_followup_workflow"] is True
+        assert result.metadata["workflow_reason"] == "mutation_bypass_blocked"
+        assert len(result.tool_calls) == 1
 
     @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_failure_returns_error_result(self) -> None:
@@ -451,3 +510,62 @@ class TestExecuteTransactionKernelTurn:
         assert result.error is not None
         assert "TransactionKernel execution failed" in result.error
         assert result.is_complete is False
+
+
+class TestFinalizationMaterializationGate:
+    @pytest.mark.asyncio
+    async def test_llm_once_blocks_materialize_without_write_receipt(self) -> None:
+        async def _llm_provider(_payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "content": "",
+                "thinking": None,
+                "tool_calls": [],
+                "model": "stub-model",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 0},
+            }
+
+        handler = FinalizationHandler(
+            llm_provider=_llm_provider,
+            decoder=SimpleNamespace(
+                decode_for_finalization=lambda *_args, **_kwargs: {
+                    "kind": TurnDecisionKind.FINAL_ANSWER,
+                }
+            ),
+            emit_event=lambda _event: None,
+            guard_assert_no_finalization_tool_calls=lambda **_kwargs: None,
+        )
+        ledger = TurnLedger(turn_id="turn_no_write")
+        ledger.set_delivery_contract(
+            DeliveryContract(
+                mode=DeliveryMode.MATERIALIZE_CHANGES,
+                requires_mutation=True,
+                allow_inline_code=False,
+                allow_patch_proposal=False,
+            )
+        )
+        state_machine = TurnStateMachine(turn_id="turn_no_write")
+        for state in (
+            TurnState.CONTEXT_BUILT,
+            TurnState.DECISION_REQUESTED,
+            TurnState.DECISION_RECEIVED,
+            TurnState.DECISION_DECODED,
+            TurnState.TOOL_BATCH_EXECUTING,
+            TurnState.TOOL_BATCH_EXECUTED,
+        ):
+            state_machine.transition_to(state)
+
+        result = await handler.execute_llm_once(
+            {
+                "turn_id": "turn_no_write",
+                "kind": TurnDecisionKind.TOOL_BATCH,
+                "finalize_mode": FinalizeMode.LLM_ONCE,
+            },
+            [{"results": [{"tool_name": "read_file", "status": "success", "result": "content"}]}],
+            state_machine,
+            ledger,
+            [{"role": "user", "content": "实现 app.py 并写入代码"}],
+        )
+
+        assert result["kind"] == "mutation_bypass_blocked"
+        assert result["finalization"]["needs_followup_workflow"] is True
+        assert result["finalization"]["blocked_reason"] == "no_write_tool_available"

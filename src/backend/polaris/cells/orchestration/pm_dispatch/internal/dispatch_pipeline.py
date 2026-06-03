@@ -762,6 +762,7 @@ def _mainline_publish_dispatch_tasks_to_task_market(
         task_stage = _task_market_stage_for_route(task_route)
         blueprint_required = task_route == _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
         payload = {
+            "source_pm_task_id": task_id,
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
             "goal": str(task.get("goal") or task.get("title") or "").strip(),
             "scope_paths": task.get("scope_paths") if isinstance(task.get("scope_paths"), list) else [],
@@ -769,6 +770,14 @@ def _mainline_publish_dispatch_tasks_to_task_market(
             "acceptance_criteria": (
                 task.get("acceptance_criteria") if isinstance(task.get("acceptance_criteria"), list) else []
             ),
+            "execution_checklist": (
+                task.get("execution_checklist") if isinstance(task.get("execution_checklist"), list) else []
+            ),
+            "constraints": task.get("constraints") if isinstance(task.get("constraints"), dict) else {},
+            "risks": task.get("risks") if isinstance(task.get("risks"), list) else [],
+            "risk_flags": task.get("risk_flags") if isinstance(task.get("risk_flags"), list) else [],
+            "qa_contract": task.get("qa_contract") if isinstance(task.get("qa_contract"), dict) else {},
+            "pm_contract": dict(task),
             "task": dict(task),
             # CE consumer PreflightContext requires these runtime fields.
             "workspace": workspace_full,
@@ -899,6 +908,7 @@ def _shadow_publish_dispatch_tasks_to_task_market(
         trace_id = str(task.get("trace_id") or run_id).strip() or run_id
         task_route = _TASK_ROUTE_DIRECT_TO_DIRECTOR
         payload = {
+            "source_pm_task_id": task_id,
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
             "goal": str(task.get("goal") or task.get("title") or "").strip(),
             "scope_paths": task.get("scope_paths") if isinstance(task.get("scope_paths"), list) else [],
@@ -906,6 +916,14 @@ def _shadow_publish_dispatch_tasks_to_task_market(
             "acceptance_criteria": (
                 task.get("acceptance_criteria") if isinstance(task.get("acceptance_criteria"), list) else []
             ),
+            "execution_checklist": (
+                task.get("execution_checklist") if isinstance(task.get("execution_checklist"), list) else []
+            ),
+            "constraints": task.get("constraints") if isinstance(task.get("constraints"), dict) else {},
+            "risks": task.get("risks") if isinstance(task.get("risks"), list) else [],
+            "risk_flags": task.get("risk_flags") if isinstance(task.get("risk_flags"), list) else [],
+            "qa_contract": task.get("qa_contract") if isinstance(task.get("qa_contract"), dict) else {},
+            "pm_contract": dict(task),
             "task": dict(task),
             "route": task_route,
             "task_market_route": task_route,
@@ -1191,6 +1209,33 @@ def run_dispatch_pipeline(
             continue
         blueprint_id = f"bp-{run_id}-{task_id}"
         task["blueprint_id"] = blueprint_id
+        target_files = (
+            [str(item) for item in task.get("target_files", []) if str(item).strip()]
+            if isinstance(task.get("target_files"), list)
+            else []
+        )
+        scope_paths = (
+            [str(item) for item in task.get("scope_paths", []) if str(item).strip()]
+            if isinstance(task.get("scope_paths"), list)
+            else []
+        )
+        acceptance_criteria = (
+            [str(item) for item in task.get("acceptance_criteria", []) if str(item).strip()]
+            if isinstance(task.get("acceptance_criteria"), list)
+            else []
+        )
+        execution_checklist = (
+            [str(item) for item in task.get("execution_checklist", []) if str(item).strip()]
+            if isinstance(task.get("execution_checklist"), list)
+            else []
+        )
+        missing_fields: list[str] = []
+        if not target_files:
+            missing_fields.append("target_files")
+        if not acceptance_criteria:
+            missing_fields.append("acceptance_criteria")
+        if not execution_checklist:
+            missing_fields.append("execution_checklist")
         try:
             from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
 
@@ -1202,6 +1247,24 @@ def run_dispatch_pipeline(
                     "status": "approved",
                     "task_id": task_id,
                     "run_id": run_id,
+                    "title": str(task.get("title") or task.get("goal") or task_id).strip(),
+                    "objective": str(task.get("goal") or task.get("title") or "").strip(),
+                    "source": "pm_dispatch.traceability_reference",
+                    "traceability_only": True,
+                    "target_files": list(target_files),
+                    "scope_paths": list(scope_paths),
+                    "acceptance_criteria": list(acceptance_criteria),
+                    "execution_checklist": list(execution_checklist),
+                    "dependencies": list(_extract_task_dependencies(task)),
+                    "constraints": task.get("constraints") if isinstance(task.get("constraints"), dict) else {},
+                    "risks": task.get("risks") if isinstance(task.get("risks"), list) else [],
+                    "pm_task": dict(task),
+                    "contract_completeness": {
+                        "handoff_ready": not missing_fields,
+                        "missing_fields": missing_fields,
+                        "requires": ["target_files", "acceptance_criteria", "execution_checklist"],
+                    },
+                    "handoff_ready": False,
                     "created_at": datetime.now().isoformat(),
                 },
             )

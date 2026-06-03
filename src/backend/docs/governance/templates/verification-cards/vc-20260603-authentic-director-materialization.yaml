@@ -1,0 +1,56 @@
+schema_version: 1
+id: vc-20260603-authentic-director-materialization
+status: active
+created_at: "2026-06-03"
+classification: pattern
+scope:
+  - src/backend/polaris/cells/roles/adapters/internal/director/adapter.py
+  - src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py
+  - src/backend/polaris/cells/orchestration/pm_planning/internal/shared_quality.py
+  - src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py
+  - src/backend/polaris/tests/test_integration_qa_command.py
+problem_statement: >
+  Director deterministic declared-scope scaffolds were accepted as successful materialization,
+  and integration QA only checked command exit status / structural test markers. This allowed
+  generic scaffold source and trivial arithmetic tests to pass the full-chain audit as if they
+  were authentic project code. Director role-kernel errors also needed to remain explicit so
+  provider/runtime failures cannot be hidden as successful empty responses.
+assumption_register:
+  - id: A1
+    assumption: Deterministic declared-scope scaffold is the source of the garbage implementation files.
+    evidence:
+      - C:/Temp/Polaris_Card3D_Multiplayer_E2E_mpxcl9yl/src/client/three-scene.ts contains deterministic-declared-scope-v1.
+      - C:/Temp/Polaris_Card3D_Multiplayer_E2E_mpxcl9yl/.polaris/history/runs/director-2d4994db2775/results/director.result.json records materialization_mode=deterministic_declared_scope_scaffold.
+  - id: A2
+    assumption: QA accepted the result because it did not scan generated source authenticity.
+    evidence:
+      - C:/Temp/Polaris_Card3D_Multiplayer_E2E_mpxcl9yl/scripts/test.mjs checks only describe()/expect() markers.
+      - tests/integration/multiplayer-flow.test.ts contains only expect(number + number).toBe(number) cases.
+  - id: A3
+    assumption: Fixing only the E2E assertion is insufficient.
+    evidence:
+      - Integration QA is the product runtime gate; garbage code must fail before any audit wrapper reports PASS.
+  - id: A4
+    assumption: Director provider/runtime failures must be preserved as failure evidence.
+    evidence:
+      - Role responses can carry [ROLE_EXECUTION_ERROR] wrappers or success=false payloads.
+      - Director materialization failure metadata now records primary_llm and direct_fallback summaries.
+pre_mortem:
+  likely_wrong_fix:
+    - Only adding more E2E assertions would leave product QA able to pass scaffold code.
+    - Replacing scaffold templates with richer templates would still bypass the real Director LLM/tool path.
+  guardrail:
+    - Director execute() must not complete implementation tasks solely from deterministic scaffold writes.
+    - Integration QA must fail known scaffold markers even when the command itself exits 0.
+    - Director role response normalization must treat role-kernel errors as failed responses.
+verification_plan:
+  static_quality:
+    - python -m ruff check --fix <changed-files>
+    - python -m ruff format <changed-files>
+    - python -m mypy <changed-python-files>
+  tests:
+    - python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py src/backend/polaris/tests/test_integration_qa_command.py -q
+expected_result:
+  - Director returns failure when no real materialization occurs for PM autofix implementation tasks.
+  - Integration QA fails workspaces containing deterministic-declared-scope-v1 or repeated trivial arithmetic placeholder tests.
+  - Director adapter_result records LLM/fallback evidence when materialization fails.

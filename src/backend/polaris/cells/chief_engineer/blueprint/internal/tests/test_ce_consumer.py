@@ -76,7 +76,18 @@ class TestCEConsumerPollOnce:
         claim_result.ok = True
         claim_result.task_id = "task-42"
         claim_result.lease_token = "lease-abc"
-        claim_result.payload = {"title": "Test task", "scope_paths": ["/src/main.py"]}
+        claim_result.payload = {
+            "title": "Test task",
+            "scope_paths": ["/src/main.py"],
+            "acceptance_criteria": ["Main module is generated"],
+            "execution_checklist": ["Create main module", "Verify import"],
+            "constraints": {"layer": "application"},
+            "pm_contract": {
+                "id": "task-42",
+                "acceptance_criteria": ["Main module is generated"],
+                "execution_checklist": ["Create main module", "Verify import"],
+            },
+        }
 
         # Ack returns success
         ack_result = MagicMock()
@@ -118,6 +129,11 @@ class TestCEConsumerPollOnce:
         assert cmd.metadata["route"] == "chief_blueprint_required"
         assert cmd.metadata["blueprint_required"] is True
         assert cmd.metadata["target_files"] == ["/src/main.py"]
+        assert cmd.metadata["acceptance_criteria"] == ["Main module is generated"]
+        assert cmd.metadata["execution_checklist"] == ["Create main module", "Verify import"]
+        assert cmd.metadata["constraints"] == {"layer": "application"}
+        assert cmd.metadata["pm_contract"]["id"] == "task-42"
+        assert cmd.metadata["contract_completeness"]["handoff_ready"] is True
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     def test_claim_then_preflight_failure_requeues(self, mock_get_svc: MagicMock) -> None:

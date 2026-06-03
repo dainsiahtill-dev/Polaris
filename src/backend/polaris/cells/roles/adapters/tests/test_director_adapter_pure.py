@@ -16,17 +16,17 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.execute_method import (
-    _apply_deterministic_declared_scope_scaffold,
     _apply_deterministic_typescript_reexport_repair,
     _build_existing_workspace_task_evidence,
     _director_direct_text_patch_only_enabled,
     _director_existing_scope_preflight_enabled,
-    _has_deterministic_declared_scope_scaffold,
+    _finalize_claimed_execution,
     _looks_like_typescript_reexport_failure,
     _resolve_claim_external_task_id,
     _task_requires_fresh_materialization,
+    _task_runtime_finalization_failed_result,
 )
 
 # ---------------------------------------------------------------------------
@@ -198,6 +198,27 @@ class TestBuildDirectorMessage:
         assert "- npm test passes" in msg
         assert "path/to/file.py" not in msg
 
+    def test_includes_pm_contract_paths_checklist_and_acceptance(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_director_message(
+            {
+                "subject": "Implement Three.js client scene",
+                "description": "Implement the client3d task",
+                "metadata": {
+                    "goal": "Add the missing client3d capability",
+                    "scope_paths": ["src/client/three-scene.ts"],
+                    "target_files": ["src/client/three-scene.ts"],
+                    "execution_checklist": ["Modify the existing Three.js scene file"],
+                    "acceptance_criteria": ["Run `npm run build` passes"],
+                },
+            }
+        )
+
+        assert "范围: src/client/three-scene.ts" in msg
+        assert "目标文件: src/client/three-scene.ts" in msg
+        assert "- Modify the existing Three.js scene file" in msg
+        assert "- Run `npm run build` passes" in msg
+
     def test_includes_qa_rework_evidence(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         msg = adapter._build_director_message(
@@ -221,6 +242,71 @@ class TestBuildDirectorMessage:
 
 class TestDirectorFailureClosure:
     """Runtime failures must fail the claimed task instead of leaving it running."""
+
+    def test_finalize_claimed_execution_reports_terminal_transition_failure(self) -> None:
+        class _Runtime:
+            def complete_execution(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                del args, kwargs
+                raise RuntimeError("Cannot transition task from 'failed' to 'completed'")
+
+        adapter = SimpleNamespace(task_runtime=_Runtime())
+
+        finalize_result = _finalize_claimed_execution(
+            adapter,
+            target_task_id="task-1",
+            session_id="session-1",
+            outcome="completed",
+            result_summary="done",
+            metadata={"adapter_phase": "completed"},
+        )
+        result = _task_runtime_finalization_failed_result(
+            target_task_id="task-1",
+            requested_outcome="completed",
+            finalize_result=finalize_result,
+        )
+
+        assert finalize_result["success"] is False
+        assert finalize_result["reason"] == "task_runtime_terminal_transition_failed"
+        assert result["success"] is False
+        assert result["error_code"] == "director_task_runtime_finalization_failed"
+        assert result["root_cause_hint"] == "task_runtime_terminal_transition_failed"
+
+    def test_role_response_normalization_keeps_kernel_errors_failed(self) -> None:
+        result = _normalize_director_role_response(
+            {
+                "response": "[ROLE_EXECUTION_ERROR] provider failed",
+                "success": True,
+                "provider": "anthropic_compat-test",
+                "model": "kimi-for-coding",
+            }
+        )
+
+        assert result["success"] is False
+        assert "provider failed" in result["error"]
+        assert result["provider"] == "anthropic_compat-test"
+        assert result["model"] == "kimi-for-coding"
+
+    def test_role_response_normalization_preserves_batch_receipt(self) -> None:
+        receipt = {
+            "results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "success",
+                    "result": {"path": "src/app.ts"},
+                }
+            ]
+        }
+        result = _normalize_director_role_response(
+            {
+                "response": "done",
+                "provider": "anthropic_compat-test",
+                "model": "kimi-for-coding",
+                "batch_receipt": receipt,
+            }
+        )
+
+        assert result["success"] is True
+        assert result["batch_receipt"] == receipt
 
     def test_direct_text_patch_flag_resolves_from_context(self, tmp_path: Any) -> None:
         del tmp_path
@@ -280,7 +366,7 @@ class TestDirectorFailureClosure:
         assert str(updated.get("status") or "").lower() == "failed"
 
     @pytest.mark.asyncio
-    async def test_execute_accepts_workspace_diff_without_write_tool_marker(self, tmp_path: Any) -> None:
+    async def test_execute_rejects_workspace_diff_without_write_tool_receipt(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         task = adapter.task_board.create(
             subject="Repair failing TypeScript test",
@@ -301,7 +387,7 @@ class TestDirectorFailureClosure:
 
         async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            raise AssertionError("direct fallback should not run after workspace diff evidence")
+            raise AssertionError("direct fallback should not run after ambiguous workspace diff evidence")
 
         adapter._invoke_role_dialogue_with_timeout = _mutating_dialogue  # type: ignore[method-assign]
         adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
@@ -312,25 +398,132 @@ class TestDirectorFailureClosure:
             context={"run_id": "run-director-diff-evidence"},
         )
 
-        assert result["success"] is True
+        assert result["success"] is False
+        assert result["error_code"] == "director_missing_write_receipt"
         assert result["materialization_mode"] == "workspace_diff_without_write_tool"
         assert any(
-            signal.get("code") == "director.workspace_diff_without_write_tool"
+            signal.get("code") == "director_missing_write_receipt"
             for signal in result.get("decision_signals", [])
             if isinstance(signal, dict)
         )
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
-        assert str(updated.get("status") or "").lower() == "completed"
+        assert str(updated.get("status") or "").lower() == "failed"
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("new_file_count") == 1
         assert adapter_result.get("write_tool_evidence") is False
+        assert adapter_result.get("materialization_error") == "director_missing_write_receipt"
 
     @pytest.mark.asyncio
-    async def test_execute_scaffolds_autofix_declared_scope_before_direct_fallback(self, tmp_path: Any) -> None:
+    async def test_execute_rejects_off_target_workspace_diff_as_materialization(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Implement browser networking client",
+            description="Update the declared network client target file.",
+            metadata={
+                "target_files": ["src/client/network-client.ts"],
+                "scope_paths": ["src"],
+                "steps": ["Implement src/client/network-client.ts"],
+                "acceptance": ["src/client/network-client.ts is changed"],
+            },
+        )
+
+        async def _off_target_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            off_target = tmp_path / "src" / "server" / "moderation.ts"
+            off_target.parent.mkdir(parents=True, exist_ok=True)
+            off_target.write_text("export const moderationReady = true;\n", encoding="utf-8")
+            return {"content": "Changed a different file.", "success": True}
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _off_target_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-off-target-diff"},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "director_no_materialized_changes"
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("new_files") == []
+        assert adapter_result.get("modified_files") == []
+
+    @pytest.mark.asyncio
+    async def test_execute_fails_when_changed_test_file_keeps_placeholder_arithmetic(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        test_file = tmp_path / "tests" / "unit" / "card-rules.test.ts"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text(
+            "\n".join(f"test('case {idx}', () => expect({idx} + 1).toBe({idx + 1}));" for idx in range(4)) + "\n",
+            encoding="utf-8",
+        )
+        task = adapter.task_board.create(
+            subject="Replace placeholder Card3D unit tests",
+            description="Remove trivial arithmetic placeholder tests and replace them with domain assertions.",
+            metadata={
+                "target_files": ["tests/unit/card-rules.test.ts"],
+                "steps": ["Replace or remove existing trivial arithmetic placeholder tests"],
+                "acceptance": ["No trivial arithmetic placeholder tests remain"],
+            },
+        )
+
+        async def _append_only_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            with test_file.open("a", encoding="utf-8") as handle:
+                handle.write("test('domain rule', () => expect(resolveCardRule()).toBeDefined());\n")
+            return {
+                "content": "Appended replacement tests.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "tests/unit/card-rules.test.ts"},
+                    }
+                ],
+            }
+
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("direct fallback should not run after workspace diff evidence")
+
+        adapter._invoke_role_dialogue_with_timeout = _append_only_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-artifact-quality"},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "director_materialization_quality_failed"
+        assert any("tests/unit/card-rules.test.ts" in item for item in result["artifact_quality_errors"])
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        assert str(updated.get("status") or "").lower() == "failed"
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("materialization_error") == "director_materialization_quality_failed"
+
+    @pytest.mark.asyncio
+    async def test_execute_fails_autofix_declared_scope_without_real_materialization(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         task = adapter.task_board.create(
             subject="Implement interactive game renderer",
@@ -343,16 +536,16 @@ class TestDirectorFailureClosure:
             },
         )
 
-        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _empty_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            raise AssertionError("PM autofix declared-scope scaffold should run before LLM dialogue")
+            return {"content": "", "success": False, "error": "role_model_not_configured"}
 
-        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            raise AssertionError("direct fallback should not run after deterministic declared-scope scaffold")
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
 
-        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
-        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+        adapter._invoke_role_dialogue_with_timeout = _empty_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=str(task.id),
@@ -361,22 +554,19 @@ class TestDirectorFailureClosure:
         )
 
         target = tmp_path / "src" / "renderer" / "game-view.tsx"
-        assert result["success"] is True
-        assert result["materialization_mode"] == "deterministic_declared_scope_scaffold"
-        assert any(
-            signal.get("code") == "director.deterministic_declared_scope_scaffold_pre_llm"
-            for signal in result.get("decision_signals", [])
-            if isinstance(signal, dict)
-        )
-        assert target.is_file()
+        assert result["success"] is False
+        assert result["error_code"] == "director_no_materialized_changes"
+        assert target.exists() is False
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
-        assert adapter_result.get("materialization_mode") == "deterministic_declared_scope_scaffold"
-        assert adapter_result.get("new_files") == ["src/renderer/game-view.tsx"]
+        assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+        assert adapter_result.get("new_files") == []
+        assert adapter_result.get("primary_llm", {}).get("error") == "role_model_not_configured"
+        assert adapter_result.get("direct_fallback", {}).get("error") == "runtime_provider_unavailable"
 
     @pytest.mark.asyncio
     async def test_ready_queue_fallback_claim_preserves_selected_task_identity(self, tmp_path: Any) -> None:
@@ -385,7 +575,7 @@ class TestDirectorFailureClosure:
         target.write_text("export const combatReady = true;\n", encoding="utf-8")
         adapter = _make_adapter(tmp_path)
         combat = adapter.task_board.create(
-            subject="Implement turn based combat system",
+            subject="Audit turn based combat system scope",
             description="Materialize combat scope.",
             metadata={
                 "external_task_id": "PM-AUTO-COMBAT",
@@ -432,28 +622,17 @@ class TestDirectorFailureClosure:
         )
 
     @pytest.mark.asyncio
-    async def test_execute_accepts_existing_autofix_scaffold_before_llm(self, tmp_path: Any) -> None:
+    async def test_execute_rejects_existing_autofix_scaffold_without_real_materialization(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        seed_task = {
-            "subject": "Implement interactive game renderer",
-            "description": "Quality gate repair task generated because the PM contract omitted renderer scope.",
-            "scope_paths": ["src/renderer/game-view.tsx"],
-            "target_files": ["src/renderer/game-view.tsx"],
-            "metadata": {
-                "autofix": True,
-                "autofix_reason": "game_pm_domain_coverage",
-            },
-        }
-        _apply_deterministic_declared_scope_scaffold(
-            adapter,
-            task=seed_task,
-            task_id="seed-renderer",
-            current_files={},
-            workspace_name=tmp_path.name,
+        target = tmp_path / "src" / "renderer" / "game-view.tsx"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            'export const gameViewScaffoldVersion = "deterministic-declared-scope-v1";\n',
+            encoding="utf-8",
         )
         task = adapter.task_board.create(
-            subject=seed_task["subject"],
-            description=seed_task["description"],
+            subject="Implement interactive game renderer",
+            description="Quality gate repair task generated because the PM contract omitted renderer scope.",
             metadata={
                 "scope_paths": ["src/renderer/game-view.tsx"],
                 "target_files": ["src/renderer/game-view.tsx"],
@@ -462,16 +641,16 @@ class TestDirectorFailureClosure:
             },
         )
 
-        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _empty_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            raise AssertionError("existing deterministic PM autofix scaffold should not call LLM dialogue")
+            return {"content": "", "success": False, "error": "role_model_not_configured"}
 
-        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            raise AssertionError("direct fallback should not run after deterministic scaffold refresh")
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
 
-        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
-        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+        adapter._invoke_role_dialogue_with_timeout = _empty_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=str(task.id),
@@ -479,15 +658,17 @@ class TestDirectorFailureClosure:
             context={"run_id": "run-director-existing-scaffold"},
         )
 
-        assert result["success"] is True
-        assert result["materialization_mode"] == "deterministic_declared_scope_scaffold"
+        assert result["success"] is False
+        assert result["error_code"] == "director_no_materialized_changes"
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
-        assert adapter_result.get("modified_files") == ["src/renderer/game-view.tsx"]
+        assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+        assert adapter_result.get("modified_files") == []
+        assert adapter_result.get("primary_llm", {}).get("error") == "role_model_not_configured"
 
     def test_text_patch_mode_requests_parseable_file_blocks(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -495,92 +676,6 @@ class TestDirectorFailureClosure:
         assert "当前运行时要求纯文本补丁" in msg
         assert "relative/path.ext" in msg
         assert "path/to/file.py" not in msg
-
-
-# ---------------------------------------------------------------------------
-# Deterministic declared-scope scaffold
-# ---------------------------------------------------------------------------
-
-
-class TestDeterministicDeclaredScopeScaffold:
-    """Director may materialize narrow PM-autofix declared files without target code."""
-
-    def test_creates_missing_autofix_source_file(self, tmp_path: Any) -> None:
-        adapter = _make_adapter(tmp_path)
-        task = {
-            "subject": "Implement interactive game renderer",
-            "scope_paths": ["src/renderer/game-view.tsx"],
-            "target_files": ["src/renderer/game-view.tsx"],
-            "metadata": {
-                "autofix": True,
-                "autofix_reason": "game_pm_domain_coverage",
-            },
-        }
-
-        results = _apply_deterministic_declared_scope_scaffold(
-            adapter,
-            task=task,
-            task_id="task-renderer",
-            current_files={},
-            workspace_name=tmp_path.name,
-        )
-
-        target = tmp_path / "src" / "renderer" / "game-view.tsx"
-        assert target.is_file()
-        text = target.read_text(encoding="utf-8")
-        assert "createGameViewScaffoldState" in text
-        assert "deterministic-declared-scope-v1" in text
-        assert _has_deterministic_declared_scope_scaffold(results) is True
-        assert results[0]["tool"] == "write_file"
-
-    def test_rewrites_existing_autofix_repair_scope_file(self, tmp_path: Any) -> None:
-        adapter = _make_adapter(tmp_path)
-        target = tmp_path / "src" / "combat" / "combat-system.ts"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("export const staleCombatScaffold = true;\n", encoding="utf-8")
-        task = {
-            "subject": "Implement turn based combat system",
-            "description": "Quality gate repair task generated because combat coverage is missing.",
-            "scope_paths": ["src/combat/combat-system.ts"],
-            "target_files": ["src/combat/combat-system.ts"],
-            "metadata": {
-                "autofix": True,
-                "autofix_reason": "game_pm_domain_coverage",
-            },
-        }
-
-        results = _apply_deterministic_declared_scope_scaffold(
-            adapter,
-            task=task,
-            task_id="task-combat",
-            current_files={"src/combat/combat-system.ts": "old-fingerprint"},
-            workspace_name=tmp_path.name,
-        )
-
-        text = target.read_text(encoding="utf-8")
-        assert "staleCombatScaffold" not in text
-        assert "createCombatSystemScaffoldState" in text
-        assert _has_deterministic_declared_scope_scaffold(results) is True
-        assert results[0]["result"]["operation"] == "modify"
-
-    def test_skips_non_autofix_tasks(self, tmp_path: Any) -> None:
-        adapter = _make_adapter(tmp_path)
-        task = {
-            "subject": "Implement feature",
-            "scope_paths": ["src/feature.ts"],
-            "target_files": ["src/feature.ts"],
-        }
-
-        results = _apply_deterministic_declared_scope_scaffold(
-            adapter,
-            task=task,
-            task_id="task-feature",
-            current_files={},
-            workspace_name=tmp_path.name,
-        )
-
-        assert results == []
-        assert not (tmp_path / "src" / "feature.ts").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +750,29 @@ class TestExistingWorkspaceTaskEvidence:
         assert evidence["ok"] is True
         assert "src/**/*.test.ts" in evidence["existing_paths"]
         assert "README.md" in evidence["existing_paths"]
+
+    def test_existing_scope_rejects_placeholder_tests_when_workspace_is_available(self, tmp_path: Any) -> None:
+        test_file = tmp_path / "tests" / "unit" / "card-rules.test.ts"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text(
+            "\n".join(f"test('case {idx}', () => expect({idx} + 1).toBe({idx + 1}));" for idx in range(4)) + "\n",
+            encoding="utf-8",
+        )
+        task = {
+            "target_files": ["tests/unit/card-rules.test.ts"],
+            "scope_paths": ["tests"],
+        }
+        current_files = {"tests/unit/card-rules.test.ts": "1"}
+
+        evidence = _build_existing_workspace_task_evidence(
+            task=task,
+            current_files=current_files,
+            workspace_full=str(tmp_path),
+        )
+
+        assert evidence["ok"] is False
+        assert evidence["reason"] == "declared_scope_quality_failed"
+        assert any("trivial arithmetic placeholder" in item for item in evidence["artifact_quality_errors"])
 
     def test_materialized_orchestration_scope_markers_are_evidence(self) -> None:
         task = {
@@ -733,7 +851,41 @@ class TestExistingWorkspaceTaskEvidence:
             )
             is True
         )
-        assert _task_requires_fresh_materialization({"subject": "Create initial source files"}) is False
+        assert _task_requires_fresh_materialization({"subject": "Create initial source files"}) is True
+        assert (
+            _task_requires_fresh_materialization(
+                {
+                    "subject": "Implement Card3D tests",
+                    "phase": "verification",
+                    "target_files": ["tests/integration/multiplayer-flow.test.ts"],
+                }
+            )
+            is True
+        )
+        assert (
+            _task_requires_fresh_materialization(
+                {
+                    "title": "补齐领域验收测试",
+                    "goal": "移除旧的占位测试，创建覆盖卡牌、牌组、多人流程、同步与3D场景的测试",
+                    "phase": "verify",
+                    "target_files": [
+                        "tests/unit/card-rules.test.ts",
+                        "tests/integration/multiplayer-flow.test.ts",
+                    ],
+                    "execution_checklist": ["删除已存在的 trivial 占位测试（如算术测试）"],
+                }
+            )
+            is True
+        )
+        assert (
+            _task_requires_fresh_materialization(
+                {
+                    "subject": "Replace placeholder Card3D unit tests",
+                    "description": "Remove trivial arithmetic placeholder tests.",
+                }
+            )
+            is True
+        )
         assert (
             _task_requires_fresh_materialization(
                 {
@@ -964,6 +1116,38 @@ class TestDirectorAdapterIdentity:
 
 
 class TestDirectorRuntimeFallback:
+    @pytest.mark.asyncio
+    async def test_role_dialogue_disables_cognitive_middleware(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        captured: dict[str, object] = {}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.adapter.get_settings_safe",
+            lambda: SimpleNamespace(llm_timeout=5),
+        )
+
+        async def _fake_generate_role_response(**kwargs: Any) -> dict[str, Any]:
+            captured["enable_cognitive"] = kwargs.get("enable_cognitive")
+            return {
+                "response": "done",
+                "provider": "anthropic_compat-test",
+                "model": "kimi-for-coding",
+            }
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.director.adapter.generate_role_response",
+            _fake_generate_role_response,
+        )
+
+        result = await adapter._invoke_role_dialogue("write src/app.ts")
+
+        assert result["success"] is True
+        assert captured["enable_cognitive"] is False
+
     def test_direct_runtime_provider_allows_codex_cli(
         self,
         tmp_path: Any,

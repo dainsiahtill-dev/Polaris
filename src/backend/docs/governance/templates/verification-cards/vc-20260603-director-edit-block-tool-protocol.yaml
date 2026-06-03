@@ -1,0 +1,74 @@
+card_id: "vc-20260603-director-edit-block-tool-protocol"
+bug_summary: >
+  Director can receive useful real LLM code, but the TransactionKernel retry
+  and edit_blocks execution contract can fail to materialize it when the model
+  emits common SEARCH[:file] syntax or placeholder SEARCH text for a full-file
+  replacement.
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py"
+  method: "_handle_edit_blocks"
+  symptom: >
+    Real Kimi output produced complete target-file code, but tool execution
+    failed with UNSUPPORTED_PATH_PREFIX or SEARCH no-match, then retry narrowed
+    the model back into edit_blocks and repeated the failure.
+
+assumptions:
+  - id: "A1"
+    statement: "The configured real LLM is invoked; the failure is not fake-provider fallback."
+    status: verified_true
+    evidence: >
+      runtime/events/director.llm.events.jsonl for the Card3D run shows
+      role=director, model=kimi-for-coding, source=llm and emitted tool calls.
+
+  - id: "A2"
+    statement: "SEARCH[:filepath] is a common model copy of the documented edit_blocks syntax and should normalize to filepath."
+    status: verified_true
+    evidence: >
+      The failing run emitted edit_blocks args containing
+      <<<< SEARCH[:src/server/app.ts], which the old parser converted into
+      a literal [:src/server/app.ts] path.
+
+  - id: "A3"
+    statement: "A single placeholder SEARCH plus a large replacement body is a whole-file replacement intent."
+    status: verified_true
+    evidence: >
+      Failing Director runs for src/server/app.ts and src/server/realtime-gateway.ts
+      used SEARCH text such as // TODO: implement app and supplied complete
+      TypeScript module bodies in REPLACE.
+
+  - id: "A4"
+    statement: "Retry must keep write-inclusive enforcement without locking to one failed write tool."
+    status: verified_true
+    evidence: >
+      Retry context later forced MANDATORY write tool edit_blocks, causing the
+      same no-match failure to repeat instead of allowing write_file/edit_file
+      fallback.
+
+pre_mortem:
+  failure_point: >
+    Over-broad whole-file fallback could overwrite useful content if triggered
+    by ordinary search misses.
+  mitigation: >
+    Fallback is restricted to a single block, obvious placeholder SEARCH text,
+    and sufficiently large complete-file replacement content. Ordinary
+    edit_blocks search misses remain failures.
+
+verification_plan:
+  - command: >
+      python -m pytest src/backend/polaris/kernelone/editing/tests/test_editblock_engine.py
+      src/backend/polaris/kernelone/llm/toolkit/executor/handlers/tests/test_filesystem_transactional_writes.py
+      src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -q
+    expected: "All targeted regression tests pass."
+  - command: >
+      python -m ruff check src/backend/polaris/kernelone/editing/editblock_engine.py
+      src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py
+      src/backend/polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py --fix
+    expected: "No lint errors remain."
+  - command: >
+      python -m mypy src/backend/polaris/kernelone/editing/editblock_engine.py
+      src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py
+      src/backend/polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py
+    expected: "Success: no issues found."

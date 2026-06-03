@@ -1,0 +1,26 @@
+id: vc-20260603-card3d-full-chain-scenario
+title: Card3D full-chain desktop scenario
+date: 2026-06-03
+classification: structural
+assumptions:
+  - id: A1
+    statement: Existing game PM quality gates are roguelike-specific and should not be reused as proof for multiplayer card3d projects.
+    evidence: src/backend/polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py
+  - id: A2
+    statement: Full-chain Electron evidence must come from desktop UI flow with screenshots, not only backend API calls.
+    evidence: src/backend/polaris/tests/electron/full-chain-audit.spec.ts
+pre_mortem:
+  - PM may auto-repair card3d plans into old tactical game domains if card3d has no dedicated domain profile.
+  - E2E may pass while the target project lacks Three.js client and Node backend evidence.
+verification:
+  commands:
+    - python -m ruff check --fix src/backend/polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py src/backend/polaris/cells/orchestration/pm_planning/tests/test_task_quality_gate.py
+    - python -m ruff format src/backend/polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py src/backend/polaris/cells/orchestration/pm_planning/tests/test_task_quality_gate.py
+    - python -m mypy src/backend/polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py
+    - python -m pytest src/backend/polaris/cells/orchestration/pm_planning/tests/test_task_quality_gate.py -q
+    - npm run test:e2e -- src/backend/polaris/tests/electron/full-chain-audit.spec.ts --grep "unattended full-chain audit"
+expected:
+  - Card3D PM contracts cover all card3d domains.
+  - Chief Engineer handoff is ready before Director execution.
+  - Director diff screenshot exists.
+  - QA passes with real_command_passed.

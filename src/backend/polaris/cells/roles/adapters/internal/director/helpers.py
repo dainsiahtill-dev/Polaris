@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from typing import Any
 
+from polaris.cells.roles.kernel.internal.transaction.write_authority import is_authoritative_write_result
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
 
 # -----------------------------------------------------------------------------
@@ -256,7 +258,7 @@ def is_timeout_failure(error_text: str) -> bool:
 
 
 def has_successful_write_tool(tool_results: list[dict[str, Any]]) -> bool:
-    """Check if any tool result indicates a successful write operation."""
+    """Check whether tool results contain an authoritative successful write."""
     write_tools = {
         "append_to_file",
         "edit_blocks",
@@ -269,12 +271,35 @@ def has_successful_write_tool(tool_results: list[dict[str, Any]]) -> bool:
     for item in tool_results:
         if not isinstance(item, dict):
             continue
-        if not bool(item.get("success")):
+        if not _is_successful_tool_result(item):
             continue
-        tool_name = str(item.get("tool") or "").strip().lower()
-        if tool_name in write_tools:
+        tool_name = str(item.get("tool_name") or item.get("tool") or "").strip().lower()
+        if tool_name in write_tools and _has_tool_execution_receipt(item) and is_authoritative_write_result(item):
             return True
     return False
+
+
+def _is_successful_tool_result(item: Mapping[str, Any]) -> bool:
+    status = str(item.get("status") or "").strip().lower()
+    if status:
+        return status == "success"
+    if "success" in item:
+        return bool(item.get("success"))
+    if "ok" in item:
+        return bool(item.get("ok"))
+    return False
+
+
+def _has_tool_execution_receipt(item: Mapping[str, Any]) -> bool:
+    """Return True for executed tool results, not plain LLM tool-call requests."""
+    if str(item.get("status") or "").strip():
+        return True
+    if item.get("effect_receipt") is not None:
+        return True
+    if item.get("result") is not None:
+        return True
+    raw_result = item.get("raw_result")
+    return isinstance(raw_result, Mapping) and bool(raw_result)
 
 
 def is_empty_role_response(role_response: dict[str, Any]) -> bool:
@@ -320,6 +345,10 @@ def looks_like_protocol_patch_response(text: str) -> bool:
 
 def extract_kernel_tool_results(role_response: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract and normalize tool results from role response."""
+    receipt_results = _extract_kernel_batch_receipt_results(role_response)
+    if receipt_results:
+        return receipt_results
+
     raw_tool_results = role_response.get("tool_results")
     if not isinstance(raw_tool_results, list):
         raw_tool_results = role_response.get("tool_calls")
@@ -338,17 +367,92 @@ def extract_kernel_tool_results(role_response: dict[str, Any]) -> list[dict[str,
     for item in raw_tool_results:
         if not isinstance(item, dict):
             continue
-        tool_name = str(item.get("tool") or item.get("name") or "").strip().lower()
+        tool_name = str(item.get("tool_name") or item.get("tool") or item.get("name") or "").strip().lower()
         if not tool_name:
             tool_name = "unknown"
+        status = str(item.get("status") or "").strip().lower()
+        success = _is_successful_tool_result(item) if status or "ok" in item else bool(item.get("success", False))
         normalized.append(
             {
                 "tool": tool_name,
-                "success": bool(item.get("success", False)),
+                "tool_name": tool_name,
+                "success": success,
+                "status": status or ("success" if success else "error" if item.get("error") else ""),
                 "result": item.get("result"),
                 "error": str(item.get("error") or "").strip() or None,
+                "call_id": str(item.get("call_id") or "").strip(),
+                "arguments": item.get("arguments"),
+                "effect_receipt": item.get("effect_receipt"),
+                "raw_result": dict(item),
             }
         )
+    return normalized
+
+
+def _extract_kernel_batch_receipt_results(role_response: dict[str, Any]) -> list[dict[str, Any]]:
+    for receipt in _iter_candidate_batch_receipts(role_response):
+        results = receipt.get("results")
+        if not isinstance(results, list):
+            results = receipt.get("raw_results")
+        if not isinstance(results, list):
+            continue
+        normalized = _normalize_batch_receipt_results(results)
+        if normalized:
+            return normalized
+    return []
+
+
+def _iter_candidate_batch_receipts(role_response: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[Any] = [role_response.get("batch_receipt")]
+    raw = role_response.get("raw_response")
+    if isinstance(raw, Mapping):
+        candidates.append(raw.get("batch_receipt"))
+        metadata = raw.get("metadata")
+        if isinstance(metadata, Mapping):
+            candidates.append(metadata.get("batch_receipt"))
+        execution_stats = raw.get("execution_stats")
+        if isinstance(execution_stats, Mapping):
+            candidates.append(execution_stats.get("batch_receipt"))
+    metadata = role_response.get("metadata")
+    if isinstance(metadata, Mapping):
+        candidates.append(metadata.get("batch_receipt"))
+    execution_stats = role_response.get("execution_stats")
+    if isinstance(execution_stats, Mapping):
+        candidates.append(execution_stats.get("batch_receipt"))
+
+    receipts: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            receipts.append(dict(candidate))
+    return receipts
+
+
+def _normalize_batch_receipt_results(items: list[Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        tool_name = str(item.get("tool_name") or item.get("tool") or item.get("name") or "").strip().lower()
+        if not tool_name:
+            tool_name = "unknown"
+        status = str(item.get("status") or "").strip().lower()
+        success = _is_successful_tool_result(item)
+        normalized_item = dict(item)
+        normalized_item.update(
+            {
+                "tool": tool_name,
+                "tool_name": tool_name,
+                "success": success,
+                "status": status or ("success" if success else "error" if item.get("error") else ""),
+                "result": item.get("result"),
+                "error": str(item.get("error") or "").strip() or None,
+                "call_id": str(item.get("call_id") or "").strip(),
+                "arguments": item.get("arguments"),
+                "effect_receipt": item.get("effect_receipt"),
+                "raw_result": dict(item),
+            }
+        )
+        normalized.append(normalized_item)
     return normalized
 
 

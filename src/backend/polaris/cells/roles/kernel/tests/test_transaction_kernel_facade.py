@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -11,11 +12,17 @@ from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import F
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     resolve_mutation_target_guard_violation,
 )
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
+    DeliveryContract,
+    DeliveryMode,
+)
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import requires_mutation_intent
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+    bootstrap_receipt_contains_whole_file_replacement_marker,
     build_forced_write_only_retry_tool_definitions,
     build_retry_tool_definitions_for_mutation,
     resolve_retry_model_override,
+    select_bootstrap_followup_write_tool_name,
 )
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_allowed_tool_names_from_definitions,
@@ -38,6 +45,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolInvocation,
     TurnDecision,
     TurnDecisionKind,
+    TurnId,
 )
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 from polaris.kernelone.context.contracts import TurnEngineContextRequest
@@ -170,6 +178,31 @@ def test_build_forced_write_only_retry_tool_definitions_keeps_execute_command_wh
     strict_names = extract_allowed_tool_names_from_definitions(strict_definitions)
 
     assert strict_names == {"write_file", "execute_command"}
+
+
+def test_bootstrap_followup_prefers_write_file_for_deterministic_scaffold() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {
+                    "file": "src/game/rules-engine.ts",
+                    "content": 'tags: ["audit-seed"]; title: "planning scenario 1";',
+                },
+            }
+        ]
+    }
+
+    assert bootstrap_receipt_contains_whole_file_replacement_marker(receipt) is True
+    selected = select_bootstrap_followup_write_tool_name(
+        allowed_tool_names={"read_file", "edit_blocks", "write_file", "edit_file"},
+        default_write_tool_name="edit_blocks",
+        bootstrap_receipt=receipt,
+        failed_bootstrap_files=[],
+    )
+
+    assert selected == "write_file"
 
 
 @pytest.mark.asyncio
@@ -441,12 +474,107 @@ async def test_retry_tool_batch_after_contract_violation_appends_retry_contract_
     assert "RETRY CONTRACT" in str(retry_context[0]["content"])
     assert "Allowed write tools" in str(retry_context[0]["content"])
     assert "HARD GATE: never return plain-text-only completion" in str(retry_context[0]["content"])
+    assert "MANDATORY:" not in str(retry_context[0]["content"])
+    assert "Do not guess precision_edit/search_replace search text" in str(retry_context[0]["content"])
     assert retry_context[-1]["role"] == "user"
     execute_context = captured["execute_context"]
     assert execute_context == retry_context
     assert captured["stream"] is False
     assert captured["allowed_tool_names"] == {"edit_file"}
-    assert captured["retry_tool_choice_override"] == {"type": "function", "function": {"name": "edit_file"}}
+    assert captured["retry_tool_choice_override"] is None
+
+
+@pytest.mark.asyncio
+async def test_retry_enforcement_after_invalid_batch_does_not_pin_edit_blocks(monkeypatch) -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_retry_no_edit_blocks_pin")
+    ledger = TurnLedger(turn_id="turn_retry_no_edit_blocks_pin")
+    context = [{"role": "user", "content": "请实现 src/game/rules-engine.ts 并写入文件"}]
+    captured: dict[str, object] = {"execute_calls": 0, "retry_contexts": []}
+    decode_calls = 0
+
+    async def _fake_call_llm_for_decision(
+        ctx,
+        tool_definitions,
+        llm_ledger,
+        *,
+        tool_choice_override=None,
+        model_override=None,
+    ):
+        del tool_definitions, llm_ledger, tool_choice_override, model_override
+        cast(list[list[dict]], captured["retry_contexts"]).append(ctx)
+        return RawLLMResponse(content="", native_tool_calls=[])
+
+    def _fake_decode(_response, _turn_id):
+        nonlocal decode_calls
+        decode_calls += 1
+        if decode_calls == 1:
+            return {
+                "kind": TurnDecisionKind.TOOL_BATCH,
+                "turn_id": "turn_retry_no_edit_blocks_pin",
+                "tool_batch": {"invocations": [{"tool_name": "read_file", "arguments": {"file": "README.md"}}]},
+            }
+        return {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "turn_id": "turn_retry_no_edit_blocks_pin",
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "write_file",
+                        "arguments": {"file": "src/game/rules-engine.ts", "content": "export {};\n"},
+                    }
+                ]
+            },
+        }
+
+    async def _fake_execute_tool_batch(
+        decision,
+        sm,
+        lg,
+        exec_context,
+        *,
+        stream,
+        shadow_engine,
+        allowed_tool_names=None,
+        count_towards_batch_limit=True,
+    ):
+        del decision, sm, lg, exec_context, stream, shadow_engine, allowed_tool_names, count_towards_batch_limit
+        execute_calls = int(captured["execute_calls"]) + 1
+        captured["execute_calls"] = execute_calls
+        if execute_calls == 1:
+            raise RuntimeError(
+                "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch"
+            )
+        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+
+    monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
+    monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
+    monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
+
+    result = await controller._retry_tool_batch_after_contract_violation(
+        turn_id="turn_retry_no_edit_blocks_pin",
+        context=context,
+        tool_definitions=[
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "edit_blocks"}},
+            {"type": "function", "function": {"name": "write_file"}},
+        ],
+        state_machine=state_machine,
+        ledger=ledger,
+        stream=False,
+        shadow_engine=None,
+    )
+
+    assert result["kind"] == "tool_batch_with_receipt"
+    retry_contexts = cast(list[list[dict]], captured["retry_contexts"])
+    assert len(retry_contexts) == 2
+    second_context_text = "\n".join(str(item.get("content") or "") for item in retry_contexts[1])
+    assert "MANDATORY write tool for this retry: edit_blocks" not in second_context_text
+    assert "MANDATORY: your batch must include write tool `edit_blocks`" not in second_context_text
 
 
 @pytest.mark.asyncio
@@ -524,11 +652,66 @@ async def test_retry_tool_batch_after_contract_violation_uses_stream_materializa
     assert retry_context[-1]["role"] == "user"
     assert captured["stream"] is True
     assert captured["allowed_tool_names"] == {"edit_file"}
-    assert captured["retry_tool_choice_override"] == {"type": "function", "function": {"name": "edit_file"}}
+    assert captured["retry_tool_choice_override"] is None
 
 
 @pytest.mark.asyncio
-async def test_retry_tool_batch_stream_escalates_to_strict_write_only_fallback(monkeypatch) -> None:
+async def test_stream_provider_tool_events_materialize_native_tool_calls(monkeypatch) -> None:
+    async def _fake_llm_provider_stream(_payload):
+        yield {
+            "type": "tool_call",
+            "tool": "write_file",
+            "args": {"file": "README.md", "content": "done\n"},
+            "call_id": "call_write_readme",
+        }
+
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+        llm_provider_stream=_fake_llm_provider_stream,
+    )
+    monkeypatch.setattr(controller._stream_orchestrator, "build_stream_shadow_engine", lambda **_kwargs: None)
+    ledger = TurnLedger(turn_id="turn_stream_provider_tool_materialize")
+    events: list[object] = []
+
+    async for event in controller._call_llm_for_decision_stream(
+        [{"role": "user", "content": "请更新 README.md 并写入文件"}],
+        [
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "write_file"}},
+        ],
+        ledger,
+        shadow_engine=None,
+    ):
+        events.append(event)
+
+    materialized = [event for event in events if isinstance(event, dict) and event.get("type") == "_internal_materialize"]
+    assert materialized
+    response = materialized[-1]["response"]
+    assert isinstance(response, RawLLMResponse)
+    assert response.native_tool_calls == [
+        {
+            "id": "call_write_readme",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": {"file": "README.md", "content": "done\n"},
+            },
+        }
+    ]
+
+    decision = controller.decoder.decode(response, TurnId("turn_stream_provider_tool_materialize"))
+    tool_batch = decision.get("tool_batch")
+    assert tool_batch is not None
+    invocations = list(tool_batch.get("invocations", []) or [])
+    assert invocations
+    assert invocations[0].get("tool_name") == "write_file"
+    assert invocations[0].get("arguments") == {"file": "README.md", "content": "done\n"}
+
+
+@pytest.mark.asyncio
+async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkeypatch) -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),
         tool_runtime=AsyncMock(return_value={}),
@@ -635,7 +818,7 @@ async def test_retry_tool_batch_stream_escalates_to_strict_write_only_fallback(m
     assert stream_calls == 2
     assert non_stream_calls == 0
     assert execute_allowed_names[0] == {"read_file", "list_directory", "edit_file"}
-    assert execute_allowed_names[1] == {"edit_file"}
+    assert execute_allowed_names[1] == {"read_file", "list_directory", "edit_file"}
 
 
 @pytest.mark.asyncio
@@ -756,6 +939,163 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
         first_file = getattr(first_bootstrap, "arguments", {}).get("file")
     assert first_tool_name == "read_file"
     assert first_file == "README.md"
+
+
+@pytest.mark.asyncio
+async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_retry_scaffold_bootstrap")
+    ledger = TurnLedger(turn_id="turn_retry_scaffold_bootstrap")
+    context = [
+        {
+            "role": "user",
+            "content": "请实现 src/game/rules-engine.ts，替换当前脚手架代码。",
+        }
+    ]
+    captured: dict[str, object] = {
+        "execute_calls": 0,
+        "tool_choice_overrides": [],
+        "llm_tool_definition_names": [],
+        "execute_allowed_names": [],
+    }
+    decode_calls = 0
+
+    async def _fake_call_llm_for_decision(
+        ctx,
+        tool_definitions,
+        llm_ledger,
+        *,
+        tool_choice_override=None,
+        model_override=None,
+    ):
+        del ctx, llm_ledger, model_override
+        cast(list[object], captured["tool_choice_overrides"]).append(tool_choice_override)
+        cast(list[set[str]], captured["llm_tool_definition_names"]).append(
+            extract_allowed_tool_names_from_definitions(list(tool_definitions))
+        )
+        return RawLLMResponse(content="", native_tool_calls=[])
+
+    def _fake_decode(_response, _turn_id):
+        nonlocal decode_calls
+        decode_calls += 1
+        if decode_calls == 1:
+            return {
+                "kind": TurnDecisionKind.TOOL_BATCH,
+                "turn_id": "turn_retry_scaffold_bootstrap",
+                "metadata": {"workspace": "."},
+                "tool_batch": {
+                    "invocations": [
+                        {
+                            "tool_name": "edit_blocks",
+                            "arguments": {
+                                "blocks": (
+                                    "<<<< SEARCH[:src/game/rules-engine.ts]\n"
+                                    "audit-seed\n"
+                                    "====\n"
+                                    "real implementation\n"
+                                    ">>>> REPLACE"
+                                )
+                            },
+                        }
+                    ]
+                },
+            }
+        return {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "turn_id": "turn_retry_scaffold_bootstrap",
+            "metadata": {"workspace": "."},
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "write_file",
+                        "arguments": {
+                            "file": "src/game/rules-engine.ts",
+                            "content": "export const implemented = true;\n",
+                        },
+                    }
+                ]
+            },
+        }
+
+    async def _fake_execute_tool_batch(
+        decision,
+        sm,
+        lg,
+        exec_context,
+        *,
+        stream,
+        shadow_engine,
+        allowed_tool_names=None,
+        count_towards_batch_limit=True,
+    ):
+        del sm, lg, exec_context, stream, shadow_engine, count_towards_batch_limit
+        execute_calls = int(captured["execute_calls"]) + 1
+        captured["execute_calls"] = execute_calls
+        cast(list[set[str]], captured["execute_allowed_names"]).append(set(allowed_tool_names or set()))
+        if execute_calls == 1:
+            raise RuntimeError(
+                "single_batch_contract_violation: stale_edit blocked write invocation; requires_bootstrap_read"
+            )
+        tool_batch = cast(Mapping[str, object], decision.get("tool_batch") or {})
+        invocations = cast(list[Mapping[str, object]], tool_batch.get("invocations") or [])
+        assert invocations
+        assert invocations[0].get("tool_name") == "write_file"
+        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+
+    async def _fake_execute_read_bootstrap_batch(
+        *,
+        turn_id,
+        workspace,
+        tool_batch,
+        ledger,
+    ):
+        del turn_id, workspace, tool_batch, ledger
+        return {
+            "results": [
+                {
+                    "tool_name": "read_file",
+                    "status": "success",
+                    "result": {
+                        "file": "src/game/rules-engine.ts",
+                        "content": 'export const cardRulesEngineScenario1 = { tags: ["audit-seed"] };',
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
+    monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
+    monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
+    monkeypatch.setattr(
+        controller._retry_orchestrator, "execute_read_bootstrap_batch", _fake_execute_read_bootstrap_batch
+    )
+
+    result = await controller._retry_tool_batch_after_contract_violation(
+        turn_id="turn_retry_scaffold_bootstrap",
+        context=context,
+        tool_definitions=[
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "edit_blocks"}},
+            {"type": "function", "function": {"name": "write_file"}},
+            {"type": "function", "function": {"name": "edit_file"}},
+        ],
+        state_machine=state_machine,
+        ledger=ledger,
+        stream=False,
+        shadow_engine=None,
+    )
+
+    assert result["kind"] == "tool_batch_with_receipt"
+    assert captured["execute_calls"] == 2
+    overrides = cast(list[object], captured["tool_choice_overrides"])
+    assert overrides[0] is None
+    assert overrides[1] == {"type": "function", "function": {"name": "write_file"}}
+    assert cast(list[set[str]], captured["llm_tool_definition_names"])[1] == {"write_file"}
+    assert cast(list[set[str]], captured["execute_allowed_names"])[1] == {"write_file"}
 
 
 @pytest.mark.asyncio
@@ -905,6 +1245,28 @@ def test_build_decision_messages_omits_task_contract_for_read_only_request() -> 
     system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
     assert any("SYSTEM CONSTRAINT (Execution)" in text for text in system_messages)
     assert not any("TASK CONTRACT (single-batch planning)" in text for text in system_messages)
+
+
+def test_build_decision_messages_uses_single_batch_guard_for_materialize_contract() -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    context = [{"role": "user", "content": "请实现 src/app.ts 并写入文件。"}]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+    ledger = TurnLedger(turn_id="turn_materialize_single_batch")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+
+    messages = controller._build_decision_messages(context, tool_definitions, ledger)
+
+    system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
+    assert any("SINGLE-BATCH execution" in text for text in system_messages)
+    assert not any("This turn supports multi-turn workflow" in text for text in system_messages)
+    assert not any("Subsequent turns: You MUST call write/edit tools" in text for text in system_messages)
 
 
 def test_build_decision_messages_omits_write_contract_for_toolless_proposal() -> None:

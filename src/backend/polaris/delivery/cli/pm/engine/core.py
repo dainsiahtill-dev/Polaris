@@ -588,7 +588,7 @@ def _resolve_preflight_paths(
         if plan_bootstrap_target:
             try:
                 ensure_plan_file(plan_bootstrap_target, auto_continue=True)
-            except (RuntimeError, ValueError) as e:
+            except (FileNotFoundError, RuntimeError, ValueError) as e:
                 logger.debug(f"Failed to ensure plan file: {e}")
             if os.path.isfile(plan_bootstrap_target):
                 resolved_plan = plan_bootstrap_target

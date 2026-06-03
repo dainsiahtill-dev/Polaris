@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
+import time
 import warnings
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable, Coroutine
 
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
@@ -91,6 +94,37 @@ class UnrecoverableExecutionError(RuntimeError):
     """Execution failure that should be dead-lettered and compensated."""
 
 
+DirectorTaskExecutor = Callable[[str, dict[str, Any], str], dict[str, Any]]
+
+
+def _run_coroutine_sync(coro: Coroutine[Any, Any, dict[str, Any]]) -> dict[str, Any]:
+    """Run an async Director adapter call from the synchronous consumer loop."""
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result_box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            result_box["result"] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001
+            result_box["error"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    error = result_box.get("error")
+    if isinstance(error, BaseException):
+        raise error
+    result = result_box.get("result")
+    if isinstance(result, dict):
+        return result
+    return {}
+
+
 def _normalize_string_list(raw: Any) -> list[str]:
     if raw is None:
         return []
@@ -138,6 +172,115 @@ def _allows_no_execution_evidence(payload: dict[str, Any]) -> bool:
         if mode in _NO_CHANGE_MODES:
             return True
     return False
+
+
+def _append_normalized_paths(paths: list[str], raw: Any) -> None:
+    for value in _normalize_string_list(raw):
+        normalized = value.replace("\\", "/")
+        if normalized not in paths:
+            paths.append(normalized)
+
+
+def _extract_changed_files_from_mapping(paths: list[str], mapping: dict[str, Any]) -> None:
+    for key in (
+        "changed_files",
+        "affected_files",
+        "all_affected_files",
+        "new_files",
+        "modified_files",
+        "files",
+    ):
+        _append_normalized_paths(paths, mapping.get(key))
+
+    for key in ("file", "path", "target", "relative_path", "target_path"):
+        value = mapping.get(key)
+        if isinstance(value, (str, os.PathLike)):
+            _append_normalized_paths(paths, value)
+
+    effect_raw = mapping.get("effect_receipt")
+    if isinstance(effect_raw, dict):
+        _extract_changed_files_from_mapping(paths, effect_raw)
+
+
+def _extract_director_changed_files(adapter_result: dict[str, Any]) -> list[str]:
+    changed_files: list[str] = []
+    _extract_changed_files_from_mapping(changed_files, adapter_result)
+
+    for key in ("tool_results", "results", "actions"):
+        raw_rows = adapter_result.get(key)
+        if not isinstance(raw_rows, list):
+            continue
+        for row in raw_rows:
+            if isinstance(row, dict):
+                _extract_changed_files_from_mapping(changed_files, row)
+
+    adapter_nested = adapter_result.get("adapter_result")
+    if isinstance(adapter_nested, dict):
+        _extract_changed_files_from_mapping(changed_files, adapter_nested)
+
+    return changed_files
+
+
+def _extract_director_side_effects(adapter_result: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_side_effects = adapter_result.get("side_effects")
+    if not isinstance(raw_side_effects, list):
+        return []
+    return [dict(row) for row in raw_side_effects if isinstance(row, dict)]
+
+
+def _compact_director_adapter_summary(adapter_result: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "success": bool(adapter_result.get("success")),
+        "task_id": str(adapter_result.get("task_id") or "").strip(),
+        "tools_executed": adapter_result.get("tools_executed", 0),
+        "materialization_mode": str(adapter_result.get("materialization_mode") or "").strip(),
+    }
+    for key in ("error", "error_code", "failure_stage", "root_cause_hint"):
+        value = adapter_result.get(key)
+        if value:
+            summary[key] = str(value)
+    return summary
+
+
+def _adapter_failure_message(adapter_result: dict[str, Any]) -> str:
+    for key in ("error", "error_code", "root_cause_hint", "failure_stage"):
+        value = str(adapter_result.get(key) or "").strip()
+        if value:
+            return value
+    return "director_adapter_execution_failed"
+
+
+def _build_director_adapter_input(task_id: str, payload: dict[str, Any], lease_token: str) -> dict[str, Any]:
+    metadata_raw = payload.get("metadata")
+    metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    source_pm_task_id = str(payload.get("source_pm_task_id") or metadata.get("source_pm_task_id") or "").strip()
+    pm_task_id = str(payload.get("pm_task_id") or metadata.get("pm_task_id") or source_pm_task_id or task_id).strip()
+    title = str(payload.get("title") or payload.get("subject") or task_id).strip()
+    goal = str(payload.get("goal") or metadata.get("goal") or title).strip()
+
+    metadata.update(
+        {
+            "task_market_task_id": task_id,
+            "task_market_lease_token": lease_token,
+            "source_pm_task_id": source_pm_task_id or pm_task_id,
+            "pm_task_id": pm_task_id,
+            "source": "runtime.task_market.pending_exec",
+        }
+    )
+
+    adapter_input = dict(payload)
+    adapter_input.update(
+        {
+            "task_id": task_id,
+            "pm_task_id": pm_task_id,
+            "subject": title,
+            "description": str(payload.get("description") or goal).strip(),
+            "input": goal,
+            "directive": goal,
+            "metadata": metadata,
+        }
+    )
+    return adapter_input
 
 
 class ScopeConflictDetector:
@@ -266,6 +409,7 @@ class DirectorExecutionConsumer:
         poll_interval: float = 5.0,
         enable_safe_parallel: bool = False,
         lease_renew_interval_seconds: float | None = None,
+        task_executor: DirectorTaskExecutor | None = None,
     ) -> None:
         warnings.warn(
             "DirectorExecutionConsumer is deprecated. Use DirectorPool instead. Will be removed after 2026-06-30.",
@@ -285,6 +429,7 @@ class DirectorExecutionConsumer:
         self._stop_event = threading.Event()
         self._svc = get_task_market_service()
         self._conflict_detector = ScopeConflictDetector()
+        self._task_executor = task_executor
 
     def poll_once(self) -> list[dict[str, Any]]:
         """Poll once for PENDING_EXEC tasks."""
@@ -374,6 +519,8 @@ class DirectorExecutionConsumer:
                 lease_token=lease_token,
                 exec_result=exec_result,
             )
+            adapter_summary_raw = exec_result.get("director_adapter_result")
+            adapter_summary = adapter_summary_raw if isinstance(adapter_summary_raw, dict) else {}
 
             # Acknowledge → PENDING_QA
             ack = self._svc.acknowledge_task_stage(
@@ -397,6 +544,7 @@ class DirectorExecutionConsumer:
                         ),
                         "director_files_changed_count": len(changed_files),
                         "exec_duration_seconds": exec_result.get("duration", 0),
+                        "director_adapter": adapter_summary,
                     },
                 )
             )
@@ -546,10 +694,50 @@ class DirectorExecutionConsumer:
         self._stop_event.set()
 
     def _execute_task(self, task_id: str, payload: dict[str, Any], lease_token: str) -> dict[str, Any]:
-        """Execute task — delegates to DirectorAgent or placeholder."""
-        # TODO: integrate DirectorAgent.execute()
-        # For now, return a placeholder result.
-        return {"changed_files": [], "duration": 0, "side_effects": []}
+        """Execute task through the real Director adapter and normalize evidence."""
+
+        if self._task_executor is not None:
+            return self._task_executor(task_id, payload, lease_token)
+
+        workspace_path = Path(self._workspace)
+        if not workspace_path.exists():
+            logger.warning(
+                "Director consumer workspace does not exist; returning no-evidence result: workspace=%s task_id=%s",
+                self._workspace,
+                task_id,
+            )
+            return {"changed_files": [], "duration": 0, "side_effects": []}
+
+        from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+
+        started_at = time.monotonic()
+        adapter = DirectorAdapter(workspace=str(workspace_path))
+        adapter_input = _build_director_adapter_input(task_id, payload, lease_token)
+        context = {
+            "run_id": str(payload.get("run_id") or f"task-market-director-{task_id}"),
+            "metadata": {
+                "task_market_task_id": task_id,
+                "task_market_stage": "pending_exec",
+                "task_market_worker_id": self._worker_id,
+                "blueprint_id": str(payload.get("blueprint_id") or ""),
+                "route": _normalize_task_market_route(payload),
+            },
+        }
+        adapter_result = _run_coroutine_sync(
+            adapter.execute(task_id=task_id, input_data=adapter_input, context=context)
+        )
+        duration = time.monotonic() - started_at
+
+        if adapter_result.get("success") is not True:
+            raise RuntimeError(_adapter_failure_message(adapter_result))
+
+        changed_files = _extract_director_changed_files(adapter_result)
+        return {
+            "changed_files": changed_files,
+            "duration": duration,
+            "side_effects": _extract_director_side_effects(adapter_result),
+            "director_adapter_result": _compact_director_adapter_summary(adapter_result),
+        }
 
 
 __all__ = ["DirectorExecutionConsumer", "UnrecoverableExecutionError"]

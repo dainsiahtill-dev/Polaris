@@ -11,6 +11,7 @@ for candidate in (BACKEND_ROOT, SCRIPTS_ROOT, CORE_ROOT):
         sys.path.insert(0, candidate)
 
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (  # noqa: E402
+    _CARD3D_PM_REQUIRED_DOMAINS,
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality,
 )
@@ -201,6 +202,7 @@ def test_evaluate_pm_task_quality_accepts_specific_actionable_tasks() -> None:
                     "Verify checklist entries are deterministic and executable",
                 ],
                 "acceptance_criteria": [
+                    'Run `rg -n "stdout|stderr|evidence" docs/product/plan.md` and verify required sections exist',
                     "Checklist includes command, expected signal, evidence path, and pass/fail threshold",
                     "Evidence path section documents stdout/stderr capture locations",
                 ],
@@ -366,4 +368,59 @@ def test_pm_quality_retry_keeps_previous_non_empty_candidate() -> None:
             {"ok": False, "score": 78},
         )
         is False
+    )
+
+
+def test_pm_quality_retry_prefers_real_tasks_over_autofix_bulk() -> None:
+    real_payload = {
+        "focus": "implementation_ready",
+        "tasks": [
+            {"id": f"PM-CARD3D-DOMAIN-{idx:02d}", "title": f"Real Card3D task {idx}"}
+            for idx in range(len(_CARD3D_PM_REQUIRED_DOMAINS))
+        ],
+        "notes": "real domain decomposition",
+    }
+    autofix_payload = {
+        "focus": "implementation_ready",
+        "tasks": [
+            {
+                "id": f"PM-AUTO-CARD3D-DOMAIN-{idx:02d}",
+                "title": f"Synthetic Card3D task {idx}",
+                "autofix": True,
+                "autofix_reason": "card3d_pm_domain_coverage",
+            }
+            for idx in range(15)
+        ],
+        "notes": "synthetic autofix fallback",
+    }
+
+    assert (
+        should_promote_pm_quality_candidate(
+            autofix_payload,
+            {
+                "ok": False,
+                "score": 90,
+                "critical_issues": [
+                    "quality autofix synthesized 15 card3d task(s). PM must decompose domain work itself."
+                ],
+            },
+            real_payload,
+            {"ok": False, "score": 78, "critical_issues": []},
+        )
+        is False
+    )
+    assert (
+        should_promote_pm_quality_candidate(
+            real_payload,
+            {"ok": False, "score": 78, "critical_issues": []},
+            autofix_payload,
+            {
+                "ok": False,
+                "score": 90,
+                "critical_issues": [
+                    "quality autofix synthesized 15 card3d task(s). PM must decompose domain work itself."
+                ],
+            },
+        )
+        is True
     )

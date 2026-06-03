@@ -1575,6 +1575,11 @@ class TurnTransactionController:
         _is_toolless_proposal_stage = (
             "[mode:propose]" in _latest_user_for_guard_lower and "do not call tools" in _latest_user_for_guard_lower
         )
+        _ledger_delivery_mode = getattr(getattr(ledger, "delivery_contract", None), "mode", None)
+        _is_materialize_single_batch = _ledger_delivery_mode in {
+            DeliveryMode.MATERIALIZE_CHANGES,
+            DeliveryMode.PROPOSE_PATCH,
+        }
 
         if _is_toolless_proposal_stage:
             proposal_guard = (
@@ -1594,16 +1599,16 @@ class TurnTransactionController:
                 "系统约束 (只读规划): 当前为 SUPER 的只读规划阶段。"
                 "只允许使用当前角色暴露的读取/探索工具，禁止尝试写入，禁止把本阶段当成代码落地阶段。"
             )
-        elif _is_benchmark_single_batch:
+        elif _is_benchmark_single_batch or _is_materialize_single_batch:
             single_batch_guard = (
                 "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH execution. "
                 "ALL required tool calls MUST be emitted in this single turn. "
                 "Do NOT defer any tool call (especially write/edit tools) to a subsequent turn — "
-                "there is no subsequent turn in this benchmark run.\\n"
+                "there is no subsequent turn in this execution path.\\n"
                 "Complete the entire workflow (search → read → write if required) in one batch. "
                 "Proceed immediately with tool calls; do not ask for confirmation.\\n"
                 "系统约束 (单批次): 本次执行为单轮单批次。所有工具调用必须在本轮一次性完成，"
-                "严禁将写入工具推迟到下一轮——本 benchmark 不存在下一轮。"
+                "严禁将写入工具推迟到下一轮——当前执行路径不存在下一轮。"
             )
         else:
             single_batch_guard = (
@@ -1647,8 +1652,20 @@ class TurnTransactionController:
                 positive_lines = []
                 for line in task_contract_hint.split("\n"):
                     # 跳过 NEGATIVE 规则行（包含 "INVALID", "HARD GATE", "rejected" 等）
+                    lowered_line = line.lower()
                     if any(
-                        marker in line for marker in ("INVALID", "HARD GATE", "rejected", "Do not stop", "read-only")
+                        marker in lowered_line
+                        for marker in (
+                            "invalid",
+                            "hard gate",
+                            "rejected",
+                            "do not stop",
+                            "read-only",
+                            "single-batch",
+                            "same batch",
+                            "this request requires mutation",
+                            "valid pattern",
+                        )
                     ):
                         continue
                     positive_lines.append(line)

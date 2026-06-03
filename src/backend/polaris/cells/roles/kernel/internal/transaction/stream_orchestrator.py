@@ -57,6 +57,41 @@ from polaris.cells.roles.kernel.public.turn_events import (
 
 logger = logging.getLogger(__name__)
 
+
+def build_native_tool_call_from_stream_event(
+    *,
+    tool_name: str,
+    tool_args: Mapping[str, Any] | None,
+    call_id: str,
+    ordinal: int,
+) -> dict[str, Any]:
+    """Convert a streamed tool_call UI event back into decoder-native shape."""
+    normalized_tool_name = str(tool_name or "").strip()
+    if not normalized_tool_name:
+        return {}
+    normalized_call_id = str(call_id or "").strip() or f"stream_tool_call_{max(1, ordinal)}"
+    return {
+        "id": normalized_call_id,
+        "type": "function",
+        "function": {
+            "name": normalized_tool_name,
+            "arguments": dict(tool_args or {}),
+        },
+    }
+
+
+def stream_tool_call_signature(tool_name: str, tool_args: Mapping[str, Any] | None, call_id: str) -> str:
+    payload = {
+        "tool": str(tool_name or "").strip(),
+        "call_id": str(call_id or "").strip(),
+        "args": dict(tool_args or {}),
+    }
+    try:
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(payload)
+
+
 # ---------------------------------------------------------------------------
 # Delivery Resolver 关键词配置
 # ---------------------------------------------------------------------------
@@ -728,6 +763,11 @@ class StreamOrchestrator:
         if shadow_engine is None:
             shadow_engine = self.build_stream_shadow_engine(workspace=".", turn_id=ledger.turn_id)
         speculative_tasks: list[tuple[str, asyncio.Task[dict[str, Any]]]] = []
+        emitted_content_parts: list[str] = []
+        emitted_thinking_parts: list[str] = []
+        stream_native_tool_calls: list[dict[str, Any]] = []
+        stream_tool_call_signatures: set[str] = set()
+        materialized_response_seen = False
 
         async def _try_speculate_tool_call(
             tool_name: str,
@@ -758,13 +798,17 @@ class StreamOrchestrator:
                 profile=None,
             ):
                 event_type = str(event.get("type") or "").strip()
-                if event_type == "thinking_chunk":
+                if event_type in {"thinking_chunk", "reasoning_chunk"}:
                     content = str(event.get("content") or "")
+                    if content:
+                        emitted_thinking_parts.append(content)
                     if shadow_engine is not None:
                         shadow_engine.consume_delta(content)
                     yield ContentChunkEvent(turn_id=ledger.turn_id, chunk=content, is_thinking=True)
-                elif event_type == "content_chunk":
+                elif event_type in {"content_chunk", "chunk"}:
                     content = str(event.get("content") or "")
+                    if content:
+                        emitted_content_parts.append(content)
                     if shadow_engine is not None:
                         shadow_engine.consume_delta(content)
                     yield ContentChunkEvent(turn_id=ledger.turn_id, chunk=content, is_thinking=False)
@@ -774,6 +818,17 @@ class StreamOrchestrator:
                     raw_args = event.get("args")
                     tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
                     if tool_name:
+                        signature = stream_tool_call_signature(tool_name, tool_args, call_id)
+                        if signature not in stream_tool_call_signatures:
+                            stream_tool_call_signatures.add(signature)
+                            native_tool_call = build_native_tool_call_from_stream_event(
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                                call_id=call_id,
+                                ordinal=len(stream_native_tool_calls) + 1,
+                            )
+                            if native_tool_call:
+                                stream_native_tool_calls.append(native_tool_call)
                         if shadow_engine is not None:
                             shadow_engine.consume_delta(f"<tool_call:{tool_name}>")
                             await _try_speculate_tool_call(tool_name, tool_args, call_id)
@@ -796,13 +851,24 @@ class StreamOrchestrator:
                     )
                     return
                 elif event_type == "_internal_materialize":
+                    materialized_response_seen = True
                     thinking_parts = event.get("thinking_content")
-                    thinking = "".join(thinking_parts) if thinking_parts else None
-                    visible_content = str(event.get("emitted_round_content") or event.get("raw_output") or "")
+                    if thinking_parts:
+                        thinking = "".join(thinking_parts)
+                    elif emitted_thinking_parts:
+                        thinking = "".join(emitted_thinking_parts)
+                    else:
+                        thinking = None
+                    visible_content = str(
+                        event.get("emitted_round_content") or event.get("raw_output") or "".join(emitted_content_parts)
+                    )
+                    native_tool_calls = list(event.get("native_tool_calls") or [])
+                    if not native_tool_calls and stream_native_tool_calls:
+                        native_tool_calls = list(stream_native_tool_calls)
                     response = RawLLMResponse(
                         content=visible_content,
                         thinking=thinking,
-                        native_tool_calls=list(event.get("native_tool_calls") or []),
+                        native_tool_calls=native_tool_calls,
                         model="unknown",
                         usage={},
                     )
@@ -813,6 +879,21 @@ class StreamOrchestrator:
                             "response": response,
                         },
                     )
+            if not materialized_response_seen:
+                response = RawLLMResponse(
+                    content="".join(emitted_content_parts),
+                    thinking="".join(emitted_thinking_parts) if emitted_thinking_parts else None,
+                    native_tool_calls=list(stream_native_tool_calls),
+                    model="unknown",
+                    usage={},
+                )
+                yield cast(
+                    TurnEvent,
+                    {
+                        "type": "_internal_materialize",
+                        "response": response,
+                    },
+                )
         finally:
             await drain_speculative_tasks(speculative_tasks, ledger=ledger, shadow_engine=shadow_engine)
 

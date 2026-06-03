@@ -285,18 +285,29 @@ class UnifiedOrchestrationService(OrchestrationService):
             request.metadata.get("global_timeout_seconds"),
             7200,
         )
+        execution_mode = str(request.metadata.get("execution_mode") or "").strip().lower()
+        parallel_limit = self._coerce_positive_int(
+            request.metadata.get("max_parallel_tasks", request.metadata.get("max_workers")),
+            1,
+        )
+        director_parallel_fanout = (
+            execution_mode == "parallel"
+            and len(request.role_entries) > 1
+            and all(str(entry.role_id or "").strip().lower() == "director" for entry in request.role_entries)
+        )
+        pipeline_max_concurrency = parallel_limit if director_parallel_fanout else 1
 
         tasks: list[PipelineTask] = []
         previous_task_id: str | None = None
         for i, entry in enumerate(request.role_entries):
             task_id = f"task-{i}-{entry.role_id}"
-            depends_on = [previous_task_id] if previous_task_id else []
+            depends_on = [] if director_parallel_fanout else [previous_task_id] if previous_task_id else []
             tasks.append(
                 PipelineTask(
                     task_id=task_id,
                     role_entry=entry,
                     depends_on=depends_on,
-                    max_concurrency=1,
+                    max_concurrency=pipeline_max_concurrency,
                     timeout_seconds=task_timeout_seconds,
                 )
             )
@@ -304,7 +315,7 @@ class UnifiedOrchestrationService(OrchestrationService):
 
         pipeline_spec = PipelineSpec(
             tasks=tasks,
-            max_concurrency=1,
+            max_concurrency=pipeline_max_concurrency,
             global_timeout_seconds=global_timeout_seconds,
         )
 

@@ -99,6 +99,22 @@ def chief_engineer_llm_ready() -> Iterator[MagicMock]:
         yield ready_gate
 
 
+def _ready_blueprint(blueprint_id: str, task_id: str) -> dict[str, Any]:
+    return {
+        "blueprint_id": blueprint_id,
+        "task_id": task_id,
+        "target_files": [f"src/{task_id.lower()}.ts"],
+        "acceptance_criteria": [f"{task_id} acceptance is implemented"],
+        "execution_checklist": [f"Implement {task_id}", f"Verify {task_id}"],
+        "contract_completeness": {
+            "handoff_ready": True,
+            "missing_fields": [],
+            "requires": ["target_files", "acceptance_criteria", "execution_checklist"],
+        },
+        "handoff_ready": True,
+    }
+
+
 @pytest.mark.asyncio
 async def test_get_chief_engineer_diagnostics_reports_blueprint_store_health(client: AsyncClient) -> None:
     """Chief Engineer diagnostics should summarize blueprint store readiness without writes."""
@@ -325,13 +341,14 @@ async def test_get_chief_engineer_diagnostics_blocks_stale_blueprint_without_pm_
 
     assert response.status_code == 200
     data = response.json()
-    assert data["blueprints"]["status"] == "ready"
+    assert data["blueprints"]["status"] == "degraded"
     assert data["blueprints"]["plan_status"] == "missing"
     assert data["blueprints"]["loadable"] == 1
+    assert data["blueprints"]["invalid_payloads"] == 1
     assert data["blueprints"]["director_handoff_ready"] is False
     assert data["can_handoff"] is False
-    assert data["issues"] == ["blueprint_task_plan_unavailable"]
-    assert data["handoff_blockers"] == ["blueprint_task_plan_unavailable"]
+    assert data["issues"] == ["blueprint_task_plan_unavailable", "blueprint_payload_invalid"]
+    assert data["handoff_blockers"] == ["blueprint_task_plan_unavailable", "blueprint_payload_invalid"]
 
 
 @pytest.mark.asyncio
@@ -353,8 +370,8 @@ async def test_get_chief_engineer_diagnostics_uses_pm_contract_when_task_plan_mi
     persistence = MagicMock()
     persistence.list_all.return_value = ["bp-1", "bp-2"]
     persistence.load.side_effect = lambda blueprint_id: {
-        "bp-1": {"blueprint_id": "bp-1", "task_id": "PM-1"},
-        "bp-2": {"blueprint_id": "bp-2", "task_id": "PM-2"},
+        "bp-1": _ready_blueprint("bp-1", "PM-1"),
+        "bp-2": _ready_blueprint("bp-2", "PM-2"),
     }[blueprint_id]
 
     def resolve_candidate(_workspace: str, logical_path: str, ramdisk_root: str | None = None) -> str:
@@ -404,8 +421,8 @@ async def test_get_chief_engineer_diagnostics_reports_complete_plan_coverage(
     persistence = MagicMock()
     persistence.list_all.return_value = ["bp-1", "bp-2"]
     persistence.load.side_effect = lambda blueprint_id: {
-        "bp-1": {"blueprint_id": "bp-1", "task_id": "PM-1"},
-        "bp-2": {"blueprint_id": "bp-2", "task_id": "PM-2"},
+        "bp-1": _ready_blueprint("bp-1", "PM-1"),
+        "bp-2": _ready_blueprint("bp-2", "PM-2"),
     }[blueprint_id]
 
     with (
@@ -436,6 +453,87 @@ async def test_get_chief_engineer_diagnostics_reports_complete_plan_coverage(
 
 
 @pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_allows_ready_coverage_with_stale_invalid_duplicates(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """A stale hollow blueprint must not block handoff when a current ready blueprint covers the task."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    plan_path = tmp_path / "runtime" / "tasks" / "plan.json"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text('{"tasks": [{"id": "PM-1"}]}', encoding="utf-8")
+    persistence = MagicMock()
+    persistence.list_all.return_value = ["ce-old-hollow", "ce-new-ready"]
+    persistence.load.side_effect = lambda blueprint_id: {
+        "ce-old-hollow": {"blueprint_id": "ce-old-hollow", "task_id": "PM-1"},
+        "ce-new-ready": _ready_blueprint("ce-new-ready", "PM-1"),
+    }[blueprint_id]
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.resolve_logical_path",
+            return_value=str(plan_path),
+        ),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["blueprints"]["covered_tasks"] == 1
+    assert data["blueprints"]["invalid_payloads"] == 1
+    assert data["blueprints"]["director_handoff_ready"] is True
+    assert data["issues"] == []
+    assert data["can_handoff"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_diagnostics_ignores_traceability_only_blueprints(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Traceability mirror artifacts must not satisfy Chief Engineer handoff coverage."""
+    mock_settings.workspace = tmp_path
+    mock_settings.workspace_path = str(tmp_path)
+    plan_path = tmp_path / "runtime" / "tasks" / "plan.json"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text('{"tasks": [{"id": "PM-1"}]}', encoding="utf-8")
+    persistence = MagicMock()
+    persistence.list_all.return_value = ["bp-trace"]
+    traceability_blueprint = _ready_blueprint("bp-trace", "PM-1")
+    traceability_blueprint["source"] = "pm_dispatch.traceability_reference"
+    traceability_blueprint["traceability_only"] = True
+    persistence.load.return_value = traceability_blueprint
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.BlueprintPersistence",
+            return_value=persistence,
+        ),
+        patch(
+            "polaris.delivery.http.v2.chief_engineer.resolve_logical_path",
+            return_value=str(plan_path),
+        ),
+    ):
+        response = await client.get("/v2/chief-engineer/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["blueprints"]["planned_tasks"] == 1
+    assert data["blueprints"]["covered_tasks"] == 0
+    assert data["blueprints"]["invalid_payloads"] == 0
+    assert data["blueprints"]["missing_task_ids"] == ["PM-1"]
+    assert data["blueprints"]["director_handoff_ready"] is False
+    assert data["issues"] == ["blueprint_coverage_incomplete"]
+
+
+@pytest.mark.asyncio
 async def test_get_chief_engineer_diagnostics_blocks_partial_plan_coverage(
     client: AsyncClient,
     mock_settings: Settings,
@@ -452,10 +550,7 @@ async def test_get_chief_engineer_diagnostics_blocks_partial_plan_coverage(
     )
     persistence = MagicMock()
     persistence.list_all.return_value = ["bp-covered"]
-    persistence.load.return_value = {
-        "blueprint_id": "bp-covered",
-        "task_id": "PM-covered",
-    }
+    persistence.load.return_value = _ready_blueprint("bp-covered", "PM-covered")
 
     with (
         patch(

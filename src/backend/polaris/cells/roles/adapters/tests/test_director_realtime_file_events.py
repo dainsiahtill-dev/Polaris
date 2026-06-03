@@ -73,6 +73,29 @@ async def test_write_file_tool_broadcasts_file_written_event(tmp_path: Path) -> 
     assert message["payload"]["added_lines"] == 1
 
 
+def test_write_file_tool_persists_file_edit_event_without_message_bus(tmp_path: Path) -> None:
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "write_file",
+        {"file": "src/main.ts", "content": "export const value = 1;\n"},
+        task_id="task-persist-1",
+    )
+
+    assert result["ok"] is True
+    assert result["broadcast_ok"] is False
+    event_log = tmp_path / ".polaris" / "runtime" / "file-edits" / "events.jsonl"
+    line = event_log.read_text(encoding="utf-8").strip()
+    event = json.loads(line)
+    payload = event["payload"]
+    assert event["channel"] == "event.file_edit"
+    assert payload["file_path"] == "src/main.ts"
+    assert payload["operation"] == "create"
+    assert payload["task_id"] == "task-persist-1"
+    assert payload["has_patch"] is True
+    assert "export const value = 1;" in payload["patch"]
+
+
 @pytest.mark.asyncio
 async def test_edit_file_tool_broadcasts_modify_event(tmp_path: Path) -> None:
     target = tmp_path / "src" / "main.ts"
@@ -175,6 +198,33 @@ async def test_markdown_patch_file_broadcasts_create_event(tmp_path: Path) -> No
     assert payload["file_path"] == "src/patch.ts"
     assert payload["operation"] == "create"
     assert payload["task_id"] == "task-3"
+
+
+@pytest.mark.asyncio
+async def test_markdown_patch_file_returns_receipt_and_persists_event_without_message_bus(tmp_path: Path) -> None:
+    executor = DirectorPatchExecutor(str(tmp_path))
+    response = "src/patch.ts\n```ts\nexport const patched = true;\n```"
+
+    results = await executor.execute_tools(response, "task-persist-2", _progress_noop)
+
+    assert len(results) == 1
+    item = results[0]
+    assert item["tool"] == "patch_apply"
+    assert item["tool_name"] == "patch_apply"
+    assert item["status"] == "success"
+    assert item["success"] is True
+    assert item["file"] == "src/patch.ts"
+    assert item["effect_receipt"]["path"] == "src/patch.ts"
+    assert item["effect_receipt"]["bytes_written"] == len(b"export const patched = true;\n")
+    assert item["result"]["broadcast_ok"] is False
+
+    event_log = tmp_path / ".polaris" / "runtime" / "file-edits" / "events.jsonl"
+    line = event_log.read_text(encoding="utf-8").strip()
+    event = json.loads(line)
+    payload = event["payload"]
+    assert payload["file_path"] == "src/patch.ts"
+    assert payload["task_id"] == "task-persist-2"
+    assert payload["has_patch"] is True
 
 
 @pytest.mark.asyncio

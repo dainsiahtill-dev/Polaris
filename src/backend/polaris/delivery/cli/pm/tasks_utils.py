@@ -800,6 +800,7 @@ def build_requirements_fallback_payload(
                 "acceptance_criteria": [
                     "Core module files are implemented with coherent behavior.",
                     "Primary implementation file contains non-trivial business logic.",
+                    f"Verification command passes: {verify_commands[0]}",
                 ],
                 "assigned_to": "Director",
                 "phase": "implementation",

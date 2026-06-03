@@ -507,6 +507,10 @@ class RoleTurnResult:
     # 执行的工具结果
     tool_results: list[dict[str, Any]] = field(default_factory=list)
 
+    # 事务内核权威批收据
+    # 保留 effect_receipt / target path 等写入事实，避免下游仅凭简化 tool_results 猜测。
+    batch_receipt: dict[str, Any] | None = None
+
     # Profile信息
     profile_version: str = ""
     prompt_fingerprint: PromptFingerprint | None = None
