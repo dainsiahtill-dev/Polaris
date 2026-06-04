@@ -2,7 +2,7 @@
 
 Migrated from ``polaris.cells.director.execution.internal.director_logic_rules``.
 
-Logic extracted from loop-director.py for testability and reusability
+Logic extracted from the historical Director CLI for testability and reusability
 across director.planning and director.runtime.
 
 Shared director logic utilities have been extracted to

@@ -316,7 +316,7 @@ async def test_role_chat_generation_error_500(client: AsyncClient) -> None:
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
             side_effect=RuntimeError("model timeout"),
         ),

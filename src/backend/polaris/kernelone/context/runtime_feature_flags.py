@@ -14,12 +14,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Canonical env var names (KERNELONE_* primary, KERNELONE_* fallback handled by resolver)
+# Canonical env var names. Legacy POLARIS_* names are normalized at process
+# startup by polaris._env_compat before kernelone modules are imported.
 CONTEXT_OS_ENABLED_ENV = "KERNELONE_CONTEXT_OS_ENABLED"
 COGNITIVE_RUNTIME_MODE_ENV = "KERNELONE_COGNITIVE_RUNTIME_MODE"
-# KERNELONE_* fallbacks
-CONTEXT_OS_ENABLED_ENV_FALLBACK = "KERNELONE_CONTEXT_OS_ENABLED"
-COGNITIVE_RUNTIME_MODE_ENV_FALLBACK = "KERNELONE_COGNITIVE_RUNTIME_MODE"
 
 _TRUE_TOKENS = {"1", "true", "yes", "on", "enabled"}
 _FALSE_TOKENS = {"0", "false", "no", "off", "disabled"}
@@ -139,14 +137,6 @@ def resolve_context_os_enabled(
     )
     if env_value is not None:
         return env_value
-    # KERNELONE_* fallback
-    env_value = _coerce_bool(
-        os.getenv(CONTEXT_OS_ENABLED_ENV_FALLBACK, ""),
-        default=None,
-        env_var_name=CONTEXT_OS_ENABLED_ENV_FALLBACK,
-    )
-    if env_value is not None:
-        return env_value
     return bool(default)
 
 
@@ -154,15 +144,15 @@ def resolve_cognitive_runtime_mode(
     *,
     context: Mapping[str, Any] | None = None,
     metadata: Mapping[str, Any] | None = None,
-    default: CognitiveRuntimeMode = CognitiveRuntimeMode.SHADOW,
+    default: CognitiveRuntimeMode = CognitiveRuntimeMode.MAINLINE,
 ) -> CognitiveRuntimeMode:
     """Resolve Cognitive Runtime mode.
 
     Priority:
     1. context/metadata explicit mode
     2. context/metadata boolean enabled flag
-    3. environment variable (KERNELONE_COGNITIVE_RUNTIME_MODE or KERNELONE_COGNITIVE_RUNTIME_MODE)
-    4. default mode (shadow)
+    3. environment variable (KERNELONE_COGNITIVE_RUNTIME_MODE)
+    4. default mode (mainline)
 
     Mode behaviors:
     - OFF: Cognitive Runtime is disabled. No runtime enhancement is applied.
@@ -180,16 +170,11 @@ def resolve_cognitive_runtime_mode(
 
         enabled = _coerce_bool(payload.get("cognitive_runtime_enabled"), default=None)
         if enabled is not None:
-            return CognitiveRuntimeMode.SHADOW if enabled else CognitiveRuntimeMode.OFF
+            return CognitiveRuntimeMode.MAINLINE if enabled else CognitiveRuntimeMode.OFF
 
     env_mode = os.getenv(COGNITIVE_RUNTIME_MODE_ENV, "")
     if str(env_mode or "").strip():
         return _coerce_mode(env_mode, default=default, env_var_name=COGNITIVE_RUNTIME_MODE_ENV)
-    # KERNELONE_* fallback
-    env_mode = os.getenv(COGNITIVE_RUNTIME_MODE_ENV_FALLBACK, "")
-    if str(env_mode or "").strip():
-        return _coerce_mode(env_mode, default=default, env_var_name=COGNITIVE_RUNTIME_MODE_ENV_FALLBACK)
-
     return default
 
 
@@ -200,9 +185,7 @@ def cognitive_runtime_is_enabled(mode: CognitiveRuntimeMode | str) -> bool:
 
 __all__ = [
     "COGNITIVE_RUNTIME_MODE_ENV",
-    "COGNITIVE_RUNTIME_MODE_ENV_FALLBACK",
     "CONTEXT_OS_ENABLED_ENV",
-    "CONTEXT_OS_ENABLED_ENV_FALLBACK",
     "CognitiveRuntimeMode",
     "cognitive_runtime_is_enabled",
     "resolve_cognitive_runtime_mode",

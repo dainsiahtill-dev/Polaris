@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import pytest
 from polaris.kernelone.context.runtime_feature_flags import (
     COGNITIVE_RUNTIME_MODE_ENV,
-    COGNITIVE_RUNTIME_MODE_ENV_FALLBACK,
     CONTEXT_OS_ENABLED_ENV,
-    CONTEXT_OS_ENABLED_ENV_FALLBACK,
     CognitiveRuntimeMode,
     cognitive_runtime_is_enabled,
     resolve_cognitive_runtime_mode,
@@ -55,22 +54,18 @@ class TestContextOSFeatureFlag:
             is False
         )
 
-    def test_polaris_prefix_fallback_disables(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """KERNELONE_* prefix falls back correctly when KERNELONE_* is not set."""
+    def test_canonical_env_disables(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(CONTEXT_OS_ENABLED_ENV, raising=False)
-        monkeypatch.setenv(CONTEXT_OS_ENABLED_ENV_FALLBACK, "off")
+        monkeypatch.setenv(CONTEXT_OS_ENABLED_ENV, "off")
         assert resolve_context_os_enabled(default=True) is False
 
-    def test_polaris_prefix_fallback_enables(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """KERNELONE_* prefix falls back correctly when KERNELONE_* is not set."""
+    def test_canonical_env_enables(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(CONTEXT_OS_ENABLED_ENV, raising=False)
-        monkeypatch.setenv(CONTEXT_OS_ENABLED_ENV_FALLBACK, "on")
+        monkeypatch.setenv(CONTEXT_OS_ENABLED_ENV, "on")
         assert resolve_context_os_enabled(default=False) is True
 
-    def test_kernelone_prefix_takes_priority(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """KERNELONE_* takes priority over KERNELONE_* when both are set."""
+    def test_canonical_env_takes_priority_over_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(CONTEXT_OS_ENABLED_ENV, "off")
-        monkeypatch.setenv(CONTEXT_OS_ENABLED_ENV_FALLBACK, "on")
         assert resolve_context_os_enabled(default=True) is False
 
     def test_invalid_env_value_falls_back_to_default(
@@ -86,9 +81,9 @@ class TestContextOSFeatureFlag:
 
 
 class TestCognitiveRuntimeFeatureFlag:
-    def test_default_is_shadow(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_default_is_mainline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(COGNITIVE_RUNTIME_MODE_ENV, raising=False)
-        assert resolve_cognitive_runtime_mode() is CognitiveRuntimeMode.SHADOW
+        assert resolve_cognitive_runtime_mode() is CognitiveRuntimeMode.MAINLINE
 
     def test_env_mode_can_be_mainline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV, "mainline")
@@ -100,6 +95,14 @@ class TestCognitiveRuntimeFeatureFlag:
                 metadata={"cognitive_runtime_enabled": False},
             )
             is CognitiveRuntimeMode.OFF
+        )
+
+    def test_metadata_enabled_true_maps_to_mainline(self) -> None:
+        assert (
+            resolve_cognitive_runtime_mode(
+                metadata={"cognitive_runtime_enabled": True},
+            )
+            is CognitiveRuntimeMode.MAINLINE
         )
 
     def test_explicit_mode_wins_over_boolean(self) -> None:
@@ -118,23 +121,37 @@ class TestCognitiveRuntimeFeatureFlag:
         assert cognitive_runtime_is_enabled(CognitiveRuntimeMode.MAINLINE) is True
         assert cognitive_runtime_is_enabled(CognitiveRuntimeMode.OFF) is False
 
-    def test_polaris_fallback_prefix_mainline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """KERNELONE_COGNITIVE_RUNTIME_MODE falls back correctly when KERNELONE_* is not set."""
+    def test_canonical_env_mainline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(COGNITIVE_RUNTIME_MODE_ENV, raising=False)
-        monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV_FALLBACK, "mainline")
+        monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV, "mainline")
         assert resolve_cognitive_runtime_mode() is CognitiveRuntimeMode.MAINLINE
 
-    def test_polaris_fallback_prefix_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """KERNELONE_COGNITIVE_RUNTIME_MODE falls back correctly when KERNELONE_* is not set."""
+    def test_canonical_env_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(COGNITIVE_RUNTIME_MODE_ENV, raising=False)
-        monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV_FALLBACK, "off")
+        monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV, "off")
         assert resolve_cognitive_runtime_mode() is CognitiveRuntimeMode.OFF
 
-    def test_kernelone_prefix_takes_priority(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """KERNELONE_COGNITIVE_RUNTIME_MODE takes priority over KERNELONE_* when both are set."""
+    def test_canonical_env_takes_priority_over_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV, "off")
-        monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV_FALLBACK, "mainline")
         assert resolve_cognitive_runtime_mode() is CognitiveRuntimeMode.OFF
+
+    def test_legacy_polaris_env_is_normalized_at_boundary(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from polaris._env_compat import normalize_env_prefix
+
+        previous_canonical = os.environ.pop(COGNITIVE_RUNTIME_MODE_ENV, None)
+        monkeypatch.setenv("POLARIS_COGNITIVE_RUNTIME_MODE", "off")
+
+        try:
+            with pytest.warns(DeprecationWarning):
+                normalize_env_prefix()
+
+            assert os.environ[COGNITIVE_RUNTIME_MODE_ENV] == "off"
+            assert resolve_cognitive_runtime_mode() is CognitiveRuntimeMode.OFF
+        finally:
+            if previous_canonical is None:
+                os.environ.pop(COGNITIVE_RUNTIME_MODE_ENV, None)
+            else:
+                os.environ[COGNITIVE_RUNTIME_MODE_ENV] = previous_canonical
 
     def test_invalid_env_value_falls_back_to_default(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -143,18 +160,6 @@ class TestCognitiveRuntimeFeatureFlag:
         monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV, "invalid_mode")
         with caplog.at_level(logging.WARNING):
             result = resolve_cognitive_runtime_mode()
-        assert result is CognitiveRuntimeMode.SHADOW
+        assert result is CognitiveRuntimeMode.MAINLINE
         assert "Invalid CognitiveRuntimeMode value" in caplog.text
         assert COGNITIVE_RUNTIME_MODE_ENV in caplog.text
-
-    def test_invalid_polaris_fallback_value_falls_back(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Invalid KERNELONE_* value triggers warning and falls back to KERNELONE_* default."""
-        monkeypatch.delenv(COGNITIVE_RUNTIME_MODE_ENV, raising=False)
-        monkeypatch.setenv(COGNITIVE_RUNTIME_MODE_ENV_FALLBACK, "bad_value")
-        with caplog.at_level(logging.WARNING):
-            result = resolve_cognitive_runtime_mode()
-        assert result is CognitiveRuntimeMode.SHADOW
-        assert "Invalid CognitiveRuntimeMode value" in caplog.text
-        assert COGNITIVE_RUNTIME_MODE_ENV_FALLBACK in caplog.text

@@ -28,10 +28,9 @@ def _bootstrap_backend_import_path():
             sys.path.insert(0, backend_root_str)
 
     from polaris.cells.audit.verdict.public import ArtifactService
-    from polaris.cells.llm.dialogue.public.service import generate_role_response
     from polaris.cells.runtime.task_runtime.public.task_board_contract import TaskBoard
 
-    return ArtifactService, generate_role_response, TaskBoard
+    return ArtifactService, TaskBoard
 
 
 logger = logging.getLogger(__name__)
@@ -46,7 +45,7 @@ class PMService:
         model: str = "glm-4.7-flash:latest",
         backend: str = "auto",
     ) -> None:
-        _ArtifactService, _generate_role_response, TaskBoard = _bootstrap_backend_import_path()  # noqa: N806
+        _ArtifactService, TaskBoard = _bootstrap_backend_import_path()  # noqa: N806
         self.workspace = workspace
         self.model = model
         self.backend = backend

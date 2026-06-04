@@ -213,6 +213,8 @@ _CARD3D_PM_DOMAIN_SCOPE_PATHS = {
     "tests": "tests/integration/multiplayer-flow.test.ts",
 }
 _CARD3D_PM_TEST_TARGET_FILES = (
+    "scripts/build.mjs",
+    "scripts/test.mjs",
     "tests/unit/card-rules.test.ts",
     "tests/unit/deck-builder.test.ts",
     "tests/integration/multiplayer-flow.test.ts",
@@ -1410,8 +1412,16 @@ def _build_card3d_domain_repair_task(
     ]
     if domain == "tests":
         acceptance_criteria.insert(1, "verify trivial arithmetic placeholder test cases are replaced or removed")
+        acceptance_criteria.insert(
+            2,
+            "verify scripts/build.mjs and scripts/test.mjs no longer perform structural-only existence checks",
+        )
         execution_checklist.insert(
             1, "Replace or remove existing trivial arithmetic placeholder tests instead of appending around them"
+        )
+        execution_checklist.insert(
+            2,
+            "Replace structural-only build/test scripts with substantive no-external-dependency verification",
         )
     task: dict[str, Any] = {
         "id": task_id,
@@ -1471,6 +1481,55 @@ def _append_missing_card3d_domain_tasks(
         added += 1
 
     return added
+
+
+def _append_unique_text_item(task: dict[str, Any], field: str, item: str) -> int:
+    existing = task.get(field)
+    if not isinstance(existing, list):
+        task[field] = [item]
+        return 1
+    normalized_existing = {_normalize_text(value).lower() for value in existing if _normalize_text(value)}
+    normalized_item = _normalize_text(item).lower()
+    if normalized_item and normalized_item not in normalized_existing:
+        existing.append(item)
+        return 1
+    return 0
+
+
+def _repair_card3d_tests_task_contract(tasks: list[dict[str, Any]]) -> int:
+    repaired = 0
+    for task in tasks:
+        if "tests" not in _card3d_domains_for_task(task, workspace_full=None):
+            continue
+
+        target_files = _normalize_path_list(task.get("target_files") or [])
+        target_set = {_normalize_path(path) for path in target_files}
+        missing_targets = [path for path in _CARD3D_PM_TEST_TARGET_FILES if _normalize_path(path) not in target_set]
+        if missing_targets:
+            task["target_files"] = _dedupe_paths([*target_files, *missing_targets])
+            repaired += len(missing_targets)
+
+        repaired += _append_unique_text_item(
+            task,
+            "acceptance_criteria",
+            "verify trivial arithmetic placeholder test cases are replaced or removed",
+        )
+        repaired += _append_unique_text_item(
+            task,
+            "acceptance_criteria",
+            "verify scripts/build.mjs and scripts/test.mjs no longer perform structural-only existence checks",
+        )
+        repaired += _append_unique_text_item(
+            task,
+            "execution_checklist",
+            "Replace or remove existing trivial arithmetic placeholder tests instead of appending around them",
+        )
+        repaired += _append_unique_text_item(
+            task,
+            "execution_checklist",
+            "Replace structural-only build/test scripts with substantive no-external-dependency verification",
+        )
+    return repaired
 
 
 def _append_missing_game_domain_tasks(
@@ -1879,6 +1938,7 @@ def autofix_pm_contract_for_quality(
         "descriptions_added": 0,
         "game_domain_tasks_added": 0,
         "card3d_domain_tasks_added": 0,
+        "card3d_test_contract_repairs": 0,
         "game_context_attached": 0,
         "game_dependency_policy_sanitized": 0,
         "game_policy_tasks_removed": 0,
@@ -1892,7 +1952,8 @@ def autofix_pm_contract_for_quality(
     stats["paths_normalized"] += _sanitize_pm_task_paths_in_place(normalized_tasks, workspace_full)
     if _attach_workspace_game_context_if_needed(normalized, normalized_tasks, workspace_full):
         stats["game_context_attached"] += 1
-    if _is_card3d_pm_contract(normalized, normalized_tasks):
+    is_card3d_contract = _is_card3d_pm_contract(normalized, normalized_tasks)
+    if is_card3d_contract:
         normalized.setdefault("_quality_gate_card3d_context", "card3d task_or_workspace_hints")
         stats["game_policy_tasks_removed"] += _remove_card3d_policy_incompatible_tasks_in_place(
             normalized_tasks,
@@ -1918,6 +1979,8 @@ def autofix_pm_contract_for_quality(
         workspace_full=workspace_full,
         verify_command=verify_command,
     )
+    if is_card3d_contract:
+        stats["card3d_test_contract_repairs"] += _repair_card3d_tests_task_contract(normalized_tasks)
     stats["game_domain_tasks_added"] += _append_missing_game_domain_tasks(
         normalized,
         normalized_tasks,

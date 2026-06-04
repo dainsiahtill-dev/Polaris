@@ -1,7 +1,7 @@
 """Unified process launcher for Polaris.
 
 This module provides ProcessLauncher, a unified service for launching
-PM and Director subprocesses with consistent UTF-8 handling, timeout
+PM and Director CLI subprocesses with consistent UTF-8 handling, timeout
 management, and audit logging.
 
 Migration status: process lifecycle now routes through
@@ -378,13 +378,13 @@ class ProcessLauncher:
         Returns:
             ProcessLaunchRequest configured for Director
         """
-        # Get Director script path
+        # Get canonical Director CLI path.
         backend_root = Path(__file__).parents[5]
-        director_script = backend_root / "polaris" / "delivery" / "cli" / "loop-director.py"
+        director_cli = backend_root / "polaris" / "delivery" / "cli" / "director_v2.py"
 
         command = [
             sys.executable,
-            str(director_script),
+            str(director_cli),
             "--workspace",
             str(workspace),
         ]

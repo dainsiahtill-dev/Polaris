@@ -59,9 +59,15 @@ class TestTransactionKernelFeatureFlag:
         with patch.dict(os.environ, {"USE_TRANSACTION_KERNEL_PRIMARY": "yes"}):
             assert RoleExecutionKernel._use_transaction_kernel() is True
 
-    def test_legacy_fallback_escape_hatch(self) -> None:
-        with patch.dict(os.environ, {"LEGACY_FALLBACK": "true"}):
-            assert RoleExecutionKernel._use_transaction_kernel() is False
+    def test_transaction_kernel_cannot_be_disabled_by_removed_env_escape_hatches(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LEGACY_FALLBACK": "true",
+                "USE_TRANSACTION_KERNEL_PRIMARY": "false",
+            },
+        ):
+            assert RoleExecutionKernel._use_transaction_kernel() is True
 
     def test_request_forces_no_transaction_tools_for_proposal_bridge(self) -> None:
         request = _MockRequest(

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from polaris.cells.orchestration.pm_planning.internal.pipeline_ports import (
@@ -32,6 +33,7 @@ from polaris.cells.orchestration.pm_planning.pipeline import (
     _build_pm_quality_retry_prompt,
     _merge_engine_config,
 )
+from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 # ---------------------------------------------------------------------------
 # normalize_priority
@@ -594,39 +596,97 @@ def test_cell_pm_invoke_port_instantiates() -> None:
 
 
 def test_cell_pm_invoke_port_normalizes_ollama_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    from polaris.kernelone.process.ollama_utils import OllamaResponse
+    captured: dict[str, Any] = {}
 
-    def fake_invoke_ollama(*args: object, **kwargs: object) -> OllamaResponse:
-        return OllamaResponse(output='{"tasks": []}')
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            captured["command"] = command
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                output='{"tasks": []}',
+            )
 
-    monkeypatch.setattr("polaris.kernelone.process.ollama_utils.invoke_ollama", fake_invoke_ollama)
+    monkeypatch.setattr(
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
+    )
     port = CellPmInvokePort()
 
     output = port.invoke(NoopPmStatePort(), "prompt", "ollama", SimpleNamespace(), None)
 
     assert output == '{"tasks": []}'
+    command = captured["command"]
+    assert command.metadata["requested_backend"] == "ollama"
+    assert command.metadata["allowed_provider_types"] == ("ollama",)
+    assert command.context["llm_provider_policy"]["allowed_provider_types"] == ("ollama",)
 
 
 def test_cell_pm_invoke_port_raises_on_ollama_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from polaris.kernelone.process.ollama_utils import OllamaMetadata, OllamaResponse
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            return RoleExecutionResultV1(
+                ok=False,
+                status="failed",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                error_message="provider_type_not_allowed:openai_compat",
+            )
 
-    def fake_invoke_ollama(*args: object, **kwargs: object) -> OllamaResponse:
-        return OllamaResponse(
-            output="",
-            metadata=OllamaMetadata(error="request timed out", error_type="timeout"),
-        )
-
-    monkeypatch.setattr("polaris.kernelone.process.ollama_utils.invoke_ollama", fake_invoke_ollama)
+    monkeypatch.setattr(
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
+    )
     port = CellPmInvokePort()
 
-    with pytest.raises(RuntimeError, match="Ollama PM backend failed: request timed out"):
+    with pytest.raises(RuntimeError, match="PM role runtime invocation failed: provider_type_not_allowed"):
         port.invoke(NoopPmStatePort(), "prompt", "ollama", SimpleNamespace(), None)
+
+
+def test_cell_pm_invoke_port_codex_backend_uses_role_runtime_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            captured["command"] = command
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                output='{"tasks": []}',
+            )
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
+    )
+
+    port = CellPmInvokePort()
+    output = port.invoke(NoopPmStatePort(), "prompt", "codex", SimpleNamespace(), None)
+
+    assert output == '{"tasks": []}'
+    command = captured["command"]
+    assert command.metadata["requested_backend"] == "codex"
+    assert command.metadata["allowed_provider_types"] == ("codex", "codex_cli", "codex_sdk")
+    assert command.context["llm_provider_policy"]["allowed_provider_types"] == (
+        "codex",
+        "codex_cli",
+        "codex_sdk",
+    )
 
 
 def test_cell_pm_invoke_port_does_not_pass_stale_state_model_as_runtime_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
     class StateWithStaleModel(NoopPmStatePort):
         @property
@@ -637,92 +697,112 @@ def test_cell_pm_invoke_port_does_not_pass_stale_state_model_as_runtime_fallback
         def model(self) -> str:
             return "modelscope.cn/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:latest"
 
-    def fake_invoke_role_runtime_provider(**kwargs: object) -> SimpleNamespace:
-        captured.update(kwargs)
-        return SimpleNamespace(attempted=True, ok=True, output='{"tasks": []}', error="")
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            captured["command"] = command
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                output='{"tasks": []}',
+            )
 
     monkeypatch.setattr(
-        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
-        fake_invoke_role_runtime_provider,
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
     )
 
     port = CellPmInvokePort()
     output = port.invoke(StateWithStaleModel(), "prompt", "generic", SimpleNamespace(), None)
 
     assert output == '{"tasks": []}'
-    assert captured["fallback_model"] == ""
+    command = captured["command"]
+    assert command.role == "pm"
+    assert command.domain == "document"
+    assert command.metadata["role_runtime_required"] is True
+    assert command.metadata["cognitive_runtime_required"] is True
+    assert command.metadata["context_os_expected"] is True
 
 
-def test_cell_pm_invoke_port_generic_allows_explicit_ollama_provider_binding(
+def test_cell_pm_invoke_port_generic_uses_role_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
-    def fake_invoke_role_runtime_provider(**kwargs: object) -> SimpleNamespace:
-        blocked_raw = kwargs.get("blocked_provider_types")
-        captured["blocked_provider_types"] = tuple(blocked_raw) if isinstance(blocked_raw, (list, set, tuple)) else ()
-        return SimpleNamespace(
-            attempted=True,
-            ok=True,
-            output='{"tasks": []}',
-            error="",
-            provider_type="ollama",
-            model="test-model",
-        )
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            captured["command"] = command
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                output='{"tasks": []}',
+            )
 
     monkeypatch.setattr(
-        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
-        fake_invoke_role_runtime_provider,
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
     )
 
     port = CellPmInvokePort()
     output = port.invoke(NoopPmStatePort(), "prompt", "generic", SimpleNamespace(), None)
 
     assert output == '{"tasks": []}'
-    blocked_provider_types = captured["blocked_provider_types"]
-    assert isinstance(blocked_provider_types, tuple)
-    assert "ollama" not in blocked_provider_types
+    command = captured["command"]
+    assert command.role == "pm"
+    assert command.host_kind == "pm_planning_pipeline"
+    assert command.stream is False
 
 
 def test_cell_pm_invoke_port_reports_missing_runtime_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_invoke_role_runtime_provider(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            attempted=False,
-            ok=False,
-            output="",
-            error="provider/model missing",
-        )
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            return RoleExecutionResultV1(
+                ok=False,
+                status="failed",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                error_message="provider/model missing",
+            )
 
     monkeypatch.setattr(
-        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
-        fake_invoke_role_runtime_provider,
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
     )
 
     port = CellPmInvokePort()
 
-    with pytest.raises(RuntimeError, match="PM runtime provider binding is not configured: provider/model missing"):
+    with pytest.raises(RuntimeError, match="PM role runtime invocation failed: provider/model missing"):
         port.invoke(NoopPmStatePort(), "prompt", "generic", SimpleNamespace(), None)
 
 
 def test_cell_pm_invoke_port_reports_runtime_provider_invocation_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_invoke_role_runtime_provider(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            attempted=True,
-            ok=False,
-            output="",
-            error="429 insufficient_quota",
-        )
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            return RoleExecutionResultV1(
+                ok=False,
+                status="failed",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                error_message="429 insufficient_quota",
+            )
 
     monkeypatch.setattr(
-        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
-        fake_invoke_role_runtime_provider,
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
     )
 
     port = CellPmInvokePort()
 
-    with pytest.raises(RuntimeError, match="PM runtime provider invocation failed: 429 insufficient_quota"):
+    with pytest.raises(RuntimeError, match="PM role runtime invocation failed: 429 insufficient_quota"):
         port.invoke(NoopPmStatePort(), "prompt", "generic", SimpleNamespace(), None)

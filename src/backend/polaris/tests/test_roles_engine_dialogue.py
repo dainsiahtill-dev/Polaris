@@ -1,16 +1,18 @@
 """tests/test_roles_engine_dialogue.py
 
-验证 roles.engine 与 roles.adapters 对 llm.dialogue public service 的调用路径收敛。
+验证 roles.engine 与 roles.adapters 对 LLM/role runtime 调用路径收敛。
 
 覆盖点：
 1. BaseEngine._call_llm 通过 EngineContext.llm_caller 委托（不直接调用 LLM provider）
 2. ReActEngine / PlanSolveEngine / ToTEngine 继承 BaseEngine._call_llm，不再自带副本
-3. BaseRoleAdapter._call_role_llm 通过 generate_role_response（public service）调用
-4. 无跨 Cell internal 导入：roles 层不直接 import llm.dialogue.internal.*
+3. 生产 role adapters 通过 runtime_dialogue 进入 roles.runtime/Context OS
+4. llm.dialogue 仅作为 runtime_dialogue 中可观测 legacy fallback
+5. 无跨 Cell internal 导入：roles 层不直接 import llm.dialogue.internal.*
 """
 
 from __future__ import annotations
 
+import pathlib as _pathlib
 from unittest.mock import AsyncMock
 
 import pytest
@@ -120,15 +122,13 @@ class TestBaseEngineLlmCaller:
 # 2. 模块级导入合规性检查（无跨 Cell internal 导入）
 # ─────────────────────────────────────────────────────────────────────────────
 
-import pathlib as _pathlib
-
 
 # 静态解析模块文件路径（不触发 import，避免触碰预存的循环导入）
 def _locate_source(module_dotted_path: str) -> _pathlib.Path:
     """返回模块对应的 .py 源文件路径，不执行模块导入。"""
     # 将 dotted path 转换为文件路径
     parts = module_dotted_path.split(".")
-    base = _pathlib.Path(__file__).parent.parent  # src/backend
+    base = _pathlib.Path(__file__).parents[2]  # src/backend
     candidate = base.joinpath(*parts).with_suffix(".py")
     if candidate.exists():
         return candidate
@@ -169,46 +169,90 @@ class TestNoCellInternalCrossImport:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. adapters._call_role_llm 通过 llm.dialogue public service 调用
+# 3. adapters role dialogue 通过 roles.runtime public boundary 调用
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class TestAdapterCallsPublicService:
-    """BaseRoleAdapter._call_role_llm 必须通过 generate_role_response（public service）。"""
+class TestAdapterCallsRuntimeBoundary:
+    """生产 role adapters 必须通过 runtime_dialogue helper 进入 roles.runtime。"""
 
-    @pytest.mark.asyncio
-    async def test_base_adapter_call_role_llm_uses_public_generate_role_response(self):
-        """_call_role_llm 调用的是模块级 generate_role_response（public service）而非 internal。
+    ROLE_ADAPTER_MODULES = (
+        "polaris.cells.roles.adapters.internal.pm_adapter",
+        "polaris.cells.roles.adapters.internal.architect_adapter",
+        "polaris.cells.roles.adapters.internal.chief_engineer_adapter",
+        "polaris.cells.roles.adapters.internal.qa_adapter",
+    )
+    PRODUCTION_ENTRYPOINT_MODULES = (
+        "polaris.delivery.cli.pm.backend",
+        "polaris.delivery.cli.pm.orchestration.doc_rendering",
+        "polaris.delivery.cli.agentic_eval",
+        "polaris.delivery.http.routers.pm_chat",
+        "polaris.delivery.http.routers.role_chat",
+        "polaris.delivery.http.routers.role_runtime_chat",
+        "polaris.delivery.cli.pm.chief_engineer_llm_tools",
+        "polaris.delivery.cli.director.director_llm_tools",
+        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports",
+        "polaris.cells.factory.pipeline.internal.projection_lab",
+        "polaris.cells.director.execution.internal.code_generation_engine",
+        "polaris.cells.audit.evidence.internal.task_audit_llm_binding",
+    )
+    PRODUCTION_PM_BACKEND_MODULES = (
+        "polaris.delivery.cli.pm.backend",
+        "polaris.cells.orchestration.pm_planning.internal.pipeline_ports",
+    )
+    PRODUCTION_PM_WRAPPER_FILES = (_pathlib.Path(__file__).resolve().parents[1] / "delivery" / "cli" / "loop-pm.py",)
+    DIRECTOR_ADAPTER_MODULES = ("polaris.cells.roles.adapters.internal.director.adapter",)
 
-        策略：静态确认 _call_role_llm 方法体内不包含 internal 路径引用，
-        并确认 generate_role_response 已在模块顶层绑定（可被 patch 拦截）。
-        """
-        src_path = _locate_source("polaris.cells.roles.adapters.internal.base")
+    def test_workflow_role_adapters_use_runtime_dialogue_helper(self):
+        for module_path in self.ROLE_ADAPTER_MODULES:
+            src_path = _locate_source(module_path)
+            src = src_path.read_text(encoding="utf-8")
+            assert "invoke_role_runtime_first" in src, f"{module_path} 未进入 runtime_dialogue helper"
+            assert "generate_role_response(" not in src, f"{module_path} 仍直接调用 legacy dialogue"
+            assert "invoke_role_runtime_provider(" not in src, f"{module_path} 仍直接调用 provider runtime"
+            assert "dialogue.internal" not in src, f"{module_path} 不应引用 llm.dialogue.internal 路径"
+
+    def test_runtime_dialogue_fails_closed_without_legacy_fallback(self):
+        src_path = _locate_source("polaris.cells.roles.adapters.internal.runtime_dialogue")
         src = src_path.read_text(encoding="utf-8")
+        assert "RoleRuntimeService" in src, "runtime_dialogue 必须通过 roles.runtime public service"
+        assert "ExecuteRoleSessionCommandV1" in src, "runtime_dialogue 必须使用 roles.runtime public contract"
+        assert "allow_legacy_fallback" not in src, "runtime_dialogue 不应保留 legacy fallback 开关"
+        assert "legacy_dialogue_fallback" not in src, "runtime_dialogue 不应保留 legacy dialogue fallback"
+        assert "generate_role_response" not in src, "runtime_dialogue 不应调用 legacy dialogue"
+        assert "enable_cognitive=False" not in src, "runtime_dialogue 不应通过旧认知中间件绕过 runtime"
+        assert "dialogue.internal" not in src, "runtime_dialogue 不应引用 llm.dialogue.internal 路径"
 
-        # 确认 _call_role_llm 函数体内引用的是 generate_role_response（非 internal 路径）
-        assert "generate_role_response" in src, "_call_role_llm 应调用 generate_role_response"
-        assert "dialogue.internal" not in src, "_call_role_llm 不应引用 llm.dialogue.internal 路径"
+    def test_production_entrypoints_do_not_call_legacy_llm_boundaries(self):
+        for module_path in self.PRODUCTION_ENTRYPOINT_MODULES:
+            src_path = _locate_source(module_path)
+            src = src_path.read_text(encoding="utf-8")
+            assert "generate_role_response(" not in src, f"{module_path} 仍直接调用 legacy dialogue"
+            assert "invoke_role_runtime_provider(" not in src, f"{module_path} 仍直接调用 provider runtime"
 
-        # 确认顶层 import 行存在，保证 patch 可拦截
-        import_line = "from polaris.cells.llm.dialogue.public.service import generate_role_response"
-        assert import_line in src, f"generate_role_response 应作为顶层导入存在，实际未找到：{import_line}"
+    def test_pm_backends_do_not_call_direct_process_llm_boundaries(self):
+        for module_path in self.PRODUCTION_PM_BACKEND_MODULES:
+            src_path = _locate_source(module_path)
+            src = src_path.read_text(encoding="utf-8")
+            assert "from polaris.kernelone.process.codex_adapter" not in src, f"{module_path} 仍导入 Codex 直连"
+            assert "from polaris.kernelone.process.ollama_utils" not in src, f"{module_path} 仍导入 Ollama 直连"
+            assert "invoke_codex(" not in src, f"{module_path} 仍调用 Codex 直连"
+            assert "invoke_ollama(" not in src, f"{module_path} 仍调用 Ollama 直连"
 
-    def test_generate_role_response_import_is_at_module_level_in_base(self):
-        """generate_role_response 必须作为顶层导入出现在 base.py 源码中（静态扫描）。"""
-        src_path = _locate_source("polaris.cells.roles.adapters.internal.base")
-        src = src_path.read_text(encoding="utf-8")
-        assert "from polaris.cells.llm.dialogue.public.service import generate_role_response" in src, (
-            "generate_role_response 应作为顶层导入存在于 base.py，而非运行时导入"
-        )
+    def test_pm_compat_wrappers_do_not_reinject_direct_process_llm_boundaries(self):
+        for src_path in self.PRODUCTION_PM_WRAPPER_FILES:
+            src = src_path.read_text(encoding="utf-8")
+            assert "from polaris.kernelone.process.codex_adapter" not in src, f"{src_path} 仍导入 Codex 直连"
+            assert "from polaris.kernelone.process.ollama_utils" not in src, f"{src_path} 仍导入 Ollama 直连"
+            assert "invoke_codex(" not in src, f"{src_path} 仍调用 Codex 直连"
+            assert "invoke_ollama(" not in src, f"{src_path} 仍调用 Ollama 直连"
 
-    def test_generate_role_response_import_is_at_module_level_in_director(self):
-        """generate_role_response 必须作为顶层导入出现在 director_adapter.py 源码中（静态扫描）。"""
-        src_path = _locate_source("polaris.cells.roles.adapters.internal.director_adapter")
-        src = src_path.read_text(encoding="utf-8")
-        assert "from polaris.cells.llm.dialogue.public.service import generate_role_response" in src, (
-            "generate_role_response 应作为顶层导入存在于 director_adapter.py，而非运行时导入"
-        )
+    def test_director_adapter_does_not_call_legacy_dialogue_fallback(self):
+        for module_path in self.DIRECTOR_ADAPTER_MODULES:
+            src_path = _locate_source(module_path)
+            src = src_path.read_text(encoding="utf-8")
+            assert "generate_role_response" not in src, f"{module_path} 仍引用 legacy dialogue"
+            assert "legacy_dialogue_fallback" not in src, f"{module_path} 仍保留 legacy dialogue fallback"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

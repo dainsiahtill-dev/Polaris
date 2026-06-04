@@ -137,8 +137,8 @@ class StreamShadowEngine:
     ) -> dict[str, Any]:
         """推测执行单个工具调用.
 
-        Phase 1：如果已注入 Registry，将 shadow task 注册到 Registry 并启动后台执行；
-        否则 fallback 到旧路径(READONLY_TOOLS 检查 + SpeculativeExecutor)。
+        如果已注入 Registry，将 shadow task 注册到 Registry 并启动后台执行；
+        否则使用本地 SpeculativeExecutor 执行只读推测。
         """
         normalized = tool_name.strip().lower().replace("-", "_")
 
@@ -149,6 +149,12 @@ class StreamShadowEngine:
                 "enabled": self._speculative_executor.enabled,
                 "result": None,
                 "error": "non_readonly_tool",
+            }
+        if is_write_tool and (self._registry is None or not self._speculative_executor.enabled):
+            return {
+                "enabled": self._speculative_executor.enabled,
+                "result": None,
+                "error": "write_tool_prepare_shadow_unavailable",
             }
 
         # Phase 1: register shadow task to Registry, executed by Registry background runner
@@ -237,7 +243,8 @@ class StreamShadowEngine:
                     )
             return {"enabled": True, "result": None, "error": None}
 
-        # Fallback 旧路径
+        # Local speculation path when no registry-backed shadow task runner is configured.
+        # Write tools are handled above because they require registry-backed prepare shadow.
         invocation = ToolInvocation(
             call_id=ToolCallId(call_id or f"spec_{normalized}"),
             tool_name=tool_name,

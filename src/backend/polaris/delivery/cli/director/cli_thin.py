@@ -113,70 +113,39 @@ def create_parser() -> argparse.ArgumentParser:
 
 async def run_director_console(workspace: str, iterations: int, max_workers: int) -> None:
     """Run director in console mode."""
-    _imports = _bootstrap_backend_import_path()
-    run_mode = _imports[0]
-    runtime_orchestrator = _imports[1]
-    service_definition = _imports[2]
+    from polaris.delivery.cli.director.director_service import DirectorService
 
-    orchestrator = runtime_orchestrator()
-    service_def = service_definition(
-        name="director",
-        command=[
-            sys.executable,
-            "-m",
-            "polaris.delivery.cli.director.cli_thin",
-            "--workspace",
-            workspace,
-            "--iterations",
-            str(iterations),
-        ],
-        working_dir=Path(workspace),
-        run_mode=run_mode.LOOP,
+    service = DirectorService(
+        workspace=Path(workspace).resolve(),
+        max_workers=max_workers,
+        execution_mode="parallel" if max_workers > 1 else "serial",
     )
-    handle = await orchestrator.submit(service_def)
-    try:
-        await orchestrator.wait_for_completion(handle, timeout=3600)
-    finally:
-        await orchestrator.terminate(handle)
+    for iteration in range(1, max(1, iterations) + 1):
+        result = await service.run_iteration(iteration=iteration)
+        logger.info("Director iteration result: %s", result)
 
 
 async def run_director_server(workspace: str, host: str, port: int) -> None:
     """Run director in server mode."""
     _imports = _bootstrap_backend_import_path()
-    run_mode = _imports[0]
-    runtime_orchestrator = _imports[1]
-    service_definition = _imports[2]
     enforce_utf8 = _imports[3]
+    from polaris.delivery.cli.director.director_service import DirectorService
 
     enforce_utf8()
     logger.info(f"Starting Director server on {host}:{port}...")
     logger.info("Workspace: %s", workspace)
 
-    orchestrator = runtime_orchestrator()
-    service_def = service_definition(
-        name="director-server",
-        command=[
-            sys.executable,
-            "-m",
-            "polaris.delivery.cli.director.cli_thin",
-            "serve",
-            "--host",
-            host,
-            "--port",
-            str(port),
-            "--workspace",
-            workspace,
-        ],
-        working_dir=Path(workspace),
-        run_mode=run_mode.DAEMON,
+    service = DirectorService(
+        workspace=Path(workspace).resolve(),
+        execution_mode="parallel",
     )
-    handle = await orchestrator.submit(service_def)
     try:
-        await orchestrator.wait_for_completion(handle, timeout=None)
+        while True:
+            result = await service.run_iteration()
+            logger.info("Director server iteration result: %s", result)
+            await asyncio.sleep(1.0)
     except KeyboardInterrupt:
         logger.info("Shutting down Director server...")
-    finally:
-        await orchestrator.terminate(handle)
 
 
 async def create_task(workspace: str, subject: str, description: str, priority: str) -> None:

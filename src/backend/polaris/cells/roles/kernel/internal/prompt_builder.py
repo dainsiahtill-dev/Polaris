@@ -1,4 +1,3 @@
-# ruff: noqa: BLE001
 """Prompt Builder - 提示词构建组件
 
 负责构建角色执行所需的各种提示词，包括：
@@ -8,7 +7,7 @@
 - 重试提示词构建
 
 支持两种模式：
-1. 传统模式 (Legacy): 使用 prompt_templates.py 中的硬编码模板
+1. 模板模式: 使用 prompt_templates.py 中的角色模板资产
 2. 三轴模式 (Tri-Axis): 使用 RoleComposer 动态组合 Anchor + Profession + Persona
 """
 
@@ -232,10 +231,10 @@ class PromptBuilder:
                     include_working_memory_contract=include_working_memory_contract,
                     include_tool_policy=include_tool_policy,
                 )
-            except Exception as exc:
-                logger.debug("Tri-Axis prompt composition failed, falling back to legacy: %s", exc)
+            except (RuntimeError, ValueError) as exc:
+                raise RuntimeError(f"tri_axis_prompt_composition_failed:{core_template_id}") from exc
 
-        # 传统模式：解析 persona
+        # 模板模式：解析 persona
         # 1. 优先使用传入参数
         # 2. 否则用 profile 中的配置
         # 3. 若配置为 "default"（未设置）且有 workspace，从 store 加载（首次随机固化）
@@ -276,28 +275,19 @@ class PromptBuilder:
         )
         appendix_prompt = f"【额外上下文】\n{prompt_appendix}" if prompt_appendix else ""
 
-        # Primary path: chunk-aware assembly with final receipt.
-        try:
-            return self._assemble_with_chunks(
-                profile=profile,
-                l1_content=l1_content,
-                l2_content=l2_content,
-                l3_content=l3_content,
-                l4_content=l4_content,
-                tool_prompt=tool_prompt,
-                appendix_prompt=appendix_prompt,
-                domain=domain,
-            )
-        except (RuntimeError, ValueError) as exc:
-            logger.warning("Prompt chunk assembly failed, fallback to legacy join: %s", exc)
-            legacy_parts = [l1_content, l2_content, l3_content]
-            if l4_content:
-                legacy_parts.append(l4_content)
-            if tool_prompt:
-                legacy_parts.append(tool_prompt)
-            if appendix_prompt:
-                legacy_parts.append(appendix_prompt)
-            return "\n\n".join(legacy_parts)
+        # Chunk-aware assembly is the only valid path because it emits the
+        # receipt used by Context OS / runtime audit. Fail closed instead of
+        # silently falling back to an unreceipted prompt.
+        return self._assemble_with_chunks(
+            profile=profile,
+            l1_content=l1_content,
+            l2_content=l2_content,
+            l3_content=l3_content,
+            l4_content=l4_content,
+            tool_prompt=tool_prompt,
+            appendix_prompt=appendix_prompt,
+            domain=domain,
+        )
 
     def get_last_request_receipt(self) -> FinalRequestReceipt | None:
         """Return the last FinalRequestReceipt emitted by chunk assembly."""
@@ -369,16 +359,7 @@ class PromptBuilder:
             composed = composer.compose_by_recipe(recipe_id, task_type=task_type)
 
             if composed is None:
-                # 回退到传统模式
-                logger.warning(f"RoleComposer failed for recipe {recipe_id}, falling back to legacy mode")
-                return self.build_system_prompt(
-                    profile=profile,
-                    prompt_appendix=prompt_appendix,
-                    domain=domain,
-                    message=message,
-                    include_working_memory_contract=include_working_memory_contract,
-                    include_tool_policy=include_tool_policy,
-                )
+                raise RuntimeError(f"role_composer_recipe_unavailable:{recipe_id}")
 
             l1_content = composed.system_prompt
 
@@ -412,29 +393,18 @@ class PromptBuilder:
 
         appendix_prompt = f"【额外上下文】\n{prompt_appendix}" if prompt_appendix else ""
 
-        # 组装所有层
-        try:
-            return self._assemble_with_chunks(
-                profile=profile,
-                l1_content=l1_content,  # 三轴融合的 L1
-                l2_content=l2_content,
-                l3_content=l3_content,
-                l4_content=l4_content,
-                tool_prompt=tool_prompt,
-                appendix_prompt=appendix_prompt,
-                domain=domain,
-            )
-        except (RuntimeError, ValueError) as exc:
-            logger.warning("Tri-Axis prompt chunk assembly failed, fallback: %s", exc)
-            # 简化回退
-            parts = [l1_content, l2_content, l3_content]
-            if l4_content:
-                parts.append(l4_content)
-            if tool_prompt:
-                parts.append(tool_prompt)
-            if appendix_prompt:
-                parts.append(appendix_prompt)
-            return "\n\n".join(parts)
+        # 组装所有层。Chunk assembly 会产生 final request receipt，失败时
+        # 必须暴露错误，不能降级到无 receipt 的字符串拼接。
+        return self._assemble_with_chunks(
+            profile=profile,
+            l1_content=l1_content,  # 三轴融合的 L1
+            l2_content=l2_content,
+            l3_content=l3_content,
+            l4_content=l4_content,
+            tool_prompt=tool_prompt,
+            appendix_prompt=appendix_prompt,
+            domain=domain,
+        )
 
     def _assemble_with_chunks(
         self,

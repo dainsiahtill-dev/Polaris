@@ -69,7 +69,8 @@ verification:
     still fails on import.
   - Director optional execution backends still route through roles.adapters while
     business-cell convergence into director.execution remains in progress.
-  - Some adapter internals still touch legacy application call paths during migration.
+  - Runtime dialogue uses roles.runtime as the primary path; construction failures
+    are surfaced explicitly instead of falling back to standalone role execution.
   - Structured output schema exports are stable, but implementation convergence is
     ongoing.
   smoke_commands: []

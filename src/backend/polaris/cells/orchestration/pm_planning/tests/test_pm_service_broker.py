@@ -435,12 +435,12 @@ class TestPMServiceExecutionBroker:
 
         assert cmd[timeout_index] == "120"
 
-    def test_build_command_passes_absolute_director_path(
+    def test_build_command_does_not_pass_director_script_path(
         self,
         mock_settings: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """PMService must not let PM CLI inherit a cwd-sensitive Director path."""
+        """PMService must not route PM-created tasks through a Director script."""
         director_script = tmp_path / "canonical-loop-director.py"
         mock_settings.pm.runs_director = True
         mock_settings.director_script_path = director_script
@@ -449,10 +449,7 @@ class TestPMServiceExecutionBroker:
         cmd = service._build_command(loop_mode=False)
 
         assert "--run-director" in cmd
-        director_path_index = cmd.index("--director-path") + 1
-        director_path = Path(cmd[director_path_index])
-        assert director_path == director_script
-        assert director_path.is_absolute()
+        assert "--director-path" not in cmd
 
 
 class TestPMServiceNoDirectSubprocess:

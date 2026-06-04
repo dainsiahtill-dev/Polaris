@@ -34,11 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 class TurnEngine(TurnEngineCompatMixin):
-    """Legacy loop engine reduced to a TransactionKernel facade.
+    """Deprecated turn-engine API reduced to a TransactionKernel facade.
 
     Deprecated compatibility shim. New execution behavior must land in
     TransactionKernel / RoleExecutionKernel, while this facade only preserves
-    the minimum legacy result shape still consumed by tests and adapters.
+    the minimum compatibility result shape still consumed by tests and adapters.
     """
 
     _DEPRECATION_WARNING = (
@@ -57,7 +57,7 @@ class TurnEngine(TurnEngineCompatMixin):
         policy_layer: Any | None = None,
         cognitive_pipeline: Any | None = None,
     ) -> None:
-        """Initialize facade (legacy collaborators ignored)."""
+        """Initialize facade (compatibility collaborators ignored)."""
         self._kernel = kernel
         self._llm_caller = llm_caller if llm_caller is not None else kernel._get_llm_caller()
         self._prompt_builder = prompt_builder if prompt_builder is not None else kernel._get_prompt_builder()

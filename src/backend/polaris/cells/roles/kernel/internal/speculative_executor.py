@@ -29,8 +29,6 @@ class SpeculativeExecutor:
     predicted tool calls without side effects.
     """
 
-    ENABLE_SPECULATIVE_EXECUTION: bool = False
-
     def __init__(
         self,
         batch_runtime: ToolBatchRuntime,

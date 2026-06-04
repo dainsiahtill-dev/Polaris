@@ -169,10 +169,10 @@ class AttentionAwareWindowCollector:
         # Import decision log types if logging is enabled
         _log_decisions = decision_log is not None
 
-        min_recent_floor = max(1, int(self._policy.min_recent_messages_pinned or 1))
-        min_recent_floor = min(self._policy.max_active_window_messages, min_recent_floor)
+        min_recent_floor = max(1, int(self._policy.window_size.min_recent_messages_pinned or 1))
+        min_recent_floor = min(self._policy.context_window.max_active_window_messages, min_recent_floor)
         recent_limit = max(min_recent_floor, int(recent_window_messages or 1))
-        recent_limit = max(1, min(self._policy.max_active_window_messages, recent_limit))
+        recent_limit = max(1, min(self._policy.context_window.max_active_window_messages, recent_limit))
         recent_candidates = list(transcript[-recent_limit:])
         forced_recent_ids = {item.event_id for item in transcript[-min_recent_floor:]}
         pinned_sequences: set[int] = {item.sequence for item in recent_candidates}
@@ -191,7 +191,7 @@ class AttentionAwareWindowCollector:
                 pinned_sequences.update(self._sequences_from_turns(entry.source_turns))
 
         active_artifact_ids = set(working_state.active_artifacts)
-        active_window_ratio = getattr(self._policy, "active_window_budget_ratio", 0.45)
+        active_window_ratio = self._policy.token_budget.active_window_budget_ratio
         token_budget = max(512, min(budget_plan.soft_limit, int(budget_plan.input_budget * active_window_ratio)))
 
         # Build scoring context for attention scoring
@@ -235,7 +235,7 @@ class AttentionAwareWindowCollector:
             candidates=transcript,
             context=scoring_context,
             token_budget=token_budget,
-            min_recent=self._policy.min_recent_messages_pinned,
+            min_recent=self._policy.window_size.min_recent_messages_pinned,
         )
 
         # Select candidates based on ranking
@@ -390,7 +390,7 @@ class AttentionAwareWindowCollector:
             if item.event_id in forced_recent_ids:
                 root_reasons.append(ReasonCode.FORCED_RECENT)
 
-            can_add = is_root or len(pinned_events) < self._policy.max_active_window_messages
+            can_add = is_root or len(pinned_events) < self._policy.context_window.max_active_window_messages
             if not can_add:
                 if decision_log is not None:
                     decision_log.record(

@@ -1,8 +1,8 @@
-"""
-Director Interface Integration for loop-pm.
+"""Director integration for PM delivery code.
 
-Integrates the DirectorInterface abstraction into the PM loop,
-allowing the PM to use either Script Director or No Director mode.
+The exported function names are kept for older PM callers, but execution is
+canonical: PM delegates to ``DirectorOrchestrator`` and the ``roles.adapters``
+Director adapter. No subprocess Director path is allowed here.
 """
 
 import argparse
@@ -63,7 +63,7 @@ def create_director_for_pm(
 
     Args:
         workspace: Workspace path
-        director_type: 'script', 'none', or None for auto
+        director_type: 'canonical', 'none', or a compatibility alias
         config: Additional configuration
 
     Returns:
@@ -110,10 +110,7 @@ def run_director_via_interface(
     director_log_path: str = "",
 ) -> int:
     """
-    Run Director using the DirectorInterface abstraction.
-
-    This replaces the subprocess-based run_director_once when
-    KERNELONE_DIRECTOR_TYPE is set to 'script' or 'none'.
+    Run Director through the canonical Director adapter compatibility facade.
 
     Args:
         args: CLI arguments
@@ -135,20 +132,22 @@ def run_director_via_interface(
             f"\n## {stamp} (iteration {iteration}) - DirectorInterface start\n",
         )
 
-    # Determine director type from environment or args
+    # Determine director type from environment or args. Older "script" values
+    # are accepted only as aliases; they never spawn a script.
     director_type = os.getenv("KERNELONE_DIRECTOR_TYPE", "auto")
     if director_type == "auto":
         director_type = getattr(args, "director_type", None) or "auto"
     token = str(director_type or "").strip().lower()
-    if token and token not in {"auto", "script", "none"}:
+    if token and token not in {"auto", "adapter", "canonical", "script", "none"}:
         if subprocess_log_path:
             append_director_log(
                 subprocess_log_path,
-                f"[error] Unsupported director_type '{token}'. Allowed: auto, script, none.\n",
+                f"[error] Unsupported director_type '{token}'. Allowed: auto, canonical, adapter, none.\n",
             )
         return 1
 
-    # Build config
+    # Build config. Historical response-path fields are preserved as metadata
+    # inputs for callers that still pass them, not for subprocess execution.
     config = {
         "script": getattr(
             args,
@@ -223,23 +222,22 @@ def run_director_via_interface(
 
 def should_use_director_interface(args: argparse.Namespace) -> bool:
     """
-    Check if we should use DirectorInterface instead of subprocess.
+    Check if we should use the PM Director compatibility facade.
 
     Returns True if:
-    1. DirectorInterface is available
-    2. KERNELONE_DIRECTOR_TYPE is set to 'script' or 'none'
-    3. Not explicitly disabled
+    1. DirectorInterface is available.
+    2. A Director mode is explicitly configured.
     """
     if not DIRECTOR_INTERFACE_AVAILABLE:
         return False
 
     director_type = os.getenv("KERNELONE_DIRECTOR_TYPE", "")
-    if director_type in ("script", "none"):
+    if director_type in ("auto", "adapter", "canonical", "script", "none"):
         return True
 
     # Check if director_type arg is set
     arg_director_type = getattr(args, "director_type", None)
-    return arg_director_type in ("script", "none")
+    return arg_director_type in ("auto", "adapter", "canonical", "script", "none")
 
 
 def is_standalone_mode(args: argparse.Namespace) -> bool:

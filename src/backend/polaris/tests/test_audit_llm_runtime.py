@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from polaris.cells.audit.evidence.internal.task_audit_llm_binding import (
     AuditLLMBindingConfig,
     bind_audit_llm_to_task_service,
     make_audit_llm_caller,
 )
-from polaris.cells.llm.provider_runtime.internal.runtime_invoke import RuntimeProviderInvokeResult
+from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
 def _settings(**overrides):
@@ -25,22 +26,58 @@ def _settings(**overrides):
     return SimpleNamespace(**base)
 
 
-def test_make_audit_llm_caller_prefers_local_ollama(monkeypatch, tmp_path) -> None:
-    calls: list[dict] = []
+def _patch_role_runtime(monkeypatch, results: list[RoleExecutionResultV1]) -> list[Any]:
+    calls: list[Any] = []
 
-    def _fake_invoke(**kwargs):
-        calls.append(kwargs)
-        return RuntimeProviderInvokeResult(
-            attempted=True,
-            ok=True,
-            output='{"acceptance":"PASS","summary":"ok","findings":[]}',
-            provider_id="ollama",
-            provider_type="ollama",
-            model="glm-4.7-flash:latest",
-        )
+    class _FakeRoleRuntimeService:
+        async def execute_role_session(self, command):
+            calls.append(command)
+            return results.pop(0)
 
     monkeypatch.setattr(
-        "polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke
+        "polaris.cells.audit.evidence.internal.task_audit_llm_binding._create_role_runtime_service",
+        lambda: _FakeRoleRuntimeService(),
+    )
+    return calls
+
+
+def _runtime_result(
+    *,
+    ok: bool,
+    output: str = "",
+    provider_id: str = "",
+    provider_type: str = "",
+    model: str = "",
+    error_message: str | None = None,
+) -> RoleExecutionResultV1:
+    return RoleExecutionResultV1(
+        ok=ok,
+        status="ok" if ok else "failed",
+        role="qa",
+        workspace=".",
+        output=output,
+        metadata={
+            "provider": provider_id,
+            "provider_type": provider_type,
+            "model": model,
+            "elapsed_ms": 25,
+        },
+        error_message=error_message,
+    )
+
+
+def test_make_audit_llm_caller_prefers_local_ollama(monkeypatch, tmp_path) -> None:
+    calls = _patch_role_runtime(
+        monkeypatch,
+        [
+            _runtime_result(
+                ok=True,
+                output='{"acceptance":"PASS","summary":"ok","findings":[]}',
+                provider_id="ollama",
+                provider_type="ollama",
+                model="glm-4.7-flash:latest",
+            )
+        ],
     )
     monkeypatch.setattr(
         "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",
@@ -63,36 +100,34 @@ def test_make_audit_llm_caller_prefers_local_ollama(monkeypatch, tmp_path) -> No
 
     assert output.startswith("{")
     assert len(calls) == 1
-    assert calls[0]["blocked_provider_types"] == ("openai_compat",)
+    command = calls[0]
+    assert command.metadata["blocked_provider_types"] == ("openai_compat",)
+    assert command.metadata["role_runtime_required"] is True
+    assert command.metadata["cognitive_runtime_required"] is True
+    assert command.metadata["context_os_expected"] is True
     assert provider_info["llm_strategy"] == "local_ollama"
     assert provider_info["court_role_name"] == "QA"
 
 
 def test_make_audit_llm_caller_falls_back_to_role_runtime(monkeypatch, tmp_path) -> None:
-    calls: list[dict] = []
-
-    def _fake_invoke(**kwargs):
-        calls.append(kwargs)
-        if kwargs.get("blocked_provider_types"):
-            return RuntimeProviderInvokeResult(
-                attempted=False,
+    calls = _patch_role_runtime(
+        monkeypatch,
+        [
+            _runtime_result(
                 ok=False,
-                output="",
-                provider_id="openai_compat",
+                provider_id="remote",
                 provider_type="openai_compat",
                 model="gpt-4o",
-            )
-        return RuntimeProviderInvokeResult(
-            attempted=True,
-            ok=True,
-            output='{"acceptance":"PASS","summary":"fallback","findings":[]}',
-            provider_id="openai_compat",
-            provider_type="openai_compat",
-            model="gpt-4o",
-        )
-
-    monkeypatch.setattr(
-        "polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke
+                error_message="provider_type_blocked:openai_compat",
+            ),
+            _runtime_result(
+                ok=True,
+                output='{"acceptance":"PASS","summary":"fallback","findings":[]}',
+                provider_id="remote",
+                provider_type="openai_compat",
+                model="gpt-4o",
+            ),
+        ],
     )
     monkeypatch.setattr(
         "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",
@@ -115,26 +150,24 @@ def test_make_audit_llm_caller_falls_back_to_role_runtime(monkeypatch, tmp_path)
 
     assert output.startswith("{")
     assert len(calls) == 2
+    assert calls[0].metadata["blocked_provider_types"] == ("openai_compat",)
+    assert "blocked_provider_types" not in calls[1].metadata
     assert provider_info["llm_strategy"] == "role_runtime_fallback"
     assert provider_info["llm_provider_type"] == "openai_compat"
 
 
 def test_make_audit_llm_caller_local_only_returns_inconclusive_payload(monkeypatch, tmp_path) -> None:
-    calls: list[dict] = []
-
-    def _fake_invoke(**kwargs):
-        calls.append(kwargs)
-        return RuntimeProviderInvokeResult(
-            attempted=False,
-            ok=False,
-            output="",
-            provider_id="openai_compat",
-            provider_type="openai_compat",
-            model="gpt-4o",
-        )
-
-    monkeypatch.setattr(
-        "polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider", _fake_invoke
+    calls = _patch_role_runtime(
+        monkeypatch,
+        [
+            _runtime_result(
+                ok=False,
+                provider_id="remote",
+                provider_type="openai_compat",
+                model="gpt-4o",
+                error_message="provider_type_blocked:openai_compat",
+            )
+        ],
     )
     monkeypatch.setattr(
         "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",

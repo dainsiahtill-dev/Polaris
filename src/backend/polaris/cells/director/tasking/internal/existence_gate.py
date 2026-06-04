@@ -7,7 +7,7 @@ ones.  This single check eliminates the need for:
 
   • required_evidence.must_read blocking execution
   • should_bootstrap_direct_edit() (now inlined here)
-  • The bootstrap fallback chain in loop-director.py
+  • Historical bootstrap fallback chains in retired Director scripts
 
 Design constraints:
   - Zero LLM calls.

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import ast
-import asyncio
 import json
 import os
 import re
@@ -15,8 +14,6 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, cast
 
-from polaris.bootstrap.config import get_settings
-from polaris.cells.llm.dialogue.public.service import generate_role_response
 from polaris.cells.orchestration.pm_planning.public.service import (
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality,
@@ -34,6 +31,7 @@ from polaris.kernelone.storage import (
 )
 
 from .base import BaseRoleAdapter
+from .runtime_dialogue import invoke_role_runtime_first
 
 _DEFAULT_PHASE_SEQUENCE = ("requirements", "implementation", "verification")
 _STOPWORDS = {
@@ -156,13 +154,11 @@ class PMAdapter(BaseRoleAdapter):
 
         try:
             message = directive or "请分析当前工作区并生成可执行架构文档"
-            settings = get_settings()
-            response = await generate_role_response(
+            response = await invoke_role_runtime_first(
                 workspace=self.workspace,
-                settings=settings,
                 role="architect",
                 message=message,
-                context=None,
+                context={"task_id": task_id, "mode": "pm_architect_stage"},
                 validate_output=False,
                 max_retries=1,
             )
@@ -512,49 +508,20 @@ class PMAdapter(BaseRoleAdapter):
             }
 
     async def _call_role_llm(self, message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Call PM planning through the direct runtime provider path.
+        """Call PM planning through the role runtime/Context OS path.
 
-        PM task contracts are data, not chat/tool turns. The role chat kernel
-        can wrap responses with Thinking/Action sections, which breaks the
-        contract parser before it sees a JSON object.
+        PM task contracts are still parsed and quality-gated locally, but the
+        LLM turn must enter roles.runtime so Context OS and cognitive receipts
+        are exercised in production workflows.
         """
-        del context
-        return await asyncio.to_thread(self._call_role_llm_sync, message)
-
-    def _call_role_llm_sync(self, message: str) -> dict[str, Any]:
-        from polaris.infrastructure.llm.provider_runtime_adapter import AppLLMRuntimeAdapter
-        from polaris.kernelone.llm.runtime import invoke_role_runtime_provider
-
-        timeout = int(getattr(get_settings(), "llm_timeout", 0) or 0) or 360
-        result = invoke_role_runtime_provider(
-            role=self.role_id,
+        return await invoke_role_runtime_first(
             workspace=self.workspace,
-            prompt=message,
-            fallback_model="",
-            timeout=timeout,
-            adapter=AppLLMRuntimeAdapter(),
-            blocked_provider_types={
-                "",
-                "codex",
-                "codex_cli",
-                "codex_sdk",
-            },
+            role=self.role_id,
+            message=message,
+            context=context,
+            validate_output=False,
+            max_retries=1,
         )
-        if not result.attempted or not result.ok:
-            error_message = str(result.error or "").strip() or "runtime_provider_unavailable"
-            if not result.attempted:
-                raise RuntimeError(f"PM runtime provider binding is not configured: {error_message}")
-            raise RuntimeError(f"PM runtime provider invocation failed: {error_message}")
-
-        output = str(result.output or "")
-        return {
-            "content": output,
-            "response": output,
-            "success": True,
-            "role": self.role_id,
-            "model": result.model,
-            "provider": result.provider_id,
-        }
 
     @staticmethod
     def _response_text(response: Any) -> str:

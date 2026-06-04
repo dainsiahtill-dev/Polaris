@@ -3005,10 +3005,12 @@ cells:
       - chief_engineer.blueprint
       - orchestration.pm_planning
       - resident.autonomy
+      - roles.adapters
     subgraphs:
       - execution_governance_pipeline
     state_owners: []
-    effects_allowed: []
+    effects_allowed:
+      - fs.write:runtime/workflow/*
     verification:
       tests:
         - polaris/tests/orchestration/test_workflow_engine.py

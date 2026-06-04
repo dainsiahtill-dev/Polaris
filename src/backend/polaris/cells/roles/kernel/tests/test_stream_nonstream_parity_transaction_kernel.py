@@ -9,9 +9,10 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TransactionConfig
-from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
+from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ErrorEvent
 
 
 async def _collect_stream(
@@ -185,6 +186,97 @@ class TestStreamNonStreamParity:
         assert stream_summary["status"] == "handoff"
         assert run_result["metrics"]["llm_calls"] == stream_summary["llm_calls"] == 1
         assert run_result["metrics"]["tool_calls"] == stream_summary["tool_calls"] == 0
+
+    @pytest.mark.asyncio
+    async def test_stream_handoff_fails_closed_when_workflow_runtime_fails(self) -> None:
+        llm = AsyncMock(
+            return_value={
+                "content": "Create PR.",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "create_pull_request", "arguments": '{"title": "PR"}'},
+                    }
+                ],
+                "model": "test-model",
+                "usage": {"prompt_tokens": 15, "completion_tokens": 8},
+            }
+        )
+        tool_runtime = AsyncMock()
+
+        class FailingWorkflowRuntime:
+            async def execute_stream(self, _decision: object, _turn_id: object) -> Any:
+                raise RuntimeError("stream workflow exploded")
+                yield None
+
+        kernel = TransactionKernel(
+            llm_provider=llm,
+            tool_runtime=tool_runtime,
+            config=TransactionConfig(domain="document"),
+            workflow_runtime=FailingWorkflowRuntime(),
+        )
+
+        events: list[Any] = []
+        async for event in kernel.execute_stream(
+            "turn_stream_workflow_fail",
+            [{"role": "user", "content": "create pr"}],
+            [{"name": "create_pull_request", "description": "Create PR"}],
+        ):
+            events.append(event)
+
+        completions = [event for event in events if isinstance(event, CompletionEvent)]
+        errors = [event for event in events if isinstance(event, ErrorEvent)]
+        assert len(completions) == 1
+        assert completions[0].status == "error"
+        assert completions[0].error == "stream workflow exploded"
+        assert errors
+        assert errors[0].error_type == "workflow_stream_error"
+
+    @pytest.mark.asyncio
+    async def test_stream_handoff_fails_closed_when_workflow_runtime_returns_failed_completion(self) -> None:
+        llm = AsyncMock(
+            return_value={
+                "content": "Create PR.",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "create_pull_request", "arguments": '{"title": "PR"}'},
+                    }
+                ],
+                "model": "test-model",
+                "usage": {"prompt_tokens": 15, "completion_tokens": 8},
+            }
+        )
+        tool_runtime = AsyncMock(return_value={"ok": True, "result": "done"})
+
+        async def failing_synthesis(_context: dict[str, Any]) -> str:
+            raise RuntimeError("stream synthesis exploded")
+
+        workflow_runtime = ExplorationWorkflowRuntime(
+            tool_executor=tool_runtime,
+            synthesis_llm=failing_synthesis,
+        )
+        kernel = TransactionKernel(
+            llm_provider=llm,
+            tool_runtime=tool_runtime,
+            config=TransactionConfig(domain="document"),
+            workflow_runtime=workflow_runtime,
+        )
+
+        events: list[Any] = []
+        async for event in kernel.execute_stream(
+            "turn_stream_workflow_failed_status",
+            [{"role": "user", "content": "create pr"}],
+            [{"name": "create_pull_request", "description": "Create PR"}],
+        ):
+            events.append(event)
+
+        completions = [event for event in events if isinstance(event, CompletionEvent)]
+        assert len(completions) == 1
+        assert completions[0].status == "error"
+        assert completions[0].error == "stream synthesis exploded"
 
     @pytest.mark.asyncio
     async def test_identical_visible_content_parity(self) -> None:

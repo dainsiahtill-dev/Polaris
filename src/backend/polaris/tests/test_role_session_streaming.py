@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Literal
 
 import pytest
 from polaris.cells.runtime.state_owner.internal.state import AppState
@@ -44,13 +45,14 @@ class _DetachedSession:
 class _FakeRoleSessionService:
     add_calls: list[dict[str, str | None]] = []
 
-    def __init__(self) -> None:
+    def __init__(self, workspace: str | None = None) -> None:
         self.closed = False
+        self.workspace = workspace
 
     def __enter__(self) -> _FakeRoleSessionService:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
         self.closed = True
         return False
 
@@ -87,7 +89,7 @@ async def test_send_message_stream_snapshots_session_data_before_service_closes(
     _FakeRoleSessionService.add_calls = []
     captured_invocation: dict[str, object] = {}
 
-    async def _fake_generate_role_response_streaming(**kwargs):
+    async def _fake_execute_role_chat_streaming(**kwargs):
         captured_invocation.update(kwargs)
         output_queue = kwargs["output_queue"]
         await output_queue.put({"type": "content_chunk", "data": {"content": "done"}})
@@ -102,8 +104,8 @@ async def test_send_message_stream_snapshots_session_data_before_service_closes(
     monkeypatch.setattr(role_session, "RoleSessionService", _FakeRoleSessionService)
     monkeypatch.setattr(
         role_session,
-        "generate_role_response_streaming",
-        _fake_generate_role_response_streaming,
+        "execute_role_chat_streaming",
+        _fake_execute_role_chat_streaming,
     )
 
     response = await role_session.send_message_stream(request, "session-1", payload)

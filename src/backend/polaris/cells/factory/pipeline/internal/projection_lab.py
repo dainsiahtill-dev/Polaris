@@ -8,14 +8,17 @@ artifacts are persisted into Polaris-managed hidden storage.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import sys
+import threading
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from polaris.cells.factory.pipeline.public.contracts import (
     FactoryPipelineError,
@@ -33,12 +36,37 @@ from .models import CommandSpec, EntitySpec, FieldSpec, ProjectionEntry, TargetC
 from .projection_change_analysis import ProjectionChangeAnalysisService
 from .resource_http_service_renderer import ResourceHttpServiceRenderer
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 logger = logging.getLogger(__name__)
 
 _PROJECT_SLUG_PATTERN = re.compile(r"[^a-z0-9_]+")
+
+
+def _run_async_from_sync(coro_factory: Callable[[], Awaitable[Any]], *, timeout_seconds: float) -> Any:
+    async def _run_with_timeout() -> Any:
+        return await asyncio.wait_for(coro_factory(), timeout=max(1.0, float(timeout_seconds)))
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_run_with_timeout())
+
+    result_box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            result_box["value"] = asyncio.run(_run_with_timeout())
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread.
+            result_box["exception"] = exc
+
+    thread = threading.Thread(target=_runner, name="polaris-projection-role-runtime", daemon=True)
+    thread.start()
+    thread.join(max(1.0, float(timeout_seconds)) + 5.0)
+    if thread.is_alive():
+        raise TimeoutError(f"projection role runtime timed out after {timeout_seconds}s")
+    exception = result_box.get("exception")
+    if isinstance(exception, BaseException):
+        raise exception
+    return result_box.get("value")
 
 
 class ProjectRenderer(Protocol):
@@ -977,28 +1005,48 @@ class FactoryProjectionLabService:
         if not command.use_pm_llm:
             return fallback
 
-        try:
-            from polaris.cells.llm.provider_runtime.public.service import invoke_role_runtime_provider
-        except (RuntimeError, ValueError) as exc:
-            logger.debug("PM runtime provider import unavailable for projection lab: %s", exc)
-            return fallback
-
         prompt = scenario.pm_prompt_builder(command.requirement)
         try:
-            provider_result = invoke_role_runtime_provider(
+            from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+            from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+            session_basis = uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"{self.workspace}:{command.scenario_id}:{command.project_slug}:{command.requirement}",
+            ).hex[:16]
+            role_command = ExecuteRoleSessionCommandV1(
                 role="pm",
+                session_id=f"projection-lab-pm-{session_basis}",
                 workspace=self.workspace,
-                prompt=prompt,
-                fallback_model="default",
-                timeout=45,
-                blocked_provider_types={""},
+                user_message=prompt,
+                domain="document",
+                context={
+                    "scenario_id": command.scenario_id,
+                    "project_slug": command.project_slug,
+                    "projection_lab": True,
+                    "requirement_normalization": True,
+                },
+                metadata={
+                    "source": "factory.pipeline.projection_lab",
+                    "role_runtime_required": True,
+                    "cognitive_runtime_required": True,
+                    "context_os_expected": True,
+                    "validate_output": False,
+                    "max_retries": 0,
+                },
+                stream=False,
+                host_kind="factory_projection_lab",
             )
-        except (RuntimeError, ValueError) as exc:
-            logger.warning("PM runtime provider invocation failed: %s", exc)
+            runtime_result = _run_async_from_sync(
+                lambda: RoleRuntimeService().execute_role_session(role_command),
+                timeout_seconds=45,
+            )
+        except (ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            logger.warning("PM role runtime invocation failed for projection lab: %s", exc)
             return fallback
 
-        output = str(provider_result.output or "").strip()
-        if not provider_result.attempted or not output:
+        output = str(getattr(runtime_result, "output", "") or "").strip()
+        if not bool(getattr(runtime_result, "ok", False)) or not output:
             return fallback
 
         parsed = self._parse_json_object(output)
@@ -1017,12 +1065,14 @@ class FactoryProjectionLabService:
         normalized_payload = dict(parsed)
         normalized_payload.update(
             {
-                "source": "pm_llm",
+                "source": "pm_role_runtime",
                 "project_title": str(parsed.get("project_title") or fallback["project_title"]).strip()
                 or fallback["project_title"],
                 "summary": str(parsed.get("summary") or fallback["summary"]).strip() or fallback["summary"],
                 "capability_focus": normalized_focus,
                 "raw_output": output[:4000],
+                "role_runtime_entrypoint": "roles.runtime.execute_role_session",
+                "context_os_expected": True,
             }
         )
         return normalized_payload

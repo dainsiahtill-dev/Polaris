@@ -16,9 +16,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-# 导入 LLM 运行时调用
-from polaris.cells.llm.provider_runtime.public import invoke_role_runtime_provider
-
 # 导入 Context Gateway
 from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
 
@@ -162,18 +159,8 @@ class ChiefEngineerLLMClient:
         }
 
     def _invoke_plain(self, prompt: str, system_prompt: str | None = None, **kwargs) -> dict[str, Any]:
-        """普通 LLM 调用（无工具）."""
-        result = invoke_role_runtime_provider(
-            role=self.role,
-            workspace=self.workspace,
-            prompt=prompt,
-            fallback_model=kwargs.get("model", ""),
-            timeout=kwargs.get("timeout", 120),
-        )
-        return {
-            "output": result.output if hasattr(result, "output") else str(result),
-            "raw": result,
-        }
+        """Fail closed: this frozen compatibility module must not invoke LLMs."""
+        raise RuntimeError("chief_engineer_llm_tools is frozen; use RoleRuntimeService.execute_role_session instead")
 
     def _invoke_messages(self, messages: list[dict[str, str]], **kwargs) -> dict[str, Any]:
         """使用消息列表调用 LLM."""

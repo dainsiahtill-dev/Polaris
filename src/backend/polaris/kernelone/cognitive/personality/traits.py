@@ -1,4 +1,4 @@
-"""Cognitive Personality Traits - 认知生命体人格特质."""
+"""Role cognitive personality traits."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from enum import Enum
 
 
 class CognitiveTrait(str, Enum):
-    """8 Core personality traits for cognitive life form."""
+    """Core personality traits for role behavior."""
 
     CURIOUS = "curious"
     HUMBLE = "humble"

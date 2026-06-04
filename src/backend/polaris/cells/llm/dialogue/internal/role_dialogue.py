@@ -3,7 +3,8 @@
 ⚠️ 防重复造轮子提示 ⚠️
 ═══════════════════════════════════════════════════════════════════
 
-这是 Polaris 唯一的角色对话实现，所有角色的提示词模板集中于此。
+这是 llm.dialogue 兼容 facade 的角色对话适配层。生产角色调用必须进入
+roles.runtime / RoleExecutionKernel；本模块不得作为新的生产入口扩散。
 
 如果你需要：
   1. 添加新角色 → 在 ROLE_PROMPT_TEMPLATES 中增加条目
@@ -13,12 +14,12 @@
 禁止行为：
   ✗ 新建 pm_dialogue.py / architect_dialogue.py 等单独文件
   ✗ 在 role_agent/ 下内嵌角色提示词
-  ✗ 创建新的 "generate_xxx_response" 函数，复用 generate_role_response()
+  ✗ 创建新的 "generate_xxx_response" 函数或从生产入口直接调用 role dialogue 兼容 facade
 
 相关文件：
   - 工具系统: core/llm_toolkit/
   - 角色集成: core/llm_toolkit/integrations.py
-  - 旧代码: pm_dialogue.py（待迁移，新代码勿用）
+  - 生产入口: polaris.cells.roles.runtime.public.service
 
 提示词设计原则：
 1. 结构化输出：要求LLM输出特定格式的结构化数据
@@ -314,7 +315,7 @@ async def generate_role_response(
         validate_output: 是否验证输出格式
         max_retries: 验证失败时重试次数
         prompt_appendix: 追加提示词（仅追加，不覆盖核心提示词）
-        enable_cognitive: 是否启用认知生命体（None=默认启用，True=启用，False=禁用）
+        enable_cognitive: 是否启用认知中间件（None=默认启用，True=启用，False=禁用）
 
     Returns:
         {

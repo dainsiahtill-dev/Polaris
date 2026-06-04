@@ -185,31 +185,8 @@ class DirectorLLMClient:
         }
 
     def _invoke_plain(self, prompt: str, system_prompt: str | None = None, **kwargs) -> dict[str, Any]:
-        """普通 LLM 调用（无工具）."""
-        # 尝试使用运行时调用
-        try:
-            from polaris.cells.llm.provider_runtime.public import invoke_role_runtime_provider
-
-            full_prompt = prompt
-            if system_prompt:
-                full_prompt = f"{system_prompt}\n\n{prompt}"
-
-            result = invoke_role_runtime_provider(
-                role=self.role,
-                workspace=self.workspace,
-                prompt=full_prompt,
-                fallback_model=kwargs.get("model", ""),
-                timeout=kwargs.get("timeout", 120),
-            )
-            return {
-                "output": result.output if hasattr(result, "output") else str(result),
-                "raw": result,
-            }
-        except ImportError:
-            return {
-                "output": f"[LLM not available] Would process: {prompt[:100]}...",
-                "raw": None,
-            }
+        """Fail closed: this frozen compatibility module must not invoke LLMs."""
+        raise RuntimeError("director_llm_tools is frozen; use RoleRuntimeService.execute_role_session instead")
 
     def _invoke_messages(self, messages: list[dict[str, str]], **kwargs) -> dict[str, Any]:
         """使用消息列表调用 LLM."""

@@ -17,7 +17,8 @@
 > and CLI/runtime consumers have been landed in code and covered by tests.
 > Unified runtime switches are now wired and default-on:
 > `KERNELONE_CONTEXT_OS_ENABLED` (default: enabled) and
-> `KERNELONE_COGNITIVE_RUNTIME_MODE` (default: `shadow`).
+> `KERNELONE_COGNITIVE_RUNTIME_MODE` (landed as `shadow` on 2026-03-26;
+> current default is `mainline` as of 2026-06-04).
 > Remaining phases in this plan: none.
 > Post-landing hardening work is tracked separately in:
 > `docs/KERNELONE_CONTEXT_OS_COGNITIVE_RUNTIME_HARDENING_PLAN_2026-03-27.md`.
@@ -548,10 +549,10 @@ This plan is considered complete with the following closure facts:
 2. Context OS and Cognitive Runtime are runtime-switchable.
 3. Default behavior is enabled:
    - `KERNELONE_CONTEXT_OS_ENABLED` -> enabled by default
-   - `KERNELONE_COGNITIVE_RUNTIME_MODE` -> `shadow` by default
+   - `KERNELONE_COGNITIVE_RUNTIME_MODE` -> landed as `shadow`; current default is `mainline` as of 2026-06-04
 4. `roles.session` remains canonical raw-truth owner.
 5. `context.engine` remains public facade.
-6. `Cognitive Runtime` remains non-blocking sidecar authority unless explicitly promoted.
+6. `Cognitive Runtime` was non-blocking sidecar authority at this plan's closure; RoleRuntime MAINLINE promotion is tracked in the 2026-06-04 production activation blueprint.
 
 Out of scope for this specific plan (next-cycle work, not phase debt):
 

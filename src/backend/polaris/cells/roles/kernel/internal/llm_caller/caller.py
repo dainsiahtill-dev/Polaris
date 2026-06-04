@@ -51,6 +51,12 @@ _TRANSACTION_KERNEL_PREBUILT_COMPRESSION_APPLIED_KEY = "_transaction_kernel_preb
 _TRANSACTION_KERNEL_PREBUILT_COMPRESSION_STRATEGY_KEY = "_transaction_kernel_prebuilt_compression_strategy"
 _TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY = "_transaction_kernel_forced_tool_definitions"
 _TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY = "_transaction_kernel_forced_tool_choice"
+_PROVIDER_POLICY_KEYS = (
+    "allowed_provider_types",
+    "allow_provider_types",
+    "blocked_provider_types",
+    "provider_type_policy",
+)
 
 
 def _normalize_user_message_for_dedupe(value: Any) -> str:
@@ -58,6 +64,22 @@ def _normalize_user_message_for_dedupe(value: Any) -> str:
     token = token.replace("\r\n", "\n").replace("\r", "\n")
     token = token.replace("\ufeff", "").strip()
     return token
+
+
+def _copy_provider_policy_options(*, override: Any, request_options: dict[str, Any]) -> None:
+    """Copy provider type policy from role-runtime context into AIRequest options."""
+    if not isinstance(override, dict):
+        return
+    for key in _PROVIDER_POLICY_KEYS:
+        value = override.get(key)
+        if value is not None:
+            request_options[key] = value
+    policy = override.get("llm_provider_policy")
+    if isinstance(policy, dict):
+        for key in _PROVIDER_POLICY_KEYS:
+            value = policy.get(key)
+            if value is not None:
+                request_options[key] = value
 
 
 class LLMCaller:
@@ -318,6 +340,10 @@ class LLMCaller:
             "max_tokens": max_tokens,
             "timeout": request_timeout_seconds,
         }
+        _copy_provider_policy_options(
+            override=override if isinstance(override, dict) else None,
+            request_options=request_options,
+        )
         capabilities = self._resolve_provider_capabilities(profile)
         contract = build_interaction_contract(
             profile=profile,

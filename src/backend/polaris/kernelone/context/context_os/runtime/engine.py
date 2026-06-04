@@ -45,6 +45,7 @@ from .state import _ContextOSStateMixin
 
 logger = logging.getLogger(__name__)
 
+
 class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
     """Canonical state-first session context engine.
 
@@ -75,7 +76,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
 
         # Initialize dialog act classifier if enabled
         self._dialog_act_classifier: DialogActClassifier | None = None
-        if self.policy.enable_dialog_act:
+        if self.policy.attention_runtime.enable_dialog_act:
             self._dialog_act_classifier = DialogActClassifier()
 
         # Async lock for thread-safety in async contexts (lazy initialization)
@@ -417,7 +418,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
                 return self._resolved_context_window
 
         # Final fallback to policy default (env var overridable)
-        self._resolved_context_window = self.policy.model_context_window
+        self._resolved_context_window = self.policy.context_window.model_context_window
         return self._resolved_context_window
 
     @property

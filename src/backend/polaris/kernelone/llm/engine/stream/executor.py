@@ -21,6 +21,7 @@ from ...providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
 from .._executor_base import (
     build_invoke_config,
     get_provider_config,
+    provider_type_policy_error,
     resolve_provider_model,
     resolve_requested_output_tokens,
 )
@@ -315,6 +316,10 @@ class StreamExecutor:
 
         if not provider_type:
             yield AIStreamEvent.error_event(f"Provider type not found for {provider_id}")
+            return
+        provider_policy_error = provider_type_policy_error(provider_type, request.options)
+        if provider_policy_error:
+            yield AIStreamEvent.error_event(provider_policy_error)
             return
 
         provider_instance = _providers_module.get_provider_manager().get_provider_instance(provider_type)

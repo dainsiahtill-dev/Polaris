@@ -1031,11 +1031,12 @@ class RoleConsoleHost:
         debug: bool = False,
         enable_cognitive: bool | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        session_payload: dict[str, Any] | None
         if not session_id:
             session_payload = self.create_session(context_config=_copy_mapping(context))
             session_id = str(session_payload.get("id") or "")
         else:
-            session_payload: dict[str, Any] | None = self._load_session_payload(session_id, message_limit=history_limit)
+            session_payload = self._load_session_payload(session_id, message_limit=history_limit)
             if session_payload is None:
                 raise RoleSessionNotFoundError(f"Session not found: {session_id}")
 
@@ -1276,7 +1277,7 @@ class RoleConsoleHost:
 
                 runtime_service_typed = cast(RoleRuntimeService, self._runtime_service)
                 try:
-                    tx_controller = runtime_service_typed.create_transaction_controller(command)
+                    tx_controller = await runtime_service_typed.create_transaction_controller(command)
                 except (RuntimeError, ValueError) as exc:
                     logger.warning("Failed to create transaction controller for orchestrator: %s", exc)
                     use_orchestrator = False

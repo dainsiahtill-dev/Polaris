@@ -110,6 +110,40 @@ def build_workflow_handoff_context(
     }
 
 
+def _workflow_result_failure(result: Any) -> str | None:
+    """Return an error string when a workflow result is not successful."""
+
+    status = getattr(result, "status", None)
+    status_value = getattr(status, "value", status)
+    status_text = str(status_value or "").strip().lower()
+    error = str(getattr(result, "error", "") or "").strip()
+    if error:
+        return error
+    if status_text and status_text not in {"completed", "success", "ok"}:
+        return f"workflow_result_status_{status_text}"
+    return None
+
+
+def _workflow_event_failure(event: Any) -> str | None:
+    """Return an error string when a workflow stream event reports failure."""
+
+    event_name = type(event).__name__
+    if event_name == "ErrorEvent":
+        return str(getattr(event, "message", "") or getattr(event, "error", "") or "workflow_stream_error")
+
+    if event_name != "CompletionEvent":
+        return None
+
+    error = str(getattr(event, "error", "") or "").strip()
+    if error:
+        return error
+
+    status_text = str(getattr(event, "status", "") or "").strip().lower()
+    if status_text in {"failed", "failure", "error", "cancelled", "timeout"}:
+        return f"workflow_stream_status_{status_text}"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Handoff Handler
 # ---------------------------------------------------------------------------
@@ -170,6 +204,7 @@ class HandoffHandler:
         )
 
         exploration_result_dict: dict[str, Any] | None = None
+        exploration_error: str | None = None
         if self.workflow_runtime is not None:
             try:
                 exploration_result = await self.workflow_runtime.execute(decision, TurnId(str(turn_id)))
@@ -183,9 +218,45 @@ class HandoffHandler:
                     "error": exploration_result.error,
                 }
                 workflow_context["exploration_result"] = exploration_result_dict
+                exploration_error = _workflow_result_failure(exploration_result)
+                if exploration_error:
+                    workflow_context["exploration_error"] = exploration_error
             except Exception as exc:
                 logger.exception("ExplorationWorkflowRuntime execution failed during handoff: turn_id=%s", turn_id)
-                workflow_context["exploration_error"] = str(exc)
+                exploration_error = str(exc)
+                workflow_context["exploration_error"] = exploration_error
+
+        if exploration_error:
+            state_machine.transition_to(TurnState.FAILED)
+            ledger.state_history.append(("FAILED", int(time.time() * 1000)))
+            ledger.finalize()
+            visible_content = (
+                f"[HANDOFF_ERROR] Exploration workflow failed. Reason: {handoff_reason}. Error: {exploration_error}"
+            )
+            self.emit_event(
+                CompletionEvent(
+                    turn_id=turn_id,
+                    status="error",
+                    duration_ms=ledger.get_duration_ms(),
+                    llm_calls=len(ledger.llm_calls),
+                    tool_calls=len(ledger.tool_executions),
+                    error=exploration_error,
+                )
+            )
+            return self.build_turn_result(
+                turn_id=turn_id,
+                kind="workflow_execution_error",
+                visible_content=visible_content,
+                decision=decision,
+                batch_receipt=batch_receipt,
+                finalization={
+                    "error": exploration_error,
+                    "phase": "handoff_workflow",
+                    "handoff_reason": handoff_reason,
+                },
+                ledger=ledger,
+                workflow_context=workflow_context,
+            )
 
         state_machine.transition_to(TurnState.COMPLETED)
         ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
@@ -255,12 +326,19 @@ class HandoffHandler:
             },
         )
 
+        workflow_error: str | None = None
         if self.workflow_runtime is not None and hasattr(self.workflow_runtime, "execute_stream"):
             try:
                 async for event in self.workflow_runtime.execute_stream(decision, TurnId(str(turn_id))):
+                    event_error = _workflow_event_failure(event)
+                    if event_error:
+                        workflow_error = event_error
+                    if isinstance(event, CompletionEvent):
+                        continue
                     yield event
             except Exception as exc:
                 logger.exception("ExplorationWorkflowRuntime stream failed during handoff: turn_id=%s", turn_id)
+                workflow_error = str(exc)
                 yield ErrorEvent(
                     turn_id=str(turn_id),
                     error_type="workflow_stream_error",
@@ -270,14 +348,16 @@ class HandoffHandler:
         elif self.workflow_runtime is not None:
             try:
                 exploration_result = await self.workflow_runtime.execute(decision, TurnId(str(turn_id)))
+                workflow_error = _workflow_result_failure(exploration_result)
                 visible_content = exploration_result.synthesis or "[HANDOFF] Exploration completed."
-                if visible_content:
+                if visible_content and not workflow_error:
                     yield ContentChunkEvent(
                         turn_id=str(turn_id),
                         chunk=visible_content,
                     )
             except Exception as exc:
                 logger.exception("ExplorationWorkflowRuntime execution failed during handoff: turn_id=%s", turn_id)
+                workflow_error = str(exc)
                 yield ErrorEvent(
                     turn_id=str(turn_id),
                     error_type="workflow_execution_error",
@@ -285,19 +365,23 @@ class HandoffHandler:
                     state_at_error="HANDOFF_WORKFLOW",
                 )
 
-        state_machine.transition_to(TurnState.COMPLETED)
-        ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
+        final_state = TurnState.FAILED if workflow_error else TurnState.COMPLETED
+        state_machine.transition_to(final_state)
+        ledger.state_history.append((final_state.name, int(time.time() * 1000)))
         ledger.finalize()
 
         yield CompletionEvent(
             turn_id=str(turn_id),
-            status="handoff",
+            status="error" if workflow_error else "handoff",
             duration_ms=ledger.get_duration_ms(),
             llm_calls=len(ledger.llm_calls),
             tool_calls=len(ledger.tool_executions),
             turn_kind="handoff_workflow",
+            error=workflow_error,
             visible_content=(
-                f"[HANDOFF] Exploration workflow executed. Reason: {handoff_reason}"
+                f"[HANDOFF_ERROR] Exploration workflow failed. Reason: {handoff_reason}. Error: {workflow_error}"
+                if workflow_error
+                else f"[HANDOFF] Exploration workflow executed. Reason: {handoff_reason}"
                 if self.workflow_runtime is not None
                 else f"[HANDOFF] Workflow runtime unavailable. Reason: {handoff_reason}"
             ),

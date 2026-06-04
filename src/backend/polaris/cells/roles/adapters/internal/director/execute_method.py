@@ -114,6 +114,124 @@ def _task_runtime_finalization_failed_result(
     return result
 
 
+def _emit_director_adapter_cognitive_receipt(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    target_task_id: str,
+    run_id: str,
+    context: dict[str, Any],
+    receipt_type: str,
+    payload: dict[str, Any],
+    export_handoff: bool = False,
+) -> dict[str, Any]:
+    """Record a Cognitive Runtime receipt for Director adapter materialization."""
+
+    metadata_sources: list[dict[str, Any]] = []
+    for candidate in (
+        context.get("metadata") if isinstance(context, dict) else None,
+        task.get("metadata") if isinstance(task, dict) else None,
+    ):
+        if isinstance(candidate, dict):
+            metadata_sources.append(candidate)
+    merged_metadata: dict[str, Any] = {}
+    for item in metadata_sources:
+        merged_metadata.update(item)
+
+    try:
+        from polaris.kernelone.context.runtime_feature_flags import (
+            CognitiveRuntimeMode,
+            resolve_cognitive_runtime_mode,
+        )
+
+        mode = resolve_cognitive_runtime_mode(context=context, metadata=merged_metadata)
+        if mode is CognitiveRuntimeMode.OFF:
+            return {"ok": False, "disabled": True, "mode": mode.value}
+
+        from polaris.cells.factory.cognitive_runtime.public.contracts import (
+            ExportHandoffPackCommandV1,
+            RecordRuntimeReceiptCommandV1,
+        )
+        from polaris.cells.factory.cognitive_runtime.public.service import (
+            get_cognitive_runtime_public_service,
+        )
+
+        workspace = str(getattr(adapter, "workspace", "") or "").strip()
+        session_id = (
+            str(merged_metadata.get("session_id") or context.get("session_id") or task.get("session_id") or "").strip()
+            or None
+        )
+        effective_run_id = (
+            str(run_id or merged_metadata.get("run_id") or context.get("run_id") or task.get("run_id") or "").strip()
+            or None
+        )
+        turn_envelope_raw = merged_metadata.get("turn_envelope")
+        turn_envelope = dict(turn_envelope_raw) if isinstance(turn_envelope_raw, dict) else {}
+        turn_envelope.setdefault("role", "director")
+        turn_envelope.setdefault("task_id", str(target_task_id or ""))
+        if session_id:
+            turn_envelope.setdefault("session_id", session_id)
+        if effective_run_id:
+            turn_envelope.setdefault("run_id", effective_run_id)
+
+        service = get_cognitive_runtime_public_service()
+        try:
+            receipt_result = service.record_runtime_receipt(
+                RecordRuntimeReceiptCommandV1(
+                    workspace=workspace,
+                    receipt_type=receipt_type,
+                    session_id=session_id,
+                    run_id=effective_run_id,
+                    payload={
+                        "source": "roles.adapters.director",
+                        "task_id": str(target_task_id or ""),
+                        "cognitive_runtime_mode": mode.value,
+                        "context_os_expected": True,
+                        **dict(payload or {}),
+                    },
+                    turn_envelope=turn_envelope,
+                )
+            )
+            receipt = getattr(receipt_result, "receipt", None)
+            receipt_id = str(getattr(receipt, "receipt_id", "") or "").strip()
+            if export_handoff and session_id:
+                handoff_envelope = dict(turn_envelope)
+                if receipt_id:
+                    receipt_ids = list(handoff_envelope.get("receipt_ids") or [])
+                    if receipt_id not in receipt_ids:
+                        receipt_ids.append(receipt_id)
+                    handoff_envelope["receipt_ids"] = receipt_ids
+                service.export_handoff_pack(
+                    ExportHandoffPackCommandV1(
+                        workspace=workspace,
+                        session_id=session_id,
+                        run_id=effective_run_id,
+                        reason=f"roles.adapters.director:{receipt_type}",
+                        turn_envelope=handoff_envelope,
+                    )
+                )
+            return {
+                "ok": bool(getattr(receipt_result, "ok", False)),
+                "receipt_id": receipt_id,
+                "receipt_type": receipt_type,
+                "mode": mode.value,
+            }
+        finally:
+            service.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to emit Director adapter Cognitive Runtime receipt for task=%s type=%s",
+            target_task_id,
+            receipt_type,
+            exc_info=True,
+        )
+        return {
+            "ok": False,
+            "receipt_type": receipt_type,
+            "error": str(exc),
+        }
+
+
 async def execute_director_task(
     adapter: Any,
     task_id: str,
@@ -566,6 +684,22 @@ async def _execute_standard_llm_flow(
                 "existing_contract_evidence": preflight_existing_contract_evidence,
             }
         }
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_existing_scope_preflight",
+            payload={
+                "status": "completed",
+                "materialization_mode": "preflight_verified_existing_workspace_scope",
+                "changed_files": [],
+                "tools_executed": 0,
+            },
+            export_handoff=True,
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         if board_claim_applied and task_claim_session_id:
             finalize_result = _finalize_claimed_execution(
                 adapter,
@@ -599,6 +733,7 @@ async def _execute_standard_llm_flow(
             "task_id": target_task_id,
             "tools_executed": 0,
             "tool_results": [],
+            "cognitive_runtime_receipt": cognitive_receipt,
             "decision_signals": decision_signals,
             "qa_required_for_final_verdict": True,
             "artifacts": [],
@@ -617,7 +752,7 @@ async def _execute_standard_llm_flow(
         else:
             result = await adapter._invoke_role_dialogue_with_timeout(
                 message,
-                context=None,
+                context=context,
                 timeout_seconds=llm_call_timeout,
                 stage_label="first_call",
             )
@@ -725,6 +860,23 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_materialization_failed",
+            payload={
+                "status": "failed",
+                "error": error,
+                "materialization_mode": "no_materialized_changes",
+                "changed_files": [],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+            },
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         if board_claim_applied and task_claim_session_id:
             _finalize_claimed_execution(
                 adapter,
@@ -744,6 +896,7 @@ async def _execute_standard_llm_flow(
             "error_code": error,
             "failure_stage": "director_materialization",
             "root_cause_hint": "no_changed_files",
+            "cognitive_runtime_receipt": cognitive_receipt,
             "decision_signals": [
                 {
                     "code": error,
@@ -777,6 +930,23 @@ async def _execute_standard_llm_flow(
         }
         if primary_llm_summary is not None:
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_existing_scope_verified",
+            payload={
+                "status": "completed",
+                "materialization_mode": "verified_existing_workspace_scope",
+                "changed_files": [],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+            },
+            export_handoff=True,
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         if board_claim_applied and task_claim_session_id:
             finalize_result = _finalize_claimed_execution(
                 adapter,
@@ -812,6 +982,7 @@ async def _execute_standard_llm_flow(
             "task_id": target_task_id,
             "tools_executed": len(tool_results),
             "tool_results": tool_results,
+            "cognitive_runtime_receipt": cognitive_receipt,
             "decision_signals": decision_signals,
             "qa_required_for_final_verdict": True,
             "artifacts": [],
@@ -842,6 +1013,25 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_materialization_receipt_failed",
+            payload={
+                "status": "failed",
+                "error": error,
+                "materialization_mode": materialization_mode,
+                "changed_files": all_affected_files,
+                "new_files": new_files[:20],
+                "modified_files": modified_files[:20],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+            },
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         if board_claim_applied and task_claim_session_id:
             _finalize_claimed_execution(
                 adapter,
@@ -871,6 +1061,7 @@ async def _execute_standard_llm_flow(
             "error_code": error,
             "failure_stage": "director_materialization_receipt",
             "root_cause_hint": "missing_write_tool_receipt",
+            "cognitive_runtime_receipt": cognitive_receipt,
             "decision_signals": [*decision_signals, missing_receipt_signal],
             "qa_required_for_final_verdict": True,
             "artifacts": [],
@@ -902,6 +1093,26 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_materialization_quality_failed",
+            payload={
+                "status": "failed",
+                "error": error,
+                "materialization_mode": materialization_mode,
+                "changed_files": all_affected_files,
+                "new_files": new_files[:20],
+                "modified_files": modified_files[:20],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "artifact_quality_errors": artifact_quality_errors[:20],
+            },
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
         if board_claim_applied and task_claim_session_id:
             _finalize_claimed_execution(
                 adapter,
@@ -930,11 +1141,86 @@ async def _execute_standard_llm_flow(
             "error_code": error,
             "failure_stage": "director_materialization_quality",
             "root_cause_hint": "artifact_quality_failed",
+            "cognitive_runtime_receipt": cognitive_receipt,
             "decision_signals": [*decision_signals, quality_signal],
             "qa_required_for_final_verdict": True,
             "artifacts": [],
             "materialization_mode": materialization_mode,
             "artifact_quality_errors": artifact_quality_errors[:20],
+        }
+
+    semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
+    if semantic_quality_error:
+        error = "director_materialization_semantic_quality_failed"
+        completion_metadata = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": new_files[:20],
+                "new_file_count": len(new_files),
+                "modified_files": modified_files[:20],
+                "modified_file_count": len(modified_files),
+                "materialization_mode": materialization_mode,
+                "materialization_error": error,
+                "semantic_quality_error": semantic_quality_error,
+            }
+        }
+        if primary_llm_summary is not None:
+            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
+        if direct_fallback_summary is not None:
+            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_materialization_semantic_quality_failed",
+            payload={
+                "status": "failed",
+                "error": error,
+                "materialization_mode": materialization_mode,
+                "changed_files": all_affected_files,
+                "new_files": new_files[:20],
+                "modified_files": modified_files[:20],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "semantic_quality_error": semantic_quality_error,
+            },
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        if board_claim_applied and task_claim_session_id:
+            _finalize_claimed_execution(
+                adapter,
+                target_task_id=target_task_id,
+                outcome="failed",
+                session_id=task_claim_session_id,
+                error=error,
+                metadata=completion_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "failed")
+        semantic_signal = {
+            "code": error,
+            "severity": "error",
+            "detail": semantic_quality_error,
+        }
+        return {
+            "success": False,
+            "task_id": target_task_id,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "error": error,
+            "error_code": error,
+            "failure_stage": "director_materialization_semantic_quality",
+            "root_cause_hint": "semantic_quality_failed",
+            "cognitive_runtime_receipt": cognitive_receipt,
+            "decision_signals": [*decision_signals, semantic_signal],
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": materialization_mode,
+            "semantic_quality_error": semantic_quality_error,
         }
 
     # 返回结果
@@ -955,6 +1241,27 @@ async def _execute_standard_llm_flow(
         completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
     if direct_fallback_summary is not None:
         completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+    cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        receipt_type="director_adapter_materialization_completed",
+        payload={
+            "status": "completed",
+            "materialization_mode": materialization_mode,
+            "changed_files": all_affected_files,
+            "new_files": new_files[:20],
+            "modified_files": modified_files[:20],
+            "tools_executed": len(tool_results),
+            "write_tool_evidence": write_tool_evidence,
+            "primary_llm": primary_llm_summary or {},
+            "direct_fallback": direct_fallback_summary or {},
+        },
+        export_handoff=True,
+    )
+    completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
 
     if board_claim_applied and task_claim_session_id:
         finalize_result = _finalize_claimed_execution(
@@ -982,6 +1289,10 @@ async def _execute_standard_llm_flow(
         "task_id": target_task_id,
         "tools_executed": len(tool_results),
         "tool_results": tool_results,
+        "changed_files": all_affected_files,
+        "new_files": new_files,
+        "modified_files": modified_files,
+        "cognitive_runtime_receipt": cognitive_receipt,
         "decision_signals": decision_signals,
         "qa_required_for_final_verdict": True,
         "artifacts": [],

@@ -210,6 +210,10 @@ class TurnEngineContextRequest:
     context_os_snapshot: dict[str, Any] | None = None
     # Optional override dict for domain/hints passed through to LLM caller
     context_override: dict[str, Any] | None = None
+    # Per-turn strategy override produced by RoleRuntime/Cognitive Runtime.
+    # This is control-plane data: ContextGateway may consume it, but it must
+    # never be rendered as prompt-visible context_override text.
+    strategy_override: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

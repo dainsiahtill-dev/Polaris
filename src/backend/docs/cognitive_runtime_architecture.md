@@ -27,10 +27,11 @@
 > runtime receipt / handoff 持久化明确使用 SQLite：
 > `runtime/cognitive_runtime/cognitive_runtime.sqlite`。
 > 这些实现是 authority facade，不是第二套 Context OS。
-> 当前已对 `roles.runtime` 与 `director.execution` 接入 shadow-sidecar：
-> 执行链会旁路写入 receipt / handoff，但不会用 `Cognitive Runtime`
-> 去阻断、裁决或替代生产主链。
-> 运行时模式可开关（默认开启 shadow）：`KERNELONE_COGNITIVE_RUNTIME_MODE=off|shadow|mainline`。
+> 当前已对 `roles.runtime` 接入 MAINLINE preflight，并对
+> `roles.runtime` / `director.execution` 保留 receipt / handoff 证据写入：
+> MAINLINE 会在 LLM turn 前注入受控 guidance、tool policy 和 strategy override；
+> `shadow` 仍可用于只观察不裁决的灰度模式。
+> 运行时模式可开关（默认 `mainline`）：`KERNELONE_COGNITIVE_RUNTIME_MODE=off|shadow|mainline`。
 
 ---
 
@@ -814,19 +815,20 @@
 3. `promote_or_reject`
 4. `rollback_ledger`
 
-### 8.1 当前阶段裁决：Shadow 接入，可开关，不接业务阻断主链
+### 8.1 当前阶段裁决：RoleRuntime MAINLINE，Shadow 可用于灰度
 
-在历史代码尚未完全跑通之前，`Cognitive Runtime` 当前阶段维持以下约束：
+`Cognitive Runtime` 当前阶段维持以下约束：
 
 1. 允许 `Phase-1 + Phase-2` 能力完整落地并持久化（SQLite）
-2. 允许 `roles.runtime` / `director.execution` 旁路写 receipt/handoff/decision/rollback 资产
-3. 允许通过开关启停：`KERNELONE_COGNITIVE_RUNTIME_MODE=off|shadow|mainline`
-4. 保持对现有 Director / roles.runtime / kernelone.context / resident.autonomy 的复用边界
+2. `roles.runtime` 默认执行 MAINLINE preflight，失败或 block 时 fail closed
+3. `roles.runtime` / `director.execution` 写 receipt/handoff/decision/rollback 资产
+4. 允许通过开关启停：`KERNELONE_COGNITIVE_RUNTIME_MODE=off|shadow|mainline`
+5. 保持对现有 Director / roles.runtime / kernelone.context / resident.autonomy 的复用边界
 
 当前阶段明确不做以下内容：
 
-1. 不接入 Polaris 真实业务主流程
-2. 不替换当前 Director 主执行链
+1. 不替换当前 Director 主执行链
+2. 不把 shadow receipt 误标为生产阻断结果
 3. 不新增正式业务状态 source-of-truth
 4. 不把 `Cognitive Runtime` 接到生产性自动演化闭环里
 5. 不要求现阶段 graph 立即声明一个已经完全落地的新 public Cell

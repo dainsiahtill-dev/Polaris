@@ -96,9 +96,9 @@ def _looks_like_large_payload(text: str, *, policy: Any) -> bool:
     token = str(text or "")
     if not token:
         return False
-    if len(token) >= policy.artifact_char_threshold:
+    if len(token) >= policy.artifact.artifact_char_threshold:
         return True
-    if _estimate_tokens(token) >= policy.artifact_token_threshold:
+    if _estimate_tokens(token) >= policy.artifact.artifact_token_threshold:
         return True
     stripped = token.lstrip()
     if stripped.startswith(("{", "[", "<html", "<!doctype", "```")):

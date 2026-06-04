@@ -7,7 +7,6 @@ Migrated from:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 from polaris.cells.orchestration.workflow_activity.internal.models import (
@@ -17,6 +16,7 @@ from polaris.cells.orchestration.workflow_activity.internal.models import (
 from polaris.cells.orchestration.workflow_activity.internal.workflow_client import get_activity_api
 from polaris.domain.entities.policy import Policy
 from polaris.domain.state_machine import PhaseContext, PhaseExecutor, PhaseResult, TaskPhase
+from polaris.kernelone.fs.text_ops import write_json_atomic
 
 from .base import ActivityExecutionResult, register_activity
 
@@ -33,8 +33,6 @@ _PHASE_NAME_MAP = {
     "verification": TaskPhase.VERIFICATION,
     "report": TaskPhase.COMPLETED,
 }
-_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS = 3600
-_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS = 3570
 
 
 def _normalize_dict(value: Any) -> dict[str, Any]:
@@ -47,16 +45,6 @@ def _normalize_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
-
-
-def _coerce_timeout_seconds(value: Any, *, default: int, maximum: int) -> int:
-    try:
-        timeout = int(value) if value is not None else int(default)
-    except (TypeError, ValueError):
-        timeout = int(default)
-    if timeout <= 0:
-        timeout = int(default)
-    return max(30, min(timeout, maximum))
 
 
 def _phase_from_name(name: str) -> TaskPhase | None:
@@ -139,17 +127,80 @@ def _result_payload(
     return payload
 
 
-def _run_director_execution(
+def _extract_adapter_changed_files(result: dict[str, Any]) -> list[str]:
+    changed = _normalize_list(result.get("changed_files"))
+    if changed:
+        return changed
+    return sorted({*_normalize_list(result.get("new_files")), *_normalize_list(result.get("modified_files"))})
+
+
+def _adapter_error(result: dict[str, Any]) -> str:
+    error = str(result.get("error") or result.get("error_code") or "").strip()
+    if error:
+        return error
+    signals = result.get("decision_signals")
+    if isinstance(signals, list):
+        for item in signals:
+            if isinstance(item, dict):
+                detail = str(item.get("detail") or item.get("code") or "").strip()
+                if detail:
+                    return detail
+    return "Director adapter execution failed"
+
+
+def _build_director_adapter_input(contract: TaskContract, phase_context: PhaseContext) -> dict[str, Any]:
+    target_files = _normalize_list(contract.payload.get("target_files"))
+    scope_paths = _normalize_list(contract.payload.get("scope_paths"))
+    acceptance = _normalize_list(contract.payload.get("acceptance_criteria"))
+    constraints = _normalize_list(contract.payload.get("constraints"))
+    metadata = dict(phase_context.metadata)
+    metadata.update(
+        {
+            "task_id": contract.task_id,
+            "pm_task_id": contract.task_id,
+            "title": contract.title,
+            "goal": contract.goal or contract.title,
+            "target_files": target_files,
+            "scope_paths": scope_paths,
+            "acceptance_criteria": acceptance,
+            "acceptance": acceptance,
+            "constraints": constraints,
+            "task_payload": contract.to_dict(),
+            "phase_context": _serialize_context(phase_context),
+            "source": "workflow_activity.director_activity",
+        }
+    )
+    return {
+        "task_id": contract.task_id,
+        "pm_task_id": contract.task_id,
+        "id": contract.task_id,
+        "title": contract.title,
+        "subject": contract.title,
+        "goal": contract.goal or contract.title,
+        "description": contract.goal or contract.title,
+        "input": contract.goal or contract.title,
+        "task": contract.to_dict(),
+        "target_files": target_files,
+        "scope_paths": scope_paths,
+        "scope_mode": str(contract.payload.get("scope_mode") or "module").strip() or "module",
+        "acceptance_criteria": acceptance,
+        "acceptance": acceptance,
+        "constraints": constraints,
+        "metadata": metadata,
+    }
+
+
+async def _run_director_execution(
     *,
     workspace: str,
     run_id: str,
     contract: TaskContract,
+    phase_context: PhaseContext,
     director_config: dict[str, Any],
     runtime_metadata: dict[str, Any],
 ) -> tuple[bool, str, list[str], dict[str, Any]]:
-    from polaris.delivery.cli.pm.director_interface_core import DirectorTask, create_director
+    from polaris.cells.roles.adapters.public.service import create_role_adapter
 
-    project_root = Path(__file__).resolve().parents[5]
     cache_root = str(runtime_metadata.get("cache_root_full") or "").strip()
     if cache_root:
         task_root = os.path.join(
@@ -172,49 +223,43 @@ def _run_director_execution(
     os.makedirs(task_root, exist_ok=True)
     result_path = os.path.join(task_root, "director.result.json")
     log_path = os.path.join(task_root, "director.log")
-
-    process_timeout = _coerce_timeout_seconds(
-        director_config.get("timeout"),
-        default=600,
-        maximum=_DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS,
-    )
-    task_timeout = _coerce_timeout_seconds(
-        director_config.get("task_timeout") or director_config.get("task_timeout_seconds"),
-        default=max(process_timeout - 30, 30),
-        maximum=_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS,
-    )
-    timeout = max(process_timeout, min(task_timeout + 30, _DIRECTOR_PROCESS_TIMEOUT_MAX_SECONDS))
-
-    config = {
-        "script": str(director_config.get("script") or "src/backend/polaris/delivery/cli/loop-director.py"),
-        "timeout": timeout,
-        "task_timeout": task_timeout,
-        "model": str(director_config.get("model") or "").strip(),
-        "prompt_profile": str(director_config.get("prompt_profile") or "").strip(),
-        "director_result_path": result_path,
-        "director_log_path": log_path,
-        "project_root": project_root,
+    context = {
+        "workspace": workspace,
+        "run_id": run_id,
+        "metadata": {
+            **dict(phase_context.metadata),
+            "director_config": dict(director_config),
+            "runtime_metadata": dict(runtime_metadata),
+            "previous_verification_result": dict(phase_context.verification_result),
+            "workflow_activity": "workflow_activity.director_execution",
+        },
     }
-    director_type = str(director_config.get("type") or "auto").strip().lower() or "auto"
-    director = create_director(workspace, director_type, config)
-    if not director.is_available():
-        return False, "Director adapter unavailable", [], {"result_path": result_path, "log_path": log_path}
-
-    director_task = DirectorTask(
-        task_id=contract.task_id,
-        goal=contract.goal or contract.title,
-        target_files=_normalize_list(contract.payload.get("target_files")),
-        acceptance_criteria=_normalize_list(contract.payload.get("acceptance_criteria")),
-        constraints=_normalize_list(contract.payload.get("constraints")),
-        context={"workspace": workspace, "run_id": run_id, "task": contract.to_dict()},
-        scope_paths=_normalize_list(contract.payload.get("scope_paths")),
-        scope_mode=str(contract.payload.get("scope_mode") or "module").strip() or "module",
+    adapter = create_role_adapter("director", workspace)
+    result = dict(
+        await adapter.execute(contract.task_id, _build_director_adapter_input(contract, phase_context), context)
     )
-    result = director.execute(director_task)
-    changed_files = _normalize_list(getattr(result, "changed_files", []))
-    metadata = _normalize_dict(getattr(result, "metadata", {}))
-    metadata.update({"result_path": result_path, "log_path": log_path})
-    return bool(result.success), str(result.error or "").strip(), changed_files, metadata
+    changed_files = _extract_adapter_changed_files(result)
+    success = bool(result.get("success"))
+    error_text = "" if success else _adapter_error(result)
+    result_payload = {
+        "schema_version": 1,
+        "task_id": contract.task_id,
+        "status": "success" if success else "failed",
+        "success": success,
+        "acceptance": success,
+        "changed_files": changed_files,
+        "adapter_result": result,
+        "error": error_text,
+    }
+    write_json_atomic(result_path, result_payload)
+    metadata = {
+        "result_path": result_path,
+        "log_path": log_path,
+        "adapter": "roles.adapters.director",
+        "materialization_mode": str(result.get("materialization_mode") or "").strip(),
+        "qa_required_for_final_verdict": bool(result.get("qa_required_for_final_verdict", True)),
+    }
+    return success, error_text, changed_files, metadata
 
 
 def _is_no_director_mode(payload: dict[str, Any]) -> bool:
@@ -251,7 +296,7 @@ async def claim_task(task: TaskContract | dict[str, Any]) -> dict[str, Any]:
 @register_activity("execute_task_phase")
 @activity.defn(name="execute_task_phase")
 async def execute_task_phase(payload: dict[str, Any]) -> dict[str, Any]:
-    """Execute a real 4-phase Director step using the legacy Director adapter."""
+    """Execute a real 4-phase Director step through the canonical role adapter."""
     phase = str((payload or {}).get("phase") or "").strip() or "unknown"
     task_id = str((payload or {}).get("task_id") or "").strip()
     phase_enum = _phase_from_name(phase)
@@ -300,20 +345,25 @@ async def execute_task_phase(payload: dict[str, Any]) -> dict[str, Any]:
         ).to_dict()
 
     if phase_enum == TaskPhase.EXECUTION:
-        success, error_text, changed_files, _metadata = _run_director_execution(
+        success, error_text, changed_files, _metadata = await _run_director_execution(
             workspace=context.workspace,
             run_id=str((payload or {}).get("run_id") or "").strip(),
             contract=contract,
+            phase_context=context,
             director_config=_normalize_dict((payload or {}).get("director_config")),
             runtime_metadata=_normalize_dict((payload or {}).get("runtime_metadata")),
         )
         if success:
             context.changed_files = list(changed_files)
+            context.metadata["director_execution"] = dict(_metadata)
             result = PhaseResult(
                 success=True,
                 phase=TaskPhase.EXECUTION,
                 message="Director implementation step completed",
-                context_updates={"changed_files": list(changed_files)},
+                context_updates={
+                    "changed_files": list(changed_files),
+                    "metadata": dict(context.metadata),
+                },
                 next_phase=TaskPhase.VERIFICATION,
             )
             step_title = "Phase execution completed"

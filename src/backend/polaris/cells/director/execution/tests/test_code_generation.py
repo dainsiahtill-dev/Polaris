@@ -15,6 +15,7 @@ from polaris.cells.director.execution.internal.code_generation_engine import (
     generate_fallback_code_content,
     generate_phase_aware_fallback_content,
 )
+from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
 class TestCodeGenerationPolicyViolationError:
@@ -794,17 +795,23 @@ class TestBlockedEntryPoints:
     async def test_runtime_codegen_invokes_director_in_proposal_mode(self, monkeypatch):
         captured: dict[str, object] = {}
 
-        async def fake_generate_role_response(**kwargs: object) -> dict[str, object]:
-            captured.update(kwargs)
-            return {
-                "response": "```file: src/app.py\nprint('ok')\n```",
-                "provider": "test-provider",
-                "model": "test-model",
-            }
+        class FakeRoleRuntimeService:
+            async def execute_role_session(self, command: object) -> RoleExecutionResultV1:
+                captured["command"] = command
+                return RoleExecutionResultV1(
+                    ok=True,
+                    status="ok",
+                    role="director",
+                    workspace="/tmp",
+                    task_id="task-1",
+                    session_id="director-codegen-task-1",
+                    output="```file: src/app.py\nprint('ok')\n```",
+                    metadata={"provider": "test-provider", "model": "test-model"},
+                )
 
         monkeypatch.setattr(
-            "polaris.cells.llm.dialogue.public.service.generate_role_response",
-            fake_generate_role_response,
+            "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+            FakeRoleRuntimeService,
         )
 
         engine = CodeGenerationEngine("/tmp", Mock())
@@ -820,20 +827,30 @@ class TestBlockedEntryPoints:
         )
 
         assert result["response"].startswith("```file: src/app.py")
+        assert result["metadata"]["role_runtime_entrypoint"] == "roles.runtime.execute_role_session"
+        assert result["metadata"]["runtime_fallback_used"] is False
+        assert result["metadata"]["fallback_policy"] == "fail_closed"
+        assert "legacy_fallback_used" not in result["metadata"]
+        command = captured["command"]
+        assert command.role == "director"
+        assert command.domain == "code"
         assert (
-            captured["message"] == "[mode:propose] Do not call tools. Please complete the assigned implementation task."
+            command.user_message
+            == "[mode:propose] Do not call tools. Please complete the assigned implementation task."
         )
-        prompt_appendix = str(captured["prompt_appendix"])
+        prompt_appendix = str(command.metadata["prompt_appendix"])
         assert "[mode:propose]" in prompt_appendix
         assert "Do not call tools." in prompt_appendix
         assert "Create src/app.py" in prompt_appendix
         assert prompt_appendix.index("[mode:propose]") < prompt_appendix.index("Create src/app.py")
         assert "write_file" not in prompt_appendix
         assert "Command:" in prompt_appendix
-        assert captured["validate_output"] is False
-        assert captured["max_retries"] == 0
-        assert captured["enable_cognitive"] is False
-        context = captured["context"]
+        assert command.metadata["validate_output"] is False
+        assert command.metadata["max_retries"] == 0
+        assert command.metadata["role_runtime_required"] is True
+        assert command.metadata["cognitive_runtime_required"] is True
+        assert command.metadata["context_os_expected"] is True
+        context = command.context
         assert isinstance(context, dict)
         assert context["delivery_mode"] == "propose_patch"
         assert context["disable_internal_tool_rounds"] is True

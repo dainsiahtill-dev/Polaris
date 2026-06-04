@@ -17,10 +17,10 @@ def is_speculative_execution_enabled() -> bool:
     Priority:
     1. ENABLE_SPECULATIVE_EXECUTION
     2. KERNELONE_ENABLE_SPECULATIVE_EXECUTION (compat)
-    Default: disabled.
+    Default: enabled.
     """
     primary = os.environ.get("ENABLE_SPECULATIVE_EXECUTION")
     if primary is not None:
-        return _parse_bool(primary, default=False)
+        return _parse_bool(primary, default=True)
     compat = os.environ.get("KERNELONE_ENABLE_SPECULATIVE_EXECUTION")
-    return _parse_bool(compat, default=False)
+    return _parse_bool(compat, default=True)

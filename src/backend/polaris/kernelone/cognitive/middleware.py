@@ -1,4 +1,4 @@
-"""Cognitive Middleware - Integrates Cognitive Life Form with Role Dialogue.
+"""Cognitive Middleware - Integrates cognitive pipeline guidance with role dialogue.
 
 This middleware provides optional cognitive enhancement for role processing:
 - Intent detection before role processing
@@ -103,6 +103,7 @@ class CognitiveMiddleware:
             - execution_path: Recommended execution path
             - cognitive_analysis: Pre-computed cognitive analysis
             - blocked: Whether the message was blocked
+            - blocked_tools: Tools disallowed by cognitive governance
         """
         orchestrator = self._get_orchestrator()
 
@@ -116,6 +117,7 @@ class CognitiveMiddleware:
                 "cognitive_analysis": None,
                 "blocked": False,
                 "block_reason": None,
+                "blocked_tools": (),
             }
 
         try:
@@ -140,6 +142,7 @@ class CognitiveMiddleware:
                 },
                 "blocked": result.blocked,
                 "block_reason": result.block_reason,
+                "blocked_tools": tuple(str(item) for item in result.blocked_tools if str(item or "").strip()),
             }
 
         except (RuntimeError, ValueError):
@@ -152,6 +155,7 @@ class CognitiveMiddleware:
                 "cognitive_analysis": None,
                 "blocked": False,
                 "block_reason": None,
+                "blocked_tools": (),
             }
 
     def inject_into_context(

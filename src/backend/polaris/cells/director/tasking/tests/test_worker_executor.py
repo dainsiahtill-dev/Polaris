@@ -636,6 +636,7 @@ class TestExecutionMethods:
     async def test_code_generation_uses_per_call_timeout_not_task_budget(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
     ) -> None:
         """A long task budget must not become a long single LLM call."""
         from polaris.cells.director.tasking.internal.worker_executor import (
@@ -665,9 +666,12 @@ class TestExecutionMethods:
 
             async def invoke_generation_with_retries(self, **kwargs: Any) -> tuple[list[dict[str, str]], list[str]]:
                 self.invoked_timeout = int(kwargs["per_call_timeout"])
+                target = tmp_path / "src" / "app.ts"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("export const appName = 'polaris-test-app';\n", encoding="utf-8")
                 return ([{"path": "src/app.ts", "content": ""}], [])
 
-        executor = WorkerExecutor(workspace="/tmp")
+        executor = WorkerExecutor(workspace=str(tmp_path))
         fake_engine = FakeCodeEngine()
         executor._code_engine = fake_engine
         task = MagicMock()
@@ -682,6 +686,45 @@ class TestExecutionMethods:
         assert result.success is True
         assert fake_engine.default_timeout == _DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS
         assert fake_engine.invoked_timeout == _DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_code_generation_rejects_deterministic_scaffold_marker(self, tmp_path) -> None:
+        """Generated files must pass the shared artifact quality gate before success."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        class FakeCodeEngine:
+            def resolve_llm_timeout(self, default_timeout: int) -> int:
+                return default_timeout
+
+            def resolve_task_timeout_budget(self, task: Any, *, rounds: int) -> int:
+                _ = (task, rounds)
+                return 60
+
+            def remaining_timeout(self, deadline_ts: float) -> int:
+                _ = deadline_ts
+                return 30
+
+            async def invoke_generation_with_retries(self, **kwargs: Any) -> tuple[list[dict[str, str]], list[str]]:
+                _ = kwargs
+                target = tmp_path / "src" / "placeholder.ts"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("// Created by Polaris: placeholder\n", encoding="utf-8")
+                return ([{"path": "src/placeholder.ts", "content": ""}], [])
+
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        executor._code_engine = FakeCodeEngine()
+        task = MagicMock()
+        task.id = "T-quality"
+        task.subject = "Implement meaningful feature"
+        task.description = ""
+        task.timeout_seconds = 60
+        task.metadata = {"target_files": ["src/placeholder.ts"]}
+
+        result = await executor._execute_code_generation(task)
+
+        assert result.success is False
+        assert result.error is not None
+        assert "deterministic scaffold marker" in result.error
 
     @pytest.mark.asyncio
     async def test_code_generation_stops_after_empty_timeout_round(self) -> None:
@@ -823,18 +866,22 @@ class TestExecutionMethods:
         assert executor._resolve_llm_call_timeout_hint(task) == _DEFAULT_DIRECTOR_RUNTIME_LLM_CALL_TIMEOUT_SECONDS
 
     @pytest.mark.asyncio
-    async def test_execute_file_creation(self) -> None:
-        """Test _execute_file_creation method."""
+    async def test_execute_file_creation_requires_codegen_without_placeholder(self, tmp_path) -> None:
+        """File creation must not synthesize deterministic placeholder content."""
         from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
 
-        executor = WorkerExecutor(workspace="/tmp")
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        executor._code_engine = None
         task = MagicMock()
         task.subject = "Create file test.py"
         task.description = "Create a test file"
         task.metadata = {"target_files": ["test.py"]}
 
         result = await executor._execute_file_creation(task)
-        assert isinstance(result.success, bool)
+
+        assert result.success is False
+        assert result.error == "CodeGenerationEngine not available (Phase 4 pending)"
+        assert not (tmp_path / "test.py").exists()
 
     @pytest.mark.asyncio
     async def test_execute_bootstrap(self) -> None:
@@ -850,6 +897,52 @@ class TestExecutionMethods:
         result = await executor._execute_bootstrap(task)
         assert isinstance(result.success, bool)
         assert isinstance(result.files_created, list)
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_missing_targets_require_codegen_without_placeholder(self, tmp_path) -> None:
+        """Bootstrap must not fill missing PM target files with deterministic stubs."""
+        from polaris.cells.director.tasking.internal.worker_executor import WorkerExecutor
+
+        class FakeCodeEngine:
+            def resolve_llm_timeout(self, default_timeout: int) -> int:
+                return default_timeout
+
+            def resolve_task_timeout_budget(self, task: Any, *, rounds: int) -> int:
+                _ = (task, rounds)
+                return 60
+
+            def remaining_timeout(self, deadline_ts: float) -> int:
+                _ = deadline_ts
+                return 30
+
+            async def invoke_generation_with_retries(self, **kwargs: Any) -> tuple[list[dict[str, str]], list[str]]:
+                _ = kwargs
+                target = tmp_path / "src" / "domain" / "cards.ts"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(
+                    "export interface CardState { id: string; ownerId: string; zone: 'deck' | 'hand'; }\n",
+                    encoding="utf-8",
+                )
+                return ([{"path": "src/domain/cards.ts", "content": ""}], [])
+
+        executor = WorkerExecutor(workspace=str(tmp_path))
+        executor._code_engine = FakeCodeEngine()
+        task = MagicMock()
+        task.id = "T-bootstrap-target"
+        task.subject = "Bootstrap TypeScript card domain"
+        task.description = "Create a multiplayer card domain model"
+        task.timeout_seconds = 60
+        task.metadata = {
+            "tech_stack": {"language": "typescript"},
+            "target_files": ["src/domain/cards.ts"],
+        }
+
+        result = await executor._execute_bootstrap(task)
+
+        assert result.success is True
+        content = (tmp_path / "src" / "domain" / "cards.ts").read_text(encoding="utf-8")
+        assert "Generated file for" not in content
+        assert "Created by Polaris" not in content
 
     @pytest.mark.asyncio
     async def test_execute_generic(self) -> None:

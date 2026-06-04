@@ -7,7 +7,6 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from polaris.cells.llm.dialogue.public import generate_role_response, generate_role_response_streaming
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
 from polaris.delivery.http.routers.sse_utils import (
     create_sse_response,
@@ -19,12 +18,13 @@ from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
 from ._shared import StructuredHTTPException, get_state, require_auth
+from .role_runtime_chat import execute_role_chat_nonstreaming, execute_role_chat_streaming
 
 router = APIRouter()
 
 
 def _workspace_value(settings: Any) -> str:
-    """Resolve the active desktop workspace with legacy fallback."""
+    """Resolve the active desktop workspace from compatible settings fields."""
     return active_workspace_value(settings)
 
 
@@ -53,12 +53,13 @@ async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     try:
-        result = await generate_role_response(
-            workspace=workspace,
-            settings=state.settings,
+        result = await execute_role_chat_nonstreaming(
             role="pm",
+            workspace=workspace,
             message=message,
-            context=payload.get("context"),
+            payload=payload,
+            default_domain="document",
+            host_kind="pm_chat_http",
         )
         return {"ok": True, **result}
 
@@ -86,12 +87,14 @@ async def pm_chat_stream(request: Request, payload: dict[str, Any]):
 
     async def _run_pm_dialogue(queue: asyncio.Queue) -> None:
         """运行PM对话并输出到队列"""
-        await generate_role_response_streaming(
+        await execute_role_chat_streaming(
             workspace=workspace,
-            settings=state.settings,
             role="pm",
             message=message,
             output_queue=queue,
+            payload=payload,
+            default_domain="document",
+            host_kind="pm_chat_http_stream",
             context=payload.get("context"),
         )
 

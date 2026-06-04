@@ -79,8 +79,8 @@ logger = logging.getLogger(__name__)
 
 
 def _default_director_path() -> str:
-    """Return the canonical Director script path for direct PM CLI execution."""
-    return str(Path(__file__).resolve().parents[1] / "loop-director.py")
+    """Return the canonical Director CLI path for compatibility args."""
+    return str(Path(__file__).resolve().parents[1] / "director_v2.py")
 
 
 def create_parser() -> argparse.ArgumentParser:

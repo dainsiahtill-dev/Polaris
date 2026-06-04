@@ -120,7 +120,7 @@ async def test_pm_chat_ping(client: AsyncClient) -> None:
 async def test_pm_chat_success(client: AsyncClient) -> None:
     """Non-streaming PM chat should return ok with response."""
     with patch(
-        "polaris.delivery.http.routers.pm_chat.generate_role_response",
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
         new_callable=AsyncMock,
         return_value={
             "response": "Hello from PM",
@@ -152,10 +152,10 @@ async def test_pm_chat_empty_message(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_pm_chat_llm_not_ready(client: AsyncClient) -> None:
     """LLM not ready should return 409 via status endpoint; chat itself returns 500 on RuntimeError."""
-    # The pm_chat router does not explicitly check LLM readiness before calling
-    # generate_role_response, so we simulate a RuntimeError from the LLM layer.
+    # The pm_chat router delegates to the runtime helper, so simulate a runtime
+    # boundary failure.
     with patch(
-        "polaris.delivery.http.routers.pm_chat.generate_role_response",
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
         new_callable=AsyncMock,
         side_effect=RuntimeError("PM LLM not ready"),
     ):
@@ -170,7 +170,7 @@ async def test_pm_chat_llm_not_ready(client: AsyncClient) -> None:
 async def test_pm_chat_generation_error(client: AsyncClient) -> None:
     """Generation failure should return 500 ROLE_RESPONSE_ERROR."""
     with patch(
-        "polaris.delivery.http.routers.pm_chat.generate_role_response",
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
         new_callable=AsyncMock,
         side_effect=RuntimeError("model timeout"),
     ):
@@ -183,9 +183,9 @@ async def test_pm_chat_generation_error(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_pm_chat_with_context(client: AsyncClient) -> None:
-    """PM chat should pass context to generate_role_response."""
+    """PM chat should pass payload context to the runtime helper."""
     with patch(
-        "polaris.delivery.http.routers.pm_chat.generate_role_response",
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
         new_callable=AsyncMock,
         return_value={"response": "ok", "role": "pm", "model": "x", "provider": "y"},
     ) as mock_generate:
@@ -196,7 +196,7 @@ async def test_pm_chat_with_context(client: AsyncClient) -> None:
         assert response.status_code == 200
         assert mock_generate.await_args is not None
         call_kwargs = mock_generate.await_args.kwargs
-        assert call_kwargs.get("context") == {"session_id": "abc123"}
+        assert call_kwargs.get("payload") == {"message": "hello", "context": {"session_id": "abc123"}}
 
 
 @pytest.mark.asyncio
@@ -206,7 +206,7 @@ async def test_pm_chat_prefers_active_workspace_path(client: AsyncClient, mock_s
     mock_settings.workspace_path = "C:/Temp/Product"
 
     with patch(
-        "polaris.delivery.http.routers.pm_chat.generate_role_response",
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
         new_callable=AsyncMock,
         return_value={"response": "ok", "role": "pm", "model": "x", "provider": "y"},
     ) as mock_generate:
@@ -232,7 +232,7 @@ async def test_pm_chat_stream_sse_headers(client: AsyncClient) -> None:
         await output_queue.put({"type": "complete", "data": {"response": "PM complete"}})
 
     with patch(
-        "polaris.delivery.http.routers.pm_chat.generate_role_response_streaming",
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_streaming",
         new_callable=AsyncMock,
         side_effect=_fake_streaming_response,
     ) as mock_generate:
@@ -266,7 +266,7 @@ async def test_pm_chat_stream_prefers_active_workspace_path(client: AsyncClient,
         await output_queue.put({"type": "complete", "data": {"response": "ok"}})
 
     with patch(
-        "polaris.delivery.http.routers.pm_chat.generate_role_response_streaming",
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_streaming",
         new_callable=AsyncMock,
         side_effect=_fake_streaming_response,
     ) as mock_generate:

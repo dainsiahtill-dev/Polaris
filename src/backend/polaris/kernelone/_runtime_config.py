@@ -65,7 +65,7 @@ _ENV_MAPPINGS: dict[str, tuple[str, str]] = {
     "tool_loop_read_file_headroom_ratio": ("KERNELONE_TOOL_LOOP_READ_FILE_HEADROOM_RATIO", "0.35"),
     # Context OS / Cognitive Runtime
     "context_os_enabled": ("KERNELONE_CONTEXT_OS_ENABLED", "1"),
-    "cognitive_runtime_mode": ("KERNELONE_COGNITIVE_RUNTIME_MODE", "shadow"),
+    "cognitive_runtime_mode": ("KERNELONE_COGNITIVE_RUNTIME_MODE", "mainline"),
     # Embedding
     "embedding_model": ("KERNELONE_EMBEDDING_MODEL", "nomic-embed-text"),
     # Audit

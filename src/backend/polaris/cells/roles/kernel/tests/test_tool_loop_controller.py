@@ -66,6 +66,34 @@ class TestToolLoopController:
         assert ctx.message == "Hello"
         assert ctx.task_id == "task-1"
 
+    def test_build_context_request_passes_cognitive_strategy_override(self) -> None:
+        mock_request = MagicMock()
+        mock_request.message = "Hello"
+        mock_request.history = []
+        mock_request.task_id = "task-1"
+        mock_request.context_override = {"context_os_snapshot": {"transcript_log": [], "working_state": {}}}
+        mock_request.metadata = {
+            "cognitive_strategy_override": {
+                "exploration": {"max_expansion_depth": 4},
+                "compaction": {"trigger_at_budget_pct": 0.9},
+                "cognitive_runtime": {"applied": True},
+            }
+        }
+        mock_request.tool_results = []
+        mock_profile = MagicMock()
+
+        controller = ToolLoopController.from_request(
+            request=mock_request,
+            profile=mock_profile,
+        )
+
+        ctx = controller.build_context_request()
+
+        assert ctx.strategy_override is not None
+        assert ctx.strategy_override["exploration"]["max_expansion_depth"] == 4
+        assert ctx.strategy_override["compaction"]["trigger_at_budget_pct"] == 0.9
+        assert ctx.strategy_override["cognitive_runtime"]["applied"] is True
+
     def test_max_tool_calls_exceeded(self) -> None:
         mock_request = MagicMock()
         mock_request.message = "Test"

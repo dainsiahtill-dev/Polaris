@@ -11,8 +11,6 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.dialogue.public import (
-    generate_role_response,
-    generate_role_response_streaming,
     get_registered_roles,
 )
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
@@ -44,6 +42,7 @@ from ._shared import (
     require_auth,
     require_role,
 )
+from .role_runtime_chat import execute_role_chat_nonstreaming, execute_role_chat_streaming
 
 router = APIRouter()
 
@@ -71,7 +70,7 @@ async def _load_llm_config_async(workspace: str, cache_root: str, settings: Any)
 
 
 def _workspace_value(settings: Any) -> str:
-    """Resolve the active desktop workspace with legacy fallback."""
+    """Resolve the active desktop workspace from compatible settings fields."""
     return active_workspace_value(settings)
 
 
@@ -370,12 +369,13 @@ async def role_chat(
         ) from exc
 
     try:
-        result = await generate_role_response(
-            workspace=workspace,
-            settings=scoped_state.settings,
+        result = await execute_role_chat_nonstreaming(
             role=role,
             message=message,
-            context=payload.get("context"),
+            workspace=workspace,
+            payload=payload,
+            default_domain="general",
+            host_kind="role_chat_http",
         )
         return {"ok": True, "workspace": workspace, **result}
     except (RuntimeError, ValueError) as exc:
@@ -422,12 +422,14 @@ async def role_chat_stream(
 
     async def _run_role_dialogue(queue: asyncio.Queue) -> None:
         """运行角色对话并输出到队列"""
-        await generate_role_response_streaming(
+        await execute_role_chat_streaming(
             workspace=workspace,
-            settings=scoped_state.settings,
             role=role,
             message=message,
             output_queue=queue,
+            payload=payload,
+            default_domain="general",
+            host_kind="role_chat_http_stream",
             context=payload.get("context"),
         )
 

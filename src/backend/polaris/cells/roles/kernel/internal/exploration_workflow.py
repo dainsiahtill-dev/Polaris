@@ -344,6 +344,7 @@ class ExplorationWorkflowRuntime:
                 duration_ms=duration_ms,
                 llm_calls=0,
                 tool_calls=len(tools_executed),
+                error="Exploration timed out",
             )
             self._ledger.append({"phase": "execute_stream", "turn_id": str(turn_id), "status": "timeout"})
 
@@ -355,6 +356,7 @@ class ExplorationWorkflowRuntime:
                 duration_ms=duration_ms,
                 llm_calls=0,
                 tool_calls=len(tools_executed),
+                error=str(exc),
             )
             self._ledger.append(
                 {"phase": "execute_stream", "turn_id": str(turn_id), "status": "error", "error": str(exc)}

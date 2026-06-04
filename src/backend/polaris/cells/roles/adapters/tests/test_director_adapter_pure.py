@@ -22,12 +22,14 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_existing_workspace_task_evidence,
     _director_direct_text_patch_only_enabled,
     _director_existing_scope_preflight_enabled,
+    _emit_director_adapter_cognitive_receipt,
     _finalize_claimed_execution,
     _looks_like_typescript_reexport_failure,
     _resolve_claim_external_task_id,
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
 )
+from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -94,6 +96,60 @@ class TestSelectExecutionStrategy:
         adapter = _make_adapter(tmp_path)
         result = adapter._select_execution_strategy("重构代码", {}, {})
         assert result == "conservative"
+
+
+class TestDirectorAdapterCognitiveRuntimeReceipt:
+    """Director materialization must leave Cognitive Runtime evidence."""
+
+    def test_emit_cognitive_runtime_receipt_records_and_exports_handoff(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        class _Service:
+            def record_runtime_receipt(self, command: Any) -> Any:
+                captured["receipt_command"] = command
+                return SimpleNamespace(ok=True, receipt=SimpleNamespace(receipt_id="receipt-1"))
+
+            def export_handoff_pack(self, command: Any) -> None:
+                captured["handoff_command"] = command
+
+            def close(self) -> None:
+                captured["closed"] = True
+
+        service = _Service()
+        monkeypatch.setattr(
+            "polaris.cells.factory.cognitive_runtime.public.service.get_cognitive_runtime_public_service",
+            lambda: service,
+        )
+        adapter = SimpleNamespace(workspace=str(tmp_path))
+
+        receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task={"metadata": {"session_id": "session-1"}},
+            target_task_id="TASK-1",
+            run_id="run-1",
+            context={"metadata": {"turn_envelope": {"turn_id": "turn-1"}}},
+            receipt_type="director_adapter_materialization_completed",
+            payload={"status": "completed", "changed_files": ["src/app.py"]},
+            export_handoff=True,
+        )
+
+        assert receipt["ok"] is True
+        assert receipt["receipt_id"] == "receipt-1"
+        receipt_command = captured["receipt_command"]
+        assert receipt_command.receipt_type == "director_adapter_materialization_completed"
+        assert receipt_command.session_id == "session-1"
+        assert receipt_command.run_id == "run-1"
+        assert receipt_command.payload["source"] == "roles.adapters.director"
+        assert receipt_command.payload["context_os_expected"] is True
+        assert receipt_command.payload["changed_files"] == ["src/app.py"]
+        handoff_command = captured["handoff_command"]
+        assert handoff_command.session_id == "session-1"
+        assert handoff_command.turn_envelope["receipt_ids"] == ["receipt-1"]
+        assert captured["closed"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -377,9 +433,11 @@ class TestDirectorFailureClosure:
                 "acceptance": ["The TypeScript test failure is repaired"],
             },
         )
+        captured: dict[str, Any] = {}
 
         async def _mutating_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            del args, kwargs
+            del args
+            captured["context"] = kwargs.get("context")
             target = tmp_path / "src" / "types" / "domain.ts"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("export type DomainState = 'ready';\n", encoding="utf-8")
@@ -401,6 +459,7 @@ class TestDirectorFailureClosure:
         assert result["success"] is False
         assert result["error_code"] == "director_missing_write_receipt"
         assert result["materialization_mode"] == "workspace_diff_without_write_tool"
+        assert captured["context"]["run_id"] == "run-director-diff-evidence"
         assert any(
             signal.get("code") == "director_missing_write_receipt"
             for signal in result.get("decision_signals", [])
@@ -521,6 +580,66 @@ class TestDirectorFailureClosure:
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("materialization_error") == "director_materialization_quality_failed"
+
+    @pytest.mark.asyncio
+    async def test_execute_fails_when_changed_file_has_no_domain_signal(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        target = tmp_path / "src" / "fish" / "arena.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        task = adapter.task_board.create(
+            subject="Implement fish predator prey multiplayer arena",
+            description="Build fish arena movement and predator prey scoring for the online game.",
+            metadata={
+                "target_files": ["src/fish/arena.ts"],
+                "scope_paths": ["src/fish/arena.ts"],
+                "steps": ["Implement fish arena gameplay"],
+                "acceptance": ["No generic unrelated implementation remains"],
+            },
+        )
+
+        async def _write_unrelated_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target.write_text(
+                "export function calculateInvoiceTotal(values: number[]): number {\n"
+                "  return values.reduce((total, value) => total + value, 0);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote an implementation.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/fish/arena.ts"},
+                    }
+                ],
+            }
+
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("direct fallback should not run after workspace diff evidence")
+
+        adapter._invoke_role_dialogue_with_timeout = _write_unrelated_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-semantic-quality"},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "director_materialization_semantic_quality_failed"
+        assert "no project-domain signal" in result["semantic_quality_error"]
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("materialization_error") == "director_materialization_semantic_quality_failed"
 
     @pytest.mark.asyncio
     async def test_execute_fails_autofix_declared_scope_without_real_materialization(self, tmp_path: Any) -> None:
@@ -1117,77 +1236,102 @@ class TestDirectorAdapterIdentity:
 
 class TestDirectorRuntimeFallback:
     @pytest.mark.asyncio
-    async def test_role_dialogue_disables_cognitive_middleware(
+    async def test_role_dialogue_uses_role_runtime_context_os_path_first(
         self,
         tmp_path: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        captured: dict[str, object] = {}
+        captured: dict[str, Any] = {}
+
+        class FakeRoleRuntimeService:
+            async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
+                captured["command"] = command
+                return RoleExecutionResultV1(
+                    ok=True,
+                    status="ok",
+                    role="director",
+                    workspace=str(tmp_path),
+                    task_id=command.task_id,
+                    session_id=command.session_id,
+                    run_id=command.run_id,
+                    output="done",
+                    usage={"tokens": 10},
+                    metadata={"provider_id": "anthropic_compat-test", "model": "kimi-for-coding"},
+                )
 
         monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.adapter.get_settings_safe",
-            lambda: SimpleNamespace(llm_timeout=5),
+            "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+            FakeRoleRuntimeService,
         )
 
-        async def _fake_generate_role_response(**kwargs: Any) -> dict[str, Any]:
-            captured["enable_cognitive"] = kwargs.get("enable_cognitive")
-            return {
-                "response": "done",
-                "provider": "anthropic_compat-test",
-                "model": "kimi-for-coding",
-            }
-
-        monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.adapter.generate_role_response",
-            _fake_generate_role_response,
+        result = await adapter._invoke_role_dialogue(
+            "write src/app.ts",
+            context={"run_id": "run-runtime-first", "task_id": "task-runtime-first"},
         )
-
-        result = await adapter._invoke_role_dialogue("write src/app.ts")
 
         assert result["success"] is True
-        assert captured["enable_cognitive"] is False
+        assert result["metadata"]["role_runtime_entrypoint"] == "roles.runtime.execute_role_session"
+        assert result["metadata"]["context_os_expected"] is True
+        command = captured["command"]
+        assert isinstance(command, ExecuteRoleSessionCommandV1)
+        assert command.role == "director"
+        assert command.domain == "code"
+        assert command.stream is False
+        assert command.run_id == "run-runtime-first"
+        assert command.task_id == "task-runtime-first"
+        assert command.metadata["role_runtime_required"] is True
+        assert command.metadata["cognitive_runtime_required"] is True
 
-    def test_direct_runtime_provider_allows_codex_cli(
+    @pytest.mark.asyncio
+    async def test_role_dialogue_fails_closed_when_runtime_boundary_unavailable(
         self,
         tmp_path: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         adapter = _make_adapter(tmp_path)
-        captured: dict[str, object] = {}
+
+        class UnavailableRoleRuntimeService:
+            def __init__(self) -> None:
+                raise ImportError("runtime boundary unavailable")
 
         monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.adapter.get_settings_safe",
-            lambda: SimpleNamespace(llm_timeout=5),
+            "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+            UnavailableRoleRuntimeService,
         )
 
-        def _fake_invoke_role_runtime_provider(**kwargs: Any) -> SimpleNamespace:
-            captured["blocked_provider_types"] = tuple(kwargs.get("blocked_provider_types") or ())
-            return SimpleNamespace(
-                attempted=True,
-                ok=True,
-                output="src/smoke.txt\n```txt\nok\n```",
-                provider_id="codex_cli",
-                provider_type="codex_cli",
-                model="gpt-5.3-codex",
-                latency_ms=1,
-                error="",
-                usage=None,
-            )
+        with pytest.raises(RuntimeError, match="director_role_runtime_boundary_unavailable"):
+            await adapter._invoke_role_dialogue("write src/app.ts")
+
+    @pytest.mark.asyncio
+    async def test_role_dialogue_runtime_execution_failure_does_not_fallback_to_legacy(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+
+        class FailingRoleRuntimeService:
+            async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
+                del command
+                raise RuntimeError("runtime provider failed")
 
         monkeypatch.setattr(
-            "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
-            _fake_invoke_role_runtime_provider,
+            "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+            FailingRoleRuntimeService,
         )
 
-        result = adapter._invoke_direct_runtime_provider_sync("write a file", timeout_seconds=3)
+        with pytest.raises(RuntimeError, match="runtime provider failed"):
+            await adapter._invoke_role_dialogue("write src/app.ts")
 
-        blocked = captured["blocked_provider_types"]
-        assert isinstance(blocked, tuple)
-        assert "codex_cli" not in blocked
-        assert "codex_sdk" not in blocked
-        assert result["provider"] == "codex_cli"
-        assert result["model"] == "gpt-5.3-codex"
+    @pytest.mark.asyncio
+    async def test_direct_runtime_provider_bypass_is_removed(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        with pytest.raises(RuntimeError, match="director_direct_runtime_provider_removed"):
+            await adapter._invoke_direct_runtime_provider("write a file", timeout_seconds=3)
 
 
 # ---------------------------------------------------------------------------

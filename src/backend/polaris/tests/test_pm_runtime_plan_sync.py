@@ -39,7 +39,7 @@ def _build_args(workspace: Path) -> SimpleNamespace:
         heartbeat=False,
         json_log="runtime/events/pm.events.jsonl",
         run_director=False,
-        director_path="src/backend/polaris/delivery/cli/loop-director.py",
+        director_path="",
         events_path="runtime/events/runtime.events.jsonl",
         director_model="",
         director_timeout=0,
@@ -76,15 +76,11 @@ def _build_args(workspace: Path) -> SimpleNamespace:
     )
 
 
-def test_pm_canonical_director_script_path_resolves_repo_relative_default() -> None:
-    """Workflow metadata must not carry cwd-sensitive Director paths."""
-    resolved = Path(
-        orchestration_engine._canonical_director_script_path("src/backend/polaris/delivery/cli/loop-director.py")
-    )
+def test_pm_runtime_args_do_not_require_director_script_path(tmp_path: Path) -> None:
+    """PM workflow setup must not require or normalize Director script paths."""
 
-    assert resolved.is_absolute()
-    assert resolved.name == "loop-director.py"
-    assert resolved.is_file()
+    args = _build_args(tmp_path)
+    assert args.director_path == ""
 
 
 def test_pm_run_once_syncs_persistent_docs_plan_to_runtime_contract(

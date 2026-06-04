@@ -338,7 +338,7 @@ class TestStateFirstContextOSBoundaryCases:
         )
         assert projection.snapshot is not None
         # Should be capped at max_active_window_messages
-        assert len(projection.active_window) <= engine.policy.max_active_window_messages
+        assert len(projection.active_window) <= engine.policy.context_window.max_active_window_messages
 
 
 class TestAttentionRuntimeEvaluationBoundaryCases:
@@ -377,9 +377,7 @@ class TestAttentionRuntimeEvaluationBoundaryCases:
 
     async def test_conversation_with_empty_messages(self) -> None:
         """Conversation with empty messages is handled."""
-        result = await evaluate_attention_runtime_case(
-            conversation=[{"role": "", "content": ""}]
-        )
+        result = await evaluate_attention_runtime_case(conversation=[{"role": "", "content": ""}])
         # Should handle gracefully, possibly returning failure
         assert isinstance(result, AttentionRuntimeQualityResult)
 

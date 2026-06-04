@@ -244,6 +244,206 @@ def _copy_result_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(metadata or {})
 
 
+def _metadata_flag_enabled(*payloads: Mapping[str, Any] | None, key: str) -> bool:
+    for payload in payloads:
+        if not isinstance(payload, Mapping) or key not in payload:
+            continue
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        token = str(value or "").strip().lower()
+        if token in {"1", "true", "yes", "on", "required"}:
+            return True
+        if token in {"0", "false", "no", "off", "optional", "disabled"}:
+            return False
+    return False
+
+
+def _with_result_metadata_patch(
+    result: RoleExecutionResultV1,
+    patch: Mapping[str, Any],
+) -> RoleExecutionResultV1:
+    metadata = _copy_result_metadata(result.metadata)
+    metadata.update(dict(patch))
+    return RoleExecutionResultV1(
+        ok=result.ok,
+        status=result.status,
+        role=result.role,
+        workspace=result.workspace,
+        task_id=result.task_id,
+        session_id=result.session_id,
+        run_id=result.run_id,
+        output=result.output,
+        thinking=result.thinking,
+        tool_calls=result.tool_calls,
+        artifacts=result.artifacts,
+        usage=result.usage,
+        metadata=metadata,
+        error_code=result.error_code,
+        error_message=result.error_message,
+        turn_history=list(result.turn_history),
+    )
+
+
+def _cognitive_runtime_result_patch(
+    *,
+    evidence: Mapping[str, Any],
+    request_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    patch: dict[str, Any] = {"cognitive_runtime_evidence": dict(evidence)}
+    preflight = request_metadata.get("cognitive_runtime_preflight")
+    if isinstance(preflight, Mapping):
+        patch["cognitive_runtime_preflight"] = dict(preflight)
+    return patch
+
+
+def _copy_llm_provider_policy_into_context(
+    *,
+    context_override: dict[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Expose role-runtime provider policy metadata to the LLM executor path."""
+    result = dict(context_override)
+    for key in (
+        "allowed_provider_types",
+        "allow_provider_types",
+        "blocked_provider_types",
+        "provider_type_policy",
+    ):
+        value = metadata.get(key)
+        if value is not None:
+            result[key] = value
+    policy = metadata.get("llm_provider_policy")
+    if isinstance(policy, Mapping):
+        result["llm_provider_policy"] = dict(policy)
+    return result
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _copy_cognitive_guidance(cognitive_context: Mapping[str, Any]) -> dict[str, Any]:
+    analysis = cognitive_context.get("cognitive_analysis")
+    analysis_payload = dict(analysis) if isinstance(analysis, Mapping) else {}
+    actions = analysis_payload.get("actions_taken")
+    action_values = tuple(str(item) for item in actions[:8]) if isinstance(actions, (list, tuple)) else ()
+    blocked_tools = _copy_string_tuple(cognitive_context.get("blocked_tools"), limit=24)
+    return {
+        "intent_type": str(cognitive_context.get("intent_type") or "unknown"),
+        "confidence": _safe_float(cognitive_context.get("confidence")),
+        "uncertainty_score": _safe_float(cognitive_context.get("uncertainty_score")),
+        "execution_path": str(cognitive_context.get("execution_path") or "unknown"),
+        "clarity_level": str(analysis_payload.get("clarity_level") or "unknown"),
+        "verification_needed": bool(analysis_payload.get("verification_needed")),
+        "actions_taken": action_values,
+        "blocked_tools": blocked_tools,
+    }
+
+
+def _copy_string_tuple(raw_value: Any, *, limit: int) -> tuple[str, ...]:
+    if not isinstance(raw_value, (list, tuple, set, frozenset)):
+        return ()
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in raw_value:
+        token = str(item or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        values.append(token)
+        if len(values) >= limit:
+            break
+    return tuple(values)
+
+
+def _deep_merge_strategy_overrides(
+    base: Mapping[str, Any] | None,
+    override: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    result = dict(base or {})
+    if not isinstance(override, Mapping):
+        return result
+    for key, value in override.items():
+        key_token = str(key or "").strip()
+        if not key_token:
+            continue
+        existing = result.get(key_token)
+        if isinstance(existing, Mapping) and isinstance(value, Mapping):
+            result[key_token] = _deep_merge_strategy_overrides(existing, value)
+        elif isinstance(value, Mapping):
+            result[key_token] = dict(value)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            result[key_token] = tuple(value)
+        else:
+            result[key_token] = value
+    return result
+
+
+def _copy_strategy_override(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return _deep_merge_strategy_overrides({}, value)
+
+
+def _build_cognitive_strategy_override(guidance: Mapping[str, Any]) -> dict[str, Any]:
+    execution_path = str(guidance.get("execution_path") or "").strip().lower()
+    intent_type = str(guidance.get("intent_type") or "").strip().lower()
+    uncertainty = _safe_float(guidance.get("uncertainty_score"))
+    verification_needed = bool(guidance.get("verification_needed"))
+    requires_deeper_context = (
+        verification_needed
+        or uncertainty >= 0.45
+        or any(
+            marker in execution_path
+            for marker in (
+                "full",
+                "verify",
+                "write",
+                "plan",
+                "refactor",
+                "architect",
+            )
+        )
+        or intent_type in {"code_generation", "architecture", "debugging", "root_cause"}
+    )
+    if not requires_deeper_context:
+        return {}
+
+    depth = 5 if uncertainty >= 0.65 else 4
+    read_threshold_kb = 500 if uncertainty >= 0.65 else 350
+    return {
+        "exploration": {
+            "map_first": True,
+            "search_before_read": True,
+            "max_expansion_depth": depth,
+            "neighbor_expansion_aggressive": verification_needed or uncertainty >= 0.45,
+        },
+        "read_escalation": {
+            "full_read_allowed": True,
+            "full_read_threshold_kb": read_threshold_kb,
+            "range_first_default": True,
+            "range_first_threshold_kb": 20,
+        },
+        "compaction": {
+            "trigger_at_budget_pct": 0.90,
+            "receipt_micro_compact": True,
+            "receipt_compact_threshold": 5,
+        },
+        "cognitive_runtime": {
+            "source": "cognitive_runtime_mainline",
+            "applied": True,
+            "execution_path": execution_path or "unknown",
+            "intent_type": intent_type or "unknown",
+            "verification_needed": verification_needed,
+            "uncertainty_score": round(uncertainty, 3),
+        },
+    }
+
+
 def _extract_turn_envelope_metadata(result: RoleExecutionResultV1) -> dict[str, Any]:
     metadata = _copy_result_metadata(result.metadata)
     envelope = metadata.get("turn_envelope")
@@ -365,6 +565,7 @@ class RoleRuntimeService(IRoleRuntime):
         domain: str | None = None,
         role: str | None = None,
         session_override: dict[str, Any] | None = None,
+        current_turn_override: Mapping[str, Any] | None = None,
         prefer_domain_default: bool = False,
     ) -> ResolvedStrategy:
         """Resolve the effective strategy profile for a run.
@@ -390,10 +591,11 @@ class RoleRuntimeService(IRoleRuntime):
         )
         strategy_domain = self._strategy_domain_from_execution(execution_domain)
         registry = get_registry()
+        merged_override = _deep_merge_strategy_overrides(session_override, current_turn_override)
         return registry.resolve(
             domain=strategy_domain,
             role=None if prefer_domain_default else role,
-            override=session_override,
+            override=merged_override or None,
         )
 
     def create_strategy_run(
@@ -405,6 +607,7 @@ class RoleRuntimeService(IRoleRuntime):
         workspace: str,
         domain_explicit: bool = False,
         include_session_override: bool = False,
+        current_turn_override: Mapping[str, Any] | None = None,
     ) -> StrategyRunContext:
         """Create a per-turn StrategyRunContext with resolved strategy identity.
 
@@ -437,6 +640,7 @@ class RoleRuntimeService(IRoleRuntime):
             domain=execution_domain,
             role=role,
             session_override=session_override,
+            current_turn_override=current_turn_override,
             prefer_domain_default=domain_explicit,
         )
         turn_index = self._next_turn_index(session_id)
@@ -517,10 +721,22 @@ class RoleRuntimeService(IRoleRuntime):
         session_id: str | None,
         run_id: str | None,
         result: RoleExecutionResultV1,
-    ) -> None:
-        mode = resolve_cognitive_runtime_mode()
+        metadata: Mapping[str, Any] | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        required = _metadata_flag_enabled(context, metadata, key="cognitive_runtime_required")
+        mode = resolve_cognitive_runtime_mode(context=context, metadata=metadata)
+        evidence: dict[str, Any] = {
+            "required": required,
+            "source": source,
+            "cognitive_runtime_mode": mode.value,
+            "receipt_recorded": False,
+            "handoff_exported": False,
+        }
         if mode is CognitiveRuntimeMode.OFF:
-            return
+            if required:
+                raise RuntimeError("cognitive_runtime_required_but_off")
+            return evidence
         try:
             from polaris.cells.factory.cognitive_runtime.public.contracts import (
                 ExportHandoffPackCommandV1,
@@ -556,16 +772,25 @@ class RoleRuntimeService(IRoleRuntime):
                         turn_envelope=turn_envelope,
                     )
                 )
+                if not bool(getattr(receipt_result, "ok", False)):
+                    error_message = str(getattr(receipt_result, "error_message", "") or "").strip()
+                    error_code = str(getattr(receipt_result, "error_code", "") or "").strip()
+                    raise RuntimeError(error_message or error_code or "runtime_receipt_failed")
+                receipt = getattr(receipt_result, "receipt", None)
+                receipt_id = str(getattr(receipt, "receipt_id", "") or "").strip()
+                if required and not receipt_id:
+                    raise RuntimeError("runtime_receipt_missing_id")
+                if receipt_id:
+                    evidence["receipt_id"] = receipt_id
+                evidence["receipt_recorded"] = True
                 if session_id:
                     handoff_turn_envelope = dict(turn_envelope)
-                    receipt = getattr(receipt_result, "receipt", None)
-                    receipt_id = str(getattr(receipt, "receipt_id", "") or "").strip()
                     if receipt_id:
                         receipt_ids = list(handoff_turn_envelope.get("receipt_ids") or [])
                         if receipt_id not in receipt_ids:
                             receipt_ids.append(receipt_id)
                         handoff_turn_envelope["receipt_ids"] = receipt_ids
-                    service.export_handoff_pack(
+                    handoff_result = service.export_handoff_pack(
                         ExportHandoffPackCommandV1(
                             workspace=workspace,
                             session_id=session_id,
@@ -574,9 +799,25 @@ class RoleRuntimeService(IRoleRuntime):
                             turn_envelope=handoff_turn_envelope,
                         )
                     )
+                    if not bool(getattr(handoff_result, "ok", False)):
+                        error_message = str(getattr(handoff_result, "error_message", "") or "").strip()
+                        error_code = str(getattr(handoff_result, "error_code", "") or "").strip()
+                        raise RuntimeError(error_message or error_code or "handoff_export_failed")
+                    handoff = getattr(handoff_result, "handoff", None)
+                    handoff_id = str(getattr(handoff, "handoff_id", "") or "").strip()
+                    if required and not handoff_id:
+                        raise RuntimeError("handoff_missing_id")
+                    if handoff_id:
+                        evidence["handoff_id"] = handoff_id
+                    evidence["handoff_exported"] = True
+                else:
+                    evidence["handoff_skipped_reason"] = "no_session_id"
             finally:
                 service.close()
-        except (RuntimeError, ValueError):
+        except (RuntimeError, ValueError) as exc:
+            evidence["error_message"] = str(exc)
+            if required:
+                raise
             logger.warning(
                 "Failed to emit Cognitive Runtime shadow artifacts for role=%s session=%s run=%s",
                 role,
@@ -584,6 +825,7 @@ class RoleRuntimeService(IRoleRuntime):
                 run_id,
                 exc_info=True,
             )
+        return evidence
 
     @staticmethod
     def resolve_strategy(
@@ -740,6 +982,10 @@ class RoleRuntimeService(IRoleRuntime):
             context=context_override,
             metadata=metadata,
         )
+        context_override = _copy_llm_provider_policy_into_context(
+            context_override=context_override,
+            metadata=metadata,
+        )
         if "repo_intelligence" in context_override:
             metadata["repo_intelligence_enabled"] = True
         validate_output = bool(metadata.get("validate_output", True))
@@ -786,6 +1032,10 @@ class RoleRuntimeService(IRoleRuntime):
             context=context_override,
             metadata=metadata,
         )
+        context_override = _copy_llm_provider_policy_into_context(
+            context_override=context_override,
+            metadata=metadata,
+        )
         if include_session_snapshot:
             # Wave 2: Load ContextOS snapshot via extracted context_adapter module.
             context_override = _load_session_context_os_snapshot_impl(
@@ -827,7 +1077,110 @@ class RoleRuntimeService(IRoleRuntime):
             metadata=metadata,
         )
 
-    def create_transaction_controller(
+    @staticmethod
+    async def _apply_cognitive_runtime_preflight(
+        *,
+        request: RoleTurnRequest,
+        role: str,
+        workspace: str,
+        session_id: str | None,
+    ) -> RoleTurnRequest:
+        context_override = dict(request.context_override or {})
+        metadata = dict(request.metadata or {})
+        mode = resolve_cognitive_runtime_mode(context=context_override, metadata=metadata)
+        required = _metadata_flag_enabled(
+            context_override,
+            metadata,
+            key="cognitive_runtime_required",
+        )
+        if mode is CognitiveRuntimeMode.OFF:
+            if required:
+                raise RuntimeError("cognitive_runtime_required_but_off")
+            metadata["cognitive_runtime_preflight"] = {
+                "mode": mode.value,
+                "applied": False,
+                "reason": "off",
+            }
+            request.metadata = metadata
+            return request
+
+        if mode is not CognitiveRuntimeMode.MAINLINE:
+            metadata["cognitive_runtime_preflight"] = {
+                "mode": mode.value,
+                "applied": False,
+                "reason": "shadow_mode",
+            }
+            request.metadata = metadata
+            return request
+
+        from polaris.kernelone.cognitive.middleware import CognitiveMiddleware
+
+        middleware = CognitiveMiddleware(workspace=workspace, enabled=True)
+        cognitive_context = await middleware.process(
+            message=str(request.message or ""),
+            role_id=role,
+            session_id=session_id,
+        )
+        if not bool(cognitive_context.get("enabled")):
+            raise RuntimeError("cognitive_runtime_mainline_unavailable")
+
+        if bool(cognitive_context.get("blocked")):
+            reason = str(cognitive_context.get("block_reason") or "blocked").strip()
+            raise RuntimeError(f"cognitive_runtime_blocked:{reason}")
+
+        guidance = _copy_cognitive_guidance(cognitive_context)
+        context_override["cognitive_guidance"] = guidance
+        blocked_tools = tuple(guidance.get("blocked_tools") or ())
+        if blocked_tools:
+            metadata["cognitive_tool_policy"] = {
+                "source": "cognitive_runtime_mainline",
+                "blocked_tools": blocked_tools,
+            }
+        strategy_override = _build_cognitive_strategy_override(guidance)
+        if strategy_override:
+            metadata["cognitive_strategy_override"] = strategy_override
+        metadata["cognitive_runtime_preflight"] = {
+            "mode": mode.value,
+            "applied": True,
+            "blocked": False,
+            "intent_type": guidance["intent_type"],
+            "execution_path": guidance["execution_path"],
+            "verification_needed": guidance["verification_needed"],
+            "blocked_tools": blocked_tools,
+            "tool_policy_applied": bool(blocked_tools),
+            "strategy_override_applied": bool(strategy_override),
+        }
+        request.context_override = context_override
+        request.metadata = metadata
+        return request
+
+    async def _prepare_task_request(self, command: ExecuteRoleTaskCommandV1) -> RoleTurnRequest:
+        request = self._build_task_request(command)
+        return await self._apply_cognitive_runtime_preflight(
+            request=request,
+            role=command.role,
+            workspace=command.workspace,
+            session_id=command.session_id,
+        )
+
+    async def _prepare_session_request(
+        self,
+        command: ExecuteRoleSessionCommandV1,
+        *,
+        include_session_snapshot: bool = False,
+    ) -> RoleTurnRequest:
+        request = self._build_session_request(
+            command,
+            include_session_snapshot=include_session_snapshot,
+        )
+        return await self._apply_cognitive_runtime_preflight(
+            request=request,
+            role=command.role,
+            workspace=command.workspace,
+            session_id=command.session_id,
+        )
+
+    async def create_transaction_controller(
         self,
         command: ExecuteRoleSessionCommandV1,
     ) -> Any:
@@ -844,7 +1197,7 @@ class RoleRuntimeService(IRoleRuntime):
             role=command.role,
         )
         kernel = self._get_kernel(command.workspace)
-        request = self._build_session_request(command, include_session_snapshot=True)
+        request = await self._prepare_session_request(command, include_session_snapshot=True)
         from polaris.cells.roles.profile.public.service import registry as _registry
 
         if not _registry.list_roles():
@@ -859,7 +1212,8 @@ class RoleRuntimeService(IRoleRuntime):
         command: ExecuteRoleTaskCommandV1,
     ) -> RoleExecutionResultV1:
         kernel = self._get_kernel(command.workspace)
-        result = await kernel.run(command.role, self._build_task_request(command))
+        request = await self._prepare_task_request(command)
+        result = await kernel.run(command.role, request)
         contract_result = _to_contract_result(
             role=command.role,
             workspace=command.workspace,
@@ -868,7 +1222,7 @@ class RoleRuntimeService(IRoleRuntime):
             run_id=command.run_id,
             result=result,
         )
-        self._emit_cognitive_runtime_shadow_artifacts(
+        evidence = self._emit_cognitive_runtime_shadow_artifacts(
             source="roles.runtime.execute_role_task",
             workspace=command.workspace,
             role=command.role,
@@ -876,8 +1230,16 @@ class RoleRuntimeService(IRoleRuntime):
             session_id=command.session_id,
             run_id=command.run_id,
             result=contract_result,
+            metadata=request.metadata,
+            context=request.context_override,
         )
-        return contract_result
+        return _with_result_metadata_patch(
+            contract_result,
+            _cognitive_runtime_result_patch(
+                evidence=evidence,
+                request_metadata=request.metadata,
+            ),
+        )
 
     async def execute_role_session(
         self,
@@ -894,11 +1256,16 @@ class RoleRuntimeService(IRoleRuntime):
             # SSOT Fix: Track accumulated turn_events_metadata from each complete event
             # so we can persist events even when complete is not the final event.
             accumulated_turn_events_metadata: list[dict[str, Any]] = []
+            request: RoleTurnRequest | None = None
 
             try:
+                request = await self._prepare_session_request(
+                    command,
+                    include_session_snapshot=True,
+                )
                 async for event in kernel.run_stream(
                     command.role,
-                    self._build_session_request(command, include_session_snapshot=True),
+                    request,
                 ):
                     event_type = str(event.get("type") or "")
                     if event_type == "content_chunk":
@@ -940,6 +1307,7 @@ class RoleRuntimeService(IRoleRuntime):
             )
 
             if final_result is not None:
+                assert request is not None
                 await self._persist_session_turn_state(
                     command,
                     turn_history=turn_history_to_persist,
@@ -953,7 +1321,7 @@ class RoleRuntimeService(IRoleRuntime):
                     run_id=command.run_id,
                     result=final_result,
                 )
-                self._emit_cognitive_runtime_shadow_artifacts(
+                evidence = self._emit_cognitive_runtime_shadow_artifacts(
                     source="roles.runtime.execute_role_session.stream",
                     workspace=command.workspace,
                     role=command.role,
@@ -961,17 +1329,24 @@ class RoleRuntimeService(IRoleRuntime):
                     session_id=command.session_id,
                     run_id=command.run_id,
                     result=contract_result,
+                    metadata=request.metadata,
+                    context=request.context_override,
                 )
-                return contract_result
+                return _with_result_metadata_patch(
+                    contract_result,
+                    _cognitive_runtime_result_patch(
+                        evidence=evidence,
+                        request_metadata=request.metadata,
+                    ),
+                )
 
             full_text = "".join(full_content)
             thinking_text = "".join(thinking)
             error_msg = error_message or ""
             ok = not bool(error_msg)
 
-            # NOTE: In the error case, we cannot recover turn_history since final_result
-            # was never set. Pass empty turn_history; the legacy fallback below is also
-            # removed so this path is explicitly lossy for error cases.
+            # NOTE: In the error case, final_result may never have been set.
+            # Persist only the turn state collected before the failure.
             await self._persist_session_turn_state(
                 command,
                 turn_history=turn_history_to_persist,
@@ -995,7 +1370,7 @@ class RoleRuntimeService(IRoleRuntime):
                 error_code=None if ok else "role_runtime_error",
                 error_message=error_msg or None,
             )
-            self._emit_cognitive_runtime_shadow_artifacts(
+            evidence = self._emit_cognitive_runtime_shadow_artifacts(
                 source="roles.runtime.execute_role_session.stream_fallback",
                 workspace=command.workspace,
                 role=command.role,
@@ -1003,14 +1378,20 @@ class RoleRuntimeService(IRoleRuntime):
                 session_id=command.session_id,
                 run_id=command.run_id,
                 result=contract_result,
+                metadata=request.metadata if request is not None else command.metadata,
+                context=request.context_override if request is not None else command.context,
             )
-            return contract_result
+            return _with_result_metadata_patch(
+                contract_result,
+                _cognitive_runtime_result_patch(
+                    evidence=evidence,
+                    request_metadata=request.metadata if request is not None else command.metadata,
+                ),
+            )
 
         kernel = self._get_kernel(command.workspace)
-        result = await kernel.run(
-            command.role,
-            self._build_session_request(command, include_session_snapshot=True),
-        )
+        request = await self._prepare_session_request(command, include_session_snapshot=True)
+        result = await kernel.run(command.role, request)
         await self._persist_session_turn_state(
             command,
             turn_history=list(result.turn_history) if result.turn_history else [],
@@ -1024,7 +1405,7 @@ class RoleRuntimeService(IRoleRuntime):
             run_id=command.run_id,
             result=result,
         )
-        self._emit_cognitive_runtime_shadow_artifacts(
+        evidence = self._emit_cognitive_runtime_shadow_artifacts(
             source="roles.runtime.execute_role_session",
             workspace=command.workspace,
             role=command.role,
@@ -1032,8 +1413,16 @@ class RoleRuntimeService(IRoleRuntime):
             session_id=command.session_id,
             run_id=command.run_id,
             result=contract_result,
+            metadata=request.metadata,
+            context=request.context_override,
         )
-        return contract_result
+        return _with_result_metadata_patch(
+            contract_result,
+            _cognitive_runtime_result_patch(
+                evidence=evidence,
+                request_metadata=request.metadata,
+            ),
+        )
 
     async def get_runtime_status(
         self,
@@ -1074,11 +1463,27 @@ class RoleRuntimeService(IRoleRuntime):
         After the stream completes, persists a StrategyReceipt to
         `<metadata_dir>/runtime/strategy_runs/`.
         """
+        try:
+            request = await self._prepare_session_request(
+                command,
+                include_session_snapshot=True,
+            )
+        except (RuntimeError, ValueError) as exc:
+            yield {
+                "type": "error",
+                "error": str(exc),
+                "source": "roles.runtime.cognitive_preflight",
+            }
+            return
+
         execution_domain, domain_explicit = self._resolve_execution_domain(
-            command_domain=command.domain,
-            context=command.context,
-            metadata=command.metadata,
+            command_domain=request.domain or command.domain,
+            context=request.context_override,
+            metadata=request.metadata,
             role=command.role,
+        )
+        cognitive_strategy_override = _copy_strategy_override(
+            request.metadata.get("cognitive_strategy_override") if isinstance(request.metadata, Mapping) else None
         )
         # WS2: Create strategy run context before the turn.
         run_ctx = self.create_strategy_run(
@@ -1089,6 +1494,7 @@ class RoleRuntimeService(IRoleRuntime):
             workspace=command.workspace,
             domain_explicit=domain_explicit,
             include_session_override=True,
+            current_turn_override=cognitive_strategy_override,
         )
         emit_debug_event(
             category="strategy",
@@ -1106,6 +1512,7 @@ class RoleRuntimeService(IRoleRuntime):
                 "profile_id": run_ctx.profile_id,
                 "profile_hash": run_ctx.profile_hash,
                 "resolved_overrides": dict(run_ctx.resolved_overrides),
+                "cognitive_strategy_override_applied": bool(cognitive_strategy_override),
             },
         )
         # Emit strategy fingerprint as the first event.
@@ -1117,6 +1524,7 @@ class RoleRuntimeService(IRoleRuntime):
             "bundle_version": run_ctx.bundle_version,
             "run_id": run_ctx.run_id,
             "turn_index": run_ctx.turn_index,
+            "cognitive_strategy_override_applied": bool(cognitive_strategy_override),
         }
         yield fingerprint_event
 
@@ -1128,7 +1536,7 @@ class RoleRuntimeService(IRoleRuntime):
         try:
             async for event in kernel.run_stream(
                 command.role,
-                self._build_session_request(command, include_session_snapshot=True),
+                request,
             ):
                 # WS2: Accumulate tool calls into the strategy run context.
                 event_type = str(event.get("type") or "")

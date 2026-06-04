@@ -367,6 +367,81 @@ async def test_execute_turn_forces_retry_on_non_tool_decision_for_mutation(monke
     assert captured["context"] == context
 
 
+@pytest.mark.asyncio
+async def test_execute_turn_passes_narrowed_tool_names_to_direct_batch_executor(monkeypatch) -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_allowed_tools")
+    ledger = TurnLedger(turn_id="turn_allowed_tools")
+    context = [{"role": "user", "content": "请只读取 README.md 的必要片段"}]
+    tool_definitions = [{"type": "function", "function": {"name": "repo_read_slice"}}]
+    captured: dict[str, Any] = {}
+
+    async def _fake_call_llm_for_decision(
+        _ctx,
+        _tool_definitions,
+        _llm_ledger,
+        *,
+        tool_choice_override=None,
+        model_override=None,
+    ):
+        return RawLLMResponse(content="", native_tool_calls=[])
+
+    def _fake_decode(_response, _turn_id):
+        return {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "turn_id": "turn_allowed_tools",
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "repo_read_slice",
+                        "arguments": {"file": "README.md", "start": 1, "end": 20},
+                    }
+                ]
+            },
+        }
+
+    async def _fake_execute_tool_batch(
+        decision,
+        state_machine,
+        ledger,
+        context,
+        *,
+        stream=False,
+        shadow_engine=None,
+        allowed_tool_names=None,
+        **_kwargs,
+    ):
+        captured["decision"] = decision
+        captured["stream"] = stream
+        captured["allowed_tool_names"] = allowed_tool_names
+        return {
+            "turn_id": "turn_allowed_tools",
+            "kind": "tool_batch_with_receipt",
+            "visible_content": "已读取",
+        }
+
+    monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
+    monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
+    monkeypatch.setattr(controller._tool_batch_executor, "execute_tool_batch", _fake_execute_tool_batch)
+
+    result = await controller._execute_turn(
+        "turn_allowed_tools",
+        context,
+        tool_definitions,
+        state_machine,
+        ledger,
+        stream=False,
+    )
+
+    assert result["kind"] == "tool_batch_with_receipt"
+    assert captured["stream"] is False
+    assert captured["allowed_tool_names"] == {"repo_read_slice"}
+
+
 def test_rewrite_existing_file_paths_in_invocations_drops_nonexistent_prefix(tmp_path) -> None:
     # 前缀剥离回退已删除：当子目录路径不存在时，系统不应静默猜测根目录同名文件。
     index_file = tmp_path / "index.html"
@@ -686,7 +761,9 @@ async def test_stream_provider_tool_events_materialize_native_tool_calls(monkeyp
     ):
         events.append(event)
 
-    materialized = [event for event in events if isinstance(event, dict) and event.get("type") == "_internal_materialize"]
+    materialized = [
+        event for event in events if isinstance(event, dict) and event.get("type") == "_internal_materialize"
+    ]
     assert materialized
     response = materialized[-1]["response"]
     assert isinstance(response, RawLLMResponse)
@@ -1669,6 +1746,109 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
     assert len(content_chunks) == 1, f"Expected 1 ContentChunkEvent, got {len(content_chunks)}: {events}"
     assert content_chunks[0].chunk == "已写入 高优先级任务清单.md"
     assert len(completions) == 1, f"Expected 1 CompletionEvent, got {len(completions)}: {events}"
+    assert completions[0].status == "success"
+
+
+@pytest.mark.asyncio
+async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_executor(monkeypatch) -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+        llm_provider_stream=AsyncMock(),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_stream_allowed_tools")
+    ledger = TurnLedger(turn_id="turn_stream_allowed_tools")
+    context = [{"role": "user", "content": "请只读取 README.md 的必要片段"}]
+    tool_definitions = [{"type": "function", "function": {"name": "repo_read_slice"}}]
+    captured: dict[str, Any] = {}
+
+    async def _fake_call_llm_for_decision_stream(
+        ctx,
+        tool_definitions,
+        llm_ledger,
+        shadow_engine=None,
+        *,
+        tool_choice_override=None,
+        model_override=None,
+    ):
+        yield {
+            "type": "_internal_materialize",
+            "response": RawLLMResponse(content="", native_tool_calls=[]),
+        }
+
+    def _fake_decode(_response, _turn_id):
+        return {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "turn_id": "turn_stream_allowed_tools",
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "repo_read_slice",
+                        "arguments": {"file": "README.md", "start": 1, "end": 20},
+                    }
+                ]
+            },
+        }
+
+    async def _fake_execute_tool_batch(
+        decision,
+        state_machine,
+        ledger,
+        context,
+        *,
+        stream=False,
+        shadow_engine=None,
+        allowed_tool_names=None,
+        **_kwargs,
+    ):
+        captured["decision"] = decision
+        captured["stream"] = stream
+        captured["allowed_tool_names"] = allowed_tool_names
+        return {
+            "kind": "tool_batch_with_receipt",
+            "visible_content": "已读取",
+            "batch_receipt": {
+                "batch_id": "batch_allowed_tools",
+                "results": [
+                    {
+                        "tool_name": "repo_read_slice",
+                        "call_id": "call_allowed_tools",
+                        "status": "success",
+                        "result": "README slice",
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setattr(controller, "_call_llm_for_decision_stream", _fake_call_llm_for_decision_stream)
+    monkeypatch.setattr(controller._stream_orchestrator.decoder, "decode", _fake_decode)
+    monkeypatch.setattr(
+        controller._stream_orchestrator.tool_batch_executor,
+        "execute_tool_batch",
+        _fake_execute_tool_batch,
+    )
+
+    events: list[Any] = []
+    async for event in controller._execute_turn_stream(
+        turn_id="turn_stream_allowed_tools",
+        context=context,
+        tool_definitions=tool_definitions,
+        state_machine=state_machine,
+        ledger=ledger,
+    ):
+        events.append(event)
+
+    from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ToolBatchEvent
+
+    tool_batch_events = [e for e in events if isinstance(e, ToolBatchEvent)]
+    completions = [e for e in events if isinstance(e, CompletionEvent)]
+
+    assert captured["stream"] is True
+    assert captured["allowed_tool_names"] == {"repo_read_slice"}
+    assert len(tool_batch_events) == 1
+    assert tool_batch_events[0].tool_name == "repo_read_slice"
+    assert len(completions) == 1
     assert completions[0].status == "success"
 
 

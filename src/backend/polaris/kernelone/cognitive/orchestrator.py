@@ -1,4 +1,4 @@
-"""Cognitive Orchestrator - Top-level entry point for Cognitive Life Form.
+"""Cognitive Orchestrator - Top-level entry point for the cognitive pipeline.
 
 .. note::
     The AlignmentServiceAdapter import from polaris.cells.adapters.kernelone
@@ -60,7 +60,7 @@ class CognitiveResponse:
 
 class CognitiveOrchestrator:
     """
-     Top-level orchestrator for Cognitive Life Form.
+     Top-level orchestrator for the cognitive pipeline.
 
      Acts as a facade that delegates to:
      - CognitiveGovernanceGate: handles all governance checks

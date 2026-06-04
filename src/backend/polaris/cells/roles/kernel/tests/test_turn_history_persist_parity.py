@@ -458,7 +458,7 @@ class TestPhase3ContextOSDirectIntegration:
         assert "transcript_log" in req.context_os_snapshot
 
     def test_kernel_build_context_extracts_context_os_snapshot(self) -> None:
-        """kernel._build_context extracts context_os_snapshot from context_override."""
+        """kernel._build_context preserves context_override and extracts context_os_snapshot."""
         from polaris.cells.roles.kernel.internal.kernel import RoleExecutionKernel
         from polaris.cells.roles.profile.public import RoleTurnRequest
         from polaris.cells.roles.profile.public.service import RoleProfile
@@ -473,13 +473,18 @@ class TestPhase3ContextOSDirectIntegration:
             message="hello",
             history=[],
             task_id="t1",
-            context_override={"context_os_snapshot": snapshot},
+            context_override={
+                "context_os_snapshot": snapshot,
+                "allowed_provider_types": ("ollama",),
+            },
         )
 
         result = kernel._build_context(profile, request)
 
         assert isinstance(result, TurnEngineContextRequest)
         assert result.context_os_snapshot == snapshot
+        assert result.context_override is not None
+        assert result.context_override["allowed_provider_types"] == ("ollama",)
         assert result.context_os_snapshot["working_state"]["current_task"] == "test"
 
     def test_context_gateway_formats_context_os_snapshot(self) -> None:

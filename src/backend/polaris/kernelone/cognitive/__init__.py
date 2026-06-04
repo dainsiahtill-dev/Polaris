@@ -1,4 +1,4 @@
-"""Cognitive Life Form - Core runtime for cognitive capabilities."""
+"""Core runtime for cognitive capabilities."""
 
 from polaris.kernelone.cognitive.context import (
     CognitiveContext,

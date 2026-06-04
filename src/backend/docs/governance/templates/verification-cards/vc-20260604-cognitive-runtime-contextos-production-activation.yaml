@@ -1,0 +1,653 @@
+card_id: "vc-20260604-cognitive-runtime-contextos-production-activation"
+bug_summary: >
+  Workflow role adapters could bypass roles.runtime/Context OS, while development
+  handoff could fake code changes by writing natural-language intent to a markdown file.
+
+classification: structural
+
+bug_path:
+  file: "src/backend/polaris/cells/roles/adapters/internal/director/adapter.py"
+  method: "DirectorAdapter._invoke_role_dialogue"
+  symptom: "Director code generation used direct dialogue before the canonical role runtime."
+
+assumptions:
+  - id: "A1"
+    statement: "Director materialization must enter roles.runtime and must not retain a direct dialogue fallback."
+    status: verified_true
+    evidence: >
+      TestDirectorRuntimeFallback.test_role_dialogue_uses_role_runtime_context_os_path_first
+      asserts ExecuteRoleSessionCommandV1 role=director, domain=code, stream=False, run_id, task_id,
+      and metadata.role_runtime_required=True.
+
+  - id: "A2"
+    statement: "Runtime metadata must remain visible in Director adapter results for auditability."
+    status: verified_true
+    evidence: >
+      _normalize_director_role_response preserves metadata, execution_stats, artifacts,
+      tool_calls, and tool_results. The runtime-first test asserts role_runtime_entrypoint
+      and context_os_expected metadata.
+
+  - id: "A3"
+    statement: "Natural-language development handoff must not create placeholder code artifacts."
+    status: verified_true
+    evidence: >
+      DevelopmentWorkflowRuntime._execute_patch now returns
+      development_handoff_requires_concrete_patch for plain intent, and
+      test_execute_patch_plain_intent_fails_closed asserts no tool call is made.
+
+  - id: "A4"
+    statement: "Explicit patch protocols must still execute through existing KernelOne parsing and tool contracts."
+    status: verified_true
+    evidence: >
+      DevelopmentWorkflowRuntime._parse_protocol_file_operations delegates to parse_protocol_output,
+      and test_execute_patch_success asserts PATCH_FILE becomes a write_file operation.
+
+  - id: "A5"
+    statement: "PM, Architect, Chief Engineer, QA, and Director code-generation bridges must enter RoleRuntimeService without an executable legacy dialogue fallback."
+    status: verified_true
+    evidence: >
+      runtime_dialogue.invoke_role_runtime_first constructs ExecuteRoleSessionCommandV1 and calls
+      RoleRuntimeService.execute_role_session. test_workflow_role_adapters_use_runtime_dialogue_helper
+      asserts these adapters no longer directly call generate_role_response or invoke_role_runtime_provider,
+      while TestRuntimeDialogueHelper verifies runtime-first metadata and fail-closed runtime-boundary behavior.
+      TestBlockedEntryPoints.test_runtime_codegen_invokes_director_in_proposal_mode asserts the Director
+      code-generation bridge creates an ExecuteRoleSessionCommandV1 with domain=code.
+
+  - id: "A6"
+    statement: "Runtime execution failures must surface as failures instead of triggering legacy dialogue or direct-provider fallback."
+    status: verified_true
+    evidence: >
+      TestRuntimeDialogueHelper.test_runtime_execution_failure_is_not_hidden_by_legacy_fallback
+      and TestDirectorRuntimeFallback.test_role_dialogue_runtime_execution_failure_does_not_fallback_to_legacy
+      assert RuntimeError from RoleRuntimeService execution does not call generate_role_response.
+      TestDirectorRuntimeFallback.test_role_dialogue_fails_closed_when_runtime_boundary_unavailable
+      asserts boundary construction failure also fails closed.
+      TestDirectorRuntimeFallback.test_direct_runtime_provider_bypass_is_removed asserts the old
+      direct provider bypass fails closed.
+
+  - id: "A7"
+    statement: "Projection-generated target projects must not import Polaris internals, and PM normalization must enter RoleRuntimeService."
+    status: verified_true
+    evidence: >
+      test_projection_lab_pm_normalization_uses_role_runtime asserts projection lab builds a PM
+      ExecuteRoleSessionCommandV1 with domain=document and context_os_expected=True. The projection
+      lab deterministic test passes verification after json_cli_app_renderer and resource_http_service_renderer
+      replace Polaris time imports with target-project standard-library helpers.
+
+  - id: "A8"
+    statement: "PM CLI, PM document rendering, non-streaming HTTP chat, and role probe entrypoints must use RoleRuntimeService instead of direct dialogue/provider calls."
+    status: verified_true
+    evidence: >
+      test_generic_backend_uses_role_runtime_command, test_render_llm_authored_docs_uses_architect_role_runtime,
+      and test_execute_role_chat_nonstreaming_uses_role_runtime assert ExecuteRoleSessionCommandV1 is built with
+      stream=False, role_runtime_required=True, context_os_expected=True, and runtime entrypoint metadata.
+      test_production_entrypoints_do_not_call_legacy_llm_boundaries statically blocks these entrypoints from
+      calling generate_role_response or invoke_role_runtime_provider directly.
+
+  - id: "A9"
+    statement: "Audit LLM local-provider preference must use RoleRuntime provider policy instead of direct provider-runtime invocation."
+    status: verified_true
+    evidence: >
+      task_audit_llm_binding now builds ExecuteRoleSessionCommandV1 via RoleRuntimeService.
+      test_make_audit_llm_caller_prefers_local_ollama asserts the first call carries
+      blocked_provider_types, test_make_audit_llm_caller_falls_back_to_role_runtime asserts the
+      fallback call is unrestricted, and TestProviderTypePolicy asserts AIExecutor rejects
+      disallowed provider types before provider invocation. TestAdapterCallsRuntimeBoundary also
+      statically blocks audit and PM production entrypoints from reintroducing direct provider/process LLM calls.
+
+  - id: "A10"
+    statement: "Required RoleRuntime paths must hard-gate Cognitive Runtime receipt/handoff evidence."
+    status: verified_true
+    evidence: >
+      RoleRuntimeService now returns metadata.cognitive_runtime_evidence on execute_role_session
+      and execute_role_task. test_required_cognitive_runtime_evidence_records_receipt_and_handoff,
+      test_required_cognitive_runtime_evidence_fails_closed_when_disabled, and
+      test_execute_role_session_returns_cognitive_runtime_evidence_metadata cover success,
+      fail-closed OFF mode, and returned metadata.
+
+  - id: "A11"
+    statement: "Legacy compatibility wrappers must not re-inject direct provider or stale generation shortcuts."
+    status: verified_true
+    evidence: >
+      loop-pm no longer imports invoke_ollama or monkeypatches PM backend provider functions.
+      worker_executor legacy _invoke_ollama and _invoke_generation_response now fail closed locally,
+      and worker progress markers include a UTF-8 content hash so stale same-size rewrites are not
+      treated as completed generation rounds.
+
+  - id: "A12"
+    statement: "Frontend runtime projection compatibility must expose source provenance."
+    status: verified_true
+    evidence: >
+      RuntimeProjectionPayload now carries projection_source/provenance. projectionCompat tests assert
+      canonical, empty, partial, merged, legacy_flat, and legacy_nested payloads are labeled explicitly,
+      including transformed=true and compatibility_reason for legacy conversions.
+
+  - id: "A13"
+    statement: "Context override must isolate control-plane fields from prompt-visible data-plane context."
+    status: verified_true
+    evidence: >
+      RoleContextGateway._process_context_override now drops context_os_snapshot, provider policy,
+      runtime-required flags, metadata, session/run identifiers, and internal _transaction_kernel_*
+      keys before creating a prompt-visible system message.
+      test_process_context_override_drops_control_plane_fields asserts these fields do not appear
+      while a safe explicit context key remains visible.
+
+  - id: "A14"
+    statement: "Cognitive Runtime MAINLINE must affect the current RoleRuntime turn before LLM invocation."
+    status: verified_true
+    evidence: >
+      RoleRuntimeService._prepare_session_request invokes CognitiveMiddleware in MAINLINE before
+      kernel.run, injects sanitized cognitive_guidance into context_override, and records
+      metadata.cognitive_runtime_preflight. test_prepare_session_request_applies_cognitive_mainline_guidance
+      covers current-turn guidance injection, and test_prepare_session_request_fails_closed_when_cognitive_mainline_blocks
+      covers pre-LLM blocking.
+
+  - id: "A15"
+    statement: "HTTP role, PM, and role-session streaming must enter RoleRuntimeService directly instead of the dialogue compatibility facade."
+    status: verified_true
+    evidence: >
+      role_runtime_chat.execute_role_chat_streaming builds ExecuteRoleSessionCommandV1(stream=True)
+      and maps RoleRuntime stream events into the SSE queue format. role_chat.py, pm_chat.py,
+      and role_session.py no longer import generate_role_response_streaming. The focused router
+      suite and test_execute_role_chat_streaming_uses_role_runtime verify the migrated path.
+
+  - id: "A16"
+    statement: "Prompt assembly must fail closed when chunk/Tri-Axis assembly cannot emit a final request receipt."
+    status: verified_true
+    evidence: >
+      PromptBuilder no longer falls back to legacy string joining or template recursion when
+      chunk assembly or RoleComposer recipe resolution fails. test_build_system_prompt_fails_closed_when_chunk_assembly_fails
+      asserts the error is surfaced.
+
+  - id: "A17"
+    statement: "WorkerExecutor must not mark generated artifacts successful from receipts alone."
+    status: verified_true
+    evidence: >
+      WorkerExecutor now requires generated-file receipts to resolve to real workspace files
+      and pass scan_workspace_artifact_quality(relative_paths=...). The focused test
+      test_code_generation_rejects_deterministic_scaffold_marker asserts a
+      Created by Polaris placeholder fails closed.
+
+  - id: "A18"
+    statement: "Director file_creation and bootstrap target backfill must not synthesize deterministic placeholder code."
+    status: verified_true
+    evidence: >
+      _execute_file_creation delegates to _execute_code_generation when concrete target files
+      exist and fails closed without CodeGenerationEngine. Bootstrap missing target files now
+      call runtime codegen instead of _bootstrap_target_file_content. The tests
+      test_execute_file_creation_requires_codegen_without_placeholder and
+      test_bootstrap_missing_targets_require_codegen_without_placeholder cover both paths.
+
+  - id: "A19"
+    statement: "Director tasking code generation must load from the canonical tasking module."
+    status: verified_true
+    evidence: >
+      polaris.cells.director.tasking.internal.code_generation_engine now contains the implementation.
+      polaris.cells.director.execution.internal.code_generation_engine is a compatibility re-export,
+      and WorkerExecutor no longer imports or falls back to the execution.internal implementation path.
+
+  - id: "A20"
+    statement: "Cognitive Runtime MAINLINE tool denials must affect exposed tool schemas and actual tool execution."
+    status: verified_true
+    evidence: >
+      CognitiveMiddleware preserves CognitiveResponse.blocked_tools, RoleRuntimeService writes them
+      to metadata.cognitive_tool_policy and the preflight receipt, and RoleExecutionKernel both filters
+      blocked native tool schemas and rejects blocked tool execution before executor dispatch. The
+      middleware, runtime strategy, and kernel facade tests cover all three boundaries.
+
+  - id: "A21"
+    statement: "The llm.dialogue public role facade must not remain an executable old dialogue path."
+    status: verified_true
+    evidence: >
+      LlmDialogueService.invoke_role_dialogue now builds ExecuteRoleSessionCommandV1 and calls
+      RoleRuntimeService.execute_role_session with role_runtime_required, cognitive_runtime_required,
+      context_os_expected, and fallback_policy=fail_closed. test_invoke_role_dialogue_uses_role_runtime
+      asserts the public facade enters RoleRuntime and emits no legacy_fallback_used metadata.
+
+  - id: "A22"
+    statement: "Cognitive Runtime MAINLINE strategy guidance must be applied before stream fingerprints are emitted."
+    status: verified_true
+    evidence: >
+      RoleRuntimeService._apply_cognitive_runtime_preflight now derives metadata.cognitive_strategy_override
+      from MAINLINE guidance before stream_chat_turn creates StrategyRunContext. create_strategy_run merges
+      that override into StrategyRegistry resolution. test_stream_chat_turn_applies_cognitive_strategy_before_fingerprint
+      asserts the first fingerprint event exposes cognitive_strategy_override_applied=True.
+
+  - id: "A23"
+    statement: "Cognitive Runtime MAINLINE strategy override must be consumed by ContextGateway before LLM prompt assembly."
+    status: verified_true
+    evidence: >
+      TurnEngineContextRequest now carries strategy_override as control-plane data. ToolLoopController extracts
+      metadata.cognitive_strategy_override from RoleRuntime requests, and RoleContextGateway consumes it to expand
+      StateFirstContextOS.project(recent_window_messages) and emit budget-pressure telemetry before ProjectionEngine
+      builds LLM messages. test_build_context_request_passes_cognitive_strategy_override and
+      test_cognitive_strategy_override_expands_context_os_window verify the handoff and actual projection argument.
+
+  - id: "A24"
+    statement: "ContextGateway decision hints must reduce the native LLM tool surface in both streaming and non-streaming TransactionKernel paths."
+    status: verified_true
+    evidence: >
+      RoleContextGateway now emits context_decision_hints with budget-pressure and read-only mutation suppression.
+      RoleExecutionKernel._apply_runtime_tool_policy consumes those hints after profile whitelist construction and before
+      TransactionKernel execution. Non-streaming and streaming transaction paths call the same helper, so Context OS can
+      remove expensive read_file and mutating/exec tools without granting any new tools. Facade refactor tests verify the
+      resulting schema filtering and safe exceptions for compact_context/update_session_state.
+
+  - id: "A25"
+    statement: "The narrowed tool surface must be enforced again at ToolBatchExecutor dispatch time."
+    status: verified_true
+    evidence: >
+      TurnTransactionController and StreamOrchestrator now derive allowed_tool_names from the already-narrowed
+      tool_definitions and pass them to ToolBatchExecutor.execute_tool_batch. The executor rejects tool invocations
+      outside that set before dispatch. test_execute_turn_passes_narrowed_tool_names_to_direct_batch_executor and
+      test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_executor verify the non-streaming and
+      streaming direct TOOL_BATCH paths.
+
+  - id: "A26"
+    statement: "Context OS production code must use structured policy subobjects instead of deprecated compatibility accessors."
+    status: verified_true
+    evidence: >
+      Context OS runtime, pipeline, scheduler, helpers, domain adapter, and RoleRuntime persistence now read
+      context_window/window_size/artifact/token_budget/attention_runtime/collection_limits subobjects directly.
+      A production scan for deprecated accessor forms under context_os and RoleRuntime persistence returns no matches
+      outside the compatibility accessor definitions themselves. The Context OS attention/runtime/policy regression
+      suite passes; remaining deprecation warnings are emitted only by compatibility-accessor tests.
+
+  - id: "A27"
+    statement: "RoleExecutionKernel must not expose an environment-variable escape hatch back to TurnEngine."
+    status: verified_true
+    evidence: >
+      RoleExecutionKernel.run and run_stream now call TransactionKernel paths directly, and
+      RoleExecutionKernel._use_transaction_kernel() is a canonical true boundary rather than an environment flag.
+      A production scan of kernel/core.py for LEGACY_FALLBACK, USE_TRANSACTION_KERNEL_PRIMARY, and TurnEngine(
+      returns no matches. test_transaction_kernel_cannot_be_disabled_by_removed_env_escape_hatches asserts
+      the removed environment variables cannot disable TransactionKernel.
+
+  - id: "A28"
+    statement: "ExplorationWorkflowRuntime handoff failures must fail closed instead of being reported as successful handoff."
+    status: verified_true
+    evidence: >
+      HandoffHandler now transitions HANDOFF_WORKFLOW to FAILED when workflow_runtime.execute or execute_stream raises
+      or returns a failed/cancelled workflow result. Stream child CompletionEvent is consumed as child status and the
+      outer TransactionKernel remains the only completion owner.
+      test_transaction_kernel_fails_closed_when_workflow_runtime_fails and
+      test_transaction_kernel_fails_closed_when_workflow_runtime_returns_failed_result cover non-streaming paths.
+      test_stream_handoff_fails_closed_when_workflow_runtime_fails and
+      test_stream_handoff_fails_closed_when_workflow_runtime_returns_failed_completion cover streaming paths.
+
+  - id: "A29"
+    statement: "The philosophical Cognitive Lifeform metaphor must not remain in production Python code."
+    status: verified_true
+    evidence: >
+      Production Python docstrings, comments, and CLI text now use cognitive capabilities,
+      cognitive pipeline, or cognitive middleware as engineering terms. test_terminology_governance.py
+      scans src/backend/polaris production Python files, excluding tests and generated assets, and blocks
+      Cognitive Lifeform / Cognitive Life Form / 认知生命体 from returning to code comments or user-facing CLI text.
+
+  - id: "A30"
+    statement: "Cognitive Runtime must be active by default and must not be bypassed by the session orchestrator path."
+    status: verified_true
+    evidence: >
+      resolve_cognitive_runtime_mode defaults to MAINLINE, cognitive_runtime_enabled=True maps to MAINLINE,
+      and KernelOne flag resolution now only reads canonical KERNELONE_* variables. Legacy POLARIS_* compatibility is
+      isolated to polaris._env_compat before kernelone imports. RoleRuntimeService.create_transaction_controller is async
+      and calls _prepare_session_request(include_session_snapshot=True), so RoleSessionOrchestrator receives a
+      preflighted TransactionKernel request. test_default_is_mainline, test_metadata_enabled_true_maps_to_mainline,
+      test_legacy_polaris_env_is_normalized_at_boundary, and
+      test_create_transaction_controller_applies_cognitive_mainline_preflight verify these boundaries.
+
+  - id: "A31"
+    statement: "Speculative/shadow execution must be active by default while write tools remain fail-closed without a registry-backed prepare shadow."
+    status: verified_true
+    evidence: >
+      is_speculative_execution_enabled defaults to True, TurnTransactionController builds StreamShadowEngine by default,
+      and StreamShadowEngine refuses write-tool speculation when no registry-backed prepare shadow is available.
+      test_speculative_flag_defaults_enabled, test_stream_controller_builds_shadow_engine_by_default,
+      test_stream_controller_speculates_when_flag_enabled, test_stream_controller_no_speculation_when_flag_disabled,
+      and test_speculate_write_tool_without_registry_fails_closed verify active-by-default behavior and write safety.
+
+pre_mortem:
+  failure_point: >
+    The most likely regression is accidentally reintroducing an executable legacy dialogue fallback,
+    or allowing development handoff to materialize non-code intent as a file artifact.
+  risk_zone:
+    - "src/backend/polaris/cells/roles/adapters/internal/director/adapter.py"
+    - "src/backend/polaris/cells/roles/adapters/internal/runtime_dialogue.py"
+    - "src/backend/polaris/cells/roles/adapters/internal/pm_adapter.py"
+    - "src/backend/polaris/cells/roles/adapters/internal/architect_adapter.py"
+    - "src/backend/polaris/cells/roles/adapters/internal/chief_engineer_adapter.py"
+    - "src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py"
+    - "src/backend/polaris/cells/director/execution/internal/code_generation_engine.py"
+    - "src/backend/polaris/cells/factory/pipeline/internal/projection_lab.py"
+    - "src/backend/polaris/cells/factory/pipeline/internal/json_cli_app_renderer.py"
+    - "src/backend/polaris/cells/factory/pipeline/internal/resource_http_service_renderer.py"
+    - "src/backend/polaris/delivery/cli/pm/backend.py"
+    - "src/backend/polaris/delivery/cli/loop-pm.py"
+    - "src/backend/polaris/delivery/cli/pm/orchestration/doc_rendering.py"
+    - "src/backend/polaris/delivery/http/routers/role_runtime_chat.py"
+    - "src/backend/polaris/delivery/http/routers/pm_chat.py"
+    - "src/backend/polaris/delivery/http/routers/role_chat.py"
+    - "src/backend/polaris/delivery/http/routers/role_session.py"
+    - "src/backend/polaris/delivery/http/workspace.py"
+    - "src/backend/polaris/delivery/cli/agentic_eval.py"
+    - "src/backend/polaris/cells/llm/dialogue/public/service.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/development_workflow_runtime.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/tool_loop_controller.py"
+    - "src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/prompt_builder.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/kernel/core.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
+    - "src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+    - "src/backend/polaris/kernelone/context/context_os/runtime/engine.py"
+    - "src/backend/polaris/kernelone/context/context_os/runtime/state.py"
+    - "src/backend/polaris/kernelone/context/context_os/runtime/scheduler.py"
+    - "src/backend/polaris/kernelone/context/context_os/pipeline/stages.py"
+    - "src/backend/polaris/kernelone/context/context_os/pipeline/attention_aware_stages.py"
+    - "src/backend/polaris/kernelone/context/context_os/pipeline/phase_aware_stages.py"
+    - "src/backend/polaris/kernelone/context/context_os/helpers.py"
+    - "src/backend/polaris/kernelone/context/context_os/domain_adapters/generic.py"
+    - "src/backend/polaris/cells/roles/runtime/public/persistence.py"
+    - "src/backend/polaris/cells/roles/runtime/internal/session_orchestrator.py"
+    - "src/backend/polaris/cells/roles/runtime/public/service.py"
+    - "src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py"
+    - "src/backend/polaris/kernelone/cognitive/middleware.py"
+    - "src/backend/polaris/kernelone/cognitive/tests/test_middleware.py"
+    - "src/backend/polaris/cells/director/tasking/internal/worker_executor.py"
+    - "src/backend/polaris/cells/director/tasking/internal/code_generation_engine.py"
+    - "src/backend/polaris/kernelone/context/contracts.py"
+    - "src/frontend/src/runtime/projection.ts"
+    - "src/frontend/src/runtime/projectionCompat.ts"
+
+verification_plan:
+  unit_tests:
+    - file: "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      description: "Director adapter must call roles.runtime first and preserve Context OS evidence."
+      expected: "TestDirectorRuntimeFallback passes."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/internal/tests/test_development_workflow_runtime.py"
+      description: "Development workflow accepts explicit PATCH_FILE operations and rejects plain intent."
+      expected: "DevelopmentWorkflowRuntime tests pass."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/adapters/tests/test_runtime_dialogue.py"
+      description: "Runtime dialogue helper must call RoleRuntimeService and fail closed without legacy dialogue fallback."
+      expected: "TestRuntimeDialogueHelper passes."
+      status: completed
+    - file: "src/backend/polaris/tests/test_roles_engine_dialogue.py"
+      description: "Static convergence gate prevents workflow adapters from reintroducing direct legacy dialogue/provider calls."
+      expected: "TestAdapterCallsRuntimeBoundary passes."
+      status: completed
+    - file: "src/backend/polaris/cells/director/execution/tests/test_code_generation.py"
+      description: "Director code-generation bridge must use RoleRuntimeService and domain=code."
+      expected: "test_runtime_codegen_invokes_director_in_proposal_mode passes."
+      status: completed
+    - file: "src/backend/polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+      description: "Projection lab must use PM RoleRuntimeService when requested and generated projects must verify without importing Polaris internals."
+      expected: "Projection lab tests pass."
+      status: completed
+    - file: "src/backend/polaris/tests/test_loop_pm_backend_resolution.py"
+      description: "PM CLI backend must execute through PM RoleRuntimeService, including explicit codex/ollama selections as provider policy."
+      expected: "PM backend role-runtime tests pass."
+      status: completed
+    - file: "src/backend/polaris/tests/test_pm_doc_rendering_role_runtime.py"
+      description: "PM document rendering must execute Architect through RoleRuntimeService."
+      expected: "Architect document runtime test passes."
+      status: completed
+    - file: "src/backend/polaris/tests/test_role_runtime_chat_router_helper.py"
+      description: "Non-streaming HTTP chat helper must execute through RoleRuntimeService."
+      expected: "Role runtime chat helper test passes."
+      status: completed
+    - file: "src/backend/polaris/tests/test_audit_llm_runtime.py"
+      description: "Audit LLM local-first and fallback policy must execute through RoleRuntimeService."
+      expected: "Audit RoleRuntime binding tests pass."
+      status: completed
+    - file: "src/backend/polaris/tests/llm/engine/test_executor_resilience_fixes.py"
+      description: "AIExecutor must enforce provider allow/block policy before invoking a provider."
+      expected: "TestProviderTypePolicy passes."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py"
+      description: "RoleRuntimeService must copy provider policy metadata into context_override, hard-gate Cognitive Runtime evidence when required, and apply MAINLINE cognitive guidance before LLM invocation."
+      expected: "Provider policy request mapping, cognitive evidence, and MAINLINE preflight tests pass."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_fallback.py"
+      description: "ContextGateway must keep control-plane runtime fields out of prompt-visible context_override messages."
+      expected: "Context override fallback and control-plane isolation tests pass."
+      status: completed
+    - file: "src/backend/polaris/tests/test_role_runtime_chat_router_helper.py"
+      description: "HTTP chat streaming helper must execute through RoleRuntimeService and keep the SSE event contract."
+      expected: "Non-streaming and streaming helper tests pass."
+      status: completed
+    - file: "src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py"
+      description: "Role chat HTTP router must use RoleRuntime helper paths for non-streaming and streaming chat."
+      expected: "Role chat router tests pass."
+      status: completed
+    - file: "src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py"
+      description: "PM chat HTTP router must use RoleRuntime helper paths for non-streaming and streaming chat."
+      expected: "PM chat router tests pass."
+      status: completed
+    - file: "src/backend/polaris/tests/test_role_session_streaming.py"
+      description: "Role-session streaming must snapshot session data, await ContextOS continuity projection, and stream through RoleRuntime helper."
+      expected: "Role session streaming regression passes."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_prompt_builder_chunks.py"
+      description: "PromptBuilder must emit chunk receipts and fail closed when chunk assembly fails."
+      expected: "PromptBuilder chunk tests pass."
+      status: completed
+    - file: "src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py"
+      description: "Worker progress markers, artifact quality receipts, canonical codegen loading, and placeholder-free file/bootstrap paths must remain fail-closed."
+      expected: "WorkerExecutor tests pass."
+      status: completed
+    - file: "src/backend/polaris/cells/director/tasking/internal/code_generation_engine.py"
+      description: "Tasking code-generation module must be the canonical implementation surface."
+      expected: "Old execution.internal module re-exports the tasking implementation."
+      status: completed
+    - file: "src/backend/polaris/kernelone/cognitive/tests/test_middleware.py"
+      description: "CognitiveMiddleware must preserve cognitive blocked_tools from the orchestrator."
+      expected: "Middleware blocked tools test passes."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py"
+      description: "RoleExecutionKernel must filter blocked native tool schemas and reject blocked tool execution."
+      expected: "Kernel cognitive tool-policy tests pass."
+      status: completed
+    - file: "src/backend/polaris/tests/test_llm_dialogue_public_service.py"
+      description: "The llm.dialogue public role facade must delegate to RoleRuntime and avoid legacy metadata."
+      expected: "Public dialogue facade regression passes."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py"
+      description: "Cognitive Runtime MAINLINE must apply current-turn strategy overrides before stream fingerprints."
+      expected: "Runtime strategy tests pass."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_tool_loop_controller.py"
+      description: "ToolLoopController must pass RoleRuntime cognitive strategy overrides into TurnEngineContextRequest."
+      expected: "test_build_context_request_passes_cognitive_strategy_override passes."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py"
+      description: "ContextGateway must consume cognitive strategy overrides as control-plane data and expand the ContextOS projection window."
+      expected: "test_cognitive_strategy_override_expands_context_os_window and control-plane isolation tests pass."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py"
+      description: "RoleExecutionKernel must apply ContextGateway decision hints to native tool definitions."
+      expected: "Context budget-pressure and read-only tool-surface reduction tests pass."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+      description: "TransactionKernel direct TOOL_BATCH paths must pass the narrowed tool allow-list to ToolBatchExecutor."
+      expected: "Non-streaming and streaming narrowed_tool_names tests pass."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py"
+      description: "RoleExecutionKernel must keep TransactionKernel as the only production execution path."
+      expected: "Removed legacy environment escape hatches cannot disable TransactionKernel."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_integration_transactional_flow.py"
+      description: "ExplorationWorkflowRuntime handoff failures must surface as workflow_execution_error."
+      expected: "Non-streaming handoff failure test passes."
+      status: completed
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_stream_parity.py"
+      description: "TurnEngine compatibility facade tests must use canonical tool names accepted by the narrowed TransactionKernel tool surface."
+      expected: "Multi-round history parity uses repo_rg instead of removed search_code alias."
+      status: completed
+    - file: "src/backend/polaris/tests/test_terminology_governance.py"
+      description: "Production Python comments, docstrings, and CLI text must not use the Cognitive Lifeform metaphor."
+      expected: "Terminology governance scan passes."
+      status: completed
+    - file: "src/backend/polaris/kernelone/context/tests/test_attention_runtime.py"
+      description: "Context OS production runtime must use structured policy subobjects while preserving attention/runtime behavior."
+      expected: "Context OS attention/runtime and boundary tests pass."
+      status: completed
+    - file: "src/frontend/src/runtime/projectionCompat.test.ts"
+      description: "Frontend runtime projection compatibility must label canonical and legacy projection sources."
+      expected: "Projection compatibility tests pass."
+      status: completed
+
+  integration_tests:
+    - description: "Focused Director runtime-first and missing-write-receipt regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::TestDirectorRuntimeFallback src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::TestDirectorFailureClosure::test_execute_rejects_workspace_diff_without_write_tool_receipt -q"
+      expected: "4 passed"
+      status: completed
+    - description: "Development workflow patch/test loop regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/internal/tests/test_development_workflow_runtime.py -q"
+      expected: "16 passed"
+      status: completed
+    - description: "Workflow adapter runtime-first regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_runtime_dialogue.py src/backend/polaris/tests/test_roles_engine_dialogue.py src/backend/polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py src/backend/polaris/cells/roles/adapters/tests/test_architect_adapter_pure.py src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::TestDirectorRuntimeFallback -q"
+      expected: "166 passed"
+      status: completed
+    - description: "Director execution code-generation runtime bridge."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/director/execution/tests/test_code_generation.py::TestBlockedEntryPoints::test_runtime_codegen_invokes_director_in_proposal_mode -q"
+      expected: "1 passed"
+      status: completed
+    - description: "Projection lab runtime normalization and portable target renderer."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/factory/pipeline/tests/test_projection_lab.py -q"
+      expected: "3 passed"
+      status: completed
+    - description: "PM CLI/docs/chat/probe runtime entrypoints and static no-direct-legacy guard."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_loop_pm_backend_resolution.py src/backend/polaris/tests/test_pm_doc_rendering_role_runtime.py src/backend/polaris/tests/test_role_runtime_chat_router_helper.py src/backend/polaris/tests/test_roles_engine_dialogue.py -q"
+      expected: "All selected tests pass."
+      status: completed
+    - description: "Audit LLM RoleRuntime provider policy."
+      command: "$env:PYTHONPATH='src/backend'; pytest src/backend/polaris/tests/test_audit_llm_runtime.py src/backend/polaris/tests/unit/cells/test_audit/test_task_audit_llm_binding.py -q"
+      expected: "23 passed"
+      status: completed
+    - description: "PM planning and PM CLI explicit backend provider policy."
+      command: "$env:PYTHONPATH='src/backend'; pytest src/backend/polaris/cells/orchestration/pm_planning/tests/test_pipeline_ports.py src/backend/polaris/tests/test_loop_pm_backend_resolution.py -q"
+      expected: "70 passed"
+      status: completed
+    - description: "Provider policy propagation and enforcement."
+      command: "$env:PYTHONPATH='src/backend'; pytest src/backend/polaris/tests/llm/engine/test_executor_resilience_fixes.py::TestProviderTypePolicy src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py::TestRoleRuntimeServiceStrategy::test_build_session_request_copies_provider_policy_to_context_override src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py::TestRoleRuntimeServiceStrategy::test_build_task_request_copies_provider_policy_to_context_override src/backend/polaris/cells/roles/kernel/tests/test_turn_history_persist_parity.py::TestPhase3ContextOSDirectIntegration::test_kernel_build_context_extracts_context_os_snapshot -q"
+      expected: "5 passed"
+      status: completed
+    - description: "RoleRuntime Cognitive Runtime evidence hard gate."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py -q"
+      expected: "20 passed"
+      status: completed
+    - description: "HTTP RoleRuntime chat/session streaming migration."
+      command: "$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/tests/test_role_runtime_chat_router_helper.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py src/backend/polaris/tests/test_role_session_streaming.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_error_paths.py -q"
+      expected: "79 passed"
+      status: completed
+    - description: "PromptBuilder receipt fail-closed protection."
+      command: "$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_prompt_builder_chunks.py -q"
+      expected: "2 passed"
+      status: completed
+    - description: "Director tasking codegen canonical migration and artifact quality gate."
+      command: "$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py src/backend/polaris/tests/test_worker_executor_tech_stack.py -q"
+      expected: "125 passed"
+      status: completed
+    - description: "Cognitive Runtime MAINLINE tool-policy enforcement."
+      command: "$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/kernelone/cognitive/tests/test_middleware.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q"
+      expected: "66 passed"
+      status: completed
+    - description: "Public llm.dialogue RoleRuntime facade and no-legacy metadata regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_llm_dialogue_public_service.py src/backend/polaris/tests/test_loop_pm_backend_resolution.py src/backend/polaris/tests/test_pm_doc_rendering_role_runtime.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py -q"
+      expected: "62 passed"
+      status: completed
+    - description: "Cognitive Runtime MAINLINE strategy override and stream fingerprint ordering."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py -q"
+      expected: "24 passed"
+      status: completed
+    - description: "Cognitive Runtime MAINLINE strategy override reaches ContextGateway projection parameters."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_tool_loop_controller.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py -q"
+      expected: "15 passed"
+      status: completed
+    - description: "ContextGateway decision hints drive Kernel tool-surface reduction."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q"
+      expected: "65 passed"
+      status: completed
+    - description: "Direct TransactionKernel dispatch receives narrowed ToolBatchExecutor allow-list."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -k \"narrowed_tool_names\" -q"
+      expected: "2 passed"
+      status: completed
+    - description: "RoleRuntime/ContextGateway/Kernel/TransactionKernel combined regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py -q"
+      expected: "107 passed"
+      status: completed
+    - description: "Context OS structured policy runtime migration."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/kernelone/context/tests/test_attention_runtime.py src/backend/polaris/kernelone/context/tests/test_attention_runtime_boundaries.py src/backend/polaris/kernelone/context/tests/test_budget_alignment.py src/backend/polaris/kernelone/context/tests/test_context_os_policies.py -q"
+      expected: "118 passed"
+      status: completed
+    - description: "RoleExecutionKernel canonical TransactionKernel and ExplorationWorkflowRuntime fail-closed regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py src/backend/polaris/cells/roles/kernel/tests/test_integration_transactional_flow.py src/backend/polaris/cells/roles/kernel/tests/test_stream_nonstream_parity_transaction_kernel.py -q"
+      expected: "37 passed"
+      status: completed
+    - description: "RoleExecutionKernel facade, run/stream parity, and stream compatibility regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py src/backend/polaris/cells/roles/kernel/tests/test_run_stream_parity.py src/backend/polaris/cells/roles/kernel/tests/test_stream_parity.py src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py -q"
+      expected: "72 passed, 1 skipped"
+      status: completed
+    - description: "Cognitive terminology governance and middleware regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_terminology_governance.py src/backend/polaris/kernelone/cognitive/tests/test_middleware.py -q"
+      expected: "14 passed"
+      status: completed
+    - description: "RoleRuntime Cognitive Runtime and Kernel tool-surface regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q"
+      expected: "57 passed"
+      status: completed
+    - description: "Adapter/runtime/PM/Director focused hardening suite."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/adapters/tests/test_runtime_dialogue.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::TestDirectorRuntimeFallback src/backend/polaris/tests/test_roles_engine_dialogue.py::TestAdapterCallsRuntimeBoundary src/backend/polaris/cells/director/tasking/tests/test_worker_executor.py src/backend/polaris/tests/test_worker_executor_tech_stack.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py src/backend/polaris/tests/test_loop_pm_backend_resolution.py src/backend/polaris/cells/orchestration/pm_planning/tests/test_pipeline_ports.py -q"
+      expected: "226 passed"
+      status: completed
+    - description: "Default-mainline cognitive runtime, orchestrator preflight, handoff returned-failed fail-closed, and terminology governance."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/kernelone/tests/test_runtime_feature_flags.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py src/backend/polaris/cells/roles/kernel/tests/test_integration_transactional_flow.py src/backend/polaris/cells/roles/kernel/tests/test_stream_nonstream_parity_transaction_kernel.py src/backend/polaris/tests/test_terminology_governance.py -q"
+      expected: "66 passed"
+      status: completed
+    - description: "Speculative/shadow execution active-by-default and write-tool fail-closed safety."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_speculative_execution.py src/backend/polaris/cells/roles/kernel/tests/test_speculation_integration.py src/backend/polaris/cells/roles/kernel/internal/tests/test_stream_shadow_engine.py -q"
+      expected: "37 passed"
+      status: completed
+    - description: "Frontend runtime projection provenance."
+      command: "npm run test -- src/frontend/src/runtime/projectionCompat.test.ts"
+      expected: "17 passed"
+      status: completed
+    - description: "Frontend projection type and lint checks."
+      command: "npm run typecheck; npx eslint src/frontend/src/runtime/projection.ts src/frontend/src/runtime/projectionCompat.ts src/frontend/src/runtime/projectionCompat.test.ts"
+      expected: "Both commands pass"
+      status: completed
+
+  manual_check:
+    - "Inspect Director adapter_result metadata for role_runtime_entrypoint=roles.runtime.execute_role_session."
+    - "Inspect PM/Architect/ChiefEngineer/QA adapter outputs for runtime entrypoint metadata on successful runtime turns."
+    - "Inspect Director code-generation bridge response metadata for roles.runtime entrypoint evidence."
+    - "Inspect projection lab requirement_analysis.json for source=pm_role_runtime when use_pm_llm=true."
+    - "Inspect PM CLI/PM docs/non-streaming HTTP chat command metadata for context_os_expected=true and roles.runtime entrypoint evidence."
+    - "Confirm no .polaris/development_patch.md is created from a plain development handoff intent."
+    - "Inspect runtime projection payloads for projection_source/provenance before treating UI status as canonical runtime evidence."
+    - "Confirm WorkerExecutor cold-start imports CodeGenerationEngine from tasking.internal and that execution.internal is only a re-export."
+    - "Confirm Cognitive Runtime MAINLINE blocked_tools are absent from native LLM tool schemas and rejected before executor dispatch."
+    - "Inspect ContextResult metadata for strategy_override_applied=true, recent_window_messages, and budget-pressure fields on MAINLINE cognitive turns."
+    - "Inspect RoleTurnResult.execution_stats for context_tool_policy_applied/context_blocked_tools when ContextGateway emits budget-pressure or read-only hints."
+    - "Inspect ToolBatchExecutor calls in direct non-streaming and streaming TransactionKernel paths for allowed_tool_names derived from narrowed tool_definitions."
+    - "Confirm Context OS runtime/pipeline code reads structured policy subobjects and emits deprecation warnings only in compatibility-accessor tests."
+    - "Confirm RoleExecutionKernel.run and run_stream have no TurnEngine fallback branch and no environment-variable downgrade path."
+    - "Confirm production Python uses engineering terms for cognitive capabilities and keeps Cognitive Lifeform only in allowed architecture/philosophy documents."
+    - "Confirm unattended RoleSessionOrchestrator turns carry metadata.cognitive_runtime_preflight.applied=true unless explicitly set to shadow/off."
+    - "Confirm ExplorationWorkflowRuntime returned FAILED/CANCELLED results produce outer CompletionEvent(status=error) and not handoff success."
+    - "Confirm speculative execution is enabled by default and write-tool speculation without registry-backed prepare shadow is rejected."
+
+related_adrs:
+  - "ADR-0071"
+  - "ADR-0073"
+
+sign_off:
+  completed_by: "Codex"
+  completed_at: "2026-06-04"
+  verified_by: "Codex"
+  verified_at: "2026-06-04"

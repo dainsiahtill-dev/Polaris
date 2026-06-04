@@ -768,7 +768,7 @@ class StatePatcher:
                     decisions.append(decision)
                     last_decision_by_kind[kind] = decision
 
-        active_artifacts = tuple(item.artifact_id for item in artifacts[-self._policy.max_artifact_stubs :])
+        active_artifacts = tuple(item.artifact_id for item in artifacts[-self._policy.artifact.max_artifact_stubs :])
 
         # Convert dataclass StateEntry -> Pydantic StateEntryV2 for domain_adapter results
         def _se(entries: tuple[Any, ...]) -> tuple[StateEntry, ...]:
@@ -779,21 +779,33 @@ class StatePatcher:
 
         working_state = WorkingState(
             user_profile=UserProfileState(
-                preferences=_se(_dedupe_state_entries(preferences, limit=self._policy.max_open_loops)),
-                style=_se(_dedupe_state_entries(style, limit=self._policy.max_open_loops)),
-                persistent_facts=_se(_dedupe_state_entries(persistent_facts, limit=self._policy.max_stable_facts)),
+                preferences=_se(
+                    _dedupe_state_entries(preferences, limit=self._policy.collection_limits.max_open_loops)
+                ),
+                style=_se(_dedupe_state_entries(style, limit=self._policy.collection_limits.max_open_loops)),
+                persistent_facts=_se(
+                    _dedupe_state_entries(persistent_facts, limit=self._policy.collection_limits.max_stable_facts)
+                ),
             ),
             task_state=TaskStateView(
                 current_goal=_se((current_goal_candidates[-1],))[0] if current_goal_candidates else None,
-                accepted_plan=_se(_dedupe_state_entries(accepted_plan, limit=self._policy.max_open_loops)),
-                open_loops=_se(_dedupe_state_entries(open_loops, limit=self._policy.max_open_loops)),
-                blocked_on=_se(_dedupe_state_entries(blocked_on, limit=self._policy.max_open_loops)),
-                deliverables=_se(_dedupe_state_entries(deliverables, limit=self._policy.max_open_loops)),
+                accepted_plan=_se(
+                    _dedupe_state_entries(accepted_plan, limit=self._policy.collection_limits.max_open_loops)
+                ),
+                open_loops=_se(_dedupe_state_entries(open_loops, limit=self._policy.collection_limits.max_open_loops)),
+                blocked_on=_se(_dedupe_state_entries(blocked_on, limit=self._policy.collection_limits.max_open_loops)),
+                deliverables=_se(
+                    _dedupe_state_entries(deliverables, limit=self._policy.collection_limits.max_open_loops)
+                ),
             ),
-            decision_log=_de(tuple(decisions[-self._policy.max_decisions :])),
-            active_entities=_se(_dedupe_state_entries(active_entities, limit=self._policy.max_stable_facts)),
+            decision_log=_de(tuple(decisions[-self._policy.collection_limits.max_decisions :])),
+            active_entities=_se(
+                _dedupe_state_entries(active_entities, limit=self._policy.collection_limits.max_stable_facts)
+            ),
             active_artifacts=active_artifacts,
-            temporal_facts=_se(_dedupe_state_entries(temporal_facts, limit=self._policy.max_stable_facts)),
+            temporal_facts=_se(
+                _dedupe_state_entries(temporal_facts, limit=self._policy.collection_limits.max_stable_facts)
+            ),
             state_history=_se(acc.entries),
         )
         return StatePatcherOutput(working_state=working_state)
@@ -816,22 +828,25 @@ class BudgetPlanner:
         artifacts = canon_out.artifacts
 
         window = max(4096, self._resolved_context_window)
-        ratio_based = int(window * self._policy.output_reserve_ratio)
-        output_reserve = max(self._policy.output_reserve_min, ratio_based)
+        token_budget_policy = self._policy.token_budget
+        ratio_based = int(window * token_budget_policy.output_reserve_ratio)
+        output_reserve = max(token_budget_policy.output_reserve_min, ratio_based)
         tool_reserve = max(
-            self._policy.tool_reserve_min,
-            int(window * self._policy.tool_reserve_ratio),
+            token_budget_policy.tool_reserve_min,
+            int(window * token_budget_policy.tool_reserve_ratio),
         )
-        safety_margin = max(self._policy.safety_margin_min, int(window * self._policy.safety_margin_ratio))
+        safety_margin = max(
+            token_budget_policy.safety_margin_min, int(window * token_budget_policy.safety_margin_ratio)
+        )
         input_budget = max(1024, window - output_reserve - tool_reserve - safety_margin)
         retrieval_budget = min(
-            max(256, int(input_budget * self._policy.retrieval_ratio)),
-            max(256, int(self._policy.planned_retrieval_tokens)),
+            max(256, int(input_budget * token_budget_policy.retrieval_ratio)),
+            max(256, int(token_budget_policy.planned_retrieval_tokens)),
         )
         current_input_tokens = sum(_estimate_tokens(item.content) for item in transcript)
         current_input_tokens += sum(min(item.token_count, 128) for item in artifacts)
         expected_next_input_tokens = (
-            current_input_tokens + int(self._policy.p95_tool_result_tokens) + retrieval_budget + output_reserve
+            current_input_tokens + int(token_budget_policy.p95_tool_result_tokens) + retrieval_budget + output_reserve
         )
 
         validation_error = ""
@@ -855,8 +870,8 @@ class BudgetPlanner:
             emergency_limit=max(1024, int(input_budget * 0.85)),
             current_input_tokens=current_input_tokens,
             expected_next_input_tokens=expected_next_input_tokens,
-            p95_tool_result_tokens=int(self._policy.p95_tool_result_tokens),
-            planned_retrieval_tokens=int(self._policy.planned_retrieval_tokens),
+            p95_tool_result_tokens=int(token_budget_policy.p95_tool_result_tokens),
+            planned_retrieval_tokens=int(token_budget_policy.planned_retrieval_tokens),
             validation_error=validation_error,
         )
 
@@ -953,18 +968,18 @@ class WindowCollector:
             return WindowCollectorOutput(active_window=())
 
         # Import decision log types if logging is enabled
-        _log_decisions = decision_log is not None
-        if _log_decisions:
+        active_decision_log = decision_log
+        if active_decision_log is not None:
             from polaris.kernelone.context.context_os.decision_log import (
                 ContextDecisionType,
                 ReasonCode,
                 create_decision,
             )
 
-        min_recent_floor = max(1, int(self._policy.min_recent_messages_pinned or 1))
-        min_recent_floor = min(self._policy.max_active_window_messages, min_recent_floor)
+        min_recent_floor = max(1, int(self._policy.window_size.min_recent_messages_pinned or 1))
+        min_recent_floor = min(self._policy.context_window.max_active_window_messages, min_recent_floor)
         recent_limit = max(min_recent_floor, int(recent_window_messages or 1))
-        recent_limit = max(1, min(self._policy.max_active_window_messages, recent_limit))
+        recent_limit = max(1, min(self._policy.context_window.max_active_window_messages, recent_limit))
         recent_candidates = list(transcript[-recent_limit:])
         forced_recent_ids = {item.event_id for item in transcript[-min_recent_floor:]}
         pinned_sequences: set[int] = {item.sequence for item in recent_candidates}
@@ -984,15 +999,15 @@ class WindowCollector:
 
         active_artifact_ids = set(working_state.active_artifacts)
         pinned_events: dict[str, TranscriptEvent] = {}
-        active_window_ratio = getattr(self._policy, "active_window_budget_ratio", 0.45)
+        active_window_ratio = self._policy.token_budget.active_window_budget_ratio
         token_budget = max(512, min(budget_plan.soft_limit, int(budget_plan.input_budget * active_window_ratio)))
         token_count = 0
 
         for item in reversed(transcript):
             if item.route == RoutingClass.CLEAR and item.event_id not in forced_recent_ids:
                 # Log: excluded due to CLEAR route
-                if _log_decisions:
-                    decision_log.record(
+                if active_decision_log is not None:
+                    active_decision_log.record(
                         create_decision(
                             decision_type=ContextDecisionType.EXCLUDE,
                             target_event_id=item.event_id,
@@ -1024,11 +1039,11 @@ class WindowCollector:
             if item.event_id in forced_recent_ids:
                 root_reasons.append(ReasonCode.FORCED_RECENT)
 
-            can_add = is_root or len(pinned_events) < self._policy.max_active_window_messages
+            can_add = is_root or len(pinned_events) < self._policy.context_window.max_active_window_messages
             if not can_add:
                 # Log: excluded due to max window messages reached
-                if _log_decisions:
-                    decision_log.record(
+                if active_decision_log is not None:
+                    active_decision_log.record(
                         create_decision(
                             decision_type=ContextDecisionType.EXCLUDE,
                             target_event_id=item.event_id,
@@ -1036,7 +1051,10 @@ class WindowCollector:
                             reason_codes=(ReasonCode.NOT_IN_ACTIVE_WINDOW,),
                             token_budget_before=token_budget,
                             token_budget_after=token_budget,
-                            explanation=f"Non-root event excluded because max_active_window_messages ({self._policy.max_active_window_messages}) reached.",
+                            explanation=(
+                                "Non-root event excluded because max_active_window_messages "
+                                f"({self._policy.context_window.max_active_window_messages}) reached."
+                            ),
                         )
                     )
                 continue
@@ -1111,8 +1129,8 @@ class WindowCollector:
                         token_budget,
                     )
                     # Log: root event still over budget after compression
-                    if _log_decisions:
-                        decision_log.record(
+                    if active_decision_log is not None:
+                        active_decision_log.record(
                             create_decision(
                                 decision_type=ContextDecisionType.INCLUDE_FULL,
                                 target_event_id=item.event_id,
@@ -1135,8 +1153,8 @@ class WindowCollector:
                         token_budget,
                     )
                     # Log: excluded due to token budget
-                    if _log_decisions:
-                        decision_log.record(
+                    if active_decision_log is not None:
+                        active_decision_log.record(
                             create_decision(
                                 decision_type=ContextDecisionType.EXCLUDE,
                                 target_event_id=item.event_id,
@@ -1170,12 +1188,12 @@ class WindowCollector:
             token_count += estimated
 
             # Log: included event
-            if _log_decisions:
+            if active_decision_log is not None:
                 decision_type = ContextDecisionType.INCLUDE_FULL
                 if compressed_via_jit or compression_reason == ReasonCode.BRUTE_FORCE_TRUNCATION:
                     decision_type = ContextDecisionType.COMPRESS
 
-                decision_log.record(
+                active_decision_log.record(
                     create_decision(
                         decision_type=decision_type,
                         target_event_id=item.event_id,
@@ -1245,8 +1263,8 @@ class EpisodeSealer:
 
         # Seal Guard: block sealing if pending follow-up exists
         if (
-            self._policy.enable_seal_guard
-            and self._policy.prevent_seal_on_pending
+            self._policy.attention_runtime.enable_seal_guard
+            and self._policy.attention_runtime.prevent_seal_on_pending
             and resolved_followup
             and resolved_followup.status == "pending"
         ):
@@ -1295,14 +1313,22 @@ class EpisodeSealer:
             to_sequence=closed_events[-1].sequence,
             intent=intent,
             outcome=outcome,
-            decisions=tuple(item.summary for item in working_state.decision_log[-self._policy.max_decisions :]),
+            decisions=tuple(
+                item.summary for item in working_state.decision_log[-self._policy.collection_limits.max_decisions :]
+            ),
             facts=tuple(
-                item.value for item in working_state.user_profile.persistent_facts[-self._policy.max_stable_facts :]
+                item.value
+                for item in working_state.user_profile.persistent_facts[
+                    -self._policy.collection_limits.max_stable_facts :
+                ]
             ),
             artifact_refs=tuple(dict.fromkeys(artifact_ids)),
-            entities=tuple(item.value for item in working_state.active_entities[-self._policy.max_stable_facts :]),
+            entities=tuple(
+                item.value for item in working_state.active_entities[-self._policy.collection_limits.max_stable_facts :]
+            ),
             reopen_conditions=tuple(
-                item.value for item in working_state.task_state.open_loops[-self._policy.max_open_loops :]
+                item.value
+                for item in working_state.task_state.open_loops[-self._policy.collection_limits.max_open_loops :]
             ),
             source_spans=(f"t{closed_events[0].sequence}:t{closed_events[-1].sequence}",),
             digest_64=_trim_text(combined, max_chars=64),
@@ -1411,7 +1437,7 @@ class ArtifactSelector:
 
         # Add remaining artifacts up to max limit
         for artifact in reversed(artifacts):
-            if len(ordered) >= self._policy.max_artifact_stubs:
+            if len(ordered) >= self._policy.artifact.max_artifact_stubs:
                 break
             if artifact.artifact_id in seen:
                 continue
@@ -1431,7 +1457,7 @@ class ArtifactSelector:
                 )
             ordered.append(artifact)
 
-        return tuple(ordered[: self._policy.max_artifact_stubs])
+        return tuple(ordered[: self._policy.artifact.max_artifact_stubs])
 
     def _select_episodes(
         self,
@@ -1463,7 +1489,7 @@ class ArtifactSelector:
             ranked.append((lexical + recency + open_loop_bonus, episode))
 
         ranked.sort(key=lambda item: (item[0], item[1].to_sequence), reverse=True)
-        return tuple(item[1] for item in ranked[: self._policy.max_episode_cards])
+        return tuple(item[1] for item in ranked[: self._policy.collection_limits.max_episode_cards])
 
     def _build_head_anchor(
         self,
@@ -1475,16 +1501,24 @@ class ArtifactSelector:
         goal = working_state.task_state.current_goal.value if working_state.task_state.current_goal is not None else ""
         if goal:
             lines.append(f"Current goal: {goal}")
-        loops = [item.value for item in working_state.task_state.open_loops[-self._policy.max_open_loops :]]
+        loops = [
+            item.value for item in working_state.task_state.open_loops[-self._policy.collection_limits.max_open_loops :]
+        ]
         if loops:
             lines.append("Open loops: " + "; ".join(loops))
-        blocked = [item.value for item in working_state.task_state.blocked_on[: self._policy.max_open_loops]]
+        blocked = [
+            item.value for item in working_state.task_state.blocked_on[: self._policy.collection_limits.max_open_loops]
+        ]
         if blocked:
             lines.append("Blocked on: " + "; ".join(blocked))
-        decisions = [item.summary for item in working_state.decision_log[: self._policy.max_decisions]]
+        decisions = [
+            item.summary for item in working_state.decision_log[: self._policy.collection_limits.max_decisions]
+        ]
         if decisions:
             lines.append("Recent decisions: " + "; ".join(decisions))
-        entities = [item.value for item in working_state.active_entities[: self._policy.max_stable_facts]]
+        entities = [
+            item.value for item in working_state.active_entities[: self._policy.collection_limits.max_stable_facts]
+        ]
         if entities:
             lines.append("Active entities: " + "; ".join(entities))
         if artifact_stubs:
@@ -1521,9 +1555,15 @@ class ArtifactSelector:
         current_goal = (
             working_state.task_state.current_goal.value if working_state.task_state.current_goal is not None else ""
         )
-        open_loops = tuple(item.value for item in working_state.task_state.open_loops[-self._policy.max_open_loops :])
-        active_entities = tuple(item.value for item in working_state.active_entities[: self._policy.max_stable_facts])
-        recent_decisions = tuple(item.summary for item in working_state.decision_log[-self._policy.max_decisions :])
+        open_loops = tuple(
+            item.value for item in working_state.task_state.open_loops[-self._policy.collection_limits.max_open_loops :]
+        )
+        active_entities = tuple(
+            item.value for item in working_state.active_entities[: self._policy.collection_limits.max_stable_facts]
+        )
+        recent_decisions = tuple(
+            item.summary for item in working_state.decision_log[-self._policy.collection_limits.max_decisions :]
+        )
         next_action_hint = ""
         if open_loops:
             next_action_hint = open_loops[-1]
@@ -1605,7 +1645,7 @@ class ArtifactSelector:
                     reason="root",
                 )
             )
-        for open_loop_entry in working_state.task_state.open_loops[-self._policy.max_open_loops :]:
+        for open_loop_entry in working_state.task_state.open_loops[-self._policy.collection_limits.max_open_loops :]:
             included.append(
                 ContextSliceSelection(
                     selection_type="state",
@@ -1666,6 +1706,6 @@ class ArtifactSelector:
             budget_tokens=budget_plan.input_budget,
             roots=tuple(roots),
             included=tuple(included),
-            excluded=tuple(excluded[: max(12, self._policy.max_active_window_messages)]),
+            excluded=tuple(excluded[: max(12, self._policy.context_window.max_active_window_messages)]),
             pressure_level=pressure_level,
         )

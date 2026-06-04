@@ -878,8 +878,8 @@ class Settings(BaseModel):
 
     @property
     def director_script_path(self) -> Path:
-        """Path to Director CLI script."""
-        return self.backend_root / "polaris" / "delivery" / "cli" / "loop-director.py"
+        """Path to canonical Director CLI entrypoint."""
+        return self.backend_root / "polaris" / "delivery" / "cli" / "director_v2.py"
 
     @property
     def loop_module_dir(self) -> Path:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence, cast
@@ -41,6 +42,73 @@ if TYPE_CHECKING:
     from polaris.kernelone.context.strategy_contracts import StrategyReceipt
 
 logger = logging.getLogger(__name__)
+
+_CONTROL_PLANE_CONTEXT_KEYS = {
+    "allowed_provider_ids",
+    "allowed_provider_types",
+    "blocked_provider_ids",
+    "blocked_provider_types",
+    "cognitive_runtime_enabled",
+    "cognitive_runtime_mode",
+    "cognitive_runtime_required",
+    "context_os_expected",
+    "context_os_snapshot",
+    "cognitive_strategy_override",
+    "domain",
+    "factory_run_id",
+    "host_kind",
+    "llm_provider_policy",
+    "metadata",
+    "model_allowlist",
+    "model_blocklist",
+    "provider_allowlist",
+    "provider_blocklist",
+    "provider_policy",
+    "role_runtime_required",
+    "run_id",
+    "runtime_session_id",
+    "session_context_config",
+    "session_id",
+    "state_first_context_os",
+    "strategy_override",
+    "stream_options",
+    "task_id",
+    "workspace",
+    "workspace_root",
+}
+
+
+def _copy_strategy_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _copy_strategy_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_copy_strategy_value(item) for item in value]
+    return value
+
+
+def _deep_merge_strategy_payload(target: dict[str, Any], source: Mapping[str, Any]) -> None:
+    for key, value in source.items():
+        key_text = str(key)
+        if not key_text:
+            continue
+        existing = target.get(key_text)
+        if isinstance(value, Mapping) and isinstance(existing, dict):
+            _deep_merge_strategy_payload(existing, value)
+            continue
+        target[key_text] = _copy_strategy_value(value)
+
+
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -188,6 +256,16 @@ class RoleContextGateway:
 
         context_os_snapshot = getattr(request, "context_os_snapshot", None)
         has_snapshot = context_os_snapshot is not None and isinstance(context_os_snapshot, dict)
+        strategy_override, strategy_override_sources = self._extract_strategy_override(request)
+        strategy_override_applied = bool(strategy_override)
+        recent_window_messages = self._effective_recent_window_messages(strategy_override)
+        context_budget_trigger_pct = self._context_budget_trigger_pct(strategy_override)
+        effective_context_budget_tokens = max(
+            1,
+            int(self.policy.max_context_tokens * context_budget_trigger_pct),
+        )
+        if strategy_override_applied:
+            sources.append("cognitive_strategy_override")
 
         _projection = None
 
@@ -200,10 +278,11 @@ class RoleContextGateway:
                 proj_input.append({"role": item[0], "content": item[1]})
 
         logger.debug(
-            "[DEBUG][ContextGateway] _build_context_impl: has_snapshot=%s proj_input=%d max_history=%d focus=%r",
+            "[DEBUG][ContextGateway] _build_context_impl: has_snapshot=%s proj_input=%d max_history=%d effective_recent=%d focus=%r",
             has_snapshot,
             len(proj_input),
             self.policy.max_history_turns,
+            recent_window_messages,
             getattr(request, "focus", "") or "",
         )
         if has_snapshot:
@@ -218,7 +297,7 @@ class RoleContextGateway:
             _projection = await self._context_os.project(
                 messages=proj_input,
                 existing_snapshot=snapshot,
-                recent_window_messages=self.policy.max_history_turns,
+                recent_window_messages=recent_window_messages,
                 focus=getattr(request, "focus", "") or "",
             )
             state_first_mode_active = True
@@ -226,7 +305,7 @@ class RoleContextGateway:
             _projection = await self._context_os.project(
                 messages=proj_input,
                 existing_snapshot=None,
-                recent_window_messages=self.policy.max_history_turns,
+                recent_window_messages=recent_window_messages,
                 focus=getattr(request, "focus", "") or "",
             )
 
@@ -290,6 +369,13 @@ class RoleContextGateway:
         token_estimate = self._token_estimator.estimate(messages)
         original_token_estimate = token_estimate
         compression_applied = False
+        budget_pressure_detected = token_estimate > effective_context_budget_tokens
+        context_decision_hints = {
+            "source": "roles.kernel.context_gateway",
+            "budget_pressure": bool(budget_pressure_detected),
+            "suppress_expensive_context_tools": bool(budget_pressure_detected),
+            "suppress_mutating_tools": self._should_suppress_mutating_tools(request),
+        }
 
         # 7. 应用统一压缩策略
         if token_estimate > self.policy.max_context_tokens:
@@ -314,8 +400,15 @@ class RoleContextGateway:
                 "token_estimate_before": int(original_token_estimate),
                 "token_estimate_after": int(token_estimate),
                 "max_context_tokens": int(self.policy.max_context_tokens),
+                "context_budget_trigger_pct": float(context_budget_trigger_pct),
+                "effective_context_budget_tokens": int(effective_context_budget_tokens),
+                "budget_pressure_detected": bool(budget_pressure_detected),
+                "context_decision_hints": dict(context_decision_hints),
                 "compression_applied": bool(compression_applied),
                 "compression_strategy": str(self.policy.compression_strategy or "none"),
+                "recent_window_messages": int(recent_window_messages),
+                "base_recent_window_messages": int(self.policy.max_history_turns),
+                "strategy_override_applied": bool(strategy_override_applied),
                 "state_first_mode_active": bool(state_first_mode_active),
             },
         )
@@ -330,6 +423,8 @@ class RoleContextGateway:
                 "token_estimate": token_estimate,
                 "compression_applied": compression_applied,
                 "role": str(getattr(self.profile, "role_id", "") or ""),
+                "recent_window_messages": int(recent_window_messages),
+                "strategy_override_applied": bool(strategy_override_applied),
             },
         )
         self._event_writer.write(projection_event)
@@ -360,8 +455,108 @@ class RoleContextGateway:
                 "state_first_mode_active": state_first_mode_active,
                 "gateway_compression_applied": compression_applied,
                 "context_sources": list(sources),
+                "strategy_override_applied": strategy_override_applied,
+                "strategy_override_sources": list(strategy_override_sources),
+                "recent_window_messages": recent_window_messages,
+                "base_recent_window_messages": self.policy.max_history_turns,
+                "context_budget_trigger_pct": context_budget_trigger_pct,
+                "effective_context_budget_tokens": effective_context_budget_tokens,
+                "budget_pressure_detected": budget_pressure_detected,
+                "context_decision_hints": context_decision_hints,
             },
         )
+
+    def _extract_strategy_override(self, request: ContextRequest) -> tuple[dict[str, Any], tuple[str, ...]]:
+        merged: dict[str, Any] = {}
+        sources: list[str] = []
+
+        value = getattr(request, "strategy_override", None)
+        if isinstance(value, Mapping):
+            _deep_merge_strategy_payload(merged, value)
+            sources.append("request.strategy_override")
+
+        context_override = getattr(request, "context_override", None)
+        if isinstance(context_override, Mapping):
+            for key in ("strategy_override", "cognitive_strategy_override"):
+                nested = context_override.get(key)
+                if isinstance(nested, Mapping):
+                    _deep_merge_strategy_payload(merged, nested)
+                    sources.append(f"context_override.{key}")
+
+            metadata = context_override.get("metadata")
+            if isinstance(metadata, Mapping):
+                for key in ("strategy_override", "cognitive_strategy_override"):
+                    nested = metadata.get(key)
+                    if isinstance(nested, Mapping):
+                        _deep_merge_strategy_payload(merged, nested)
+                        sources.append(f"context_override.metadata.{key}")
+
+        return merged, tuple(sources)
+
+    def _effective_recent_window_messages(self, strategy_override: Mapping[str, Any]) -> int:
+        base_window = max(1, int(self.policy.max_history_turns or 1))
+        if not strategy_override:
+            return base_window
+
+        exploration = strategy_override.get("exploration")
+        exploration_payload = exploration if isinstance(exploration, Mapping) else {}
+        depth = _coerce_float(exploration_payload.get("max_expansion_depth"))
+        aggressive = bool(exploration_payload.get("neighbor_expansion_aggressive"))
+
+        read_escalation = strategy_override.get("read_escalation")
+        read_payload = read_escalation if isinstance(read_escalation, Mapping) else {}
+        full_read_allowed = bool(read_payload.get("full_read_allowed"))
+
+        cognitive_runtime = strategy_override.get("cognitive_runtime")
+        cognitive_payload = cognitive_runtime if isinstance(cognitive_runtime, Mapping) else {}
+        cognitive_applied = bool(cognitive_payload.get("applied"))
+
+        requested = base_window
+        if depth is not None and depth >= 4:
+            requested = max(requested, base_window * 2)
+        elif depth is not None and depth >= 3:
+            requested = max(requested, base_window + max(2, base_window // 2))
+        if aggressive:
+            requested = max(requested, base_window + 4)
+        if full_read_allowed:
+            requested = max(requested, base_window + 2)
+        if cognitive_applied:
+            requested = max(requested, base_window + 2)
+
+        return min(max(base_window, requested), max(base_window, 32))
+
+    @staticmethod
+    def _context_budget_trigger_pct(strategy_override: Mapping[str, Any]) -> float:
+        compaction = strategy_override.get("compaction") if strategy_override else None
+        compaction_payload = compaction if isinstance(compaction, Mapping) else {}
+        ratio = _coerce_float(compaction_payload.get("trigger_at_budget_pct"))
+        if ratio is None:
+            return 1.0
+        return min(1.0, max(0.1, ratio))
+
+    @staticmethod
+    def _should_suppress_mutating_tools(request: ContextRequest) -> bool:
+        context_override = getattr(request, "context_override", None)
+        context_payload = context_override if isinstance(context_override, Mapping) else {}
+        mode = (
+            str(
+                context_payload.get("delivery_mode")
+                or context_payload.get("interaction_mode")
+                or context_payload.get("mode")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
+        return mode in {
+            "analysis",
+            "analyze",
+            "analyze_only",
+            "audit",
+            "diagnostic",
+            "read_only",
+            "review",
+        }
 
     def build_system_context(self, base_prompt: str, appendix: str | None = None) -> str:
         """构建系统上下文（提示词部分）
@@ -398,6 +593,9 @@ class RoleContextGateway:
 
         for key, value in context_override.items():
             if not isinstance(key, str):
+                continue
+            normalized_key = key.strip().lower()
+            if normalized_key.startswith("_") or normalized_key in _CONTROL_PLANE_CONTEXT_KEYS:
                 continue
 
             str_value = str(value) if value is not None else ""

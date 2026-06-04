@@ -41,11 +41,15 @@ class TestDevelopmentWorkflowRuntime:
 
     @pytest.mark.asyncio
     async def test_execute_stream_passes_on_first_try(self, mock_tool_executor, base_runtime):
-        mock_tool_executor.return_value = {"result": "1 passed"}
+        mock_tool_executor.side_effect = [
+            {"ok": True, "result": "write ok"},
+            {"result": "1 passed"},
+        ]
         session_state = SimpleNamespace(session_id="sess-1")
+        intent = "PATCH_FILE: src/app.py\nprint('ok')\nEND PATCH_FILE"
 
         events = []
-        async for event in base_runtime.execute_stream("fix bug", session_state):
+        async for event in base_runtime.execute_stream(intent, session_state):
             events.append(event)
 
         event_types = [type(e).__name__ for e in events]
@@ -99,18 +103,16 @@ class TestDevelopmentWorkflowRuntime:
 
     @pytest.mark.asyncio
     async def test_synthesis_llm_repair_intent(self, mock_tool_executor):
-        synthesis_llm = AsyncMock(return_value="refined intent")
+        synthesis_llm = AsyncMock(return_value="PATCH_FILE: src/app.py\nprint('fixed')\nEND PATCH_FILE")
         runtime = DevelopmentWorkflowRuntime(
             tool_executor=mock_tool_executor,
             synthesis_llm=synthesis_llm,
             max_retries=2,
         )
-        # 第一次 patch 后测试失败，第二次成功
+        # 第一次 handoff 没有具体 patch，synthesis 生成可执行 patch 后成功
         mock_tool_executor.side_effect = [
-            {"result": "write ok"},  # _execute_patch (write_file)
-            {"result": "1 failed"},  # _run_tests (pytest) - first attempt fails
-            {"result": "write ok"},  # _execute_patch - second attempt
-            {"result": "1 passed"},  # _run_tests - second attempt passes
+            {"ok": True, "result": "write ok"},
+            {"result": "1 passed"},
         ]
         session_state = SimpleNamespace(session_id="sess-1")
 
@@ -121,9 +123,9 @@ class TestDevelopmentWorkflowRuntime:
         synthesis_llm.assert_awaited_once()
         # 验证第二次使用了合成后的 intent
         calls = mock_tool_executor.call_args_list
-        # 第一次是 apply_patch (write_file), 第二次是 run_tests (execute_command)
-        # 第三次 apply_patch 应该使用 refined intent
-        assert len(calls) >= 3
+        assert len(calls) >= 2
+        assert calls[0].args[0] == "write_file"
+        assert calls[0].args[1]["path"] == "src/app.py"
 
     @pytest.mark.asyncio
     async def test_run_tests_interprets_failure(self, mock_tool_executor, base_runtime):
@@ -176,18 +178,33 @@ class TestDevelopmentWorkflowRuntime:
     async def test_execute_patch_success(self, mock_tool_executor, base_runtime):
         mock_tool_executor.return_value = {"ok": True}
         session_state = SimpleNamespace(session_id="sess-1")
-        result = await base_runtime._execute_patch("implement feature", session_state)
+        result = await base_runtime._execute_patch(
+            "PATCH_FILE: src/app.py\nprint('ok')\nEND PATCH_FILE",
+            session_state,
+        )
         assert result["ok"] is True
         mock_tool_executor.assert_awaited_once()
         args = mock_tool_executor.call_args[0]
         assert args[0] == "write_file"
-        assert "implement feature" in args[1]["content"]
+        assert args[1]["path"] == "src/app.py"
+        assert "print('ok')" in args[1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_execute_patch_plain_intent_fails_closed(self, mock_tool_executor, base_runtime):
+        session_state = SimpleNamespace(session_id="sess-1")
+        result = await base_runtime._execute_patch("implement feature", session_state)
+        assert result["ok"] is False
+        assert result["error"] == "development_handoff_requires_concrete_patch"
+        mock_tool_executor.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_execute_patch_failure(self, mock_tool_executor, base_runtime):
         mock_tool_executor.side_effect = RuntimeError("disk full")
         session_state = SimpleNamespace(session_id="sess-1")
-        result = await base_runtime._execute_patch("implement feature", session_state)
+        result = await base_runtime._execute_patch(
+            "PATCH_FILE: src/app.py\nprint('ok')\nEND PATCH_FILE",
+            session_state,
+        )
         assert result["ok"] is False
         assert "disk full" in result["error"]
 

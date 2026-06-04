@@ -11,6 +11,29 @@
 // Core Runtime Projection
 // ============================================================================
 
+export type RuntimeProjectionSource =
+  | "canonical"
+  | "legacy_flat"
+  | "legacy_nested"
+  | "empty"
+  | "partial"
+  | "merged";
+
+export interface RuntimeProjectionProvenance {
+  /** Projection source category used by the frontend runtime bridge */
+  source: RuntimeProjectionSource;
+  /** True when the frontend compatibility layer transformed a non-canonical payload */
+  transformed: boolean;
+  /** ISO timestamp when the frontend received or generated this projection */
+  received_at: string;
+  /** Optional schema/protocol hint from the producer */
+  source_schema?: string;
+  /** Human-readable reason for compatibility conversion */
+  compatibility_reason?: string;
+  /** Legacy fields that caused compatibility conversion */
+  legacy_fields?: string[];
+}
+
 /**
  * Main Runtime Projection Payload
  * This is the single source of truth for all runtime state consumed by the frontend.
@@ -29,6 +52,10 @@ export interface RuntimeProjectionPayload {
   snapshot_compat: SnapshotCompatFields;
   /** ISO timestamp when this projection was generated */
   generated_at: string;
+  /** Explicit source of this projection, so legacy compatibility cannot masquerade as canonical runtime state */
+  projection_source?: RuntimeProjectionSource;
+  /** Runtime projection provenance for observability and migration audits */
+  provenance?: RuntimeProjectionProvenance;
 }
 
 // ============================================================================
@@ -214,6 +241,10 @@ export interface EngineStatus {
  * @deprecated Use canonical fields (pm, director, workflow) instead
  */
 export interface SnapshotCompatFields {
+  /** Frontend compatibility provenance; canonical consumers should use top-level `provenance` */
+  projection_source?: RuntimeProjectionSource;
+  /** Frontend compatibility provenance; canonical consumers should use top-level `provenance` */
+  projection_provenance?: RuntimeProjectionProvenance;
   /** Legacy PM status string */
   pm_status?: string;
   /** Legacy PM current task */

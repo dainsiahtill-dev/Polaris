@@ -347,9 +347,9 @@ class TestSettings:
         assert settings.pm_script_path.exists()
 
     def test_director_script_path(self) -> None:
-        """Should point to Director script."""
+        """Should point to canonical Director CLI."""
         settings = Settings()
-        assert "loop" in str(settings.director_script_path) or "director" in str(settings.director_script_path)
+        assert settings.director_script_path.name == "director_v2.py"
 
 
 class TestSettingsFromEnv:

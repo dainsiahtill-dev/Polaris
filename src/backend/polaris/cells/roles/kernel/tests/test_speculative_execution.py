@@ -37,10 +37,10 @@ def _sample_invocation() -> ToolInvocation:
     )
 
 
-def test_speculative_flag_defaults_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_speculative_flag_defaults_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ENABLE_SPECULATIVE_EXECUTION", raising=False)
     monkeypatch.delenv("KERNELONE_ENABLE_SPECULATIVE_EXECUTION", raising=False)
-    assert is_speculative_execution_enabled() is False
+    assert is_speculative_execution_enabled() is True
 
 
 def test_speculative_flag_prefers_primary_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,6 +55,11 @@ def test_speculative_flag_compat_env_when_primary_missing(
     monkeypatch.delenv("ENABLE_SPECULATIVE_EXECUTION", raising=False)
     monkeypatch.setenv("KERNELONE_ENABLE_SPECULATIVE_EXECUTION", "1")
     assert is_speculative_execution_enabled() is True
+
+
+def test_speculative_flag_can_be_explicitly_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENABLE_SPECULATIVE_EXECUTION", "false")
+    assert is_speculative_execution_enabled() is False
 
 
 @pytest.mark.asyncio
@@ -155,6 +160,23 @@ async def test_stream_controller_speculates_when_flag_enabled(
     monitoring = cast(dict[str, float], completion_event.monitoring or {})
     assert monitoring["speculative.hit_rate"] == 1.0
     assert monitoring["speculative.false_positive_rate"] == 0.0
+
+
+def test_stream_controller_builds_shadow_engine_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ENABLE_SPECULATIVE_EXECUTION", raising=False)
+    monkeypatch.delenv("KERNELONE_ENABLE_SPECULATIVE_EXECUTION", raising=False)
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(),
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(domain="code"),
+    )
+
+    shadow_engine = controller._build_stream_shadow_engine(workspace=".", turn_id="turn_default_spec")
+
+    assert shadow_engine is not None
+    assert shadow_engine._speculative_executor.enabled is True
 
 
 @pytest.mark.asyncio

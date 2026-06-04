@@ -370,7 +370,7 @@ class BaseEngine(ABC):
         """调用 LLM 获取响应。
 
         通过 EngineContext.llm_caller 间接调用，llm_caller 由 adapter 层注入，
-        adapter 层统一通过 llm.dialogue public service（generate_role_response）调用。
+        生产 adapter 必须通过 roles.runtime public service 注入调用边界。
         此方法不直接访问任何 LLM provider，是纯粹的 DI 委托包装。
 
         测试时可向 EngineContext.llm_caller 注入 mock callable，无需 monkey-patch。

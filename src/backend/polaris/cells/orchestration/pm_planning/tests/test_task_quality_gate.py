@@ -1077,12 +1077,18 @@ class TestAutofixPmContractForQuality:
 
         assert stats["game_policy_tasks_removed"] == 0
         assert stats["card3d_domain_tasks_added"] == 0
+        assert stats["card3d_test_contract_repairs"] > 0
         remaining_ids = {task["id"] for task in payload["tasks"] if isinstance(task, dict)}
         assert {"PM-0001-1", "PM-0002-1", "PM-0003-1"}.issubset(remaining_ids)
+        all_targets = {
+            target for task in payload["tasks"] if isinstance(task, dict) for target in task.get("target_files", [])
+        }
+        assert "scripts/build.mjs" in all_targets
+        assert "scripts/test.mjs" in all_targets
 
         report = evaluate_pm_task_quality(payload, workspace_full=workspace)
         assert any("card3d PM decomposition requires at least" in item for item in report["critical_issues"])
-        assert any(
+        assert not any(
             "card3d tests task must target all required test files" in item for item in report["critical_issues"]
         )
         assert not any("unknown dependency" in item for item in report["critical_issues"])
@@ -1122,6 +1128,14 @@ class TestAutofixPmContractForQuality:
             "card3d tests task must target all required test files" in item for item in report["critical_issues"]
         )
         assert "tests/unit/card-rules.test.ts" in "\n".join(report["critical_issues"])
+        assert "scripts/build.mjs" in "\n".join(report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+        repaired_targets = payload["tasks"][0]["target_files"]
+
+        assert stats["card3d_test_contract_repairs"] > 0
+        assert "scripts/build.mjs" in repaired_targets
+        assert "scripts/test.mjs" in repaired_targets
 
     def test_card3d_tests_task_requires_placeholder_cleanup_contract(self, tmp_path: Any) -> None:
         workspace = str(tmp_path)
@@ -1137,6 +1151,8 @@ class TestAutofixPmContractForQuality:
                     "title": "Add multiplayer card integration tests",
                     "goal": "Add meaningful multiplayer card coverage.",
                     "target_files": [
+                        "scripts/build.mjs",
+                        "scripts/test.mjs",
                         "tests/unit/card-rules.test.ts",
                         "tests/unit/deck-builder.test.ts",
                         "tests/integration/multiplayer-flow.test.ts",

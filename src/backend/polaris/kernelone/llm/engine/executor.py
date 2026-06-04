@@ -21,6 +21,7 @@ from ._executor_base import (
     build_invoke_config,
     classify_error,
     get_provider_config,
+    provider_type_policy_error,
     resolve_provider_model,
     resolve_requested_output_tokens,
 )
@@ -312,6 +313,12 @@ class AIExecutor:
         if not provider_type:
             return AIResponse.failure(
                 error=f"Provider type not found for {provider_id}",
+                category=ErrorCategory.CONFIG_ERROR,
+            )
+        provider_policy_error = provider_type_policy_error(provider_type, request.options)
+        if provider_policy_error:
+            return AIResponse.failure(
+                error=provider_policy_error,
                 category=ErrorCategory.CONFIG_ERROR,
             )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -44,7 +45,7 @@ def test_resolve_pm_backend_kind_auto_uses_runtime_provider_for_ollama_role_mapp
     assert kind == "generic"
 
 
-def test_invoke_pm_backend_generic_prefers_runtime_provider(monkeypatch) -> None:
+def test_invoke_pm_backend_generic_prefers_role_runtime(monkeypatch) -> None:
     state = SimpleNamespace(
         workspace_full=".",
         show_output=False,
@@ -60,53 +61,138 @@ def test_invoke_pm_backend_generic_prefers_runtime_provider(monkeypatch) -> None
     )
     monkeypatch.setattr(
         pm_backend,
-        "_invoke_generic_runtime_provider",
+        "_invoke_generic_role_runtime",
         lambda **_: '{"tasks":[]}',
     )
-
-    def _should_not_call_ollama(*_args, **_kwargs):
-        raise AssertionError("invoke_ollama should not be called when runtime provider succeeds")
-
-    monkeypatch.setattr(pm_backend, "invoke_ollama", _should_not_call_ollama)
     output = pm_backend.invoke_pm_backend(state, "prompt", "generic", args, usage_ctx=None)
     assert output == '{"tasks":[]}'
 
 
-def test_generic_runtime_provider_allows_ollama_http_adapter(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+def test_generic_backend_uses_role_runtime_command(monkeypatch, tmp_path) -> None:
+    captured: dict[str, Any] = {}
 
-    monkeypatch.setattr(pm_backend, "load_pm_model_config", lambda: ("ollama", "test-model"))
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command):
+            captured["command"] = command
+            return SimpleNamespace(
+                ok=True,
+                output='{"tasks":[]}',
+                usage={},
+                metadata={"provider_type": "role_runtime", "model": "test-model"},
+            )
 
-    def _fake_invoke_role_runtime_provider(**kwargs):
-        captured["blocked_provider_types"] = tuple(kwargs.get("blocked_provider_types") or ())
-        return SimpleNamespace(
-            attempted=True,
-            ok=True,
-            output='{"tasks":[]}',
-            provider_type="ollama",
-            model="test-model",
-            latency_ms=1,
-            error="",
-            usage=None,
-        )
-
-    monkeypatch.setattr(
-        "polaris.kernelone.llm.runtime.invoke_role_runtime_provider",
-        _fake_invoke_role_runtime_provider,
-    )
+    monkeypatch.setattr(pm_backend, "_create_role_runtime_service", lambda: FakeRoleRuntimeService())
 
     state = SimpleNamespace(
-        workspace_full=".",
+        workspace_full=str(tmp_path),
+        timeout=12,
+        events_full="",
+    )
+
+    output = pm_backend._invoke_generic_role_runtime(state, "prompt", usage_ctx=None)
+
+    assert output == '{"tasks":[]}'
+    command = captured["command"]
+    assert command.role == "pm"
+    assert command.workspace == str(tmp_path)
+    assert command.user_message == "prompt"
+    assert command.domain == "document"
+    assert command.stream is False
+    assert command.host_kind == "pm_cli_backend"
+    assert command.metadata["role_runtime_required"] is True
+    assert command.metadata["cognitive_runtime_required"] is True
+    assert command.metadata["context_os_expected"] is True
+    assert command.metadata["runtime_fallback_used"] is False
+    assert command.metadata["fallback_policy"] == "fail_closed"
+    assert "legacy_fallback_used" not in command.metadata
+
+
+def test_explicit_ollama_backend_uses_role_runtime_provider_policy(monkeypatch, tmp_path) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command):
+            captured["command"] = command
+            return SimpleNamespace(
+                ok=True,
+                output='{"tasks":[]}',
+                usage={},
+                metadata={"provider_type": "ollama", "model": "qwen"},
+            )
+
+    monkeypatch.setattr(pm_backend, "_create_role_runtime_service", lambda: FakeRoleRuntimeService())
+    state = SimpleNamespace(
+        workspace_full=str(tmp_path),
+        timeout=0,
+        events_full="",
+        ollama_full="",
+    )
+    args = SimpleNamespace(codex_full_auto=False, codex_dangerous=False, codex_profile="")
+
+    output = pm_backend.invoke_pm_backend(state, "prompt", "ollama", args, usage_ctx=None)
+
+    assert output == '{"tasks":[]}'
+    command = captured["command"]
+    assert command.metadata["requested_backend"] == "ollama"
+    assert command.metadata["allowed_provider_types"] == ("ollama",)
+    assert command.context["llm_provider_policy"]["allowed_provider_types"] == ("ollama",)
+
+
+def test_explicit_codex_backend_uses_role_runtime_provider_policy(monkeypatch, tmp_path) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command):
+            captured["command"] = command
+            return SimpleNamespace(
+                ok=True,
+                output='{"tasks":[]}',
+                usage={},
+                metadata={"provider_type": "codex_cli", "model": "gpt-5.3-codex"},
+            )
+
+    monkeypatch.setattr(pm_backend, "_create_role_runtime_service", lambda: FakeRoleRuntimeService())
+    state = SimpleNamespace(
+        workspace_full=str(tmp_path),
+        timeout=0,
+        events_full="",
+        ollama_full="",
+    )
+    args = SimpleNamespace(codex_full_auto=False, codex_dangerous=False, codex_profile="")
+
+    output = pm_backend.invoke_pm_backend(state, "prompt", "codex", args, usage_ctx=None)
+
+    assert output == '{"tasks":[]}'
+    command = captured["command"]
+    assert command.metadata["requested_backend"] == "codex"
+    assert command.metadata["allowed_provider_types"] == ("codex", "codex_cli", "codex_sdk")
+    assert command.context["llm_provider_policy"]["allowed_provider_types"] == (
+        "codex",
+        "codex_cli",
+        "codex_sdk",
+    )
+
+
+def test_generic_role_runtime_failure_is_fail_closed(monkeypatch, tmp_path) -> None:
+    class FailingRoleRuntimeService:
+        async def execute_role_session(self, _command):
+            return SimpleNamespace(
+                ok=False,
+                output="",
+                usage={},
+                metadata={},
+                error_message="role model missing",
+            )
+
+    monkeypatch.setattr(pm_backend, "_create_role_runtime_service", lambda: FailingRoleRuntimeService())
+    state = SimpleNamespace(
+        workspace_full=str(tmp_path),
         timeout=0,
         events_full="",
     )
 
-    output = pm_backend._invoke_generic_runtime_provider(state, "prompt", usage_ctx=None)
-
-    assert output == '{"tasks":[]}'
-    blocked_provider_types = captured["blocked_provider_types"]
-    assert isinstance(blocked_provider_types, tuple)
-    assert "ollama" not in blocked_provider_types
+    with pytest.raises(RuntimeError, match="PM role runtime invocation failed"):
+        pm_backend._invoke_generic_role_runtime(state, "prompt", usage_ctx=None)
 
 
 def test_invoke_pm_backend_generic_raises_on_empty_runtime_output(monkeypatch) -> None:
@@ -125,15 +211,8 @@ def test_invoke_pm_backend_generic_raises_on_empty_runtime_output(monkeypatch) -
     )
     monkeypatch.setattr(
         pm_backend,
-        "_invoke_generic_runtime_provider",
+        "_invoke_generic_role_runtime",
         lambda **_: "",
-    )
-    monkeypatch.setattr(
-        pm_backend,
-        "invoke_ollama",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("invoke_ollama must not be used as an implicit fallback")
-        ),
     )
 
     with pytest.raises(RuntimeError, match="empty response"):

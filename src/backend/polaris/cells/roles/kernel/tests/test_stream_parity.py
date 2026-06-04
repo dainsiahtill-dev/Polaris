@@ -499,7 +499,7 @@ class TestStreamNonStreamParity:
     async def test_same_input_produces_same_tool_calls(self) -> None:
         """G-3: Same input must produce identical tool call sequences."""
         # Arrange
-        profile = _make_role_profile(whitelist=["read_file", "search_code"])
+        profile = _make_role_profile(whitelist=["read_file", "repo_rg"])
         llm_invoker = MockLLMInvoker()
 
         # First call: tool call
@@ -613,7 +613,7 @@ class TestMultiRoundConversation:
         llm_invoker.add_response(
             MockLLMResponse(
                 content="<thinking>I need to search for the main function.</thinking>Let me search for files.",
-                tool_calls=[_make_tool_call("search_code", {"query": "def main"})],
+                tool_calls=[_make_tool_call("repo_rg", {"query": "def main"})],
             )
         )
         # Round 2: Final answer
@@ -626,9 +626,9 @@ class TestMultiRoundConversation:
 
         tool_executor = MockToolExecutor()
         tool_executor.add_result(
-            "search_code",
+            "repo_rg",
             MockToolResult(
-                tool="search_code",
+                tool="repo_rg",
                 success=True,
                 result={"files": ["src/main.py"]},
             ),

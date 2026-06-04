@@ -120,13 +120,13 @@ class TestStreamShadowEngineSpeculateToolCall:
         assert result["result"] == {"mock": "result"}
 
     @pytest.mark.asyncio
-    async def test_speculate_write_tool_rejected(self, engine):
+    async def test_speculate_write_tool_without_registry_fails_closed(self, engine):
         result = await engine.speculate_tool_call(
             tool_name="write_file",
             arguments={"path": "main.py", "content": "x"},
             call_id="call-2",
         )
-        assert result["error"] == "non_readonly_tool"
+        assert result["error"] == "write_tool_prepare_shadow_unavailable"
 
     @pytest.mark.asyncio
     async def test_speculate_from_buffer_skeleton(self, engine):

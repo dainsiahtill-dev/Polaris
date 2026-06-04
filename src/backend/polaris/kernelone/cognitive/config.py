@@ -1,4 +1,4 @@
-"""Cognitive Life Form Feature Flags and Configuration.
+"""Cognitive capability feature flags and configuration.
 
 This module provides unified profile-based cognitive switch management.
 

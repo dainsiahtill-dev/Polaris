@@ -7,10 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from polaris.bootstrap.config import get_settings
-from polaris.cells.llm.dialogue.public.service import generate_role_response
-
 from .base import BaseRoleAdapter
+from .runtime_dialogue import invoke_role_runtime_first
 
 
 class ChiefEngineerAdapter(BaseRoleAdapter):
@@ -57,14 +55,16 @@ class ChiefEngineerAdapter(BaseRoleAdapter):
             # 构建分析消息
             message = self._build_analysis_message(analysis_type, target)
 
-            # 调用 Chief Engineer 角色
-            settings = get_settings()
-            response = await generate_role_response(
+            # 调用 Chief Engineer 角色运行时
+            response = await invoke_role_runtime_first(
                 workspace=self.workspace,
-                settings=settings,
                 role=self.role_id,
                 message=message,
-                context=None,
+                context={
+                    "task_id": task_id,
+                    "analysis_type": analysis_type,
+                    "target": target,
+                },
                 validate_output=False,
                 max_retries=1,
             )

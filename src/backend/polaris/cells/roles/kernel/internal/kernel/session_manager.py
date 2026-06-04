@@ -142,7 +142,7 @@ class SessionManager:
 
     @staticmethod
     def build_context_request_for_stream(messages: list[dict[str, Any]], request: RoleTurnRequest) -> Any:
-        """Build a minimal ContextRequest for legacy call_stream compatibility."""
+        """Build a minimal ContextRequest for compatibility call_stream providers."""
 
         def _normalize_user_text(value: Any) -> str:
             return str(value or "").replace("\ufeff", "").strip()

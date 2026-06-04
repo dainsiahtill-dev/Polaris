@@ -842,10 +842,92 @@ function buildResumePlanningTaskSeeds(scenario: FullChainProjectScenario): Resum
         ],
       },
       {
+        id: "CARD3D-PRESENCE",
+        domain: "presence",
+        title: "Extend player presence tracking",
+        scopePaths: ["src/shared/player-presence.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/shared/player-presence.ts exists.",
+          "Run `npm run test` and verify presence state coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-TELEMETRY",
+        domain: "telemetry",
+        title: "Extend client/server telemetry events",
+        scopePaths: ["src/shared/telemetry.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/shared/telemetry.ts exists.",
+          "Run `npm run test` and verify telemetry event coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-AUTH",
+        domain: "auth",
+        title: "Extend multiplayer session authentication",
+        scopePaths: ["src/auth/session-auth.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/auth/session-auth.ts exists.",
+          "Run `npm run test` and verify session authentication coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-LOBBY",
+        domain: "lobby",
+        title: "Extend lobby and room discovery service",
+        scopePaths: ["src/lobby/lobby-service.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/lobby/lobby-service.ts exists.",
+          "Run `npm run test` and verify lobby flow coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-ASSETS",
+        domain: "assets",
+        title: "Extend card asset manifest and loading contracts",
+        scopePaths: ["src/assets/card-assets.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/assets/card-assets.ts exists.",
+          "Run `npm run test` and verify card asset coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-ANIMATION",
+        domain: "animation",
+        title: "Extend card dealing and table animation contracts",
+        scopePaths: ["src/animation/card-animations.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/animation/card-animations.ts exists.",
+          "Run `npm run test` and verify card animation coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-PHYSICS",
+        domain: "physics",
+        title: "Extend table layout and card collision physics",
+        scopePaths: ["src/physics/table-layout.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/physics/table-layout.ts exists.",
+          "Run `npm run test` and verify table physics coverage remains present.",
+        ],
+      },
+      {
+        id: "CARD3D-ANALYTICS",
+        domain: "analytics",
+        title: "Extend match analytics and audit events",
+        scopePaths: ["src/analytics/match-analytics.ts"],
+        acceptance: [
+          "Run `npm run build` and verify src/analytics/match-analytics.ts exists.",
+          "Run `npm run test` and verify match analytics coverage remains present.",
+        ],
+      },
+      {
         id: "CARD3D-TESTS",
         domain: "tests",
         title: "Strengthen multiplayer card integration tests",
         scopePaths: [
+          "scripts/build.mjs",
+          "scripts/test.mjs",
           "tests/unit/card-rules.test.ts",
           "tests/unit/deck-builder.test.ts",
           "tests/integration/multiplayer-flow.test.ts",
@@ -853,8 +935,9 @@ function buildResumePlanningTaskSeeds(scenario: FullChainProjectScenario): Resum
           "tests/e2e/card-table-3d.test.ts",
         ],
         acceptance: [
-          "Run `npm run test` and verify all multiplayer card tests contain describe/expect coverage.",
-          "Run `npm run build` and verify tests do not require external runners.",
+          "Replace structural-only build/test scripts with substantive no-external-dependency verification.",
+          "Run `npm run test` and verify all multiplayer card tests import and exercise src modules.",
+          "Run `npm run build` and verify scripts no longer only check file existence or string markers.",
         ],
       },
     ];
@@ -1933,8 +2016,9 @@ function buildGameProjectScenario(): FullChainProjectScenario {
       "All text files must be read and written with explicit UTF-8.",
       "This workspace is a TypeScript browser tactical roguelike seed project.",
       "Do not introduce Rust, Cargo, Go, Python, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
-      "Preserve package.json scripts: build must remain `node scripts/build.mjs`, and test must remain `node scripts/test.mjs`.",
-      "Use the existing structural verification scripts for acceptance.",
+      "Preserve package.json script commands: build must remain `node scripts/build.mjs`, and test must remain `node scripts/test.mjs`.",
+      "Replace structural-only script contents with substantive no-external-dependency verification before final QA.",
+      "Use the existing Node verification script entrypoints for acceptance.",
       "If adding PRNG tests, assert same-seed reproducibility, range, and distribution invariants only; do not assert unverified magic-number outputs.",
     ].join("\n"),
     "index.html": [
@@ -2074,9 +2158,10 @@ function buildCard3dProjectScenario(): FullChainProjectScenario {
       "This workspace is a TypeScript multiplayer creative card game seed project.",
       "The browser client is based on Three.js / WebGL concepts, and the backend is Node.js.",
       "Do not introduce Rust, Cargo, Go, Python, Webpack, Jest, Vite, Vitest, or any new external build/test dependency.",
-      "Preserve package.json scripts: build must remain `node scripts/build.mjs`, and test must remain `node scripts/test.mjs`.",
+      "Preserve package.json script commands: build must remain `node scripts/build.mjs`, and test must remain `node scripts/test.mjs`.",
       "Preserve the existing Three.js dependency declaration; do not rewrite package.json during implementation.",
-      "Use the existing structural verification scripts for acceptance.",
+      "Replace structural-only script contents with substantive no-external-dependency verification before final QA.",
+      "Use the existing Node verification script entrypoints for acceptance.",
     ].join("\n"),
     "index.html": [
       "<!doctype html>",
@@ -2143,7 +2228,7 @@ function buildCard3dProjectScenario(): FullChainProjectScenario {
       "必须可执行、可测试、可审计，并且必须先完成完整 Architect 计划和 Chief Engineer 全量蓝图，再交给 Director 落地代码。",
       "项目必须包含 3D 客户端场景、交互式卡牌桌、浏览器网络客户端、Node 后端、实时网关、匹配队列、房间状态、创意卡牌目录、牌组构筑、规则引擎、共享同步协议、会话持久化、内容安全/房间治理、玩家在线状态、遥测、认证、大厅、资产、动画、桌面布局物理、对局分析和测试。",
       "PM 必须拆出至少 22 个可执行任务，覆盖 client3d、table、networking、server、realtime、matchmaking、rooms、cards、deckbuilder、rules、sync、persistence、moderation、presence、telemetry、auth、lobby、assets、animation、physics、analytics、tests。",
-      "每个任务都要有目标、作用域、执行清单和可测验收；必须使用当前 C:/Temp 工作区内的 TypeScript 文件和内置 node scripts/build.mjs / scripts/test.mjs 验收。",
+      "每个任务都要有目标、作用域、执行清单和可测验收；必须使用当前 C:/Temp 工作区内的 TypeScript 文件和内置 node scripts/build.mjs / scripts/test.mjs 验收，并且 tests 域必须把结构性脚本内容替换为真实的无外部依赖校验。",
       "所有 seed 文件必须被真实业务实现替换，最终源码/测试/配置中不得保留 audit-seed 或 planning scenario 标记。",
       "禁止引入 Rust/Cargo、Go、Python、Webpack、Jest、Vite、Vitest 或任何新外部构建/测试依赖；禁止重写 package.json。",
     ].join(" "),
@@ -2302,6 +2387,10 @@ async function findScenarioSeedResidue(workspace: string, scenario: FullChainPro
   const markerPatterns: Array<{ marker: string; pattern: RegExp }> = [
     { marker: "audit-seed", pattern: /\baudit-seed\b/i },
     { marker: "planning scenario", pattern: /\bplanning scenario\b/i },
+    { marker: "build verification completed", pattern: /\bbuild verification completed\b/i },
+    { marker: "test verification completed", pattern: /\btest verification completed\b/i },
+    { marker: "structural build passed", pattern: /\bstructural build passed\b/i },
+    { marker: "structural tests passed", pattern: /\bstructural tests passed\b/i },
   ];
 
   for (const filePath of files) {

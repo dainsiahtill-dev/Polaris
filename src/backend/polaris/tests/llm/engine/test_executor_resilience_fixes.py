@@ -14,6 +14,8 @@ import threading
 from typing import Any
 
 import pytest
+from polaris.kernelone.llm.engine._executor_base import provider_type_policy_error
+from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.llm.engine.executor import (
     AIExecutor,
     WorkspaceExecutorManager,
@@ -49,7 +51,7 @@ class TestGlobalSemaphoreThreadSafety:
                     results.append(sem)
                 finally:
                     loop.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - worker thread reports failures to the test thread.
                 errors.append(e)
 
         # 并发启动 10 个线程
@@ -97,7 +99,7 @@ class TestWorkspaceExecutorManagerLockConsistency:
             try:
                 executor = manager.get_executor_sync("test_workspace")
                 executors.append(executor)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - worker thread reports failures to the test thread.
                 errors.append(e)
 
         threads = [threading.Thread(target=get_executor) for _ in range(20)]
@@ -181,9 +183,7 @@ class TestCancelledErrorPropagation:
             return "success"
 
         async def retry_and_cancel() -> Any:
-            task = asyncio.create_task(
-                retry_with_jitter(failing_func, max_retries=5, base_delay=0.1)
-            )
+            task = asyncio.create_task(retry_with_jitter(failing_func, max_retries=5, base_delay=0.1))
             # 等待第一次失败后取消
             await asyncio.sleep(0.2)
             task.cancel()
@@ -191,6 +191,50 @@ class TestCancelledErrorPropagation:
 
         with pytest.raises(asyncio.CancelledError):
             await retry_and_cancel()
+
+
+class TestProviderTypePolicy:
+    def test_provider_type_policy_normalizes_allow_and_block_lists(self) -> None:
+        assert (
+            provider_type_policy_error(
+                "openai_compat",
+                {"allowed_provider_types": ("ollama",)},
+            )
+            == "provider_type_not_allowed:openai_compat"
+        )
+        assert (
+            provider_type_policy_error(
+                "openai_compat",
+                {"provider_type_policy": {"blocked_provider_types": ["openai_compat"]}},
+            )
+            == "provider_type_blocked:openai_compat"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ai_executor_rejects_disallowed_provider_before_invoke(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = AIExecutor(workspace=".")
+        monkeypatch.setattr(
+            executor,
+            "_get_provider_config",
+            lambda _provider_id: {"type": "openai_compat"},
+        )
+
+        request = AIRequest(
+            task_type=TaskType.GENERATION,
+            role="pm",
+            input="plan tasks",
+            provider_id="remote-provider",
+            model="gpt-4o",
+            options={"allowed_provider_types": ("ollama",)},
+        )
+
+        response = await executor.invoke(request)
+
+        assert response.ok is False
+        assert response.error == "provider_type_not_allowed:openai_compat"
 
 
 class TestCircuitBreakerTOCTOUFix:
@@ -311,12 +355,16 @@ class TestExceptionHandlingSpecificity:
         async def raise_401() -> None:
             nonlocal call_count
             call_count += 1
-            err = Exception("401 Unauthorized")
+
+            class UnauthorizedError(RuntimeError):
+                pass
+
+            err = UnauthorizedError("401 Unauthorized")
             err.status_code = 401  # type: ignore[attr-defined]
             raise err
 
         # 401 不应重试
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError):
             await retry_with_jitter(raise_401, max_retries=5)
 
         # 应只调用一次

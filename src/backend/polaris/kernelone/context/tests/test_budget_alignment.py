@@ -150,7 +150,7 @@ class TestActiveWindowBudgetRatio:
     def test_default_active_window_ratio(self) -> None:
         """Default active_window_budget_ratio is 0.45."""
         policy = StateFirstContextOSPolicy()
-        assert hasattr(policy, "active_window_budget_ratio")
+        assert hasattr(policy.token_budget, "active_window_budget_ratio")
         assert policy.token_budget.active_window_budget_ratio == 0.45
 
     def test_active_window_respects_policy_ratio(self) -> None:

@@ -45,10 +45,12 @@ depends_on:
 - orchestration.workflow_runtime
 - orchestration.pm_planning
 - resident.autonomy
+- roles.adapters
 subgraphs:
 - execution_governance_pipeline
 state_owners: []
-effects_allowed: []
+effects_allowed:
+- fs.write:runtime/workflow/*
 verification:
   tests:
   - tests/orchestration/test_workflow_runtime.py

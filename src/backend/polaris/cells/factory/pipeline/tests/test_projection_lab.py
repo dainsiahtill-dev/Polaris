@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from polaris.cells.factory.pipeline.internal.projection_lab import FactoryProjectionLabService
 from polaris.cells.factory.pipeline.public.contracts import RunProjectionExperimentCommandV1
+from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter, set_default_adapter
 
@@ -27,6 +29,7 @@ def test_projection_lab_generates_record_cli_project_and_artifacts(tmp_path: Pat
             scenario_id="record_cli_app",
             requirement="生成一个本地 JSON 持久化的记录管理项目, 支持新增、列表、搜索、Finalize和测试。",
             project_slug="record_cli_lab",
+            use_pm_llm=False,
             run_verification=True,
             overwrite=False,
         )
@@ -83,3 +86,61 @@ def test_projection_lab_rejects_unsupported_scenario(tmp_path: Path) -> None:
                 overwrite=False,
             )
         )
+
+
+def test_projection_lab_pm_normalization_uses_role_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    captured: dict[str, Any] = {}
+
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            captured["command"] = command
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role="pm",
+                workspace=str(workspace),
+                session_id=command.session_id,
+                output=(
+                    '{"project_title":"Runtime Records","summary":"Runtime normalized",'
+                    '"capability_focus":["records","search"]}'
+                ),
+            )
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
+    )
+
+    service = FactoryProjectionLabService(str(workspace))
+    result = service.run_projection_experiment(
+        RunProjectionExperimentCommandV1(
+            workspace=str(workspace),
+            scenario_id="record_cli_app",
+            requirement="生成一个记录管理项目。",
+            project_slug="runtime_records",
+            use_pm_llm=True,
+            run_verification=False,
+            overwrite=False,
+        )
+    )
+
+    assert result.ok is True
+    assert result.normalization_source == "pm_role_runtime"
+    command = captured["command"]
+    assert command.role == "pm"
+    assert command.domain == "document"
+    assert command.stream is False
+    assert command.metadata["role_runtime_required"] is True
+    assert command.metadata["cognitive_runtime_required"] is True
+    assert command.metadata["context_os_expected"] is True
+
+    kernel_fs = KernelFileSystem(str(workspace), get_default_adapter())
+    artifact_map = {Path(path).name: path for path in result.artifact_paths}
+    requirement_analysis = kernel_fs.read_json(artifact_map["requirement_analysis.json"])
+    assert requirement_analysis["role_runtime_entrypoint"] == "roles.runtime.execute_role_session"
+    assert requirement_analysis["context_os_expected"] is True

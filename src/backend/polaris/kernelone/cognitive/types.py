@@ -1,4 +1,4 @@
-"""Cognitive Life Form Core Types."""
+"""Core cognitive pipeline types."""
 
 from __future__ import annotations
 

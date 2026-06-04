@@ -14,9 +14,11 @@ Phase 4.1 升级：
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
 from polaris.cells.roles.kernel.public.turn_events import (
@@ -123,15 +125,28 @@ class DevelopmentWorkflowRuntime:
             else:
                 patch_result = await self._execute_patch(current_intent, session_state)
 
+            patch_ok = self._is_successful_tool_result(patch_result)
             yield ToolBatchEvent(
                 turn_id=turn_id,
                 batch_id=f"{turn_id}_dev",
                 tool_name="apply_patch",
                 call_id="",
-                status="success",
+                status="success" if patch_ok else "error",
                 progress=0.5,
                 result=patch_result,
+                error=None if patch_ok else str(patch_result.get("error") or "patch_failed"),
             )
+            if not patch_ok:
+                patch_failure = TestResult(
+                    passed=False,
+                    summary=str(patch_result.get("error") or "development patch failed")[:500],
+                    raw_output=str(patch_result),
+                )
+                if self.synthesis_llm is not None:
+                    current_intent = await self._analyze_failure_and_create_repair_intent(patch_failure)
+                    continue
+                current_intent = f"修复测试失败: {patch_failure.summary[:200]}"
+                continue
 
             # Test 阶段
             yield TurnPhaseEvent.create(
@@ -181,21 +196,141 @@ class DevelopmentWorkflowRuntime:
     async def _execute_patch(self, intent: str, session_state: Any) -> dict[str, Any]:
         """执行代码修改（patch）。
 
-        默认策略：将 intent 作为 write_file 的内容写入一个临时说明文件，
-        实际生产环境应替换为更智能的 patch 应用逻辑。
+        只接受明确可审计的工具调用或 PATCH_FILE/FILE 协议输出。
+        普通自然语言 handoff 不会被写入临时文件伪装成代码变更。
         """
         _ = session_state
-        try:
-            result = await self.tool_executor(
+        parsed_calls = self._parse_file_tool_calls(intent)
+        if parsed_calls:
+            return await self._execute_parsed_tool_calls(parsed_calls)
+
+        protocol_calls = self._parse_protocol_file_operations(intent)
+        if protocol_calls:
+            return await self._execute_parsed_tool_calls(protocol_calls)
+
+        return {
+            "ok": False,
+            "error": "development_handoff_requires_concrete_patch",
+            "reason": (
+                "Development handoff intent did not contain native file tool calls "
+                "or PATCH_FILE/FILE protocol operations."
+            ),
+        }
+
+    async def _execute_parsed_tool_calls(self, calls: list[dict[str, Any]]) -> dict[str, Any]:
+        results: list[dict[str, Any]] = []
+        for call in calls:
+            tool = str(call.get("tool") or "").strip()
+            arguments = call.get("arguments")
+            if not tool or not isinstance(arguments, dict):
+                results.append({"ok": False, "tool": tool, "error": "invalid_tool_call"})
+                continue
+            try:
+                result = await self.tool_executor(tool, arguments)
+                result_payload = result if isinstance(result, dict) else {"result": result}
+                results.append({"ok": self._is_successful_tool_result(result_payload), "tool": tool, **result_payload})
+            except Exception as exc:  # noqa: BLE001
+                results.append({"ok": False, "tool": tool, "error": str(exc)})
+
+        ok = bool(results) and all(self._is_successful_tool_result(item) for item in results)
+        return {
+            "ok": ok,
+            "source": "development_handoff_patch",
+            "operations": len(results),
+            "results": results,
+            "error": "" if ok else self._summarize_tool_errors(results),
+        }
+
+    @staticmethod
+    def _parse_file_tool_calls(intent: str) -> list[dict[str, Any]]:
+        from polaris.kernelone.llm.toolkit import parse_tool_calls
+
+        parsed = parse_tool_calls(
+            intent,
+            allowed_tool_names={
+                "append_to_file",
+                "delete_file",
+                "edit_file",
                 "write_file",
-                {
-                    "path": ".polaris/development_patch.md",
-                    "content": f"# Development Patch Intent\n\n{intent}",
-                },
-            )
-            return {"ok": True, "result": result}
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": str(exc)}
+            },
+        )
+        calls: list[dict[str, Any]] = []
+        for item in parsed:
+            tool = str(getattr(item, "name", "") or "").strip()
+            arguments = getattr(item, "arguments", None)
+            if not tool or not isinstance(arguments, dict):
+                continue
+            path = DevelopmentWorkflowRuntime._extract_tool_path(tool, arguments)
+            if DevelopmentWorkflowRuntime._unsafe_relative_path(path):
+                continue
+            calls.append({"tool": tool, "arguments": dict(arguments)})
+        return calls
+
+    @staticmethod
+    def _parse_protocol_file_operations(intent: str) -> list[dict[str, Any]]:
+        from polaris.kernelone.llm.toolkit import EditType, parse_protocol_output
+
+        calls: list[dict[str, Any]] = []
+        for operation in parse_protocol_output(intent):
+            path = str(getattr(operation, "path", "") or "").strip()
+            if DevelopmentWorkflowRuntime._unsafe_relative_path(path):
+                continue
+            edit_type = getattr(operation, "edit_type", None)
+            replace = str(getattr(operation, "replace", "") or "")
+            search = str(getattr(operation, "search", "") or "")
+            if edit_type == EditType.DELETE:
+                calls.append({"tool": "delete_file", "arguments": {"path": path}})
+            elif edit_type == EditType.SEARCH_REPLACE:
+                if search:
+                    calls.append(
+                        {
+                            "tool": "edit_file",
+                            "arguments": {"path": path, "search": search, "replace": replace},
+                        }
+                    )
+            elif replace:
+                calls.append({"tool": "write_file", "arguments": {"path": path, "content": replace}})
+        return calls
+
+    @staticmethod
+    def _extract_tool_path(tool: str, arguments: dict[str, Any]) -> str:
+        if tool == "edit_file":
+            return str(arguments.get("path") or arguments.get("file") or "")
+        return str(arguments.get("path") or arguments.get("file") or "")
+
+    @staticmethod
+    def _unsafe_relative_path(path: str) -> bool:
+        token = str(path or "").strip().replace("\\", "/")
+        if not token:
+            return True
+        if re.match(r"(?i)^[a-z]:", token) or token.startswith("/"):
+            return True
+        if any(ch in token for ch in ('"', "'", "`", "<", ">", "|", "\0")):
+            return True
+        pure = PurePosixPath(token)
+        return any(part == ".." for part in pure.parts)
+
+    @staticmethod
+    def _is_successful_tool_result(result: Any) -> bool:
+        if not isinstance(result, dict):
+            return True
+        if result.get("ok") is False or result.get("success") is False:
+            return False
+        status = str(result.get("status") or "").strip().lower()
+        if status in {"error", "failed", "failure"}:
+            return False
+        return not result.get("error")
+
+    @staticmethod
+    def _summarize_tool_errors(results: list[dict[str, Any]]) -> str:
+        errors: list[str] = []
+        for item in results:
+            if DevelopmentWorkflowRuntime._is_successful_tool_result(item):
+                continue
+            detail = str(item.get("error") or item.get("status") or "tool_failed").strip()
+            tool = str(item.get("tool") or "").strip()
+            errors.append(f"{tool}:{detail}" if tool else detail)
+        return "; ".join(errors[:3]) or "development_patch_failed"
 
     async def _run_tests(self, session_state: Any) -> TestResult:
         """运行测试并返回结果。"""

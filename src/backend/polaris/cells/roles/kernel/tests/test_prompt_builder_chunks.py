@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import types
 
+import pytest
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 
 
@@ -57,7 +58,7 @@ def test_build_system_prompt_emits_chunk_receipt() -> None:
     assert receipt.strategy.domain == "document"
 
 
-def test_build_system_prompt_fallback_to_legacy_join(monkeypatch) -> None:
+def test_build_system_prompt_fails_closed_when_chunk_assembly_fails(monkeypatch) -> None:
     builder = PromptBuilder()
     profile = _make_profile()
 
@@ -65,8 +66,5 @@ def test_build_system_prompt_fallback_to_legacy_join(monkeypatch) -> None:
         raise RuntimeError("chunk path unavailable")
 
     monkeypatch.setattr(builder, "_assemble_with_chunks", _raise)
-    prompt = builder.build_system_prompt(profile, prompt_appendix="补充说明")
-
-    assert "安全边界" in prompt
-    assert "输出格式规范" in prompt
-    assert "额外上下文" in prompt
+    with pytest.raises(RuntimeError, match="tri_axis_prompt_composition_failed:pm"):
+        builder.build_system_prompt(profile, prompt_appendix="补充说明")

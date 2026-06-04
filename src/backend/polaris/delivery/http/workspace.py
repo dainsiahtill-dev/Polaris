@@ -24,7 +24,7 @@ def _workspace_text(value: Any) -> str:
 
 
 def active_workspace_value(settings: Any) -> str:
-    """Resolve active desktop workspace with legacy fallback."""
+    """Resolve active desktop workspace from compatible settings fields."""
     for attr in ("workspace_path", "workspace"):
         text = _workspace_text(getattr(settings, attr, ""))
         if text:

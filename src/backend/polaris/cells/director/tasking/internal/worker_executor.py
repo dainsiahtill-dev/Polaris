@@ -16,6 +16,7 @@ Phase 4 note:
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -32,6 +33,7 @@ from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
 )
 from polaris.domain.entities import Task, TaskResult
 from polaris.domain.services import get_token_service
+from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +105,8 @@ def _parse_positive_timeout_seconds(raw: Any) -> int | None:
 
 
 # -----------------------------------------------------------------------
-# Phase 4 dependency deferral: CodeGenerationEngine + FileApplyService
-# These imports are deferred because they belong to director.runtime (Phase 4).
-# When director.runtime is migrated, update these to direct imports.
+# Dependency deferral: CodeGenerationEngine + FileApplyService
+# Imports stay lazy to avoid circular imports during Director bootstrap.
 # -----------------------------------------------------------------------
 
 if TYPE_CHECKING:
@@ -127,27 +128,16 @@ else:
     _CGE = None
     _FAS = None
 
-    # Phase 4 target location (canonical after director.runtime migration)
+    # Canonical tasking runtime entries. Missing imports fail closed below.
     with contextlib.suppress(ImportError):
         _CGE = _importlib.import_module("polaris.cells.director.tasking.internal.code_generation_engine")
 
     with contextlib.suppress(ImportError):
         _FAS = _importlib.import_module("polaris.cells.director.tasking.internal.file_apply_service")
 
-    # Fall back to execution/internal.code_generation_engine directly.
-    # Direct module path avoids triggering execution/internal/__init__ which
-    # would create a circular import during initial load.
     if _CGE is None:
-        with contextlib.suppress(ImportError):
-            _CGE = _importlib.import_module("polaris.cells.director.execution.internal.code_generation_engine")
-    if _CGE is None:
-        _CGE = sys.modules.get("polaris.cells.director.execution.internal.code_generation_engine")
+        _CGE = sys.modules.get("polaris.cells.director.tasking.internal.code_generation_engine")
 
-    if _FAS is None:
-        with contextlib.suppress(ImportError):
-            _FAS = _importlib.import_module("polaris.cells.director.execution.internal.file_apply_service")
-
-    # Placeholder only if Phase 4 is completely unavailable
     if _CGE is None:
         _CODE_WARN = "[Policy] Code writing is forbidden"
 
@@ -561,6 +551,15 @@ class WorkerExecutor:
                 output="Code generation blocked by security policy",
             )
 
+        quality_error = self._generated_artifact_quality_error(files_created, phase="Code generation")
+        if quality_error:
+            return CodeGenerationResult(
+                success=False,
+                files_created=files_created,
+                error=quality_error,
+                output=quality_error,
+            )
+
         return CodeGenerationResult(
             success=len(files_created) > 0,
             files_created=files_created,
@@ -568,28 +567,15 @@ class WorkerExecutor:
         )
 
     async def _execute_file_creation(self, task: Task) -> CodeGenerationResult:
-        """Execute file creation task."""
-        if self._file_service is None:
+        """Execute file creation through the audited code-generation path."""
+        target_files = self._normalize_target_files(task)
+        if not target_files:
             return CodeGenerationResult(
                 success=False,
-                error="FileApplyService not available (Phase 4 pending)",
-                output="WorkerExecutor: file service not initialised",
+                error="File creation rejected: no concrete target files declared",
+                output="File creation requires concrete target files",
             )
-        # For file creation, extract target files from task and create them
-        target_files = self._normalize_target_files(task)
-        files_created: list[dict] = []
-
-        for file_path in target_files[:10]:
-            content = f"# Created by Polaris: {task.subject}\n# {task.description or ''}\n"
-            files_created.append({"path": file_path, "content": content})
-
-        written = self._file_service.write_files(files_created)  # type: ignore[operator]
-
-        return CodeGenerationResult(
-            success=len(written) > 0,
-            files_created=written,
-            output=f"Created {len(written)} files",
-        )
+        return await self._execute_code_generation(task)
 
     async def _execute_bootstrap(self, task: Task) -> CodeGenerationResult:
         """Execute bootstrap task with template or LLM generation."""
@@ -629,21 +615,19 @@ class WorkerExecutor:
         existing_paths = {str(item.get("path") or "").strip() for item in files_created if isinstance(item, dict)}
         missing_target_files = [path for path in target_files if path and path not in existing_paths]
         if missing_target_files:
-            target_bootstrap_files = [
-                {
-                    "path": path,
-                    "content": self._bootstrap_target_file_content(
-                        path=path,
-                        task=task,
-                        language=language,
-                    ),
-                }
-                for path in missing_target_files
-            ]
-            files_created.extend(self._file_service.write_files(target_bootstrap_files))  # type: ignore[operator]
+            codegen_result = await self._execute_code_generation(task)
+            files_created.extend(codegen_result.files_created)
+            if not codegen_result.success:
+                return CodeGenerationResult(
+                    success=False,
+                    files_created=files_created,
+                    error=codegen_result.error
+                    or "Bootstrap target contract requires runtime code generation for missing files",
+                    output=codegen_result.output,
+                )
             logger.info(
-                "[WorkerExecutor] Bootstrap target contract generated %s files",
-                len(target_bootstrap_files),
+                "[WorkerExecutor] Bootstrap target contract generated %s files through runtime codegen",
+                len(codegen_result.files_created),
             )
 
         return CodeGenerationResult(
@@ -1118,57 +1102,10 @@ class WorkerExecutor:
             )
         return "\n".join(lines)
 
-    def _bootstrap_target_file_content(self, *, path: str, task: Task, language: str) -> str:
-        """Return minimal UTF-8 content for bootstrap files named by the PM contract."""
-        normalized = str(path or "").strip().replace("\\", "/").lower()
-        subject = str(task.subject or "Generated Project").strip() or "Generated Project"
-        description = str(task.description or "Generated by Polaris.").strip() or "Generated by Polaris."
-
-        if normalized.endswith("pyproject.toml"):
-            return (
-                "[build-system]\n"
-                'requires = ["setuptools>=61.0", "wheel"]\n'
-                'build-backend = "setuptools.build_meta"\n'
-                "\n"
-                "[project]\n"
-                'name = "generated-project"\n'
-                'version = "0.1.0"\n'
-                f'description = "{subject.replace(chr(34), chr(39))}"\n'
-                'requires-python = ">=3.10"\n'
-            )
-        if normalized.endswith("readme.md"):
-            return f"# {subject}\n\n{description}\n"
-        if normalized.endswith("__init__.py"):
-            return '"""Generated project package."""\n'
-        if normalized.endswith("main.py"):
-            return (
-                '"""Main application entry point."""\n'
-                "\n"
-                "import logging\n"
-                "\n"
-                "\n"
-                "def main() -> int:\n"
-                '    """Run the application."""\n'
-                "    logging.basicConfig(level=logging.INFO)\n"
-                '    logging.info("Application started successfully")\n'
-                "    return 0\n"
-                "\n"
-                "\n"
-                'if __name__ == "__main__":\n'
-                "    raise SystemExit(main())\n"
-            )
-        if normalized.endswith("package.json"):
-            return (
-                "{\n"
-                '  "name": "generated-project",\n'
-                '  "version": "0.1.0",\n'
-                f'  "description": "{subject.replace(chr(34), chr(39))}",\n'
-                '  "type": "module"\n'
-                "}\n"
-            )
-        if language == "python" or normalized.endswith(".py"):
-            return f'"""Generated file for {subject}."""\n'
-        return f"{description}\n"
+    def _bootstrap_target_file_content(self, *, path: str, task: Task, language: str) -> typing.NoReturn:
+        """Blocked: bootstrap target files must be produced by runtime codegen."""
+        _ = (path, task, language)
+        self._raise_code_writing_forbidden("_bootstrap_target_file_content")
 
     def _construction_file_plans(self, task: Task) -> list[dict]:
         """Get construction file plans from task metadata."""
@@ -1290,6 +1227,41 @@ class WorkerExecutor:
             or normalized.endswith(".spec.js")
         )
 
+    def _generated_artifact_quality_error(self, files_created: list[dict], *, phase: str) -> str | None:
+        """Return a fail-closed quality error for generated artifact receipts."""
+        relative_paths = self._generated_artifact_paths(files_created)
+        if not relative_paths:
+            return f"{phase} quality gate failed: no changed files to evaluate"
+
+        missing_paths: list[str] = []
+        for path in relative_paths:
+            full_path = self._resolve_workspace_file_path(path)
+            if full_path is None or not os.path.isfile(full_path):
+                missing_paths.append(path)
+        if missing_paths:
+            return f"{phase} quality gate failed: changed file receipts missing on disk: {', '.join(missing_paths[:6])}"
+
+        errors = scan_workspace_artifact_quality(self.workspace, relative_paths=relative_paths)
+        if errors:
+            return f"{phase} quality gate failed: {'; '.join(errors[:6])}"
+        return None
+
+    @staticmethod
+    def _generated_artifact_paths(files_created: list[dict]) -> list[str]:
+        """Extract stable workspace-relative paths from generated file receipts."""
+        paths: list[str] = []
+        seen: set[str] = set()
+        for item in files_created:
+            if not isinstance(item, dict) or bool(item.get("deleted")):
+                continue
+            raw_path = item.get("path") or item.get("file")
+            path = str(raw_path or "").strip().replace("\\", "/").lstrip("/")
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+        return paths
+
     def _resolve_workspace_file_path(self, relative_path: str) -> str | None:
         """Resolve a workspace-relative file path without allowing traversal."""
         path = str(relative_path or "").strip()
@@ -1373,18 +1345,22 @@ class WorkerExecutor:
             f"round-{round_index:03d}.json",
         )
 
-    def _workspace_file_signature(self, relative_path: str) -> dict[str, int] | None:
+    def _workspace_file_signature(self, relative_path: str) -> dict[str, int | str] | None:
         """Return a stable file signature for a workspace-relative file."""
         full_path = self._resolve_workspace_file_path(relative_path)
         if full_path is None or not os.path.isfile(full_path):
             return None
         try:
             stat = os.stat(full_path)
+            with open(full_path, encoding="utf-8", errors="surrogateescape") as handle:
+                content = handle.read()
         except OSError:
             return None
+        digest = hashlib.sha256(content.encode("utf-8", errors="surrogateescape")).hexdigest()
         return {
             "size": int(stat.st_size),
             "mtime_ns": int(stat.st_mtime_ns),
+            "sha256": digest,
         }
 
     def _write_code_generation_round_marker(
@@ -1397,7 +1373,7 @@ class WorkerExecutor:
         normalized_paths = [str(path or "").strip() for path in round_paths if str(path or "").strip()]
         if not normalized_paths:
             return
-        signatures: dict[str, dict[str, int]] = {}
+        signatures: dict[str, dict[str, int | str]] = {}
         for path in normalized_paths:
             signature = self._workspace_file_signature(path)
             if signature is None:
@@ -1755,22 +1731,10 @@ Requirements:
         timeout: int,
         deadline_ts: float,
         round_label: str,
-    ) -> tuple[str, list[str], list[str], dict[str, Any]]:
-        """Invoke LLM for generation response."""
-        if self._code_engine is None:
-            return "", [], [], {}
-        # This delegates to the code generation engine
-        output, metadata = self._code_engine.invoke_ollama(
-            prompt=prompt,
-            model=model,
-            timeout=timeout,
-        )
-
-        # Extract tool calls if any (simplified - full implementation in code_generation_engine)
-        tool_changed_files: list[str] = []
-        tool_warnings: list[str] = []
-
-        return output, tool_changed_files, tool_warnings, metadata
+    ) -> typing.NoReturn:
+        """Legacy direct-generation entry point retained only to fail closed."""
+        _ = (prompt, model, timeout, deadline_ts, round_label)
+        self._raise_code_writing_forbidden("_invoke_generation_response")
 
     # === Legacy Method Names ===
     # These names are retained only to fail closed and expose policy violations.
@@ -1810,19 +1774,10 @@ Requirements:
         prompt: str,
         model: str,
         timeout: int,
-    ) -> dict:
-        """Invoke Ollama for LLM generation.
-
-        Delegates to code_generation_engine.
-        """
-        if self._code_engine is None:
-            return {"output": "", "metadata": {}}
-        output, metadata = self._code_engine.invoke_ollama(
-            prompt=prompt,
-            model=model,
-            timeout=timeout,
-        )
-        return {"output": output, **metadata}
+    ) -> typing.NoReturn:
+        """Legacy Ollama entry point retained only to fail closed."""
+        _ = (prompt, model, timeout)
+        self._raise_code_writing_forbidden("_invoke_ollama")
 
     def _invoke_generation_with_retries(
         self,

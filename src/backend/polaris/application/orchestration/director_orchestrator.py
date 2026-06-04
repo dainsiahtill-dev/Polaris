@@ -125,8 +125,9 @@ class DirectorOrchestrator:
 
     Responsibilities:
         1. Task discovery – query the task board for ready tasks.
-        2. Role-session execution – run each task through
-           ``RoleRuntimeService`` (the canonical tool-loop facade).
+        2. Adapter execution – run each task through the canonical
+           ``roles.adapters`` Director adapter, which owns write receipts and
+           materialization quality gates.
         3. Result aggregation – collect per-task results into an iteration
            snapshot.
         4. Status bookkeeping – update task-board state without exposing
@@ -141,7 +142,6 @@ class DirectorOrchestrator:
         self._config = config
         self._workspace = str(config.workspace)
         self._task_board: Any | None = None
-        self._runtime: Any | None = None
 
     # -- lazy service resolution --------------------------------------------
 
@@ -160,22 +160,6 @@ class DirectorOrchestrator:
             raise DirectorOrchestratorError(
                 f"Failed to resolve TaskBoard: {exc}",
                 code="task_board_resolution_error",
-                cause=exc,
-            ) from exc
-
-    def _get_runtime(self) -> Any:
-        """Lazily resolve ``RoleRuntimeService`` from the ``roles.runtime`` Cell."""
-        if self._runtime is not None:
-            return self._runtime
-        try:
-            from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-            self._runtime = RoleRuntimeService()
-            return self._runtime
-        except (ImportError, RuntimeError, ValueError) as exc:
-            raise DirectorOrchestratorError(
-                f"Failed to resolve RoleRuntimeService: {exc}",
-                code="runtime_resolution_error",
                 cause=exc,
             ) from exc
 
@@ -205,11 +189,12 @@ class DirectorOrchestrator:
     # -- single task execution ----------------------------------------------
 
     async def execute_task(self, task: Mapping[str, Any]) -> DirectorTaskResult:
-        """Execute a single task via the role-runtime facade.
+        """Execute one task through the canonical Director role adapter.
 
-        This method builds a canonical ``ExecuteRoleSessionCommandV1``,
-        invokes ``RoleRuntimeService.execute_role_session``, and maps the
-        response back to a ``DirectorTaskResult``.
+        This method is kept as an application-layer facade for older delivery
+        callers, but it no longer performs role-runtime-only execution. A task
+        is completed only when the adapter returns a successful materialization
+        result with its own write-receipt and quality metadata.
 
         Args:
             task: Task dict with at least ``id`` and ``subject`` keys.
@@ -218,83 +203,68 @@ class DirectorOrchestrator:
             ``DirectorTaskResult`` snapshot.
 
         Raises:
-            DirectorOrchestratorError: if the runtime invocation fails in
-                an unexpected way.
+            DirectorOrchestratorError: if the adapter cannot be resolved.
         """
         task_id = str(task.get("id", "unknown"))
-        subject = str(task.get("subject", "unknown"))
-        description = str(task.get("description", ""))
-
+        subject = str(task.get("subject") or task.get("title") or "unknown")
         board = self._get_task_board()
-        runtime = self._get_runtime()
-
-        # Update status to in_progress
+        adapter_result: dict[str, Any]
         try:
-            normalized_id = self._normalize_task_id(task_id)
-            board.update(normalized_id, status="in_progress")
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            logger.warning("Failed to update task %s to in_progress: %s", task_id, exc)
+            from polaris.cells.roles.adapters.public.service import create_role_adapter
 
-        message = self._build_director_message(subject, description)
-
-        try:
-            from polaris.cells.roles.runtime.public.contracts import (
-                ExecuteRoleSessionCommandV1,
-            )
-
-            command = ExecuteRoleSessionCommandV1(
-                role="director",
-                session_id=f"director-task-{task_id}",
-                workspace=self._workspace,
-                user_message=message,
-                history=(),
-                stream=False,
-            )
-            payload = await runtime.execute_role_session(command)
-            response = self._extract_response_text(payload)
-
-            # Mark completed
-            try:
-                board.update(
-                    normalized_id,
-                    status="completed",
-                    metadata={
-                        "adapter_result": {
-                            "response_length": len(response),
-                            "tool_calls_executed_by_kernel": True,
-                        }
+            adapter = create_role_adapter("director", self._workspace)
+            adapter_result = dict(
+                await adapter.execute(
+                    task_id,
+                    self._build_adapter_input(task),
+                    {
+                        "workspace": self._workspace,
+                        "metadata": {
+                            "source": "application.director_orchestrator",
+                            "delivery_compat": True,
+                        },
                     },
                 )
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                logger.warning("Failed to update task %s to completed: %s", task_id, exc)
-
-            return DirectorTaskResult(
-                task_id=task_id,
-                subject=subject,
-                success=True,
-                status="completed",
-                response_length=len(response),
-                metadata={"response_length": len(response)},
             )
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            raise DirectorOrchestratorError(
+                f"Director adapter execution failed: {exc}",
+                code="director_adapter_execution_failed",
+                cause=exc,
+            ) from exc
 
-        except (RuntimeError, ValueError) as exc:
-            logger.exception("Director task execution failed: id=%s", task_id)
-            try:
-                board.update(
-                    normalized_id,
-                    status="failed",
-                    metadata={"adapter_error": str(exc)},
-                )
-            except (AttributeError, RuntimeError, ValueError):
-                logger.exception("Task state update failed after execution error: id=%s", task_id)
-
-            return DirectorTaskResult(
-                task_id=task_id,
-                subject=subject,
-                success=False,
-                status="failed",
-                error=str(exc),
+        success = bool(adapter_result.get("success"))
+        status = "completed" if success else "failed"
+        error = "" if success else str(adapter_result.get("error") or adapter_result.get("error_code") or "").strip()
+        changed_files = self._normalize_string_list(adapter_result.get("changed_files"))
+        if not changed_files:
+            changed_files = sorted(
+                {
+                    *self._normalize_string_list(adapter_result.get("new_files")),
+                    *self._normalize_string_list(adapter_result.get("modified_files")),
+                }
             )
+        metadata = {
+            "adapter": "roles.adapters.director",
+            "adapter_result": adapter_result,
+            "changed_files": changed_files,
+            "qa_required_for_final_verdict": bool(adapter_result.get("qa_required_for_final_verdict", True)),
+        }
+
+        try:
+            normalized_id = self._normalize_task_id(task_id)
+            board.update(normalized_id, status=status, metadata=metadata)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Failed to update Director task %s after adapter execution: %s", task_id, exc)
+
+        return DirectorTaskResult(
+            task_id=task_id,
+            subject=subject,
+            success=success,
+            status=status,
+            error=error,
+            metadata=metadata,
+        )
 
     # -- iteration orchestration --------------------------------------------
 
@@ -499,6 +469,43 @@ class DirectorOrchestrator:
     # -- internal helpers ---------------------------------------------------
 
     @staticmethod
+    def _build_adapter_input(task: Mapping[str, Any]) -> dict[str, Any]:
+        """Build a DirectorAdapter input payload from a task-board row."""
+
+        task_id = str(task.get("id") or task.get("task_id") or "").strip()
+        subject = str(task.get("subject") or task.get("title") or "").strip()
+        description = str(task.get("description") or task.get("goal") or subject).strip()
+        metadata_raw = task.get("metadata")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+        metadata.update(
+            {
+                "task_id": task_id,
+                "pm_task_id": str(metadata.get("pm_task_id") or task_id).strip(),
+                "subject": subject,
+                "goal": description,
+                "source": "application.director_orchestrator",
+            }
+        )
+        return {
+            "task_id": task_id,
+            "pm_task_id": metadata["pm_task_id"],
+            "id": task_id,
+            "subject": subject,
+            "title": subject,
+            "goal": description,
+            "description": description,
+            "input": description,
+            "task": dict(task),
+            "metadata": metadata,
+        }
+
+    @staticmethod
+    def _normalize_string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @staticmethod
     def _normalize_task_id(task_id: Any) -> int:
         """Normalize a task identifier to an integer.
 
@@ -515,44 +522,3 @@ class DirectorOrchestrator:
         if not token.isdigit():
             raise ValueError(f"Invalid TaskBoard task id: {task_id}")
         return int(token)
-
-    @staticmethod
-    def _extract_response_text(payload: Any) -> str:
-        """Extract plain-text response from a role-runtime payload.
-
-        Args:
-            payload: Raw payload returned by ``execute_role_session``.
-
-        Returns:
-            Normalized response string.
-        """
-        if isinstance(payload, dict):
-            return str(payload.get("response") or payload.get("text") or "").strip()
-        return str(payload or "").strip()
-
-    @staticmethod
-    def _build_director_message(subject: str, description: str) -> str:
-        """Build the canonical Director role message for a task.
-
-        Args:
-            subject: Task subject.
-            description: Optional task description.
-
-        Returns:
-            Formatted message string.
-        """
-        lines = [f"任务: {subject}", ""]
-        if description:
-            lines.extend(["描述:", description, ""])
-        lines.extend(
-            [
-                "请执行此任务。",
-                "",
-                "运行时说明:",
-                "",
-                "- 工具调用由运行时以原生 structured tool calls 处理。",
-                "- 不要输出任何 [READ_FILE] / [WRITE_FILE] / [TOOL_CALL] 之类的文本 wrapper。",
-                "- 如果不需要工具，直接给出回答；如果需要工具，正常表达你的意图，运行时会处理工具 schema。",
-            ]
-        )
-        return "\n".join(lines)

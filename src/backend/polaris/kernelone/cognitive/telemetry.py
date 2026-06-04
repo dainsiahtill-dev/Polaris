@@ -1,4 +1,4 @@
-"""OpenTelemetry-based Cognitive Telemetry for tracing cognitive life form operations."""
+"""OpenTelemetry-based telemetry for cognitive pipeline operations."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class NoOpSpan:
 
 class CognitiveTelemetry:
     """
-    OpenTelemetry-based telemetry for cognitive life form operations.
+    OpenTelemetry-based telemetry for cognitive pipeline operations.
 
     Provides distributed tracing capabilities for:
     - Perception layer operations
@@ -71,7 +71,7 @@ class CognitiveTelemetry:
                 provider.add_span_processor(processor)
                 trace.set_tracer_provider(provider)
                 self._trace_api = trace
-                self._tracer = trace.get_tracer("cognitive_life_form")
+                self._tracer = trace.get_tracer("cognitive_pipeline")
             except ImportError:
                 self._enabled = False
 

@@ -19,6 +19,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from polaris.cells.llm.evaluation.public.service import (
     list_baseline_library_sources,
@@ -66,25 +67,39 @@ async def _probe_role(workspace: str, role: str, timeout_seconds: float) -> dict
     ok_flag = False
 
     try:
-        # Use generate_role_response with validation disabled — we only care
-        # that the role's LLM is reachable, not that its output conforms to
-        # the role's schema.
-        from polaris.cells.llm.dialogue.public import (
-            generate_role_response,
+        from polaris.cells.roles.runtime.public.contracts import (
+            ExecuteRoleSessionCommandV1,
         )
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
         result = await asyncio.wait_for(
-            generate_role_response(
-                workspace=workspace,
-                settings={},
-                role=role,
-                message=_PROBE_MESSAGE,
-                validate_output=False,
-                max_retries=0,
+            RoleRuntimeService().execute_role_session(
+                ExecuteRoleSessionCommandV1(
+                    role=role,
+                    session_id=f"agentic-eval-probe-{role}-{uuid4().hex}",
+                    workspace=workspace,
+                    user_message=_PROBE_MESSAGE,
+                    domain="general",
+                    metadata={
+                        "role_runtime_required": True,
+                        "cognitive_runtime_required": True,
+                        "context_os_expected": True,
+                        "source": "agentic_eval_probe",
+                        "runtime_fallback_used": False,
+                        "fallback_policy": "fail_closed",
+                    },
+                    stream=False,
+                    host_kind="agentic_eval_probe",
+                )
             ),
             timeout=timeout_seconds,
         )
-        result_dict = _as_dict(result)
+        result_dict = {
+            "response": str(getattr(result, "output", "") or ""),
+            "thinking": str(getattr(result, "thinking", "") or ""),
+            "error": str(getattr(result, "error_message", "") or ""),
+            "metadata": _as_dict(getattr(result, "metadata", {})),
+        }
         ok_flag = not bool(result_dict.get("error"))
         output_preview = str(result_dict.get("response") or "").strip()[:120]
         error_text = str(result_dict.get("error") or "").strip()
@@ -100,8 +115,9 @@ async def _probe_role(workspace: str, role: str, timeout_seconds: float) -> dict
             provider_id = role_cfg.provider_id
             model_name = role_cfg.model
         else:
-            provider_id = str(result_dict.get("provider") or "unknown").strip()
-            model_name = str(result_dict.get("model") or "unknown").strip()
+            metadata = _as_dict(result_dict.get("metadata"))
+            provider_id = str(metadata.get("provider") or metadata.get("provider_type") or "unknown").strip()
+            model_name = str(metadata.get("model") or metadata.get("llm_model") or "unknown").strip()
     except asyncio.TimeoutError:
         error_msg = f"timeout after {timeout_seconds}s"
         provider_id = "unknown"

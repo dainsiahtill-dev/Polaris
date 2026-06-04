@@ -111,7 +111,7 @@ async def test_role_chat_success(client: AsyncClient) -> None:
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
             return_value={
                 "response": "Hello from PM",
@@ -149,7 +149,7 @@ async def test_role_chat_prefers_active_workspace_path(
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
             return_value={"response": "ok", "role": "pm", "model": "x", "provider": "y"},
         ) as mock_generate,
@@ -257,7 +257,7 @@ async def test_role_chat_generation_error(client: AsyncClient) -> None:
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
             side_effect=RuntimeError("model timeout"),
         ),
@@ -281,7 +281,7 @@ async def test_role_chat_architect_success(client: AsyncClient) -> None:
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
             return_value={
                 "response": "Design proposal",
@@ -301,7 +301,7 @@ async def test_role_chat_architect_success(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_role_chat_with_context(client: AsyncClient) -> None:
-    """Role chat should pass context to generate_role_response."""
+    """Role chat should pass payload context to the runtime helper."""
     with (
         patch(
             "polaris.delivery.http.routers.role_chat.get_registered_roles",
@@ -311,7 +311,7 @@ async def test_role_chat_with_context(client: AsyncClient) -> None:
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
             return_value={"response": "ok", "role": "pm", "model": "x", "provider": "y"},
         ) as mock_generate,
@@ -323,7 +323,7 @@ async def test_role_chat_with_context(client: AsyncClient) -> None:
         assert response.status_code == 200
         assert mock_generate.await_args is not None
         call_kwargs = mock_generate.await_args.kwargs
-        assert call_kwargs.get("context") == {"session_id": "abc123"}
+        assert call_kwargs.get("payload") == {"message": "hello", "context": {"session_id": "abc123"}}
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +350,7 @@ async def test_role_chat_stream_success(client: AsyncClient) -> None:
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response_streaming",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_streaming",
             new_callable=AsyncMock,
             side_effect=_fake_streaming_response,
         ) as mock_generate,
@@ -418,7 +418,7 @@ async def test_role_chat_stream_prefers_active_workspace_path(
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response_streaming",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_streaming",
             new_callable=AsyncMock,
             side_effect=_fake_streaming_response,
         ) as mock_generate,
@@ -504,7 +504,7 @@ async def test_role_chat_stream_engineering_roles(client: AsyncClient, role: str
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response_streaming",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_streaming",
             new_callable=AsyncMock,
             side_effect=_fake_streaming_response,
         ) as mock_generate,

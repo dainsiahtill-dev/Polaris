@@ -159,6 +159,48 @@ class TestProcessContextOverride:
         assert "nested: {'key': 'value'}" in result["content"]
         assert "list: [1, 2, 3]" in result["content"]
 
+    def test_process_context_override_drops_control_plane_fields(self):
+        """Control-plane fields must not be injected into LLM prompt context."""
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 128000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "none"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = None
+        mock_profile.model = None
+        mock_profile.role_id = "test"
+        mock_profile.display_name = "Test"
+
+        gateway = RoleContextGateway(mock_profile, workspace=".")
+
+        override = {
+            "safe_key": "visible context",
+            "context_os_snapshot": {
+                "working_state": {"current_task": "snapshot must stay control-plane"},
+            },
+            "llm_provider_policy": {"allowed_provider_types": ["ollama"]},
+            "role_runtime_required": True,
+            "cognitive_runtime_required": True,
+            "_transaction_kernel_prebuilt_messages": [{"role": "system", "content": "internal"}],
+        }
+        result = gateway._process_context_override(override)
+
+        assert result is not None
+        content = result["content"]
+        assert "safe_key: visible context" in content
+        assert "context_os_snapshot" not in content
+        assert "snapshot must stay control-plane" not in content
+        assert "llm_provider_policy" not in content
+        assert "allowed_provider_types" not in content
+        assert "role_runtime_required" not in content
+        assert "cognitive_runtime_required" not in content
+        assert "_transaction_kernel_prebuilt_messages" not in content
+
 
 class TestExtractToolMessagesFromHistory:
     """Test _extract_tool_messages_from_history method."""

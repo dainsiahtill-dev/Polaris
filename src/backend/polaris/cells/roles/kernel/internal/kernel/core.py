@@ -96,6 +96,14 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+_CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS = frozenset(
+    {
+        "compact_context",
+        "update_session_state",
+    }
+)
+_CONTEXT_EXPENSIVE_TOOL_NAMES = frozenset({"read_file"})
+
 
 @dataclass(frozen=True)
 class ValidationReport:
@@ -179,7 +187,7 @@ class RoleExecutionKernel:
 
         # 保存注入的服务（可能为 None，由 _get_* 方法处理）
         self._injected_llm_invoker = llm_invoker
-        self._injected_llm_caller: LLMCaller | None = None  # Legacy LLMCaller DI
+        self._injected_llm_caller: LLMCaller | None = None  # Compatibility LLMCaller DI
         self._injected_tool_executor = tool_executor
         self._injected_prompt_builder = prompt_builder
         self._injected_output_parser = output_parser
@@ -210,7 +218,7 @@ class RoleExecutionKernel:
         self._prompt_builder: PromptBuilder | None = None
         self._output_parser: OutputParser | None = None
         self._quality_checker: QualityChecker | None = None
-        self._llm_caller_fallback: LLMCaller | None = None  # Lazy fallback for legacy
+        self._llm_caller: LLMCaller | None = None
         self._event_emitter: KernelEventEmitter | None = None
 
         # 状态管理
@@ -274,17 +282,11 @@ class RoleExecutionKernel:
 
     @staticmethod
     def _use_transaction_kernel() -> bool:
-        """Feature flag: use TransactionKernel as primary execution path.
+        """Return the canonical execution engine selection.
 
-        Default is True (env absent = True). LEGACY_FALLBACK=true forces old TurnEngine.
+        TransactionKernel is now the only production role-turn execution path.
         """
-        if os.environ.get("LEGACY_FALLBACK", "").lower() in ("true", "1", "yes"):
-            return False
-        return os.environ.get("USE_TRANSACTION_KERNEL_PRIMARY", "true").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        return True
 
     @staticmethod
     def _benchmark_requires_no_tools(request: RoleTurnRequest) -> bool:
@@ -321,6 +323,156 @@ class RoleExecutionKernel:
 
         message = str(getattr(request, "message", "") or "").lower()
         return "[mode:propose]" in message and "do not call tools" in message
+
+    @classmethod
+    def _cognitive_runtime_blocked_tools(cls, request: RoleTurnRequest) -> frozenset[str]:
+        """Return canonical tool names blocked by Cognitive Runtime mainline policy."""
+        values: list[Any] = []
+        metadata = getattr(request, "metadata", None)
+        if isinstance(metadata, dict):
+            policy = metadata.get("cognitive_tool_policy")
+            if isinstance(policy, dict):
+                values.extend(cls._iter_tool_policy_values(policy.get("blocked_tools")))
+            values.extend(cls._iter_tool_policy_values(metadata.get("cognitive_runtime_blocked_tools")))
+
+        context_override = getattr(request, "context_override", None)
+        if isinstance(context_override, dict):
+            guidance = context_override.get("cognitive_guidance")
+            if isinstance(guidance, dict):
+                values.extend(cls._iter_tool_policy_values(guidance.get("blocked_tools")))
+            policy = context_override.get("cognitive_tool_policy")
+            if isinstance(policy, dict):
+                values.extend(cls._iter_tool_policy_values(policy.get("blocked_tools")))
+
+        normalized: set[str] = set()
+        for value in values:
+            tool_name = cls._normalize_tool_policy_name(value)
+            if tool_name:
+                normalized.add(tool_name)
+        return frozenset(normalized)
+
+    @staticmethod
+    def _iter_tool_policy_values(raw_value: Any) -> tuple[Any, ...]:
+        if isinstance(raw_value, (list, tuple, set, frozenset)):
+            return tuple(raw_value)
+        if isinstance(raw_value, str):
+            return (raw_value,)
+        return ()
+
+    @staticmethod
+    def _normalize_tool_policy_name(raw_name: Any) -> str:
+        token = str(raw_name or "").strip()
+        if not token:
+            return ""
+        try:
+            from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+            return str(normalize_tool_name(token) or token).strip().lower()
+        except (ImportError, RuntimeError, ValueError):
+            return token.lower()
+
+    @classmethod
+    def _filter_cognitive_blocked_tool_definitions(
+        cls,
+        tool_definitions: list[dict[str, Any]],
+        blocked_tools: frozenset[str],
+    ) -> list[dict[str, Any]]:
+        """Remove tools disallowed by Cognitive Runtime from native LLM schemas."""
+        if not tool_definitions or not blocked_tools:
+            return tool_definitions
+        filtered: list[dict[str, Any]] = []
+        for definition in tool_definitions:
+            schema_name = ""
+            if isinstance(definition, dict):
+                function_payload = definition.get("function")
+                if isinstance(function_payload, dict):
+                    schema_name = str(function_payload.get("name") or "").strip()
+                else:
+                    schema_name = str(definition.get("name") or "").strip()
+            if cls._normalize_tool_policy_name(schema_name) in blocked_tools:
+                continue
+            filtered.append(definition)
+        return filtered
+
+    @classmethod
+    def _runtime_tool_policy_from_context(
+        cls,
+        context_result: Any,
+    ) -> tuple[frozenset[str], dict[str, Any]]:
+        """Derive tool-surface reductions from ContextGateway decision hints.
+
+        ContextGateway decisions may only reduce the tool surface. They never
+        grant access to tools outside the role profile whitelist.
+        """
+
+        metadata = getattr(context_result, "metadata", None)
+        metadata_payload = metadata if isinstance(metadata, dict) else {}
+        hints = metadata_payload.get("context_decision_hints")
+        hints_payload = hints if isinstance(hints, dict) else {}
+
+        suppress_expensive_context_tools = bool(
+            hints_payload.get("suppress_expensive_context_tools") or metadata_payload.get("budget_pressure_detected")
+        )
+        suppress_mutating_tools = bool(hints_payload.get("suppress_mutating_tools"))
+        blocked: set[str] = set()
+
+        if suppress_expensive_context_tools:
+            blocked.update(_CONTEXT_EXPENSIVE_TOOL_NAMES)
+
+        if suppress_mutating_tools:
+            try:
+                from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+                for spec in ToolSpecRegistry.get_write_tools() + ToolSpecRegistry.get_exec_tools():
+                    tool_name = cls._normalize_tool_policy_name(spec.canonical_name)
+                    if tool_name and tool_name not in _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS:
+                        blocked.add(tool_name)
+            except (ImportError, RuntimeError, ValueError):
+                blocked.update(
+                    {
+                        "append_to_file",
+                        "apply_patch",
+                        "background_run",
+                        "edit_blocks",
+                        "edit_file",
+                        "execute_command",
+                        "precision_edit",
+                        "repo_apply_diff",
+                        "search_replace",
+                        "write_file",
+                    }
+                )
+
+        audit = {
+            "context_tool_policy_applied": bool(blocked),
+            "context_blocked_tools": sorted(blocked),
+            "context_decision_hints": dict(hints_payload),
+        }
+        return frozenset(blocked), audit
+
+    @classmethod
+    def _apply_runtime_tool_policy(
+        cls,
+        *,
+        request: RoleTurnRequest,
+        context_result: Any,
+        tool_definitions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        cognitive_blocked_tools = cls._cognitive_runtime_blocked_tools(request)
+        filtered = cls._filter_cognitive_blocked_tool_definitions(
+            tool_definitions,
+            cognitive_blocked_tools,
+        )
+        context_blocked_tools, context_audit = cls._runtime_tool_policy_from_context(context_result)
+        filtered = cls._filter_cognitive_blocked_tool_definitions(
+            filtered,
+            context_blocked_tools,
+        )
+        return filtered, {
+            **context_audit,
+            "cognitive_tool_policy_applied": bool(cognitive_blocked_tools),
+            "cognitive_blocked_tools": sorted(cognitive_blocked_tools),
+        }
 
     def _create_transaction_kernel(
         self,
@@ -440,7 +592,6 @@ class RoleExecutionKernel:
             __slots__ = ()
 
             async def __call__(self, request_payload: dict[str, Any]) -> dict[str, Any]:
-                import asyncio
 
                 effective_profile = _build_effective_profile(request_payload)
                 raw_messages = list(request_payload.get("messages", []))
@@ -470,7 +621,7 @@ class RoleExecutionKernel:
                 task_id_str = str(provider_request.task_id or "").strip() or None
 
                 if tool_choice == "none":
-                    if hasattr(llm_invoker, "call_finalization") and asyncio.iscoroutinefunction(
+                    if hasattr(llm_invoker, "call_finalization") and inspect.iscoroutinefunction(
                         getattr(llm_invoker, "call_finalization", None)
                     ):
                         return await llm_invoker.call_finalization(
@@ -500,7 +651,7 @@ class RoleExecutionKernel:
                         "model": str(getattr(response, "model", "unknown") or "unknown"),
                         "usage": dict(getattr(response, "metadata", {}) or {}),
                     }
-                if hasattr(llm_invoker, "call_decision") and asyncio.iscoroutinefunction(
+                if hasattr(llm_invoker, "call_decision") and inspect.iscoroutinefunction(
                     getattr(llm_invoker, "call_decision", None)
                 ):
                     return await llm_invoker.call_decision(
@@ -996,6 +1147,11 @@ class RoleExecutionKernel:
             if self._benchmark_requires_no_tools(request) or self._request_forces_no_transaction_tools(request)
             else build_native_tool_schemas(profile)
         )
+        tool_definitions, runtime_tool_policy_audit = self._apply_runtime_tool_policy(
+            request=request,
+            context_result=context_result,
+            tool_definitions=tool_definitions,
+        )
 
         try:
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
@@ -1069,6 +1225,7 @@ class RoleExecutionKernel:
             "llm_calls": metrics.get("llm_calls", 0),
             "tool_calls": metrics.get("tool_calls", 0),
             "transaction_kernel": True,
+            **runtime_tool_policy_audit,
         }
 
         metadata: dict[str, Any] = {}
@@ -1181,6 +1338,11 @@ class RoleExecutionKernel:
             []
             if self._benchmark_requires_no_tools(request) or self._request_forces_no_transaction_tools(request)
             else build_native_tool_schemas(profile)
+        )
+        tool_definitions, runtime_tool_policy_audit = self._apply_runtime_tool_policy(
+            request=request,
+            context_result=context_result,
+            tool_definitions=tool_definitions,
         )
 
         accumulated_content: list[str] = []
@@ -1304,6 +1466,7 @@ class RoleExecutionKernel:
                         "llm_calls": event.llm_calls,
                         "tool_calls": event.tool_calls,
                         "transaction_kernel": True,
+                        **runtime_tool_policy_audit,
                     },
                     turn_history=turn_history,
                     turn_events_metadata=turn_events_metadata,
@@ -1328,7 +1491,7 @@ class RoleExecutionKernel:
             yield event_dict
 
     def _build_context_request_for_stream(self, messages: list[dict[str, Any]], request: RoleTurnRequest) -> Any:
-        """Build a minimal ContextRequest for legacy call_stream compatibility."""
+        """Build a minimal ContextRequest for compatibility call_stream providers."""
         from polaris.cells.roles.kernel.public.service import ContextRequest
 
         def _normalize_user_text(value: Any) -> str:
@@ -1441,10 +1604,10 @@ class RoleExecutionKernel:
         # 1. 优先使用注入的 LLMCaller
         if self._injected_llm_caller is not None:
             return self._injected_llm_caller
-        # 2. 回退到懒加载创建
-        if self._llm_caller_fallback is None:
-            self._llm_caller_fallback = LLMCaller(self.workspace)
-        return self._llm_caller_fallback
+        # 2. 默认懒加载创建 canonical LLM caller
+        if self._llm_caller is None:
+            self._llm_caller = LLMCaller(self.workspace)
+        return self._llm_caller
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 主要公开 API
@@ -1494,12 +1657,6 @@ class RoleExecutionKernel:
         except (RuntimeError, ValueError) as e:
             return RoleTurnResult(error=f"上下文构建失败: {e}", is_complete=True)
 
-        # 5a. Transcript-driven tool loop controller
-        controller = ToolLoopController.from_request(
-            request=request,
-            profile=profile,
-        )
-
         # Reset cached gateway for new turn (FailureBudget should not persist across turns)
         self._cached_tool_gateway = None
         self._cached_gateway_profile = None
@@ -1543,29 +1700,15 @@ class RoleExecutionKernel:
                 tags={"role": role, "attempt": attempt, "model": profile.model},
             ) as span:
                 llm_start_time = time.monotonic()
-                if self._use_transaction_kernel():
-                    te_result = await self._execute_transaction_kernel_turn(
-                        role=role,
-                        profile=profile,
-                        request=request,
-                        system_prompt=system_prompt,
-                        fingerprint=fingerprint,
-                        observer_run_id=observer_run_id,
-                        response_schema=response_schema,
-                    )
-                else:
-                    from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
-
-                    engine = TurnEngine(kernel=self)
-                    te_result = await engine.run(
-                        request=request,
-                        role=role,
-                        controller=controller,
-                        system_prompt=system_prompt,
-                        fingerprint=fingerprint,
-                        attempt=attempt,
-                        response_model=response_schema,
-                    )
+                te_result = await self._execute_transaction_kernel_turn(
+                    role=role,
+                    profile=profile,
+                    request=request,
+                    system_prompt=system_prompt,
+                    fingerprint=fingerprint,
+                    observer_run_id=observer_run_id,
+                    response_schema=response_schema,
+                )
                 llm_latency = time.monotonic() - llm_start_time
 
                 # Record LLM latency to metrics
@@ -1579,7 +1722,7 @@ class RoleExecutionKernel:
                 span.set_tag("has_content", bool(te_result.content))
                 span.set_tag("has_tool_calls", bool(te_result.tool_calls))
 
-            # TurnEngine 返回错误，不重试
+            # TransactionKernel 返回错误，不重试
             if te_result.error:
                 return RoleTurnResult(
                     content=te_result.content or "",
@@ -1843,68 +1986,28 @@ class RoleExecutionKernel:
             # 4. 构建系统提示词
             system_prompt = self._build_system_prompt_for_request(profile, request, prompt_appendix)
 
-            # 5. Transcript-driven Tool Loop
-            controller = ToolLoopController.from_request(
-                request=request,
-                profile=profile,
-            )
-
-            # Phase 7: TurnEngine facade
-            if self._use_transaction_kernel():
-                try:
-                    async for event in self._execute_transaction_kernel_stream(
-                        role=role,
-                        profile=profile,
-                        request=request,
-                        system_prompt=system_prompt,
-                        fingerprint=fingerprint,
-                        stream_run_id=stream_run_id,
-                        uep_publisher=uep_publisher,
-                    ):
-                        yield event
-                except (RuntimeError, ValueError) as e:
-                    inner_error = e
-                    logger.exception("流式执行失败 (TransactionKernel)")
-                    await uep_publisher.publish_stream_event(
-                        workspace=self.workspace or os.getcwd(),
-                        run_id=stream_run_id,
-                        role=role,
-                        event_type="error",
-                        payload={"error": str(e)},
-                    )
-                    yield {"type": "error", "error": str(e)}
-            else:
-                from polaris.cells.roles.kernel.internal.turn_engine.engine import TurnEngine
-
-                engine = TurnEngine(kernel=self)
-                try:
-                    async for event in engine.run_stream(
-                        request=request,
-                        role=role,
-                        controller=controller,
-                        system_prompt=system_prompt,
-                        fingerprint=fingerprint,
-                    ):
-                        event_type = str(event.get("type") or "").strip()
-                        await uep_publisher.publish_stream_event(
-                            workspace=self.workspace or os.getcwd(),
-                            run_id=stream_run_id,
-                            role=role,
-                            event_type=event_type,
-                            payload=dict(event),
-                        )
-                        yield event
-                except (RuntimeError, ValueError) as e:
-                    inner_error = e
-                    logger.exception("流式执行失败")
-                    await uep_publisher.publish_stream_event(
-                        workspace=self.workspace or os.getcwd(),
-                        run_id=stream_run_id,
-                        role=role,
-                        event_type="error",
-                        payload={"error": str(e)},
-                    )
-                    yield {"type": "error", "error": str(e)}
+            try:
+                async for event in self._execute_transaction_kernel_stream(
+                    role=role,
+                    profile=profile,
+                    request=request,
+                    system_prompt=system_prompt,
+                    fingerprint=fingerprint,
+                    stream_run_id=stream_run_id,
+                    uep_publisher=uep_publisher,
+                ):
+                    yield event
+            except (RuntimeError, ValueError) as e:
+                inner_error = e
+                logger.exception("流式执行失败 (TransactionKernel)")
+                await uep_publisher.publish_stream_event(
+                    workspace=self.workspace or os.getcwd(),
+                    run_id=stream_run_id,
+                    role=role,
+                    event_type="error",
+                    payload={"error": str(e)},
+                )
+                yield {"type": "error", "error": str(e)}
 
         except (RuntimeError, ValueError):
             if inner_error is None:
@@ -1932,7 +2035,6 @@ class RoleExecutionKernel:
         """
         if self._injected_llm_invoker is not None:
             return await self._injected_llm_invoker.invoke(request, timeout_seconds)
-        # 向后兼容：使用旧的 LLMCaller
         raise NotImplementedError("call() requires injected llm_invoker")
 
     async def call_stream(
@@ -1957,7 +2059,6 @@ class RoleExecutionKernel:
             async for event in stream_gen:
                 yield event
             return
-        # 向后兼容：使用旧的 LLMCaller
         raise NotImplementedError("call_stream() requires injected llm_invoker")
 
     @staticmethod
@@ -2005,6 +2106,14 @@ class RoleExecutionKernel:
         Returns:
             工具执行结果
         """
+        request_for_policy = context.get("request") if context else None
+        if request_for_policy is not None:
+            cognitive_blocked_tools = self._cognitive_runtime_blocked_tools(cast(RoleTurnRequest, request_for_policy))
+            if self._normalize_tool_policy_name(tool_name) in cognitive_blocked_tools:
+                from polaris.cells.roles.kernel.internal.tool_gateway import ToolAuthorizationError
+
+                raise ToolAuthorizationError(f"Cognitive Runtime blocked tool '{tool_name}'")
+
         if self._injected_tool_executor is not None:
             # BUG FIX: Even injected executors must go through authorization.
             # Previously bypassed RoleToolGateway entirely — no counting, whitelist,
@@ -2224,6 +2333,7 @@ class RoleExecutionKernel:
     def _build_context(self, profile: RoleProfile, request: RoleTurnRequest) -> ContextRequest:
         """构建上下文请求"""
         context_os_snapshot = None
+        context_override = dict(request.context_override) if isinstance(request.context_override, dict) else {}
         if isinstance(request.context_override, dict):
             context_os_snapshot = request.context_override.get("context_os_snapshot")
         return ContextRequest(
@@ -2231,6 +2341,7 @@ class RoleExecutionKernel:
             history=tuple(request.history) if request.history else (),
             task_id=request.task_id,
             context_os_snapshot=context_os_snapshot,
+            context_override=context_override or None,
         )
 
     def _build_system_prompt_for_request(

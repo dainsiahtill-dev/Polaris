@@ -2064,7 +2064,7 @@ class ContextWindowStatus(EventBase):
 
 
 # =============================================================================
-# Cognitive Life Form Events
+# Cognitive pipeline events
 # =============================================================================
 
 

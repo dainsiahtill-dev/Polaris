@@ -26,7 +26,7 @@ from polaris.kernelone.cognitive.reasoning.meta_cognition import ReflectionOutpu
 
 class EvolutionEngine:
     """
-    Implements Continuous Evolution for Cognitive Life Form.
+    Implements continuous evolution for cognitive pipeline state.
 
     Evolution Protocol:
     1. IDENTIFY - What knowledge was wrong/incorrect?

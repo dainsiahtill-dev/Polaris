@@ -1,12 +1,15 @@
 """Backend resolution and invocation for loop-pm."""
 
 import argparse
+import asyncio
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Coroutine, TypeVar
+from uuid import uuid4
 
 from polaris.cells.context.engine.public.service import get_anthropomorphic_context_v2
 
@@ -18,8 +21,6 @@ from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.memory.integration import (
     get_anthropomorphic_context,
 )
-from polaris.kernelone.process.codex_adapter import invoke_codex
-from polaris.kernelone.process.ollama_utils import invoke_ollama
 from polaris.kernelone.prompts.loader import current_profile, get_template, render_template
 from polaris.kernelone.prompts.meta_prompting import build_meta_prompting_appendix
 from polaris.kernelone.runtime.shared_types import strip_ansi
@@ -34,6 +35,7 @@ from polaris.kernelone.tool_execution.io_tools import (
 )
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 @dataclass
@@ -255,61 +257,143 @@ def ensure_pm_backend_available(backend_kind: str) -> None:
         ensure_ollama_available()
 
 
-def _invoke_generic_runtime_provider(
+def _run_async_from_sync(coro: Coroutine[Any, Any, T]) -> T:
+    """Run an async role-runtime call from the synchronous PM CLI path."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result_box: dict[str, T] = {}
+    error_box: dict[str, BaseException] = {}
+
+    def _runner() -> None:
+        try:
+            result_box["result"] = asyncio.run(coro)
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            error_box["error"] = exc
+
+    thread = threading.Thread(target=_runner, name="pm-role-runtime", daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in error_box:
+        raise error_box["error"]
+    return result_box["result"]
+
+
+def _create_role_runtime_service() -> Any:
+    from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+    return RoleRuntimeService()
+
+
+def _provider_policy_for_backend(backend_kind: str) -> dict[str, tuple[str, ...]]:
+    token = str(backend_kind or "").strip().lower()
+    if token == "ollama":
+        return {"allowed_provider_types": ("ollama",)}
+    if token in {"codex", "codex_cli", "codex_sdk"}:
+        return {"allowed_provider_types": ("codex", "codex_cli", "codex_sdk")}
+    return {}
+
+
+def _usage_int(payload: dict[str, Any], *keys: str, default: int = 0) -> int:
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _invoke_generic_role_runtime(
     state: PmRoleState,
     prompt: str,
     usage_ctx: UsageContext | None,
+    *,
+    backend_kind: str = "generic",
 ) -> str:
-    """Invoke PM-configured runtime provider via provider registry.
+    """Invoke the PM backend through roles.runtime.
 
-    This path is fail-closed. Missing bindings or unavailable providers are
-    treated as configuration errors and surfaced to the caller.
+    The production PM backend path must not bypass
+    Context OS, strategy receipts, or Cognitive Runtime shadow artifacts by
+    calling provider runtime directly.
     """
-    from polaris.infrastructure.llm.provider_runtime_adapter import (
-        AppLLMRuntimeAdapter,
+    from polaris.cells.roles.runtime.public.contracts import (
+        ExecuteRoleSessionCommandV1,
     )
-    from polaris.kernelone.llm.runtime import invoke_role_runtime_provider
 
-    provider_id, model = load_pm_model_config()
-    if not provider_id or not model:
-        raise RuntimeError("PM runtime provider binding is not configured.")
-
-    provider_result = invoke_role_runtime_provider(
+    workspace = str(getattr(state, "workspace_full", "") or ".").strip() or "."
+    run_id = str(getattr(usage_ctx, "run_id", "") or "").strip() if usage_ctx else ""
+    task_id = str(getattr(usage_ctx, "task_id", "") or "").strip() if usage_ctx else ""
+    timeout_seconds = int(getattr(state, "timeout", 0) or 0)
+    requested_backend = str(backend_kind or "").strip().lower() or "generic"
+    provider_policy = _provider_policy_for_backend(requested_backend)
+    context: dict[str, Any] = {
+        "source": "pm_cli_backend",
+        "backend": requested_backend,
+    }
+    metadata: dict[str, Any] = {
+        "role_runtime_required": True,
+        "cognitive_runtime_required": True,
+        "context_os_expected": True,
+        "source": "pm_cli_backend",
+        "timeout_seconds": timeout_seconds,
+        "runtime_fallback_used": False,
+        "fallback_policy": "fail_closed",
+        "requested_backend": requested_backend,
+    }
+    if provider_policy:
+        context.update(provider_policy)
+        context["llm_provider_policy"] = dict(provider_policy)
+        metadata.update(provider_policy)
+        metadata["llm_provider_policy"] = dict(provider_policy)
+    command = ExecuteRoleSessionCommandV1(
         role="pm",
-        workspace=state.workspace_full,
-        prompt=prompt,
-        fallback_model=model,
-        timeout=state.timeout,
-        adapter=AppLLMRuntimeAdapter(),
-        blocked_provider_types={"", "codex", "codex_cli", "codex_sdk"},
+        session_id=f"pm-cli-{run_id or uuid4().hex}",
+        workspace=workspace,
+        user_message=prompt,
+        run_id=run_id or None,
+        task_id=task_id or None,
+        domain="document",
+        context=context,
+        metadata=metadata,
+        stream=False,
+        host_kind="pm_cli_backend",
     )
-    if not provider_result.attempted or not provider_result.ok:
-        error_message = str(provider_result.error or "").strip() or "runtime_provider_unavailable"
-        raise RuntimeError(f"PM runtime provider invocation failed: {error_message}")
+    result = _run_async_from_sync(_create_role_runtime_service().execute_role_session(command))
+    if not bool(getattr(result, "ok", False)):
+        error_message = str(getattr(result, "error_message", "") or "").strip() or "role_runtime_unavailable"
+        raise RuntimeError(f"PM role runtime invocation failed: {error_message}")
 
-    output = str(provider_result.output or "")
-    resolved_type = str(provider_result.provider_type or "").strip()
-    resolved_model = str(provider_result.model or model).strip()
+    output = str(getattr(result, "output", "") or "")
 
     if usage_ctx and state.events_full:
-        usage_obj = provider_result.usage
+        usage_payload = getattr(result, "usage", {}) or {}
+        if not isinstance(usage_payload, dict):
+            usage_payload = {}
+        metadata = getattr(result, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
         usage = TokenUsage(
-            prompt_tokens=int(getattr(usage_obj, "prompt_tokens", 0) or 0),
-            completion_tokens=int(getattr(usage_obj, "completion_tokens", 0) or 0),
-            total_tokens=int(getattr(usage_obj, "total_tokens", 0) or 0),
-            estimated=bool(getattr(usage_obj, "estimated", True)),
-            prompt_chars=int(getattr(usage_obj, "prompt_chars", len(prompt)) or len(prompt)),
-            completion_chars=int(getattr(usage_obj, "completion_chars", len(output)) or len(output)),
+            prompt_tokens=_usage_int(usage_payload, "prompt_tokens", "input_tokens"),
+            completion_tokens=_usage_int(usage_payload, "completion_tokens", "output_tokens"),
+            total_tokens=_usage_int(usage_payload, "total_tokens", "tokens"),
+            estimated=bool(usage_payload.get("estimated", True)),
+            prompt_chars=_usage_int(usage_payload, "prompt_chars", default=len(prompt)),
+            completion_chars=_usage_int(usage_payload, "completion_chars", default=len(output)),
         )
         track_usage(
             state.events_full,
             usage_ctx,
-            model=resolved_model,
-            provider=resolved_type or "generic",
+            model=str(metadata.get("model") or metadata.get("llm_model") or "role_runtime"),
+            provider=str(metadata.get("provider") or metadata.get("provider_type") or "role_runtime"),
             usage=usage,
-            duration_ms=int(provider_result.latency_ms or 0),
-            ok=bool(provider_result.ok),
-            error=str(provider_result.error or "") or None,
+            duration_ms=_usage_int(usage_payload, "duration_ms", "latency_ms"),
+            ok=True,
+            error=None,
         )
     return output
 
@@ -401,41 +485,15 @@ def invoke_pm_backend(
     )
 
     try:
-        if backend_kind == "codex":
-            output = invoke_codex(
-                prompt,
-                state.ollama_full,
-                state.workspace_full,
-                state.show_output,
-                args.codex_full_auto,
-                args.codex_dangerous,
-                args.codex_profile,
-                state.timeout,
-                _build_codex_env_from_role_config(state),
-                usage_ctx=usage_ctx,
-                events_path=state.events_full,
-            )
-            resolved_backend = "codex"
-        elif backend_kind == "ollama":
-            output = invoke_ollama(
-                prompt,
-                state.model,
-                state.workspace_full,
-                state.show_output,
-                state.timeout,
-                usage_ctx=usage_ctx,
-                events_path=state.events_full,
-            )
-            resolved_backend = "ollama"
-        else:
-            output = _invoke_generic_runtime_provider(
-                state=state,
-                prompt=prompt,
-                usage_ctx=usage_ctx,
-            )
-            if state.ollama_full:
-                write_text_atomic(state.ollama_full, output or "")
-            resolved_backend = "runtime_provider"
+        output = _invoke_generic_role_runtime(
+            state=state,
+            prompt=prompt,
+            usage_ctx=usage_ctx,
+            backend_kind=resolved_backend,
+        )
+        if state.ollama_full:
+            write_text_atomic(state.ollama_full, output or "")
+        resolved_backend = "role_runtime"
 
         elapsed_ms = int((time.time() - started_at) * 1000)
         summary_payload = _summarize_pm_output_for_event(output)

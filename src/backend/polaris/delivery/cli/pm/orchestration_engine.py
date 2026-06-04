@@ -202,34 +202,6 @@ def _pm_workflow_wait_timeout_seconds(
     )
 
 
-def _repo_root_from_module() -> str:
-    """Resolve repository root from this PM module location."""
-    module_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.abspath(os.path.join(module_dir, "..", "..", "..", "..", "..", ".."))
-
-
-def _canonical_director_script_path(raw_path: Any) -> str:
-    """Normalize Director script path before crossing workflow boundaries."""
-    default_path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "loop-director.py"))
-    text = str(raw_path or "").strip()
-    if not text:
-        return default_path
-    if os.path.isabs(text):
-        return os.path.abspath(text)
-
-    repo_candidate = os.path.abspath(os.path.join(_repo_root_from_module(), text))
-    if os.path.exists(repo_candidate):
-        return repo_candidate
-
-    cwd_candidate = os.path.abspath(text)
-    if os.path.exists(cwd_candidate):
-        return cwd_candidate
-
-    if text.replace("\\", "/").endswith("polaris/delivery/cli/loop-director.py"):
-        return default_path
-    return repo_candidate
-
-
 _FALLBACK_WORKSPACE_SKIP_DIRS = {
     ".git",
     ".polaris",
@@ -1864,13 +1836,7 @@ def _run_dispatch_pipeline_with_workflow(
         "type": str(getattr(args, "director_type", os.environ.get("KERNELONE_DIRECTOR_TYPE", "auto")) or "auto")
         .strip()
         .lower(),
-        "script": _canonical_director_script_path(
-            getattr(
-                args,
-                "director_path",
-                "",
-            )
-        ),
+        "adapter": "roles.adapters.director",
         "timeout": int(
             normalize_timeout_seconds(
                 getattr(args, "director_timeout", None),

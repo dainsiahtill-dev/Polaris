@@ -44,7 +44,7 @@ class TestPMChatRouter:
         """POST /v2/pm/chat returns 200 when message is provided."""
         app = _build_app()
         with patch(
-            "polaris.delivery.http.routers.pm_chat.generate_role_response",
+            "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
         ) as mock_generate:
             mock_generate.return_value = {
@@ -97,7 +97,7 @@ class TestPMChatRouter:
         """POST /v2/pm/chat handles RuntimeError with 500."""
         app = _build_app()
         with patch(
-            "polaris.delivery.http.routers.pm_chat.generate_role_response",
+            "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
         ) as mock_generate:
             mock_generate.side_effect = RuntimeError("LLM service unavailable")
@@ -123,7 +123,7 @@ class TestPMChatRouter:
             await output_queue.put({"type": "complete", "data": {"response": "PM complete"}})
 
         with patch(
-            "polaris.delivery.http.routers.pm_chat.generate_role_response_streaming",
+            "polaris.delivery.http.routers.pm_chat.execute_role_chat_streaming",
             new_callable=AsyncMock,
             side_effect=_fake_streaming_response,
         ) as mock_generate:

@@ -22,8 +22,15 @@ describe('Runtime Projection Compatibility', () => {
       expect(result.director).toBeNull();
       expect(result.workflow).toBeNull();
       expect(result.engine).toBeNull();
-      expect(result.snapshot_compat).toEqual({});
+      expect(result.snapshot_compat).toEqual(expect.objectContaining({
+        projection_source: 'empty',
+      }));
       expect(result.generated_at).toBeDefined();
+      expect(result.projection_source).toBe('empty');
+      expect(result.provenance).toEqual(expect.objectContaining({
+        source: 'empty',
+        transformed: false,
+      }));
     });
 
     it('should return empty projection for undefined input', () => {
@@ -32,7 +39,7 @@ describe('Runtime Projection Compatibility', () => {
       expect(result.director).toBeNull();
     });
 
-    it('should pass through canonical projection unchanged', () => {
+    it('should mark canonical projection with canonical provenance when absent', () => {
       const canonical: RuntimeProjectionPayload = {
         pm: {
           running: true,
@@ -48,7 +55,13 @@ describe('Runtime Projection Compatibility', () => {
       };
 
       const result = toCanonicalProjection(canonical);
-      expect(result).toEqual(canonical);
+      expect(result.pm).toEqual(canonical.pm);
+      expect(result.snapshot_compat.legacy_field).toBe('value');
+      expect(result.projection_source).toBe('canonical');
+      expect(result.provenance).toEqual(expect.objectContaining({
+        source: 'canonical',
+        transformed: false,
+      }));
     });
 
     it('should convert legacy PM format', () => {
@@ -66,6 +79,13 @@ describe('Runtime Projection Compatibility', () => {
         phase: 'planning',
         last_updated: expect.any(String),
       });
+      expect(result.projection_source).toBe('legacy_flat');
+      expect(result.provenance).toEqual(expect.objectContaining({
+        source: 'legacy_flat',
+        transformed: true,
+        compatibility_reason: 'legacy_flat_compat',
+      }));
+      expect(result.provenance?.legacy_fields).toContain('pm_status');
     });
 
     it('should convert legacy Director format', () => {
@@ -152,14 +172,19 @@ describe('Runtime Projection Compatibility', () => {
       };
 
       const result = toCanonicalProjection(legacy);
-      expect(result.snapshot_compat).toEqual({
+      expect(result.snapshot_compat).toEqual(expect.objectContaining({
         pm_status: 'running',
         pm_current_task: 'task-1',
         director_status: 'idle',
         director_active: 0,
         workflow_loaded: true,
         workflow_tasks: 5,
-      });
+        projection_source: 'legacy_flat',
+      }));
+      expect(result.snapshot_compat.projection_provenance).toEqual(expect.objectContaining({
+        source: 'legacy_flat',
+        transformed: true,
+      }));
     });
 
     it('should normalize task status variations', () => {
@@ -233,6 +258,18 @@ describe('Runtime Projection Compatibility', () => {
       expect(result.snapshot_compat.engine_roles).toEqual({
         Director: { status: 'running', task_id: 'task-2' },
       });
+      expect(result.projection_source).toBe('legacy_nested');
+      expect(result.provenance).toEqual(expect.objectContaining({
+        source: 'legacy_nested',
+        transformed: true,
+        compatibility_reason: 'nested_status_compat',
+      }));
+      expect(result.provenance?.legacy_fields).toEqual(expect.arrayContaining([
+        'pm_status',
+        'director_status',
+        'snapshot',
+        'engine_status',
+      ]));
     });
   });
 
@@ -243,8 +280,11 @@ describe('Runtime Projection Compatibility', () => {
       expect(result.director).toBeNull();
       expect(result.workflow).toBeNull();
       expect(result.engine).toBeNull();
-      expect(result.snapshot_compat).toEqual({});
+      expect(result.snapshot_compat).toEqual(expect.objectContaining({
+        projection_source: 'empty',
+      }));
       expect(result.generated_at).toBeDefined();
+      expect(result.projection_source).toBe('empty');
     });
   });
 
@@ -263,6 +303,11 @@ describe('Runtime Projection Compatibility', () => {
       expect(result.pm).toEqual(partial.pm);
       expect(result.director).toBeNull();
       expect(result.workflow).toBeNull();
+      expect(result.projection_source).toBe('partial');
+      expect(result.provenance).toEqual(expect.objectContaining({
+        source: 'partial',
+        transformed: false,
+      }));
     });
   });
 
@@ -299,7 +344,8 @@ describe('Runtime Projection Compatibility', () => {
       const result = mergeProjections(base, update);
       expect(result.pm).toEqual(update.pm);
       expect(result.director).toEqual(base.director);
-      expect(result.snapshot_compat).toEqual({ old: 'value', new: 'value' });
+      expect(result.snapshot_compat).toEqual(expect.objectContaining({ old: 'value', new: 'value' }));
+      expect(result.projection_source).toBe('merged');
     });
 
     it('should preserve base generated_at if not provided in update', () => {

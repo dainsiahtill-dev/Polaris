@@ -228,7 +228,7 @@ def create_parser() -> argparse.ArgumentParser:
         choices=["off", "basic", "full"],
         default="basic",
         help=(
-            "Cognitive Life Form mode: "
+            "Cognitive pipeline mode: "
             "off (disable cognitive middleware), "
             "basic (enable middleware only, advanced features off), "
             "full (enable all cognitive features: evolution, governance, value alignment, LLM reasoning). "

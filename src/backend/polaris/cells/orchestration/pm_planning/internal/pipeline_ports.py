@@ -19,9 +19,12 @@ here as cell-local ports backed by KernelOne/infrastructure primitives.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+import threading
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -77,6 +80,35 @@ _PRIORITY_ALIASES = {
     "medium": 5,
     "low": 9,
 }
+
+
+def _run_async_from_sync(coro_factory: Callable[[], Awaitable[Any]], *, timeout_seconds: float) -> Any:
+    async def _run_with_timeout() -> Any:
+        return await asyncio.wait_for(coro_factory(), timeout=max(1.0, float(timeout_seconds)))
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_run_with_timeout())
+
+    result_box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            result_box["value"] = asyncio.run(_run_with_timeout())
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread.
+            result_box["exception"] = exc
+
+    thread = threading.Thread(target=_runner, name="polaris-pm-planning-role-runtime", daemon=True)
+    thread.start()
+    thread.join(max(1.0, float(timeout_seconds)) + 5.0)
+    if thread.is_alive():
+        raise TimeoutError(f"PM role runtime timed out after {timeout_seconds}s")
+    exception = result_box.get("exception")
+    if isinstance(exception, BaseException):
+        raise exception
+    return result_box.get("value")
+
 
 # ---------------------------------------------------------------------------
 # PmStatePort – abstract boundary for PM state container
@@ -562,6 +594,15 @@ class CellPmInvokePort:
 
         return env
 
+    @staticmethod
+    def _provider_policy_for_backend(backend_kind: str) -> dict[str, tuple[str, ...]]:
+        token = str(backend_kind or "").strip().lower()
+        if token == "ollama":
+            return {"allowed_provider_types": ("ollama",)}
+        if token in {"codex", "codex_cli", "codex_sdk"}:
+            return {"allowed_provider_types": ("codex", "codex_cli", "codex_sdk")}
+        return {}
+
     def invoke(
         self,
         state: PmStatePort,
@@ -572,22 +613,15 @@ class CellPmInvokePort:
     ) -> str:
         import time
 
-        from polaris.infrastructure.llm.provider_runtime_adapter import (
-            AppLLMRuntimeAdapter,
-        )
         from polaris.kernelone.events import emit_llm_event
         from polaris.kernelone.fs.text_ops import write_text_atomic
-        from polaris.kernelone.llm.runtime import invoke_role_runtime_provider
-        from polaris.kernelone.process.codex_adapter import invoke_codex
-        from polaris.kernelone.process.ollama_utils import invoke_ollama
 
         started_at = time.time()
         resolved_backend = str(backend_kind or "").strip().lower() or "generic"
         state_events_full = str(getattr(state, "events_full", "") or "").strip()
         state_output_full = str(getattr(state, "ollama_full", "") or "").strip()
         state_workspace_full = str(getattr(state, "workspace_full", "") or "").strip()
-        state_model = str(getattr(state, "model", "") or "").strip()
-        state_show_output = bool(getattr(state, "show_output", False))
+        workspace_token = state_workspace_full or "."
         state_timeout = int(getattr(state, "timeout", 0) or 0)
 
         run_id = str(getattr(usage_ctx, "run_id", "") or "").strip()
@@ -610,61 +644,58 @@ class CellPmInvokePort:
             )
 
         try:
-            if backend_kind == "codex":
-                output = invoke_codex(
-                    prompt,
-                    state_output_full,
-                    state_workspace_full,
-                    state_show_output,
-                    getattr(args, "codex_full_auto", False),
-                    getattr(args, "codex_dangerous", False),
-                    getattr(args, "codex_profile", ""),
-                    state_timeout,
-                    self._build_codex_env_from_role_config(state),
-                    usage_ctx=usage_ctx,
-                    events_path=state_events_full,
+            from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+            from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+            runtime_timeout = state_timeout if state_timeout > 0 else 360
+            provider_policy = self._provider_policy_for_backend(resolved_backend)
+            role_context: dict[str, Any] = {
+                "pm_planning_pipeline": True,
+                "backend_kind": resolved_backend,
+                "iteration": iteration,
+            }
+            role_metadata: dict[str, Any] = {
+                "source": "orchestration.pm_planning.pipeline_ports",
+                "role_runtime_required": True,
+                "cognitive_runtime_required": True,
+                "context_os_expected": True,
+                "validate_output": False,
+                "max_retries": 0,
+                "requested_backend": resolved_backend,
+            }
+            if provider_policy:
+                role_context.update(provider_policy)
+                role_context["llm_provider_policy"] = dict(provider_policy)
+                role_metadata.update(provider_policy)
+                role_metadata["llm_provider_policy"] = dict(provider_policy)
+            role_command = ExecuteRoleSessionCommandV1(
+                role="pm",
+                session_id=f"pm-planning-{run_id or 'adhoc'}",
+                workspace=workspace_token,
+                user_message=prompt,
+                run_id=run_id or None,
+                domain="document",
+                context=role_context,
+                metadata=role_metadata,
+                stream=False,
+                host_kind="pm_planning_pipeline",
+            )
+            runtime_result = _run_async_from_sync(
+                lambda: RoleRuntimeService().execute_role_session(role_command),
+                timeout_seconds=runtime_timeout,
+            )
+            if not bool(getattr(runtime_result, "ok", False)):
+                error_message = (
+                    str(
+                        getattr(runtime_result, "error_message", "") or getattr(runtime_result, "error_code", "") or ""
+                    ).strip()
+                    or "role_runtime_unavailable"
                 )
-                resolved_backend = "codex"
-            elif backend_kind == "ollama":
-                response = invoke_ollama(
-                    prompt,
-                    state_model,
-                    state_workspace_full,
-                    state_show_output,
-                    state_timeout,
-                    usage_ctx=usage_ctx,
-                    events_path=state_events_full,
-                )
-                output = str(getattr(response, "output", response) or "")
-                response_metadata = getattr(response, "metadata", None)
-                response_error = str(getattr(response_metadata, "error", "") or "").strip()
-                if response_error:
-                    raise RuntimeError(f"Ollama PM backend failed: {response_error}")
-                resolved_backend = "ollama"
-            else:
-                provider_result = invoke_role_runtime_provider(
-                    role="pm",
-                    workspace=state_workspace_full,
-                    prompt=prompt,
-                    fallback_model="",
-                    timeout=state_timeout,
-                    adapter=AppLLMRuntimeAdapter(),
-                    blocked_provider_types={
-                        "",
-                        "codex",
-                        "codex_cli",
-                        "codex_sdk",
-                    },
-                )
-                if not provider_result.attempted or not provider_result.ok:
-                    error_message = str(provider_result.error or "").strip() or "runtime_provider_unavailable"
-                    if not provider_result.attempted:
-                        raise RuntimeError(f"PM runtime provider binding is not configured: {error_message}")
-                    raise RuntimeError(f"PM runtime provider invocation failed: {error_message}")
-                output = str(provider_result.output or "")
-                resolved_backend = "runtime_provider"
-                if state_output_full:
-                    write_text_atomic(state_output_full, output or "")
+                raise RuntimeError(f"PM role runtime invocation failed: {error_message}")
+            output = str(getattr(runtime_result, "output", "") or "")
+            resolved_backend = "role_runtime"
+            if state_output_full:
+                write_text_atomic(state_output_full, output or "")
 
             if state_events_full:
                 emit_llm_event(

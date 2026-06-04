@@ -6,11 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import replace
 from typing import Any
-
-from polaris.cells.llm.dialogue.public.service import generate_role_response
 
 from ..base import BaseRoleAdapter
 from ..director_execution_backend import (
@@ -62,6 +61,18 @@ def _normalize_director_role_response(role_response: Any) -> dict[str, Any]:
     execution_stats: dict[str, Any] = execution_stats_raw if isinstance(execution_stats_raw, dict) else {}
     batch_receipt_raw = response_payload.get("batch_receipt")
     batch_receipt: dict[str, Any] | None = batch_receipt_raw if isinstance(batch_receipt_raw, dict) else None
+    tool_results_raw = response_payload.get("tool_results")
+    tool_results = (
+        [dict(item) for item in tool_results_raw if isinstance(item, dict)]
+        if isinstance(tool_results_raw, list)
+        else []
+    )
+    tool_calls_raw = response_payload.get("tool_calls")
+    tool_calls = (
+        [dict(item) for item in tool_calls_raw if isinstance(item, dict)] if isinstance(tool_calls_raw, list) else []
+    )
+    artifacts_raw = response_payload.get("artifacts")
+    artifacts = [str(item) for item in artifacts_raw if str(item).strip()] if isinstance(artifacts_raw, list) else []
     if not provider:
         provider = str(metadata.get("provider_id") or metadata.get("provider") or "").strip()
     if not model:
@@ -73,8 +84,12 @@ def _normalize_director_role_response(role_response: Any) -> dict[str, Any]:
         "raw_response": role_response,
         "provider": provider,
         "model": model,
+        "metadata": dict(metadata),
         "execution_stats": dict(execution_stats),
         "batch_receipt": dict(batch_receipt) if batch_receipt else None,
+        "tool_results": tool_results,
+        "tool_calls": tool_calls,
+        "artifacts": artifacts,
     }
 
 
@@ -340,43 +355,197 @@ class DirectorAdapter(BaseRoleAdapter):
         message: str,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """调用 Director LLM (via canonical public dialogue API)."""
-        settings = get_settings_safe()
+        """Invoke Director through the canonical role runtime first."""
         llm_max_retries = self._resolve_kernel_retry_budget(self.role_id)
 
-        primary_response = await generate_role_response(
-            workspace=self.workspace,
-            settings=settings,
-            role=self.role_id,
-            message=message,
-            context=context,
-            validate_output=False,
-            max_retries=llm_max_retries,
-            enable_cognitive=False,
-        )
-        primary = _normalize_director_role_response(primary_response)
-        if not bool(primary.get("success")) or is_empty_role_response(primary):
-            fallback_response = await generate_role_response(
-                workspace=self.workspace,
-                settings=settings,
-                role=self.role_id,
-                message=message,
+        try:
+            runtime_response = await self._invoke_role_runtime_session(
+                message,
                 context=context,
-                validate_output=True,
-                max_retries=max(1, llm_max_retries),
-                enable_cognitive=False,
+                max_retries=llm_max_retries,
             )
-            fallback = _normalize_director_role_response(fallback_response)
-            if bool(fallback.get("success")) and not is_empty_role_response(fallback):
-                return fallback
-            try:
-                return await self._invoke_direct_runtime_provider(message)
-            except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
-                fallback_error = str(fallback.get("error") or primary.get("error") or "").strip()
-                fallback["error"] = fallback_error or f"director_empty_role_response:{exc}"
-                fallback["success"] = False
-                return fallback
-        return primary
+        except (ImportError, AttributeError) as exc:
+            raise RuntimeError("director_role_runtime_boundary_unavailable") from exc
+        else:
+            primary = _normalize_director_role_response(runtime_response)
+            if bool(primary.get("success")) and not is_empty_role_response(primary):
+                return primary
+            primary["error"] = str(primary.get("error") or "director_role_runtime_empty_response")
+            primary["success"] = False
+            return primary
+
+    async def _invoke_role_runtime_session(
+        self,
+        message: str,
+        *,
+        context: dict[str, Any] | None,
+        max_retries: int,
+    ) -> dict[str, Any]:
+        """Call roles.runtime so Context OS and Cognitive Runtime participate."""
+
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        context_payload = dict(context) if isinstance(context, dict) else {}
+        metadata = self._build_role_runtime_metadata(context_payload, max_retries=max_retries)
+        task_id = self._resolve_runtime_identity_field(
+            context_payload,
+            metadata,
+            keys=("task_id", "pm_task_id", "target_task_id", "id"),
+        )
+        run_id = self._resolve_runtime_identity_field(
+            context_payload,
+            metadata,
+            keys=("run_id", "workflow_run_id", "observer_run_id"),
+        )
+        session_id = self._resolve_role_runtime_session_id(
+            context_payload,
+            metadata=metadata,
+            task_id=task_id,
+            run_id=run_id,
+            message=message,
+        )
+        command = ExecuteRoleSessionCommandV1(
+            role=self.role_id,
+            session_id=session_id,
+            workspace=str(self.workspace),
+            user_message=message,
+            run_id=run_id or None,
+            task_id=task_id or None,
+            domain=str(metadata.get("domain") or "code"),
+            history=self._normalize_role_runtime_history(context_payload),
+            context=context_payload,
+            metadata=metadata,
+            stream=False,
+            host_kind="director_adapter",
+        )
+        runtime = RoleRuntimeService()
+        result = await runtime.execute_role_session(command)
+        result_metadata = dict(getattr(result, "metadata", {}) or {})
+        result_usage = dict(getattr(result, "usage", {}) or {})
+        output = str(getattr(result, "output", "") or "")
+        error = str(getattr(result, "error_message", "") or getattr(result, "error_code", "") or "").strip()
+        tool_calls = [
+            {"tool": str(name), "tool_name": str(name), "status": "observed", "success": False}
+            for name in tuple(getattr(result, "tool_calls", ()) or ())
+            if str(name).strip()
+        ]
+        return {
+            "content": output,
+            "response": output,
+            "success": bool(getattr(result, "ok", False)) and not bool(error),
+            "error": error,
+            "role": str(getattr(result, "role", self.role_id) or self.role_id),
+            "metadata": {
+                **result_metadata,
+                "role_runtime_entrypoint": "roles.runtime.execute_role_session",
+                "role_runtime_session_id": session_id,
+                "context_os_expected": True,
+            },
+            "execution_stats": {
+                **result_usage,
+                "role_runtime_entrypoint": "roles.runtime.execute_role_session",
+            },
+            "tool_calls": tool_calls,
+            "artifacts": list(getattr(result, "artifacts", ()) or ()),
+            "raw_response": {
+                "ok": bool(getattr(result, "ok", False)),
+                "status": str(getattr(result, "status", "") or ""),
+                "session_id": str(getattr(result, "session_id", "") or session_id),
+                "run_id": str(getattr(result, "run_id", "") or run_id),
+                "task_id": str(getattr(result, "task_id", "") or task_id),
+                "metadata": result_metadata,
+                "usage": result_usage,
+                "tool_calls": list(getattr(result, "tool_calls", ()) or ()),
+                "artifacts": list(getattr(result, "artifacts", ()) or ()),
+                "error_code": str(getattr(result, "error_code", "") or ""),
+                "error_message": str(getattr(result, "error_message", "") or ""),
+            },
+        }
+
+    @staticmethod
+    def _build_role_runtime_metadata(context: dict[str, Any], *, max_retries: int) -> dict[str, Any]:
+        raw_metadata = context.get("metadata")
+        metadata: dict[str, Any] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        for key in ("task_id", "pm_task_id", "run_id", "session_id"):
+            value = context.get(key)
+            if value is not None and key not in metadata:
+                metadata[key] = value
+        metadata.setdefault("source", "roles.adapters.director")
+        metadata.setdefault("domain", "code")
+        metadata.setdefault("validate_output", False)
+        metadata.setdefault("max_retries", max(0, int(max_retries)))
+        metadata["role_runtime_required"] = True
+        metadata["cognitive_runtime_required"] = True
+        metadata["context_os_expected"] = True
+        return metadata
+
+    @staticmethod
+    def _resolve_runtime_identity_field(
+        context: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        keys: tuple[str, ...],
+    ) -> str:
+        for source in (context, metadata):
+            for key in keys:
+                token = str(source.get(key) or "").strip()
+                if token:
+                    return token
+        return ""
+
+    @classmethod
+    def _resolve_role_runtime_session_id(
+        cls,
+        context: dict[str, Any],
+        *,
+        metadata: dict[str, Any],
+        task_id: str,
+        run_id: str,
+        message: str,
+    ) -> str:
+        explicit = cls._resolve_runtime_identity_field(
+            context,
+            metadata,
+            keys=("session_id", "role_runtime_session_id", "runtime_session_id"),
+        )
+        if explicit:
+            return explicit
+        seed = "|".join(
+            part
+            for part in (
+                "director",
+                run_id,
+                task_id,
+                hashlib.sha256(message.encode("utf-8")).hexdigest()[:12],
+            )
+            if part
+        )
+        if not seed:
+            seed = "director-adhoc"
+        safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in seed)
+        return safe.strip("-_")[:120] or "director-adhoc"
+
+    @staticmethod
+    def _normalize_role_runtime_history(context: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+        raw_history = context.get("history")
+        if raw_history is None:
+            raw_history = context.get("messages")
+        if not isinstance(raw_history, (list, tuple)):
+            return ()
+        normalized: list[tuple[str, str]] = []
+        for item in raw_history:
+            role = ""
+            content = ""
+            if isinstance(item, dict):
+                role = str(item.get("role") or item.get("speaker") or "").strip()
+                content = str(item.get("content") or item.get("message") or "").strip()
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                role = str(item[0] or "").strip()
+                content = str(item[1] or "").strip()
+            if role and content:
+                normalized.append((role, content))
+        return tuple(normalized)
 
     async def _invoke_direct_runtime_provider(
         self,
@@ -384,53 +553,9 @@ class DirectorAdapter(BaseRoleAdapter):
         *,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        """Call the configured Director provider without the chat/tool kernel wrapper."""
-        return await asyncio.to_thread(
-            self._invoke_direct_runtime_provider_sync,
-            message,
-            timeout_seconds=timeout_seconds,
-        )
-
-    def _invoke_direct_runtime_provider_sync(
-        self,
-        message: str,
-        *,
-        timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
-        from polaris.infrastructure.llm.provider_runtime_adapter import AppLLMRuntimeAdapter
-        from polaris.kernelone.llm.runtime import invoke_role_runtime_provider
-
-        settings = get_settings_safe()
-        configured_timeout = int(getattr(settings, "llm_timeout", 0) or 0) or int(_DEFAULT_LLM_CALL_TIMEOUT_SECONDS)
-        if timeout_seconds is not None:
-            configured_timeout = max(1, int(float(timeout_seconds)))
-        result = invoke_role_runtime_provider(
-            role=self.role_id,
-            workspace=self.workspace,
-            prompt=message,
-            fallback_model="",
-            timeout=configured_timeout,
-            adapter=AppLLMRuntimeAdapter(),
-            blocked_provider_types={
-                "",
-                "codex",
-            },
-        )
-        if not result.attempted or not result.ok:
-            error_message = str(result.error or "").strip() or "runtime_provider_unavailable"
-            if not result.attempted:
-                raise RuntimeError(f"Director runtime provider binding is not configured: {error_message}")
-            raise RuntimeError(f"Director runtime provider invocation failed: {error_message}")
-
-        output = str(result.output or "")
-        return {
-            "content": output,
-            "response": output,
-            "success": True,
-            "role": self.role_id,
-            "model": result.model,
-            "provider": result.provider_id,
-        }
+        """Fail closed: direct provider bypass is no longer a Director fallback."""
+        del message, timeout_seconds
+        raise RuntimeError("director_direct_runtime_provider_removed")
 
     async def _invoke_role_dialogue_with_timeout(
         self,

@@ -26,6 +26,7 @@ Architecture constraints (AGENTS.md):
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import AsyncIterator, Mapping
 from typing import Any, Protocol, runtime_checkable
@@ -257,7 +258,7 @@ class RuntimeAdminService:
 
     # -- orchestrator path ------------------------------------------------
 
-    def create_transaction_controller(
+    async def create_transaction_controller(
         self,
         command: ExecuteRoleSessionCommandV1,
     ) -> Any:
@@ -279,7 +280,10 @@ class RuntimeAdminService:
                 code="unsupported_runtime_capability",
             )
         try:
-            return create_fn(command)
+            controller = create_fn(command)
+            if inspect.isawaitable(controller):
+                return await controller
+            return controller
         except (RuntimeError, ValueError) as exc:
             raise RuntimeAdminError(
                 f"Failed to create transaction controller: {exc}",
@@ -287,7 +291,7 @@ class RuntimeAdminService:
                 cause=exc,
             ) from exc
 
-    def create_orchestrator_handle(
+    async def create_orchestrator_handle(
         self,
         *,
         session_id: str,
@@ -311,7 +315,7 @@ class RuntimeAdminService:
             RuntimeAdminError: if controller creation or orchestrator
                 instantiation fails.
         """
-        tx_controller = self.create_transaction_controller(command)
+        tx_controller = await self.create_transaction_controller(command)
 
         try:
             # Lazy import keeps the internal module out of the module-level

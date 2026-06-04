@@ -19,6 +19,47 @@ from polaris.cells.audit.evidence.internal.task_audit_llm_binding import (
     get_audit_role_descriptor,
     make_audit_llm_caller,
 )
+from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
+
+
+def _patch_role_runtime(monkeypatch: Any, results: list[RoleExecutionResultV1]) -> list[Any]:
+    calls: list[Any] = []
+
+    class _FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            calls.append(command)
+            return results.pop(0)
+
+    monkeypatch.setattr(
+        "polaris.cells.audit.evidence.internal.task_audit_llm_binding._create_role_runtime_service",
+        lambda: _FakeRoleRuntimeService(),
+    )
+    return calls
+
+
+def _runtime_result(
+    *,
+    ok: bool,
+    output: str = "",
+    provider_id: str = "",
+    provider_type: str = "",
+    model: str = "",
+    error_message: str | None = None,
+) -> RoleExecutionResultV1:
+    return RoleExecutionResultV1(
+        ok=ok,
+        status="ok" if ok else "failed",
+        role="qa",
+        workspace=".",
+        output=output,
+        metadata={
+            "provider": provider_id,
+            "provider_type": provider_type,
+            "model": model,
+            "elapsed_ms": 100,
+        },
+        error_message=error_message,
+    )
 
 
 class TestAuditConstants:
@@ -149,17 +190,15 @@ class TestBuildAuditLLMBindingConfig:
 class TestMakeAuditLLMCaller:
     """LLM caller factory behavior."""
 
-    @patch("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider")
-    def test_no_llm_caller_returns_empty_when_provider_fails(self, mock_invoke: Any) -> None:
-        mock_invoke.return_value = MagicMock(
-            ok=False,
-            output="",
-            provider_id="",
-            provider_type="",
-            model="",
-            attempted=False,
-            latency_ms=0,
-            error=None,
+    def test_no_llm_caller_returns_empty_when_provider_fails(self, monkeypatch: Any) -> None:
+        _patch_role_runtime(
+            monkeypatch,
+            [
+                _runtime_result(
+                    ok=False,
+                    error_message="provider_not_attempted",
+                )
+            ],
         )
 
         cfg = AuditLLMBindingConfig(prefer_local_ollama=False)
@@ -169,17 +208,22 @@ class TestMakeAuditLLMCaller:
         assert info["llm_strategy"] == "role_runtime"
         assert info["tech_role_id"] == "qa"
 
-    @patch("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider")
-    def test_local_ollama_success(self, mock_invoke: Any) -> None:
-        mock_invoke.return_value = MagicMock(
-            ok=True,
-            output="audit result",
-            provider_id="ollama-1",
-            provider_type="ollama",
-            model="llama3",
-            attempted=True,
-            latency_ms=150,
-            error=None,
+    def test_local_ollama_success(self, monkeypatch: Any) -> None:
+        calls = _patch_role_runtime(
+            monkeypatch,
+            [
+                _runtime_result(
+                    ok=True,
+                    output="audit result",
+                    provider_id="ollama-1",
+                    provider_type="ollama",
+                    model="llama3",
+                )
+            ],
+        )
+        monkeypatch.setattr(
+            "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",
+            lambda _workspace, _settings: {"openai_compat"},
         )
 
         settings: Any = MagicMock()
@@ -189,34 +233,31 @@ class TestMakeAuditLLMCaller:
 
         output, info = caller("qa", "prompt")
         assert output == "audit result"
+        assert calls[0].metadata["blocked_provider_types"] == ("openai_compat",)
         assert info["llm_strategy"] == "local_ollama"
         assert info["llm_provider_type"] == "ollama"
 
-    @patch("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider")
-    def test_local_falls_back_to_remote_when_local_fails(self, mock_invoke: Any) -> None:
-        # First call (local) fails, second call (remote) succeeds
-        mock_invoke.side_effect = [
-            MagicMock(
-                ok=False,
-                output="",
-                provider_id="",
-                provider_type="",
-                model="",
-                attempted=True,
-                latency_ms=0,
-                error="local unavailable",
-            ),
-            MagicMock(
-                ok=True,
-                output="remote result",
-                provider_id="openai-1",
-                provider_type="openai_compat",
-                model="gpt-4",
-                attempted=True,
-                latency_ms=200,
-                error=None,
-            ),
-        ]
+    def test_local_falls_back_to_remote_when_local_fails(self, monkeypatch: Any) -> None:
+        calls = _patch_role_runtime(
+            monkeypatch,
+            [
+                _runtime_result(
+                    ok=False,
+                    error_message="local unavailable",
+                ),
+                _runtime_result(
+                    ok=True,
+                    output="remote result",
+                    provider_id="openai-1",
+                    provider_type="openai_compat",
+                    model="gpt-4",
+                ),
+            ],
+        )
+        monkeypatch.setattr(
+            "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",
+            lambda _workspace, _settings: {"openai_compat"},
+        )
 
         settings: Any = MagicMock()
         settings.workspace = "."
@@ -225,19 +266,24 @@ class TestMakeAuditLLMCaller:
 
         output, info = caller("qa", "prompt")
         assert output == "remote result"
+        assert len(calls) == 2
+        assert calls[0].metadata["blocked_provider_types"] == ("openai_compat",)
+        assert "blocked_provider_types" not in calls[1].metadata
         assert info["llm_strategy"] == "role_runtime_fallback"
 
-    @patch("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider")
-    def test_no_fallback_when_not_allowed(self, mock_invoke: Any) -> None:
-        mock_invoke.return_value = MagicMock(
-            ok=False,
-            output="",
-            provider_id="",
-            provider_type="",
-            model="",
-            attempted=True,
-            latency_ms=0,
-            error="local unavailable",
+    def test_no_fallback_when_not_allowed(self, monkeypatch: Any) -> None:
+        calls = _patch_role_runtime(
+            monkeypatch,
+            [
+                _runtime_result(
+                    ok=False,
+                    error_message="local unavailable",
+                )
+            ],
+        )
+        monkeypatch.setattr(
+            "polaris.cells.audit.evidence.internal.task_audit_llm_binding._resolve_non_local_provider_types",
+            lambda _workspace, _settings: {"openai_compat"},
         )
 
         settings: Any = MagicMock()
@@ -247,19 +293,21 @@ class TestMakeAuditLLMCaller:
 
         output, info = caller("qa", "prompt")
         assert output == ""
+        assert len(calls) == 1
         assert info["llm_strategy"] == "local_ollama_only"
 
-    @patch("polaris.cells.audit.evidence.internal.task_audit_llm_binding.invoke_role_runtime_provider")
-    def test_role_runtime_direct_when_no_local_preference(self, mock_invoke: Any) -> None:
-        mock_invoke.return_value = MagicMock(
-            ok=True,
-            output="direct result",
-            provider_id="anthropic-1",
-            provider_type="anthropic_compat",
-            model="claude-3",
-            attempted=True,
-            latency_ms=100,
-            error=None,
+    def test_role_runtime_direct_when_no_local_preference(self, monkeypatch: Any) -> None:
+        calls = _patch_role_runtime(
+            monkeypatch,
+            [
+                _runtime_result(
+                    ok=True,
+                    output="direct result",
+                    provider_id="anthropic-1",
+                    provider_type="anthropic_compat",
+                    model="claude-3",
+                )
+            ],
         )
 
         settings: Any = MagicMock()
@@ -269,6 +317,7 @@ class TestMakeAuditLLMCaller:
 
         output, info = caller("qa", "prompt")
         assert output == "direct result"
+        assert "blocked_provider_types" not in calls[0].metadata
         assert info["llm_strategy"] == "role_runtime"
 
 

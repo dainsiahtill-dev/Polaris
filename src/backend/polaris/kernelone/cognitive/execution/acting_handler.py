@@ -40,7 +40,7 @@ class ActionResult:
 
 class ActingPhaseHandler:
     """
-    Implements the ACTING phase of Cognitive Life Form.
+    Implements the ACTING phase of the cognitive pipeline.
 
     ACTING PHASE characteristics:
     - Must be fast, precise, verifiable

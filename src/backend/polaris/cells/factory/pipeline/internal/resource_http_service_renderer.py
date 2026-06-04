@@ -134,11 +134,12 @@ class ResourceHttpServiceRenderer:
             from __future__ import annotations
 
             from dataclasses import dataclass, field
+            from datetime import UTC, datetime
             from typing import Any
 
 
-            # Import time utility from Polaris canonical location
-            from polaris.kernelone.utils.time_utils import utc_now_iso as _utc_now_iso
+            def _utc_now_iso() -> str:
+                return datetime.now(UTC).isoformat()
 
 
             def _require_text(name: str, value: str) -> str:

@@ -1,4 +1,4 @@
-"""Director run management for loop-pm (interface-only path)."""
+"""Director run management for PM delivery code."""
 
 import argparse
 import logging
@@ -43,7 +43,7 @@ def run_director_once(
     pid_holder: dict[str, int] | None = None,
     task: dict[str, Any] | None = None,
 ) -> int:
-    """Run director once through DirectorInterface."""
+    """Run Director once through the canonical adapter compatibility facade."""
     base_status_payload: dict[str, Any] = dict(status_payload) if isinstance(status_payload, dict) else {}
     tracked_pid: int | None = None
 
@@ -73,8 +73,8 @@ def run_director_once(
     director_type = (
         str(getattr(args, "director_type", None) or os.getenv("KERNELONE_DIRECTOR_TYPE", "auto")).strip().lower()
     )
-    if director_type not in {"auto", "script", "none"}:
-        error_text = f"Unsupported director_type '{director_type}'. Allowed: auto, script, none."
+    if director_type not in {"auto", "adapter", "canonical", "script", "none"}:
+        error_text = f"Unsupported director_type '{director_type}'. Allowed: auto, canonical, adapter, none."
         if subprocess_log_path:
             append_director_log(subprocess_log_path, f"[error] {error_text}\n")
         _update_runtime_status(running=False, exit_code=1, error=error_text)
@@ -92,7 +92,8 @@ def run_director_once(
         _update_runtime_status(running=False, exit_code=0)
         return 0
 
-    # New architecture: always route through DirectorInterface.
+    # Canonical architecture: route through the PM compatibility facade, whose
+    # implementation delegates to DirectorOrchestrator and roles.adapters.
     try:
         from polaris.delivery.cli.pm.director_interface_integration import (
             DIRECTOR_INTERFACE_AVAILABLE,

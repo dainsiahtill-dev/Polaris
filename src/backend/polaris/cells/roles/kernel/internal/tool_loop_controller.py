@@ -41,6 +41,7 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -85,6 +86,26 @@ class ToolLoopCircuitBreakerError(Exception):
         )
         self.breaker_type = breaker_type
         super().__init__(f"{message}\n\n[恢复指导] {self.recovery_hint}")
+
+
+def _copy_strategy_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _copy_strategy_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_copy_strategy_value(item) for item in value]
+    return value
+
+
+def _deep_merge_strategy_payload(target: dict[str, Any], source: Mapping[str, Any]) -> None:
+    for key, value in source.items():
+        key_text = str(key)
+        if not key_text:
+            continue
+        existing = target.get(key_text)
+        if isinstance(value, Mapping) and isinstance(existing, dict):
+            _deep_merge_strategy_payload(existing, value)
+            continue
+        target[key_text] = _copy_strategy_value(value)
 
 
 if TYPE_CHECKING:
@@ -375,9 +396,10 @@ class ToolLoopController:
 
         # Context OS snapshot (for state summary / working_state / artifacts)
         context_override = getattr(self.request, "context_override", None)
+        context_override_payload = dict(context_override) if isinstance(context_override, dict) else {}
         context_os_snapshot: dict[str, Any] | None = None
-        if isinstance(context_override, dict):
-            snapshot_val = context_override.get("context_os_snapshot")
+        if context_override_payload:
+            snapshot_val = context_override_payload.get("context_os_snapshot")
             if isinstance(snapshot_val, dict):
                 context_os_snapshot = snapshot_val
 
@@ -393,7 +415,30 @@ class ToolLoopController:
             history=history_with_metadata,  # type: ignore[arg-type]
             task_id=self.request.task_id,
             context_os_snapshot=context_os_snapshot,
+            context_override=context_override_payload or None,
+            strategy_override=self._extract_strategy_override(context_override_payload),
         )
+
+    def _extract_strategy_override(self, context_override: Mapping[str, Any]) -> dict[str, Any] | None:
+        merged: dict[str, Any] = {}
+
+        for source in (
+            context_override.get("strategy_override"),
+            context_override.get("cognitive_strategy_override"),
+        ):
+            if isinstance(source, Mapping):
+                _deep_merge_strategy_payload(merged, source)
+
+        metadata = getattr(self.request, "metadata", None)
+        if isinstance(metadata, Mapping):
+            for source in (
+                metadata.get("strategy_override"),
+                metadata.get("cognitive_strategy_override"),
+            ):
+                if isinstance(source, Mapping):
+                    _deep_merge_strategy_payload(merged, source)
+
+        return merged or None
 
     def register_cycle(
         self,

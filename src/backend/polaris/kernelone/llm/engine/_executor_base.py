@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from polaris.kernelone.errors import ErrorCategory, classify_error
-from polaris.kernelone.llm.runtime import resolve_provider_api_key
+from polaris.kernelone.llm.runtime import normalize_provider_type, resolve_provider_api_key
 from polaris.kernelone.llm.runtime_config import get_role_model
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,53 @@ def build_invoke_config(
     cfg.setdefault("stream", False)
     cfg.setdefault("max_tokens", 3000)
     return cfg
+
+
+def normalize_provider_type_constraints(value: Any) -> tuple[str, ...]:
+    """Normalize provider type constraints from request options."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raw_items: list[Any] = list(value.split(","))
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        raw_items = list(value)
+    else:
+        return ()
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        token = normalize_provider_type(str(item or "").strip().lower())
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return tuple(normalized)
+
+
+def provider_type_policy_error(provider_type: str, options: dict[str, Any]) -> str:
+    """Return an error string when a resolved provider violates request policy."""
+    resolved_type = normalize_provider_type(str(provider_type or "").strip().lower())
+    if not resolved_type:
+        return "provider_type_missing"
+
+    policy = options.get("provider_type_policy")
+    policy_payload = policy if isinstance(policy, dict) else {}
+    allowed_types = normalize_provider_type_constraints(
+        options.get("allowed_provider_types")
+        or options.get("allow_provider_types")
+        or policy_payload.get("allowed_provider_types")
+        or policy_payload.get("allow_provider_types")
+    )
+    blocked_types = normalize_provider_type_constraints(
+        options.get("blocked_provider_types") or policy_payload.get("blocked_provider_types")
+    )
+
+    if allowed_types and resolved_type not in allowed_types:
+        return f"provider_type_not_allowed:{resolved_type}"
+    if resolved_type in blocked_types:
+        return f"provider_type_blocked:{resolved_type}"
+    return ""
 
 
 def resolve_requested_output_tokens(

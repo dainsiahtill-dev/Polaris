@@ -582,11 +582,15 @@ class TestExplorationWorkflowIntegration:
             return {"ok": True, "result": "done"}
 
         mock_workflow = MagicMock()
-        mock_workflow.execute = MagicMock(
+        mock_workflow.execute = AsyncMock(
             return_value=MagicMock(
                 status=MagicMock(value="completed"),
                 synthesis="workflow synthesis",
                 decisions=[],
+                steps_completed=1,
+                discoveries=[],
+                duration_ms=1,
+                error=None,
             )
         )
 
@@ -601,3 +605,95 @@ class TestExplorationWorkflowIntegration:
         # The workflow runtime is invoked when decoder yields HANDOFF_WORKFLOW
         mock_workflow.execute.assert_called_once()
         assert result["kind"] == "handoff_workflow"
+
+    @pytest.mark.asyncio
+    async def test_transaction_kernel_fails_closed_when_workflow_runtime_fails(self) -> None:
+        """Workflow runtime failures must not be reported as successful handoff."""
+        from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
+
+        async def mock_llm_provider(_request_payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "content": "[handoff_workflow]",
+                "thinking": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": json.dumps({"path": "main.py"}),
+                        },
+                    }
+                ],
+                "model": "mock",
+                "usage": {},
+            }
+
+        async def mock_tool_runtime(_tool_name: str, _arguments: dict[str, Any]) -> dict[str, Any]:
+            return {"ok": True, "result": "done"}
+
+        mock_workflow = MagicMock()
+        mock_workflow.execute = AsyncMock(side_effect=RuntimeError("workflow exploded"))
+
+        tk = TransactionKernel(
+            llm_provider=mock_llm_provider,
+            tool_runtime=mock_tool_runtime,
+            workflow_runtime=mock_workflow,
+        )
+
+        result = await tk.execute("turn_workflow_fail", [{"role": "user", "content": "explore"}], [])
+
+        mock_workflow.execute.assert_called_once()
+        assert result["kind"] == "workflow_execution_error"
+        assert result["finalization"]["phase"] == "handoff_workflow"
+        assert result["finalization"]["error"] == "workflow exploded"
+        assert result["workflow_context"]["exploration_error"] == "workflow exploded"
+        assert "FAILED" in result["state_trajectory"]
+
+    @pytest.mark.asyncio
+    async def test_transaction_kernel_fails_closed_when_workflow_runtime_returns_failed_result(self) -> None:
+        """Returned FAILED exploration results must not be reported as successful handoff."""
+        from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
+
+        async def mock_llm_provider(_request_payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "content": "[handoff_workflow]",
+                "thinking": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": json.dumps({"path": "main.py"}),
+                        },
+                    }
+                ],
+                "model": "mock",
+                "usage": {},
+            }
+
+        async def mock_tool_runtime(_tool_name: str, _arguments: dict[str, Any]) -> dict[str, Any]:
+            return {"ok": True, "result": "def main():\n    pass\n"}
+
+        async def failing_synthesis(_context: dict[str, Any]) -> str:
+            raise RuntimeError("synthesis exploded")
+
+        workflow_runtime = ExplorationWorkflowRuntime(
+            tool_executor=mock_tool_runtime,
+            synthesis_llm=failing_synthesis,
+        )
+        tk = TransactionKernel(
+            llm_provider=mock_llm_provider,
+            tool_runtime=mock_tool_runtime,
+            workflow_runtime=workflow_runtime,
+        )
+
+        result = await tk.execute("turn_workflow_failed_status", [{"role": "user", "content": "explore"}], [])
+
+        assert result["kind"] == "workflow_execution_error"
+        assert result["finalization"]["phase"] == "handoff_workflow"
+        assert result["finalization"]["error"] == "synthesis exploded"
+        assert result["workflow_context"]["exploration_error"] == "synthesis exploded"
+        assert result["workflow_context"]["exploration_result"]["status"] == "failed"
+        assert "FAILED" in result["state_trajectory"]

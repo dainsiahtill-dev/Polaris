@@ -31,14 +31,17 @@ def _bootstrap_backend_import_path():
         if backend_root_str not in sys.path:
             sys.path.insert(0, backend_root_str)
 
+    from polaris.application.orchestration.director_orchestrator import (
+        DirectorExecutionConfig,
+        DirectorOrchestrator,
+    )
     from polaris.cells.director.execution.public.service import (
         DirectorConfig,
         DirectorService,
-        DirectorState,
     )
     from polaris.domain.entities import TaskPriority
 
-    return DirectorConfig, DirectorService, DirectorState, TaskPriority
+    return DirectorConfig, DirectorService, DirectorExecutionConfig, DirectorOrchestrator, TaskPriority
 
 
 logger = logging.getLogger(__name__)
@@ -82,38 +85,104 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="Direct command to execute",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="",
+        help="Director model override",
+    )
+    parser.add_argument(
+        "--prompt-profile",
+        type=str,
+        default="",
+        help="Prompt profile override (accepted for PM compatibility)",
+    )
+    parser.add_argument(
+        "--ramdisk-root",
+        type=str,
+        default="",
+        help="Runtime ramdisk root (accepted for PM compatibility)",
+    )
+    parser.add_argument(
+        "--forever",
+        action="store_true",
+        help="Run Director iterations until stopped",
+    )
+    parser.add_argument(
+        "--show-output",
+        action="store_true",
+        help="Accepted for PM compatibility; logging controls output",
+    )
+    parser.add_argument(
+        "--slm-enabled",
+        action="store_true",
+        help="Accepted for PM compatibility; SLM is controlled by runtime config",
+    )
     return parser
 
 
-async def run_director(workspace: str, iterations: int, max_workers: int, state: str, command: str | None) -> None:
+async def run_director(
+    workspace: str,
+    iterations: int,
+    max_workers: int,
+    state: str,
+    command: str | None,
+    *,
+    model: str = "",
+    forever: bool = False,
+) -> None:
     """Run director in iterative mode."""
-    DirectorConfig, DirectorService, DirectorState, _ = _bootstrap_backend_import_path()  # noqa: N806
-
-    config = DirectorConfig(
-        workspace=workspace,
-        max_iterations=iterations,
-        max_workers=max_workers,
+    director_config_cls, director_service_cls, execution_config_cls, orchestrator_cls, task_priority_cls = (
+        _bootstrap_backend_import_path()
     )
-    service = DirectorService(config=config)
 
     if state != "idle":
-        initial = DirectorState(status=state)
-        service.set_state(initial)
+        logger.warning("Ignoring deprecated --state=%s; Director v2 derives state from runtime services.", state)
 
     if command:
-        result = await service.execute_command(command)
-        logger.info("Command result: %s", result)
-    else:
-        for i in range(iterations):
-            logger.info("Iteration %d/%d", i + 1, iterations)
-            await service.run_iteration()
+        service = director_service_cls(
+            config=director_config_cls(
+                workspace=workspace,
+                max_workers=max_workers,
+            )
+        )
+        await service.submit_task(
+            subject=command,
+            description="Director v2 command task",
+            command=command,
+            priority=task_priority_cls.MEDIUM,
+        )
+        await service.start()
+        while True:
+            status = await service.get_status()
+            if str(status.get("state") or "").upper() != "RUNNING":
+                logger.info("Command task result: %s", status)
+                return
+            await asyncio.sleep(0.25)
+    orchestrator = orchestrator_cls(
+        execution_config_cls(
+            workspace=workspace,
+            model=str(model or ""),
+            max_workers=max_workers,
+            execution_mode="parallel" if max_workers > 1 else "serial",
+        )
+    )
+    iteration = 0
+    while forever or iteration < max(1, int(iterations or 1)):
+        iteration += 1
+        total_label = "forever" if forever else str(max(1, int(iterations or 1)))
+        logger.info("Iteration %d/%s", iteration, total_label)
+        result = await orchestrator.run_iteration(iteration=iteration)
+        logger.info("Director iteration result: %s", result)
+        if forever:
+            await asyncio.sleep(1.0)
 
 
 async def run_status(workspace: str) -> None:
     """Run director in status mode."""
-    _, director_service_cls, _, _ = _bootstrap_backend_import_path()
+    director_config_cls, director_service_cls, _, _, _ = _bootstrap_backend_import_path()
 
-    service = director_service_cls(workspace=workspace)
+    service = director_service_cls(config=director_config_cls(workspace=workspace))
     status = await service.get_status()
     logger.info("Director status: %s", status)
 
@@ -132,6 +201,8 @@ def main() -> int:
             parsed.max_workers,
             parsed.state,
             parsed.command,
+            model=parsed.model,
+            forever=bool(parsed.forever),
         )
     )
     return 0

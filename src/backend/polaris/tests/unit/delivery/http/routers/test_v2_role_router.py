@@ -232,7 +232,7 @@ async def test_role_chat_generation_uses_requested_workspace(client: AsyncClient
         patch("polaris.delivery.http.routers.role_chat.get_registered_roles", return_value=["pm"]),
         patch("polaris.delivery.http.routers.role_chat.ensure_required_roles_ready") as mock_ready,
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
             return_value={"response": "plan ready", "role": "pm"},
         ) as mock_generate,
@@ -252,7 +252,6 @@ async def test_role_chat_generation_uses_requested_workspace(client: AsyncClient
     generate_args = mock_generate.await_args
     assert generate_args is not None
     assert generate_args.kwargs["workspace"] == "C:/Temp/Product"
-    assert str(generate_args.kwargs["settings"].workspace).replace("\\", "/") == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio
@@ -269,7 +268,7 @@ async def test_role_chat_stream_uses_context_workspace(client: AsyncClient, mock
         patch("polaris.delivery.http.routers.role_chat.get_registered_roles", return_value=["director"]),
         patch("polaris.delivery.http.routers.role_chat.ensure_required_roles_ready") as mock_ready,
         patch(
-            "polaris.delivery.http.routers.role_chat.generate_role_response_streaming",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_streaming",
             new_callable=AsyncMock,
             side_effect=_stream_response,
         ) as mock_stream,
@@ -286,7 +285,6 @@ async def test_role_chat_stream_uses_context_workspace(client: AsyncClient, mock
     stream_args = mock_stream.await_args
     assert stream_args is not None
     assert stream_args.kwargs["workspace"] == "C:/Temp/Product"
-    assert str(stream_args.kwargs["settings"].workspace).replace("\\", "/") == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio

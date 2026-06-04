@@ -1,24 +1,21 @@
-"""
-Director Interface - 抽象导演层
+"""Director Interface compatibility layer for PM delivery code.
 
-为 PM 提供统一的 Director 调用接口，
-支持多种 Director 实现：Script Director、No Director、其他实现。
-
-设计原则：
-1. PM 只依赖接口，不依赖具体实现
-2. 通过配置切换 Director 实现
-3. 统一的输入输出契约
+The public dataclasses and factory remain for older PM callers, but code
+materialization is routed through the canonical application orchestrator and
+``roles.adapters`` Director adapter. This module must not spawn Director
+scripts or own a second execution protocol.
 """
 
+import asyncio
 import os
-import warnings
+import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from polaris.kernelone.runtime.shared_types import normalize_path_list, timeout_seconds_or_none
-from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.runtime.shared_types import normalize_path_list
 
 
 @dataclass
@@ -64,8 +61,8 @@ class DirectorInterface(ABC):
     """
     Director 抽象接口
 
-    所有 Director 实现必须遵循此接口，
-    包括：Script Director、No Director、Mock Director 等。
+    Delivery compatibility interface. Concrete implementations must delegate
+    to canonical services instead of launching standalone scripts.
     """
 
     def __init__(self, workspace: Path, config: dict | None = None) -> None:
@@ -96,254 +93,127 @@ class DirectorInterface(ABC):
         pass
 
 
-class ScriptDirectorAdapter(DirectorInterface):
-    """
-    Script Director Adapter (DEPRECATED)
+def _run_awaitable_sync(factory: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
+    """Run an awaitable from sync PM delivery code without reusing event loops."""
 
-    Wraps the original loop-director.py subprocess calls
-    to conform to DirectorInterface.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
 
-    .. deprecated::
-        This adapter is deprecated. Use the unified Director runtime instead.
-    """
+    result: dict[str, Any] = {}
+    errors: list[BaseException] = []
 
-    def __init__(self, workspace: Path, config: dict | None = None) -> None:
-        warnings.warn(
-            "ScriptDirectorAdapter is deprecated. Use the unified Director runtime instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        cfg = config or {}
-        super().__init__(workspace, cfg)
-        self.director_script = cfg.get("script", "src/backend/scripts/loop-director.py")
-        timeout_raw = cfg.get("timeout", 3600)
-        # Preserve explicit disable semantics from caller (`None` / <=0).
-        if "timeout" in cfg:
-            self.timeout = timeout_seconds_or_none(timeout_raw, default=0)
-        else:
-            self.timeout = timeout_seconds_or_none(timeout_raw, default=3600)
-        self.pm_task_path = str(cfg.get("pm_task_path") or "").strip()
-        self.director_result_path = str(cfg.get("director_result_path") or "").strip()
-        self.director_log_path = str(cfg.get("director_log_path") or "").strip()
-        self.prompt_profile = str(cfg.get("prompt_profile") or "").strip()
-        self.planner_response_path = str(cfg.get("planner_response_path") or "").strip()
-        self.ollama_response_path = str(cfg.get("ollama_response_path") or "").strip()
-        self.qa_response_path = str(cfg.get("qa_response_path") or "").strip()
-        self.reviewer_response_path = str(cfg.get("reviewer_response_path") or "").strip()
-        self._project_root = cfg.get("project_root", self._find_project_root())
+    def _runner() -> None:
+        try:
+            result["value"] = asyncio.run(factory())
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
+            errors.append(exc)
 
-    def _resolve_task_timeout(self) -> int:
-        """Resolve loop-director per-task timeout and keep margin from process timeout."""
-        raw_task_timeout = self.config.get("task_timeout")
-        if raw_task_timeout is not None:
-            task_timeout = timeout_seconds_or_none(raw_task_timeout, default=0)
-            if task_timeout is not None:
-                return min(max(int(task_timeout), 30), 3570)
+    thread = threading.Thread(target=_runner, name="polaris-director-adapter-sync", daemon=True)
+    thread.start()
+    thread.join()
+    if errors:
+        raise errors[0]
+    return result.get("value")
 
-        if self.timeout is not None:
-            # Leave a safety margin so loop-director can write result before process kill.
-            return min(max(int(self.timeout) - 30, 30), 3570)
 
-        env_raw = os.environ.get("KERNELONE_DIRECTOR_TASK_TIMEOUT", "600")
-        env_timeout = timeout_seconds_or_none(env_raw, default=600)
-        if env_timeout is None:
-            return 600
-        return min(max(int(env_timeout), 30), 3570)
-
-    def _find_project_root(self) -> Path:
-        """Find project root by looking for src/backend/scripts/loop-director.py."""
-        # Start from workspace and go up
-        current = self.workspace
-        for _ in range(5):  # Check up to 5 levels up
-            if (current / "src" / "backend" / "scripts" / "loop-director.py").exists():
-                return current
-            parent = current.parent
-            if parent == current:
-                break
-            current = parent
-        return self.workspace
+class CanonicalDirectorAdapter(DirectorInterface):
+    """PM compatibility adapter backed by the canonical Director orchestrator."""
 
     def is_available(self) -> bool:
-        """Check if director script exists."""
-        script_path = self._project_root / self.director_script
-        return script_path.exists()
+        """The canonical adapter is the only materialization path."""
+
+        return True
 
     def execute(self, task: DirectorTask) -> DirectorResult:
-        """Execute director script via subprocess."""
-        import json
-        import subprocess
-        import sys
-
-        # Find director script
-        script_path = self._project_root / self.director_script
-        if not script_path.exists():
-            return DirectorResult(
-                success=False,
-                task_id=task.task_id,
-                changed_files=[],
-                patches=[],
-                error=f"Director script not found: {self.director_script}",
-            )
-
-        # Build command line
-        cmd = [
-            sys.executable,
-            str(script_path),
-            "--iterations",
-            "1",
-            "--workspace",
-            str(self.workspace),
-            "--no-rollback-on-fail",
-            "--timeout",
-            str(self._resolve_task_timeout()),
-        ]
-
-        # Reuse engine-generated PM task contract when available.
-        pm_task_file = Path(self.pm_task_path) if self.pm_task_path else None
-        if not (pm_task_file and pm_task_file.is_file()):
-            pm_task_file = Path(
-                resolve_runtime_path(
-                    str(self.workspace),
-                    f"runtime/contracts/pm_tasks.{task.task_id}.contract.json",
-                )
-            )
-            pm_task_file.parent.mkdir(parents=True, exist_ok=True)
-            scope_paths = (
-                task.scope_paths
-                if isinstance(task.scope_paths, list)
-                else (task.context.get("task", {}).get("scope_paths", []) if isinstance(task.context, dict) else [])
-            )
-            if not isinstance(scope_paths, list):
-                scope_paths = []
-            scope_mode = str(task.scope_mode or "").strip() or "module"
-            pm_payload = {
-                "schema_version": 1,
-                "pm_iteration": task.context.get("iteration") if isinstance(task.context, dict) else None,
-                "tasks": [
-                    {
-                        "id": task.task_id,
-                        "title": task.goal,
-                        "goal": task.goal,
-                        "target_files": normalize_path_list(task.target_files),
-                        "scope_paths": normalize_path_list(scope_paths),
-                        "scope_mode": scope_mode,
-                        "acceptance_criteria": task.acceptance_criteria,
-                        "constraints": task.constraints,
-                        "context": task.context if isinstance(task.context, dict) else {},
-                    }
-                ],
-            }
-            pm_task_file.write_text(json.dumps(pm_payload, ensure_ascii=False), encoding="utf-8")
-        cmd.extend(["--pm-task-path", str(pm_task_file)])
-
-        # Execute Director
-        result_file = (
-            Path(self.director_result_path)
-            if self.director_result_path
-            else Path(
-                resolve_runtime_path(
-                    str(self.workspace),
-                    "runtime/results/director.result.json",
-                )
-            )
-        )
-        result_file.parent.mkdir(parents=True, exist_ok=True)
-        cmd.extend(["--director-result-path", str(result_file)])
-        if self.director_log_path:
-            cmd.extend(["--log-path", self.director_log_path])
-        if self.prompt_profile:
-            cmd.extend(["--prompt-profile", self.prompt_profile])
-        if self.planner_response_path:
-            cmd.extend(["--planner-response-path", self.planner_response_path])
-        if self.ollama_response_path:
-            cmd.extend(["--ollama-response-path", self.ollama_response_path])
-        if self.qa_response_path:
-            cmd.extend(["--qa-response-path", self.qa_response_path])
-        if self.reviewer_response_path:
-            cmd.extend(["--reviewer-response-path", self.reviewer_response_path])
+        """Execute a task through ``DirectorOrchestrator`` and ``roles.adapters``."""
 
         try:
-            process = subprocess.Popen(
-                cmd,
-                cwd=self.workspace,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            from polaris.application.orchestration.director_orchestrator import (
+                DirectorExecutionConfig,
+                DirectorOrchestrator,
             )
-            stdout, stderr = process.communicate(timeout=self.timeout)
-            return_code = int(process.returncode or 0)
 
-            # 读取结果
-            if result_file.exists():
-                result_data = json.loads(result_file.read_text(encoding="utf-8"))
-                status = str(result_data.get("status") or "").strip().lower()
-                acceptance = result_data.get("acceptance")
-                explicit_success = result_data.get("success")
-                if isinstance(explicit_success, bool):
-                    success = explicit_success
-                else:
-                    success = bool(acceptance is True or status == "success")
-                error_text = (
-                    str(result_data.get("error") or "").strip()
-                    or str(result_data.get("reason") or "").strip()
-                    or str(result_data.get("error_code") or "").strip()
+            orchestrator = DirectorOrchestrator(
+                DirectorExecutionConfig(
+                    workspace=str(self.workspace),
+                    model=str(self.config.get("model") or ""),
+                    max_workers=1,
+                    execution_mode="serial",
+                    timeout_seconds=int(self.config.get("timeout") or 3600),
                 )
-                if not success and not error_text and return_code != 0:
-                    error_text = f"Director exited with code {return_code}"
-                return DirectorResult(
-                    success=success,
-                    task_id=task.task_id,
-                    changed_files=normalize_path_list(result_data.get("changed_files", [])),
-                    patches=result_data.get("patches", []),
-                    error=error_text or None,
-                    metadata={
-                        "return_code": return_code,
-                        "status": status,
-                        "stderr": stderr.decode(errors="replace") if stderr else None,
-                        "stdout": stdout.decode(errors="replace") if stdout else None,
-                    },
-                )
-            else:
-                stderr_text = stderr.decode(errors="replace") if stderr else ""
-                message = (
-                    f"Director exited with code {return_code} and did not produce result file"
-                    if return_code != 0
-                    else "Director did not produce result file"
-                )
-                if stderr_text.strip():
-                    message = f"{message}: {stderr_text.strip()}"
-                return DirectorResult(
-                    success=False,
-                    task_id=task.task_id,
-                    changed_files=[],
-                    patches=[],
-                    error=message,
-                    metadata={"return_code": return_code},
-                )
-
-        except subprocess.TimeoutExpired:
-            process.kill()
-            timeout_hint = f"{self.timeout}s" if self.timeout is not None else "disabled"
+            )
+            result = _run_awaitable_sync(lambda: orchestrator.execute_task(self._to_orchestrator_task(task)))
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             return DirectorResult(
                 success=False,
                 task_id=task.task_id,
                 changed_files=[],
                 patches=[],
-                error=f"Director timeout after {timeout_hint}",
+                error=f"Canonical Director adapter failed: {exc}",
+                metadata={"adapter": "application.director_orchestrator"},
             )
-        except (OSError, ValueError, RuntimeError) as e:
-            return DirectorResult(
-                success=False,
-                task_id=task.task_id,
-                changed_files=[],
-                patches=[],
-                error=str(e),
-            )
+
+        metadata = dict(result.metadata)
+        adapter_result = metadata.get("adapter_result")
+        adapter_payload = adapter_result if isinstance(adapter_result, dict) else {}
+        changed_files = normalize_path_list(metadata.get("changed_files") or adapter_payload.get("changed_files") or [])
+        raw_patches = adapter_payload.get("patches")
+        patches = [dict(item) for item in raw_patches if isinstance(item, dict)] if isinstance(raw_patches, list) else []
+        return DirectorResult(
+            success=bool(result.success),
+            task_id=task.task_id,
+            changed_files=changed_files,
+            patches=patches,
+            error=result.error or None,
+            metadata={
+                **metadata,
+                "adapter": "application.director_orchestrator",
+                "canonical_role_adapter": "roles.adapters.director",
+            },
+        )
+
+    @staticmethod
+    def _to_orchestrator_task(task: DirectorTask) -> dict[str, Any]:
+        context = dict(task.context) if isinstance(task.context, dict) else {}
+        embedded_task_raw = context.get("task")
+        embedded_task = dict(embedded_task_raw) if isinstance(embedded_task_raw, dict) else {}
+        description = (
+            str(embedded_task.get("description") or "").strip()
+            or str(embedded_task.get("goal") or "").strip()
+            or str(task.goal or "").strip()
+        )
+        embedded_metadata_raw = embedded_task.get("metadata")
+        metadata = dict(embedded_metadata_raw) if isinstance(embedded_metadata_raw, dict) else {}
+        metadata.update(
+            {
+                "pm_task_id": task.task_id,
+                "source": "pm.director_interface",
+                "delivery_compat": True,
+            }
+        )
+        return {
+            "id": task.task_id,
+            "task_id": task.task_id,
+            "subject": task.goal,
+            "title": task.goal,
+            "goal": description,
+            "description": description,
+            "target_files": normalize_path_list(task.target_files),
+            "scope_paths": normalize_path_list(task.scope_paths or []),
+            "scope_mode": str(task.scope_mode or "module"),
+            "acceptance_criteria": list(task.acceptance_criteria or []),
+            "constraints": list(task.constraints or []),
+            "context": context,
+            "metadata": metadata,
+        }
 
     def get_info(self) -> dict[str, str]:
         return {
-            "type": "script",
-            "name": "Director Script (loop-director.py)",
-            "script": self.director_script,
+            "type": "canonical",
+            "name": "Canonical Director Adapter",
+            "adapter": "roles.adapters.director",
         }
 
 
@@ -400,8 +270,14 @@ class DirectorFactory:
     根据配置创建对应的 Director 实例。
     """
 
-    _registry: dict[str, type] = {
-        "script": ScriptDirectorAdapter,
+    _aliases: dict[str, str] = {
+        "": "canonical",
+        "auto": "canonical",
+        "adapter": "canonical",
+        "script": "canonical",
+    }
+    _registry: dict[str, type[DirectorInterface]] = {
+        "canonical": CanonicalDirectorAdapter,
         "none": NoDirectorAdapter,
     }
 
@@ -416,17 +292,18 @@ class DirectorFactory:
         创建 Director 实例
 
         Args:
-            director_type: Director 类型 ("script", "none", ...)
+            director_type: Director 类型 ("canonical", "none", ...)
             workspace: 工作空间路径
             config: 配置参数
 
         Returns:
             DirectorInterface 实例
         """
-        if director_type not in cls._registry:
+        normalized_type = cls._aliases.get(str(director_type or "").strip().lower(), director_type)
+        if normalized_type not in cls._registry:
             raise ValueError(f"Unknown director type: {director_type}. Available: {list(cls._registry.keys())}")
 
-        director_class = cls._registry[director_type]
+        director_class = cls._registry[normalized_type]
         return director_class(workspace, config)
 
     @classmethod
@@ -457,12 +334,12 @@ def create_director(
         director = create_director("/path/to/workspace")
 
         # 明确指定
-        director = create_director("/path/to/workspace", "script")
+        director = create_director("/path/to/workspace", "canonical")
 
         # 带配置
         director = create_director(
             "/path/to/workspace",
-            "script",
+            "canonical",
             {"timeout": 1200}
         )
     """
@@ -472,20 +349,16 @@ def create_director(
     if director_type is None:
         director_type = os.getenv("KERNELONE_DIRECTOR_TYPE", "auto")
 
-    if director_type == "auto":
-        # 优先使用 script，如果不可用则使用 NoDirector
-        director_type = "script" if ScriptDirectorAdapter(workspace_path, config).is_available() else "none"
-
     return DirectorFactory.create(director_type, workspace_path, config)
 
 
 # Public exports
 __all__ = [
+    "CanonicalDirectorAdapter",
     "DirectorFactory",
     "DirectorInterface",
     "DirectorResult",
     "DirectorTask",
     "NoDirectorAdapter",
-    "ScriptDirectorAdapter",
     "create_director",
 ]

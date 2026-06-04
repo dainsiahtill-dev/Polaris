@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -193,6 +194,119 @@ class TestFacadeMethods:
 
         mock_executor.execute.assert_called_once()
         assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_execute_single_tool_enforces_cognitive_runtime_blocked_tools(self) -> None:
+        """Cognitive Runtime blocked tools must be rejected before executor dispatch."""
+        from polaris.cells.roles.kernel.internal.tool_gateway import ToolAuthorizationError
+        from polaris.cells.roles.profile.public.service import RoleTurnRequest
+
+        mock_executor = MagicMock(spec=CellToolExecutorPort)
+        mock_executor.execute = AsyncMock(return_value={"success": True})
+        kernel = RoleExecutionKernel(workspace=".", tool_executor=mock_executor)
+        request = RoleTurnRequest(
+            message="do not delete files",
+            metadata={
+                "cognitive_tool_policy": {
+                    "source": "cognitive_runtime_mainline",
+                    "blocked_tools": ("delete_file",),
+                }
+            },
+        )
+
+        with pytest.raises(ToolAuthorizationError, match="Cognitive Runtime blocked tool"):
+            await kernel._execute_single_tool(
+                "delete_file",
+                {"file": "src/app.py"},
+                context={"request": request},
+            )
+
+        mock_executor.execute.assert_not_called()
+
+    def test_cognitive_runtime_blocked_tools_filter_native_tool_definitions(self) -> None:
+        """Cognitive Runtime policy must remove blocked tools from native schemas."""
+        from polaris.cells.roles.profile.public.service import RoleTurnRequest
+
+        request = RoleTurnRequest(
+            message="safe edit only",
+            metadata={"cognitive_tool_policy": {"blocked_tools": ("delete_file",)}},
+        )
+        blocked = RoleExecutionKernel._cognitive_runtime_blocked_tools(request)
+        filtered = RoleExecutionKernel._filter_cognitive_blocked_tool_definitions(
+            [
+                {"type": "function", "function": {"name": "read_file"}},
+                {"type": "function", "function": {"name": "delete_file"}},
+            ],
+            blocked,
+        )
+
+        assert [item["function"]["name"] for item in filtered] == ["read_file"]
+
+    def test_context_budget_pressure_filters_expensive_context_tools(self) -> None:
+        """ContextGateway budget pressure must reduce expensive context tools before LLM decision."""
+        from polaris.cells.roles.profile.public.service import RoleTurnRequest
+
+        request = RoleTurnRequest(message="inspect efficiently")
+        context_result = SimpleNamespace(
+            metadata={
+                "context_decision_hints": {
+                    "source": "roles.kernel.context_gateway",
+                    "budget_pressure": True,
+                    "suppress_expensive_context_tools": True,
+                }
+            }
+        )
+
+        filtered, audit = RoleExecutionKernel._apply_runtime_tool_policy(
+            request=request,
+            context_result=context_result,
+            tool_definitions=[
+                {"type": "function", "function": {"name": "read_file"}},
+                {"type": "function", "function": {"name": "repo_read_slice"}},
+                {"type": "function", "function": {"name": "repo_rg"}},
+            ],
+        )
+
+        assert [item["function"]["name"] for item in filtered] == ["repo_read_slice", "repo_rg"]
+        assert audit["context_tool_policy_applied"] is True
+        assert audit["context_blocked_tools"] == ["read_file"]
+
+    def test_context_read_only_hints_filter_filesystem_and_exec_tools(self) -> None:
+        """ContextGateway read-only hints must suppress mutating/exec tools without expanding access."""
+        from polaris.cells.roles.profile.public.service import RoleTurnRequest
+
+        request = RoleTurnRequest(message="review only")
+        context_result = SimpleNamespace(
+            metadata={
+                "context_decision_hints": {
+                    "source": "roles.kernel.context_gateway",
+                    "suppress_mutating_tools": True,
+                }
+            }
+        )
+
+        filtered, audit = RoleExecutionKernel._apply_runtime_tool_policy(
+            request=request,
+            context_result=context_result,
+            tool_definitions=[
+                {"type": "function", "function": {"name": "read_file"}},
+                {"type": "function", "function": {"name": "edit_file"}},
+                {"type": "function", "function": {"name": "execute_command"}},
+                {"type": "function", "function": {"name": "update_session_state"}},
+                {"type": "function", "function": {"name": "compact_context"}},
+            ],
+        )
+
+        assert [item["function"]["name"] for item in filtered] == [
+            "read_file",
+            "update_session_state",
+            "compact_context",
+        ]
+        assert audit["context_tool_policy_applied"] is True
+        assert "edit_file" in audit["context_blocked_tools"]
+        assert "execute_command" in audit["context_blocked_tools"]
+        assert "update_session_state" not in audit["context_blocked_tools"]
+        assert "compact_context" not in audit["context_blocked_tools"]
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_resets_counter_between_none_run_id_requests(self, monkeypatch) -> None:

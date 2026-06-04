@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from polaris.kernelone.cognitive.middleware import (
     CognitiveMiddleware,
@@ -73,6 +75,37 @@ class TestCognitiveMiddleware:
 
         assert result["enabled"] is True
         assert result["intent_type"] == "create_file"
+
+    @pytest.mark.asyncio
+    async def test_middleware_preserves_blocked_tools(self, middleware):
+        """Middleware must preserve cognitive governance tool denials."""
+
+        class FakeOrchestrator:
+            async def process(self, *, message: str, session_id: str, role_id: str, workspace: str):
+                _ = (message, session_id, role_id, workspace)
+                return SimpleNamespace(
+                    intent_type="modify_file",
+                    confidence=0.82,
+                    uncertainty_score=0.21,
+                    execution_path=SimpleNamespace(value="full_pipe"),
+                    content="Use safe file edits only.",
+                    clarity_level=SimpleNamespace(value="action_oriented"),
+                    actions_taken=("inspect_scope",),
+                    verification_needed=True,
+                    blocked=False,
+                    block_reason=None,
+                    blocked_tools=("delete_file", "run_command"),
+                )
+
+        middleware._orchestrator = FakeOrchestrator()
+
+        result = await middleware.process(
+            message="modify files without deleting",
+            role_id="director",
+            session_id="test_session",
+        )
+
+        assert result["blocked_tools"] == ("delete_file", "run_command")
 
     @pytest.mark.asyncio
     async def test_middleware_inject_into_context(self, middleware):

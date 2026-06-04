@@ -113,12 +113,13 @@ class PhaseAwareBudgetPlannerStage:
         artifact_tokens = sum(min(item.token_count, 128) for item in artifacts)
 
         # Get phase-aware budget plan
+        token_budget_policy = self._policy.token_budget
         phase_plan = self._budget_planner.plan_budget(
             phase=detected_phase,
             transcript_tokens=transcript_tokens,
             artifact_tokens=artifact_tokens,
-            p95_tool_result_tokens=int(self._policy.p95_tool_result_tokens),
-            planned_retrieval_tokens=int(self._policy.planned_retrieval_tokens),
+            p95_tool_result_tokens=int(token_budget_policy.p95_tool_result_tokens),
+            planned_retrieval_tokens=int(token_budget_policy.planned_retrieval_tokens),
         )
 
         # Convert to standard BudgetPlan for compatibility

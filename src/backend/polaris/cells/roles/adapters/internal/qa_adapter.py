@@ -13,13 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
-from polaris.bootstrap.config import get_settings
-from polaris.cells.llm.dialogue.public.service import generate_role_response
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .base import BaseRoleAdapter
+from .runtime_dialogue import invoke_role_runtime_first
 
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java", ".rs", ".json", ".yaml", ".yml"}
 _IGNORE_ROOTS = {
@@ -83,13 +82,16 @@ class QAAdapter(BaseRoleAdapter):
             run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
             review_result = self._run_static_review(target, run_id=run_id)
             message = self._build_qa_message(review_type, target, review_result=review_result)
-            settings = get_settings()
-            response = await generate_role_response(
+            response = await invoke_role_runtime_first(
                 workspace=self.workspace,
-                settings=settings,
                 role=self.role_id,
                 message=message,
-                context=None,
+                context={
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "review_type": review_type,
+                    "target": target,
+                },
                 validate_output=False,
                 max_retries=1,
             )

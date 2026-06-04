@@ -98,6 +98,115 @@ class TestStateFirstContextOSIntegration:
             assert "state_first_context_os_initial_projection" in result.context_sources
 
     @pytest.mark.asyncio
+    async def test_cognitive_strategy_override_expands_context_os_window(self):
+        """MAINLINE cognitive strategy must affect ContextOS projection parameters."""
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
+        )
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 1000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "truncate"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = "test_provider"
+        mock_profile.model = "test_model"
+        mock_profile.role_id = "director"
+        mock_profile.display_name = "Director"
+
+        gateway = RoleContextGateway(mock_profile, workspace=".")
+
+        mock_snapshot = MagicMock(spec=ContextOSSnapshot)
+        mock_snapshot.budget_plan = MagicMock()
+        mock_snapshot.budget_plan.validation_error = ""
+
+        mock_projection = MagicMock(spec=ContextOSProjection)
+        mock_projection.head_anchor = ""
+        mock_projection.tail_anchor = ""
+        mock_projection.active_window = (
+            TranscriptEvent(
+                event_id="test_1",
+                sequence=1,
+                role="user",
+                kind="user_turn",
+                route="clear",
+                content="Test message",
+            ),
+        )
+        mock_projection.run_card = MagicMock()
+        mock_projection.run_card.current_goal = ""
+        mock_projection.run_card.open_loops = ()
+        mock_projection.run_card.latest_user_intent = ""
+        mock_projection.run_card.pending_followup_action = ""
+        mock_projection.run_card.last_turn_outcome = ""
+        mock_projection.snapshot = mock_snapshot
+
+        with patch.object(gateway._context_os, "project", return_value=mock_projection) as mock_project:
+            request = ContextRequest(
+                message="Audit code generation deeply",
+                history=[("user", "Hello")],
+                context_os_snapshot=None,
+                strategy_override={
+                    "exploration": {
+                        "max_expansion_depth": 4,
+                        "neighbor_expansion_aggressive": True,
+                    },
+                    "compaction": {"trigger_at_budget_pct": 0.9},
+                    "cognitive_runtime": {"applied": True},
+                },
+            )
+
+            result = await gateway.build_context(request)
+
+        mock_project.assert_called_once()
+        call_args = mock_project.call_args
+        assert call_args is not None
+        assert call_args.kwargs["recent_window_messages"] == 16
+        assert "cognitive_strategy_override" in result.context_sources
+        assert result.metadata["strategy_override_applied"] is True
+        assert result.metadata["strategy_override_sources"] == ["request.strategy_override"]
+        assert result.metadata["recent_window_messages"] == 16
+        assert result.metadata["base_recent_window_messages"] == 8
+        assert result.metadata["context_budget_trigger_pct"] == 0.9
+        assert result.metadata["effective_context_budget_tokens"] == 900
+
+    def test_cognitive_strategy_override_is_control_plane_only(self):
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 1000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "truncate"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = "test_provider"
+        mock_profile.model = "test_model"
+        mock_profile.role_id = "director"
+        mock_profile.display_name = "Director"
+
+        gateway = RoleContextGateway(mock_profile, workspace=".")
+
+        message = gateway._process_context_override(
+            {
+                "cognitive_strategy_override": {"exploration": {"max_expansion_depth": 4}},
+                "visible_business_context": "keep this",
+            }
+        )
+
+        assert message is not None
+        content = message["content"]
+        assert "visible_business_context: keep this" in content
+        assert "cognitive_strategy_override" not in content
+
+    @pytest.mark.asyncio
     async def test_build_context_with_snapshot_uses_projection(self):
         """Verify build_context uses projection when snapshot is provided."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway

@@ -7,8 +7,11 @@ kernelone may NOT import from polaris/cells, but cells may import from kernelone
 
 from __future__ import annotations
 
-from typing import NoReturn
+from pathlib import Path
+from types import SimpleNamespace
+from typing import NoReturn, cast
 
+import pytest
 from polaris.kernelone.context import ResolvedStrategy
 
 
@@ -67,6 +70,30 @@ class TestRoleRuntimeServiceStrategy:
         )
         assert ctx.profile_id == "canonical_balanced"
 
+    def test_create_strategy_run_applies_current_turn_cognitive_override(self) -> None:
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        svc = RoleRuntimeService()
+        ctx = svc.create_strategy_run(
+            domain="code",
+            role="director",
+            session_id="sess-cognitive",
+            budget=None,
+            workspace="/repo",
+            current_turn_override={
+                "compaction": {"trigger_at_budget_pct": 0.9},
+                "cognitive_runtime": {
+                    "source": "cognitive_runtime_mainline",
+                    "applied": True,
+                    "execution_path": "verify_then_write",
+                },
+            },
+        )
+
+        assert ctx.resolved_overrides["compaction"]["trigger_at_budget_pct"] == 0.9
+        assert ctx.resolved_overrides["cognitive_runtime"]["applied"] is True
+        assert ctx.resolved_overrides["cognitive_runtime"]["execution_path"] == "verify_then_write"
+
     def test_resolve_strategy_profile_prefers_domain_default_when_explicit(self) -> None:
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
@@ -121,6 +148,459 @@ class TestRoleRuntimeServiceStrategy:
         request = RoleRuntimeService._build_task_request(command)
         assert request.domain == "research"
         assert request.metadata["domain"] == "research"
+
+    def test_build_session_request_copies_provider_policy_to_context_override(self) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        command = ExecuteRoleSessionCommandV1(
+            role="pm",
+            session_id="sess-1",
+            workspace="/repo",
+            user_message="plan",
+            metadata={
+                "allowed_provider_types": ("ollama",),
+                "llm_provider_policy": {"blocked_provider_types": ("openai_compat",)},
+            },
+        )
+
+        request = RoleRuntimeService._build_session_request(command)
+
+        assert request.context_override is not None
+        assert request.context_override["allowed_provider_types"] == ("ollama",)
+        assert request.context_override["llm_provider_policy"]["blocked_provider_types"] == ("openai_compat",)
+
+    def test_build_task_request_copies_provider_policy_to_context_override(self) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        command = ExecuteRoleTaskCommandV1(
+            role="director",
+            task_id="task-1",
+            workspace="/repo",
+            objective="write code",
+            metadata={"blocked_provider_types": ("openai_compat",)},
+        )
+
+        request = RoleRuntimeService._build_task_request(command)
+
+        assert request.context_override is not None
+        assert request.context_override["blocked_provider_types"] == ("openai_compat",)
+
+    @pytest.mark.asyncio
+    async def test_prepare_session_request_applies_cognitive_mainline_guidance(self, monkeypatch) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+        from polaris.kernelone.cognitive import middleware as cognitive_middleware
+
+        class FakeCognitiveMiddleware:
+            def __init__(self, *, workspace: str | None = None, enabled: bool | None = None) -> None:
+                self.workspace = workspace
+                self.enabled = enabled
+
+            async def process(self, *, message: str, role_id: str, session_id: str | None = None):
+                return {
+                    "enabled": True,
+                    "intent_type": "code_generation",
+                    "confidence": 0.91,
+                    "uncertainty_score": 0.17,
+                    "execution_path": "verify_then_write",
+                    "blocked": False,
+                    "blocked_tools": ("delete_file", "run_command"),
+                    "cognitive_analysis": {
+                        "clarity_level": "high",
+                        "verification_needed": True,
+                        "actions_taken": ["inspect_scope", "write_tests"],
+                    },
+                }
+
+        monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", FakeCognitiveMiddleware)
+
+        request = await RoleRuntimeService()._prepare_session_request(
+            ExecuteRoleSessionCommandV1(
+                role="director",
+                session_id="sess-mainline",
+                workspace="/repo",
+                user_message="implement feature",
+                metadata={"cognitive_runtime_mode": "mainline"},
+                stream=False,
+            )
+        )
+
+        assert request.context_override is not None
+        assert request.context_override["cognitive_guidance"]["intent_type"] == "code_generation"
+        assert request.context_override["cognitive_guidance"]["execution_path"] == "verify_then_write"
+        assert request.context_override["cognitive_guidance"]["verification_needed"] is True
+        assert request.context_override["cognitive_guidance"]["blocked_tools"] == ("delete_file", "run_command")
+        assert request.metadata["cognitive_tool_policy"]["blocked_tools"] == ("delete_file", "run_command")
+        assert request.metadata["cognitive_tool_policy"]["source"] == "cognitive_runtime_mainline"
+        assert request.metadata["cognitive_runtime_preflight"]["mode"] == "mainline"
+        assert request.metadata["cognitive_runtime_preflight"]["applied"] is True
+        assert request.metadata["cognitive_runtime_preflight"]["tool_policy_applied"] is True
+        assert request.metadata["cognitive_runtime_preflight"]["blocked_tools"] == ("delete_file", "run_command")
+        assert request.metadata["cognitive_runtime_preflight"]["strategy_override_applied"] is True
+        assert request.metadata["cognitive_strategy_override"]["cognitive_runtime"]["applied"] is True
+        assert request.metadata["cognitive_strategy_override"]["exploration"]["max_expansion_depth"] == 4
+        assert request.metadata["cognitive_strategy_override"]["compaction"]["trigger_at_budget_pct"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_prepare_session_request_fails_closed_when_cognitive_mainline_blocks(
+        self,
+        monkeypatch,
+    ) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+        from polaris.kernelone.cognitive import middleware as cognitive_middleware
+
+        class BlockingCognitiveMiddleware:
+            def __init__(self, *, workspace: str | None = None, enabled: bool | None = None) -> None:
+                return None
+
+            async def process(self, *, message: str, role_id: str, session_id: str | None = None):
+                return {
+                    "enabled": True,
+                    "blocked": True,
+                    "block_reason": "unsafe objective",
+                }
+
+        monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", BlockingCognitiveMiddleware)
+
+        with pytest.raises(RuntimeError, match="cognitive_runtime_blocked:unsafe objective"):
+            await RoleRuntimeService()._prepare_session_request(
+                ExecuteRoleSessionCommandV1(
+                    role="director",
+                    session_id="sess-blocked",
+                    workspace="/repo",
+                    user_message="do unsafe thing",
+                    metadata={"cognitive_runtime_mode": "mainline"},
+                    stream=False,
+                )
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_transaction_controller_applies_cognitive_mainline_preflight(
+        self,
+        monkeypatch,
+    ) -> None:
+        from polaris.cells.roles.profile.public.service import RoleTurnRequest
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+        from polaris.kernelone.cognitive import middleware as cognitive_middleware
+
+        captured: dict[str, object] = {}
+
+        class FakeCognitiveMiddleware:
+            def __init__(self, *, workspace: str | None = None, enabled: bool | None = None) -> None:
+                self.workspace = workspace
+                self.enabled = enabled
+
+            async def process(self, *, message: str, role_id: str, session_id: str | None = None):
+                return {
+                    "enabled": True,
+                    "intent_type": "code_generation",
+                    "confidence": 0.87,
+                    "uncertainty_score": 0.22,
+                    "execution_path": "verify_then_write",
+                    "blocked": False,
+                    "blocked_tools": ("delete_file",),
+                    "cognitive_analysis": {
+                        "clarity_level": "high",
+                        "verification_needed": True,
+                        "actions_taken": ["inspect_scope"],
+                    },
+                }
+
+        class FakeKernel:
+            def _create_transaction_kernel(self, role, profile, request):
+                captured["role"] = role
+                captured["profile"] = profile
+                captured["request"] = request
+                return {"controller": True}
+
+        monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", FakeCognitiveMiddleware)
+        service = RoleRuntimeService()
+        monkeypatch.setattr(service, "_get_kernel", lambda _workspace: FakeKernel())
+
+        controller = await service.create_transaction_controller(
+            ExecuteRoleSessionCommandV1(
+                role="director",
+                session_id="sess-orchestrator-mainline",
+                workspace="/repo",
+                user_message="implement feature",
+                metadata={"cognitive_runtime_mode": "mainline"},
+                stream=True,
+            )
+        )
+
+        request = cast(RoleTurnRequest, captured["request"])
+        assert controller == {"controller": True}
+        assert request.metadata["cognitive_runtime_preflight"]["applied"] is True
+        assert request.metadata["cognitive_runtime_preflight"]["mode"] == "mainline"
+        assert request.metadata["cognitive_tool_policy"]["blocked_tools"] == ("delete_file",)
+        assert request.context_override is not None
+        assert request.context_override["cognitive_guidance"]["execution_path"] == "verify_then_write"
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_turn_applies_cognitive_strategy_before_fingerprint(self, monkeypatch) -> None:
+        from polaris.cells.roles.profile.public.service import RoleTurnRequest, RoleTurnResult
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+        from polaris.kernelone.cognitive import middleware as cognitive_middleware
+
+        captured: dict[str, object] = {}
+
+        class FakeCognitiveMiddleware:
+            def __init__(self, *, workspace: str | None = None, enabled: bool | None = None) -> None:
+                self.workspace = workspace
+                self.enabled = enabled
+
+            async def process(self, *, message: str, role_id: str, session_id: str | None = None):
+                return {
+                    "enabled": True,
+                    "intent_type": "code_generation",
+                    "confidence": 0.72,
+                    "uncertainty_score": 0.58,
+                    "execution_path": "verify_then_write",
+                    "blocked": False,
+                    "cognitive_analysis": {
+                        "clarity_level": "medium",
+                        "verification_needed": True,
+                        "actions_taken": ["inspect_scope"],
+                    },
+                }
+
+        class FakeKernel:
+            async def run_stream(self, _role, request):
+                captured["request"] = request
+                yield {
+                    "type": "complete",
+                    "result": RoleTurnResult(content="done", turn_history=[("assistant", "done")]),
+                }
+
+        async def fake_persist(*_args, **_kwargs) -> None:
+            return None
+
+        monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", FakeCognitiveMiddleware)
+        monkeypatch.setattr(
+            RoleRuntimeService, "emit_strategy_receipt", staticmethod(lambda *_args: Path("receipt.json"))
+        )
+
+        service = RoleRuntimeService()
+        monkeypatch.setattr(service, "_get_kernel", lambda _workspace: FakeKernel())
+        monkeypatch.setattr(service, "_persist_session_turn_state", fake_persist)
+
+        events = [
+            event
+            async for event in service.stream_chat_turn(
+                ExecuteRoleSessionCommandV1(
+                    role="director",
+                    session_id="sess-stream-mainline",
+                    workspace="/repo",
+                    user_message="implement feature",
+                    domain="code",
+                    metadata={"cognitive_runtime_mode": "mainline"},
+                    stream=True,
+                )
+            )
+        ]
+
+        assert events[0]["type"] == "fingerprint"
+        assert events[0]["cognitive_strategy_override_applied"] is True
+        request = cast("RoleTurnRequest", captured["request"])
+        assert request.metadata["cognitive_runtime_preflight"]["strategy_override_applied"] is True
+        assert request.metadata["cognitive_strategy_override"]["cognitive_runtime"]["applied"] is True
+
+    def test_required_cognitive_runtime_evidence_records_receipt_and_handoff(self, monkeypatch) -> None:
+        from polaris.cells.factory.cognitive_runtime.public import service as cognitive_service
+        from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
+        from polaris.cells.roles.runtime.public.service import (
+            RoleRuntimeService,
+            _with_result_metadata_patch,
+        )
+
+        class FakeCognitiveService:
+            def __init__(self) -> None:
+                self.closed = False
+                self.receipt_command = None
+                self.handoff_command = None
+
+            def record_runtime_receipt(self, command):
+                self.receipt_command = command
+                return SimpleNamespace(ok=True, receipt=SimpleNamespace(receipt_id="receipt-1"))
+
+            def export_handoff_pack(self, command):
+                self.handoff_command = command
+                return SimpleNamespace(ok=True, handoff=SimpleNamespace(handoff_id="handoff-1"))
+
+            def close(self) -> None:
+                self.closed = True
+
+        fake_service = FakeCognitiveService()
+        monkeypatch.setattr(
+            cognitive_service,
+            "get_cognitive_runtime_public_service",
+            lambda: fake_service,
+        )
+        result = RoleExecutionResultV1(
+            ok=True,
+            status="ok",
+            role="director",
+            workspace="/repo",
+            task_id="task-1",
+            session_id="session-1",
+            run_id="run-1",
+            output="done",
+        )
+
+        evidence = RoleRuntimeService()._emit_cognitive_runtime_shadow_artifacts(
+            source="test",
+            workspace="/repo",
+            role="director",
+            task_id="task-1",
+            session_id="session-1",
+            run_id="run-1",
+            result=result,
+            metadata={"cognitive_runtime_required": True},
+            context={},
+        )
+        patched = _with_result_metadata_patch(result, {"cognitive_runtime_evidence": evidence})
+
+        assert evidence["required"] is True
+        assert evidence["receipt_recorded"] is True
+        assert evidence["handoff_exported"] is True
+        assert evidence["receipt_id"] == "receipt-1"
+        assert evidence["handoff_id"] == "handoff-1"
+        assert patched.metadata["cognitive_runtime_evidence"]["receipt_id"] == "receipt-1"
+        assert fake_service.closed is True
+        assert fake_service.receipt_command is not None
+        assert fake_service.handoff_command is not None
+        assert fake_service.receipt_command.payload["role"] == "director"
+        assert fake_service.handoff_command.turn_envelope["receipt_ids"] == ["receipt-1"]
+
+    def test_required_cognitive_runtime_evidence_fails_closed_when_disabled(self) -> None:
+        from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        result = RoleExecutionResultV1(
+            ok=True,
+            status="ok",
+            role="pm",
+            workspace="/repo",
+            session_id="session-1",
+            output="done",
+        )
+
+        with pytest.raises(RuntimeError, match="cognitive_runtime_required_but_off"):
+            RoleRuntimeService()._emit_cognitive_runtime_shadow_artifacts(
+                source="test",
+                workspace="/repo",
+                role="pm",
+                task_id=None,
+                session_id="session-1",
+                run_id=None,
+                result=result,
+                metadata={
+                    "cognitive_runtime_required": True,
+                    "cognitive_runtime_mode": "off",
+                },
+                context={},
+            )
+
+    def test_optional_cognitive_runtime_failure_is_observable_without_raising(self, monkeypatch) -> None:
+        from polaris.cells.factory.cognitive_runtime.public import service as cognitive_service
+        from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        class FailingCognitiveService:
+            def record_runtime_receipt(self, _command):
+                return SimpleNamespace(ok=False, error_message="receipt store unavailable")
+
+            def close(self) -> None:
+                return None
+
+        monkeypatch.setattr(
+            cognitive_service,
+            "get_cognitive_runtime_public_service",
+            lambda: FailingCognitiveService(),
+        )
+        result = RoleExecutionResultV1(
+            ok=True,
+            status="ok",
+            role="pm",
+            workspace="/repo",
+            session_id="session-1",
+            output="done",
+        )
+
+        evidence = RoleRuntimeService()._emit_cognitive_runtime_shadow_artifacts(
+            source="test",
+            workspace="/repo",
+            role="pm",
+            task_id=None,
+            session_id="session-1",
+            run_id=None,
+            result=result,
+            metadata={},
+            context={},
+        )
+
+        assert evidence["required"] is False
+        assert evidence["receipt_recorded"] is False
+        assert evidence["error_message"] == "receipt store unavailable"
+
+    @pytest.mark.asyncio
+    async def test_execute_role_session_returns_cognitive_runtime_evidence_metadata(self, monkeypatch) -> None:
+        from polaris.cells.factory.cognitive_runtime.public import service as cognitive_service
+        from polaris.cells.roles.profile.public.service import RoleTurnResult
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        class FakeKernel:
+            async def run(self, _role, _request):
+                return RoleTurnResult(
+                    content="done",
+                    metadata={"turn_id": "turn-1"},
+                    turn_history=[("assistant", "done")],
+                )
+
+        class FakeCognitiveService:
+            def record_runtime_receipt(self, _command):
+                return SimpleNamespace(ok=True, receipt=SimpleNamespace(receipt_id="receipt-2"))
+
+            def export_handoff_pack(self, _command):
+                return SimpleNamespace(ok=True, handoff=SimpleNamespace(handoff_id="handoff-2"))
+
+            def close(self) -> None:
+                return None
+
+        async def fake_persist(*_args, **_kwargs) -> None:
+            return None
+
+        monkeypatch.setattr(
+            cognitive_service,
+            "get_cognitive_runtime_public_service",
+            lambda: FakeCognitiveService(),
+        )
+        service = RoleRuntimeService()
+        monkeypatch.setattr(service, "_get_kernel", lambda _workspace: FakeKernel())
+        monkeypatch.setattr(service, "_persist_session_turn_state", fake_persist)
+
+        result = await service.execute_role_session(
+            ExecuteRoleSessionCommandV1(
+                role="director",
+                session_id="session-2",
+                workspace="/repo",
+                user_message="write",
+                domain="code",
+                metadata={"cognitive_runtime_required": True},
+                stream=False,
+            )
+        )
+
+        assert result.ok is True
+        assert result.metadata["cognitive_runtime_evidence"]["required"] is True
+        assert result.metadata["cognitive_runtime_evidence"]["receipt_id"] == "receipt-2"
+        assert result.metadata["cognitive_runtime_evidence"]["handoff_id"] == "handoff-2"
 
     def test_build_session_request_injects_repo_intelligence_for_code_domain(
         self,

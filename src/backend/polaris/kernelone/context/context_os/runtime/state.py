@@ -56,7 +56,12 @@ class _ContextOSStateMixin:
     _notify_observers: Any
     _get_hook_manager: Any
     _get_content_store: Any
+    _collect_active_window: Any
     _sequences_from_turns: Any
+
+    @property
+    def resolved_context_window(self) -> int:
+        raise NotImplementedError
 
     def _rebuild_prompt_view(
         self,
@@ -66,7 +71,7 @@ class _ContextOSStateMixin:
         active_window = self._collect_active_window(
             transcript=snapshot.transcript_log,
             working_state=snapshot.working_state,
-            recent_window_messages=self.policy.default_history_window_messages,
+            recent_window_messages=self.policy.context_window.default_history_window_messages,
             budget_plan=budget_plan,
         )
         artifact_stubs = self._select_artifacts_for_prompt(
@@ -236,18 +241,33 @@ class _ContextOSStateMixin:
                     decisions.append(decision)
                     last_decision_by_kind[kind] = decision
 
-        active_artifacts = tuple(item.artifact_id for item in artifacts[-self.policy.max_artifact_stubs :])
+        active_artifacts = tuple(item.artifact_id for item in artifacts[-self.policy.artifact.max_artifact_stubs :])
 
         # Build deduped active lists first so we can compute active_entry_ids
-        deduped_preferences = _dedupe_state_entries(preferences, limit=self.policy.max_open_loops)
-        deduped_style = _dedupe_state_entries(style, limit=self.policy.max_open_loops)
-        deduped_persistent_facts = _dedupe_state_entries(persistent_facts, limit=self.policy.max_stable_facts)
-        deduped_accepted_plan = _dedupe_state_entries(accepted_plan, limit=self.policy.max_open_loops)
-        deduped_open_loops = _dedupe_state_entries(open_loops, limit=self.policy.max_open_loops)
-        deduped_blocked_on = _dedupe_state_entries(blocked_on, limit=self.policy.max_open_loops)
-        deduped_deliverables = _dedupe_state_entries(deliverables, limit=self.policy.max_open_loops)
-        deduped_active_entities = _dedupe_state_entries(active_entities, limit=self.policy.max_stable_facts)
-        deduped_temporal_facts = _dedupe_state_entries(temporal_facts, limit=self.policy.max_stable_facts)
+        deduped_preferences = _dedupe_state_entries(preferences, limit=self.policy.collection_limits.max_open_loops)
+        deduped_style = _dedupe_state_entries(style, limit=self.policy.collection_limits.max_open_loops)
+        deduped_persistent_facts = _dedupe_state_entries(
+            persistent_facts,
+            limit=self.policy.collection_limits.max_stable_facts,
+        )
+        deduped_accepted_plan = _dedupe_state_entries(
+            accepted_plan,
+            limit=self.policy.collection_limits.max_open_loops,
+        )
+        deduped_open_loops = _dedupe_state_entries(open_loops, limit=self.policy.collection_limits.max_open_loops)
+        deduped_blocked_on = _dedupe_state_entries(blocked_on, limit=self.policy.collection_limits.max_open_loops)
+        deduped_deliverables = _dedupe_state_entries(
+            deliverables,
+            limit=self.policy.collection_limits.max_open_loops,
+        )
+        deduped_active_entities = _dedupe_state_entries(
+            active_entities,
+            limit=self.policy.collection_limits.max_stable_facts,
+        )
+        deduped_temporal_facts = _dedupe_state_entries(
+            temporal_facts,
+            limit=self.policy.collection_limits.max_stable_facts,
+        )
 
         # Collect IDs of all entries currently in active lists
         active_entry_ids: set[str] = set()
@@ -290,7 +310,7 @@ class _ContextOSStateMixin:
                 blocked_on=deduped_blocked_on,
                 deliverables=deduped_deliverables,
             ),
-            decision_log=tuple(decisions[-self.policy.max_decisions :]),
+            decision_log=tuple(decisions[-self.policy.collection_limits.max_decisions :]),
             active_entities=deduped_active_entities,
             active_artifacts=active_artifacts,
             temporal_facts=deduped_temporal_facts,
@@ -326,26 +346,29 @@ class _ContextOSStateMixin:
     ) -> BudgetPlan:
         # Use resolved context window (LLM Config > Hard-coded Table > Policy Default)
         window = max(4096, self.resolved_context_window)
+        token_budget_policy = self.policy.token_budget
         # Claude Code formula: output_reserve = max(max_expected_output, 0.18C)
         # output_reserve_min serves as max_expected_output (configurable floor)
         # ratio_based is 0.18*C as ceiling
-        ratio_based = int(window * self.policy.output_reserve_ratio)  # 0.18 * C
-        output_reserve = max(self.policy.output_reserve_min, ratio_based)
+        ratio_based = int(window * token_budget_policy.output_reserve_ratio)  # 0.18 * C
+        output_reserve = max(token_budget_policy.output_reserve_min, ratio_based)
         tool_reserve = max(
-            self.policy.tool_reserve_min,
-            int(window * self.policy.tool_reserve_ratio),
+            token_budget_policy.tool_reserve_min,
+            int(window * token_budget_policy.tool_reserve_ratio),
         )
         # Claude Code formula: safety_margin = max(2048, 0.05C)
-        safety_margin = max(self.policy.safety_margin_min, int(window * self.policy.safety_margin_ratio))
+        safety_margin = max(
+            token_budget_policy.safety_margin_min, int(window * token_budget_policy.safety_margin_ratio)
+        )
         input_budget = max(1024, window - output_reserve - tool_reserve - safety_margin)
         retrieval_budget = min(
-            max(256, int(input_budget * self.policy.retrieval_ratio)),
-            max(256, int(self.policy.planned_retrieval_tokens)),
+            max(256, int(input_budget * token_budget_policy.retrieval_ratio)),
+            max(256, int(token_budget_policy.planned_retrieval_tokens)),
         )
         current_input_tokens = sum(_estimate_tokens(item.content) for item in transcript)
         current_input_tokens += sum(min(item.token_count, 128) for item in artifacts)
         expected_next_input_tokens = (
-            current_input_tokens + int(self.policy.p95_tool_result_tokens) + retrieval_budget + output_reserve
+            current_input_tokens + int(token_budget_policy.p95_tool_result_tokens) + retrieval_budget + output_reserve
         )
         # A11 Fix: Validate expected_next_input_tokens doesn't exceed model_context_window
         validation_error = ""
@@ -368,8 +391,8 @@ class _ContextOSStateMixin:
             emergency_limit=max(1024, int(input_budget * 0.85)),
             current_input_tokens=current_input_tokens,
             expected_next_input_tokens=expected_next_input_tokens,
-            p95_tool_result_tokens=int(self.policy.p95_tool_result_tokens),
-            planned_retrieval_tokens=int(self.policy.planned_retrieval_tokens),
+            p95_tool_result_tokens=int(token_budget_policy.p95_tool_result_tokens),
+            planned_retrieval_tokens=int(token_budget_policy.planned_retrieval_tokens),
             validation_error=validation_error,
         )
         logger.debug(
@@ -410,8 +433,8 @@ class _ContextOSStateMixin:
 
         # === Seal Guard: Block sealing if pending follow-up exists ===
         if (
-            self.policy.enable_seal_guard
-            and self.policy.prevent_seal_on_pending
+            self.policy.attention_runtime.enable_seal_guard
+            and self.policy.attention_runtime.prevent_seal_on_pending
             and pending_followup
             and pending_followup.status == "pending"
         ):
@@ -478,14 +501,22 @@ class _ContextOSStateMixin:
             to_sequence=closed_events[-1].sequence,
             intent=intent,
             outcome=outcome,
-            decisions=tuple(item.summary for item in working_state.decision_log[-self.policy.max_decisions :]),
+            decisions=tuple(
+                item.summary for item in working_state.decision_log[-self.policy.collection_limits.max_decisions :]
+            ),
             facts=tuple(
-                item.value for item in working_state.user_profile.persistent_facts[-self.policy.max_stable_facts :]
+                item.value
+                for item in working_state.user_profile.persistent_facts[
+                    -self.policy.collection_limits.max_stable_facts :
+                ]
             ),
             artifact_refs=tuple(dict.fromkeys(artifact_ids)),
-            entities=tuple(item.value for item in working_state.active_entities[-self.policy.max_stable_facts :]),
+            entities=tuple(
+                item.value for item in working_state.active_entities[-self.policy.collection_limits.max_stable_facts :]
+            ),
             reopen_conditions=tuple(
-                item.value for item in working_state.task_state.open_loops[-self.policy.max_open_loops :]
+                item.value
+                for item in working_state.task_state.open_loops[-self.policy.collection_limits.max_open_loops :]
             ),
             source_spans=(f"t{closed_events[0].sequence}:t{closed_events[-1].sequence}",),
             digest_64=_trim_text(combined, max_chars=64),
@@ -550,7 +581,7 @@ class _ContextOSStateMixin:
 
         # Add remaining artifacts up to max limit
         for artifact in reversed(artifacts):
-            if len(ordered) >= self.policy.max_artifact_stubs:
+            if len(ordered) >= self.policy.artifact.max_artifact_stubs:
                 break
             if artifact.artifact_id in seen:
                 continue
@@ -559,14 +590,14 @@ class _ContextOSStateMixin:
 
         # Add remaining artifacts up to max limit
         for artifact in reversed(artifacts):
-            if len(ordered) >= self.policy.max_artifact_stubs:
+            if len(ordered) >= self.policy.artifact.max_artifact_stubs:
                 break
             if artifact.artifact_id in seen:
                 continue
             seen.add(artifact.artifact_id)
             ordered.append(self._truncate_artifact_if_needed(artifact))
 
-        return tuple(ordered[: self.policy.max_artifact_stubs])
+        return tuple(ordered[: self.policy.artifact.max_artifact_stubs])
 
     def _select_episodes_for_prompt(
         self,
@@ -601,7 +632,7 @@ class _ContextOSStateMixin:
             )
             ranked.append((lexical + recency + open_loop_bonus, episode))
         ranked.sort(key=lambda item: (item[0], item[1].to_sequence), reverse=True)
-        return tuple(item[1] for item in ranked[: self.policy.max_episode_cards])
+        return tuple(item[1] for item in ranked[: self.policy.collection_limits.max_episode_cards])
 
     def _build_run_card(
         self,
@@ -613,9 +644,15 @@ class _ContextOSStateMixin:
         current_goal = (
             working_state.task_state.current_goal.value if working_state.task_state.current_goal is not None else ""
         )
-        open_loops = tuple(item.value for item in working_state.task_state.open_loops[-self.policy.max_open_loops :])
-        active_entities = tuple(item.value for item in working_state.active_entities[: self.policy.max_stable_facts])
-        recent_decisions = tuple(item.summary for item in working_state.decision_log[-self.policy.max_decisions :])
+        open_loops = tuple(
+            item.value for item in working_state.task_state.open_loops[-self.policy.collection_limits.max_open_loops :]
+        )
+        active_entities = tuple(
+            item.value for item in working_state.active_entities[: self.policy.collection_limits.max_stable_facts]
+        )
+        recent_decisions = tuple(
+            item.summary for item in working_state.decision_log[-self.policy.collection_limits.max_decisions :]
+        )
         next_action_hint = ""
         if open_loops:
             next_action_hint = open_loops[-1]
@@ -716,7 +753,7 @@ class _ContextOSStateMixin:
                     reason="root",
                 )
             )
-        for open_loop_entry in working_state.task_state.open_loops[-self.policy.max_open_loops :]:
+        for open_loop_entry in working_state.task_state.open_loops[-self.policy.collection_limits.max_open_loops :]:
             included.append(
                 ContextSliceSelection(
                     selection_type="state",
@@ -804,7 +841,7 @@ class _ContextOSStateMixin:
             budget_tokens=budget_plan.input_budget,
             roots=tuple(roots),
             included=tuple(included),
-            excluded=tuple(excluded[: max(12, self.policy.max_active_window_messages)]),
+            excluded=tuple(excluded[: max(12, self.policy.context_window.max_active_window_messages)]),
             pressure_level=pressure_level,
         )
         logger.debug(
@@ -827,16 +864,22 @@ class _ContextOSStateMixin:
         goal = working_state.task_state.current_goal.value if working_state.task_state.current_goal is not None else ""
         if goal:
             lines.append(f"Current goal: {goal}")
-        loops = [item.value for item in working_state.task_state.open_loops[-self.policy.max_open_loops :]]
+        loops = [
+            item.value for item in working_state.task_state.open_loops[-self.policy.collection_limits.max_open_loops :]
+        ]
         if loops:
             lines.append("Open loops: " + "; ".join(loops))
-        blocked = [item.value for item in working_state.task_state.blocked_on[: self.policy.max_open_loops]]
+        blocked = [
+            item.value for item in working_state.task_state.blocked_on[: self.policy.collection_limits.max_open_loops]
+        ]
         if blocked:
             lines.append("Blocked on: " + "; ".join(blocked))
-        decisions = [item.summary for item in working_state.decision_log[: self.policy.max_decisions]]
+        decisions = [item.summary for item in working_state.decision_log[: self.policy.collection_limits.max_decisions]]
         if decisions:
             lines.append("Recent decisions: " + "; ".join(decisions))
-        entities = [item.value for item in working_state.active_entities[: self.policy.max_stable_facts]]
+        entities = [
+            item.value for item in working_state.active_entities[: self.policy.collection_limits.max_stable_facts]
+        ]
         if entities:
             lines.append("Active entities: " + "; ".join(entities))
         if artifact_stubs:

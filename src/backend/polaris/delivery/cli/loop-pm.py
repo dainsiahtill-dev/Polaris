@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# noqa: N999 - CLI script with hyphenated name (convention for CLI tools)
+# ruff: noqa: N999
+
 """PM wrapper for Ollama loop - CLI entry point.
 
 This file delegates to the canonical implementation in the pm/ package.
@@ -85,8 +86,6 @@ from polaris.delivery.cli.pm.task_helpers import (
     _auto_assign_role,
     compute_task_fingerprint,
 )
-from polaris.kernelone.process.ollama_utils import invoke_ollama
-from polaris.kernelone.tool_execution.io_tools import ensure_ollama_available
 
 # Import DirectorInterface integration
 try:
@@ -151,19 +150,13 @@ def _invoke_pm_backend(*args, **kwargs):
 
 def run_once(args, iteration=1):
     # Keep wrapper-level monkeypatch behavior for tests that patch this module.
-    prev_invoke_ollama = _pm_backend_module.invoke_ollama
-    prev_ensure_ollama_available = _pm_backend_module.ensure_ollama_available
     prev_backend_invoke = _pm_backend_module.invoke_pm_backend
     prev_engine_invoke = _pm_orchestration_engine_module.invoke_pm_backend
     try:
-        _pm_backend_module.invoke_ollama = invoke_ollama
-        _pm_backend_module.ensure_ollama_available = ensure_ollama_available
         _pm_backend_module.invoke_pm_backend = _invoke_pm_backend
         _pm_orchestration_engine_module.invoke_pm_backend = _invoke_pm_backend
         return _run_once_impl(args, iteration=iteration)
     finally:
-        _pm_backend_module.invoke_ollama = prev_invoke_ollama
-        _pm_backend_module.ensure_ollama_available = prev_ensure_ollama_available
         _pm_backend_module.invoke_pm_backend = prev_backend_invoke
         _pm_orchestration_engine_module.invoke_pm_backend = prev_engine_invoke
 

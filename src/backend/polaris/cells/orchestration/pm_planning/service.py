@@ -936,7 +936,6 @@ class PMService:
 
         if settings.pm.runs_director:
             cmd.append("--run-director")
-            cmd.extend(["--director-path", str(settings.director_script_path)])
             if settings.pm.director_show_output:
                 cmd.append("--director-show-output")
             cmd.extend(

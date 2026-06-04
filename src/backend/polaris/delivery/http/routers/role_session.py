@@ -15,11 +15,10 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from polaris.cells.audit.evidence.public.service import RoleSessionAuditService
-from polaris.cells.llm.dialogue.public.service import generate_role_response_streaming
 from polaris.cells.roles.session.public import (
     AttachmentMode,
     RoleHostKind,
@@ -69,10 +68,8 @@ from polaris.kernelone.events.constants import (
 from pydantic import BaseModel
 
 from ._shared import StructuredHTTPException, ensure_required_roles_ready, get_state, require_auth
+from .role_runtime_chat import execute_role_chat_streaming
 from .sse_utils import create_sse_response, sse_event_generator
-
-if TYPE_CHECKING:
-    from polaris.cells.runtime.state_owner.public.service import AppState
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +332,7 @@ def _audit_total(audit_service: Any, session_id: str, event_type: str | None, ev
 
 
 def _workspace_value(settings: Any) -> str:
-    """Resolve active desktop workspace with legacy fallback."""
+    """Resolve active desktop workspace from compatible settings fields."""
     return active_workspace_value(settings)
 
 
@@ -719,8 +716,6 @@ async def send_message_stream(
 
     使用 SSE 进行流式响应。
     """
-    state: AppState = get_state(request)
-
     try:
         with _role_session_service(request) as service:
             session = service.get_session(session_id)
@@ -753,7 +748,7 @@ async def send_message_stream(
                 )
                 session_context = None
 
-            projection = _SESSION_CONTINUITY_ENGINE.project(
+            projection = await _SESSION_CONTINUITY_ENGINE.project(
                 SessionContinuityRequest(
                     session_id=session_id,
                     role=session_role,
@@ -786,12 +781,14 @@ async def send_message_stream(
             async def _run_role_session_dialogue(queue: asyncio.Queue[dict[str, Any]]) -> None:
                 output_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
                 producer_task = asyncio.create_task(
-                    generate_role_response_streaming(
+                    execute_role_chat_streaming(
                         workspace=session_workspace,
-                        settings=state.settings,
                         role=session_role,
                         message=payload.content,
                         output_queue=output_queue,
+                        payload=None,
+                        default_domain="general",
+                        host_kind="role_session_http_stream",
                         context=runtime_context,
                         session_id=session_id,
                         history=runtime_history,

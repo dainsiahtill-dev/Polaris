@@ -17,9 +17,9 @@ TurnTransactionController 是**新架构**的事务化执行器，与 TurnEngine
 | 停止条件 | PolicyLayer.evaluate() | State Machine 状态转换 |
 | LLM调用 | `self._llm_caller.call()` | `self.llm_provider()` |
 
-**迁移路径**：
+**执行路径**：
 - TransactionKernel is the canonical execution path.
-- Legacy fallback controlled by LEGACY_FALLBACK env var.
+- Workflow handoff is explicit and must surface runtime failures as turn errors.
 
 核心职责：
 1. 替代旧的continuation loop，执行显式事务化turn
@@ -98,6 +98,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import R
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import StreamOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     build_single_batch_task_contract_hint,
+    extract_allowed_tool_names_from_definitions,
     extract_latest_user_message,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
@@ -1404,6 +1405,7 @@ class TurnTransactionController:
 
         elif decision_kind == TurnDecisionKind.TOOL_BATCH:
             shadow_engine = self._build_stream_shadow_engine(workspace=".", turn_id=turn_id)
+            allowed_tool_names = extract_allowed_tool_names_from_definitions(tool_definitions)
             try:
                 return await self._tool_batch_executor.execute_tool_batch(
                     decision,
@@ -1412,6 +1414,7 @@ class TurnTransactionController:
                     context,
                     stream=False,
                     shadow_engine=shadow_engine,
+                    allowed_tool_names=allowed_tool_names,
                 )
             except RuntimeError as exc:
                 if not is_mutation_contract_violation(exc):

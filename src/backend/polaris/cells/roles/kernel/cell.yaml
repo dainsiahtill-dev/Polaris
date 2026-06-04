@@ -78,8 +78,8 @@ verification:
   - tests/test_turn_engine_policy_convergence.py
   - tests/test_kernel_stream_tool_loop.py
   gaps:
-  - Some legacy callers still import role kernel components through application-level
-    compatibility paths.
+  - Some callers still import role kernel components through transitional compatibility
+    paths instead of canonical public contracts.
   - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts,
     but parser input and transcript output are not yet compile-time-distinct types.
 
@@ -95,8 +95,8 @@ verification:
     \ request) — async generator yielding event dicts Both accept RoleTurnRequest\
     \ with mode=RoleExecutionMode.CHAT or WORKFLOW. Unified path (mandatory):\n  \
     \  RoleRuntimeService → RoleExecutionKernel (CHAT | WORKFLOW mode)\nRoles.kernel\
-    \ is the execution engine; roles.runtime is the facade + lifecycle. Legacy standalone\
-    \ paths (StandaloneRoleAgent, AgentService, RoleAgentTUI) are frozen — all production\
-    \ routes must go through RoleExecutionKernel.\n"
+    \ is the execution engine; roles.runtime is the facade + lifecycle. Frozen standalone\
+    \ surfaces (StandaloneRoleAgent, AgentService, RoleAgentTUI) are non-production\
+    \ compatibility windows — all production routes must go through RoleExecutionKernel.\n"
   smoke_commands: []
 generated_artifacts: []

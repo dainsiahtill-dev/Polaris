@@ -12,13 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from polaris.bootstrap.config import get_settings
-from polaris.cells.llm.dialogue.public.service import generate_role_response
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.engine import ResponseNormalizer
 from polaris.kernelone.storage import resolve_runtime_path, resolve_workspace_persistent_path
 
 from .base import BaseRoleAdapter
+from .runtime_dialogue import invoke_role_runtime_first
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +121,26 @@ class ArchitectAdapter(BaseRoleAdapter):
             "constraint_propagation",
         ]
 
+    async def _call_architect_llm(
+        self,
+        *,
+        task_id: str,
+        attempt_label: str,
+        message: str,
+    ) -> dict[str, Any]:
+        return await invoke_role_runtime_first(
+            workspace=self.workspace,
+            role=self.role_id,
+            message=message,
+            context={
+                "task_id": task_id,
+                "attempt_label": attempt_label,
+                "validate_output": True,
+            },
+            validate_output=False,
+            max_retries=1,
+        )
+
     async def execute(
         self,
         task_id: str,
@@ -134,15 +153,10 @@ class ArchitectAdapter(BaseRoleAdapter):
 
         try:
             message = self._build_architect_message(directive)
-            settings = get_settings()
-            response = await generate_role_response(
-                workspace=self.workspace,
-                settings=settings,
-                role=self.role_id,
+            response = await self._call_architect_llm(
+                task_id=task_id,
+                attempt_label="initial",
                 message=message,
-                context={"validate_output": True},
-                validate_output=False,
-                max_retries=1,
             )
             content = str(response.get("response") or "") if isinstance(response, dict) else str(response or "")
             response_error = str(response.get("error") or "") if isinstance(response, dict) else ""
@@ -178,15 +192,10 @@ class ArchitectAdapter(BaseRoleAdapter):
                 and not skip_llm_doc_repairs
             ):
                 force_message = self._build_force_finalize_message(directive, content)
-                settings = get_settings()
-                force_response = await generate_role_response(
-                    workspace=self.workspace,
-                    settings=settings,
-                    role=self.role_id,
+                force_response = await self._call_architect_llm(
+                    task_id=task_id,
+                    attempt_label="force_finalize",
                     message=force_message,
-                    context={"validate_output": True},
-                    validate_output=False,
-                    max_retries=1,
                 )
                 force_content = (
                     str(force_response.get("response") or "")
@@ -233,15 +242,10 @@ class ArchitectAdapter(BaseRoleAdapter):
                     content,
                     retry_round=retry_round,
                 )
-                settings = get_settings()
-                retry_response = await generate_role_response(
-                    workspace=self.workspace,
-                    settings=settings,
-                    role=self.role_id,
+                retry_response = await self._call_architect_llm(
+                    task_id=task_id,
+                    attempt_label=f"quality_retry_{retry_round}",
                     message=retry_message,
-                    context={"validate_output": True},
-                    validate_output=False,
-                    max_retries=1,
                 )
                 retry_content = (
                     str(retry_response.get("response") or "")
@@ -597,15 +601,10 @@ class ArchitectAdapter(BaseRoleAdapter):
         if not self._should_attempt_truncated_docs_repair(content, docs):
             return result, content, docs, issues
 
-        settings = get_settings()
-        repair_response = await generate_role_response(
-            workspace=self.workspace,
-            settings=settings,
-            role=self.role_id,
+        repair_response = await self._call_architect_llm(
+            task_id=task_id,
+            attempt_label=f"{attempt_label}_truncation_repair",
             message=self._build_truncated_docs_repair_message(directive, content),
-            context={"validate_output": True},
-            validate_output=False,
-            max_retries=1,
         )
         repair_content = (
             str(repair_response.get("response") or "")

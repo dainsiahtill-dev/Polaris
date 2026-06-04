@@ -1,4 +1,4 @@
-"""Cognitive Life Form CLI - Simple demo tool for testing the cognitive pipeline."""
+"""Cognitive pipeline CLI demo."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ import os
 
 
 def main() -> None:
-    """Simple CLI demo for Cognitive Life Form."""
+    """Simple CLI demo for the cognitive pipeline."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Cognitive Life Form Demo")
+    parser = argparse.ArgumentParser(description="Cognitive Pipeline Demo")
     parser.add_argument("message", nargs="?", default="Read the file at src/main.py", help="Message to process")
     parser.add_argument("--session", default="cli_demo", help="Session ID")
     parser.add_argument("--role", default="director", help="Role (pm, architect, chief_engineer, director, qa, scout)")
@@ -21,7 +21,7 @@ def main() -> None:
 
     # Handle diagnose mode
     if args.diagnose:
-        print("=== Cognitive Life Form System Status ===")
+        print("=== Cognitive Pipeline System Status ===")
         print()
         print("--- Core Components ---")
         print("CognitiveOrchestrator: Available")
@@ -56,7 +56,7 @@ def main() -> None:
     async def run() -> None:
         orchestrator = CognitiveOrchestrator()
 
-        print("=== Cognitive Life Form Demo ===")
+        print("=== Cognitive Pipeline Demo ===")
         print(f"Message: {args.message}")
         print(f"Session: {args.session}")
         print(f"Role: {args.role}")

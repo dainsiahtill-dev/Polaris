@@ -168,35 +168,35 @@ class TestRuntimeAdminService:
 
     # -- create_transaction_controller ---------------------------------------
 
-    def test_create_transaction_controller_success(self) -> None:
+    async def test_create_transaction_controller_success(self) -> None:
         fake = MagicMock()
         fake.create_transaction_controller.return_value = {"ctrl": 1}
         svc = RuntimeAdminService(runtime=fake)
         cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
-        result = svc.create_transaction_controller(cmd)
+        result = await svc.create_transaction_controller(cmd)
         assert result == {"ctrl": 1}
 
-    def test_create_transaction_controller_unsupported(self) -> None:
+    async def test_create_transaction_controller_unsupported(self) -> None:
         fake = MagicMock()
         fake.create_transaction_controller = None
         svc = RuntimeAdminService(runtime=fake)
         cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
         with pytest.raises(RuntimeAdminError) as exc_info:
-            svc.create_transaction_controller(cmd)
+            await svc.create_transaction_controller(cmd)
         assert exc_info.value.code == "unsupported_runtime_capability"
 
-    def test_create_transaction_controller_creation_error(self) -> None:
+    async def test_create_transaction_controller_creation_error(self) -> None:
         fake = MagicMock()
         fake.create_transaction_controller.side_effect = ValueError("boom")
         svc = RuntimeAdminService(runtime=fake)
         cmd = RuntimeAdminService.build_session_command(role="pm", session_id="s1", workspace="/tmp", user_message="hi")
         with pytest.raises(RuntimeAdminError) as exc_info:
-            svc.create_transaction_controller(cmd)
+            await svc.create_transaction_controller(cmd)
         assert exc_info.value.code == "transaction_controller_creation_error"
 
     # -- create_orchestrator_handle ------------------------------------------
 
-    def test_create_orchestrator_handle_success(self) -> None:
+    async def test_create_orchestrator_handle_success(self) -> None:
         fake_runtime = MagicMock()
         fake_runtime.create_transaction_controller.return_value = {"ctrl": 1}
         svc = RuntimeAdminService(runtime=fake_runtime)
@@ -205,7 +205,7 @@ class TestRuntimeAdminService:
             "polaris.cells.roles.runtime.internal.session_orchestrator.RoleSessionOrchestrator",
             return_value=FakeOrchestrator(),
         ) as mock_orch:
-            handle = svc.create_orchestrator_handle(
+            handle = await svc.create_orchestrator_handle(
                 session_id="s1",
                 workspace="/tmp",
                 role="pm",
@@ -222,7 +222,7 @@ class TestRuntimeAdminService:
             )
         assert isinstance(handle, OrchestratorHandle)
 
-    def test_create_orchestrator_handle_instantiation_error(self) -> None:
+    async def test_create_orchestrator_handle_instantiation_error(self) -> None:
         fake_runtime = MagicMock()
         fake_runtime.create_transaction_controller.return_value = {"ctrl": 1}
         svc = RuntimeAdminService(runtime=fake_runtime)
@@ -234,7 +234,7 @@ class TestRuntimeAdminService:
             ),
             pytest.raises(RuntimeAdminError) as exc_info,
         ):
-            svc.create_orchestrator_handle(
+            await svc.create_orchestrator_handle(
                 session_id="s1",
                 workspace="/tmp",
                 role="pm",

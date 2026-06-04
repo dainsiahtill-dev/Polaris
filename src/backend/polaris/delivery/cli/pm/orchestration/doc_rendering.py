@@ -1,10 +1,13 @@
 """Document rendering utilities for orchestration."""
 
+import asyncio
 import json
 import logging
 import os
 import re
-from typing import Any
+import threading
+from typing import Any, Coroutine, TypeVar
+from uuid import uuid4
 
 from .directive_processing import (
     _contains_prompt_leakage,
@@ -14,6 +17,7 @@ from .helpers import (
 )
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 def _doc_generation_brief(rel_path: str) -> str:
@@ -127,6 +131,73 @@ def _normalize_doc_markdown(text: str) -> str:
     return body.strip() + "\n"
 
 
+def _run_async_from_sync(coro: Coroutine[Any, Any, T]) -> T:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result_box: dict[str, T] = {}
+    error_box: dict[str, BaseException] = {}
+
+    def _runner() -> None:
+        try:
+            result_box["result"] = asyncio.run(coro)
+        except (ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            error_box["error"] = exc
+
+    thread = threading.Thread(target=_runner, name="architect-doc-role-runtime", daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in error_box:
+        raise error_box["error"]
+    return result_box["result"]
+
+
+def _create_role_runtime_service() -> Any:
+    from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+    return RoleRuntimeService()
+
+
+def _invoke_architect_doc_runtime(
+    *,
+    workspace_full: str,
+    rel_path: str,
+    prompt: str,
+    timeout_seconds: int,
+    fallback_model: str,
+) -> Any:
+    from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+
+    workspace = str(workspace_full or ".").strip() or "."
+    command = ExecuteRoleSessionCommandV1(
+        role="architect",
+        session_id=f"architect-docs-{uuid4().hex}",
+        workspace=workspace,
+        user_message=prompt,
+        domain="document",
+        context={
+            "source": "pm_doc_rendering",
+            "doc_path": rel_path,
+        },
+        metadata={
+            "role_runtime_required": True,
+            "cognitive_runtime_required": True,
+            "context_os_expected": True,
+            "source": "pm_doc_rendering",
+            "doc_path": rel_path,
+            "timeout_seconds": timeout_seconds,
+            "fallback_model": str(fallback_model or "").strip(),
+            "runtime_fallback_used": False,
+            "fallback_policy": "fail_closed",
+        },
+        stream=False,
+        host_kind="pm_doc_rendering",
+    )
+    return _run_async_from_sync(_create_role_runtime_service().execute_role_session(command))
+
+
 def _render_llm_authored_docs(
     *,
     workspace_full: str,
@@ -138,21 +209,6 @@ def _render_llm_authored_docs(
     """Render LLM-authored documents."""
     if not _role_llm_docs_enabled():
         return docs_map, {"enabled": False, "attempted": 0, "accepted": 0}
-    try:
-        from polaris.cells.llm.provider_runtime.public import (
-            invoke_role_runtime_provider,
-        )
-    except (RuntimeError, ValueError) as exc:
-        logger.warning(
-            "Failed to import invoke_role_runtime_provider for role LLM docs, skipping rendering: %s",
-            exc,
-        )
-        return docs_map, {
-            "enabled": True,
-            "attempted": 0,
-            "accepted": 0,
-            "error": "runtime_invoke_unavailable",
-        }
 
     rendered: dict[str, str] = {}
     attempted = 0
@@ -192,21 +248,30 @@ def _render_llm_authored_docs(
                 qa_commands=qa_commands,
                 template_text=str(template_text or "") if attempt == 1 else "",
             )
-            result = invoke_role_runtime_provider(
-                role="architect",
-                workspace=workspace_full,
-                prompt=prompt,
-                fallback_model=fallback_model,
-                timeout=timeout_seconds,
-                blocked_provider_types=None,
-            )
-            candidate = _normalize_doc_markdown(result.output)
-            if result.ok and _document_quality_ok(candidate):
+            try:
+                result = _invoke_architect_doc_runtime(
+                    workspace_full=workspace_full,
+                    rel_path=rel_path,
+                    prompt=prompt,
+                    timeout_seconds=timeout_seconds,
+                    fallback_model=fallback_model,
+                )
+            except (ImportError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                last_error = str(exc or "").strip() or "role_runtime_invoke_failed"
+                logger.warning(
+                    "Architect role runtime doc rendering failed for %s attempt=%s: %s",
+                    rel_path,
+                    attempt,
+                    last_error,
+                )
+                continue
+            candidate = _normalize_doc_markdown(getattr(result, "output", ""))
+            if bool(getattr(result, "ok", False)) and _document_quality_ok(candidate):
                 rendered[rel_path] = candidate
                 accepted += 1
                 accepted_doc = True
                 break
-            last_error = str(getattr(result, "error", "") or "").strip()
+            last_error = str(getattr(result, "error_message", "") or "").strip()
         if not accepted_doc:
             rendered[rel_path] = str(template_text or "")
             failures.append(rel_path)

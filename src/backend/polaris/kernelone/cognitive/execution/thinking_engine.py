@@ -22,7 +22,7 @@ class ThinkingPhaseConfig:
 
 class ThinkingPhaseEngine:
     """
-    Implements the THINKING phase of Cognitive Life Form.
+    Implements the THINKING phase of the cognitive pipeline.
 
     THINKING PHASE characteristics:
     - Can be slow, hesitant, exploratory

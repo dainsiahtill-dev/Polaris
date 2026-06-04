@@ -36,6 +36,7 @@ from polaris.cells.roles.kernel.internal.transaction.read_strategy import (
 from polaris.cells.roles.kernel.internal.transaction.receipt_utils import normalize_batch_receipt
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
+    extract_allowed_tool_names_from_definitions,
     extract_continuation_prompt_metadata,
     extract_latest_user_message,
 )
@@ -1231,6 +1232,7 @@ class StreamOrchestrator:
             elif decision_kind == TurnDecisionKind.ASK_USER:
                 result = await self.handoff_handler.handle_ask_user(decision, state_machine, ledger)
             elif decision_kind == TurnDecisionKind.TOOL_BATCH:
+                allowed_tool_names = extract_allowed_tool_names_from_definitions(tool_definitions)
                 try:
                     result = await self.tool_batch_executor.execute_tool_batch(
                         decision,
@@ -1239,6 +1241,7 @@ class StreamOrchestrator:
                         context,
                         stream=True,
                         shadow_engine=shadow_engine,
+                        allowed_tool_names=allowed_tool_names,
                     )
                 except (RuntimeError, KernelGuardError) as exc:
                     if not isinstance(exc, RuntimeError) or not is_mutation_contract_violation(exc):

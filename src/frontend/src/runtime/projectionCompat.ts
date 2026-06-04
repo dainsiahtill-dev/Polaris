@@ -9,6 +9,8 @@
 
 import {
   RuntimeProjectionPayload,
+  RuntimeProjectionProvenance,
+  RuntimeProjectionSource,
   PMLocalStatus,
   DirectorLocalStatus,
   WorkflowStatus,
@@ -167,6 +169,82 @@ type LegacyResponse = LegacyPMResponse &
 // Compatibility Functions
 // ============================================================================
 
+const LEGACY_FIELD_NAMES = [
+  "pm_status",
+  "pm_current_task",
+  "pm_running",
+  "pm_phase",
+  "pm_progress",
+  "pm_message",
+  "director_status",
+  "director_active",
+  "director_running",
+  "director_phase",
+  "director_completed",
+  "director_failed",
+  "director_run_id",
+  "director_queue_depth",
+  "workflow_loaded",
+  "workflow_tasks",
+  "workflow_run_id",
+  "workflow_completed_at",
+  "tasks",
+  "engine_available",
+  "engine_version",
+  "engine_mode",
+  "engine_health",
+  "engine_last_check",
+] as const;
+
+function createProjectionProvenance(params: {
+  source: RuntimeProjectionSource;
+  transformed: boolean;
+  receivedAt: string;
+  reason?: string;
+  legacyFields?: string[];
+  sourceSchema?: string;
+}): RuntimeProjectionProvenance {
+  return {
+    source: params.source,
+    transformed: params.transformed,
+    received_at: params.receivedAt,
+    source_schema: params.sourceSchema,
+    compatibility_reason: params.reason,
+    legacy_fields: params.legacyFields && params.legacyFields.length > 0 ? params.legacyFields : undefined,
+  };
+}
+
+function collectLegacyFields(response: unknown, hasNestedFormat: boolean): string[] {
+  if (!response || typeof response !== "object") return [];
+  const obj = response as Record<string, unknown>;
+  const fields = LEGACY_FIELD_NAMES.filter((field) => field in obj);
+  if (hasNestedFormat) {
+    for (const field of ["pm_status", "director_status", "snapshot", "engine_status"]) {
+      if (field in obj && !fields.includes(field as (typeof LEGACY_FIELD_NAMES)[number])) {
+        fields.push(field as (typeof LEGACY_FIELD_NAMES)[number]);
+      }
+    }
+  }
+  return Array.from(new Set(fields));
+}
+
+function attachProjectionProvenance(
+  projection: RuntimeProjectionPayload,
+  provenance: RuntimeProjectionProvenance
+): RuntimeProjectionPayload {
+  const snapshotCompat = {
+    ...projection.snapshot_compat,
+    projection_source: provenance.source,
+    projection_provenance: provenance,
+  };
+  return {
+    ...projection,
+    projection_source: provenance.source,
+    provenance,
+    snapshot_compat: snapshotCompat,
+  };
+}
+
 /**
  * Convert any response format to canonical RuntimeProjectionPayload
  *
@@ -181,7 +259,20 @@ export function toCanonicalProjection(response: unknown): RuntimeProjectionPaylo
 
   // Already canonical
   if (isCanonicalProjection(response)) {
-    return response as RuntimeProjectionPayload;
+    const canonical = response as RuntimeProjectionPayload;
+    if (canonical.projection_source && canonical.provenance) {
+      return canonical;
+    }
+    const receivedAt = canonical.generated_at || new Date().toISOString();
+    return attachProjectionProvenance(
+      canonical,
+      createProjectionProvenance({
+        source: "canonical",
+        transformed: false,
+        receivedAt,
+        sourceSchema: "runtime_projection",
+      })
+    );
   }
 
   // Check for nested WebSocket format (pm_status, director_status, snapshot as objects)
@@ -194,15 +285,24 @@ export function toCanonicalProjection(response: unknown): RuntimeProjectionPaylo
 
   // Legacy format conversion
   const legacy = response as LegacyResponse;
+  const generatedAt = new Date().toISOString();
+  const source: RuntimeProjectionSource = hasNestedFormat ? "legacy_nested" : "legacy_flat";
+  const provenance = createProjectionProvenance({
+    source,
+    transformed: true,
+    receivedAt: generatedAt,
+    reason: hasNestedFormat ? "nested_status_compat" : "legacy_flat_compat",
+    legacyFields: collectLegacyFields(response, Boolean(hasNestedFormat)),
+  });
 
-  return {
+  return attachProjectionProvenance({
     pm: normalizePMStatus(legacy, hasNestedFormat ? nested : undefined),
     director: normalizeDirectorStatus(legacy, hasNestedFormat ? nested : undefined),
     workflow: normalizeWorkflowStatus(legacy, hasNestedFormat ? nested : undefined),
     engine: normalizeEngineStatus(legacy, hasNestedFormat ? nested : undefined),
     snapshot_compat: extractCompatFields(legacy, hasNestedFormat ? nested : undefined),
-    generated_at: new Date().toISOString(),
-  };
+    generated_at: generatedAt,
+  }, provenance);
 }
 
 /**
@@ -545,14 +645,20 @@ function calculateProgress(tasks: WorkflowTask[]): number {
  * Create an empty projection for initialization
  */
 export function createEmptyProjection(): RuntimeProjectionPayload {
-  return {
+  const generatedAt = new Date().toISOString();
+  return attachProjectionProvenance({
     pm: null,
     director: null,
     workflow: null,
     engine: null,
     snapshot_compat: {},
-    generated_at: new Date().toISOString(),
-  };
+    generated_at: generatedAt,
+  }, createProjectionProvenance({
+    source: "empty",
+    transformed: false,
+    receivedAt: generatedAt,
+    reason: "empty_runtime_projection",
+  }));
 }
 
 /**
@@ -566,15 +672,29 @@ export function mergeProjections(
   base: RuntimeProjectionPayload,
   update: Partial<RuntimeProjectionPayload>
 ): RuntimeProjectionPayload {
+  const generatedAt = update.generated_at || base.generated_at;
+  const provenance =
+    update.provenance ||
+    base.provenance ||
+    createProjectionProvenance({
+      source: "merged",
+      transformed: false,
+      receivedAt: generatedAt,
+      reason: "projection_merge_without_source",
+    });
   return {
     ...base,
     ...update,
+    projection_source: update.projection_source || base.projection_source || provenance.source,
+    provenance,
     snapshot_compat: {
       ...base.snapshot_compat,
       ...update.snapshot_compat,
+      projection_source: update.projection_source || base.projection_source || provenance.source,
+      projection_provenance: provenance,
     },
     // Keep the most recent generated_at if not explicitly provided
-    generated_at: update.generated_at || base.generated_at,
+    generated_at: generatedAt,
   };
 }
 
@@ -584,7 +704,18 @@ export function mergeProjections(
 export function createPartialProjection(
   partial: Partial<RuntimeProjectionPayload>
 ): RuntimeProjectionPayload {
-  return mergeProjections(createEmptyProjection(), partial);
+  const generatedAt = partial.generated_at || new Date().toISOString();
+  return mergeProjections(createEmptyProjection(), {
+    projection_source: "partial",
+    provenance: createProjectionProvenance({
+      source: "partial",
+      transformed: false,
+      receivedAt: generatedAt,
+      reason: "partial_runtime_projection",
+    }),
+    generated_at: generatedAt,
+    ...partial,
+  });
 }
 
 // ============================================================================

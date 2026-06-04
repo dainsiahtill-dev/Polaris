@@ -321,15 +321,15 @@ class TestPmLoopCli:
         assert args.iterations == 1
         assert args.agent == "pm"
 
-    def test_loop_pm_parser_default_director_path_is_absolute(
+    def test_loop_pm_parser_default_director_path_is_canonical(
         self,
         pm_loop_parser: argparse.ArgumentParser,
     ) -> None:
-        """loop-pm must not inherit a cwd-sensitive Director script path."""
+        """loop-pm must expose the canonical Director CLI compatibility path."""
         args = pm_loop_parser.parse_args([])
         director_path = Path(args.director_path)
         assert director_path.is_absolute()
-        assert director_path.name == "loop-director.py"
+        assert director_path.name == "director_v2.py"
         assert director_path.is_file()
 
     def test_loop_pm_parser_accepts_pm_service_contract(self, pm_loop_parser: argparse.ArgumentParser) -> None:

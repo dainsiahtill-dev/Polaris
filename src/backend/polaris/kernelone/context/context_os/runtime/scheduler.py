@@ -135,7 +135,7 @@ class _ContextOSSchedulerMixin:
                 source_turns=(f"t{int(call_sequence)}",),
                 artifact_id=None,
                 created_at=_utc_now_iso(),
-                metadata=tc_metadata,
+                metadata=tuple(tc_metadata.items()),
                 content_ref_hash=tc_content_ref.hash if tc_content_ref else "",
                 content_ref_size=int(tc_content_ref.size) if tc_content_ref else 0,
                 content_ref_mime=tc_content_ref.mime if tc_content_ref else "",
@@ -228,7 +228,7 @@ class _ContextOSSchedulerMixin:
                 source_turns=source_turns,
                 artifact_id=artifact_id,
                 created_at=created_at,
-                metadata=metadata,
+                metadata=tuple(metadata.items()),
                 content_ref_hash=content_ref.hash if content_ref else "",
                 content_ref_size=int(content_ref.size) if content_ref else 0,
                 content_ref_mime=content_ref.mime if content_ref else "",
@@ -525,10 +525,10 @@ class _ContextOSSchedulerMixin:
     ) -> tuple[TranscriptEvent, ...]:
         if not transcript:
             return ()
-        min_recent_floor = max(1, int(self.policy.min_recent_messages_pinned or 1))
-        min_recent_floor = min(self.policy.max_active_window_messages, min_recent_floor)
+        min_recent_floor = max(1, int(self.policy.window_size.min_recent_messages_pinned or 1))
+        min_recent_floor = min(self.policy.context_window.max_active_window_messages, min_recent_floor)
         recent_limit = max(min_recent_floor, int(recent_window_messages or 1))
-        recent_limit = max(1, min(self.policy.max_active_window_messages, recent_limit))
+        recent_limit = max(1, min(self.policy.context_window.max_active_window_messages, recent_limit))
         recent_candidates = list(transcript[-recent_limit:])
         forced_recent_ids = {item.event_id for item in transcript[-min_recent_floor:]}
         pinned_sequences: set[int] = {item.sequence for item in recent_candidates}
@@ -548,7 +548,7 @@ class _ContextOSSchedulerMixin:
         active_artifact_ids = set(working_state.active_artifacts)
         pinned_events: dict[str, TranscriptEvent] = {}
         # Use policy-based allocation ratio instead of hard-coded 0.45 (T3-6)
-        active_window_ratio = getattr(self.policy, "active_window_budget_ratio", 0.45)
+        active_window_ratio = self.policy.token_budget.active_window_budget_ratio
         token_budget = max(512, min(budget_plan.soft_limit, int(budget_plan.input_budget * active_window_ratio)))
         token_count = 0
         for item in reversed(transcript):
@@ -561,7 +561,7 @@ class _ContextOSSchedulerMixin:
                 or is_reopened
                 or item.event_id in forced_recent_ids
             )
-            can_add = is_root or len(pinned_events) < self.policy.max_active_window_messages
+            can_add = is_root or len(pinned_events) < self.policy.context_window.max_active_window_messages
             if not can_add:
                 continue
             item_content = item.content

@@ -55,7 +55,7 @@ class ProcessLaunchRequest:
 
     This unifies the launch semantics for:
     - PM CLI (loop-pm)
-    - Director CLI (loop-director)
+    - Director CLI (director_v2)
     - Backend-managed processes
 
     Attributes:
