@@ -11,6 +11,7 @@ purpose: 'Provide role dialogue and docs dialogue prompt/response orchestration 
 current_modules:
 - polaris.cells.llm.dialogue.public.service
 - polaris.cells.llm.dialogue.internal.role_dialogue
+- polaris.cells.llm.dialogue.internal.cognitive_evidence
 - polaris.cells.llm.dialogue.internal.docs_dialogue
 - polaris.cells.llm.dialogue.internal.docs_suggest
 tags: []
@@ -32,6 +33,7 @@ public_contracts:
   - LlmDialogueErrorV1
 depends_on:
 - context.engine
+- factory.cognitive_runtime
 - llm.provider_runtime
 - llm.tool_runtime
 - policy.workspace_guard
@@ -45,12 +47,14 @@ state_owners: []
 effects_allowed:
 - fs.read:workspace/**
 - fs.read:runtime/**
+- fs.write:runtime/cognitive_runtime/**
 - llm.invoke:roles/*
 - ws.outbound:runtime/*
 verification:
   tests:
   - tests/test_role_dialogue_validation_retry.py
   - tests/test_docs_suggest.py
+  - tests/test_docs_dialogue_cognitive_runtime.py
   - tests/test_interactive_interview_streaming_fallback.py
   gaps:
   - Remaining direct imports to internal modules must be migrated to public service/contracts.

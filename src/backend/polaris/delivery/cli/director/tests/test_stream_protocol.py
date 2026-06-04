@@ -668,6 +668,7 @@ class TestStreamTurnRoleRouting:
         ]
 
     def test_stream_turn_projects_current_user_without_duplicate_history(self, mock_host: RoleConsoleHost) -> None:
+        current_request = "Update src/app.ts to add a health-check route."
         create_payload = {
             "id": "sess-projection",
             "context_config": {"role": "director", "host_kind": "cli"},
@@ -695,17 +696,17 @@ class TestStreamTurnRoleRouting:
                 assert mock_persist.call_count == 1
                 first_call = mock_persist.call_args_list[0]
                 assert first_call.kwargs["role"] == "user"
-                assert first_call.kwargs["content"] == "hello"
+                assert first_call.kwargs["content"] == current_request
                 projected_messages = session_payload.get("messages")
                 assert isinstance(projected_messages, list)
                 tail = projected_messages[-1]
                 assert isinstance(tail, dict)
                 assert tail.get("role") == "user"
-                assert tail.get("content") == "hello"
+                assert tail.get("content") == current_request
                 return SessionContinuityProjection(
                     recent_messages=(
                         {"role": "assistant", "content": "previous"},
-                        {"role": "user", "content": "hello"},
+                        {"role": "user", "content": current_request},
                     ),
                     prompt_context={},
                     persisted_context_config={},
@@ -721,7 +722,7 @@ class TestStreamTurnRoleRouting:
             with patch.object(mock_host, "_project_session_continuity", side_effect=_project):
 
                 async def run() -> None:
-                    async for _ in mock_host.stream_turn(None, "hello"):
+                    async for _ in mock_host.stream_turn(None, current_request):
                         pass
 
                 asyncio.run(run())
@@ -729,10 +730,11 @@ class TestStreamTurnRoleRouting:
         assert recorded_history == (("assistant", "previous"),)
 
     def test_stream_turn_trims_duplicate_tail_when_current_user_not_injected(self, mock_host: RoleConsoleHost) -> None:
+        current_request = "Modify src/app.ts to return 200 from /health."
         create_payload = {
             "id": "sess-projection-existing-user-tail",
             "context_config": {"role": "director", "host_kind": "cli"},
-            "messages": [{"sequence": 0, "role": "user", "content": "hello"}],
+            "messages": [{"sequence": 0, "role": "user", "content": current_request}],
         }
         recorded_history: tuple[tuple[str, str], ...] | None = None
 
@@ -755,7 +757,7 @@ class TestStreamTurnRoleRouting:
                 assert isinstance(projected_messages, list)
                 assert len(projected_messages) == 1
                 return SessionContinuityProjection(
-                    recent_messages=({"role": "user", "content": "hello"},),
+                    recent_messages=({"role": "user", "content": current_request},),
                     prompt_context={},
                     persisted_context_config={},
                     changed=False,
@@ -770,7 +772,7 @@ class TestStreamTurnRoleRouting:
             with patch.object(mock_host, "_project_session_continuity", side_effect=_project):
 
                 async def run() -> None:
-                    async for _ in mock_host.stream_turn(None, "hello"):
+                    async for _ in mock_host.stream_turn(None, current_request):
                         pass
 
                 asyncio.run(run())

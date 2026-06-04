@@ -1,10 +1,18 @@
 card_id: "vc-20260417-speculative-execution-kernel-v2"
 bug_summary: >
-  StreamShadowEngine 当前仅是一个骨架实现：以 READONLY_TOOLS 二分法做权限判定、
+  StreamShadowEngine 在本卡立项时仅是一个骨架实现：以 READONLY_TOOLS 二分法做权限判定、
   0.2s timeout 后直接 task.cancel() 强杀、缺少 ADOPT/JOIN/CANCEL/REPLAY 事务语义、
   无参数稳定度判定、无预算治理、无可追踪的 ShadowTaskRegistry。
   这导致高并发或复杂流式场景下可能出现 ghost tasks、重复执行、错误复用旧结果、
   以及取消不干净等资源泄漏问题。
+
+current_status_override: >
+  2026-06-04: This card records the 2026-04-17 construction baseline, not the
+  current production status. Speculative execution now defaults to enabled via
+  speculative_flags.py, explicit false still acts as a rollback switch, and
+  write-tool speculation must fail closed unless registry-backed prepare shadow
+  proves safety. Current activation evidence is recorded in
+  vc-20260604-cognitive-runtime-contextos-production-activation.yaml.
 
 classification: structural
 
@@ -15,14 +23,16 @@ bug_path:
 
 assumptions:
   - id: "A1"
-    statement: "当前 StreamShadowEngine 和 SpeculativeExecutor 已实现骨架代码，默认 feature flag 关闭。"
+    statement: "At card creation time, StreamShadowEngine and SpeculativeExecutor were skeleton code with feature flag default off; current status is superseded by vc-20260604-cognitive-runtime-contextos-production-activation."
     status: verified_true
     evidence: >
       已核对 polaris/cells/roles/kernel/internal/stream_shadow_engine.py L17-91：
       consume_delta() 仅缓冲 + 关键词触发；speculate_tool_call() 检查 READONLY_TOOLS。
       polaris/cells/roles/kernel/internal/speculative_executor.py L16-64：
       调用 ToolBatchRuntime.execute_batch() 执行 speculative batch。
-      polaris/cells/roles/kernel/internal/speculative_flags.py：默认关闭。
+      polaris/cells/roles/kernel/internal/speculative_flags.py 在 2026-04-17 基线中默认关闭；
+      2026-06-04 当前默认开启状态与写工具 fail-closed 证据见
+      vc-20260604-cognitive-runtime-contextos-production-activation.yaml。
 
   - id: "A2"
     statement: "TurnTransactionController 已在流式路径中集成 StreamShadowEngine，并有 _drain_speculative_tasks 清理逻辑。"

@@ -168,7 +168,7 @@ def delivery_blocked() -> Generator[None, None, None]:
 def _import_internal_module(module_name: str) -> types.ModuleType:
     """Import a module directly from its .py file, bypassing package __init__."""
     # Convert dotted name to file path relative to the backend root.
-    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     rel_path = module_name.replace(".", os.sep) + ".py"
     abs_path = os.path.join(backend_root, rel_path)
 

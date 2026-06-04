@@ -288,6 +288,7 @@ class TurnTransactionController:
             emit_event=self._emit_phase_event,
             build_decision_messages=self._build_decision_messages,
             build_stream_shadow_engine=self._build_stream_shadow_engine,
+            resolve_shadow_workspace=self._resolve_shadow_workspace,
             call_llm_for_decision=self._call_llm_for_decision,
             handoff_handler=self._handoff_handler,
             tool_batch_executor=self._tool_batch_executor,
@@ -360,6 +361,29 @@ class TurnTransactionController:
             task_group=task_group,
             chain_speculator=chain_speculator,
         )
+
+    def _resolve_shadow_workspace(self, context: list[dict]) -> str:
+        """Resolve the target workspace for speculative execution side work."""
+
+        configured = str(getattr(self.config, "workspace", "") or "").strip()
+        if configured:
+            return configured
+        for message in reversed(context or []):
+            if not isinstance(message, dict):
+                continue
+            for source in (
+                message,
+                message.get("context"),
+                message.get("metadata"),
+                message.get("context_override"),
+            ):
+                if not isinstance(source, dict):
+                    continue
+                for key in ("workspace", "workspace_full", "workspace_root"):
+                    token = str(source.get(key) or "").strip()
+                    if token:
+                        return token
+        return "."
 
     @staticmethod
     def _detect_target_files_known(context: list[dict]) -> bool:
@@ -1369,7 +1393,10 @@ class TurnTransactionController:
                         turn_id,
                         decision_kind,
                     )
-                shadow_engine = self._build_stream_shadow_engine(workspace=".", turn_id=turn_id)
+                shadow_engine = self._build_stream_shadow_engine(
+                    workspace=self._resolve_shadow_workspace(context),
+                    turn_id=turn_id,
+                )
                 return await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
                     turn_id=turn_id,
                     context=context,
@@ -1404,7 +1431,10 @@ class TurnTransactionController:
             return await self._handoff_handler.handle_ask_user(decision, state_machine, ledger)
 
         elif decision_kind == TurnDecisionKind.TOOL_BATCH:
-            shadow_engine = self._build_stream_shadow_engine(workspace=".", turn_id=turn_id)
+            shadow_engine = self._build_stream_shadow_engine(
+                workspace=self._resolve_shadow_workspace(context),
+                turn_id=turn_id,
+            )
             allowed_tool_names = extract_allowed_tool_names_from_definitions(tool_definitions)
             try:
                 return await self._tool_batch_executor.execute_tool_batch(

@@ -24,6 +24,7 @@ Own role/docs dialogue prompt orchestration and response parsing/validation.
 ## Depends On
 
 - `context.engine`
+- `factory.cognitive_runtime`
 - `llm.provider_runtime`
 - `llm.tool_runtime`
 - `policy.workspace_guard`
@@ -36,12 +37,15 @@ Own role/docs dialogue prompt orchestration and response parsing/validation.
 
 - `fs.read:workspace/**`
 - `fs.read:runtime/**`
+- `fs.write:runtime/cognitive_runtime/**`
 - `llm.invoke:roles/*`
 - `ws.outbound:runtime/*`
 
 ## Invariants
 
 - role/docs dialogue output must pass schema/format validation
+- docs dialogue/suggest must resolve Context OS before provider invocation and
+  record Cognitive Runtime receipts after LLM completion
 - callers should use public contracts/service, not `internal/**`
 - no hidden write side-effect in query-only paths
 
@@ -49,6 +53,7 @@ Own role/docs dialogue prompt orchestration and response parsing/validation.
 
 - `public/contracts.py`
 - `public/service.py`
+- `internal/cognitive_evidence.py`
 - `internal/role_dialogue.py`
 - `internal/docs_dialogue.py`
 - `internal/docs_suggest.py`
@@ -57,4 +62,5 @@ Own role/docs dialogue prompt orchestration and response parsing/validation.
 
 - `tests/test_role_dialogue_validation_retry.py`
 - `tests/test_docs_suggest.py`
+- `tests/test_docs_dialogue_cognitive_runtime.py`
 - `tests/test_interactive_interview_streaming_fallback.py`

@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
@@ -30,7 +30,7 @@ class _FakeSession:
     messages: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self, include_messages: bool = False, message_limit: int = 100) -> dict[str, Any]:
-        payload = {
+        payload: dict[str, Any] = {
             "id": self.session_id,
             "role": self.role,
             "workspace": self.workspace,
@@ -58,7 +58,7 @@ class _FakeRoleSessionService:
     def __enter__(self) -> _FakeRoleSessionService:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
         return False
 
     def create_session(
@@ -91,6 +91,22 @@ class _FakeRoleSessionService:
 
     def get_session(self, session_id: str) -> _FakeSession | None:
         return self.sessions.get(session_id)
+
+    def update_session(
+        self,
+        session_id: str,
+        *,
+        context_config: dict[str, Any] | None = None,
+        capability_profile: dict[str, Any] | None = None,
+    ) -> _FakeSession | None:
+        session = self.sessions.get(session_id)
+        if session is None:
+            return None
+        if context_config is not None:
+            session.context_config = dict(context_config)
+        if capability_profile is not None:
+            session.capability_profile = dict(capability_profile)
+        return session
 
     def get_sessions(
         self,
@@ -177,7 +193,7 @@ class _DetachedAwareRoleSessionService:
     def __enter__(self) -> _DetachedAwareRoleSessionService:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, tb) -> Literal[False]:
         self.closed = True
         return False
 
@@ -351,7 +367,13 @@ async def test_director_console_host_loads_history_and_persists_stream_turn() ->
         meta={"source": "seed"},
     )
 
-    events = [event async for event in host.stream_turn(session["id"], "new request")]
+    events = [
+        event
+        async for event in host.stream_turn(
+            session["id"],
+            "Update src/backend/demo.py to add a health check function.",
+        )
+    ]
     history = host.load_session_history(session["id"])
     loaded = host.load_session(session["id"])
     command = runtime.commands[-1]
@@ -361,6 +383,10 @@ async def test_director_console_host_loads_history_and_persists_stream_turn() ->
     assert command.role == "director"
     assert command.workspace == "workspace"
     assert [item[1] for item in command.history] == ["prior user", "prior assistant"]
+    assert command.metadata["role_runtime_required"] is True
+    assert command.metadata["cognitive_runtime_required"] is True
+    assert command.metadata["context_os_expected"] is True
+    assert command.metadata["delivery_cognitive_preflight"] == "delegated_to_role_runtime"
     assert events[-1]["type"] == "complete"
     assert events[-1]["data"]["content"] == "hello world"
     assert [item["role"] for item in history] == ["user", "assistant", "user", "assistant"]
@@ -401,7 +427,7 @@ async def test_director_console_host_projects_file_diff_for_tool_result(tmp_path
     )
 
     session = host.create_session(context_config={"lane": "director"})
-    events = [event async for event in host.stream_turn(session["id"], "patch the file")]
+    events = [event async for event in host.stream_turn(session["id"], "Patch demo.py to print the new value.")]
 
     tool_result = next(item for item in events if item["type"] == "tool_result")
     payload = tool_result["data"]

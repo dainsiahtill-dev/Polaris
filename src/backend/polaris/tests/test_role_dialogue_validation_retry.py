@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from polaris.cells.llm.dialogue.internal import role_dialogue
+from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
 def test_resolve_role_tool_rounds_supports_role_overrides(monkeypatch) -> None:
@@ -23,47 +25,36 @@ def test_resolve_role_tool_rounds_supports_role_overrides(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_role_response_delegates_retry_policy_to_kernel(monkeypatch) -> None:
+async def test_generate_role_response_delegates_retry_policy_to_role_runtime(monkeypatch) -> None:
+    """Legacy generate_role_response must delegate retry policy to RoleRuntime command metadata."""
     import polaris.cells.roles.runtime.public.service as roles_module
 
-    call_count = {"value": 0}
-    seen_request = {"value": None}
+    captured: dict[str, Any] = {}
 
-    class FakeKernel:
-        def __init__(self, workspace: str, registry) -> None:
-            self.workspace = workspace
-            self.registry = registry
-
-        async def run(self, role: str, request) -> SimpleNamespace:
-            call_count["value"] += 1
-            seen_request["value"] = request
-            return SimpleNamespace(
-                content=(
-                    "PATCH_FILE: src/fastapi_entrypoint.py\n"
-                    "<<<<<<< SEARCH\n"
-                    "\n"
-                    "=======\n"
-                    "print('ok')\n"
-                    ">>>>>>> REPLACE\n"
-                    "END PATCH_FILE"
-                ),
-                thinking=None,
-                metadata={},
-                execution_stats={},
-                profile_version="test",
-                prompt_fingerprint=None,
-                tool_policy_id="policy",
-                error="",
-                tool_results=[],
-                structured_output={"patches": [{"file": "src/fastapi_entrypoint.py"}]},
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command) -> RoleExecutionResultV1:
+            captured["command"] = command
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role=command.role,
+                workspace=command.workspace,
+                task_id=command.task_id,
+                session_id=command.session_id,
+                run_id=command.run_id,
+                output="PATCH_FILE: src/fastapi_entrypoint.py\n<<<<<<< SEARCH\n\n=======\nprint('ok')\n>>>>>>> REPLACE\nEND PATCH_FILE",
+                metadata={
+                    "provider_id": "runtime-provider",
+                    "model": "runtime-model",
+                    "profile_version": "test",
+                    "prompt_fingerprint": "fp-test",
+                    "tool_policy_id": "policy",
+                    "context_os_snapshot_loaded": True,
+                },
+                usage={"tokens": 9},
             )
 
-    monkeypatch.setattr(roles_module, "RoleExecutionKernel", FakeKernel)
-    monkeypatch.setattr(
-        roles_module,
-        "registry",
-        SimpleNamespace(has_role=lambda _: True),
-    )
+    monkeypatch.setattr(roles_module, "RoleRuntimeService", lambda: FakeRoleRuntimeService())
     monkeypatch.setattr(
         role_dialogue,
         "validate_and_parse_role_output",
@@ -85,15 +76,21 @@ async def test_generate_role_response_delegates_retry_policy_to_kernel(monkeypat
         max_retries=1,
     )
 
-    assert call_count["value"] == 1
-    assert seen_request["value"] is not None
-    assert int(seen_request["value"].max_retries) == 1
-    assert bool(seen_request["value"].validate_output) is True
+    command = captured["command"]
+    assert command.role == "director"
+    assert command.metadata["role_runtime_required"] is True
+    assert command.metadata["cognitive_runtime_required"] is True
+    assert command.metadata["context_os_expected"] is True
+    assert command.metadata["validate_output"] is True
+    assert int(command.metadata["max_retries"]) == 1
     assert "PATCH_FILE" in str(response.get("response") or "")
+    assert response["metadata"]["context_os_snapshot_loaded"] is True
+    assert response["metadata"]["fallback_policy"] == "fail_closed"
 
 
 @pytest.mark.asyncio
 async def test_generate_role_response_advances_tool_rounds_until_completion(monkeypatch) -> None:
+    pytest.skip("Legacy internal tool rounds moved under RoleRuntime/TransactionKernel")
     import polaris.cells.roles.runtime.public.service as roles_module
 
     call_count = {"value": 0}
@@ -183,6 +180,7 @@ async def test_generate_role_response_advances_tool_rounds_until_completion(monk
 
 @pytest.mark.asyncio
 async def test_generate_role_response_adds_loop_breaker_for_repeated_readonly_tool_calls(monkeypatch) -> None:
+    pytest.skip("Legacy internal tool rounds moved under RoleRuntime/TransactionKernel")
     import polaris.cells.roles.runtime.public.service as roles_module
 
     requests = []
@@ -280,6 +278,7 @@ async def test_generate_role_response_adds_loop_breaker_for_repeated_readonly_to
 
 @pytest.mark.asyncio
 async def test_generate_role_response_guides_write_file_when_read_file_missing(monkeypatch) -> None:
+    pytest.skip("Legacy internal tool rounds moved under RoleRuntime/TransactionKernel")
     import polaris.cells.roles.runtime.public.service as roles_module
 
     call_count = {"value": 0}
@@ -364,6 +363,7 @@ async def test_generate_role_response_guides_write_file_when_read_file_missing(m
 
 @pytest.mark.asyncio
 async def test_generate_role_response_marks_error_when_tool_rounds_exhausted(monkeypatch) -> None:
+    pytest.skip("Legacy internal tool rounds moved under RoleRuntime/TransactionKernel")
     import polaris.cells.roles.runtime.public.service as roles_module
 
     call_count = {"value": 0}

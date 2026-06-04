@@ -285,13 +285,14 @@ class FileApplyService:
         old_content: str,
         new_content: str,
         operation: str,
+        allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
     ) -> str:
         """Return a deterministic policy error for a pending file apply write."""
         normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
         package_write = _is_package_manifest_path(normalized_rel)
         verdict = validate_director_write_policy(
             changed_files=[normalized_rel] if normalized_rel else [],
-            allowed_scope=[],
+            allowed_scope=list(allowed_scope_paths or []),
             agents_md=_read_workspace_agents_policy_text(self.workspace, normalized_rel),
             operation=operation,
             package_before=old_content if package_write else None,
@@ -303,7 +304,12 @@ class FileApplyService:
         reason = "; ".join(verdict.reasons) or "Director write policy denied the write"
         return f"Director write policy denied: {reason}"
 
-    def write_files(self, files: list[dict], task_id: str = "") -> list[dict]:
+    def write_files(
+        self,
+        files: list[dict],
+        task_id: str = "",
+        allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
+    ) -> list[dict]:
         """Write generated files to workspace with broadcast support.
 
         Args:
@@ -341,6 +347,7 @@ class FileApplyService:
                     old_content=old_content,
                     new_content=content,
                     operation="file_apply_service.write_files",
+                    allowed_scope_paths=allowed_scope_paths,
                 )
                 if policy_error:
                     self._last_write_errors.append(policy_error)
@@ -361,6 +368,32 @@ class FileApplyService:
             except OSError as exc:
                 logger.warning("Skip file '%s': %s", file_path, exc)
         return files_created
+
+    def _validate_applied_files_against_director_policy(
+        self,
+        files: list[dict],
+        *,
+        snapshots: dict[str, str | None],
+        operation: str,
+        allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
+    ) -> list[str]:
+        """Validate already-applied protocol writes and let caller roll back."""
+        errors: list[str] = []
+        for file_info in files:
+            file_path = str(file_info.get("path") or "").strip()
+            if not file_path:
+                continue
+            old_content = snapshots.get(file_path)
+            policy_error = self._validate_director_policy_for_write(
+                rel_path=file_path,
+                old_content=old_content or "",
+                new_content=str(file_info.get("content") or ""),
+                operation=operation,
+                allowed_scope_paths=allowed_scope_paths,
+            )
+            if policy_error:
+                errors.append(policy_error)
+        return errors
 
     def _resolve_workspace_path(self, relative_path: str) -> str | None:
         """Resolve a workspace-relative path inside the workspace boundary."""
@@ -518,6 +551,7 @@ class FileApplyService:
         response: str,
         task_id: str = "",
         llm_metadata: dict[str, Any] | None = None,
+        allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
     ) -> tuple[list[dict], list[str]]:
         """Apply patch/file operations from LLM response with pre-apply validation.
 
@@ -580,12 +614,23 @@ class FileApplyService:
                         self._restore_snapshots(protocol_snapshots)
                         errors.extend(structured_errors)
                     else:
-                        applied.extend(protocol_applied)
+                        policy_errors = self._validate_applied_files_against_director_policy(
+                            protocol_applied,
+                            snapshots=protocol_snapshots,
+                            operation="file_apply_service.apply_response_operations",
+                            allowed_scope_paths=allowed_scope_paths,
+                        )
+                        if policy_errors:
+                            self._restore_snapshots(protocol_snapshots)
+                            errors.extend(policy_errors)
+                        else:
+                            applied.extend(protocol_applied)
 
             applied.extend(
                 self.write_files(
                     [{"path": path, "content": content} for path, content in fenced_blocks],
                     task_id=task_id,
+                    allowed_scope_paths=allowed_scope_paths,
                 )
             )
             if self._last_write_errors:
@@ -619,6 +664,15 @@ class FileApplyService:
                 if structured_errors:
                     self._restore_snapshots(operation_snapshots)
                     return [], [*errors, *structured_errors]
+                policy_errors = self._validate_applied_files_against_director_policy(
+                    changed_files,
+                    snapshots=operation_snapshots,
+                    operation="file_apply_service.apply_response_operations",
+                    allowed_scope_paths=allowed_scope_paths,
+                )
+                if policy_errors:
+                    self._restore_snapshots(operation_snapshots)
+                    return [], [*errors, *policy_errors]
                 return (
                     changed_files,
                     errors,
@@ -643,6 +697,15 @@ class FileApplyService:
                     if structured_errors:
                         self._restore_snapshots(operation_snapshots)
                         return [], [*errors, *fenced_errors, *structured_errors]
+                    policy_errors = self._validate_applied_files_against_director_policy(
+                        fenced_changed_files,
+                        snapshots=operation_snapshots,
+                        operation="file_apply_service.apply_response_operations",
+                        allowed_scope_paths=allowed_scope_paths,
+                    )
+                    if policy_errors:
+                        self._restore_snapshots(operation_snapshots)
+                        return [], [*errors, *fenced_errors, *policy_errors]
                     return (
                         fenced_changed_files,
                         [*errors, *fenced_errors],
@@ -658,6 +721,15 @@ class FileApplyService:
         if structured_errors:
             self._restore_snapshots(operation_snapshots)
             return [], structured_errors
+        policy_errors = self._validate_applied_files_against_director_policy(
+            changed_files,
+            snapshots=operation_snapshots,
+            operation="file_apply_service.apply_response_operations",
+            allowed_scope_paths=allowed_scope_paths,
+        )
+        if policy_errors:
+            self._restore_snapshots(operation_snapshots)
+            return [], policy_errors
 
         return (
             changed_files,

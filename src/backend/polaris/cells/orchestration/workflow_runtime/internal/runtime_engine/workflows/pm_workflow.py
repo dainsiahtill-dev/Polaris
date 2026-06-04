@@ -54,6 +54,15 @@ def _validation_ok(payload: Any) -> tuple[bool, list[str]]:
     return bool(payload.get("success")), [str(item).strip() for item in errors if str(item).strip()]
 
 
+def _activity_ok(payload: Any) -> tuple[bool, list[str], str]:
+    if not isinstance(payload, dict):
+        return False, ["invalid_activity_payload"], ""
+    raw_errors = payload.get("errors")
+    errors: list[str] = raw_errors if isinstance(raw_errors, list) else []
+    summary = str(payload.get("summary") or "").strip()
+    return bool(payload.get("success")), [str(item).strip() for item in errors if str(item).strip()], summary
+
+
 def _director_status(payload: Any) -> str:
     if isinstance(payload, dict):
         return str(payload.get("status") or "").strip()
@@ -102,8 +111,13 @@ def _record_resident_decision_safe(workspace: str, payload: dict[str, Any]) -> N
         from polaris.cells.resident.autonomy.public.service import record_resident_decision
 
         record_resident_decision(workspace, payload)
-    except (RuntimeError, ValueError):
-        logger.debug("DEBUG: pm_workflow.py:{87} {exc} (swallowed)")
+    except (RuntimeError, ValueError, OSError, TypeError):
+        logger.warning(
+            "pm_workflow: failed to record resident decision: run_id=%s stage=%s",
+            payload.get("run_id"),
+            payload.get("stage"),
+            exc_info=True,
+        )
 
 
 @workflow.defn
@@ -307,6 +321,93 @@ class PMWorkflow(WorkflowQueryState):
         for task in tasks:
             self._set_task_status(task.task_id, "planned", summary="PM task ready")
 
+        await self._broadcast_task_trace(
+            phase="chief_engineer",
+            step_kind="analysis",
+            step_title="ChiefEngineer started",
+            step_detail=f"Generating construction blueprints for {len(tasks)} tasks",
+            status="started",
+            task_id="pm::global",
+            related_task_ids=[task.task_id for task in tasks],
+        )
+        ce_payload = await workflow.execute_activity(
+            "run_chief_engineer_blueprint",
+            {
+                "workspace": workflow_input.workspace,
+                "run_id": workflow_input.run_id,
+                "tasks": [task.to_dict() for task in tasks],
+                "metadata": {
+                    **dict(workflow_input.metadata),
+                    "chief_engineer_session_id": f"chief-engineer-{workflow_input.run_id}",
+                    "cognitive_runtime_required": True,
+                    "context_os_expected": True,
+                },
+            },
+            start_to_close_timeout=timedelta(minutes=10),
+        )
+        ce_ok, ce_errors, ce_summary = _activity_ok(ce_payload)
+        if not ce_ok:
+            reason = "; ".join(ce_errors) if ce_errors else ce_summary or "ChiefEngineer blueprint generation failed"
+            await self._broadcast_task_trace(
+                phase="failed",
+                step_kind="analysis",
+                step_title="ChiefEngineer failed",
+                step_detail=reason,
+                status="failed",
+                task_id="pm::global",
+                errors=ce_errors,
+            )
+            self._record_event(
+                stage="pm_failed",
+                message=reason,
+                details={"run_id": workflow_input.run_id, "errors": ce_errors, "stage": "chief_engineer"},
+            )
+            raise RuntimeError(reason)
+
+        tasks = _extract_tasks(ce_payload, tasks)
+        for task in tasks:
+            self._set_task_status(task.task_id, "blueprinted", summary="ChiefEngineer blueprint applied")
+        ce_activity_payload = ce_payload.get("payload") if isinstance(ce_payload, dict) else {}
+        ce_activity_payload = ce_activity_payload if isinstance(ce_activity_payload, dict) else {}
+        await self._broadcast_task_trace(
+            phase="chief_engineer",
+            step_kind="analysis",
+            step_title="ChiefEngineer completed",
+            step_detail=ce_summary or f"Generated construction blueprints for {len(tasks)} tasks",
+            status="completed",
+            task_id="pm::global",
+            related_task_ids=[task.task_id for task in tasks],
+            blueprint_path=ce_activity_payload.get("blueprint_path"),
+            runtime_blueprint_path=ce_activity_payload.get("runtime_blueprint_path"),
+        )
+        _record_resident_decision_safe(
+            workflow_input.workspace,
+            {
+                "run_id": workflow_input.run_id,
+                "actor": "chief_engineer",
+                "stage": "construction_blueprint",
+                "summary": ce_summary or f"Generated construction blueprints for {len(tasks)} PM task contracts",
+                "strategy_tags": ["construction_blueprint", "pre_dispatch_analysis"],
+                "expected_outcome": {"status": "blueprinted", "success": True},
+                "actual_outcome": {
+                    "status": "blueprinted",
+                    "success": True,
+                    "task_count": len(tasks),
+                    "task_update_count": int(ce_activity_payload.get("task_update_count") or 0),
+                },
+                "verdict": "success",
+                "evidence_refs": [
+                    str(ce_activity_payload.get("blueprint_path") or "runtime/contracts/chief_engineer.blueprint.json"),
+                    str(
+                        ce_activity_payload.get("runtime_blueprint_path")
+                        or "runtime/contracts/chief_engineer.blueprint.json"
+                    ),
+                ],
+                "context_refs": [task.task_id for task in tasks],
+                "confidence": 0.76,
+            },
+        )
+
         director_config = (
             workflow_input.metadata.get("director_config", {})
             if isinstance(workflow_input.metadata, dict)
@@ -340,19 +441,21 @@ class PMWorkflow(WorkflowQueryState):
                 "summary": f"Dispatch Director using {selected_mode} execution mode",
                 "options": [
                     {
+                        "option_id": "parallel_dispatch",
                         "label": "parallel_dispatch",
                         "rationale": "Favor throughput for independent tasks.",
                         "strategy_tags": ["parallel_dispatch"],
                         "estimated_score": 0.78,
                     },
                     {
+                        "option_id": "serial_dispatch",
                         "label": "serial_dispatch",
                         "rationale": "Favor predictability for tightly coupled tasks.",
                         "strategy_tags": ["serial_dispatch"],
                         "estimated_score": 0.62,
                     },
                 ],
-                "selected_option_id": "",
+                "selected_option_id": f"{selected_mode}_dispatch",
                 "strategy_tags": [f"{selected_mode}_dispatch", "governed_handoff"],
                 "expected_outcome": {"status": "director_running", "success": True},
                 "actual_outcome": {
@@ -405,7 +508,12 @@ class PMWorkflow(WorkflowQueryState):
                     workspace=workflow_input.workspace,
                     run_id=workflow_input.run_id,
                     director_status=director_status,
-                    metadata=dict(workflow_input.metadata),
+                    metadata={
+                        **dict(workflow_input.metadata),
+                        "qa_session_id": f"qa-{workflow_input.run_id}",
+                        "cognitive_runtime_required": True,
+                        "context_os_expected": True,
+                    },
                 ),
                 id=qa_workflow_id(workflow_input.run_id),
             )
@@ -476,5 +584,13 @@ class PMWorkflow(WorkflowQueryState):
             tasks=tasks,
             director_status=director_status,
             qa_status="passed" if qa_passed else qa_status,
-            metadata={"task_count": len(tasks)},
+            metadata={
+                "task_count": len(tasks),
+                "chief_engineer": {
+                    "ran": True,
+                    "task_update_count": int(ce_activity_payload.get("task_update_count") or 0),
+                    "blueprint_path": str(ce_activity_payload.get("blueprint_path") or ""),
+                    "runtime_blueprint_path": str(ce_activity_payload.get("runtime_blueprint_path") or ""),
+                },
+            },
         )

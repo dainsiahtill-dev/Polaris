@@ -138,7 +138,7 @@ async def test_resolver_adopts_prepare_shadow_for_write_tool(
 
 
 @pytest.mark.asyncio
-async def test_resolver_replay_when_no_prepare_shadow() -> None:
+async def test_resolver_blocks_when_no_prepare_shadow() -> None:
     registry = ShadowTaskRegistry(
         speculative_executor=AsyncMock(spec=SpeculativeExecutor),
         metrics=SpeculationMetrics(),
@@ -150,14 +150,15 @@ async def test_resolver_replay_when_no_prepare_shadow() -> None:
         tool_name="write_file",
         args={"path": "src/auth.ts", "content": "hello"},
     )
-    assert resolution["action"] == "replay"
+    assert resolution["action"] == "block"
+    assert resolution["error"] == "write_tool_prepare_shadow_missing"
 
 
 @pytest.mark.asyncio
 async def test_write_tool_commit_never_speculative(
     write_registry: ShadowTaskRegistry,
 ) -> None:
-    """write_file 本身的 shadow 不应存在,resolver 必须回退到 replay."""
+    """write_file 本身的 shadow 不应存在,缺少 prepare 时必须阻断."""
     resolver = SpeculationResolver(registry=write_registry, metrics=SpeculationMetrics())
     resolution = await resolver.resolve_or_execute(
         turn_id="t_write",
@@ -165,5 +166,5 @@ async def test_write_tool_commit_never_speculative(
         tool_name="write_file",
         args={"path": "src/auth.ts", "content": "hello"},
     )
-    # 由于没有 prepare shadow,应回退到 replay
-    assert resolution["action"] == "replay"
+    assert resolution["action"] == "block"
+    assert resolution["error"] == "write_tool_prepare_shadow_missing"

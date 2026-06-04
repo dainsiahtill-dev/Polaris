@@ -766,6 +766,7 @@ class RoleExecutionKernel:
             tool_runtime=tool_runtime,
             config=TransactionConfig(
                 domain="code" if role in {"director", "chief_engineer"} else "document",
+                workspace=str(request.workspace or "").strip(),
                 mutation_guard_mode="strict" if role == "director" else "warn",
             ),
             workflow_runtime=workflow_runtime,
@@ -1606,7 +1607,7 @@ class RoleExecutionKernel:
             return self._injected_llm_caller
         # 2. 默认懒加载创建 canonical LLM caller
         if self._llm_caller is None:
-            self._llm_caller = LLMCaller(self.workspace)
+            self._llm_caller = LLMCaller(self.workspace, emit_deprecation_warning=False)
         return self._llm_caller
 
     # ═══════════════════════════════════════════════════════════════════════════

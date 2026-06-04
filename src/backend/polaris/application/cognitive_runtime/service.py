@@ -97,8 +97,13 @@ def _resolve_workspace_bounded_path(workspace: str, candidate_path: str) -> str:
 
 def _load_graph_cells(workspace: str, graph_catalog_path: str) -> list[dict[str, Any]]:
     catalog_path = _resolve_workspace_bounded_path(workspace, graph_catalog_path)
-    with open(catalog_path, encoding="utf-8") as fh:
-        payload = yaml.safe_load(fh) or {}
+    try:
+        with open(catalog_path, encoding="utf-8") as fh:
+            payload = yaml.safe_load(fh) or {}
+    except OSError as exc:
+        raise RuntimeError(f"Graph catalog unavailable: {catalog_path}") from exc
+    except yaml.YAMLError as exc:
+        raise RuntimeError(f"Graph catalog invalid: {catalog_path}") from exc
     cells = payload.get("cells")
     if not isinstance(cells, list):
         return []

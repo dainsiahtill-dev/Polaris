@@ -6,12 +6,13 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import TransactionConfig
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TransactionConfig, TurnTransactionController
+from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecision, TurnDecisionKind, TurnId
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ErrorEvent
 
 
@@ -277,6 +278,60 @@ class TestStreamNonStreamParity:
         assert len(completions) == 1
         assert completions[0].status == "error"
         assert completions[0].error == "stream synthesis exploded"
+
+    @pytest.mark.asyncio
+    async def test_stream_development_handoff_fails_closed_when_runtime_fails(self) -> None:
+        llm = AsyncMock(
+            return_value={
+                "content": "handoff to development",
+                "tool_calls": [],
+                "model": "test-model",
+                "usage": {"prompt_tokens": 15, "completion_tokens": 8},
+            }
+        )
+        tool_runtime = AsyncMock()
+
+        class FailingDevelopmentRuntime:
+            async def execute_stream(self, _intent: str, _session_state: object) -> Any:
+                raise RuntimeError("stream development exploded")
+                yield None
+
+        controller = TurnTransactionController(
+            llm_provider=llm,
+            tool_runtime=tool_runtime,
+            config=TransactionConfig(domain="code"),
+            development_runtime=FailingDevelopmentRuntime(),
+        )
+        controller.decoder.decode = MagicMock(
+            return_value=TurnDecision(
+                turn_id=TurnId("turn_stream_development_fail"),
+                kind=TurnDecisionKind.HANDOFF_DEVELOPMENT,
+                visible_message="handoff to development",
+                reasoning_summary=None,
+                tool_batch=None,
+                finalize_mode=FinalizeMode.NONE,
+                domain="code",
+                metadata={"intent": "apply generated patch"},
+            )
+        )
+
+        events: list[Any] = []
+        async for event in controller.execute_stream(
+            "turn_stream_development_fail",
+            [{"role": "user", "content": "apply generated patch"}],
+            [],
+        ):
+            events.append(event)
+
+        completions = [event for event in events if isinstance(event, CompletionEvent)]
+        errors = [event for event in events if isinstance(event, ErrorEvent)]
+        assert len(completions) == 1
+        assert completions[0].status == "error"
+        assert completions[0].error == "stream development exploded"
+        assert completions[0].turn_kind == "handoff_development"
+        assert completions[0].session_patch == {}
+        assert errors
+        assert errors[0].error_type == "development_stream_error"
 
     @pytest.mark.asyncio
     async def test_identical_visible_content_parity(self) -> None:

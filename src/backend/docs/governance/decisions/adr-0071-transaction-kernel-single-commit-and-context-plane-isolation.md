@@ -98,6 +98,8 @@ roles.kernel 当前仍处于“旧 TurnEngine 主路径 + 新事务控制器旁�
 
 ## 当前实现进度（截至 2026-04-17）
 
+> 2026-06-04 覆盖说明：下列进度项中的 speculative 默认状态已升级。当前 `ENABLE_SPECULATIVE_EXECUTION` / `KERNELONE_ENABLE_SPECULATIVE_EXECUTION` 仍是回滚开关，但默认解析为开启；写工具 speculative 缺少 registry-backed prepare shadow 时 fail closed。当前证据见 `src/backend/docs/governance/templates/verification-cards/vc-20260604-cognitive-runtime-contextos-production-activation.yaml`。
+
 - ✅ `TransactionKernel` 已切为主路径，`RoleExecutionKernel.run()` / `run_stream()` 不再直接实例化旧 `TurnEngine`
 - ✅ `TurnEngine` 已退化为 facade，`while` loop 与 continuation logic 已移除
 - ✅ `KernelGuard` 已上线并运行断言
@@ -107,8 +109,8 @@ roles.kernel 当前仍处于“旧 TurnEngine 主路径 + 新事务控制器旁�
 - ✅ `ContextOSSnapshot.to_dict()` nuke 修复：超限自动创建 `ReceiptStore` 并内联 `_receipt_store_export`，round-trip 安全
 - ✅ `ToolSpecRegistry` SSOT 已收口；`contracts.py` 手术式添加 `@warnings.deprecated`（`normalize_tool_args`、`_has_value`、`reset_tool_spec_registry_cache`）
 - ✅ `ProjectionEngine` / `ReceiptStore` / `TruthLogService` / `WorkingStateManager` 已完成正式化硬化并接入 runtime + gateway 主路径
-- ✅ `ENABLE_SPECULATIVE_EXECUTION` feature flag 已落地（默认关闭，兼容 `KERNELONE_ENABLE_SPECULATIVE_EXECUTION`）
-- ✅ `SpeculativeExecutor` / `StreamShadowEngine` 已接入 stream 路径（flag 默认关闭，低风险可回滚）
+- ✅ `ENABLE_SPECULATIVE_EXECUTION` feature flag 已落地；2026-06-04 当前默认为开启，兼容 `KERNELONE_ENABLE_SPECULATIVE_EXECUTION`，显式关闭仍用于低风险回滚
+- ✅ `SpeculativeExecutor` / `StreamShadowEngine` 已接入 stream 路径并默认开启；写工具 speculative 由 registry-backed prepare shadow / fail-closed 门禁保护
 - ✅ Phase 7 监控基线已落地：`TurnResult.metrics` 与 stream `CompletionEvent.monitoring` 已导出
   `transaction_kernel.violation_count` / `turn.single_batch_ratio` / `workflow.handoff_rate` /
   `kernel_guard.assert_fail_rate` / `speculative.hit_rate` / `speculative.false_positive_rate`

@@ -4,6 +4,10 @@
 
 `runtime.task_market` is the asynchronous collaboration broker for governed Agent work items.
 It owns publish/claim/lease/requeue/dead-letter primitives used by PM, ChiefEngineer, Director, and QA.
+Each mutating lifecycle transition records a `factory.cognitive_runtime` receipt so task-market
+state changes carry auditable cross-role governance evidence. If a work item explicitly marks
+`cognitive_runtime_required=true`, receipt failure fails the transition closed; otherwise the
+transition records optional receipt failure evidence and continues.
 
 ## Polaris Role Flow (Current Governance)
 
@@ -46,6 +50,7 @@ Stage mapping:
 
 - `runtime/task_market/work_items.json`
 - `runtime/task_market/dead_letters.json`
+- `runtime/cognitive_runtime/*` receipt records for task-market lifecycle events
 - fact stream side effects under `runtime/events/*` via `events.fact_stream`.
 
 ## Rollout Mode

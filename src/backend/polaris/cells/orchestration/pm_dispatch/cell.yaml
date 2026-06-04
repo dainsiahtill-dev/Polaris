@@ -35,6 +35,7 @@ depends_on:
 - director.execution
 - archive.task_snapshot_archive
 - chief_engineer.blueprint
+- factory.cognitive_runtime
 - roles.adapters
 - qa.audit_verdict
 - runtime.state_owner
@@ -51,11 +52,13 @@ effects_allowed:
 - fs.read:runtime/contracts/*
 - fs.write:runtime/state/dispatch/*
 - fs.write:runtime/events/runtime.events.jsonl
+- fs.write:runtime/cognitive_runtime/*
 - ws.outbound:runtime/*
 verification:
   tests:
   - tests/test_dispatch_pipeline_engine_dispatch.py
   - tests/test_orchestration_command_service.py
+  - polaris/tests/test_dispatch_pipeline_integration_qa.py
   gaps:
   - Initial business-cell declaration; implementation convergence is in progress.
   smoke_commands: []

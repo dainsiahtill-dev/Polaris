@@ -10,6 +10,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.llm.dialogue.internal.cognitive_evidence import (
+    append_context_to_prompt,
+    compact_evidence_for_meta,
+    record_llm_cognitive_receipt,
+    resolve_llm_context,
+)
 from polaris.cells.llm.provider_runtime.public.service import (
     CellAIExecutor,
     CellAIRequest,
@@ -223,6 +229,14 @@ async def generate_docs_fields(
     executor = CellAIExecutor(workspace=workspace)
 
     prompt = build_docs_prompt(fields)
+    cognitive_evidence = resolve_llm_context(
+        workspace=workspace,
+        role="architect",
+        mode="docs_suggest",
+        query=prompt,
+        policy={"docs_fields": sorted(str(key) for key in fields)},
+    )
+    prompt = append_context_to_prompt(prompt, cognitive_evidence)
     request = CellAIRequest(
         task_type=TaskType.GENERATION,
         role="architect",
@@ -233,6 +247,15 @@ async def generate_docs_fields(
     response = await executor.invoke(request)
 
     if not response.ok:
+        record_llm_cognitive_receipt(
+            workspace=workspace,
+            evidence=cognitive_evidence,
+            receipt_type="llm_docs_suggest",
+            task_type=str(TaskType.GENERATION.value),
+            llm_ok=False,
+            output_length=len(response.output or ""),
+            provider_error=response.error,
+        )
         return None
 
     parsed = _coerce_docs_fields(
@@ -240,13 +263,40 @@ async def generate_docs_fields(
         fields,
     )
     if parsed:
+        record_llm_cognitive_receipt(
+            workspace=workspace,
+            evidence=cognitive_evidence,
+            receipt_type="llm_docs_suggest",
+            task_type=str(TaskType.GENERATION.value),
+            llm_ok=True,
+            output_length=len(response.output or ""),
+            metadata={"result": "parsed"},
+        )
         return parsed
 
     repaired = await _repair_docs_fields(executor, response.output, fields)
     if repaired:
+        record_llm_cognitive_receipt(
+            workspace=workspace,
+            evidence=cognitive_evidence,
+            receipt_type="llm_docs_suggest",
+            task_type=str(TaskType.GENERATION.value),
+            llm_ok=True,
+            output_length=len(response.output or ""),
+            metadata={"result": "repaired"},
+        )
         return repaired
 
     logger.warning("[docs-suggest] failed to parse docs fields, using fallback defaults")
+    record_llm_cognitive_receipt(
+        workspace=workspace,
+        evidence=cognitive_evidence,
+        receipt_type="llm_docs_suggest",
+        task_type=str(TaskType.GENERATION.value),
+        llm_ok=True,
+        output_length=len(response.output or ""),
+        metadata={"result": "fallback_parse_failure"},
+    )
     return _build_default_docs_fields(fields)
 
 
@@ -265,6 +315,14 @@ async def generate_docs_fields_stream(
     executor = CellAIExecutor(workspace=workspace)
 
     prompt = build_docs_prompt(fields)
+    cognitive_evidence = resolve_llm_context(
+        workspace=workspace,
+        role="architect",
+        mode="docs_suggest_stream",
+        query=prompt,
+        policy={"docs_fields": sorted(str(key) for key in fields)},
+    )
+    prompt = append_context_to_prompt(prompt, cognitive_evidence)
     request = CellAIRequest(
         task_type=TaskType.GENERATION,
         role="architect",
@@ -299,6 +357,15 @@ async def generate_docs_fields_stream(
                 break
 
             elif event_type == "error":
+                record_llm_cognitive_receipt(
+                    workspace=workspace,
+                    evidence=cognitive_evidence,
+                    receipt_type="llm_docs_suggest_stream",
+                    task_type=str(TaskType.GENERATION.value),
+                    llm_ok=False,
+                    output_length=len(collected_output),
+                    provider_error=str(event.get("error") or ""),
+                )
                 yield {"type": "error", "error": event.get("error") or "流式调用失败"}
                 return
 
@@ -318,13 +385,58 @@ async def generate_docs_fields_stream(
             parsed = await _repair_docs_fields(repair_executor, collected_output, fields)
 
         if parsed:
-            yield {"type": "result", "fields": parsed}
+            cognitive_evidence = record_llm_cognitive_receipt(
+                workspace=workspace,
+                evidence=cognitive_evidence,
+                receipt_type="llm_docs_suggest_stream",
+                task_type=str(TaskType.GENERATION.value),
+                llm_ok=True,
+                output_length=len(collected_output),
+                metadata={"result": "parsed"},
+            )
+            yield {
+                "type": "result",
+                "fields": parsed,
+                "cognitive_runtime": compact_evidence_for_meta(cognitive_evidence),
+            }
             return
 
         logger.warning("[docs-suggest] preview stream parse failed, using fallback defaults")
-        yield {"type": "result", "fields": _build_default_docs_fields(fields), "fallback": True}
+        cognitive_evidence = record_llm_cognitive_receipt(
+            workspace=workspace,
+            evidence=cognitive_evidence,
+            receipt_type="llm_docs_suggest_stream",
+            task_type=str(TaskType.GENERATION.value),
+            llm_ok=True,
+            output_length=len(collected_output),
+            metadata={"result": "fallback_parse_failure"},
+        )
+        yield {
+            "type": "result",
+            "fields": _build_default_docs_fields(fields),
+            "fallback": True,
+            "cognitive_runtime": compact_evidence_for_meta(cognitive_evidence),
+        }
     except (RuntimeError, ValueError) as exc:
+        record_llm_cognitive_receipt(
+            workspace=workspace,
+            evidence=cognitive_evidence,
+            receipt_type="llm_docs_suggest_stream",
+            task_type=str(TaskType.GENERATION.value),
+            llm_ok=False,
+            output_length=len(collected_output),
+            provider_error=str(exc),
+        )
         yield {"type": "error", "error": str(exc)}
     except Exception as exc:  # noqa: BLE001 - provider adapters can raise transport-specific exceptions.
         logger.warning("[docs-suggest] streaming provider failed: %s", exc)
+        record_llm_cognitive_receipt(
+            workspace=workspace,
+            evidence=cognitive_evidence,
+            receipt_type="llm_docs_suggest_stream",
+            task_type=str(TaskType.GENERATION.value),
+            llm_ok=False,
+            output_length=len(collected_output),
+            provider_error=str(exc) or type(exc).__name__,
+        )
         yield {"type": "error", "error": str(exc) or type(exc).__name__}

@@ -306,6 +306,248 @@ assumptions:
       test_stream_controller_speculates_when_flag_enabled, test_stream_controller_no_speculation_when_flag_disabled,
       and test_speculate_write_tool_without_registry_fails_closed verify active-by-default behavior and write safety.
 
+  - id: "A32"
+    statement: "WorkflowRoleAdapter and WorkflowRoleNode must enter RoleRuntimeService instead of directly constructing RoleExecutionKernel requests."
+    status: verified_true
+    evidence: >
+      WorkflowRoleAdapter now calls runtime_dialogue.invoke_role_runtime_first, which builds
+      ExecuteRoleSessionCommandV1 and calls RoleRuntimeService.execute_role_session with
+      role_runtime_required=True, cognitive_runtime_required=True, context_os_expected=True, and
+      fail_closed metadata. WorkflowRoleNode delegates to WorkflowRoleAdapter instead of exposing
+      a kernel property or tool-loop retry path. test_workflow_entrypoints_do_not_bypass_role_runtime
+      statically blocks RoleExecutionKernel, RoleTurnRequest, and .kernel.run from these workflow
+      entrypoints, while test_workflow_chain and TestWorkflowAdapter capture RoleRuntime commands.
+
+  - id: "A33"
+    statement: "The llm.dialogue internal role compatibility facade must not invoke the old cognitive middleware or RoleExecutionKernel path."
+    status: verified_true
+    evidence: >
+      generate_role_response now delegates to _generate_with_role_runtime, which builds
+      ExecuteRoleSessionCommandV1 and calls RoleRuntimeService.execute_role_session with
+      role_runtime_required=True, cognitive_runtime_required=True, context_os_expected=True,
+      and fallback_policy=fail_closed. The legacy _generate_with_kernel symbol remains only
+      as a compatibility wrapper to the RoleRuntime path. test_llm_dialogue_internal_role_facade_does_not_bypass_role_runtime
+      statically blocks RoleExecutionKernel, RoleTurnRequest, and get_cognitive_middleware from
+      the internal role dialogue module, while test_generate_role_response_delegates_retry_policy_to_role_runtime
+      captures the generated RoleRuntime command metadata.
+
+  - id: "A34"
+    statement: "Delivery console entrypoints must delegate cognitive preflight to RoleRuntimeService instead of invoking CognitiveMiddleware directly."
+    status: verified_true
+    evidence: >
+      RoleConsoleHost.stream_turn no longer imports or calls get_cognitive_middleware, no longer injects
+      prompt appendix guidance from the delivery layer, and records delivery_cognitive_preflight=delegated_to_role_runtime
+      with role_runtime_required=True, cognitive_runtime_required=True, and context_os_expected=True on
+      ExecuteRoleSessionCommandV1. test_delivery_console_host_delegates_cognitive_preflight_to_role_runtime
+      statically blocks direct cognitive middleware from console_host.py, and
+      test_director_console_host_loads_history_and_persists_stream_turn captures the generated RoleRuntime command metadata.
+
+  - id: "A35"
+    statement: "Default PM Workflow production dispatch must run ChiefEngineer blueprinting before Director fan-out."
+    status: verified_true
+    evidence: >
+      PMWorkflow.run now executes the run_chief_engineer_blueprint activity after PM task validation and before
+      DirectorWorkflow.run. The activity calls run_chief_engineer_analysis, writes chief_engineer.blueprint.json,
+      merges construction_plan, scope_for_apply, missing_targets, constraints, and chief_engineer metadata back into
+      PM task contracts, and then hands the enriched TaskContract list to DirectorWorkflow. ChiefEngineerNode also
+      applies task_update_map before returning tasks in the RoleNode/coordinator path. test_pm_workflow_chief_engineer.py
+      verifies workflow ordering and activity enrichment, while test_pm_chief_engineer_node.py verifies the RoleNode
+      path passes construction blueprints to Director tasks.
+
+  - id: "A36"
+    statement: "RoleRuntime streaming turns must expose Cognitive Runtime receipt/handoff evidence on complete events."
+    status: verified_true
+    evidence: >
+      RoleRuntimeService.stream_chat_turn now emits Cognitive Runtime shadow artifacts when the stream complete event
+      carries a RoleTurnResult. The complete event receives cognitive_runtime_evidence and metadata.cognitive_runtime_evidence,
+      the embedded RoleTurnResult.metadata is patched with the same evidence, and execution_stats marks
+      cognitive_runtime_evidence_emitted=True. test_stream_chat_turn_applies_cognitive_strategy_before_fingerprint verifies
+      both strategy override ordering and streaming evidence exposure.
+
+  - id: "A37"
+    statement: "RoleRuntime session persistence must use SessionContinuityEngine policy APIs so Context OS projections survive policy schema evolution."
+    status: verified_true
+    evidence: >
+      persist_session_turn_state no longer reads the removed legacy policy.context_window path. It delegates history-window
+      resolution to SessionContinuityEngine.resolve_history_window and then applies the persistence safety cap before projecting
+      session continuity and state_first_context_os back into roles.session context_config. test_persist_session_turn_state_uses_session_continuity_engine_policy
+      creates a real in-memory role session with malformed prior continuity metadata, persists a streaming turn, and verifies
+      that both session_continuity and state_first_context_os are written back instead of failing before Context OS projection.
+
+  - id: "A38"
+    statement: "LLM control-plane streaming must finish when provider tasks complete even if compatibility providers do not emit an explicit COMPLETE sentinel."
+    status: verified_true
+    evidence: >
+      LlmControlPlaneService.stream now treats either producer task completion or an explicit COMPLETE sentinel as the completion
+      signal, while still requiring the token queue to drain before returning. This prevents real or test compatibility clients
+      that return from chat_stream without sending an empty sentinel from hanging indefinitely. test_llm_control_plane_generate_and_stream
+      verifies generate plus streaming completion with a provider that emits two tokens and then returns without a sentinel.
+
+  - id: "A39"
+    statement: "context_os_expected must be enforced as a RoleRuntime preflight gate, not kept as passive metadata."
+    status: verified_true
+    evidence: >
+      RoleRuntimeService now enforces context_os_expected during task/session request preparation. If the command metadata
+      or context requires Context OS and the resolved runtime feature flag disables it, the turn fails closed with
+      context_os_expected_but_disabled before reaching the LLM. Successful required paths stamp metadata.context_os_preflight
+      with expected=True and enabled=True, and RoleExecutionResult metadata carries the same preflight evidence.
+      test_prepare_session_request_fails_closed_when_context_os_expected_but_disabled
+      and test_prepare_task_request_records_context_os_preflight_when_expected verify both failure and active evidence paths.
+
+  - id: "A40"
+    statement: "Kernel-owned LLMCaller use must be treated as an internal compatibility adapter, not as a cognitive-layer removal or user-visible legacy path."
+    status: verified_true
+    evidence: >
+      RoleExecutionKernel._get_llm_caller now creates LLMCaller with emit_deprecation_warning=False, and LLMInvoker/stream
+      preparation helpers also instantiate that facade in silent internal-adapter mode. Direct external LLMCaller construction
+      and method calls still warn. test_internal_llm_caller_adapter_is_silent proves the kernel-owned path no longer emits
+      user-visible legacy warnings, while test_direct_compatibility_facade_warns_on_construction and
+      test_internal_adapter_call_suppresses_deprecated_method_warning prove the public compatibility API and internal adapter
+      remain distinguishable.
+
+  - id: "A41"
+    statement: "Director runtime codegen proposal-to-apply must use Cognitive Runtime as a real write acceptance gate, not only as HTTP/test-side capability."
+    status: verified_true
+    evidence: >
+      CodeGenerationEngine now validates accepted generated files through CognitiveRuntimePublicService lease_edit_scope,
+      validate_change_set, record_runtime_receipt, map_diff_to_cells, and request_projection_compile before returning
+      files as accepted. Promotion is also enforced when graph cell mappings exist. FileApplyService receives the round
+      allowed scope and blocks fenced-file writes before write, while protocol writes that exceed scope are restored from
+      snapshots. CognitiveRuntimeService._load_graph_cells now converts missing target-project graph catalogs into a
+      soft graph_catalog_unavailable mapping note instead of crashing production target-project generation. The tests
+      test_runtime_codegen_passes_applied_files_through_cognitive_runtime_gate,
+      test_runtime_codegen_rejects_when_cognitive_runtime_gate_denies_change,
+      test_apply_response_operations_blocks_fenced_file_outside_allowed_scope,
+      test_apply_response_operations_rolls_back_patch_outside_allowed_scope, and
+      test_public_service_map_diff_treats_missing_target_graph_as_soft_note verify the active path.
+
+  - id: "A42"
+    statement: "Director runtime codegen must preserve one cognitive session across RoleRuntime execution and Cognitive Runtime write-gate evidence."
+    status: verified_true
+    evidence: >
+      CodeGenerationEngine resolves a single director-codegen session_id from run_id, task_id, or prompt hash before invoking
+      RoleRuntimeService. The same session_id is then passed into CognitiveRuntimePublicService lease_edit_scope,
+      record_runtime_receipt, and request_projection_compile. _director_codegen_task_identity defensively ignores non-scalar
+      task identity values so Mock or malformed task objects cannot poison session continuity. test_runtime_codegen_invokes_director_in_proposal_mode
+      asserts the RoleRuntime command session_id, and test_runtime_codegen_passes_applied_files_through_cognitive_runtime_gate
+      asserts the lease, receipt, and projection commands share that same session.
+
+  - id: "A43"
+    statement: "Development workflow handoff must fail closed when the DevelopmentWorkflowRuntime fails, matching ExplorationWorkflowRuntime handoff semantics."
+    status: verified_true
+    evidence: >
+      HandoffHandler.handle_development_handoff now treats DevelopmentWorkflowRuntime exceptions, unsupported stream runtimes,
+      and failed child stream events as development_execution_error instead of successful handoff_development. The stream
+      path records a failed terminal state, emits a final CompletionEvent(status=error), and suppresses the successful
+      _development_handoff_executed session patch when the child runtime fails. TurnStateMachine now permits
+      HANDOFF_DEVELOPMENT -> FAILED. test_transaction_kernel_fails_closed_when_development_runtime_fails and
+      test_stream_development_handoff_fails_closed_when_runtime_fails cover the non-streaming and streaming paths.
+
+  - id: "A44"
+    statement: "Governance graph and active blueprints must not describe Cognitive Runtime and speculative execution with superseded shadow-only or default-off production status."
+    status: verified_true
+    evidence: >
+      docs/graph/catalog/cells.yaml and docs/graph/subgraphs/execution_governance_pipeline.yaml now state that
+      Director runtime codegen proposal-to-apply uses Cognitive Runtime as a mainline write acceptance gate for
+      scope lease, change-set validation, receipts, diff mapping, and projection compile, while explicitly preserving
+      the remaining global orchestration-stage convergence gap. The 2026-04 speculative blueprints and ADRs now carry
+      2026-06-04 current-status overrides: speculative execution defaults to enabled with explicit rollback flags, and
+      write-tool speculation must fail closed without registry-backed prepare shadow. AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14
+      now distinguishes Director codegen Cognitive Runtime authority from unfinished Task Market durable pull/outbox work.
+
+  - id: "A45"
+    statement: "Task Market lifecycle transitions must record Cognitive Runtime receipts so durable PM/ChiefEngineer/Director/QA claim/ack paths carry runtime governance evidence."
+    status: verified_true
+    evidence: >
+      TaskMarketService now records a task_market_lifecycle receipt through factory.cognitive_runtime public contracts for
+      publish, claim, ack, fail, requeue, and dead-letter transitions. The receipt evidence is attached to the work-item
+      metadata, transition metadata, and outbox payload. Optional receipt failures are recorded as evidence and do not break
+      task-market availability, while tasks that explicitly set cognitive_runtime_required or task_market_cognitive_runtime_required
+      fail closed before the lifecycle write is committed. runtime.task_market graph/cell metadata now declares the dependency
+      on factory.cognitive_runtime and the runtime/cognitive_runtime write effect. test_publish_claim_ack_records_cognitive_runtime_lifecycle_receipts
+      and test_required_cognitive_runtime_receipt_failure_blocks_publish verify the active path.
+
+  - id: "A46"
+    statement: "Director production turns must give Context OS and speculative execution the real target workspace, not a Polaris process cwd surrogate."
+    status: verified_true
+    evidence: >
+      DirectorAdapter._build_role_runtime_metadata now marks Director code turns with use_repo_intelligence=True,
+      context_os_expected=True, cognitive_runtime_required=True, and bounded repo-intelligence budgets so
+      RoleRuntime._build_session_request injects repo intelligence for target-project code work by default.
+      RoleExecutionKernel._create_transaction_kernel carries RoleTurnRequest.workspace into TransactionConfig.workspace,
+      and TurnTransactionController resolves shadow/speculative ToolBatchRuntime workspace from that config before
+      falling back to message metadata or ".". test_create_transaction_kernel_carries_request_workspace,
+      test_shadow_engine_uses_configured_target_workspace, and
+      test_role_runtime_metadata_requires_context_os_and_repo_intelligence verify the path.
+
+  - id: "A47"
+    statement: "PM Workflow ChiefEngineer blueprinting must leave Cognitive Runtime evidence before Director receives enriched tasks."
+    status: verified_true
+    evidence: >
+      PMWorkflow.run now calls run_chief_engineer_blueprint with chief_engineer_session_id,
+      cognitive_runtime_required=True, and context_os_expected=True before DirectorWorkflow.run. The activity records a
+      chief_engineer_blueprint receipt through factory.cognitive_runtime for completed and failed blueprint attempts,
+      attaches the receipt to the activity payload, and copies it into each enriched task under
+      chief_engineer.cognitive_runtime_receipt. orchestration.workflow_runtime graph/cell metadata now declares
+      factory.cognitive_runtime and runtime/cognitive_runtime write effects. test_run_chief_engineer_blueprint_enriches_director_tasks
+      verifies the receipt command, session/run ids, Context OS expectation, and task handoff evidence.
+
+  - id: "A48"
+    statement: "Runtime QA final gates must leave Cognitive Runtime evidence before PM can report workflow completion."
+    status: verified_true
+    evidence: >
+      workflow_runtime QAWorkflow now calls record_qa_cognitive_receipt after unit and integration QA results,
+      and treats the receipt activity as part of the final qa_passed gate. PMWorkflow passes qa_session_id,
+      cognitive_runtime_required=True, and context_os_expected=True into QAWorkflowInput. The activity records a
+      qa_verification receipt through factory.cognitive_runtime with unit/integration result paths as trace_refs
+      and returns the receipt evidence through QAWorkflow.evidence.cognitive_runtime. test_record_qa_cognitive_receipt_records_required_runtime_evidence
+      verifies the public Cognitive Runtime command, session/run ids, Context OS expectation, trace refs, and
+      qa::verification turn envelope; test_pm_and_qa_workflows_require_cognitive_runtime_for_final_qa_gate verifies the
+      PM/QA workflow wiring.
+
+  - id: "A49"
+    statement: "PM dispatch/CLI integration QA must not remain a legacy path that can pass without Cognitive Runtime evidence."
+    status: verified_true
+    evidence: >
+      delivery.cli.pm.orchestration_engine imports run_post_dispatch_integration_qa from orchestration.pm_dispatch.public,
+      so the dispatch_pipeline QA path is still a real PM/CLI production path. dispatch_pipeline now records a
+      Context OS snapshot through factory.cognitive_runtime ResolveContextCommandV1 before recording a qa_verification
+      receipt through RecordRuntimeReceiptCommandV1 after result paths are known. The Context OS evidence is embedded in
+      the receipt payload and the receipt evidence is stored back into integration_qa.result.json and emitted in QA
+      runtime/dialogue events. Required Context OS resolve failure or receipt failure flips the dispatch QA result to a
+      failed reason instead of allowing a false pass.
+      orchestration.pm_dispatch graph/cell metadata now declares factory.cognitive_runtime and runtime/cognitive_runtime
+      write effects. test_run_post_dispatch_integration_qa_records_cognitive_runtime_receipt and
+      test_legacy_run_integration_qa_records_context_os_and_cognitive_receipt verify both the active CLI path and the
+      compatibility run_integration_qa path. test_run_post_dispatch_integration_qa_fails_closed_when_context_os_resolve_fails
+      verifies the public command contracts, trace refs, Context OS snapshot evidence, persisted evidence, and fail-closed behavior.
+
+  - id: "A50"
+    statement: "Docs dialogue/suggest must not call provider_runtime as a naked legacy path without Context OS grounding and Cognitive Runtime receipts."
+    status: verified_true
+    evidence: >
+      llm.dialogue now routes docs_suggest and docs_dialogue provider requests through internal.cognitive_evidence.
+      Each docs LLM request first resolves Context OS via factory.cognitive_runtime ResolveContextCommandV1,
+      appends the rendered Context OS grounding to the provider prompt, and records a RecordRuntimeReceiptCommandV1
+      receipt after provider completion or failure. Streaming docs suggestion results and docs dialogue meta expose compact
+      cognitive_runtime evidence. llm.dialogue cell and graph metadata now declare factory.cognitive_runtime and
+      runtime/cognitive_runtime write effects. test_generate_docs_fields_uses_context_os_prompt_and_records_receipt and
+      test_generate_dialogue_turn_uses_context_os_prompt_and_records_receipt verify prompt injection, public command
+      contracts, receipt payload evidence, and returned/streamed metadata.
+
+  - id: "A51"
+    statement: "Interactive LLM interview/evaluation must not remain a naked provider_runtime path without Context OS grounding and Cognitive Runtime receipts."
+    status: verified_true
+    evidence: >
+      llm.evaluation internal interview now resolves Context OS through factory.cognitive_runtime before invoking
+      CellAIExecutor for non-streaming and streaming interview answers, appends the rendered Context OS grounding to
+      the interview prompt, and records llm_interview receipts through RecordRuntimeReceiptCommandV1 after provider
+      completion or provider error. Returned interview answers and streaming complete events expose compact
+      cognitive_runtime evidence. llm.evaluation cell and graph metadata now declare factory.cognitive_runtime and
+      runtime/cognitive_runtime write effects. test_generate_interview_answer_uses_context_os_prompt_and_records_receipt
+      and test_generate_interview_answer_streaming_emits_cognitive_runtime_evidence verify prompt injection, receipt
+      payload evidence, and returned/streamed metadata.
+
 pre_mortem:
   failure_point: >
     The most likely regression is accidentally reintroducing an executable legacy dialogue fallback,
@@ -329,6 +571,16 @@ pre_mortem:
     - "src/backend/polaris/delivery/http/routers/role_chat.py"
     - "src/backend/polaris/delivery/http/routers/role_session.py"
     - "src/backend/polaris/delivery/http/workspace.py"
+    - "src/backend/polaris/delivery/cli/director/console_host.py"
+    - "src/backend/polaris/delivery/cli/director/cli_thin.py"
+    - "src/backend/polaris/delivery/cli/toad/app.py"
+    - "src/backend/polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    - "src/backend/polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    - "src/backend/polaris/cells/orchestration/workflow_runtime/cell.yaml"
+    - "src/backend/polaris/cells/roles/runtime/public/service.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/kernel/core.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
+    - "src/backend/polaris/cells/roles/kernel/internal/transaction/ledger.py"
     - "src/backend/polaris/delivery/cli/agentic_eval.py"
     - "src/backend/polaris/cells/llm/dialogue/public/service.py"
     - "src/backend/polaris/cells/roles/kernel/internal/development_workflow_runtime.py"
@@ -539,7 +791,7 @@ verification_plan:
       status: completed
     - description: "RoleRuntime Cognitive Runtime evidence hard gate."
       command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py -q"
-      expected: "20 passed"
+      expected: "25 passed"
       status: completed
     - description: "HTTP RoleRuntime chat/session streaming migration."
       command: "$env:PYTHONPATH=(Resolve-Path src/backend).Path; python -m pytest src/backend/polaris/tests/test_role_runtime_chat_router_helper.py src/backend/polaris/tests/unit/delivery/http/routers/test_role_chat.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_role_router.py src/backend/polaris/tests/unit/delivery/http/routers/test_pm_chat_v2.py src/backend/polaris/tests/integration/delivery/routers/test_pm_chat_router.py src/backend/polaris/tests/test_role_session_streaming.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_error_paths.py -q"
@@ -563,7 +815,7 @@ verification_plan:
       status: completed
     - description: "Cognitive Runtime MAINLINE strategy override and stream fingerprint ordering."
       command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py -q"
-      expected: "24 passed"
+      expected: "25 passed"
       status: completed
     - description: "Cognitive Runtime MAINLINE strategy override reaches ContextGateway projection parameters."
       command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_tool_loop_controller.py src/backend/polaris/cells/roles/kernel/tests/test_context_gateway_integration.py -q"
@@ -613,6 +865,115 @@ verification_plan:
       command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_speculative_execution.py src/backend/polaris/cells/roles/kernel/tests/test_speculation_integration.py src/backend/polaris/cells/roles/kernel/internal/tests/test_stream_shadow_engine.py -q"
       expected: "37 passed"
       status: completed
+    - description: "Workflow adapter/node RoleRuntime-only boundary and legacy-private-kernel test cleanup."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_roles_kernel.py src/backend/polaris/tests/test_workflow_chain.py src/backend/polaris/tests/test_roles_engine_dialogue.py src/backend/polaris/cells/roles/adapters/tests/test_runtime_dialogue.py -q"
+      expected: "68 passed, 5 skipped"
+      status: completed
+    - description: "llm.dialogue internal/public RoleRuntime-only compatibility facade."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_role_dialogue_validation_retry.py src/backend/polaris/tests/test_roles_engine_dialogue.py src/backend/polaris/tests/test_llm_dialogue_public_service.py src/backend/polaris/tests/test_llm_cell_public_services.py -q"
+      expected: "32 passed, 4 skipped"
+      status: completed
+    - description: "Director console delivery RoleRuntime-only cognitive preflight delegation."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_director_console_host.py src/backend/polaris/tests/test_roles_engine_dialogue.py src/backend/polaris/delivery/cli/director/tests/test_stream_protocol.py -q"
+      expected: "90 passed"
+      status: completed
+    - description: "Default PM Workflow ChiefEngineer blueprinting before Director dispatch."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_pm_workflow_chief_engineer.py src/backend/polaris/tests/test_pm_chief_engineer_node.py src/backend/polaris/tests/test_orchestration_engine_chief_engineer.py src/backend/polaris/tests/test_loop_director_metadata.py -q"
+      expected: "5 passed"
+      status: completed
+    - description: "PM Workflow ChiefEngineer Cognitive Runtime receipt before Director dispatch."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_pm_workflow_chief_engineer.py -q"
+      expected: "2 passed"
+      status: completed
+    - description: "Runtime QA final-gate Cognitive Runtime receipt before PM workflow completion."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_qa_workflow_cognitive_runtime.py -q"
+      expected: "2 passed"
+      status: completed
+    - description: "PM dispatch/CLI integration QA Cognitive Runtime receipt hard gate."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_dispatch_pipeline_integration_qa.py src/backend/polaris/tests/test_orchestration_engine_integration_qa.py -q"
+      expected: "18 passed"
+      status: completed
+    - description: "Docs dialogue/suggest Context OS prompt grounding and Cognitive Runtime receipts."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_docs_suggest.py src/backend/polaris/tests/test_docs_dialogue_cognitive_runtime.py -q"
+      expected: "4 passed"
+      status: completed
+    - description: "Interactive LLM interview Context OS prompt grounding and Cognitive Runtime receipts."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_llm_interview_cognitive_runtime.py -q"
+      expected: "2 passed"
+      status: completed
+    - description: "Workflow activity/model registry regression after ChiefEngineer activity registration."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/orchestration/workflow_runtime/tests/test_workflow_runtime_models.py src/backend/polaris/cells/orchestration/workflow_runtime/tests/test_handoff_contracts.py src/backend/polaris/tests/unit/cells/orchestration/workflow_runtime/internal/test_runtime_engine/test_activity_registry.py -q"
+      expected: "59 passed"
+      status: completed
+    - description: "RoleRuntime session persistence and Context OS projection continuity."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_host_session_continuity.py src/backend/polaris/tests/test_roles_runtime_and_llm_control_plane_public_services.py::test_role_runtime_service_stream_chat_turn_passes_history_and_prompt_appendix -q"
+      expected: "8 passed"
+      status: completed
+    - description: "LLM control-plane stream compatibility completion regression."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/tests/test_roles_runtime_and_llm_control_plane_public_services.py -q"
+      expected: "8 passed"
+      status: completed
+    - description: "RoleRuntime required Context OS preflight gate."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py -q"
+      expected: "27 passed"
+      status: completed
+    - description: "Internal LLMCaller compatibility adapter remains silent while direct legacy API still warns."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_llm_caller.py src/backend/polaris/cells/roles/kernel/internal/kernel/tests/test_facade_refactor.py -q"
+      expected: "102 passed"
+      status: completed
+    - description: "Director runtime codegen Cognitive Runtime write gate and target-project graph soft mapping."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/factory/cognitive_runtime/tests/test_public_service.py src/backend/polaris/cells/director/tasking/tests/test_file_apply_service.py src/backend/polaris/cells/director/execution/tests/test_code_generation.py -q"
+      expected: "85 passed"
+      status: completed
+    - description: "Director runtime codegen shared RoleRuntime/Cognitive Runtime session continuity."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/director/execution/tests/test_code_generation.py -q"
+      expected: "53 passed"
+      status: completed
+    - description: "Development workflow handoff fail-closed parity for non-streaming and streaming transaction paths."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/kernel/tests/test_integration_transactional_flow.py src/backend/polaris/cells/roles/kernel/tests/test_stream_nonstream_parity_transaction_kernel.py -q"
+      expected: "All tests pass"
+      status: completed
+    - description: "Governance graph/current blueprint drift scan for Cognitive Runtime and speculative execution production status."
+      command: |
+        $env:PYTHONPATH='src/backend'
+        @'
+        from pathlib import Path
+        import yaml
+
+        yaml_paths = [
+            Path("src/backend/docs/graph/catalog/cells.yaml"),
+            Path("src/backend/docs/graph/subgraphs/execution_governance_pipeline.yaml"),
+            Path("src/backend/docs/governance/templates/verification-cards/vc-20260604-cognitive-runtime-contextos-production-activation.yaml"),
+        ]
+        for path in yaml_paths:
+            with path.open("r", encoding="utf-8") as fh:
+                yaml.safe_load(fh)
+
+        text_paths = [
+            Path("docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md"),
+            Path("docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_CLOSURE_MATRIX_20260416.md"),
+            Path("docs/blueprints/STREAM_SHADOW_ENGINE_RELIABILITY_ASSESSMENT_20260417.md"),
+            Path("src/backend/docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md"),
+            Path("src/backend/docs/governance/decisions/adr-0077-speculative-execution-kernel-v2.md"),
+            Path("src/backend/docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md"),
+        ]
+        for path in text_paths:
+            text = path.read_text(encoding="utf-8")
+            assert "2026-06-04" in text, path
+            if "默认关闭" in text or "shadow-sidecar" in text or "骨架实现" in text:
+                assert "2026-06-04" in text and ("覆盖" in text or "基线" in text or "立项时" in text), path
+        print("governance_current_status_docs_ok")
+        '@ | python -
+      expected: "governance_current_status_docs_ok"
+      status: completed
+    - description: "Task Market lifecycle Cognitive Runtime receipt governance."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/runtime/task_market/tests/test_service.py::test_publish_claim_ack_records_cognitive_runtime_lifecycle_receipts src/backend/polaris/cells/runtime/task_market/tests/test_service.py::test_required_cognitive_runtime_receipt_failure_blocks_publish -q"
+      expected: "2 passed"
+      status: completed
+    - description: "Director Context OS repo-intelligence defaults and speculative target-workspace binding."
+      command: "$env:PYTHONPATH='src/backend'; python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::TestDirectorAdapterCognitiveRuntimeReceipt::test_role_runtime_metadata_requires_context_os_and_repo_intelligence src/backend/polaris/cells/roles/kernel/tests/test_speculative_execution.py::test_shadow_engine_uses_configured_target_workspace src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py::TestTransactionKernelPrebuiltContextPassThrough::test_create_transaction_kernel_carries_request_workspace -q"
+      expected: "3 passed"
+      status: completed
     - description: "Frontend runtime projection provenance."
       command: "npm run test -- src/frontend/src/runtime/projectionCompat.test.ts"
       expected: "17 passed"
@@ -641,6 +1002,18 @@ verification_plan:
     - "Confirm unattended RoleSessionOrchestrator turns carry metadata.cognitive_runtime_preflight.applied=true unless explicitly set to shadow/off."
     - "Confirm ExplorationWorkflowRuntime returned FAILED/CANCELLED results produce outer CompletionEvent(status=error) and not handoff success."
     - "Confirm speculative execution is enabled by default and write-tool speculation without registry-backed prepare shadow is rejected."
+    - "Confirm workflow adapter/node commands carry role_runtime_required, cognitive_runtime_required, and context_os_expected metadata before unattended execution."
+    - "Confirm llm.dialogue internal compatibility calls no longer use enable_cognitive or get_cognitive_middleware to bypass RoleRuntime preflight."
+    - "Confirm RoleConsoleHost.stream_turn no longer calls get_cognitive_middleware and command metadata marks delivery_cognitive_preflight=delegated_to_role_runtime."
+    - "Confirm PMWorkflow activity history contains run_chief_engineer_blueprint before DirectorWorkflow.run and Director task payloads include construction_plan metadata."
+    - "Confirm stream_chat_turn complete events include cognitive_runtime_evidence and embedded RoleTurnResult.metadata carries the same receipt/handoff evidence."
+    - "Confirm RoleRuntime session persistence writes session_continuity and state_first_context_os into roles.session context_config after streaming turns."
+    - "Confirm LLM control-plane streaming drains queued tokens and exits when provider chat_stream returns without an explicit COMPLETE sentinel."
+    - "Confirm context_os_expected=True fails closed when KERNELONE_CONTEXT_OS_ENABLED or request context disables Context OS."
+    - "Confirm kernel-owned LLMCaller is only an internal compatibility adapter and direct public LLMCaller use still emits deprecation warnings."
+    - "Confirm Director runtime codegen accepted files carry Cognitive Runtime lease/change-set validation/projection evidence before task success."
+    - "Confirm Director runtime codegen RoleRuntime command, Cognitive Runtime lease, receipt, and projection share one director-codegen session_id."
+    - "Confirm DevelopmentWorkflowRuntime handoff failures emit terminal error completion and do not set _development_handoff_executed session_patch."
 
 related_adrs:
   - "ADR-0071"

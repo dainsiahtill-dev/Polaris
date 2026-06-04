@@ -142,6 +142,45 @@ async def test_batch_adopts_completed_shadow_task(
 
 
 @pytest.mark.asyncio
+async def test_stream_write_tool_without_prepare_shadow_fails_closed(
+    controller: TurnTransactionController, shadow_engine: StreamShadowEngine
+) -> None:
+    decision = TurnDecision(
+        turn_id=TurnId("t_write_prepare_required"),
+        kind=TurnDecisionKind.TOOL_BATCH,
+        visible_message="",
+        tool_batch=ToolBatch(
+            batch_id="batch_prepare_required",
+            invocations=[
+                ToolInvocation(
+                    call_id=ToolCallId("call_missing_prepare"),
+                    tool_name="write_file",
+                    arguments={"path": "src/auth.ts", "content": "hello"},
+                    effect_type=ToolEffectType.WRITE,
+                    execution_mode=ToolExecutionMode.WRITE_SERIAL,
+                )
+            ],
+        ),
+        finalize_mode=FinalizeMode.NONE,
+        domain="code",
+    )
+    state_machine = _setup_state_machine("t_write_prepare_required")
+    ledger = TurnLedger(turn_id="t_write_prepare_required")
+
+    with pytest.raises(RuntimeError, match="speculative_write_prepare_failed"):
+        await controller._execute_tool_batch(
+            decision,
+            state_machine,
+            ledger,
+            context=[],
+            stream=True,
+            shadow_engine=shadow_engine,
+        )
+
+    controller.tool_runtime.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_batch_joins_running_shadow_task(
     controller: TurnTransactionController, shadow_engine: StreamShadowEngine
 ) -> None:

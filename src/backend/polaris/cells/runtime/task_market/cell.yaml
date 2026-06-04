@@ -6,7 +6,8 @@ stateful: true
 owner: runtime
 purpose: >
   Provide asynchronous task-market orchestration primitives for PM/ChiefEngineer/Director/QA
-  collaboration, including publish/claim/lease/requeue/dead-letter lifecycle management.
+  collaboration, including publish/claim/lease/requeue/dead-letter lifecycle management
+  with Cognitive Runtime lifecycle receipts for auditable cross-role governance.
 current_modules:
   - polaris.cells.runtime.task_market.public.service
   - polaris.cells.runtime.task_market.internal.service
@@ -44,6 +45,7 @@ depends_on:
   - events.fact_stream
   - policy.workspace_guard
   - audit.evidence
+  - factory.cognitive_runtime
   - chief_engineer.blueprint
   - director.task_consumer
   - qa.audit_verdict
@@ -54,6 +56,7 @@ state_owners:
 effects_allowed:
   - fs.read:runtime/task_market/*
   - fs.write:runtime/task_market/*
+  - fs.write:runtime/cognitive_runtime/*
   - fs.write:runtime/events/*
   - ws.outbound:runtime/*
 verification:

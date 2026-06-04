@@ -172,7 +172,12 @@ class LLMInvoker:
             # Import here to avoid circular dependency
             from .caller import LLMCaller
 
-            caller = LLMCaller(workspace=self.workspace, enable_cache=self._enable_cache, executor=self._executor)
+            caller = LLMCaller(
+                workspace=self.workspace,
+                enable_cache=self._enable_cache,
+                executor=self._executor,
+                emit_deprecation_warning=False,
+            )
             caller._model_catalog = self._model_catalog
             caller._formatter = self._formatter
 
@@ -627,7 +632,12 @@ class LLMInvoker:
             # Import here to avoid circular dependency
             from .caller import LLMCaller
 
-            caller = LLMCaller(workspace=self.workspace, enable_cache=self._enable_cache, executor=self._executor)
+            caller = LLMCaller(
+                workspace=self.workspace,
+                enable_cache=self._enable_cache,
+                executor=self._executor,
+                emit_deprecation_warning=False,
+            )
             caller._model_catalog = self._model_catalog
             caller._formatter = self._formatter
 
@@ -1027,7 +1037,12 @@ class LLMInvoker:
             # Import here to avoid circular dependency
             from .caller import LLMCaller
 
-            caller = LLMCaller(workspace=self.workspace, enable_cache=self._enable_cache, executor=self._executor)
+            caller = LLMCaller(
+                workspace=self.workspace,
+                enable_cache=self._enable_cache,
+                executor=self._executor,
+                emit_deprecation_warning=False,
+            )
             caller._model_catalog = self._model_catalog
             caller._formatter = self._formatter
 

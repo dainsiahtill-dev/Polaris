@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -16,6 +17,7 @@ from polaris.kernelone.fs.text_ops import write_json_atomic
 from .base import ActivityExecutionResult, register_activity
 
 activity = get_activity_api()
+logger = logging.getLogger(__name__)
 
 _PHASE_NAME_MAP = {
     "prepare": TaskPhase.PLANNING,
@@ -144,6 +146,94 @@ def _terminal_result_payload(
         }
     )
     return payload
+
+
+def _safe_record_director_terminal_resident_decision(
+    *,
+    workspace: str,
+    run_id: str,
+    contract: TaskContract,
+    result_path: str,
+    terminal_payload: dict[str, Any],
+) -> None:
+    """Record real Director terminal facts into resident autonomy."""
+    try:
+        from polaris.cells.resident.autonomy.public.service import record_resident_decision
+    except (ImportError, RuntimeError, ValueError) as exc:
+        logger.warning(
+            "director_terminal_result: resident recorder unavailable: run_id=%s task_id=%s error=%s",
+            run_id,
+            contract.task_id,
+            exc,
+        )
+        return
+
+    metadata = _normalize_dict(terminal_payload.get("workflow_metadata"))
+    context = _normalize_dict(metadata.get("context"))
+    context_metadata = _normalize_dict(context.get("metadata"))
+    director_execution = _normalize_dict(context_metadata.get("director_execution"))
+    changed_files = (
+        _normalize_list(terminal_payload.get("changed_files"))
+        or _normalize_list(metadata.get("changed_files"))
+        or _normalize_list(context.get("changed_files"))
+    )
+    verification_result = _normalize_dict(terminal_payload.get("verification_result"))
+    success = bool(terminal_payload.get("success"))
+    status = str(terminal_payload.get("status") or "").strip().lower() or ("success" if success else "failed")
+    evidence_refs = [result_path]
+    execution_result_path = str(director_execution.get("result_path") or "").strip()
+    if execution_result_path and execution_result_path not in evidence_refs:
+        evidence_refs.append(execution_result_path)
+
+    strategy_tags = ["director_terminal_result", "task_execution"]
+    materialization_mode = str(director_execution.get("materialization_mode") or "").strip()
+    if materialization_mode:
+        strategy_tags.append(materialization_mode)
+    if changed_files:
+        strategy_tags.append("workspace_mutation")
+    if verification_result:
+        strategy_tags.append("verification_feedback")
+    if success:
+        strategy_tags.append("successful_delivery")
+    else:
+        strategy_tags.append("failure_feedback")
+
+    try:
+        record_resident_decision(
+            workspace,
+            {
+                "run_id": run_id,
+                "actor": "director",
+                "stage": "task_terminal_result",
+                "task_id": contract.task_id,
+                "summary": str(terminal_payload.get("summary") or contract.title or contract.task_id).strip(),
+                "strategy_tags": strategy_tags,
+                "expected_outcome": {"status": "success", "success": True},
+                "actual_outcome": {
+                    "status": status,
+                    "success": success,
+                    "qa_verdict": str(terminal_payload.get("qa_verdict") or "").strip(),
+                    "changed_files": changed_files,
+                    "completed_phases": _normalize_list(terminal_payload.get("workflow_completed_phases")),
+                    "verification_result": verification_result,
+                    "materialization_mode": materialization_mode,
+                    "result_path": result_path,
+                    "errors": _normalize_list(terminal_payload.get("errors")),
+                },
+                "verdict": "success" if success else "failure",
+                "evidence_refs": evidence_refs,
+                "context_refs": [contract.task_id, *changed_files],
+                "confidence": 0.88 if success else 0.82,
+            },
+        )
+    except (RuntimeError, ValueError, OSError, TypeError) as exc:
+        logger.warning(
+            "director_terminal_result: failed to record resident decision: run_id=%s task_id=%s error=%s",
+            run_id,
+            contract.task_id,
+            exc,
+            exc_info=True,
+        )
 
 
 def _build_context(payload: dict[str, Any], contract: TaskContract) -> PhaseContext:
@@ -550,6 +640,13 @@ async def record_director_task_terminal_result(payload: dict[str, Any]) -> dict[
         metadata=metadata,
     )
     write_json_atomic(result_path, terminal_payload)
+    _safe_record_director_terminal_resident_decision(
+        workspace=workspace,
+        run_id=run_id,
+        contract=contract,
+        result_path=result_path,
+        terminal_payload=terminal_payload,
+    )
     return ActivityExecutionResult(
         success=True,
         summary="Director task terminal result recorded",

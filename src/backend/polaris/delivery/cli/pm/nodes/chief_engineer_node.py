@@ -92,7 +92,11 @@ class ChiefEngineerNode(BaseRoleNode):
                 error_code="CE_ANALYSIS_ERROR",
             )
 
-        updated_tasks = tasks
+        task_update_map = result.get("task_update_map") if isinstance(result, dict) else None
+        updated_tasks = self._apply_blueprint_updates(
+            tasks,
+            task_update_map if isinstance(task_update_map, dict) else {},
+        )
         hard_failure = bool(result.get("hard_failure"))
         ran = bool(result.get("ran"))
         reason = str(result.get("reason") or "").strip()

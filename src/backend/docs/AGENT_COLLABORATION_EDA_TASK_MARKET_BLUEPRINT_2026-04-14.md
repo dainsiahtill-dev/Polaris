@@ -12,6 +12,8 @@
 > 当前执行真相仍以 `AGENTS.md`、`docs/AGENT_ARCHITECTURE_STANDARD.md`、`docs/graph/catalog/cells.yaml`、`docs/graph/subgraphs/*.yaml` 为准。  
 > 当前仓已声明 `runtime.task_market` 并落地部分 `shadow/mainline/mainline-full` 路径，但 `pull-based durable consumer`、`outbox atomicity`、`projection dashboard`、`HITL` 主链仍在迁移中。
 > 本文档的职责是：为 Polaris 从“同步角色链”升级为“异步任务集市”提供唯一、可审计、可演进的目标态蓝图，并对标 2026 年业界最佳实践：`Temporal` 的耐久执行思想、`NATS JetStream` 的高性能流、`PostgreSQL JSONB` 的状态机建模、`OpenTelemetry` 的全链路可观测性。
+>
+> 2026-06-04 覆盖说明：本文中关于 `factory.cognitive_runtime` “仍是 shadow-sidecar” 的语句是 2026-04-14 迁移基线，不再代表当前全部事实。当前 Director runtime codegen proposal-to-apply 已把 Cognitive Runtime 用作主线写入接受门禁：scope lease、change-set validation、receipt、diff-to-cell mapping、projection compile，以及存在 graph cell mapping 时的 promotion gate。Task Market durable pull consumer / outbox atomicity 仍未因此自动完成，二者不能混为同一状态。
 
 ---
 
@@ -92,8 +94,8 @@ Polaris 当前主业务角色链，图谱上已经清晰表达为：
    - 已提供 Human-in-the-Loop 审批队列雏形，但仍是 sidecar，不是主链 authority。
 9. `polaris/cells/runtime/projection/**`
    - 已存在 runtime projection 能力，可作为后续 `CQRS query model` 的接入点。
-10. `docs/cognitive_runtime_architecture.md`
-   - 已明确 `Cognitive Runtime` 当前为 `shadow-sidecar`，不是生产主链 authority。
+10. `factory.cognitive_runtime`
+   - 2026-04-14 时仅可按 `shadow-sidecar` 使用；2026-06-04 起已在 Director runtime codegen proposal-to-apply 写入路径承担主线 authority 门禁，但尚未覆盖所有 task-market orchestration 阶段。
 
 ### 1.3 当前问题不在“有没有组件”，而在“谁是唯一主链 authority”
 
@@ -329,7 +331,7 @@ Kafka 当然能做，但对 Polaris 当前阶段不是最优：
 | `events.fact_stream` | append-only 事实流 | 保留，作为 pub/sub 事实总线 |
 | `orchestration.workflow_runtime` | workflow engine + store | 保留，用于 worker 内部长任务而非角色耦合主链 |
 | `context.engine` / `ContextOS` | 上下文投影 | 保留，作为 snapshot source |
-| `factory.cognitive_runtime` | shadow-sidecar receipt/handoff | 保留，后续可升格为 authority sidecar |
+| `factory.cognitive_runtime` | receipt/handoff + Director codegen mainline write gate | 保留；已在代码生成写入接受路径承担 scope lease / change-set validation / projection authority，后续继续扩展到 task-market orchestration 阶段 |
 
 ### 5.2 当前不足以直接复用为主链的模块
 
@@ -788,7 +790,9 @@ sequenceDiagram
 
 ### 11.2 与 Cognitive Runtime 的关系
 
-当前 `Cognitive Runtime` 仍是 `shadow-sidecar`，这一事实必须诚实保留。
+2026-04-14 基线中，`Cognitive Runtime` 仍是 `shadow-sidecar`；2026-06-04 当前事实已经前进：Director runtime codegen proposal-to-apply 会通过 Cognitive Runtime 执行 scope lease、change-set validation、receipt、diff-to-cell mapping 和 projection compile，存在 graph cell mapping 时还会执行 promotion gate。
+
+仍需诚实保留的边界是：这不等于 Task Market 的 durable pull consumer、outbox atomicity、全角色 claim/ack 编排治理已经全部完成。
 
 目标态里它不负责替代任务市场，而负责：
 

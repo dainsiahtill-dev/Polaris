@@ -23,6 +23,7 @@ from polaris.cells.llm.provider_runtime.public.contracts import (
     InvokeRoleProviderCommandV1,
     QueryRoleRuntimeProviderSupportV1,
 )
+from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
 def test_execute_provider_action_maps_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -185,10 +186,21 @@ async def test_provider_config_service_facade(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.asyncio
 async def test_dialogue_service_role_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _role_response(**_: object) -> dict[str, object]:
-        return {"response": "hello", "source": "mock"}
+    class _FakeRoleRuntimeService:
+        async def execute_role_session(self, command) -> RoleExecutionResultV1:
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role=command.role,
+                workspace=command.workspace,
+                task_id=command.task_id,
+                session_id=command.session_id,
+                run_id=command.run_id,
+                output="hello",
+                metadata={"provider_type": "role_runtime"},
+            )
 
-    monkeypatch.setattr(dialogue_public, "generate_role_response", _role_response)
+    monkeypatch.setattr(dialogue_public, "_create_role_runtime_service", lambda: _FakeRoleRuntimeService())
     monkeypatch.setattr(dialogue_public, "validate_and_parse_role_output", lambda _role, _output: {"valid": True})
 
     service = dialogue_public.LlmDialogueService(settings=object())
@@ -199,6 +211,7 @@ async def test_dialogue_service_role_success(monkeypatch: pytest.MonkeyPatch) ->
 
     assert result.ok is True
     assert result.content == "hello"
+    assert result.metadata["role_runtime_entrypoint"] == "roles.runtime.execute_role_session"
     assert parsed["valid"] is True
 
 

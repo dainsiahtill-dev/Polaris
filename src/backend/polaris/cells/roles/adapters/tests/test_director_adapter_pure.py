@@ -101,6 +101,26 @@ class TestSelectExecutionStrategy:
 class TestDirectorAdapterCognitiveRuntimeReceipt:
     """Director materialization must leave Cognitive Runtime evidence."""
 
+    def test_role_runtime_metadata_requires_context_os_and_repo_intelligence(self) -> None:
+        metadata = DirectorAdapter._build_role_runtime_metadata(
+            {
+                "run_id": "run-1",
+                "task_id": "TASK-1",
+                "metadata": {"source": "caller"},
+            },
+            max_retries=2,
+        )
+
+        assert metadata["role_runtime_required"] is True
+        assert metadata["cognitive_runtime_required"] is True
+        assert metadata["context_os_expected"] is True
+        assert metadata["use_repo_intelligence"] is True
+        assert metadata["repo_intel_max_files"] == 20
+        assert metadata["repo_intel_max_symbols"] == 40
+        assert metadata["run_id"] == "run-1"
+        assert metadata["task_id"] == "TASK-1"
+        assert metadata["source"] == "caller"
+
     def test_emit_cognitive_runtime_receipt_records_and_exports_handoff(
         self,
         tmp_path: Any,

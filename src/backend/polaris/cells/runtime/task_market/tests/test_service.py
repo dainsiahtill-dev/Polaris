@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -23,8 +25,35 @@ from polaris.cells.runtime.task_market.public.contracts import (
     RequestHumanReviewCommandV1,
     ResolveHumanReviewCommandV1,
     SubmitChangeOrderCommandV1,
+    TaskMarketError,
 )
 from polaris.cells.runtime.task_market.public.service import TaskMarketService
+
+
+class _FakeCognitiveRuntimeService:
+    def __init__(self, *, ok: bool = True) -> None:
+        self.ok = ok
+        self.commands: list[Any] = []
+        self.closed = False
+
+    def record_runtime_receipt(self, command: Any) -> SimpleNamespace:
+        self.commands.append(command)
+        if not self.ok:
+            return SimpleNamespace(
+                ok=False,
+                receipt=None,
+                error_code="receipt_denied",
+                error_message="receipt denied",
+            )
+        return SimpleNamespace(
+            ok=True,
+            receipt=SimpleNamespace(receipt_id=f"receipt-{len(self.commands)}"),
+            error_code="",
+            error_message="",
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_publish_claim_ack_flow(tmp_path: Path) -> None:
@@ -80,6 +109,102 @@ def test_publish_claim_ack_flow(tmp_path: Path) -> None:
     )
     assert acknowledged.ok is True
     assert acknowledged.status == "pending_qa"
+
+
+def test_publish_claim_ack_records_cognitive_runtime_lifecycle_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    cognitive_service = _FakeCognitiveRuntimeService()
+    monkeypatch.setattr(
+        "polaris.cells.factory.cognitive_runtime.public.get_cognitive_runtime_public_service",
+        lambda: cognitive_service,
+    )
+    service = TaskMarketService()
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-cognitive",
+            run_id="run-cognitive",
+            task_id="task-cognitive",
+            stage="pending_exec",
+            source_role="pm",
+            payload={
+                "title": "Implement API",
+                "context_os_expected": True,
+                "session_id": "role-session-task-cognitive",
+            },
+        )
+    )
+    claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+        )
+    )
+    assert claim.ok is True
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="task-cognitive",
+            lease_token=claim.lease_token,
+            next_stage="pending_qa",
+            summary="Execution complete",
+        )
+    )
+
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
+    item = status.items[0]
+    lifecycle = item["metadata"]["last_cognitive_runtime_lifecycle"]
+    assert lifecycle["source"] == "runtime.task_market"
+    assert lifecycle["event_type"] == "acknowledged"
+    assert lifecycle["receipt_recorded"] is True
+    assert lifecycle["context_os_expected"] is True
+    assert item["metadata"]["cognitive_runtime_receipt_ids"] == ["receipt-1", "receipt-2", "receipt-3"]
+    assert [command.receipt_type for command in cognitive_service.commands] == [
+        "task_market_lifecycle",
+        "task_market_lifecycle",
+        "task_market_lifecycle",
+    ]
+    assert cognitive_service.commands[0].session_id == "role-session-task-cognitive"
+
+
+def test_required_cognitive_runtime_receipt_failure_blocks_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    cognitive_service = _FakeCognitiveRuntimeService(ok=False)
+    monkeypatch.setattr(
+        "polaris.cells.factory.cognitive_runtime.public.get_cognitive_runtime_public_service",
+        lambda: cognitive_service,
+    )
+    service = TaskMarketService()
+
+    with pytest.raises(TaskMarketError, match="receipt denied"):
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id="trace-required",
+                run_id="run-required",
+                task_id="task-required",
+                stage="pending_exec",
+                source_role="pm",
+                payload={
+                    "title": "Implement API",
+                    "cognitive_runtime_required": True,
+                },
+            )
+        )
+
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
+    assert status.total == 0
 
 
 def test_publish_preserves_revision_context_fields(tmp_path: Path) -> None:

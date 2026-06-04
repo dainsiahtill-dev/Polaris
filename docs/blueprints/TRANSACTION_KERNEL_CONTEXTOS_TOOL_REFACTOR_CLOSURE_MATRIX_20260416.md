@@ -8,6 +8,11 @@
 > - 本文是当前事实对账文档，不负责下一阶段实施步骤。
 > - `ContextOS` 四层正式化执行与验收已在 `../../docs/blueprints/CONTEXTOS_SERVICE_HARDENING_BLUEPRINT_20260417.md` 完成并收口。
 > - 对应修前治理卡见 `src/backend/docs/governance/templates/verification-cards/vc-20260417-contextos-service-hardening.yaml`。
+>
+> 2026-06-04 覆盖说明：
+> - Speculative execution 当前默认开启，显式关闭变量仍保留为回滚开关。
+> - 写工具 speculative 必须由 registry-backed prepare shadow 证明安全；缺失时 fail closed。
+> - 当前验证证据统一见 `src/backend/docs/governance/templates/verification-cards/vc-20260604-cognitive-runtime-contextos-production-activation.yaml`。
 
 ---
 
@@ -68,7 +73,7 @@
 |---|---|---|---|
 | StreamShadowEngine | `roles/kernel/internal/stream_shadow_engine.py` | **Auth** | 已接入 `TurnTransactionController._call_llm_for_decision_stream`（flag 控制） |
 | SpeculativeExecutor | `roles/kernel/internal/speculative_executor.py` | **Auth** | 已由 stream shadow path 调用，只对只读工具触发 pre-exec |
-| feature flag | `roles/kernel/internal/speculative_flags.py` | **Auth** | `ENABLE_SPECULATIVE_EXECUTION` 已落地（默认关闭，兼容 `KERNELONE_ENABLE_SPECULATIVE_EXECUTION`） |
+| feature flag | `roles/kernel/internal/speculative_flags.py` | **Auth** | `ENABLE_SPECULATIVE_EXECUTION` 已落地；截至 2026-06-04 默认开启，兼容 `KERNELONE_ENABLE_SPECULATIVE_EXECUTION`，显式 false 仍可回滚 |
 
 ## Tool Spec SSOT (Phase 7)
 
@@ -102,7 +107,7 @@
 
 1. **不要再补新层**。四层 ContextOS 文件已有代码，下一步是让它们**替代**旧内联实现，而不是继续新建服务。
 2. **双轨已退役**（2026-04-17）。`runtime.py` 中 `_legacy_project_impl` 已删除，`enable_pipeline` 已移除，`project()` 直接走 `_project_via_pipeline`。
-3. **speculative 层已完成受控接线**。当前以 feature flag 默认关闭方式接入 stream 路径，保持可回滚与低风险。
+3. **speculative 层已完成受控接线并升级为默认开启**。当前仍保留 feature flag 回滚；写工具推测必须经过 registry-backed prepare shadow，否则 fail closed。
 4. **Phase 7 监控基线已落地**。`transaction_kernel.violation_count`、`turn.single_batch_ratio`、`workflow.handoff_rate`、`kernel_guard.assert_fail_rate`、`speculative.hit_rate`、`speculative.false_positive_rate` 已进入结果与流式完成事件。
 5. **nuke 序列化已修复**（2026-04-17）。`ContextOSSnapshot.to_dict()` 超限自动创建 `ReceiptStore` 并内联 `_receipt_store_export`，round-trip 安全。
 6. **四层服务硬化已完成**。`ReceiptStore` / `TruthLogService` / `WorkingStateManager` / `ProjectionEngine` 已从占位符升级为 authoritative path，并完成 `kernel + context` 联合回归。

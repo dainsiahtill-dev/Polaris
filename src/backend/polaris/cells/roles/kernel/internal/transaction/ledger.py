@@ -46,6 +46,7 @@ class TransactionConfig:
     """事务控制器配置"""
 
     domain: Literal["document", "code"] = "document"
+    workspace: str = ""
     max_tool_execution_time_ms: int = 60000
     enable_streaming: bool = True
     # LLM_ONCE强制约束

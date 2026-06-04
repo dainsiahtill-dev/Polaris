@@ -13,8 +13,8 @@ from .director_activities import (
     execute_task_phase,
     get_ready_tasks,
 )
-from .pm_activities import generate_pm_tasks, validate_task_contract
-from .qa_activities import collect_evidence, run_integration_qa, run_unit_qa
+from .pm_activities import generate_pm_tasks, run_chief_engineer_blueprint, validate_task_contract
+from .qa_activities import collect_evidence, record_qa_cognitive_receipt, run_integration_qa, run_unit_qa
 
 __all__ = [
     "ActivityExecutionContext",
@@ -28,6 +28,8 @@ __all__ = [
     "get_registered_activity",
     "list_registered_activities",
     "register_activity",
+    "record_qa_cognitive_receipt",
+    "run_chief_engineer_blueprint",
     "run_integration_qa",
     "run_unit_qa",
     "validate_task_contract",

@@ -259,8 +259,8 @@ class LlmControlPlaneService(ILLMControlPlane):
 
         Completeness contract
         ---------------------
-        The loop exits only after the provider has emitted StreamEventType.COMPLETE
-        (signalled by ``producer.done()``) AND the internal queue is fully drained.
+        The loop exits only after the provider task has finished or emitted
+        StreamEventType.COMPLETE, and the internal queue is fully drained.
         This guarantees that no tokens are silently dropped even when the provider
         produces a burst of text followed by the COMPLETE event.
         """
@@ -271,7 +271,8 @@ class LlmControlPlaneService(ILLMControlPlane):
         )
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
         # Mutable flag shared between the producer callback and the consumer loop.
-        # Set to True once the provider signals completion.
+        # Some compatibility providers do not emit an explicit sentinel, so task
+        # completion is also a valid completion signal.
         saw_complete: list[bool] = [False]
 
         def _on_token(token: str) -> None:
@@ -286,17 +287,14 @@ class LlmControlPlaneService(ILLMControlPlane):
         )
         yielded = False
         while True:
-            # Exit only when the provider has finished AND we have drained
-            # all pending tokens AND we have observed the COMPLETE signal.
-            if producer.done() and queue.empty() and saw_complete[0]:
+            # Exit only after the producer is complete or has explicitly signalled
+            # COMPLETE, and all pending tokens have been drained.
+            if (producer.done() or saw_complete[0]) and queue.empty():
                 break
             try:
                 token = await asyncio.wait_for(queue.get(), timeout=timeout)
             except TimeoutError:
-                # If the producer is done but we haven't observed COMPLETE yet,
-                # the queue may be momentarily empty — keep waiting up to timeout
-                # to give the COMPLETE signal time to arrive.
-                if producer.done() and saw_complete[0]:
+                if producer.done() or saw_complete[0]:
                     break
                 continue
             yielded = True

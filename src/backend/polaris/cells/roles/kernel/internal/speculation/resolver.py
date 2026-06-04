@@ -83,7 +83,11 @@ class SpeculationResolver:
             prepare_task = self._registry.lookup(prepare_spec_key)
             if prepare_task is None:
                 self._metrics.record_replay(turn_id, call_id, tool_name, reason="prepare_miss")
-                return {"action": "replay", "result": None, "error": None}
+                return {
+                    "action": "block",
+                    "result": None,
+                    "error": "write_tool_prepare_shadow_missing",
+                }
             if prepare_task.state == ShadowTaskState.COMPLETED:
                 try:
                     result = await self._registry.adopt(prepare_task.task_id, call_id)
@@ -91,7 +95,11 @@ class SpeculationResolver:
                     return {"action": "adopt", "result": result, "error": None}
                 except Exception as exc:
                     self._metrics.record_replay(turn_id, call_id, tool_name, reason=f"prepare_adopt_failed:{exc}")
-                    return {"action": "replay", "result": None, "error": str(exc)}
+                    return {
+                        "action": "block",
+                        "result": None,
+                        "error": f"write_tool_prepare_shadow_adopt_failed:{exc}",
+                    }
             if prepare_task.state in {ShadowTaskState.STARTING, ShadowTaskState.RUNNING}:
                 try:
                     result = await self._registry.join(prepare_task.task_id, call_id)
@@ -99,9 +107,17 @@ class SpeculationResolver:
                     return {"action": "join", "result": result, "error": None}
                 except Exception as exc:
                     self._metrics.record_replay(turn_id, call_id, tool_name, reason=f"prepare_join_failed:{exc}")
-                    return {"action": "replay", "result": None, "error": str(exc)}
+                    return {
+                        "action": "block",
+                        "result": None,
+                        "error": f"write_tool_prepare_shadow_join_failed:{exc}",
+                    }
             self._metrics.record_replay(turn_id, call_id, tool_name, reason=prepare_task.state.value)
-            return {"action": "replay", "result": None, "error": None}
+            return {
+                "action": "block",
+                "result": None,
+                "error": f"write_tool_prepare_shadow_{prepare_task.state.value}",
+            }
 
         normalized = normalize_args(tool_name, args)
         env_fp = build_env_fingerprint()

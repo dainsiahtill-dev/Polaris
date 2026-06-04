@@ -454,3 +454,49 @@ class TestHandoffEntry:
 
         result = await runtime.execute(decision, TurnId("turn_after_handoff"))
         assert result.status == ExplorationStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_execute_consumes_context_handoff_pack_metadata(self, mock_executor) -> None:
+        runtime = ExplorationWorkflowRuntime(tool_executor=mock_executor, max_steps=1)
+        pack = ContextHandoffPack(
+            handoff_id="handoff_metadata",
+            workspace="/workspace",
+            created_at="2026-04-16T00:00:00Z",
+            session_id="session_1",
+            reason="async_operation",
+            current_goal="Resume from Context OS",
+            run_card={"priority": "high"},
+            receipt_refs=("receipt_1",),
+        )
+        decision = TurnDecision(
+            turn_id=TurnId("turn_context_pack"),
+            kind=TurnDecisionKind.HANDOFF_WORKFLOW,
+            visible_message="Run original plan",
+            reasoning_summary="Context handoff should be consumed before execution",
+            tool_batch=ToolBatch(
+                batch_id=BatchId("batch_context_pack"),
+                invocations=[
+                    ToolInvocation(
+                        call_id=ToolCallId("call_1"),
+                        tool_name="read_file",
+                        arguments={"path": "main.py"},
+                        effect_type=ToolEffectType.READ,
+                        execution_mode=ToolExecutionMode.READONLY_PARALLEL,
+                    )
+                ],
+            ),
+            finalize_mode=FinalizeMode.NONE,
+            domain="document",
+            metadata={
+                "handoff_reason": "async_operation",
+                "context_handoff_pack": pack.to_dict(),
+            },
+        )
+        mock_executor.return_value = {"success": True, "result": "done"}
+
+        result = await runtime.execute(decision, TurnId("turn_after_context_pack"))
+
+        assert result.status == ExplorationStatus.COMPLETED
+        assert runtime._handoff_context["handoff_id"] == "handoff_metadata"
+        assert runtime._handoff_context["current_goal"] == "Resume from Context OS"
+        mock_executor.assert_awaited_once_with("read_file", {"path": "main.py"})

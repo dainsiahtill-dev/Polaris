@@ -164,8 +164,8 @@ async def persist_session_turn_state(
                     configured_recent_window = int(existing_pack.get("recent_window_messages") or 0)
                 except (TypeError, ValueError):
                     configured_recent_window = 0
-            history_limit = configured_recent_window or int(
-                engine.policy.context_window.default_history_window_messages
+            history_limit = engine.resolve_history_window(
+                configured_recent_window if configured_recent_window > 0 else None
             )
             history_limit = max(2, min(24, history_limit))
 

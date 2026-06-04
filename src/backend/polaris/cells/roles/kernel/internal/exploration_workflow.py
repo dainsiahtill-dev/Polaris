@@ -130,6 +130,20 @@ class ExplorationWorkflowRuntime:
         # Handoff context (populated when entering from ContextHandoffPack)
         self._handoff_context: dict[str, Any] = {}
 
+    def _apply_handoff_pack_from_metadata(self, decision: TurnDecision) -> None:
+        metadata = decision.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return
+        payload = metadata.get("context_handoff_pack") or metadata.get("handoff_pack")
+        if not isinstance(payload, dict):
+            return
+        handoff_pack = ContextHandoffPack.from_mapping(payload)
+        if handoff_pack is None:
+            return
+        if self._handoff_context.get("handoff_id") == handoff_pack.handoff_id:
+            return
+        self.enter_from_handoff(handoff_pack)
+
     async def execute(self, decision: TurnDecision, turn_id: TurnId) -> ExplorationResult:
         """
         执行探索工作流
@@ -142,7 +156,7 @@ class ExplorationWorkflowRuntime:
         5. 综合分析（可选）
         """
         start_ms = int(time.time() * 1000)
-        decision.get("metadata", {})
+        self._apply_handoff_pack_from_metadata(decision)
 
         # Check cancellation before starting work
         check_cancel(self._cancel_token)
@@ -254,6 +268,7 @@ class ExplorationWorkflowRuntime:
         - CompletionEvent (success / failed)
         """
         start_ms = int(time.time() * 1000)
+        self._apply_handoff_pack_from_metadata(decision)
         plan = self._create_plan(decision)
         tools_executed: list[dict] = []
 
@@ -365,6 +380,7 @@ class ExplorationWorkflowRuntime:
     def enter_from_handoff(self, handoff_pack: ContextHandoffPack) -> TurnDecision:
         """从 ContextHandoffPack 进入，提取 handoff 信息并构造 TurnDecision。"""
         self._handoff_context = {
+            "handoff_id": handoff_pack.handoff_id,
             "handoff_reason": handoff_pack.reason,
             "current_goal": handoff_pack.current_goal,
             "run_card": dict(handoff_pack.run_card),

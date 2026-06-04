@@ -12,6 +12,12 @@ import os
 import re
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.llm.dialogue.internal.cognitive_evidence import (
+    append_context_to_prompt,
+    attach_cognitive_meta,
+    record_llm_cognitive_receipt,
+    resolve_llm_context,
+)
 from polaris.cells.llm.provider_runtime.public.service import (
     CellAIExecutor,
     CellAIRequest,
@@ -419,6 +425,15 @@ async def generate_dialogue_turn(
 
     state = build_dialogue_state(fields, history, message)
     prompt = build_dialogue_prompt(fields, history, message, state)
+    cognitive_evidence = resolve_llm_context(
+        workspace=workspace,
+        role="architect",
+        mode="docs_dialogue",
+        query=message or prompt,
+        step=len(history),
+        policy={"history_length": len(history), "unresolved_slots": state.get("unresolved_slot_ids") or []},
+    )
+    prompt = append_context_to_prompt(prompt, cognitive_evidence)
 
     request = CellAIRequest(
         task_type=TaskType.DIALOGUE,
@@ -438,7 +453,17 @@ async def generate_dialogue_turn(
             last_output = response.output
             data = ResponseNormalizer.extract_json_object(last_output)
             if data:
-                return finalize_dialogue_payload(data, fields, message, state)
+                result = finalize_dialogue_payload(data, fields, message, state)
+                cognitive_evidence = record_llm_cognitive_receipt(
+                    workspace=workspace,
+                    evidence=cognitive_evidence,
+                    receipt_type="llm_docs_dialogue",
+                    task_type=str(TaskType.DIALOGUE.value),
+                    llm_ok=True,
+                    output_length=len(last_output),
+                    metadata={"result": "parsed"},
+                )
+                return attach_cognitive_meta(result, cognitive_evidence)
 
         # 检查是否是截断导致的失败
         if response.ok and ResponseNormalizer.looks_truncated_json(last_output):
@@ -465,10 +490,29 @@ Each list <= {_MAX_DIALOGUE_ITEMS} items. No markdown.
         if repair_response.ok:
             data = ResponseNormalizer.extract_json_object(repair_response.output)
             if data:
-                return finalize_dialogue_payload(data, fields, message, state)
+                result = finalize_dialogue_payload(data, fields, message, state)
+                cognitive_evidence = record_llm_cognitive_receipt(
+                    workspace=workspace,
+                    evidence=cognitive_evidence,
+                    receipt_type="llm_docs_dialogue",
+                    task_type=str(TaskType.DIALOGUE.value),
+                    llm_ok=True,
+                    output_length=len(repair_response.output or last_output),
+                    metadata={"result": "repaired"},
+                )
+                return attach_cognitive_meta(result, cognitive_evidence)
 
     # 降级响应
-    return generate_dialogue_fallback(fields, message, state)
+    cognitive_evidence = record_llm_cognitive_receipt(
+        workspace=workspace,
+        evidence=cognitive_evidence,
+        receipt_type="llm_docs_dialogue",
+        task_type=str(TaskType.DIALOGUE.value),
+        llm_ok=bool(last_output),
+        output_length=len(last_output),
+        metadata={"result": "fallback"},
+    )
+    return attach_cognitive_meta(generate_dialogue_fallback(fields, message, state), cognitive_evidence)
 
 
 async def generate_dialogue_turn_streaming(
@@ -485,6 +529,15 @@ async def generate_dialogue_turn_streaming(
 
     state = build_dialogue_state(fields, history, message)
     prompt = build_dialogue_prompt(fields, history, message, state)
+    cognitive_evidence = resolve_llm_context(
+        workspace=workspace,
+        role="architect",
+        mode="docs_dialogue_stream",
+        query=message or prompt,
+        step=len(history),
+        policy={"history_length": len(history), "unresolved_slots": state.get("unresolved_slot_ids") or []},
+    )
+    prompt = append_context_to_prompt(prompt, cognitive_evidence)
 
     request = CellAIRequest(
         task_type=TaskType.DIALOGUE,
@@ -509,11 +562,29 @@ async def generate_dialogue_turn_streaming(
             elif event_type == "complete":
                 break
             elif event_type == "error":
+                record_llm_cognitive_receipt(
+                    workspace=workspace,
+                    evidence=cognitive_evidence,
+                    receipt_type="llm_docs_dialogue_stream",
+                    task_type=str(TaskType.DIALOGUE.value),
+                    llm_ok=False,
+                    output_length=len(collected_output),
+                    provider_error=str(event.get("error") or ""),
+                )
                 await output_queue.put({"type": "error", "data": {"error": event.get("error", "")}})
                 return
 
     except (RuntimeError, ValueError) as exc:
         logger.warning("[dialogue-stream] stream error: %s", exc)
+        record_llm_cognitive_receipt(
+            workspace=workspace,
+            evidence=cognitive_evidence,
+            receipt_type="llm_docs_dialogue_stream",
+            task_type=str(TaskType.DIALOGUE.value),
+            llm_ok=False,
+            output_length=len(collected_output),
+            provider_error=str(exc),
+        )
         await output_queue.put({"type": "error", "data": {"error": str(exc)}})
         return
 
@@ -538,6 +609,17 @@ async def generate_dialogue_turn_streaming(
         result = finalize_dialogue_payload(data, fields, message, state)
     else:
         result = generate_dialogue_fallback(fields, message, state)
+
+    cognitive_evidence = record_llm_cognitive_receipt(
+        workspace=workspace,
+        evidence=cognitive_evidence,
+        receipt_type="llm_docs_dialogue_stream",
+        task_type=str(TaskType.DIALOGUE.value),
+        llm_ok=bool(collected_output),
+        output_length=len(collected_output),
+        metadata={"result": "parsed" if data else "fallback"},
+    )
+    result = attach_cognitive_meta(result, cognitive_evidence)
 
     # 添加 reasoning 标记
     meta = result.get("meta", {})

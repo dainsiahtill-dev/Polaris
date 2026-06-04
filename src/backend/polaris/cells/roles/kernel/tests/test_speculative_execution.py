@@ -179,6 +179,72 @@ def test_stream_controller_builds_shadow_engine_by_default(
     assert shadow_engine._speculative_executor.enabled is True
 
 
+def test_shadow_engine_uses_configured_target_workspace(tmp_path: Any) -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(),
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(domain="code", workspace=str(tmp_path)),
+    )
+
+    shadow_workspace = controller._resolve_shadow_workspace([])
+    shadow_engine = controller._build_stream_shadow_engine(
+        workspace=shadow_workspace,
+        turn_id="turn_target_workspace",
+    )
+
+    assert shadow_workspace == str(tmp_path)
+    assert shadow_engine is not None
+    batch_runtime = shadow_engine._speculative_executor._batch_runtime
+    assert batch_runtime.context.workspace == str(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_stream_controller_passes_configured_workspace_to_shadow_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    monkeypatch.setenv("ENABLE_SPECULATIVE_EXECUTION", "true")
+
+    async def stream_provider(_request_payload: dict[str, Any]):
+        yield {
+            "type": "tool_call",
+            "tool": "read_file",
+            "args": {"path": "README.md"},
+            "call_id": "call_readme",
+        }
+
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(
+            return_value={
+                "content": "Done.",
+                "model": "test-model",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+            }
+        ),
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"path": "README.md"}}),
+        config=TransactionConfig(domain="code", workspace=str(tmp_path)),
+        llm_provider_stream=stream_provider,
+    )
+    captured_workspaces: list[str] = []
+    original_builder = controller._stream_orchestrator.build_stream_shadow_engine
+
+    def capture_shadow_engine(*, workspace: str = ".", turn_id: str = "") -> StreamShadowEngine | None:
+        captured_workspaces.append(workspace)
+        return original_builder(workspace=workspace, turn_id=turn_id)
+
+    controller._stream_orchestrator.build_stream_shadow_engine = capture_shadow_engine
+
+    async for _event in controller.execute_stream(
+        turn_id="turn_stream_target_workspace",
+        context=[{"role": "user", "content": "read me"}],
+        tool_definitions=[{"name": "read_file", "parameters": {}}],
+    ):
+        pass
+
+    assert captured_workspaces
+    assert set(captured_workspaces) == {str(tmp_path)}
+
+
 @pytest.mark.asyncio
 async def test_stream_controller_no_speculation_when_flag_disabled(
     monkeypatch: pytest.MonkeyPatch,

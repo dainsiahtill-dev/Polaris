@@ -161,7 +161,7 @@ class CompletionEvent:
     """
 
     turn_id: str
-    status: Literal["success", "failed", "handoff", "suspended"]
+    status: Literal["success", "failed", "error", "handoff", "suspended"]
     duration_ms: int = 0
     llm_calls: int = 0
     tool_calls: int = 0

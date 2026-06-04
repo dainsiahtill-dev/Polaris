@@ -155,6 +155,7 @@ from polaris.kernelone.context import (
 from polaris.kernelone.context.runtime_feature_flags import (
     CognitiveRuntimeMode,
     resolve_cognitive_runtime_mode,
+    resolve_context_os_enabled,
 )
 
 # Skill system: prefer KernelOne implementation, keep Cells layer for backward compat
@@ -259,6 +260,33 @@ def _metadata_flag_enabled(*payloads: Mapping[str, Any] | None, key: str) -> boo
     return False
 
 
+def _enforce_required_context_os(request: RoleTurnRequest) -> RoleTurnRequest:
+    context_override = dict(request.context_override or {})
+    metadata = dict(request.metadata or {})
+    expected = _metadata_flag_enabled(
+        context_override,
+        metadata,
+        key="context_os_expected",
+    )
+    if not expected:
+        return request
+
+    enabled = resolve_context_os_enabled(
+        incoming_context=context_override,
+        session_context_config=metadata,
+        default=True,
+    )
+    if not enabled:
+        raise RuntimeError("context_os_expected_but_disabled")
+
+    metadata["context_os_preflight"] = {
+        "expected": True,
+        "enabled": True,
+    }
+    request.metadata = metadata
+    return request
+
+
 def _with_result_metadata_patch(
     result: RoleExecutionResultV1,
     patch: Mapping[str, Any],
@@ -287,13 +315,21 @@ def _with_result_metadata_patch(
 
 def _cognitive_runtime_result_patch(
     *,
-    evidence: Mapping[str, Any],
+    evidence: Mapping[str, Any] | None,
     request_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
-    patch: dict[str, Any] = {"cognitive_runtime_evidence": dict(evidence)}
+    evidence_payload = (
+        dict(evidence)
+        if isinstance(evidence, Mapping)
+        else {"available": False, "error_code": "invalid_cognitive_runtime_evidence"}
+    )
+    patch: dict[str, Any] = {"cognitive_runtime_evidence": evidence_payload}
     preflight = request_metadata.get("cognitive_runtime_preflight")
     if isinstance(preflight, Mapping):
         patch["cognitive_runtime_preflight"] = dict(preflight)
+    context_os_preflight = request_metadata.get("context_os_preflight")
+    if isinstance(context_os_preflight, Mapping):
+        patch["context_os_preflight"] = dict(context_os_preflight)
     return patch
 
 
@@ -1156,6 +1192,7 @@ class RoleRuntimeService(IRoleRuntime):
 
     async def _prepare_task_request(self, command: ExecuteRoleTaskCommandV1) -> RoleTurnRequest:
         request = self._build_task_request(command)
+        request = _enforce_required_context_os(request)
         return await self._apply_cognitive_runtime_preflight(
             request=request,
             role=command.role,
@@ -1173,6 +1210,7 @@ class RoleRuntimeService(IRoleRuntime):
             command,
             include_session_snapshot=include_session_snapshot,
         )
+        request = _enforce_required_context_os(request)
         return await self._apply_cognitive_runtime_preflight(
             request=request,
             role=command.role,
@@ -1552,6 +1590,37 @@ class RoleRuntimeService(IRoleRuntime):
                 elif event_type == "complete":
                     maybe_result = event.get("result")
                     if isinstance(maybe_result, RoleTurnResult):
+                        contract_result = _to_contract_result(
+                            role=command.role,
+                            workspace=command.workspace,
+                            task_id=command.task_id,
+                            session_id=command.session_id,
+                            run_id=command.run_id,
+                            result=maybe_result,
+                        )
+                        evidence = self._emit_cognitive_runtime_shadow_artifacts(
+                            source="roles.runtime.stream_chat_turn",
+                            workspace=command.workspace,
+                            role=command.role,
+                            task_id=command.task_id,
+                            session_id=command.session_id,
+                            run_id=command.run_id,
+                            result=contract_result,
+                            metadata=request.metadata,
+                            context=request.context_override,
+                        )
+                        evidence_patch = _cognitive_runtime_result_patch(
+                            evidence=evidence,
+                            request_metadata=request.metadata,
+                        )
+                        maybe_result.metadata.update(evidence_patch)
+                        maybe_result.execution_stats["cognitive_runtime_evidence_emitted"] = True
+                        event["cognitive_runtime_evidence"] = dict(evidence_patch["cognitive_runtime_evidence"])
+                        event_metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+                        event["metadata"] = {
+                            **dict(event_metadata),
+                            **evidence_patch,
+                        }
                         final_stream_result = maybe_result
 
                 yield dict(event)

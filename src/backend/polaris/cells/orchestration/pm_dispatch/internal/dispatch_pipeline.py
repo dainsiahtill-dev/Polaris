@@ -151,6 +151,205 @@ def _classify_integration_qa_evidence(
     return "unknown"
 
 
+def _get_cognitive_runtime_services() -> tuple[type, type, Callable[[], Any]]:
+    """Lazy import for factory.cognitive_runtime public contracts."""
+    from polaris.cells.factory.cognitive_runtime.public import (
+        RecordRuntimeReceiptCommandV1,
+        ResolveContextCommandV1,
+        get_cognitive_runtime_public_service,
+    )
+
+    return RecordRuntimeReceiptCommandV1, ResolveContextCommandV1, get_cognitive_runtime_public_service
+
+
+def _context_snapshot_evidence(snapshot: Any) -> dict[str, Any]:
+    """Extract compact, stable Context OS evidence from a resolved snapshot."""
+    if snapshot is None:
+        return {}
+    context_os_summary = getattr(snapshot, "context_os_summary", {})
+    source_refs = getattr(snapshot, "source_refs", ())
+    return {
+        "workspace": str(getattr(snapshot, "workspace", "") or "").strip(),
+        "role": str(getattr(snapshot, "role", "") or "").strip(),
+        "run_id": str(getattr(snapshot, "run_id", "") or "").strip(),
+        "session_id": str(getattr(snapshot, "session_id", "") or "").strip(),
+        "mode": str(getattr(snapshot, "mode", "") or "").strip(),
+        "token_usage_estimate": int(getattr(snapshot, "token_usage_estimate", 0) or 0),
+        "source_refs": [str(item).strip() for item in source_refs if str(item).strip()],
+        "context_os_summary": dict(context_os_summary) if isinstance(context_os_summary, dict) else {},
+    }
+
+
+def _record_pm_dispatch_qa_cognitive_receipt(
+    *,
+    workspace_full: str,
+    run_id: str,
+    iteration: int,
+    result: dict[str, Any],
+    required: bool = True,
+    context_os_expected: bool = True,
+) -> dict[str, Any]:
+    """Record Cognitive Runtime evidence for PM dispatch integration QA."""
+    receipt_evidence: dict[str, Any] = {
+        "ok": False,
+        "required": bool(required),
+        "receipt_type": "qa_verification",
+        "source": "pm_dispatch",
+        "context_os_expected": bool(context_os_expected),
+    }
+    workspace = str(workspace_full or "").strip()
+    if not workspace:
+        receipt_evidence["error_message"] = "missing_workspace"
+        return receipt_evidence
+
+    trace_refs = [
+        str(item).strip()
+        for item in (result.get("result_path"), result.get("runtime_result_path"))
+        if str(item or "").strip()
+    ]
+    raw_errors = result.get("errors")
+    errors = [str(item).strip() for item in raw_errors if str(item).strip()] if isinstance(raw_errors, list) else []
+    raw_director_task_status = result.get("director_task_status")
+    director_task_status = dict(raw_director_task_status) if isinstance(raw_director_task_status, dict) else {}
+    status = "completed" if result.get("passed") is True else "skipped" if result.get("ran") is False else "failed"
+    should_resolve_context = bool(context_os_expected and result.get("ran") is True)
+    session_id = f"qa-{run_id or 'adhoc'}-{int(iteration or 0)}"
+    context_os_evidence: dict[str, Any] = {
+        "ok": False,
+        "required": should_resolve_context,
+        "skipped": not should_resolve_context,
+        "reason": "qa_not_run" if not should_resolve_context else "",
+    }
+    try:
+        receipt_command_type, resolve_context_command_type, get_cognitive_runtime_public_service = (
+            _get_cognitive_runtime_services()
+        )
+        service = get_cognitive_runtime_public_service()
+        try:
+            if should_resolve_context:
+                context_result = service.resolve_context(
+                    resolve_context_command_type(
+                        workspace=workspace,
+                        role="qa",
+                        query=str(result.get("summary") or result.get("reason") or "post-dispatch integration QA"),
+                        step=int(iteration or 0),
+                        run_id=str(run_id or "").strip() or "pm-dispatch",
+                        mode="pm_dispatch_integration_qa",
+                        session_id=session_id,
+                        sources_enabled=("runtime", "events", "contracts"),
+                        policy={
+                            "source": "pm_dispatch.integration_qa",
+                            "context_os_required": True,
+                            "evidence_grade": str(result.get("evidence_grade") or "").strip(),
+                        },
+                    )
+                )
+                if not bool(getattr(context_result, "ok", False)):
+                    context_os_evidence["error_message"] = (
+                        str(getattr(context_result, "error_message", "") or "").strip()
+                        or str(getattr(context_result, "error_code", "") or "").strip()
+                        or "context_os_resolve_failed"
+                    )
+                    receipt_evidence["context_os"] = context_os_evidence
+                    receipt_evidence["error_code"] = "qa_context_os_resolve_failed"
+                    receipt_evidence["error_message"] = context_os_evidence["error_message"]
+                    return receipt_evidence
+                context_os_evidence = {
+                    "ok": True,
+                    "required": True,
+                    "skipped": False,
+                    "snapshot": _context_snapshot_evidence(getattr(context_result, "snapshot", None)),
+                }
+            receipt_evidence["context_os"] = context_os_evidence
+            receipt_result = service.record_runtime_receipt(
+                receipt_command_type(
+                    workspace=workspace,
+                    receipt_type="qa_verification",
+                    session_id=session_id,
+                    run_id=str(run_id or "").strip() or None,
+                    trace_refs=tuple(trace_refs),
+                    payload={
+                        "source": "pm_dispatch.integration_qa",
+                        "role": "qa",
+                        "status": status,
+                        "reason": str(result.get("reason") or "").strip(),
+                        "summary": str(result.get("summary") or "").strip(),
+                        "ran": bool(result.get("ran") is True),
+                        "passed": result.get("passed"),
+                        "evidence_grade": str(result.get("evidence_grade") or "").strip(),
+                        "qa_path": str(result.get("qa_path") or "dispatch_pipeline"),
+                        "pm_iteration": int(iteration or 0),
+                        "director_task_status": director_task_status,
+                        "result_path": str(result.get("result_path") or "").strip(),
+                        "runtime_result_path": str(result.get("runtime_result_path") or "").strip(),
+                        "errors": errors,
+                        "context_os_expected": bool(context_os_expected),
+                        "context_os": context_os_evidence,
+                    },
+                    turn_envelope={
+                        "role": "qa",
+                        "session_id": session_id,
+                        "run_id": str(run_id or "").strip(),
+                        "task_id": "qa::post_dispatch_integration",
+                    },
+                )
+            )
+        finally:
+            service.close()
+    except (RuntimeError, ValueError, ImportError) as exc:
+        receipt_evidence["error_message"] = str(exc)
+        return receipt_evidence
+
+    if not bool(getattr(receipt_result, "ok", False)):
+        error_message = str(getattr(receipt_result, "error_message", "") or "").strip()
+        error_code = str(getattr(receipt_result, "error_code", "") or "").strip()
+        receipt_evidence["error_message"] = error_message or error_code
+        return receipt_evidence
+
+    receipt = getattr(receipt_result, "receipt", None)
+    receipt_id = str(getattr(receipt, "receipt_id", "") or "").strip()
+    if required and not receipt_id:
+        receipt_evidence["error_message"] = "qa_cognitive_runtime_receipt_missing_id"
+        return receipt_evidence
+    receipt_evidence["ok"] = True
+    if receipt_id:
+        receipt_evidence["receipt_id"] = receipt_id
+    return receipt_evidence
+
+
+def _attach_pm_dispatch_qa_cognitive_receipt(
+    *,
+    workspace_full: str,
+    run_id: str,
+    iteration: int,
+    result: dict[str, Any],
+) -> None:
+    """Attach Cognitive Runtime receipt evidence and fail closed when required."""
+    receipt = _record_pm_dispatch_qa_cognitive_receipt(
+        workspace_full=workspace_full,
+        run_id=run_id,
+        iteration=iteration,
+        result=result,
+    )
+    result["cognitive_runtime_required"] = True
+    result["context_os_expected"] = True
+    result["cognitive_runtime_receipt"] = receipt
+    if bool(receipt.get("ok")):
+        return
+
+    error_code = str(receipt.get("error_code") or "").strip()
+    error_message = str(receipt.get("error_message") or "qa_cognitive_runtime_receipt_failed").strip()
+    raw_errors = result.get("errors")
+    errors = list(raw_errors) if isinstance(raw_errors, list) else []
+    result["errors"] = [*errors, error_message]
+    result["passed"] = False
+    result["reason"] = (
+        error_code if error_code == "qa_context_os_resolve_failed" else "qa_cognitive_runtime_receipt_failed"
+    )
+    result["summary"] = f"QA Cognitive Runtime receipt failed: {error_message}"
+    result["evidence_grade"] = "qa_error"
+
+
 def _get_io_utils() -> tuple[Callable, Callable]:
     """Lazy import for events to avoid circular imports."""
     from polaris.kernelone.events import emit_dialogue, emit_event
@@ -190,6 +389,61 @@ def _get_traceability_safety() -> tuple[Any, Any, Any]:
     )
 
     return safe_find_node, safe_link, safe_register_node
+
+
+def _chief_engineer_preflight_block_reason(result: Any) -> str:
+    """Return a non-empty reason when CE preflight must block dispatch."""
+    if result is None:
+        return "chief_engineer_preflight_missing"
+    if not isinstance(result, dict):
+        return "chief_engineer_preflight_invalid_result"
+
+    explicit_reason = str(result.get("reason") or "").strip()
+    if bool(result.get("hard_failure")):
+        return explicit_reason or "chief_engineer_preflight_hard_failure"
+
+    status = str(result.get("status") or "").strip().lower()
+    if status in {"failed", "failure", "error", "blocked"}:
+        return explicit_reason or f"chief_engineer_preflight_{status}"
+
+    if result.get("ok") is False:
+        return explicit_reason or "chief_engineer_preflight_not_ok"
+    if result.get("success") is False:
+        return explicit_reason or "chief_engineer_preflight_unsuccessful"
+    if result.get("ran") is False:
+        return explicit_reason or "chief_engineer_preflight_not_run"
+
+    return ""
+
+
+def _build_chief_engineer_blocked_director_result(
+    *,
+    run_id: str,
+    task_count: int,
+    reason: str,
+    chief_engineer_result: Any,
+) -> dict[str, Any]:
+    """Build a Director-compatible blocked result for failed CE preflight."""
+    summary = ""
+    if isinstance(chief_engineer_result, dict):
+        summary = str(chief_engineer_result.get("summary") or "").strip()
+    if not summary:
+        summary = "ChiefEngineer preflight blocked dispatch"
+
+    return {
+        "run_id": run_id,
+        "status": "blocked",
+        "mode": "chief_engineer_preflight",
+        "summary": summary,
+        "successes": 0,
+        "failures": 0,
+        "blocked": int(task_count or 0),
+        "total": int(task_count or 0),
+        "hard_failure": True,
+        "dispatch_blocked": True,
+        "dispatch_anomaly": "chief_engineer_preflight_failed",
+        "preflight_reason": reason,
+    }
 
 
 def _resolve_task_market_mode() -> str:
@@ -1166,6 +1420,42 @@ def run_dispatch_pipeline(
         dialogue_full=dialogue_full,
     )
 
+    preflight_block_reason = _chief_engineer_preflight_block_reason(outcome["chief_engineer_result"])
+    if preflight_block_reason:
+        director_result = _build_chief_engineer_blocked_director_result(
+            run_id=run_id,
+            task_count=len(dispatch_tasks),
+            reason=preflight_block_reason,
+            chief_engineer_result=outcome["chief_engineer_result"],
+        )
+        error = f"chief_engineer_preflight_failed: {preflight_block_reason}"
+        outcome.update(
+            {
+                "used": True,
+                "exit_code": 1,
+                "error": error,
+                "engine_dispatch": {
+                    "skipped": True,
+                    "reason": "chief_engineer_preflight_failed",
+                    "preflight_reason": preflight_block_reason,
+                    "task_count": len(dispatch_tasks),
+                },
+                "director_result": director_result,
+            }
+        )
+        _emit_engine_dispatch_status(
+            run_events=run_events,
+            run_id=run_id,
+            iteration=iteration,
+            task_count=len(dispatch_tasks),
+            name="engine_dispatch_blocked",
+            summary="Engine dispatch blocked by ChiefEngineer preflight",
+            ok=False,
+            status="blocked",
+            error=error,
+        )
+        return outcome
+
     # Traceability: register blueprint nodes per task after CE preflight
     safe_find_node, safe_link, safe_register_node = _get_traceability_safety()
     trace_service = None
@@ -1723,6 +2013,8 @@ def run_integration_qa(
         "run_id": run_id,
         "pm_iteration": int(iteration or 0),
         "director_task_status": status_summary,
+        "cognitive_runtime_required": True,
+        "context_os_expected": True,
         # Evidence-chain field: documents which QA path was used.
         # Surviving path: dispatch_pipeline (Cell-local, lightweight).
         # Deprecated path: QAWorkflow (temporal-activity-based, heavyweight).
@@ -1739,6 +2031,12 @@ def run_integration_qa(
             summary=str(result["summary"]),
             errors=[],
         )
+        _attach_pm_dispatch_qa_cognitive_receipt(
+            workspace_full=workspace_full,
+            run_id=run_id,
+            iteration=iteration,
+            result=result,
+        )
         return result
 
     if not tasks:
@@ -1750,6 +2048,12 @@ def run_integration_qa(
             reason=str(result["reason"]),
             summary=str(result["summary"]),
             errors=[],
+        )
+        _attach_pm_dispatch_qa_cognitive_receipt(
+            workspace_full=workspace_full,
+            run_id=run_id,
+            iteration=iteration,
+            result=result,
         )
         return result
 
@@ -1764,6 +2068,12 @@ def run_integration_qa(
             summary=str(result["summary"]),
             errors=[],
         )
+        _attach_pm_dispatch_qa_cognitive_receipt(
+            workspace_full=workspace_full,
+            run_id=run_id,
+            iteration=iteration,
+            result=result,
+        )
         return result
 
     if _tasks_touch_docs_only(tasks):
@@ -1777,6 +2087,12 @@ def run_integration_qa(
             reason=str(result["reason"]),
             summary=str(result["summary"]),
             errors=[],
+        )
+        _attach_pm_dispatch_qa_cognitive_receipt(
+            workspace_full=workspace_full,
+            run_id=run_id,
+            iteration=iteration,
+            result=result,
         )
         return result
 
@@ -1809,6 +2125,12 @@ def run_integration_qa(
             errors=[str(exc)],
         )
 
+    _attach_pm_dispatch_qa_cognitive_receipt(
+        workspace_full=workspace_full,
+        run_id=run_id,
+        iteration=iteration,
+        result=result,
+    )
     return result
 
 
@@ -1887,6 +2209,8 @@ def _build_post_dispatch_integration_qa_result(
         "director_task_status": status_summary,
         "result_path": "",
         "runtime_result_path": "",
+        "cognitive_runtime_required": True,
+        "context_os_expected": True,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "docs_stage": {
             "enabled": bool(docs_stage_payload.get("enabled")),
@@ -2049,6 +2373,9 @@ def _emit_post_dispatch_integration_qa_result(
     if result["ran"] is not True:
         return
 
+    cognitive_runtime_receipt = (
+        result.get("cognitive_runtime_receipt") if isinstance(result.get("cognitive_runtime_receipt"), dict) else {}
+    )
     emit_event(
         run_events,
         kind="status",
@@ -2069,6 +2396,7 @@ def _emit_post_dispatch_integration_qa_result(
             "errors_count": len(result.get("errors") or []),
             "result_path": result.get("result_path"),
             "runtime_result_path": result.get("runtime_result_path"),
+            "cognitive_runtime_receipt": cognitive_runtime_receipt,
         },
         error="" if result.get("passed") is True else "INTEGRATION_QA_FAILED",
     )
@@ -2088,6 +2416,7 @@ def _emit_post_dispatch_integration_qa_result(
             "passed": bool(result.get("passed") is True),
             "reason": str(result.get("reason") or ""),
             "evidence_grade": str(result.get("evidence_grade") or "unknown"),
+            "cognitive_runtime_receipt": cognitive_runtime_receipt,
         },
     )
 
@@ -2163,6 +2492,18 @@ def run_post_dispatch_integration_qa(
             result["summary"] = f"Integration QA runtime error: {exc}"
             result["errors"] = [str(exc)]
 
+    _persist_post_dispatch_integration_qa_result(
+        run_dir=run_dir,
+        workspace_full=workspace_full,
+        cache_root_full=cache_root_full,
+        result=result,
+    )
+    _attach_pm_dispatch_qa_cognitive_receipt(
+        workspace_full=workspace_full,
+        run_id=run_id,
+        iteration=iteration,
+        result=result,
+    )
     _persist_post_dispatch_integration_qa_result(
         run_dir=run_dir,
         workspace_full=workspace_full,

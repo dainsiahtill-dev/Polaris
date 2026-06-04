@@ -4,7 +4,7 @@
 ═══════════════════════════════════════════════════════════════════
 
 这是 llm.dialogue 兼容 facade 的角色对话适配层。生产角色调用必须进入
-roles.runtime / RoleExecutionKernel；本模块不得作为新的生产入口扩散。
+roles.runtime；本模块不得作为新的生产入口扩散。
 
 如果你需要：
   1. 添加新角色 → 在 ROLE_PROMPT_TEMPLATES 中增加条目
@@ -87,6 +87,40 @@ def _normalize_tool_results(items: Any) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             normalized.append(dict(item))
     return normalized
+
+
+def _coerce_runtime_history(value: Any) -> tuple[tuple[str, str], ...]:
+    if value is None or isinstance(value, str | bytes):
+        return ()
+    try:
+        iterator = iter(value)
+    except TypeError:
+        return ()
+
+    normalized: list[tuple[str, str]] = []
+    for item in iterator:
+        role = ""
+        content = ""
+        if isinstance(item, dict):
+            role = str(item.get("role") or "").strip()
+            content = str(item.get("content") or item.get("message") or "").strip()
+        elif isinstance(item, (tuple, list)) and len(item) >= 2:
+            role = str(item[0] or "").strip()
+            content = str(item[1] or "").strip()
+        if role and content:
+            normalized.append((role, content))
+    return tuple(normalized)
+
+
+def _resolve_runtime_identifier(context: dict[str, Any], metadata: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = str(context.get(key) or "").strip()
+        if value:
+            return value
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _resolve_role_provider_model(role: str, workspace: str = ".") -> tuple[str, str]:
@@ -302,9 +336,9 @@ async def generate_role_response(
     prompt_appendix: str | None = None,
     enable_cognitive: bool | None = None,
 ) -> dict[str, Any]:
-    """生成角色回复（非流式）
+    """生成角色回复（非流式）。
 
-    使用 RoleExecutionKernel 内核生成回复。
+    兼容 facade：实际执行必须进入 RoleRuntimeService。
 
     Args:
         workspace: 工作区路径
@@ -315,7 +349,7 @@ async def generate_role_response(
         validate_output: 是否验证输出格式
         max_retries: 验证失败时重试次数
         prompt_appendix: 追加提示词（仅追加，不覆盖核心提示词）
-        enable_cognitive: 是否启用认知中间件（None=默认启用，True=启用，False=禁用）
+        enable_cognitive: 兼容参数；实际认知运行时由 RoleRuntimeService 统一控制
 
     Returns:
         {
@@ -327,7 +361,6 @@ async def generate_role_response(
             "profile_version": str,
             "prompt_fingerprint": str,
             "tool_policy_id": str,
-            "cognitive": dict | None,  # 认知中间件分析结果
             "validation": {
                 "success": bool,
                 "data": dict | None,
@@ -337,68 +370,16 @@ async def generate_role_response(
             }
         }
     """
-    final_appendix = prompt_appendix or ""
-
-    # 尝试使用认知中间件增强（默认启用）
-    cognitive_context: dict[str, Any] | None = None
-    try:
-        from polaris.kernelone.cognitive.middleware import get_cognitive_middleware
-
-        middleware = get_cognitive_middleware(workspace=workspace, enabled=enable_cognitive)
-        if middleware._enabled:
-            cognitive_context = await middleware.process(
-                message=message,
-                role_id=role,
-                session_id=context.get("session_id") if context else None,
-            )
-
-            # 如果被认知层阻止，直接返回阻止信息
-            if cognitive_context.get("blocked"):
-                return {
-                    "response": f"[Cognitive Blocked] {cognitive_context.get('block_reason')}",
-                    "thinking": None,
-                    "role": role,
-                    "model": "cognitive",
-                    "provider": "cognitive",
-                    "profile_version": "1.0",
-                    "prompt_fingerprint": "",
-                    "tool_policy_id": "",
-                    "cognitive": cognitive_context,
-                    "validation": {
-                        "success": True,
-                        "data": None,
-                        "errors": [],
-                        "quality_score": 0.0,
-                        "suggestions": [],
-                    },
-                }
-
-            # 注入认知上下文
-            context = middleware.inject_into_context(cognitive_context, context)
-            cognitive_appendix = middleware.get_prompt_appendix(cognitive_context)
-            if cognitive_appendix:
-                final_appendix = f"{prompt_appendix or ''} [{cognitive_appendix}]".strip()
-    except (RuntimeError, ValueError):
-        # 认知中间件失败不影响主流程
-        pass
-
-    # 强制使用新内核
-    result = await _generate_with_kernel(
+    _ = settings, enable_cognitive
+    return await _generate_with_role_runtime(
         workspace=workspace,
-        settings=settings,
         role=role,
         message=message,
         context=context,
-        prompt_appendix=final_appendix,
+        prompt_appendix=prompt_appendix,
         validate_output=validate_output,
         max_retries=max_retries,
     )
-
-    # 附加认知上下文到结果
-    if cognitive_context is not None:
-        result["cognitive"] = cognitive_context
-
-    return result
 
 
 async def _generate_with_kernel(
@@ -411,218 +392,130 @@ async def _generate_with_kernel(
     validate_output: bool = True,
     max_retries: int = 1,
 ) -> dict[str, Any]:
-    """使用 RoleExecutionKernel 生成角色回复"""
-    from polaris.cells.roles.runtime.public.service import (
-        RoleExecutionKernel,
-        RoleExecutionMode,
-        RoleTurnRequest,
-        registry as role_registry,
-    )
-
-    final_appendix = prompt_appendix or ""
-
-    # 初始化内核
-    kernel = RoleExecutionKernel(
+    """Compatibility wrapper for old imports; delegates to RoleRuntimeService."""
+    _ = settings
+    return await _generate_with_role_runtime(
         workspace=workspace,
-        registry=role_registry,
-    )
-
-    # 确保角色配置已加载
-    if not role_registry.has_role(role):
-        from polaris.cells.roles.runtime.public.service import load_core_roles
-
-        load_core_roles()
-
-    # 构建请求
-    # Note: RoleTurnRequest.__init__ 是 SSOT 单一真相源头，
-    # 自动 bootstrap context_os_snapshot（如果不存在）。
-    # 无需在此处处理，_build_session_request 也不再需要。
-    request = RoleTurnRequest(
-        mode=RoleExecutionMode.CHAT,
-        workspace=workspace,
+        role=role,
         message=message,
-        prompt_appendix=final_appendix or None,
-        context_override=context,
+        context=context,
+        prompt_appendix=prompt_appendix,
         validate_output=validate_output,
-        max_retries=max(0, int(max_retries)),
+        max_retries=max_retries,
     )
 
-    # 首次执行：内核内部处理 validate/retry。
-    last_result = await kernel.run(role=role, request=request)
-    all_tool_results = _normalize_tool_results(getattr(last_result, "tool_results", None))
-    tool_rounds_executed = 0
-    max_tool_rounds = _resolve_role_tool_rounds(role)
-    disable_internal_tool_rounds = False
-    if isinstance(context, dict):
-        disable_internal_tool_rounds = bool(context.get("disable_internal_tool_rounds"))
-    if disable_internal_tool_rounds:
-        max_tool_rounds = 0
-    last_tool_signatures: tuple[str, ...] = ()
-    repeated_tool_signature_rounds = 0
-    tool_loop_detected = False
 
-    # 若模型先发工具调用，再输出最终结果，继续推进工具回合直到拿到最终响应。
-    while _has_pending_tool_turn(last_result) and tool_rounds_executed < max_tool_rounds:
-        tool_rounds_executed += 1
-        current_tool_results = _normalize_tool_results(getattr(last_result, "tool_results", None))
-        if not current_tool_results:
-            fallback_tool_results = _execute_pending_tool_calls_via_orchestrator(
-                workspace,
-                getattr(last_result, "tool_calls", None),
-                max_tool_calls=max_tool_rounds,
-            )
-            if fallback_tool_results:
-                current_tool_results = fallback_tool_results
-                all_tool_results.extend(fallback_tool_results)
-        tool_feedback = _build_tool_feedback(current_tool_results)
-        current_tool_signatures = _normalize_tool_call_signatures(last_result)
-        missing_read_paths = _collect_missing_read_paths(current_tool_results)
-        result_metadata = getattr(last_result, "metadata", None)
-        needs_followup_workflow = isinstance(result_metadata, dict) and bool(
-            result_metadata.get("needs_followup_workflow")
+async def _generate_with_role_runtime(
+    workspace: str,
+    role: str,
+    message: str,
+    context: dict[str, Any] | None = None,
+    prompt_appendix: str | None = None,
+    validate_output: bool = True,
+    max_retries: int = 1,
+) -> dict[str, Any]:
+    """Use RoleRuntimeService for role dialogue compatibility calls."""
+    from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+    from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+    workspace_token = str(workspace or "").strip()
+    role_token = str(role or "").strip()
+    message_text = str(message or "")
+    if not workspace_token:
+        raise ValueError("workspace must be a non-empty string")
+    if not role_token:
+        raise ValueError("role must be a non-empty string")
+    if not message_text.strip():
+        raise ValueError("message must be a non-empty string")
+
+    context_payload = dict(context or {})
+    metadata = dict(context_payload.get("metadata") or {})
+    metadata.update(
+        {
+            "source": "llm.dialogue.internal.role_dialogue",
+            "role_runtime_required": True,
+            "cognitive_runtime_required": True,
+            "context_os_expected": True,
+            "runtime_fallback_used": False,
+            "fallback_policy": "fail_closed",
+            "llm_dialogue_internal_compat": True,
+            "validate_output": bool(validate_output),
+            "max_retries": max(0, int(max_retries)),
+        }
+    )
+    if prompt_appendix:
+        metadata["prompt_appendix"] = str(prompt_appendix)
+
+    run_id = _resolve_runtime_identifier(context_payload, metadata, "run_id", "factory_run_id")
+    task_id = _resolve_runtime_identifier(context_payload, metadata, "task_id")
+    session_id = _resolve_runtime_identifier(context_payload, metadata, "session_id", "runtime_session_id")
+    if not session_id:
+        session_basis = run_id or task_id or str(abs(hash((workspace_token, role_token, message_text))) & 0xFFFFFFFF)
+        session_id = f"{role_token}-dialogue-{session_basis}"
+
+    result = await RoleRuntimeService().execute_role_session(
+        ExecuteRoleSessionCommandV1(
+            role=role_token,
+            session_id=session_id,
+            workspace=workspace_token,
+            user_message=message_text,
+            run_id=run_id or None,
+            task_id=task_id or None,
+            domain=str(context_payload.get("domain") or metadata.get("domain") or "general").strip() or "general",
+            history=_coerce_runtime_history(context_payload.get("history")),
+            context=context_payload,
+            metadata=metadata,
+            stream=False,
+            host_kind="llm_dialogue_internal_compat",
         )
-        if current_tool_signatures and current_tool_signatures == last_tool_signatures:
-            repeated_tool_signature_rounds += 1
-        else:
-            repeated_tool_signature_rounds = 0
-        last_tool_signatures = current_tool_signatures
-        loop_on_readonly_tools = repeated_tool_signature_rounds >= 1 and _is_redundant_exploration_loop(
-            current_tool_signatures
-        )
-        if loop_on_readonly_tools:
-            tool_loop_detected = True
+    )
 
-        near_round_limit = tool_rounds_executed >= max(1, max_tool_rounds - 1)
-        if missing_read_paths:
-            joined_paths = ", ".join(missing_read_paths[:3])
-            follow_up_instruction = (
-                f"你对不存在的文件执行了 read_file（{joined_paths}）。"
-                "这些路径当前不存在。禁止继续对同路径 read_file。"
-                "若任务需要这些文件，请改用 write_file 直接创建，然后输出最终答案。"
-            )
-        elif needs_followup_workflow:
-            follow_up_instruction = (
-                "上一轮没有满足落盘义务。请基于已有工具结果继续完成原始请求；"
-                "必须调用 write_file、edit_file、repo_apply_diff 或等价写工具产生文件变更。"
-                "在成功写入前不要输出最终答案。"
-            )
-        elif loop_on_readonly_tools:
-            follow_up_instruction = (
-                "检测到连续重复的只读工具调用（相同参数）。"
-                "除非上一轮明确失败且需修正参数，否则禁止再次调用同类工具。"
-                "请直接输出最终答案。"
-            )
-        elif near_round_limit:
-            follow_up_instruction = (
-                "你已接近工具回合上限。若信息已足够，请直接输出最终答案；"
-                "只有在上一轮工具明确失败且缺少关键证据时才继续调用工具。"
-            )
-        else:
-            follow_up_instruction = (
-                "请基于工具结果继续完成原始请求。若信息已足够，请直接输出最终可执行答案；仅在确有必要时再调用工具。"
-            )
+    result_metadata = dict(getattr(result, "metadata", {}) or {})
+    result_metadata.update(
+        {
+            "role_runtime_entrypoint": "roles.runtime.execute_role_session",
+            "role_runtime_session_id": session_id,
+            "role_runtime_required": True,
+            "cognitive_runtime_required": True,
+            "context_os_expected": True,
+            "runtime_fallback_used": False,
+            "fallback_policy": "fail_closed",
+            "llm_dialogue_internal_compat": True,
+        }
+    )
+    execution_stats = dict(getattr(result, "usage", {}) or {})
+    provider_id, model_name = _resolve_role_provider_model(role_token, workspace_token)
+    provider_id = str(result_metadata.get("provider_id") or execution_stats.get("provider_id") or provider_id)
+    model_name = str(result_metadata.get("model") or execution_stats.get("model") or model_name)
+    error_message = str(getattr(result, "error_message", "") or getattr(result, "error_code", "") or "").strip()
+    response_text = str(getattr(result, "output", "") or "").strip()
+    if not response_text and error_message:
+        response_text = f"[ROLE_EXECUTION_ERROR] {error_message}"
 
-        follow_up_message = (
-            f"{message}\n\n【工具执行结果（第{tool_rounds_executed}轮）】\n{tool_feedback}\n\n{follow_up_instruction}"
-        )
-        follow_up_context = dict(context or {})
-        follow_up_context["tool_feedback_round"] = tool_rounds_executed
-        follow_up_context["tool_results"] = current_tool_results
-        follow_up_context["tool_round_limit"] = max_tool_rounds
-        follow_up_context["repeated_tool_signature_rounds"] = repeated_tool_signature_rounds
-        follow_up_context["tool_loop_detected"] = loop_on_readonly_tools
-
-        follow_up_request = RoleTurnRequest(
-            mode=RoleExecutionMode.CHAT,
-            workspace=workspace,
-            message=follow_up_message,
-            prompt_appendix=final_appendix or None,
-            context_override=follow_up_context,
-            validate_output=validate_output,
-            max_retries=max(0, int(max_retries)),
-        )
-        last_result = await kernel.run(role=role, request=follow_up_request)
-
-        next_tool_results = _normalize_tool_results(getattr(last_result, "tool_results", None))
-        if next_tool_results:
-            all_tool_results.extend(next_tool_results)
-
-    tool_round_exhausted = _has_pending_tool_turn(last_result)
-
-    provider_id = "unknown"
-    model_name = "unknown"
-
-    # 通过 Cell 公共服务解析角色 provider/model
-    resolved_provider, resolved_model = _resolve_role_provider_model(role, workspace)
-    if resolved_provider and resolved_provider != "unknown":
-        provider_id = resolved_provider
-    if resolved_model and resolved_model != "unknown":
-        model_name = resolved_model
-
-    if last_result and isinstance(last_result.metadata, dict):
-        provider_id = str(last_result.metadata.get("provider_id") or provider_id or "unknown")
-        model_name = str(last_result.metadata.get("model") or model_name or "unknown")
-
-    if last_result and isinstance(last_result.execution_stats, dict):
-        provider_id = str(last_result.execution_stats.get("provider_id") or provider_id or "unknown")
-        model_name = str(last_result.execution_stats.get("model") or model_name or "unknown")
-
-    response_text = ""
-    if last_result:
-        response_text = str(last_result.content or "").strip()
-        if not response_text and str(last_result.error or "").strip():
-            response_text = f"[ROLE_EXECUTION_ERROR] {str(last_result.error).strip()}"
-
-    # 构建响应（保持向后兼容的格式）
     response: dict[str, Any] = {
         "response": response_text,
-        "thinking": last_result.thinking if last_result else None,
-        "role": role,
+        "thinking": getattr(result, "thinking", None),
+        "role": role_token,
         "model": model_name,
         "provider": provider_id,
+        "profile_version": str(
+            result_metadata.get("profile_version") or result_metadata.get("role_profile_version") or ""
+        ),
+        "prompt_fingerprint": result_metadata.get("prompt_fingerprint"),
+        "tool_policy_id": str(result_metadata.get("tool_policy_id") or ""),
+        "metadata": result_metadata,
+        "execution_stats": execution_stats,
+        "artifacts": list(getattr(result, "artifacts", ()) or ()),
     }
+    if validate_output:
+        response["validation"] = validate_and_parse_role_output(role_token, response_text)
+    if error_message:
+        response["error"] = error_message
 
-    # 新增字段（内核特有）
-    if last_result:
-        response["profile_version"] = last_result.profile_version
-        response["prompt_fingerprint"] = (
-            last_result.prompt_fingerprint.full_hash if last_result.prompt_fingerprint else None
-        )
-        response["tool_policy_id"] = last_result.tool_policy_id
-        response["metadata"] = dict(last_result.metadata or {})
-        response["execution_stats"] = dict(last_result.execution_stats or {})
-        batch_receipt = getattr(last_result, "batch_receipt", None)
-        if isinstance(batch_receipt, dict) and batch_receipt:
-            response["batch_receipt"] = dict(batch_receipt)
-        if last_result.turn_events_metadata:
-            response["turn_events_metadata"] = [dict(item) for item in last_result.turn_events_metadata]
-
-    # 保留验证信息
-    if validate_output and last_result:
-        validation = validate_and_parse_role_output(role, last_result.content)
-        response["validation"] = validation
-
-    if last_result and str(last_result.error or "").strip():
-        response["error"] = str(last_result.error).strip()
-    elif tool_round_exhausted:
-        exhausted_prefix = (
-            "internal_tool_rounds_disabled"
-            if disable_internal_tool_rounds
-            else f"role_tool_rounds_exhausted:{max_tool_rounds}"
-        )
-        exhausted_reason = (
-            "detected_repeated_tool_calls"
-            if tool_loop_detected
-            else "model keeps issuing tool calls without final answer"
-        )
-        response["error"] = f"{exhausted_prefix}; {exhausted_reason}"
-    if tool_rounds_executed > 0:
-        response["tool_rounds_executed"] = tool_rounds_executed
-
-    # 工具调用结果
-    if all_tool_results:
-        response["tool_calls"] = all_tool_results
-        response["tool_results"] = all_tool_results
+    tool_calls = list(getattr(result, "tool_calls", ()) or ())
+    if tool_calls:
+        response["tool_calls"] = tool_calls
+        response["tool_results"] = tool_calls
 
     return response
 

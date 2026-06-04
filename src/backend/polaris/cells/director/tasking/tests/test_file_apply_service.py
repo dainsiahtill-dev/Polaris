@@ -89,6 +89,22 @@ class TestFileApplyService:
         assert any("AGENTS.md forbids writing src/generated/schema.ts" in error for error in errors)
         assert not (tmp_path / "src" / "generated" / "schema.ts").exists()
 
+    def test_apply_response_operations_blocks_fenced_file_outside_allowed_scope(self, tmp_path: Path) -> None:
+        """Director proposal apply must not write outside the round scope."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        service = FileApplyService(workspace=str(tmp_path))
+
+        files, errors = service.apply_response_operations(
+            "```file: src/out_of_scope.py\nprint('blocked')\n```",
+            task_id="task-scope-fenced",
+            allowed_scope_paths=["src/app.py"],
+        )
+
+        assert files == []
+        assert any("Changed files exceed act.files scope" in error for error in errors)
+        assert not (tmp_path / "src" / "out_of_scope.py").exists()
+
     def test_collect_workspace_files_empty_list(self) -> None:
         """Test collect_workspace_files with empty list."""
         from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
@@ -264,6 +280,21 @@ class TestFileApplyService:
             "package.json: invalid JSON" in error or "package.json structured diff failed" in error for error in errors
         )
         assert package_path.read_text(encoding="utf-8") == original
+
+    def test_apply_response_operations_rolls_back_patch_outside_allowed_scope(self, tmp_path: Path) -> None:
+        """Protocol writes that exceed Director scope must be rolled back."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        path = tmp_path / "src" / "out_of_scope.py"
+        service = FileApplyService(workspace=str(tmp_path))
+        applied, errors = service.apply_response_operations(
+            "FILE: src/out_of_scope.py\nprint('blocked')\nEND FILE",
+            allowed_scope_paths=["src/app.py"],
+        )
+
+        assert applied == []
+        assert any("Changed files exceed act.files scope" in error for error in errors)
+        assert not path.exists()
 
     def test_apply_response_operations_accepts_nested_markdown_fences(self, tmp_path: Path) -> None:
         """Regression: nested README fences must not become bogus file paths."""

@@ -34,6 +34,7 @@ depends_on:
 - archive.run_archive
 - audit.evidence
 - events.fact_stream
+- factory.cognitive_runtime
 - orchestration.pm_dispatch
 - orchestration.pm_planning
 - orchestration.workflow_engine
@@ -55,12 +56,14 @@ effects_allowed:
 - fs.write:runtime/workflows/*
 - fs.write:runtime/state/workflow/*
 - fs.write:runtime/events/runtime.events.jsonl
+- fs.write:runtime/cognitive_runtime/*
 - db.read_write:workflow_runtime
 - process.spawn:workflow/*
 verification:
   tests:
   - tests/orchestration/test_workflow_runtime.py
   - tests/test_embedded_orchestration_dag.py
+  - polaris/tests/test_qa_workflow_cognitive_runtime.py
   gaps:
   - Initial business-cell declaration; implementation convergence is in progress.
   smoke_commands: []

@@ -22,6 +22,7 @@ qualification. The cell also owns deterministic role benchmarks
 
 ## Depends On
 
+- `factory.cognitive_runtime`
 - `llm.provider_runtime`
 - `llm.provider_config`
 - `policy.workspace_guard`
@@ -39,6 +40,7 @@ qualification. The cell also owns deterministic role benchmarks
 - `fs.write:workspace/.polaris/llm_test_index.evaluation.json`
 - `fs.write:workspace/.polaris/runtime/llm_evaluations/*`
 - `fs.write:workspace/.polaris/runtime/llm_tests/*`
+- `fs.write:runtime/cognitive_runtime/*`
 - `network.http_outbound:llm/*`
 
 ## Invariants
@@ -46,6 +48,8 @@ qualification. The cell also owns deterministic role benchmarks
 - evaluation reports must be indexable and reproducible
 - index writes are explicit and auditable
 - contract boundary is stable even if suite internals evolve
+- interactive interview provider calls must resolve Context OS before invocation
+  and record `llm_interview` Cognitive Runtime receipts after completion
 - role benchmarks must execute inside fixture sandboxes, not the primary repo
 - judge outcomes must be deterministic and reproducible from trace + fixture state
 
@@ -59,6 +63,7 @@ qualification. The cell also owns deterministic role benchmarks
 - `internal/deterministic_judge.py`
 - `internal/benchmark_loader.py`
 - `internal/readiness_tests.py`
+- `internal/interview.py`
 - `internal/index.py`
 
 ## Verification
@@ -67,4 +72,5 @@ qualification. The cell also owns deterministic role benchmarks
 - `tests/test_llm_tool_calling_matrix.py`
 - `tests/test_llm_test_index_reconcile.py`
 - `tests/test_llm_qualification_validators.py`
+- `tests/test_llm_interview_cognitive_runtime.py`
 - `tests/test_llm_connectivity_suite_ollama.py`

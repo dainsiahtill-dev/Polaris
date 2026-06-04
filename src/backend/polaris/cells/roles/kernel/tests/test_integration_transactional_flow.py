@@ -11,6 +11,7 @@ Integration Tests for Turn Engine Transactional Flow
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,6 +34,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent, TurnPhaseEvent
+from polaris.domain.cognitive_runtime.models import ContextHandoffPack
 
 
 def _native_tool_call(
@@ -368,6 +370,53 @@ class TestWorkflowHandoffIntegration:
         assert result["kind"] == "handoff_workflow"
         assert result["workflow_context"] is not None
 
+    @pytest.mark.asyncio
+    async def test_handoff_runtime_receives_context_handoff_pack(
+        self, mock_llm, mock_tool_executor, context, tool_defs
+    ) -> None:
+        """Workflow runtime should receive a canonical ContextHandoffPack before execution."""
+
+        class CapturingWorkflowRuntime:
+            def __init__(self) -> None:
+                self.decision = None
+
+            async def execute(self, decision: TurnDecision, turn_id: TurnId) -> SimpleNamespace:
+                self.decision = decision
+                return SimpleNamespace(
+                    turn_id=turn_id,
+                    status=SimpleNamespace(value="completed"),
+                    steps_completed=0,
+                    discoveries=[],
+                    synthesis="handoff completed",
+                    duration_ms=1,
+                    error=None,
+                )
+
+        mock_llm.return_value = {
+            "content": "提交 PR。",
+            "tool_calls": [_native_tool_call("create_pull_request", {"title": "PR"})],
+            "model": "claude",
+            "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+        }
+        runtime = CapturingWorkflowRuntime()
+        controller = TurnTransactionController(
+            llm_provider=mock_llm,
+            tool_runtime=mock_tool_executor,
+            config=TransactionConfig(domain="document"),
+            workflow_runtime=runtime,
+        )
+
+        result = await controller.execute(turn_id="turn_context_handoff", context=context, tool_definitions=tool_defs)
+
+        assert runtime.decision is not None
+        handoff_payload = runtime.decision["metadata"]["context_handoff_pack"]
+        handoff_pack = ContextHandoffPack.from_mapping(handoff_payload)
+        assert handoff_pack is not None
+        assert handoff_pack.reason == "async_operation"
+        assert handoff_pack.turn_envelope is not None
+        assert handoff_pack.turn_envelope.turn_id == "turn_context_handoff"
+        assert result["workflow_context"]["context_handoff_pack"] == handoff_payload
+
 
 # ============ Test Ledger and Events ============
 
@@ -696,4 +745,56 @@ class TestExplorationWorkflowIntegration:
         assert result["finalization"]["error"] == "synthesis exploded"
         assert result["workflow_context"]["exploration_error"] == "synthesis exploded"
         assert result["workflow_context"]["exploration_result"]["status"] == "failed"
+        assert "FAILED" in result["state_trajectory"]
+
+    @pytest.mark.asyncio
+    async def test_transaction_kernel_fails_closed_when_development_runtime_fails(self) -> None:
+        """Development handoff runtime errors must not be reported as successful handoff."""
+
+        async def mock_llm_provider(_request_payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "content": "handoff to development",
+                "thinking": None,
+                "tool_calls": [],
+                "model": "mock",
+                "usage": {},
+            }
+
+        async def mock_tool_runtime(_tool_name: str, _arguments: dict[str, Any]) -> dict[str, Any]:
+            return {"ok": True, "result": "unused"}
+
+        class FailingDevelopmentRuntime:
+            async def execute_stream(self, _intent: str, _session_state: object) -> Any:
+                raise RuntimeError("development exploded")
+                yield None
+
+        controller = TurnTransactionController(
+            llm_provider=mock_llm_provider,
+            tool_runtime=mock_tool_runtime,
+            config=TransactionConfig(domain="code"),
+            development_runtime=FailingDevelopmentRuntime(),
+        )
+        controller.decoder.decode = MagicMock(
+            return_value=TurnDecision(
+                turn_id=TurnId("turn_development_fail"),
+                kind=TurnDecisionKind.HANDOFF_DEVELOPMENT,
+                visible_message="handoff to development",
+                reasoning_summary=None,
+                tool_batch=None,
+                finalize_mode=FinalizeMode.NONE,
+                domain="code",
+                metadata={"intent": "apply generated patch"},
+            )
+        )
+
+        result = await controller.execute(
+            "turn_development_fail",
+            [{"role": "user", "content": "apply generated patch"}],
+            [],
+        )
+
+        assert result["kind"] == "development_execution_error"
+        assert result["finalization"]["phase"] == "handoff_development"
+        assert result["finalization"]["error"] == "development exploded"
+        assert result["workflow_context"]["development_result"]["error"] == "development exploded"
         assert "FAILED" in result["state_trajectory"]

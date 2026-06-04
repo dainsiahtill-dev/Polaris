@@ -366,7 +366,6 @@ class RoleConsoleHost:
         self._task_service: TaskRuntimeService | None = None
         self._task_service_error: str | None = None
         self._continuity_strategy: SessionContinuityStrategy = SessionContinuityStrategy()
-        self._cognitive_middleware_cache: dict[str, Any] = {}
         # Bootstrap kernel bindings once at init; runtime service is the only
         # allowed streaming entrypoint for role chat.
         _ensure_minimal_runtime_bindings()
@@ -399,37 +398,6 @@ class RoleConsoleHost:
                 )
             return None
         return self._task_service
-
-    def _get_cognitive_middleware(self, enable_cognitive: bool | None = None) -> Any | None:
-        """Get or create the CognitiveMiddleware instance.
-
-        Args:
-            enable_cognitive: Override for cognitive middleware enablement.
-                None: use default (enabled)
-                True: explicitly enable
-                False: explicitly disable
-
-        Returns:
-            CognitiveMiddleware instance if available and enabled, None otherwise.
-        """
-        if enable_cognitive is False:
-            return None
-        key = self.workspace or ""
-        if key not in self._cognitive_middleware_cache:
-            try:
-                from polaris.kernelone.cognitive.middleware import get_cognitive_middleware
-
-                self._cognitive_middleware_cache[key] = get_cognitive_middleware(
-                    workspace=self.workspace,
-                    enabled=enable_cognitive,
-                )
-            except (RuntimeError, ValueError) as exc:
-                logger.debug("Cognitive middleware unavailable: %s", exc)
-                self._cognitive_middleware_cache[key] = False
-        cached = self._cognitive_middleware_cache.get(key)
-        if cached is False:
-            return None
-        return cached
 
     @contextlib.contextmanager
     def _session_service(self) -> Any:
@@ -1149,53 +1117,6 @@ class RoleConsoleHost:
                     context_config=continuity.persisted_context_config,
                 )
 
-            # ── Cognitive Processing ───────────────────────────────────────────
-            # Process message through cognitive middleware for intent understanding,
-            # critical thinking, and meta-cognition before execution.
-            cognitive_context: dict[str, Any] | None = None
-            middleware = self._get_cognitive_middleware(enable_cognitive)
-            if middleware is not None:
-                try:
-                    cognitive_context = await middleware.process(
-                        message=message,
-                        role_id=runtime_role,
-                        session_id=session_id,
-                    )
-                    if cognitive_context and cognitive_context.get("enabled"):
-                        emit_debug_event(
-                            category="cognitive",
-                            label="intent_detected",
-                            source="delivery.console_host",
-                            payload={
-                                "intent_type": cognitive_context.get("intent_type"),
-                                "confidence": cognitive_context.get("confidence"),
-                                "uncertainty_score": cognitive_context.get("uncertainty_score"),
-                                "execution_path": cognitive_context.get("execution_path"),
-                            },
-                        )
-                        # Check if message was blocked by cognitive policy
-                        if cognitive_context.get("blocked"):
-                            emit_debug_event(
-                                category="cognitive",
-                                label="blocked",
-                                source="delivery.console_host",
-                                payload={
-                                    "block_reason": cognitive_context.get("block_reason"),
-                                },
-                            )
-                            yield {
-                                "type": "error",
-                                "error": f"[Cognitive Blocked] {cognitive_context.get('block_reason')}",
-                                "metadata": {
-                                    "cognitive": cognitive_context,
-                                    "intent_type": cognitive_context.get("intent_type"),
-                                    "confidence": cognitive_context.get("confidence"),
-                                },
-                            }
-                            return
-                except (RuntimeError, ValueError) as exc:
-                    logger.debug("Cognitive middleware processing failed: %s", exc)
-
             # FIX-20250422: Director 请求清晰度检查
             # 防止模糊需求（如"进一步完善XXX"）导致 Director 死循环探索
             if runtime_role == "director":
@@ -1224,27 +1145,18 @@ class RoleConsoleHost:
             metadata: dict[str, Any] = {}
             prompt_appendix_token = str(prompt_appendix or "").strip()
 
-            # Inject cognitive context and generate prompt appendix
             enhanced_context = continuity.prompt_context
-            if cognitive_context and cognitive_context.get("enabled") and middleware is not None:
-                # Inject cognitive context into context for downstream processing
-                enhanced_context = middleware.inject_into_context(cognitive_context, dict(continuity.prompt_context))
-                # Generate cognitive prompt appendix for role guidance
-                cognitive_appendix = middleware.get_prompt_appendix(cognitive_context)
-                if cognitive_appendix:
-                    prompt_appendix_token = (
-                        f"{prompt_appendix_token} [{cognitive_appendix}]"
-                        if prompt_appendix_token
-                        else cognitive_appendix
-                    )
-                # Add cognitive metadata to command metadata
-                metadata["cognitive"] = cognitive_context
-
             if prompt_appendix_token:
                 metadata["prompt_appendix"] = prompt_appendix_token
             metadata["host_kind"] = runtime_host_kind
             metadata["session_id"] = session_id
             metadata["debug"] = debug_enabled
+            metadata["role_runtime_required"] = True
+            metadata["cognitive_runtime_required"] = True
+            metadata["context_os_expected"] = True
+            metadata["delivery_cognitive_preflight"] = "delegated_to_role_runtime"
+            if enable_cognitive is not None:
+                metadata["legacy_enable_cognitive_requested"] = bool(enable_cognitive)
             if capability_profile:
                 metadata["capability_profile"] = capability_profile
 

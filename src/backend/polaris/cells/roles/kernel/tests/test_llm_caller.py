@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import warnings
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
@@ -401,6 +402,18 @@ class TestMessagesToInput:
 class TestLLMCallerConstruction:
     """LLMCaller instantiates correctly with workspace and cache flags."""
 
+    def test_direct_compatibility_facade_warns_on_construction(self) -> None:
+        with pytest.warns(DeprecationWarning, match="LLMCaller is deprecated"):
+            LLMCaller()
+
+    def test_internal_adapter_can_suppress_deprecation_warning(self) -> None:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            caller = LLMCaller(emit_deprecation_warning=False)
+
+        assert caller._emit_deprecation_warning is False
+        assert not any("LLMCaller is deprecated" in str(item.message) for item in captured)
+
     def test_default_construction(self) -> None:
         caller = LLMCaller()
         assert caller.workspace == ""
@@ -413,6 +426,27 @@ class TestLLMCallerConstruction:
     def test_cache_can_be_disabled(self) -> None:
         caller = LLMCaller(enable_cache=False)
         assert caller._enable_cache is False
+
+    @pytest.mark.asyncio
+    async def test_internal_adapter_call_suppresses_deprecated_method_warning(self, monkeypatch) -> None:
+        caller = LLMCaller(emit_deprecation_warning=False)
+
+        class _FakeInvoker:
+            async def call(self, **_kwargs: Any) -> LLMResponse:
+                return LLMResponse(content="ok")
+
+        monkeypatch.setattr(LLMCaller, "_get_invoker", lambda _self: _FakeInvoker())
+
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            response = await caller.call(
+                profile=cast("RoleProfile", MockProfile()),
+                system_prompt="system",
+                context=cast("ContextRequest", SimpleNamespace(task_id=None)),
+            )
+
+        assert response.content == "ok"
+        assert not any("LLMCaller.call() is deprecated" in str(item.message) for item in captured)
 
 
 class TestLLMResponseDataclass:

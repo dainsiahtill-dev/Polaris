@@ -1,6 +1,6 @@
 """Workflow Role Node - 统一工作流角色节点
 
-为 PM/Director/CE/QA 工作流节点提供基于 RoleExecutionKernel 的统一基类。
+为 PM/Director/CE/QA 工作流节点提供基于 RoleRuntime 合同层的统一基类。
 
 使用示例:
     from polaris.cells.roles.runtime.public.service.workflow_node import WorkflowRoleNode
@@ -23,16 +23,13 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from polaris.cells.roles.kernel.public.service import RoleExecutionKernel
 from polaris.cells.roles.profile.public.service import (
-    RoleExecutionMode,
     RoleProfileRegistry,
-    RoleTurnRequest,
     load_core_roles,
     profile_to_dict,
 )
 
-from .workflow_adapter import WorkflowRoleResult
+from .workflow_adapter import WorkflowRoleAdapter, WorkflowRoleResult
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +37,7 @@ logger = logging.getLogger(__name__)
 class WorkflowRoleNode(ABC):
     """统一工作流角色节点基类
 
-    基于 RoleExecutionKernel 的角色工作流节点实现。
+    基于 RoleRuntime 的角色工作流节点实现。
     """
 
     def __init__(
@@ -50,7 +47,7 @@ class WorkflowRoleNode(ABC):
     ) -> None:
         self.workspace = workspace
         self.registry = registry or RoleProfileRegistry()
-        self._kernel: RoleExecutionKernel | None = None
+        self._adapter = WorkflowRoleAdapter(workspace=workspace, registry=self.registry)
 
         # 确保核心角色配置已加载
         self._ensure_core_roles_loaded()
@@ -73,14 +70,9 @@ class WorkflowRoleNode(ABC):
             load_core_roles()
 
     @property
-    def kernel(self) -> RoleExecutionKernel:
-        """获取或创建执行内核"""
-        if self._kernel is None:
-            self._kernel = RoleExecutionKernel(
-                workspace=self.workspace,
-                registry=self.registry,
-            )
-        return self._kernel
+    def runtime_entrypoint(self) -> str:
+        """返回生产执行入口，便于测试和审计。"""
+        return self._adapter.runtime_entrypoint
 
     async def execute_kernel(
         self,
@@ -108,84 +100,16 @@ class WorkflowRoleNode(ABC):
         Returns:
             WorkflowRoleResult
         """
-        # 构建内核请求
-        request = RoleTurnRequest(
-            mode=RoleExecutionMode.WORKFLOW,
-            workspace=self.workspace,
+        _ = handle_tools, max_tool_rounds
+        return await self._adapter.execute_role(
+            role=self.role_id,
             message=message,
-            history=history or [],
-            prompt_appendix=prompt_appendix,
-            context_override=context,
             task_id=task_id,
+            context=context,
+            prompt_appendix=prompt_appendix,
+            history=history,
+            validate_output=validate_output,
         )
-
-        # 执行内核
-        result = await self.kernel.run(role=self.role_id, request=request)
-
-        # 如果需要自动处理工具调用
-        if handle_tools and result.tool_calls and not result.is_complete:
-            return await self._handle_tool_rounds(
-                request=request,
-                initial_result=result,
-                max_rounds=max_tool_rounds,
-            )
-
-        # 转换为工作流结果
-        return WorkflowRoleResult.from_kernel_result(result, self.role_id)
-
-    async def _handle_tool_rounds(
-        self,
-        request: RoleTurnRequest,
-        initial_result: Any,
-        max_rounds: int,
-    ) -> WorkflowRoleResult:
-        """Handle multi-turn tool calls using transcript-driven history injection.
-
-        Rounds accumulate (role, content) tuples in history so that the LLM
-        receives a faithful transcript rather than a string-concatenated prompt.
-        """
-        current_result = initial_result
-        all_tool_results: list[dict[str, Any]] = list(initial_result.tool_results or [])
-
-        # Seed history with the original user message.
-        accumulated_history: list[tuple[str, str]] = list(request.history or [])
-        if request.message:
-            accumulated_history.append(("user", request.message))
-
-        for _round_num in range(max_rounds):
-            if not current_result.tool_calls or current_result.is_complete:
-                break
-
-            # Build the next request with transcript-driven history.
-            next_request = RoleTurnRequest(
-                mode=RoleExecutionMode.WORKFLOW,
-                workspace=request.workspace,
-                message="",  # driven by history
-                history=list(accumulated_history),
-                prompt_appendix=request.prompt_appendix,
-                context_override=request.context_override,
-                task_id=request.task_id,
-            )
-
-            current_result = await self.kernel.run(role=self.role_id, request=next_request)
-            if current_result.tool_results:
-                all_tool_results.extend(current_result.tool_results)
-
-            # Inject this turn into transcript for the next round.
-            if current_result.content:
-                accumulated_history.append(("assistant", current_result.content))
-            for tr in current_result.tool_results or []:
-                tool_name = str(tr.get("tool", "tool")).strip() or "tool"
-                tool_text = f"[{tool_name}] success={tr.get('success', False)}"
-                if tr.get("error"):
-                    tool_text += f" error={tr.get('error')}"
-                elif tr.get("result"):
-                    tool_text += f" result={str(tr.get('result'))[:240]}"
-                accumulated_history.append(("tool", tool_text))
-
-        final_result = WorkflowRoleResult.from_kernel_result(current_result, self.role_id)
-        final_result.all_tool_results = all_tool_results
-        return final_result
 
     def get_profile(self) -> dict[str, Any] | None:
         """获取角色配置"""

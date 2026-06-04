@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import warnings
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -126,6 +127,17 @@ class TestDependencyInjection:
         assert kernel._injected_output_parser is not None
         assert kernel._injected_quality_checker is not None
         assert kernel._injected_event_emitter is not None
+
+    def test_internal_llm_caller_adapter_is_silent(self) -> None:
+        """Kernel-owned LLMCaller is a compatibility adapter, not public legacy use."""
+        kernel = RoleExecutionKernel(workspace=".")
+
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            caller = kernel._get_llm_caller()
+
+        assert caller._emit_deprecation_warning is False
+        assert not any("LLMCaller is deprecated" in str(item.message) for item in captured)
 
 
 class TestFacadeMethods:

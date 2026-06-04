@@ -202,6 +202,11 @@ class TestAdapterCallsRuntimeBoundary:
     )
     PRODUCTION_PM_WRAPPER_FILES = (_pathlib.Path(__file__).resolve().parents[1] / "delivery" / "cli" / "loop-pm.py",)
     DIRECTOR_ADAPTER_MODULES = ("polaris.cells.roles.adapters.internal.director.adapter",)
+    WORKFLOW_RUNTIME_ENTRYPOINT_MODULES = (
+        "polaris.cells.roles.adapters.internal.workflow_adapter",
+        "polaris.cells.roles.adapters.internal.workflow_node",
+    )
+    DELIVERY_RUNTIME_ENTRYPOINT_MODULES = ("polaris.delivery.cli.director.console_host",)
 
     def test_workflow_role_adapters_use_runtime_dialogue_helper(self):
         for module_path in self.ROLE_ADAPTER_MODULES:
@@ -253,6 +258,35 @@ class TestAdapterCallsRuntimeBoundary:
             src = src_path.read_text(encoding="utf-8")
             assert "generate_role_response" not in src, f"{module_path} 仍引用 legacy dialogue"
             assert "legacy_dialogue_fallback" not in src, f"{module_path} 仍保留 legacy dialogue fallback"
+
+    def test_workflow_entrypoints_do_not_bypass_role_runtime(self):
+        for module_path in self.WORKFLOW_RUNTIME_ENTRYPOINT_MODULES:
+            src_path = _locate_source(module_path)
+            src = src_path.read_text(encoding="utf-8")
+            assert "RoleExecutionKernel" not in src, f"{module_path} 仍直接引用 RoleExecutionKernel"
+            assert "RoleTurnRequest(" not in src, f"{module_path} 仍自行构造 RoleTurnRequest"
+            assert ".kernel.run" not in src, f"{module_path} 仍直接调用 kernel.run"
+            assert "invoke_role_runtime_first" in src or "WorkflowRoleAdapter" in src, (
+                f"{module_path} 未进入 RoleRuntime 合同入口"
+            )
+
+    def test_llm_dialogue_internal_role_facade_does_not_bypass_role_runtime(self):
+        module_path = "polaris.cells.llm.dialogue.internal.role_dialogue"
+        src_path = _locate_source(module_path)
+        src = src_path.read_text(encoding="utf-8")
+        assert "RoleExecutionKernel" not in src, f"{module_path} 仍直接引用 RoleExecutionKernel"
+        assert "RoleTurnRequest(" not in src, f"{module_path} 仍自行构造 RoleTurnRequest"
+        assert "get_cognitive_middleware" not in src, f"{module_path} 仍通过旧认知中间件旁路 RoleRuntime"
+        assert "RoleRuntimeService" in src, f"{module_path} 未进入 RoleRuntimeService"
+        assert "ExecuteRoleSessionCommandV1" in src, f"{module_path} 未使用 RoleRuntime session contract"
+
+    def test_delivery_console_host_delegates_cognitive_preflight_to_role_runtime(self):
+        for module_path in self.DELIVERY_RUNTIME_ENTRYPOINT_MODULES:
+            src_path = _locate_source(module_path)
+            src = src_path.read_text(encoding="utf-8")
+            assert "get_cognitive_middleware" not in src, f"{module_path} 仍直接调用旧认知中间件"
+            assert "delivery_cognitive_preflight" in src, f"{module_path} 未标记 RoleRuntime 认知预检委托"
+            assert "cognitive_runtime_required" in src, f"{module_path} 未要求 RoleRuntime cognitive preflight"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -834,12 +834,20 @@ class ToolBatchExecutor:
                     )
                 except asyncio.CancelledError:
                     raise
-                except (RuntimeError, TypeError, ValueError):
-                    # TODO: narrow exception type — shadow_engine.resolve_or_execute
-                    # may raise provider-specific errors
-                    resolution = {"action": "replay", "result": None, "error": None}
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    if stream and WriteToolPhases.is_write_tool(tool_name):
+                        raise RuntimeError(
+                            "speculative_write_prepare_failed: "
+                            f"shadow resolution failed for write tool {tool_name!r}: {exc}"
+                        ) from exc
+                    resolution = {"action": "replay", "result": None, "error": str(exc)}
                 action = str(resolution.get("action", "replay"))
                 is_write_tool = WriteToolPhases.is_write_tool(tool_name)
+                if stream and is_write_tool and action == "block":
+                    error = str(resolution.get("error") or "write_tool_prepare_shadow_blocked")
+                    raise RuntimeError(
+                        f"speculative_write_prepare_failed: {error}; tool={tool_name!r}; call_id={call_id!r}"
+                    )
                 if action in ("adopt", "join") and not is_write_tool:
                     adopted_result = {
                         "call_id": call_id,

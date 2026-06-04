@@ -49,6 +49,10 @@ relations:
     to: runtime.task_market
     type: commands
     contract: PublishTaskWorkItemCommandV1
+  - from: orchestration.pm_dispatch
+    to: factory.cognitive_runtime
+    type: commands
+    contract: RecordRuntimeReceiptCommandV1
   - from: runtime.task_market
     to: chief_engineer.blueprint
     type: commands
@@ -227,7 +231,8 @@ verify_targets:
 migration_notes:
   - Subgraph declared during business-cell convergence; some legacy routes may still proxy to Polaris entrypoints.
   - Director's projection-oriented execution backend is opt-in and currently routed through roles.adapters during migration.
-  - Cognitive Runtime is wired in shadow mode only; receipt/handoff sidecar is live, but lease/gate authority is not yet on the production decision path.
-  - runtime.task_market is the single business broker for PM/ChiefEngineer/Director/QA stage publication, claim, ack, requeue, and dead-letter transitions.
+  - Cognitive Runtime receipt/handoff sidecar is live, and Director runtime codegen proposal-to-apply now uses scope lease plus change-set validation as a mainline write acceptance gate.
+  - Cognitive Runtime projection promotion is enforced when graph cell mappings exist; target-project workspaces without a Polaris graph record unmapped projection evidence and still require broader orchestration-stage convergence before global promotion authority is claimed.
+  - runtime.task_market is the single business broker for PM/ChiefEngineer/Director/QA stage publication, claim, ack, requeue, and dead-letter transitions; mutating lifecycle transitions now record Cognitive Runtime task_market_lifecycle receipts.
   - runtime.execution_broker remains a technical process broker and must not be used as business task routing authority.
   - mainline-full is currently a bounded inline migration mode; durable Pull Consumer ownership and outbox-atomic fact publication are still required for final cutover.

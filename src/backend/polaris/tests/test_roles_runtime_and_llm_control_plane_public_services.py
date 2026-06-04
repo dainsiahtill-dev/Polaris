@@ -153,7 +153,8 @@ async def test_role_runtime_service_stream_chat_turn_passes_history_and_prompt_a
     assert captured_request["role"] == "qa"
     assert captured_request["history"] == [("user", "previous turn"), ("assistant", "previous answer")]
     assert captured_request["prompt_appendix"] == "appendix"
-    assert events[0]["type"] == "content_chunk"
+    assert events[0]["type"] == "fingerprint"
+    assert any(event.get("type") == "content_chunk" for event in events)
 
 
 @pytest.mark.asyncio

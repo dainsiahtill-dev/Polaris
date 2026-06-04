@@ -23,6 +23,7 @@ Own workflow engine runtime, activity and workflow registration, and workflow st
 - `policy.permission`
 - `audit.evidence`
 - `events.fact_stream`
+- `factory.cognitive_runtime`
 
 ## State Ownership
 
@@ -35,6 +36,7 @@ Own workflow engine runtime, activity and workflow registration, and workflow st
 - `fs.write:runtime/workflows/*`
 - `fs.write:runtime/state/workflow/*`
 - `fs.write:runtime/events/runtime.events.jsonl`
+- `fs.write:runtime/cognitive_runtime/*`
 - `db.read_write:workflow_runtime`
 - `process.spawn:workflow/*`
 
@@ -42,3 +44,4 @@ Own workflow engine runtime, activity and workflow registration, and workflow st
 
 - `tests/orchestration/test_workflow_runtime.py`
 - `tests/test_embedded_orchestration_dag.py`
+- `polaris/tests/test_qa_workflow_cognitive_runtime.py`

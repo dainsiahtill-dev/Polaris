@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
     TurnEvent,
     TurnPhaseEvent,
 )
+from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,94 @@ def summarize_batch_receipts(receipts: list[dict]) -> list[dict[str, object]]:
             }
         )
     return summary
+
+
+def _safe_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _build_context_handoff_pack(
+    *,
+    decision: TurnDecision,
+    workflow_context: dict[str, Any],
+    handoff_reason: str,
+) -> ContextHandoffPack:
+    metadata = _safe_mapping(decision.get("metadata", {}))
+    recoverable_context = _safe_mapping(workflow_context.get("recoverable_context"))
+    recoverable_decision = _safe_mapping(recoverable_context.get("decision"))
+    recoverable_metadata = _safe_mapping(recoverable_decision.get("metadata"))
+    batch_receipts = recoverable_context.get("batch_receipts") or workflow_context.get("batch_receipts") or []
+    receipt_refs: list[str] = []
+    if isinstance(batch_receipts, list):
+        for receipt in batch_receipts:
+            if not isinstance(receipt, dict):
+                continue
+            batch_id = str(receipt.get("batch_id") or "").strip()
+            if batch_id:
+                receipt_refs.append(batch_id)
+
+    turn_id = str(decision.get("turn_id") or workflow_context.get("turn_id") or "").strip()
+    session_id = str(metadata.get("session_id") or metadata.get("task_id") or turn_id).strip() or turn_id
+    run_id = str(metadata.get("run_id") or metadata.get("stream_run_id") or "").strip() or None
+    role = str(metadata.get("role") or metadata.get("role_id") or "workflow").strip() or "workflow"
+    workspace = (
+        str(
+            metadata.get("workspace") or metadata.get("workspace_root") or metadata.get("workspace_full") or "."
+        ).strip()
+        or "."
+    )
+    current_goal = str(
+        metadata.get("current_goal")
+        or recoverable_metadata.get("current_goal")
+        or decision.get("visible_message")
+        or ""
+    )
+    run_card = _safe_mapping(metadata.get("run_card") or recoverable_metadata.get("run_card"))
+    handoff_id = str(metadata.get("handoff_id") or f"handoff_{turn_id}_{int(time.time() * 1000)}").strip()
+
+    return ContextHandoffPack(
+        handoff_id=handoff_id,
+        workspace=workspace,
+        created_at=str(int(time.time())),
+        session_id=session_id,
+        run_id=run_id,
+        reason=handoff_reason,
+        current_goal=current_goal,
+        run_card=run_card,
+        context_slice_plan={"workflow_context": workflow_context},
+        decision_log=(recoverable_context,),
+        receipt_refs=tuple(dict.fromkeys(receipt_refs)),
+        turn_envelope=TurnEnvelope(
+            turn_id=turn_id,
+            session_id=session_id,
+            run_id=run_id,
+            role=role,
+            receipt_ids=tuple(dict.fromkeys(receipt_refs)),
+        ),
+    )
+
+
+def _with_context_handoff_pack(
+    decision: TurnDecision,
+    workflow_context: dict[str, Any],
+    handoff_reason: str,
+) -> TurnDecision:
+    metadata = _safe_mapping(decision.get("metadata", {}))
+    existing_pack = ContextHandoffPack.from_mapping(
+        metadata.get("context_handoff_pack") if isinstance(metadata.get("context_handoff_pack"), dict) else None
+    )
+    handoff_pack = existing_pack or _build_context_handoff_pack(
+        decision=decision,
+        workflow_context=workflow_context,
+        handoff_reason=handoff_reason,
+    )
+    handoff_payload = handoff_pack.to_dict()
+    metadata["context_handoff_pack"] = handoff_payload
+    workflow_context["context_handoff_pack"] = handoff_payload
+    recoverable_context = workflow_context.get("recoverable_context")
+    if isinstance(recoverable_context, dict):
+        recoverable_context["context_handoff_pack"] = handoff_payload
+    return decision.model_copy(update={"metadata": metadata})
 
 
 def build_workflow_handoff_context(
@@ -207,7 +296,8 @@ class HandoffHandler:
         exploration_error: str | None = None
         if self.workflow_runtime is not None:
             try:
-                exploration_result = await self.workflow_runtime.execute(decision, TurnId(str(turn_id)))
+                workflow_decision = _with_context_handoff_pack(decision, workflow_context, handoff_reason)
+                exploration_result = await self.workflow_runtime.execute(workflow_decision, TurnId(str(turn_id)))
                 exploration_result_dict = {
                     "turn_id": str(exploration_result.turn_id),
                     "status": exploration_result.status.value,
@@ -327,9 +417,10 @@ class HandoffHandler:
         )
 
         workflow_error: str | None = None
+        workflow_decision = _with_context_handoff_pack(decision, workflow_context, handoff_reason)
         if self.workflow_runtime is not None and hasattr(self.workflow_runtime, "execute_stream"):
             try:
-                async for event in self.workflow_runtime.execute_stream(decision, TurnId(str(turn_id))):
+                async for event in self.workflow_runtime.execute_stream(workflow_decision, TurnId(str(turn_id))):
                     event_error = _workflow_event_failure(event)
                     if event_error:
                         workflow_error = event_error
@@ -347,7 +438,7 @@ class HandoffHandler:
                 )
         elif self.workflow_runtime is not None:
             try:
-                exploration_result = await self.workflow_runtime.execute(decision, TurnId(str(turn_id)))
+                exploration_result = await self.workflow_runtime.execute(workflow_decision, TurnId(str(turn_id)))
                 workflow_error = _workflow_result_failure(exploration_result)
                 visible_content = exploration_result.synthesis or "[HANDOFF] Exploration completed."
                 if visible_content and not workflow_error:
@@ -414,19 +505,60 @@ class HandoffHandler:
         )
 
         development_result: dict[str, Any] | None = None
+        development_error: str | None = None
         if self.development_runtime is not None and hasattr(self.development_runtime, "execute_stream"):
             try:
                 session_state = SimpleNamespace(session_id=str(turn_id))
                 events: list[Any] = []
                 async for event in self.development_runtime.execute_stream(intent, session_state):
                     events.append(event)
+                    event_error = _workflow_event_failure(event)
+                    if event_error:
+                        development_error = event_error
                 development_result = {
                     "event_count": len(events),
                     "events": events,
                 }
             except Exception as exc:
                 logger.exception("DevelopmentWorkflowRuntime execution failed during handoff: turn_id=%s", turn_id)
-                development_result = {"error": str(exc)}
+                development_error = str(exc)
+                development_result = {"error": development_error}
+        elif self.development_runtime is not None:
+            development_error = "DevelopmentWorkflowRuntime does not support execute_stream"
+            development_result = {"error": development_error}
+
+        if development_error:
+            state_machine.transition_to(TurnState.FAILED)
+            ledger.state_history.append(("FAILED", int(time.time() * 1000)))
+            ledger.finalize()
+            visible_content = (
+                f"[HANDOFF_ERROR] Development workflow failed. Intent: {intent}. Error: {development_error}"
+            )
+            self.emit_event(
+                CompletionEvent(
+                    turn_id=turn_id,
+                    status="error",
+                    duration_ms=ledger.get_duration_ms(),
+                    llm_calls=len(ledger.llm_calls),
+                    tool_calls=len(ledger.tool_executions),
+                    turn_kind="handoff_development",
+                    error=development_error,
+                )
+            )
+            return self.build_turn_result(
+                turn_id=turn_id,
+                kind="development_execution_error",
+                visible_content=visible_content,
+                decision=decision,
+                batch_receipt=None,
+                finalization={
+                    "error": development_error,
+                    "phase": "handoff_development",
+                    "intent": intent,
+                },
+                ledger=ledger,
+                workflow_context={"development_result": development_result, "intent": intent},
+            )
 
         state_machine.transition_to(TurnState.COMPLETED)
         ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
@@ -481,13 +613,20 @@ class HandoffHandler:
             },
         )
 
+        development_error: str | None = None
         if self.development_runtime is not None and hasattr(self.development_runtime, "execute_stream"):
             try:
                 session_state = SimpleNamespace(session_id=str(turn_id))
                 async for event in self.development_runtime.execute_stream(intent, session_state):
+                    event_error = _workflow_event_failure(event)
+                    if event_error:
+                        development_error = event_error
+                    if isinstance(event, CompletionEvent):
+                        continue
                     yield event
             except Exception as exc:
                 logger.exception("DevelopmentWorkflowRuntime stream failed during handoff: turn_id=%s", turn_id)
+                development_error = str(exc)
                 yield ErrorEvent(
                     turn_id=str(turn_id),
                     error_type="development_stream_error",
@@ -495,30 +634,37 @@ class HandoffHandler:
                     state_at_error="HANDOFF_DEVELOPMENT",
                 )
         elif self.development_runtime is not None:
+            development_error = "DevelopmentWorkflowRuntime does not support execute_stream"
             yield ErrorEvent(
                 turn_id=str(turn_id),
                 error_type="development_runtime_error",
-                message="DevelopmentWorkflowRuntime does not support execute_stream",
+                message=development_error,
                 state_at_error="HANDOFF_DEVELOPMENT",
             )
 
-        state_machine.transition_to(TurnState.COMPLETED)
-        ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
+        final_state = TurnState.FAILED if development_error else TurnState.COMPLETED
+        state_machine.transition_to(final_state)
+        ledger.state_history.append((final_state.name, int(time.time() * 1000)))
         ledger.finalize()
 
         yield CompletionEvent(
             turn_id=str(turn_id),
-            status="handoff",
+            status="error" if development_error else "handoff",
             duration_ms=ledger.get_duration_ms(),
             llm_calls=len(ledger.llm_calls),
             tool_calls=len(ledger.tool_executions),
             turn_kind="handoff_development",
+            error=development_error,
             visible_content=(
-                f"[HANDOFF] Development workflow executed. Intent: {intent}"
+                f"[HANDOFF_ERROR] Development workflow failed. Intent: {intent}. Error: {development_error}"
+                if development_error
+                else f"[HANDOFF] Development workflow executed. Intent: {intent}"
                 if self.development_runtime is not None
                 else f"[HANDOFF] Development runtime unavailable. Intent: {intent}"
             ),
-            session_patch={"next_intent": intent, "_development_handoff_executed": True} if intent else {},
+            session_patch={"next_intent": intent, "_development_handoff_executed": True}
+            if intent and not development_error
+            else {},
         )
 
     # --- Ask user ---

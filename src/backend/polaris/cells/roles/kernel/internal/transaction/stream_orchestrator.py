@@ -695,6 +695,7 @@ class StreamOrchestrator:
         handle_final_answer: Callable[..., Any],
         requires_mutation_intent_hybrid: Callable[..., Any],
         extract_monitoring_metrics: Callable[..., dict[str, float]],
+        resolve_shadow_workspace: Callable[[list[dict]], str] | None = None,
         config: Any | None = None,
     ) -> None:
         self.llm_provider = llm_provider
@@ -703,6 +704,7 @@ class StreamOrchestrator:
         self.emit_event = emit_event
         self.build_decision_messages = build_decision_messages
         self.build_stream_shadow_engine = build_stream_shadow_engine
+        self.resolve_shadow_workspace = resolve_shadow_workspace
         self.call_llm_for_decision = call_llm_for_decision
         self.handoff_handler = handoff_handler
         self.tool_batch_executor = tool_batch_executor
@@ -715,6 +717,12 @@ class StreamOrchestrator:
         # FIX-20250421-P2: 逃生舱机制 - 连续 exploring 回合计数
         self._consecutive_exploring_count: int = 0
         self._escape_hatch_triggered: bool = False
+
+    def _resolve_shadow_workspace(self, context: list[dict]) -> str:
+        if self.resolve_shadow_workspace is None:
+            return "."
+        workspace = str(self.resolve_shadow_workspace(context) or "").strip()
+        return workspace or "."
 
     # -----------------------------------------------------------------------
     # 流式 LLM 决策调用
@@ -760,9 +768,10 @@ class StreamOrchestrator:
             )
             return
 
-        handler = StreamEventHandler(workspace=".")
+        shadow_workspace = self._resolve_shadow_workspace(context)
+        handler = StreamEventHandler(workspace=shadow_workspace)
         if shadow_engine is None:
-            shadow_engine = self.build_stream_shadow_engine(workspace=".", turn_id=ledger.turn_id)
+            shadow_engine = self.build_stream_shadow_engine(workspace=shadow_workspace, turn_id=ledger.turn_id)
         speculative_tasks: list[tuple[str, asyncio.Task[dict[str, Any]]]] = []
         emitted_content_parts: list[str] = []
         emitted_thinking_parts: list[str] = []
@@ -1062,7 +1071,8 @@ class StreamOrchestrator:
         ledger.state_history.append(("DECISION_REQUESTED", int(time.time() * 1000)))
         self.emit_event(TurnPhaseEvent.create(turn_id, "decision_requested"))
 
-        shadow_engine = self.build_stream_shadow_engine(workspace=".", turn_id=turn_id)
+        shadow_workspace = self._resolve_shadow_workspace(context)
+        shadow_engine = self.build_stream_shadow_engine(workspace=shadow_workspace, turn_id=turn_id)
         llm_response: RawLLMResponse | None = None
         # FIX-20260427: In SUPER mode, force tool_choice="required" ONLY for Director
         # to prevent the LLM from generating text-only analysis instead of calling write tools.

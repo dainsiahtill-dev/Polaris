@@ -403,6 +403,232 @@ class CodeGenerationEngine:
         return list(dict.fromkeys(violations))
 
     @staticmethod
+    def _normalize_workspace_relative_paths(values: list[Any] | tuple[Any, ...] | None) -> list[str]:
+        paths: list[str] = []
+        seen: set[str] = set()
+        for raw_value in values or []:
+            value = str(raw_value or "").replace("\\", "/").strip().strip("/")
+            if not value or value.startswith("/") or ":" in value or ".." in value.split("/"):
+                continue
+            if value not in seen:
+                seen.add(value)
+                paths.append(value)
+        return paths
+
+    def _changed_paths_from_file_records(self, files: list[dict[str, str]]) -> list[str]:
+        return self._normalize_workspace_relative_paths([item.get("path") for item in files if isinstance(item, dict)])
+
+    @staticmethod
+    def _identity_token(value: Any) -> str:
+        if value is None or isinstance(value, bool):
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, int):
+            return str(value).strip()
+        return ""
+
+    @staticmethod
+    def _director_codegen_task_identity(task: Any) -> tuple[str, str, dict[str, Any]]:
+        metadata = getattr(task, "metadata", None)
+        task_metadata: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
+        task_id = CodeGenerationEngine._identity_token(getattr(task, "id", ""))
+        run_id = (
+            CodeGenerationEngine._identity_token(getattr(task, "run_id", ""))
+            or CodeGenerationEngine._identity_token(task_metadata.get("run_id"))
+            or CodeGenerationEngine._identity_token(task_metadata.get("factory_run_id"))
+        )
+        return task_id, run_id, task_metadata
+
+    @staticmethod
+    def _director_codegen_session_id(task: Any, prompt: str = "") -> str:
+        task_id, run_id, _task_metadata = CodeGenerationEngine._director_codegen_task_identity(task)
+        basis = run_id or task_id or hashlib.sha1(str(prompt or "").encode("utf-8")).hexdigest()[:12]
+        return f"director-codegen-{basis}"
+
+    def _allowed_scope_for_round(self, task: Any, round_files: list[str] | None) -> list[str]:
+        round_scope = self._normalize_workspace_relative_paths(list(round_files or []))
+        if round_scope:
+            return round_scope
+
+        metadata = getattr(task, "metadata", None)
+        task_metadata: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
+        scope_candidates: list[Any] = []
+        for key in ("target_files", "scope_paths"):
+            raw_value = task_metadata.get(key)
+            if isinstance(raw_value, list):
+                scope_candidates.extend(raw_value)
+        file_plan = task_metadata.get("file_plan")
+        if isinstance(file_plan, list):
+            for item in file_plan:
+                if isinstance(item, dict):
+                    scope_candidates.append(item.get("path"))
+        return self._normalize_workspace_relative_paths(scope_candidates)
+
+    def _cognitive_runtime_write_gate_violations(
+        self,
+        *,
+        files: list[dict[str, str]],
+        task: Any,
+        round_files: list[str] | None,
+        round_label: str,
+        session_id: str,
+    ) -> list[str]:
+        changed_files = self._changed_paths_from_file_records(files)
+        if not changed_files:
+            return ["cognitive_runtime_write_gate:no_changed_files"]
+
+        allowed_scope_paths = self._allowed_scope_for_round(task, round_files)
+        if not allowed_scope_paths:
+            return ["cognitive_runtime_write_gate:missing_allowed_scope_paths"]
+
+        try:
+            from polaris.cells.factory.cognitive_runtime.public import (
+                LeaseEditScopeCommandV1,
+                MapDiffToCellsCommandV1,
+                PromoteOrRejectCommandV1,
+                RecordRuntimeReceiptCommandV1,
+                RequestProjectionCompileCommandV1,
+                ValidateChangeSetCommandV1,
+                get_cognitive_runtime_public_service,
+            )
+        except (ImportError, RuntimeError) as exc:
+            return [f"cognitive_runtime_write_gate:unavailable:{exc}"]
+
+        task_id, run_id, _task_metadata = self._director_codegen_task_identity(task)
+        subject_ref = f"director_codegen:{task_id or 'unknown'}:{str(round_label or '').strip() or 'round'}"
+
+        service = get_cognitive_runtime_public_service()
+        lease = service.lease_edit_scope(
+            LeaseEditScopeCommandV1(
+                workspace=self.workspace,
+                requested_by="director_runtime_codegen",
+                scope_paths=tuple(allowed_scope_paths),
+                session_id=session_id,
+                reason="Director runtime code generation write gate",
+                metadata={
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "round_label": str(round_label or ""),
+                    "changed_files": changed_files,
+                },
+            )
+        )
+        if not lease.ok:
+            return [f"cognitive_runtime_write_gate:lease_failed:{lease.error_message or lease.error_code}"]
+
+        validation = service.validate_change_set(
+            ValidateChangeSetCommandV1(
+                workspace=self.workspace,
+                changed_files=tuple(changed_files),
+                allowed_scope_paths=tuple(allowed_scope_paths),
+                evidence_refs=(task_id,) if task_id else (),
+                require_change=True,
+            )
+        )
+        if not validation.ok or validation.validation is None:
+            return [
+                "cognitive_runtime_write_gate:validate_change_set_failed:"
+                f"{validation.error_message or validation.error_code or 'unknown'}"
+            ]
+        if not validation.validation.write_gate_allowed:
+            reasons = "; ".join(validation.validation.reasons) or "write_gate_not_allowed"
+            return [f"cognitive_runtime_write_gate:write_gate_denied:{reasons}"]
+
+        receipt_refs: list[str] = []
+        receipt = service.record_runtime_receipt(
+            RecordRuntimeReceiptCommandV1(
+                workspace=self.workspace,
+                receipt_type="director_codegen_change_set_validated",
+                payload={
+                    "task_id": task_id,
+                    "round_label": str(round_label or ""),
+                    "changed_files": changed_files,
+                    "allowed_scope_paths": allowed_scope_paths,
+                    "validation_id": validation.validation.validation_id,
+                    "risk_level": validation.validation.risk_level,
+                    "impact_score": validation.validation.impact_score,
+                },
+                session_id=session_id,
+                run_id=run_id or None,
+                trace_refs=(validation.validation.validation_id,) if validation.validation.validation_id else (),
+            )
+        )
+        if receipt.ok and receipt.receipt is not None:
+            receipt_refs.append(receipt.receipt.receipt_id)
+
+        mapping = service.map_diff_to_cells(
+            MapDiffToCellsCommandV1(
+                workspace=self.workspace,
+                changed_files=tuple(changed_files),
+            )
+        )
+        mapped_cells = tuple(mapping.mapping.matched_cells) if mapping.ok and mapping.mapping is not None else ()
+        if not mapping.ok:
+            logger.warning(
+                "cognitive_runtime_diff_mapping_failed: task=%s round=%s error=%s",
+                task_id,
+                round_label,
+                mapping.error_message or mapping.error_code,
+            )
+
+        projection = service.request_projection_compile(
+            RequestProjectionCompileCommandV1(
+                workspace=self.workspace,
+                requested_by="director_runtime_codegen",
+                subject_ref=subject_ref,
+                changed_files=tuple(changed_files),
+                mapped_cells=mapped_cells,
+                session_id=session_id,
+                run_id=run_id or None,
+                metadata={
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "round_label": str(round_label or ""),
+                    "mapping_id": getattr(mapping.mapping, "mapping_id", "") if mapping.mapping is not None else "",
+                    "mapping_notes": list(getattr(mapping.mapping, "notes", ()) if mapping.mapping is not None else ()),
+                },
+            )
+        )
+        if not projection.ok or projection.request is None:
+            return [
+                "cognitive_runtime_write_gate:projection_compile_failed:"
+                f"{projection.error_message or projection.error_code or 'unknown'}"
+            ]
+
+        if mapped_cells:
+            promotion = service.promote_or_reject(
+                PromoteOrRejectCommandV1(
+                    workspace=self.workspace,
+                    subject_ref=subject_ref,
+                    changed_files=tuple(changed_files),
+                    mapped_cells=mapped_cells,
+                    write_gate_allowed=True,
+                    projection_status=projection.request.status,
+                    projection_request_id=projection.request.request_id,
+                    receipt_refs=tuple(receipt_refs),
+                    reasons=tuple(validation.validation.reasons),
+                    metadata={
+                        "task_id": task_id,
+                        "run_id": run_id,
+                        "session_id": session_id,
+                        "round_label": str(round_label or ""),
+                    },
+                )
+            )
+            if not promotion.ok:
+                reason = ""
+                if promotion.decision is not None:
+                    reason = "; ".join(promotion.decision.reasons)
+                return [
+                    "cognitive_runtime_write_gate:promotion_rejected:"
+                    f"{reason or promotion.error_message or promotion.error_code or 'unknown'}"
+                ]
+        return []
+
+    @staticmethod
     def _proposal_mentions_path(response_text: str, relative_path: str) -> bool:
         """Return whether a proposal declares a PATCH_FILE/FILE block for a path."""
         path_token = re.escape(str(relative_path or "").strip().replace("\\", "/"))
@@ -444,17 +670,13 @@ class CodeGenerationEngine:
         timeout: int,
         round_label: str,
         round_files: list[str] | None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Invoke the canonical Director role runtime for one generation round."""
         from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
-        task_id = str(getattr(task, "id", "") or "").strip()
-        raw_metadata = getattr(task, "metadata", None)
-        task_metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
-        run_id = str(
-            getattr(task, "run_id", "") or task_metadata.get("run_id") or task_metadata.get("factory_run_id") or ""
-        ).strip()
+        task_id, run_id, _task_metadata = self._director_codegen_task_identity(task)
         context = {
             "task_id": task_id,
             "run_id": run_id,
@@ -486,10 +708,10 @@ class CodeGenerationEngine:
             "\n\n"
             f"{proposal_prompt}"
         )
-        session_basis = run_id or task_id or hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:12]
+        session_id = session_id or self._director_codegen_session_id(task, prompt)
         command = ExecuteRoleSessionCommandV1(
             role="director",
-            session_id=f"director-codegen-{session_basis}",
+            session_id=session_id,
             workspace=self.workspace,
             user_message=user_message,
             run_id=run_id or None,
@@ -850,6 +1072,7 @@ class CodeGenerationEngine:
         *,
         response_text: str,
         task_id: str,
+        allowed_scope_paths: list[str] | tuple[str, ...] | None,
         llm_metadata: dict[str, Any],
     ) -> tuple[list[dict], list[str]]:
         apply_func = getattr(self._executor, "_apply_response_operations", None)
@@ -859,6 +1082,7 @@ class CodeGenerationEngine:
             response_text,
             task_id=task_id,
             llm_metadata=llm_metadata,
+            allowed_scope_paths=allowed_scope_paths,
         )
         normalized_files = [dict(item) for item in applied_files if isinstance(item, dict)]
         normalized_errors = [str(item) for item in errors if str(item or "").strip()]
@@ -923,7 +1147,8 @@ class CodeGenerationEngine:
             return [], [warning]
 
         warnings: list[str] = []
-        task_id = str(getattr(task, "id", "") or "").strip()
+        task_id, _run_id, _task_metadata = self._director_codegen_task_identity(task)
+        session_id = self._director_codegen_session_id(task, prompt)
         attempts = self.resolve_patch_retry_attempts()
         current_prompt = prompt
 
@@ -945,6 +1170,7 @@ class CodeGenerationEngine:
                     timeout=timeout,
                     round_label=f"{round_label}:attempt-{attempt}",
                     round_files=round_files,
+                    session_id=session_id,
                 )
             except (asyncio.TimeoutError, TimeoutError):
                 changed_files = self._collect_changed_round_files(round_files, before_signatures)
@@ -952,6 +1178,16 @@ class CodeGenerationEngine:
                     file_policy_violations = self._file_policy_violations(changed_files, package_policy_snapshot)
                     if file_policy_violations:
                         warnings.extend(file_policy_violations)
+                        break
+                    cognitive_gate_violations = self._cognitive_runtime_write_gate_violations(
+                        files=changed_files,
+                        task=task,
+                        round_files=round_files,
+                        round_label=round_label,
+                        session_id=session_id,
+                    )
+                    if cognitive_gate_violations:
+                        warnings.extend(cognitive_gate_violations)
                         break
                     warnings.append(f"director_runtime_codegen_timeout_after_changes:{timeout}s")
                     return changed_files, warnings
@@ -992,6 +1228,16 @@ class CodeGenerationEngine:
                 if file_policy_violations:
                     warnings.extend(file_policy_violations)
                     break
+                cognitive_gate_violations = self._cognitive_runtime_write_gate_violations(
+                    files=tool_files,
+                    task=task,
+                    round_files=round_files,
+                    round_label=round_label,
+                    session_id=session_id,
+                )
+                if cognitive_gate_violations:
+                    warnings.extend(cognitive_gate_violations)
+                    break
                 return tool_files, warnings
 
             changed_files = self._collect_changed_round_files(round_files, before_signatures)
@@ -999,6 +1245,16 @@ class CodeGenerationEngine:
                 file_policy_violations = self._file_policy_violations(changed_files, package_policy_snapshot)
                 if file_policy_violations:
                     warnings.extend(file_policy_violations)
+                    break
+                cognitive_gate_violations = self._cognitive_runtime_write_gate_violations(
+                    files=changed_files,
+                    task=task,
+                    round_files=round_files,
+                    round_label=round_label,
+                    session_id=session_id,
+                )
+                if cognitive_gate_violations:
+                    warnings.extend(cognitive_gate_violations)
                     break
                 return changed_files, warnings
 
@@ -1015,6 +1271,7 @@ class CodeGenerationEngine:
                 applied_files, apply_errors = self._apply_response_operations(
                     response_text=response_text,
                     task_id=task_id,
+                    allowed_scope_paths=round_files,
                     llm_metadata={
                         "provider": response.get("provider"),
                         "model": response.get("model"),
@@ -1027,12 +1284,32 @@ class CodeGenerationEngine:
                     if file_policy_violations:
                         warnings.extend(file_policy_violations)
                         break
+                    cognitive_gate_violations = self._cognitive_runtime_write_gate_violations(
+                        files=applied_files,
+                        task=task,
+                        round_files=round_files,
+                        round_label=round_label,
+                        session_id=session_id,
+                    )
+                    if cognitive_gate_violations:
+                        warnings.extend([*apply_errors, *cognitive_gate_violations])
+                        break
                     return applied_files, [*warnings, *apply_errors]
                 changed_files = self._collect_changed_round_files(round_files, before_signatures)
                 if changed_files:
                     file_policy_violations = self._file_policy_violations(changed_files, package_policy_snapshot)
                     if file_policy_violations:
                         warnings.extend([*apply_errors, *file_policy_violations])
+                        break
+                    cognitive_gate_violations = self._cognitive_runtime_write_gate_violations(
+                        files=changed_files,
+                        task=task,
+                        round_files=round_files,
+                        round_label=round_label,
+                        session_id=session_id,
+                    )
+                    if cognitive_gate_violations:
+                        warnings.extend([*apply_errors, *cognitive_gate_violations])
                         break
                     return changed_files, [*warnings, *apply_errors]
                 warnings.extend(apply_errors)

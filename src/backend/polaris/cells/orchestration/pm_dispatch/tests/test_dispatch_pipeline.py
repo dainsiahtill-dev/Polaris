@@ -446,6 +446,74 @@ def test_run_dispatch_pipeline_mainline_full_skips_engine_dispatch(monkeypatch) 
     assert outcome["director_result"]["mode"] == "task_market_mainline_full"
 
 
+def test_run_dispatch_pipeline_blocks_when_chief_engineer_preflight_hard_fails(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-full")
+
+    dispatch_tasks = [{"id": "T01", "title": "Task 1"}]
+    status_events: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline.resolve_director_dispatch_tasks",
+        lambda **_kwargs: (dispatch_tasks, {}),
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline.run_chief_engineer_preflight",
+        lambda **_kwargs: {
+            "ran": True,
+            "hard_failure": True,
+            "reason": "chief_engineer_error",
+            "summary": "ChiefEngineer preflight failed",
+        },
+    )
+
+    def _unexpected_engine_dispatch(**_kwargs):
+        raise AssertionError("run_engine_dispatch must not run after ChiefEngineer hard failure")
+
+    def _unexpected_task_market_publish(**_kwargs):
+        raise AssertionError("task-market publishing must not run after ChiefEngineer hard failure")
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline.run_engine_dispatch",
+        _unexpected_engine_dispatch,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._mainline_publish_dispatch_tasks_to_task_market",
+        _unexpected_task_market_publish,
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._emit_engine_dispatch_status",
+        lambda **kwargs: status_events.append(kwargs),
+    )
+
+    outcome = run_dispatch_pipeline(
+        workspace_full=str(tmp_path),
+        cache_root_full="",
+        run_dir=str(tmp_path / "run"),
+        run_id="run-ce-blocked",
+        iteration=1,
+        normalized={"tasks": dispatch_tasks},
+        run_events=str(tmp_path / "runtime.events.jsonl"),
+        dialogue_full=str(tmp_path / "dialogue.transcript.jsonl"),
+        runtime_pm_tasks_full=str(tmp_path / "pm_tasks_runtime.json"),
+        pm_out_full=str(tmp_path / "pm_out.json"),
+        run_pm_tasks=str(tmp_path / "pm_tasks.json"),
+        run_director_result=str(tmp_path / "director_result.json"),
+    )
+
+    assert outcome["used"] is True
+    assert outcome["exit_code"] == 1
+    assert outcome["error"] == "chief_engineer_preflight_failed: chief_engineer_error"
+    assert outcome["engine_dispatch"]["skipped"] is True
+    assert outcome["engine_dispatch"]["reason"] == "chief_engineer_preflight_failed"
+    assert outcome["director_result"]["status"] == "blocked"
+    assert outcome["director_result"]["dispatch_blocked"] is True
+    assert outcome["director_result"]["blocked"] == 1
+    assert outcome["integration_qa_result"] is None
+    assert "blueprint_id" not in dispatch_tasks[0]
+    assert status_events
+    assert status_events[0]["name"] == "engine_dispatch_blocked"
+
+
 class TestRecordDispatchStatusToShangshuling:
     def test_empty_updates_returns_zero(self) -> None:
         result = record_dispatch_status_to_shangshuling(

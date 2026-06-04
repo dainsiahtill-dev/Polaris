@@ -102,7 +102,7 @@ _VALID_TRANSITIONS: dict[TurnState, set[TurnState]] = {
     TurnState.FINALIZATION_RECEIVED: {TurnState.COMPLETED, TurnState.FAILED},
     TurnState.FINAL_ANSWER_READY: {TurnState.COMPLETED},
     TurnState.HANDOFF_WORKFLOW: {TurnState.COMPLETED, TurnState.FAILED},  # 移交完成或失败，当前turn结束
-    TurnState.HANDOFF_DEVELOPMENT: {TurnState.COMPLETED},  # 开发移交完成，当前turn结束
+    TurnState.HANDOFF_DEVELOPMENT: {TurnState.COMPLETED, TurnState.FAILED},  # 开发移交完成或失败，当前turn结束
     TurnState.COMPLETED: set(),  # 终止状态
     TurnState.FAILED: set(),  # 终止状态
 }

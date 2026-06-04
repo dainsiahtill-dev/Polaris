@@ -5,9 +5,15 @@ date: 2026-04-17
 
 # ADR-0077: Speculative Execution Kernel v2 — 从事务语义外推测到受控 Latency-Hiding Kernel
 
+> 2026-06-04 当前状态覆盖：
+> - “骨架实现”是本 ADR 在 2026-04-17 立项时的背景，不再是当前运行状态。
+> - `StreamShadowEngine` / `SpeculativeExecutor` 当前通过 feature flag 默认开启；显式关闭仍保留为回滚机制。
+> - 写工具 speculative 只有在 registry-backed prepare shadow 可证明安全时才允许；缺失时 fail closed。
+> - 当前生产激活证据见 `src/backend/docs/governance/templates/verification-cards/vc-20260604-cognitive-runtime-contextos-production-activation.yaml`。
+
 ## 背景
 
-`polaris/cells/roles/kernel/internal/stream_shadow_engine.py` 当前是一个骨架实现（skeleton）：
+在本 ADR 立项时，`polaris/cells/roles/kernel/internal/stream_shadow_engine.py` 仍是一个骨架实现（skeleton）：
 
 - `consume_delta()` 仅做缓冲区累积 + 关键词触发（`<tool_call>` / `` ```tool ``），confidence=0.1。
 - `speculate_tool_call()` 仅检查 `ToolBatchRuntime.READONLY_TOOLS`，非只读直接拒绝。

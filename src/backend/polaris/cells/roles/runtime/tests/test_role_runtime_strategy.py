@@ -119,6 +119,59 @@ class TestRoleRuntimeServiceStrategy:
         resolved = RoleRuntimeService.resolve_strategy(domain="other", role="director")
         assert resolved.profile.profile_id == "director.execution"
 
+    @pytest.mark.asyncio
+    async def test_prepare_session_request_fails_closed_when_context_os_expected_but_disabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        monkeypatch.setenv("KERNELONE_CONTEXT_OS_ENABLED", "off")
+
+        with pytest.raises(RuntimeError, match="context_os_expected_but_disabled"):
+            await RoleRuntimeService()._prepare_session_request(
+                ExecuteRoleSessionCommandV1(
+                    role="director",
+                    session_id="sess-context-required",
+                    workspace="/repo",
+                    user_message="continue",
+                    metadata={
+                        "context_os_expected": True,
+                        "cognitive_runtime_mode": "shadow",
+                    },
+                    stream=False,
+                )
+            )
+
+    @pytest.mark.asyncio
+    async def test_prepare_task_request_records_context_os_preflight_when_expected(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        monkeypatch.delenv("KERNELONE_CONTEXT_OS_ENABLED", raising=False)
+
+        request = await RoleRuntimeService()._prepare_task_request(
+            ExecuteRoleTaskCommandV1(
+                role="director",
+                task_id="task-context-required",
+                workspace="/repo",
+                objective="implement governed change",
+                metadata={
+                    "context_os_expected": True,
+                    "cognitive_runtime_mode": "shadow",
+                },
+            )
+        )
+
+        assert request.metadata["context_os_preflight"] == {
+            "expected": True,
+            "enabled": True,
+        }
+
     def test_build_session_request_propagates_context_domain(self) -> None:
         from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
@@ -388,6 +441,15 @@ class TestRoleRuntimeServiceStrategy:
         service = RoleRuntimeService()
         monkeypatch.setattr(service, "_get_kernel", lambda _workspace: FakeKernel())
         monkeypatch.setattr(service, "_persist_session_turn_state", fake_persist)
+        monkeypatch.setattr(
+            service,
+            "_emit_cognitive_runtime_shadow_artifacts",
+            lambda **_kwargs: {
+                "required": True,
+                "receipt_id": "receipt-stream",
+                "handoff_id": "handoff-stream",
+            },
+        )
 
         events = [
             event
@@ -409,6 +471,13 @@ class TestRoleRuntimeServiceStrategy:
         request = cast("RoleTurnRequest", captured["request"])
         assert request.metadata["cognitive_runtime_preflight"]["strategy_override_applied"] is True
         assert request.metadata["cognitive_strategy_override"]["cognitive_runtime"]["applied"] is True
+        complete_event = events[1]
+        assert complete_event["type"] == "complete"
+        assert complete_event["cognitive_runtime_evidence"]["receipt_id"] == "receipt-stream"
+        assert complete_event["metadata"]["cognitive_runtime_evidence"]["handoff_id"] == "handoff-stream"
+        result = complete_event["result"]
+        assert result.metadata["cognitive_runtime_evidence"]["receipt_id"] == "receipt-stream"
+        assert result.execution_stats["cognitive_runtime_evidence_emitted"] is True
 
     def test_required_cognitive_runtime_evidence_records_receipt_and_handoff(self, monkeypatch) -> None:
         from polaris.cells.factory.cognitive_runtime.public import service as cognitive_service
@@ -592,12 +661,19 @@ class TestRoleRuntimeServiceStrategy:
                 workspace="/repo",
                 user_message="write",
                 domain="code",
-                metadata={"cognitive_runtime_required": True},
+                metadata={
+                    "cognitive_runtime_required": True,
+                    "context_os_expected": True,
+                },
                 stream=False,
             )
         )
 
         assert result.ok is True
+        assert result.metadata["context_os_preflight"] == {
+            "expected": True,
+            "enabled": True,
+        }
         assert result.metadata["cognitive_runtime_evidence"]["required"] is True
         assert result.metadata["cognitive_runtime_evidence"]["receipt_id"] == "receipt-2"
         assert result.metadata["cognitive_runtime_evidence"]["handoff_id"] == "handoff-2"

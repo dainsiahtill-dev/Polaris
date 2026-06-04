@@ -475,6 +475,9 @@ class DirectorAdapter(BaseRoleAdapter):
         metadata.setdefault("domain", "code")
         metadata.setdefault("validate_output", False)
         metadata.setdefault("max_retries", max(0, int(max_retries)))
+        metadata.setdefault("use_repo_intelligence", True)
+        metadata.setdefault("repo_intel_max_files", 20)
+        metadata.setdefault("repo_intel_max_symbols", 40)
         metadata["role_runtime_required"] = True
         metadata["cognitive_runtime_required"] = True
         metadata["context_os_expected"] = True

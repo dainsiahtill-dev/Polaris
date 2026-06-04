@@ -4,28 +4,27 @@
 """
 
 import sys
-from pathlib import Path
-
-# 添加 scripts 路径到 Python 路径
-scripts_path = str(Path(__file__).parent.parent / "scripts")
-if scripts_path not in sys.path:
-    sys.path.insert(0, scripts_path)
-
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# 添加 scripts 路径到 Python 路径
+scripts_path = str(Path(__file__).parent.parent / "scripts")
+if scripts_path not in sys.path:
+    sys.path.insert(0, scripts_path)
+
 # 确保在测试路径中
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from polaris.cells.roles.adapters.public.service import (
+from polaris.cells.roles.adapters.internal import runtime_dialogue  # noqa: E402
+from polaris.cells.roles.adapters.public.service import (  # noqa: E402
     WorkflowRoleAdapter,
     WorkflowRoleResult,
 )
-from polaris.cells.roles.runtime.public.service import (
+from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1  # noqa: E402
+from polaris.cells.roles.runtime.public.service import (  # noqa: E402
     RoleExecutionKernel,
     RoleExecutionMode,
     RoleTurnRequest,
@@ -74,6 +73,28 @@ def mock_context():
     return context
 
 
+def _install_fake_role_runtime(monkeypatch: pytest.MonkeyPatch, output: str) -> list:
+    captured_commands = []
+
+    class _FakeRoleRuntimeService:
+        async def execute_role_session(self, command):
+            captured_commands.append(command)
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role=command.role,
+                workspace=command.workspace,
+                task_id=command.task_id,
+                session_id=command.session_id,
+                run_id=command.run_id,
+                output=output,
+                metadata={"context_os_snapshot_loaded": True},
+            )
+
+    monkeypatch.setattr(runtime_dialogue, "_create_role_runtime_service", lambda: _FakeRoleRuntimeService())
+    return captured_commands
+
+
 class TestWorkflowNodeInitialization:
     """测试工作流节点初始化"""
 
@@ -84,11 +105,9 @@ class TestWorkflowNodeInitialization:
         assert adapter.workspace == temp_workspace
 
     def test_nodes_have_kernel(self, temp_workspace):
-        """测试节点具有内核"""
+        """测试节点具有 RoleRuntime 入口"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
-        kernel = adapter.kernel
-        assert kernel is not None
-        assert isinstance(kernel, RoleExecutionKernel)
+        assert adapter.runtime_entrypoint == "roles.runtime.execute_role_session"
 
 
 class TestWorkflowDependencies:
@@ -174,102 +193,75 @@ class TestWorkflowExecutionChain:
             assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_pm_node_execution(self, temp_workspace):
+    async def test_pm_node_execution(self, temp_workspace, monkeypatch):
         """测试 PM 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
+        commands = _install_fake_role_runtime(monkeypatch, '{"tasks": [{"id": "TASK-001", "title": "test"}]}')
 
-        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
-            mock_result = MagicMock()
-            mock_result.success = True
-            mock_result.content = '{"tasks": [{"id": "TASK-001", "title": "test"}]}'
-            mock_result.structured_output = {"tasks": [{"id": "TASK-001", "title": "test"}]}
-            mock_result.thinking = None
-            mock_run.return_value = mock_result
+        result = await adapter.execute_role(
+            role="pm",
+            message="分析需求并创建任务",
+        )
 
-            result = await adapter.execute_role(
-                role="pm",
-                message="分析需求并创建任务",
-            )
-
-            assert isinstance(result, WorkflowRoleResult)
+        assert isinstance(result, WorkflowRoleResult)
+        assert commands[0].role == "pm"
+        assert commands[0].metadata["context_os_expected"] is True
 
     @pytest.mark.asyncio
-    async def test_director_node_execution(self, temp_workspace):
+    async def test_director_node_execution(self, temp_workspace, monkeypatch):
         """测试 Director 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
+        commands = _install_fake_role_runtime(monkeypatch, "patch applied")
 
-        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
-            mock_result = MagicMock()
-            mock_result.success = True
-            mock_result.content = "patch applied"
-            mock_result.structured_output = {}
-            mock_result.thinking = None
-            mock_run.return_value = mock_result
+        result = await adapter.execute_role(
+            role="director",
+            message="执行任务",
+        )
 
-            result = await adapter.execute_role(
-                role="director",
-                message="执行任务",
-            )
-
-            assert isinstance(result, WorkflowRoleResult)
+        assert isinstance(result, WorkflowRoleResult)
+        assert commands[0].role == "director"
 
     @pytest.mark.asyncio
-    async def test_qa_node_execution(self, temp_workspace):
+    async def test_qa_node_execution(self, temp_workspace, monkeypatch):
         """测试 QA 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
+        commands = _install_fake_role_runtime(monkeypatch, '{"verdict": "PASS"}')
 
-        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
-            mock_result = MagicMock()
-            mock_result.success = True
-            mock_result.content = '{"verdict": "PASS"}'
-            mock_result.structured_output = {"verdict": "PASS"}
-            mock_result.thinking = None
-            mock_run.return_value = mock_result
+        result = await adapter.execute_role(
+            role="qa",
+            message="审查结果",
+        )
 
-            result = await adapter.execute_role(
-                role="qa",
-                message="审查结果",
-            )
-
-            assert isinstance(result, WorkflowRoleResult)
+        assert isinstance(result, WorkflowRoleResult)
+        assert commands[0].role == "qa"
 
     @pytest.mark.asyncio
-    async def test_architect_node_execution(self, temp_workspace):
+    async def test_architect_node_execution(self, temp_workspace, monkeypatch):
         """测试 Architect 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
+        commands = _install_fake_role_runtime(monkeypatch, '{"architecture": "design"}')
 
-        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
-            mock_result = MagicMock()
-            mock_result.success = True
-            mock_result.content = '{"architecture": "design"}'
-            mock_result.structured_output = {"architecture": "design"}
-            mock_run.return_value = mock_result
+        result = await adapter.execute_role(
+            role="architect",
+            message="设计架构",
+        )
 
-            result = await adapter.execute_role(
-                role="architect",
-                message="设计架构",
-            )
-
-            assert isinstance(result, WorkflowRoleResult)
+        assert isinstance(result, WorkflowRoleResult)
+        assert commands[0].role == "architect"
 
     @pytest.mark.asyncio
-    async def test_ce_node_execution(self, temp_workspace):
+    async def test_ce_node_execution(self, temp_workspace, monkeypatch):
         """测试 ChiefEngineer 节点执行"""
         adapter = WorkflowRoleAdapter(workspace=temp_workspace)
+        commands = _install_fake_role_runtime(monkeypatch, '{"blueprint": "plan"}')
 
-        with patch.object(adapter.kernel, "run", new_callable=AsyncMock) as mock_run:
-            mock_result = MagicMock()
-            mock_result.success = True
-            mock_result.content = '{"blueprint": "plan"}'
-            mock_result.structured_output = {"blueprint": "plan"}
-            mock_run.return_value = mock_result
+        result = await adapter.execute_role(
+            role="chief_engineer",
+            message="生成蓝图",
+        )
 
-            result = await adapter.execute_role(
-                role="chief_engineer",
-                message="生成蓝图",
-            )
-
-            assert isinstance(result, WorkflowRoleResult)
+        assert isinstance(result, WorkflowRoleResult)
+        assert commands[0].role == "chief_engineer"
 
 
 class TestWorkflowFingerprintConsistency:

@@ -103,6 +103,16 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Task subcommand
     task_subparsers = parser.add_subparsers(dest="task_command", help="Task commands")
+    console_parser = task_subparsers.add_parser("console", help="Open the unified role terminal console")
+    console_parser.add_argument("--role", default="director", help="Role to run in the terminal console")
+    console_parser.add_argument(
+        "--backend",
+        choices=["auto", "plain"],
+        default="auto",
+        help="Terminal rendering backend (default: auto)",
+    )
+    console_parser.add_argument("--session-id", help="Existing role session id")
+    console_parser.add_argument("--session-title", help="Title for a new role session")
     task_create = task_subparsers.add_parser("create", help="Create a new task")
     task_create.add_argument("--subject", required=True, help="Task subject")
     task_create.add_argument("--description", help="Task description")
@@ -182,6 +192,19 @@ def main() -> int:
     if parsed.task_command == "create":
         asyncio.run(create_task(workspace, parsed.subject, parsed.description, parsed.priority))
         return 0
+
+    if parsed.task_command == "console":
+        from polaris.delivery.cli import terminal_console
+
+        return int(
+            terminal_console.run_director_console(
+                workspace=str(Path(workspace).resolve()),
+                role=str(parsed.role or "director"),
+                backend=str(parsed.backend or "auto"),
+                session_id=parsed.session_id,
+                session_title=parsed.session_title,
+            )
+        )
 
     if parsed.serve == "serve" or parsed.task_command == "serve":
         asyncio.run(run_director_server(workspace, parsed.host, parsed.port))

@@ -153,6 +153,53 @@ async def test_execute_role_session_persists_transcript_and_context_os(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_persist_session_turn_state_uses_session_continuity_engine_policy(monkeypatch) -> None:
+    engine = create_engine("sqlite:///:memory:", echo=False)
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine)
+    db = session_factory()
+    try:
+        role_session_service = RoleSessionService(db=db)
+        session = role_session_service.create_session(
+            role="director",
+            context_config={"session_continuity": {"recent_window_messages": "invalid"}},
+        )
+
+        import polaris.cells.roles.session.internal.role_session_service as session_service_module
+        import polaris.cells.roles.session.public as session_public_module
+
+        def _session_factory():
+            return role_session_service
+
+        monkeypatch.setattr(session_service_module, "RoleSessionService", _session_factory)
+        monkeypatch.setattr(session_public_module, "RoleSessionService", _session_factory)
+
+        await RoleRuntimeService._persist_session_turn_state(
+            ExecuteRoleSessionCommandV1(
+                role="director",
+                session_id=session.id,  # type: ignore[arg-type]
+                workspace="C:/repo",
+                user_message="继续保留 Context OS 投影",
+                context={},
+                stream=True,
+            ),
+            turn_history=[
+                ("user", "继续保留 Context OS 投影"),
+                ("assistant", "我会把状态写回 session。"),
+            ],
+        )
+
+        context_config = role_session_service.get_context_config_dict(session.id)  # type: ignore[arg-type]
+        assert context_config is not None
+        assert "session_continuity" in context_config
+        assert "state_first_context_os" in context_config
+        assert role_session_service.get_messages(session.id)  # type: ignore[arg-type]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_execute_role_task_emits_cognitive_runtime_shadow_receipt(monkeypatch) -> None:
     class _FakeKernel:
         async def run(self, role: str, request):

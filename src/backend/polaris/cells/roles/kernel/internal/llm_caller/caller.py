@@ -92,9 +92,25 @@ class LLMCaller:
         for new code. LLMCaller is maintained for backward compatibility.
     """
 
-    __slots__ = ("_cache", "_enable_cache", "_executor", "_formatter", "_invoker", "_model_catalog", "workspace")
+    __slots__ = (
+        "_cache",
+        "_emit_deprecation_warning",
+        "_enable_cache",
+        "_executor",
+        "_formatter",
+        "_invoker",
+        "_model_catalog",
+        "workspace",
+    )
 
-    def __init__(self, workspace: str = "", enable_cache: bool = True, executor: Any | None = None) -> None:
+    def __init__(
+        self,
+        workspace: str = "",
+        enable_cache: bool = True,
+        executor: Any | None = None,
+        *,
+        emit_deprecation_warning: bool = True,
+    ) -> None:
         """Initialize LLM caller.
 
         Args:
@@ -111,14 +127,18 @@ class LLMCaller:
         self._formatter: Any | None = None  # ProviderFormatter for lazy serialization
         self._invoker: LLMInvoker | None = None
         self._executor: Any | None = executor  # Injected executor for DI
+        self._emit_deprecation_warning = emit_deprecation_warning
 
-        # Emit deprecation warning for direct instantiation
-        warnings.warn(
-            "LLMCaller is deprecated. Use LLMInvoker directly for new code. "
-            "LLMCaller is maintained as a backward-compatible facade.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        # Emit deprecation warning for direct compatibility-facade use. LLMInvoker
+        # may still instantiate this class internally as a request-preparation
+        # adapter until that preparation logic is fully extracted.
+        if emit_deprecation_warning:
+            warnings.warn(
+                "LLMCaller is deprecated. Use LLMInvoker directly for new code. "
+                "LLMCaller is maintained as a backward-compatible facade.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     def _get_invoker(self) -> LLMInvoker:
         """Get or create LLMInvoker instance (respects DI executor injection)."""
@@ -692,11 +712,12 @@ class LLMCaller:
         .. deprecated::
             Use LLMInvoker.call() directly for new code.
         """
-        warnings.warn(
-            "LLMCaller.call() is deprecated. Use LLMInvoker.call() directly.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if self._emit_deprecation_warning:
+            warnings.warn(
+                "LLMCaller.call() is deprecated. Use LLMInvoker.call() directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         invoker = self._get_invoker()
         return await invoker.call(
             profile=profile,
@@ -733,11 +754,12 @@ class LLMCaller:
         .. deprecated::
             Use LLMInvoker.call_structured() directly for new code.
         """
-        warnings.warn(
-            "LLMCaller.call_structured() is deprecated. Use LLMInvoker.call_structured() directly.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if self._emit_deprecation_warning:
+            warnings.warn(
+                "LLMCaller.call_structured() is deprecated. Use LLMInvoker.call_structured() directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         invoker = self._get_invoker()
         return await invoker.call_structured(
             profile=profile,
@@ -770,11 +792,12 @@ class LLMCaller:
         .. deprecated::
             Use LLMInvoker.call_stream() directly for new code.
         """
-        warnings.warn(
-            "LLMCaller.call_stream() is deprecated. Use LLMInvoker.call_stream() directly.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        if self._emit_deprecation_warning:
+            warnings.warn(
+                "LLMCaller.call_stream() is deprecated. Use LLMInvoker.call_stream() directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         invoker = self._get_invoker()
         async for event in invoker.call_stream(
             profile=profile,

@@ -167,7 +167,12 @@ class StreamEngine:
             if allow_fallback and prepared.native_tool_schemas:
                 from .caller import LLMCaller
 
-                caller = LLMCaller(workspace=self.workspace, enable_cache=False, executor=self._get_executor())
+                caller = LLMCaller(
+                    workspace=self.workspace,
+                    enable_cache=False,
+                    executor=self._get_executor(),
+                    emit_deprecation_warning=False,
+                )
                 fallback_request = caller._build_native_tool_fallback_request(
                     prepared=prepared, profile=profile, mode="chat"
                 )

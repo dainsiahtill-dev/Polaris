@@ -202,6 +202,19 @@ class TestTransactionKernelPrebuiltContextPassThrough:
         assert isinstance(response, dict)
         assert captured_models == ["override-model"]
 
+    def test_create_transaction_kernel_carries_request_workspace(self, tmp_path: Any) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="director")
+        request = _MockRequest(
+            message="implement the target project",
+            run_id="run_123",
+            workspace=str(tmp_path),
+        )
+
+        tk = kernel._create_transaction_kernel("director", profile, request)
+
+        assert tk.config.workspace == str(tmp_path)
+
     @pytest.mark.asyncio
     async def test_provider_preserves_explicit_empty_forced_tools_override(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")

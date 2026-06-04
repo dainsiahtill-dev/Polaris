@@ -111,8 +111,13 @@ def _record_resident_decision_safe(workspace: str, payload: dict[str, Any]) -> N
         from polaris.cells.resident.autonomy.public.service import record_resident_decision
 
         record_resident_decision(workspace, payload)
-    except (RuntimeError, ValueError):
-        logger.debug("pm_workflow: failed to record resident decision: %s", payload.get("stage"))
+    except (RuntimeError, ValueError, OSError, TypeError):
+        logger.warning(
+            "pm_workflow: failed to record resident decision: run_id=%s stage=%s",
+            payload.get("run_id"),
+            payload.get("stage"),
+            exc_info=True,
+        )
 
 
 @workflow.defn
@@ -339,19 +344,21 @@ class PMWorkflow(WorkflowQueryState):
                 "summary": f"Dispatch Director using {selected_mode} execution mode",
                 "options": [
                     {
+                        "option_id": "parallel_dispatch",
                         "label": "parallel_dispatch",
                         "rationale": "Favor throughput for independent tasks.",
                         "strategy_tags": ["parallel_dispatch"],
                         "estimated_score": 0.78,
                     },
                     {
+                        "option_id": "serial_dispatch",
                         "label": "serial_dispatch",
                         "rationale": "Favor predictability for tightly coupled tasks.",
                         "strategy_tags": ["serial_dispatch"],
                         "estimated_score": 0.62,
                     },
                 ],
-                "selected_option_id": "",
+                "selected_option_id": f"{selected_mode}_dispatch",
                 "strategy_tags": [f"{selected_mode}_dispatch", "governed_handoff"],
                 "expected_outcome": {"status": "director_running", "success": True},
                 "actual_outcome": {

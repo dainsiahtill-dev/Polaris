@@ -365,7 +365,8 @@ cells:
     owner: runtime
     purpose: >
       Provide asynchronous task-market collaboration primitives for PM/ChiefEngineer/Director/QA,
-      including publish/claim/lease/requeue/dead-letter lifecycle transitions.
+      including publish/claim/lease/requeue/dead-letter lifecycle transitions and
+      Cognitive Runtime lifecycle receipts for auditable cross-role governance.
     current_modules:
       - polaris.cells.runtime.task_market.public.service
       - polaris.cells.runtime.task_market.internal.service
@@ -402,6 +403,7 @@ cells:
       - events.fact_stream
       - policy.workspace_guard
       - audit.evidence
+      - factory.cognitive_runtime
       - chief_engineer.blueprint
       - director.task_consumer
       - qa.audit_verdict
@@ -413,6 +415,7 @@ cells:
     effects_allowed:
       - fs.read:runtime/task_market/*
       - fs.write:runtime/task_market/*
+      - fs.write:runtime/cognitive_runtime/*
       - fs.write:runtime/events/*
       - ws.outbound:runtime/*
     verification:
@@ -1031,6 +1034,7 @@ cells:
     current_modules:
       - polaris.cells.llm.dialogue.public.service
       - polaris.cells.llm.dialogue.internal.role_dialogue
+      - polaris.cells.llm.dialogue.internal.cognitive_evidence
       - polaris.cells.llm.dialogue.internal.docs_dialogue
       - polaris.cells.llm.dialogue.internal.docs_suggest
     owned_paths:
@@ -1051,6 +1055,7 @@ cells:
         - LlmDialogueErrorV1
     depends_on:
       - context.engine
+      - factory.cognitive_runtime
       - llm.provider_runtime
       - llm.tool_runtime
       - policy.workspace_guard
@@ -1064,12 +1069,14 @@ cells:
     effects_allowed:
       - fs.read:workspace/**
       - fs.read:runtime/**
+      - fs.write:runtime/cognitive_runtime/**
       - llm.invoke:roles/*
       - ws.outbound:runtime/*
     verification:
       tests:
         - tests/test_role_dialogue_validation_retry.py
         - tests/test_docs_suggest.py
+        - tests/test_docs_dialogue_cognitive_runtime.py
         - tests/test_interactive_interview_streaming_fallback.py
       gaps:
         - Remaining direct imports to internal modules must be migrated to public service/contracts.
@@ -1090,6 +1097,7 @@ cells:
       - polaris.cells.llm.evaluation.internal.deterministic_judge
       - polaris.cells.llm.evaluation.internal.readiness_tests
       - polaris.cells.llm.evaluation.internal.index
+      - polaris.cells.llm.evaluation.internal.interview
     owned_paths:
       - polaris/cells/llm/evaluation/**
     public_contracts:
@@ -1106,6 +1114,7 @@ cells:
       errors:
         - LlmEvaluationErrorV1
     depends_on:
+      - factory.cognitive_runtime
       - llm.provider_runtime
       - llm.provider_config
       - policy.workspace_guard
@@ -1127,6 +1136,7 @@ cells:
       - fs.write:workspace/.polaris/runtime/llm_evaluations/*
       - fs.write:workspace/.polaris/runtime/llm_tests/*
       - fs.write:workspace/.polaris/llm_test_index.evaluation.json
+      - fs.write:runtime/cognitive_runtime/*
       - network.http_outbound:llm/*
     verification:
       tests:
@@ -1134,6 +1144,7 @@ cells:
         - tests/test_llm_test_index_reconcile.py
         - tests/test_llm_qualification_validators.py
         - tests/test_llm_evaluation_runner_provider_cfg.py
+        - tests/test_llm_interview_cognitive_runtime.py
       gaps:
         - Some evaluation callers still bypass contracts and call internal modules directly.
         - EvaluationRunner still mirrors legacy readiness reports under runtime/llm_tests/reports for delivery compatibility.
@@ -2006,8 +2017,9 @@ cells:
         - polaris/delivery/http/routers/test_cognitive_runtime_router.py
         - polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py
       gaps:
-        - This cell is only shadow-wired today; it can record receipts, export/rehydrate handoff packs, and evaluate rollout gates, but it does not yet gate production orchestration decisions.
-        - Projection-compile and promote/reject authority exist in the cell boundary but are not yet enforced as mainline runtime gates.
+        - Director runtime code generation now uses this cell as a mainline proposal-to-apply write gate for scope lease, change-set validation, receipts, diff mapping, and projection compile before accepting generated target-project files.
+        - Projection-compile and promote/reject authority exists in the cell boundary; promote/reject is enforced when graph cell mappings exist, while target-project workspaces without a Polaris graph are recorded as unmapped projection evidence.
+        - Broader orchestration-stage promotion beyond Director runtime codegen still requires call-site convergence before it can be claimed as a global production gate.
 
   - id: orchestration.pm_planning
     title: PM Planning
@@ -2106,6 +2118,7 @@ cells:
       - orchestration.pm_planning
       - orchestration.workflow_runtime
       - director.execution
+      - factory.cognitive_runtime
       - qa.audit_verdict
       - runtime.state_owner
       - runtime.task_market
@@ -2124,12 +2137,14 @@ cells:
       - fs.read:runtime/contracts/*
       - fs.write:runtime/state/dispatch/*
       - fs.write:runtime/events/runtime.events.jsonl
+      - fs.write:runtime/cognitive_runtime/*
       - fs.write:runtime/snapshots/*
       - ws.outbound:runtime/*
     verification:
       tests:
         - tests/test_dispatch_pipeline_engine_dispatch.py
         - tests/test_orchestration_command_service.py
+        - polaris/tests/test_dispatch_pipeline_integration_qa.py
       gaps:
         - Legacy dispatch entrypoints still exist and are not fully removed.
 
@@ -2910,6 +2925,7 @@ cells:
       - policy.permission
       - audit.evidence
       - events.fact_stream
+      - factory.cognitive_runtime
       - archive.run_archive
       - orchestration.workflow_engine
       - orchestration.pm_planning
@@ -2928,6 +2944,7 @@ cells:
       - fs.write:runtime/workflows/*
       - fs.write:runtime/state/workflow/*
       - fs.write:runtime/events/runtime.events.jsonl
+      - fs.write:runtime/cognitive_runtime/*
       - fs.write:workspace/brain/*
       - db.read_write:workflow_runtime
       - process.spawn:workflow/*
@@ -2935,6 +2952,7 @@ cells:
       tests:
         - tests/orchestration/test_workflow_runtime.py
         - tests/test_embedded_orchestration_dag.py
+        - polaris/tests/test_qa_workflow_cognitive_runtime.py
       gaps:
         - This cell is being downgraded to a thin facade. Real ownership is split across
           orchestration.workflow_engine, orchestration.workflow_activity, and

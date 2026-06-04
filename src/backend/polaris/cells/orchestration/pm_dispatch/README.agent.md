@@ -21,6 +21,7 @@ Dispatch PM contracts into executable task iterations, drive task assignment and
 - `orchestration.pm_planning`
 - `orchestration.workflow_runtime`
 - `director.execution`
+- `factory.cognitive_runtime`
 - `qa.audit_verdict`
 - `runtime.state_owner`
 - `audit.evidence`
@@ -36,9 +37,11 @@ Dispatch PM contracts into executable task iterations, drive task assignment and
 - `fs.read:runtime/contracts/*`
 - `fs.write:runtime/state/dispatch/*`
 - `fs.write:runtime/events/runtime.events.jsonl`
+- `fs.write:runtime/cognitive_runtime/*`
 - `ws.outbound:runtime/*`
 
 ## Verification
 
 - `tests/test_dispatch_pipeline_engine_dispatch.py`
 - `tests/test_orchestration_command_service.py`
+- `polaris/tests/test_dispatch_pipeline_integration_qa.py`

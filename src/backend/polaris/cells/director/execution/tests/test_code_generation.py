@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -792,6 +793,171 @@ class TestBlockedEntryPoints:
         assert warnings == ["director_runtime_codegen_timeout:300s"]
 
     @pytest.mark.asyncio
+    async def test_runtime_codegen_passes_applied_files_through_cognitive_runtime_gate(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
+        executor = Mock()
+        executor._apply_response_operations.return_value = (
+            [{"path": "src/app.py", "content": "print('ok')\n"}],
+            [],
+        )
+        calls: list[tuple[str, object]] = []
+
+        class FakeCognitiveRuntimeService:
+            def lease_edit_scope(self, command: object) -> object:
+                calls.append(("lease", command))
+                return SimpleNamespace(ok=True, lease=SimpleNamespace(lease_id="lease-1"))
+
+            def validate_change_set(self, command: object) -> object:
+                calls.append(("validate", command))
+                return SimpleNamespace(
+                    ok=True,
+                    validation=SimpleNamespace(
+                        validation_id="validation-1",
+                        write_gate_allowed=True,
+                        reasons=(),
+                        risk_level="low",
+                        impact_score=0,
+                    ),
+                )
+
+            def record_runtime_receipt(self, command: object) -> object:
+                calls.append(("receipt", command))
+                return SimpleNamespace(ok=True, receipt=SimpleNamespace(receipt_id="receipt-1"))
+
+            def map_diff_to_cells(self, command: object) -> object:
+                calls.append(("map", command))
+                return SimpleNamespace(
+                    ok=True,
+                    mapping=SimpleNamespace(
+                        matched_cells=("target.project",),
+                        mapping_id="mapping-1",
+                        notes=(),
+                    ),
+                )
+
+            def request_projection_compile(self, command: object) -> object:
+                calls.append(("projection", command))
+                return SimpleNamespace(
+                    ok=True,
+                    request=SimpleNamespace(request_id="projection-1", status="compiled"),
+                )
+
+            def promote_or_reject(self, command: object) -> object:
+                calls.append(("promote", command))
+                return SimpleNamespace(ok=True, decision=SimpleNamespace(decision="promote", reasons=()))
+
+        monkeypatch.setattr(
+            "polaris.cells.factory.cognitive_runtime.public.get_cognitive_runtime_public_service",
+            lambda: FakeCognitiveRuntimeService(),
+        )
+        engine = CodeGenerationEngine(str(tmp_path), executor)
+        task = Mock()
+        task.id = "task-1"
+        task.metadata = {"target_files": ["src/app.py"], "run_id": "run-1"}
+
+        async def fake_invoke(**_: object) -> dict[str, object]:
+            return {
+                "response": "```file: src/app.py\nprint('ok')\n```",
+                "provider": "fake",
+                "model": "fake-model",
+            }
+
+        monkeypatch.setattr(engine, "_invoke_director_role_response", fake_invoke)
+
+        files, warnings = await engine.invoke_generation_with_retries(
+            task=task,
+            prompt="implement src/app.py",
+            model="ignored",
+            per_call_timeout=300,
+            deadline_ts=9999999999,
+            round_label="1/1",
+            round_files=["src/app.py"],
+            spin_tracker={},
+        )
+
+        assert files == [{"path": "src/app.py", "content": "print('ok')\n"}]
+        assert warnings == []
+        assert [name for name, _command in calls] == [
+            "lease",
+            "validate",
+            "receipt",
+            "map",
+            "projection",
+            "promote",
+        ]
+        validate_command = calls[1][1]
+        assert validate_command.changed_files == ("src/app.py",)
+        assert validate_command.allowed_scope_paths == ("src/app.py",)
+        assert calls[0][1].session_id == "director-codegen-run-1"
+        assert calls[2][1].session_id == "director-codegen-run-1"
+        assert calls[4][1].session_id == "director-codegen-run-1"
+        executor._apply_response_operations.assert_called_once()
+        assert executor._apply_response_operations.call_args.kwargs["allowed_scope_paths"] == ["src/app.py"]
+
+    @pytest.mark.asyncio
+    async def test_runtime_codegen_rejects_when_cognitive_runtime_gate_denies_change(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
+        executor = Mock()
+        executor._apply_response_operations.return_value = (
+            [{"path": "src/app.py", "content": "print('blocked')\n"}],
+            [],
+        )
+
+        class FakeCognitiveRuntimeService:
+            def lease_edit_scope(self, command: object) -> object:
+                return SimpleNamespace(ok=True, lease=SimpleNamespace(lease_id="lease-1"))
+
+            def validate_change_set(self, command: object) -> object:
+                return SimpleNamespace(
+                    ok=False,
+                    validation=None,
+                    error_code="validate_change_set_failed",
+                    error_message="scope drift",
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.factory.cognitive_runtime.public.get_cognitive_runtime_public_service",
+            lambda: FakeCognitiveRuntimeService(),
+        )
+        engine = CodeGenerationEngine(str(tmp_path), executor)
+        task = Mock()
+        task.id = "task-1"
+        task.metadata = {"target_files": ["src/app.py"]}
+
+        async def fake_invoke(**_: object) -> dict[str, object]:
+            return {
+                "response": "```file: src/app.py\nprint('blocked')\n```",
+                "provider": "fake",
+                "model": "fake-model",
+            }
+
+        monkeypatch.setattr(engine, "_invoke_director_role_response", fake_invoke)
+
+        files, warnings = await engine.invoke_generation_with_retries(
+            task=task,
+            prompt="implement src/app.py",
+            model="ignored",
+            per_call_timeout=300,
+            deadline_ts=9999999999,
+            round_label="1/1",
+            round_files=["src/app.py"],
+            spin_tracker={},
+        )
+
+        assert files == []
+        assert any(
+            warning == "cognitive_runtime_write_gate:validate_change_set_failed:scope drift" for warning in warnings
+        )
+
+    @pytest.mark.asyncio
     async def test_runtime_codegen_invokes_director_in_proposal_mode(self, monkeypatch):
         captured: dict[str, object] = {}
 
@@ -817,6 +983,7 @@ class TestBlockedEntryPoints:
         engine = CodeGenerationEngine("/tmp", Mock())
         task = Mock()
         task.id = "task-1"
+        task.metadata = {"run_id": "run-1"}
 
         result = await engine._invoke_director_role_response(
             task=task,
@@ -834,6 +1001,8 @@ class TestBlockedEntryPoints:
         command = captured["command"]
         assert command.role == "director"
         assert command.domain == "code"
+        assert command.session_id == "director-codegen-run-1"
+        assert command.context["run_id"] == "run-1"
         assert (
             command.user_message
             == "[mode:propose] Do not call tools. Please complete the assigned implementation task."

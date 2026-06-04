@@ -16,6 +16,7 @@ current_modules:
 - polaris.cells.llm.evaluation.internal.deterministic_judge
 - polaris.cells.llm.evaluation.internal.readiness_tests
 - polaris.cells.llm.evaluation.internal.index
+- polaris.cells.llm.evaluation.internal.interview
 - polaris.kernelone.benchmark.unified_models
 - polaris.kernelone.benchmark.unified_judge
 - polaris.kernelone.benchmark.unified_runner
@@ -36,6 +37,7 @@ public_contracts:
   errors:
   - LlmEvaluationErrorV1
 depends_on:
+- factory.cognitive_runtime
 - llm.provider_runtime
 - llm.provider_config
 - policy.workspace_guard
@@ -57,6 +59,7 @@ effects_allowed:
 - fs.write:workspace/.polaris/llm_test_index.evaluation.json
 - fs.write:workspace/.polaris/runtime/llm_evaluations/*
 - fs.write:workspace/.polaris/runtime/llm_tests/*
+- fs.write:runtime/cognitive_runtime/*
 - network.http_outbound:llm/*
 verification:
   tests:
@@ -64,6 +67,7 @@ verification:
   - tests/test_llm_tool_calling_matrix.py
   - tests/test_llm_test_index_reconcile.py
   - tests/test_llm_qualification_validators.py
+  - tests/test_llm_interview_cognitive_runtime.py
   - tests/test_llm_connectivity_suite_ollama.py
   - polaris/kernelone/benchmark/tests/test_unified_models.py
   - polaris/kernelone/benchmark/tests/test_unified_judge.py

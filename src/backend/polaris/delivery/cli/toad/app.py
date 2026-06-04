@@ -23,6 +23,31 @@ def _bootstrap_backend_import_path():
     return PolarisRoleConsole, run_role_console
 
 
+def run_role_console(
+    *,
+    workspace: str | Path = ".",
+    role: str = "director",
+    backend: str = "auto",
+    session_id: str | None = None,
+    session_title: str | None = None,
+    prompt_style: str | None = None,
+    omp_config: str | None = None,
+    json_render: str | None = None,
+) -> int:
+    """Module-level console hook retained for toad adapter tests and callers."""
+    _, console_entrypoint = _bootstrap_backend_import_path()
+    return console_entrypoint(
+        workspace=workspace,
+        role=role,
+        backend=backend,
+        session_id=session_id,
+        session_title=session_title,
+        prompt_style=prompt_style,
+        omp_config=omp_config,
+        json_render=json_render,
+    )
+
+
 class ToadApp:
     """Minimal runnable toad surface backed by the canonical role console."""
 
@@ -42,7 +67,6 @@ def run_toad(
     omp_config: str | None = None,
     json_render: str | None = None,
 ) -> int:
-    _, run_role_console = _bootstrap_backend_import_path()
     return run_role_console(
         workspace=workspace,
         role=role,

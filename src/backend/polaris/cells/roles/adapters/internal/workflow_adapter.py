@@ -1,6 +1,6 @@
 """Workflow Adapter - 工作流适配器
 
-为 PM/Director 工作流节点提供 RoleExecutionKernel 的适配层。
+为 PM/Director 工作流节点提供 RoleRuntime 合同层适配。
 
 使用示例:
     from polaris.cells.roles.runtime.public.service.workflow_adapter import WorkflowRoleAdapter
@@ -18,24 +18,23 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from polaris.cells.roles.kernel.public.service import RoleExecutionKernel
 from polaris.cells.roles.profile.public.service import (
-    RoleExecutionMode,
     RoleProfileRegistry,
-    RoleTurnRequest,
-    RoleTurnResult,
     load_core_roles,
     profile_to_dict,
 )
 from polaris.cells.roles.session.public import RoleDataStore
 
+from . import runtime_dialogue
+
 logger = logging.getLogger(__name__)
+_RUNTIME_ENTRYPOINT = "roles.runtime.execute_role_session"
 
 
 class WorkflowRoleAdapter:
     """工作流角色适配器
 
-    为工作流节点提供统一的内核调用接口。
+    为工作流节点提供统一的 RoleRuntime 调用接口。
     """
 
     def __init__(
@@ -51,7 +50,6 @@ class WorkflowRoleAdapter:
         """
         self.workspace = workspace
         self.registry = registry or RoleProfileRegistry()
-        self._kernel: RoleExecutionKernel | None = None
         self._data_stores: dict[str, RoleDataStore] = {}
 
         # 确保核心角色配置已加载
@@ -63,14 +61,23 @@ class WorkflowRoleAdapter:
             load_core_roles()
 
     @property
-    def kernel(self) -> RoleExecutionKernel:
-        """获取或创建执行内核"""
-        if self._kernel is None:
-            self._kernel = RoleExecutionKernel(
-                workspace=self.workspace,
-                registry=self.registry,
-            )
-        return self._kernel
+    def runtime_entrypoint(self) -> str:
+        """返回生产执行入口，便于测试和审计。"""
+        return _RUNTIME_ENTRYPOINT
+
+    @staticmethod
+    def _build_runtime_context(
+        *,
+        context: dict[str, Any] | None,
+        task_id: str | None,
+        history: list[tuple] | None,
+    ) -> dict[str, Any]:
+        payload = dict(context or {})
+        if task_id and not str(payload.get("task_id") or "").strip():
+            payload["task_id"] = task_id
+        if history:
+            payload["history"] = list(history)
+        return payload
 
     async def execute_role(
         self,
@@ -81,6 +88,7 @@ class WorkflowRoleAdapter:
         prompt_appendix: str | None = None,
         history: list[tuple] | None = None,
         validate_output: bool = True,
+        max_retries: int = 1,
     ) -> WorkflowRoleResult:
         """执行角色（工作流模式）
 
@@ -92,31 +100,28 @@ class WorkflowRoleAdapter:
             prompt_appendix: 追加提示词
             history: 历史消息
             validate_output: 是否验证输出
+            max_retries: 验证失败时的重试次数
 
         Returns:
             WorkflowRoleResult
         """
-        # 构建内核请求
-        request = RoleTurnRequest(
-            mode=RoleExecutionMode.WORKFLOW,
+        runtime_payload = await runtime_dialogue.invoke_role_runtime_first(
             workspace=self.workspace,
+            role=role,
             message=message,
-            history=history or [],
+            context=self._build_runtime_context(context=context, task_id=task_id, history=history),
             prompt_appendix=prompt_appendix,
-            context_override=context,
-            task_id=task_id,
             validate_output=validate_output,
+            max_retries=max_retries,
         )
 
-        # 执行内核
-        result = await self.kernel.run(role=role, request=request)
+        result = WorkflowRoleResult.from_runtime_payload(runtime_payload, role)
 
         # 存储执行数据
         if task_id:
             await self._store_execution_data(role, task_id, result)
 
-        # 转换为工作流结果格式
-        return WorkflowRoleResult.from_kernel_result(result, role)
+        return result
 
     async def execute_role_with_tools(
         self, role: str, message: str, task_id: str | None = None, max_tool_rounds: int = 5, **kwargs
@@ -130,27 +135,21 @@ class WorkflowRoleAdapter:
 
         max_tool_rounds 参数保留但已降级为参考（由 kernel.run() 内预算控制）。
         """
-        request = RoleTurnRequest(
-            mode=RoleExecutionMode.WORKFLOW,
-            workspace=self.workspace,
+        _ = max_tool_rounds
+        result = await self.execute_role(
+            role=role,
             message=message,
-            history=[],  # TurnEngine 通过 kernel.run() 的 ToolLoopController 管理 transcript
-            prompt_appendix=kwargs.get("prompt_appendix"),
-            context_override=kwargs.get("context"),
             task_id=task_id,
+            context=kwargs.get("context"),
+            prompt_appendix=kwargs.get("prompt_appendix"),
+            history=kwargs.get("history"),
             validate_output=kwargs.get("validate_output", True),
             max_retries=kwargs.get("max_retries", 1),
         )
+        result.all_tool_results = list(result.tool_results or [])
+        return result
 
-        # 单次 kernel.run() — TurnEngine.run() 内部处理完整工具循环
-        result = await self.kernel.run(role=role, request=request)
-
-        final = WorkflowRoleResult.from_kernel_result(result, role)
-        # all_tool_results = result.tool_results（kernel.run() 已累积全部结果）
-        final.all_tool_results = result.tool_results if result.tool_results else []
-        return final
-
-    async def _store_execution_data(self, role: str, task_id: str, result: RoleTurnResult) -> None:
+    async def _store_execution_data(self, role: str, task_id: str, result: WorkflowRoleResult) -> None:
         """存储执行数据到角色数据目录"""
         try:
             if role not in self._data_stores:
@@ -166,6 +165,7 @@ class WorkflowRoleAdapter:
                         "task_id": task_id,
                         "has_tool_calls": len(result.tool_calls) > 0,
                         "is_complete": result.is_complete,
+                        "runtime_entrypoint": _RUNTIME_ENTRYPOINT,
                     },
                 )
         except (RuntimeError, ValueError) as e:
@@ -212,14 +212,17 @@ class WorkflowRoleResult:
         role: str,
         thinking: str | None = None,
         structured_output: dict | None = None,
-        tool_calls: list[dict] | None = None,
-        tool_results: list[dict] | None = None,
-        all_tool_results: list[dict] | None = None,
+        tool_calls: list[Any] | None = None,
+        tool_results: list[Any] | None = None,
+        all_tool_results: list[Any] | None = None,
         profile_version: str = "",
         prompt_fingerprint: str | None = None,
         tool_policy_id: str = "",
         is_complete: bool = True,
         error: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        execution_stats: dict[str, Any] | None = None,
+        raw_response: Any | None = None,
     ) -> None:
         self.success = success
         self.content = content
@@ -234,25 +237,33 @@ class WorkflowRoleResult:
         self.tool_policy_id = tool_policy_id
         self.is_complete = is_complete
         self.error = error
+        self.metadata = metadata or {}
+        self.execution_stats = execution_stats or {}
+        self.raw_response = raw_response
 
     @classmethod
-    def from_kernel_result(cls, result: RoleTurnResult, role: str) -> WorkflowRoleResult:
-        """从内核结果创建工作流结果"""
-        success = result.error is None
-
+    def from_runtime_payload(cls, payload: dict[str, Any], role: str) -> WorkflowRoleResult:
+        """从 RoleRuntime payload 创建工作流结果。"""
+        metadata = dict(payload.get("metadata") or {})
+        error = str(payload.get("error") or "").strip() or None
         return cls(
-            success=success,
-            content=result.content,
-            role=role,
-            thinking=result.thinking,
-            structured_output=result.structured_output,
-            tool_calls=result.tool_calls,
-            tool_results=result.tool_results,
-            profile_version=result.profile_version,
-            prompt_fingerprint=result.prompt_fingerprint.full_hash if result.prompt_fingerprint else None,
-            tool_policy_id=result.tool_policy_id,
-            is_complete=result.is_complete,
-            error=result.error,
+            success=bool(payload.get("success")),
+            content=str(payload.get("content") or payload.get("response") or ""),
+            role=str(payload.get("role") or role),
+            thinking=payload.get("thinking"),
+            structured_output=dict(payload.get("structured_output") or {}),
+            tool_calls=list(payload.get("tool_calls") or []),
+            tool_results=list(payload.get("tool_results") or []),
+            profile_version=str(metadata.get("profile_version") or metadata.get("role_profile_version") or ""),
+            prompt_fingerprint=(
+                str(metadata.get("prompt_fingerprint")) if metadata.get("prompt_fingerprint") is not None else None
+            ),
+            tool_policy_id=str(metadata.get("tool_policy_id") or ""),
+            is_complete=bool(payload.get("is_complete", True)),
+            error=error,
+            metadata=metadata,
+            execution_stats=dict(payload.get("execution_stats") or {}),
+            raw_response=payload.get("raw_response"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -270,6 +281,8 @@ class WorkflowRoleResult:
             "tool_policy_id": self.tool_policy_id,
             "is_complete": self.is_complete,
             "error": self.error,
+            "metadata": self.metadata,
+            "execution_stats": self.execution_stats,
         }
 
 

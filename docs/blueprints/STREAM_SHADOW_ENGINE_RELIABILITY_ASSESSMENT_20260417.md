@@ -4,6 +4,12 @@
 **范围**: `polaris/cells/roles/kernel/internal/stream_shadow_engine.py` 及其相关链路  
 **评估结论**: 在"只读、可取消、可去重、可回退"边界内可靠，方向正确；但尚未成为通用推测执行内核，需补一层调度与事务语义。
 
+> 2026-06-04 当前状态覆盖：
+> - 本文保留 2026-04-17 的风险评估，但不再代表当前默认运行状态。
+> - `StreamShadowEngine` / `SpeculativeExecutor` 已进入默认开启路径；显式关闭变量仍可回滚。
+> - 写工具 speculative 在缺少 registry-backed prepare shadow 时必须 fail closed，避免 shadow 结果越权成为业务提交。
+> - 当前生产激活证据见 `src/backend/docs/governance/templates/verification-cards/vc-20260604-cognitive-runtime-contextos-production-activation.yaml`。
+
 ---
 
 ## 1. 执行摘要
@@ -11,7 +17,7 @@
 | 维度 | 判断 |
 |------|------|
 | 架构方向 | 与 OpenAI Responses 流式工具事件、Anthropic fine-grained tool streaming 同向，有价值 |
-| 当前实现 | 骨架级（skeleton），仅有 `SpeculativeExecutor` + `StreamShadowEngine` + `TurnLedger` 监控 |
+| 当前实现 | 2026-04-17 评估时为骨架级；2026-06-04 起已作为默认开启的受控 latency-hiding 路径运行 |
 | 可靠性边界 | 仅在 `READONLY_TOOLS` 内、单工具、单 turn、低并发场景下可控 |
 | 核心缺口 | 缺少参数稳定度判定、工具策略分级、影子任务状态机、Adopt/Join/Cancel/Replay 语义、预算治理、结构化取消 |
 | 下一步 | 升级为 **Speculative Execution Kernel** 子系统，纳入 TransactionKernel 统一事务语义 |
@@ -28,7 +34,7 @@
 - `polaris/cells/roles/kernel/tests/test_speculative_execution.py`
 
 **当前行为**:
-1. `ENABLE_SPECULATIVE_EXECUTION` feature flag 控制，默认关闭。
+1. `ENABLE_SPECULATIVE_EXECUTION` feature flag 控制；2026-06-04 当前默认开启，显式 false 仍可关闭。
 2. `StreamShadowEngine.consume_delta(delta)` 缓存流式 delta，但参数解析仅停留在关键词触发（`<tool_call>` / `` ```tool ``），confidence=0.1。
 3. 真正的推测执行发生在 `turn_transaction_controller.execute_stream()` 中：当流事件明确输出 `tool_call` 时，才调用 `shadow_engine.speculate_tool_call()`。
 4. `speculate_tool_call()` 检查 `tool_name` 是否在 `ToolBatchRuntime.READONLY_TOOLS` 中，非只读直接拒绝。

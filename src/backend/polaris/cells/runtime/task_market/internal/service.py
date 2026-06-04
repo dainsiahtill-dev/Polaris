@@ -65,6 +65,14 @@ _IN_PROGRESS_STATUSES = {"in_design", "in_execution", "in_qa"}
 _EXECUTION_STATUS_SET = {"pending_exec", "in_execution"}
 _QA_STATUS_SET = {"pending_qa", "in_qa"}
 _DESIGN_STATUS_SET = {"pending_design", "in_design"}
+_COGNITIVE_REQUIRED_KEYS = (
+    "cognitive_runtime_required",
+    "task_market_cognitive_runtime_required",
+)
+_CONTEXT_OS_EXPECTED_KEYS = (
+    "context_os_expected",
+    "task_market_context_os_expected",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +202,195 @@ class TaskMarketService:
         """Return the appropriate store backend (lazy)."""
         return get_store(workspace)
 
+    @staticmethod
+    def _coerce_optional_bool(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if token in {"1", "true", "yes", "y", "on", "required"}:
+                return True
+            if token in {"0", "false", "no", "n", "off", "optional", "disabled"}:
+                return False
+        return None
+
+    @classmethod
+    def _payload_flag(cls, *payloads: dict[str, Any], keys: tuple[str, ...]) -> bool:
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in keys:
+                if key not in payload:
+                    continue
+                coerced = cls._coerce_optional_bool(payload.get(key))
+                if coerced is not None:
+                    return coerced
+            metadata = payload.get("metadata")
+            if isinstance(metadata, dict):
+                for key in keys:
+                    if key not in metadata:
+                        continue
+                    coerced = cls._coerce_optional_bool(metadata.get(key))
+                    if coerced is not None:
+                        return coerced
+        return False
+
+    @staticmethod
+    def _task_market_session_id(item: TaskWorkItemRecord) -> str:
+        for payload in (item.payload, item.metadata):
+            if not isinstance(payload, dict):
+                continue
+            for key in ("task_market_session_id", "role_session_id", "session_id"):
+                token = str(payload.get(key) or "").strip()
+                if token:
+                    return token
+        basis = str(item.run_id or item.task_id or "").strip()
+        return f"task-market-{basis}"
+
+    def _record_cognitive_runtime_lifecycle_receipt(
+        self,
+        *,
+        item: TaskWorkItemRecord,
+        event_type: str,
+        from_status: str,
+        to_status: str,
+        worker_id: str = "",
+        lease_token: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Record a Cognitive Runtime receipt for a task-market lifecycle event."""
+
+        event_metadata = dict(metadata or {})
+        required = self._payload_flag(
+            item.payload,
+            item.metadata,
+            event_metadata,
+            keys=_COGNITIVE_REQUIRED_KEYS,
+        )
+        context_os_expected = self._payload_flag(
+            item.payload,
+            item.metadata,
+            event_metadata,
+            keys=_CONTEXT_OS_EXPECTED_KEYS,
+        )
+        evidence: dict[str, Any] = {
+            "source": "runtime.task_market",
+            "event_type": event_type,
+            "required": required,
+            "receipt_recorded": False,
+            "context_os_expected": context_os_expected,
+        }
+        try:
+            from polaris.cells.factory.cognitive_runtime.public import (
+                RecordRuntimeReceiptCommandV1,
+                get_cognitive_runtime_public_service,
+            )
+
+            service = get_cognitive_runtime_public_service()
+            try:
+                result = service.record_runtime_receipt(
+                    RecordRuntimeReceiptCommandV1(
+                        workspace=item.workspace,
+                        receipt_type="task_market_lifecycle",
+                        payload={
+                            "event_type": event_type,
+                            "task_id": item.task_id,
+                            "trace_id": item.trace_id,
+                            "run_id": item.run_id,
+                            "stage": item.stage,
+                            "from_status": from_status,
+                            "to_status": to_status,
+                            "worker_id": worker_id,
+                            "lease_token_present": bool(str(lease_token or "").strip()),
+                            "plan_id": item.plan_id,
+                            "plan_revision_id": item.plan_revision_id,
+                            "root_task_id": item.root_task_id or item.task_id,
+                            "parent_task_id": item.parent_task_id,
+                            "context_os_expected": context_os_expected,
+                            "metadata": event_metadata,
+                        },
+                        session_id=self._task_market_session_id(item),
+                        run_id=item.run_id or None,
+                        trace_refs=(item.trace_id,) if item.trace_id else (),
+                        turn_envelope={
+                            "source": "runtime.task_market",
+                            "event_type": event_type,
+                            "task_id": item.task_id,
+                            "from_status": from_status,
+                            "to_status": to_status,
+                        },
+                    )
+                )
+            finally:
+                service.close()
+        except (ImportError, RuntimeError, ValueError) as exc:
+            evidence["error_message"] = str(exc)
+            if required:
+                raise TaskMarketError(
+                    f"Cognitive Runtime receipt failed for task-market event {event_type}: {exc}",
+                    code="cognitive_runtime_receipt_failed",
+                    details={"task_id": item.task_id, "event_type": event_type},
+                ) from exc
+            return evidence
+
+        if not bool(getattr(result, "ok", False)):
+            error_message = str(getattr(result, "error_message", "") or "").strip()
+            error_code = str(getattr(result, "error_code", "") or "").strip()
+            evidence["error_code"] = error_code
+            evidence["error_message"] = error_message
+            if required:
+                raise TaskMarketError(
+                    error_message or error_code or "cognitive_runtime_receipt_failed",
+                    code="cognitive_runtime_receipt_failed",
+                    details={"task_id": item.task_id, "event_type": event_type},
+                )
+            return evidence
+
+        receipt = getattr(result, "receipt", None)
+        receipt_id = str(getattr(receipt, "receipt_id", "") or "").strip()
+        evidence["receipt_recorded"] = bool(receipt_id)
+        if receipt_id:
+            evidence["receipt_id"] = receipt_id
+        if required and not receipt_id:
+            raise TaskMarketError(
+                "Cognitive Runtime receipt did not return a receipt id",
+                code="cognitive_runtime_receipt_missing_id",
+                details={"task_id": item.task_id, "event_type": event_type},
+            )
+        return evidence
+
+    @staticmethod
+    def _attach_lifecycle_evidence(
+        *,
+        item: TaskWorkItemRecord,
+        transition: dict[str, Any],
+        outbox_record: dict[str, Any],
+        evidence: dict[str, Any],
+    ) -> None:
+        item.metadata = dict(item.metadata)
+        item.metadata["last_cognitive_runtime_lifecycle"] = dict(evidence)
+        receipt_id = str(evidence.get("receipt_id") or "").strip()
+        if receipt_id:
+            existing = item.metadata.get("cognitive_runtime_receipt_ids")
+            receipt_ids = [str(row) for row in existing] if isinstance(existing, list) else []
+            if receipt_id not in receipt_ids:
+                receipt_ids.append(receipt_id)
+            item.metadata["cognitive_runtime_receipt_ids"] = receipt_ids
+
+        transition_metadata = transition.get("metadata")
+        if not isinstance(transition_metadata, dict):
+            transition_metadata = {}
+            transition["metadata"] = transition_metadata
+        transition_metadata["cognitive_runtime"] = dict(evidence)
+
+        payload = outbox_record.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+            outbox_record["payload"] = payload
+        payload["cognitive_runtime"] = dict(evidence)
+
     # ---- Publish ------------------------------------------------------------
 
     def publish_work_item(self, command: PublishTaskWorkItemCommandV1) -> TaskWorkItemResultV1:
@@ -300,6 +497,23 @@ class TaskMarketService:
                     "parent_task_id": item.parent_task_id,
                 },
             )
+            lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
+                item=item,
+                event_type="published",
+                from_status="",
+                to_status=item.status,
+                metadata={
+                    "source_role": command.source_role,
+                    "priority": item.priority,
+                },
+            )
+            self._attach_lifecycle_evidence(
+                item=item,
+                transition=transition,
+                outbox_record=outbox_record,
+                evidence=lifecycle_evidence,
+            )
+            items[item.task_id] = item
 
             store.save_items_and_outbox_atomic(
                 items=items,
@@ -374,6 +588,25 @@ class TaskMarketService:
                         "attempts": selected.attempts,
                     },
                 )
+                lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
+                    item=selected,
+                    event_type="retry_exhausted_on_claim",
+                    from_status=transition["from_status"],
+                    to_status="dead_letter",
+                    worker_id=command.worker_id,
+                    metadata={
+                        "worker_role": command.worker_role,
+                        "attempts": selected.attempts,
+                        "reason": "retry_exhausted_on_claim",
+                    },
+                )
+                self._attach_lifecycle_evidence(
+                    item=selected,
+                    transition=transition,
+                    outbox_record=outbox,
+                    evidence=lifecycle_evidence,
+                )
+                items[selected.task_id] = selected
                 store.save_items_and_outbox_atomic(
                     items=items,
                     transitions=[transition],
@@ -432,6 +665,25 @@ class TaskMarketService:
                     "lease_expires_at": expires_at,
                 },
             )
+            lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
+                item=selected,
+                event_type="claimed",
+                from_status=from_status,
+                to_status=selected.status,
+                worker_id=command.worker_id,
+                lease_token=lease_token,
+                metadata={
+                    "worker_role": command.worker_role,
+                    "lease_expires_at": expires_at,
+                },
+            )
+            self._attach_lifecycle_evidence(
+                item=selected,
+                transition=transition,
+                outbox_record=outbox,
+                evidence=lifecycle_evidence,
+            )
+            items[selected.task_id] = selected
             store.save_items_and_outbox_atomic(
                 items=items,
                 transitions=[transition],
@@ -577,6 +829,27 @@ class TaskMarketService:
                     "next_stage": command.next_stage or "",
                 },
             )
+            lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
+                item=item,
+                event_type="acknowledged",
+                from_status=previous_status,
+                to_status=item.status,
+                worker_id=item.claimed_by or "",
+                lease_token=command.lease_token,
+                metadata={
+                    "next_stage": command.next_stage or "",
+                    "terminal_status": command.terminal_status or "",
+                    "summary": command.summary,
+                    "ack_metadata": dict(command.metadata),
+                },
+            )
+            self._attach_lifecycle_evidence(
+                item=item,
+                transition=transition,
+                outbox_record=outbox,
+                evidence=lifecycle_evidence,
+            )
+            items[item.task_id] = item
 
             store.save_items_and_outbox_atomic(
                 items=items,
@@ -684,6 +957,28 @@ class TaskMarketService:
                     "error_message": command.error_message,
                 },
             )
+            lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
+                item=item,
+                event_type=event_type,
+                from_status=previous_status,
+                to_status=item.status,
+                worker_id=item.claimed_by or "",
+                lease_token=command.lease_token,
+                metadata={
+                    "error_code": command.error_code,
+                    "error_message": command.error_message,
+                    "requeue_stage": command.requeue_stage or "",
+                    "to_dead_letter": bool(command.to_dead_letter),
+                    "failure_metadata": dict(command.metadata),
+                },
+            )
+            self._attach_lifecycle_evidence(
+                item=item,
+                transition=transition,
+                outbox_record=outbox,
+                evidence=lifecycle_evidence,
+            )
+            items[item.task_id] = item
 
             store.save_items_and_outbox_atomic(
                 items=items,
@@ -844,6 +1139,24 @@ class TaskMarketService:
                     "reason": command.reason,
                 },
             )
+            lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
+                item=item,
+                event_type="requeued",
+                from_status=previous_status,
+                to_status=item.status,
+                metadata={
+                    "target_stage": command.target_stage,
+                    "reason": command.reason,
+                    "requeue_metadata": dict(command.metadata),
+                },
+            )
+            self._attach_lifecycle_evidence(
+                item=item,
+                transition=transition,
+                outbox_record=outbox,
+                evidence=lifecycle_evidence,
+            )
+            items[item.task_id] = item
 
             store.save_items_and_outbox_atomic(
                 items=items,
@@ -899,6 +1212,24 @@ class TaskMarketService:
                     "error_code": command.error_code or "",
                 },
             )
+            lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
+                item=item,
+                event_type="dead_lettered",
+                from_status=previous_status,
+                to_status="dead_letter",
+                metadata={
+                    "reason": command.reason,
+                    "error_code": command.error_code or "",
+                    "dead_letter_metadata": dict(command.metadata),
+                },
+            )
+            self._attach_lifecycle_evidence(
+                item=item,
+                transition=transition,
+                outbox_record=outbox,
+                evidence=lifecycle_evidence,
+            )
+            items[item.task_id] = item
 
             store.save_items_and_outbox_atomic(
                 items=items,

@@ -1439,6 +1439,7 @@ class WorkerExecutor:
         response: str,
         task_id: str = "",
         llm_metadata: dict[str, Any] | None = None,
+        allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
     ) -> tuple[list[dict], list[str]]:
         """Delegate to FileApplyService."""
         if self._file_service is None:
@@ -1447,6 +1448,7 @@ class WorkerExecutor:
             response,
             task_id,
             llm_metadata,  # type: ignore[arg-type]
+            allowed_scope_paths=allowed_scope_paths,
         )
 
     def _compact_prompt_fragment(self, text: str, *, max_chars: int) -> str:

@@ -451,6 +451,30 @@ def test_public_service_phase2_flow() -> None:
     service.close()
 
 
+def test_public_service_map_diff_treats_missing_target_graph_as_soft_note() -> None:
+    workspace = tempfile.mkdtemp(prefix="cognitive-runtime-target-project-")
+    runtime = CognitiveRuntimeService(
+        session_service=cast("IRoleSessionService | None", _FakeRoleSessionService()),
+        context_memory_service=cast("IRoleSessionContextMemoryService | None", _FakeContextMemoryService()),
+        store=_build_store(workspace),
+    )
+    service = CognitiveRuntimePublicService(runtime=runtime)
+
+    result = service.map_diff_to_cells(
+        MapDiffToCellsCommandV1(
+            workspace=workspace,
+            changed_files=("src/app.py",),
+        )
+    )
+
+    assert result.ok is True
+    assert result.mapping is not None
+    assert result.mapping.matched_cells == ()
+    assert "graph_catalog_unavailable" in result.mapping.notes
+    assert "unmapped_files_present" in result.mapping.notes
+    service.close()
+
+
 def test_public_service_rejects_graph_catalog_path_outside_workspace() -> None:
     workspace = tempfile.mkdtemp(prefix="cognitive-runtime-path-")
     runtime = CognitiveRuntimeService(

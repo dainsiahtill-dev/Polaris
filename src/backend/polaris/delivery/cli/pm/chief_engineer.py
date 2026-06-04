@@ -1473,7 +1473,7 @@ def run_chief_engineer_analysis(
                     if rel_path and rel_path not in scan_files:
                         scan_files.append(rel_path)
 
-            except (RuntimeError, ValueError) as exc:
+            except (RuntimeError, ValueError, ImportError) as exc:
                 logger.debug("semantic index lookup failed (non-critical): %s", exc)
 
         for target in target_files:

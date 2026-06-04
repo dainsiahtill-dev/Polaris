@@ -27,8 +27,13 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activi
 )
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities.director_activities import (  # noqa: E402
     execute_task_phase,
+    record_director_task_terminal_result,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import submit_pm_workflow_sync  # noqa: E402
+from polaris.cells.resident.autonomy.internal.resident_runtime_service import (  # noqa: E402
+    get_resident_service,
+    reset_resident_services,
+)
 from polaris.cells.runtime.projection.internal import workflow_status as workflow_status_module  # noqa: E402
 from polaris.delivery.cli.pm import orchestration_engine as engine  # noqa: E402
 
@@ -150,6 +155,64 @@ def test_execute_task_phase_skips_verification_for_no_director() -> None:
     assert result["success"] is True
     payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
     assert payload.get("verification_skipped") is True
+
+
+def test_record_director_task_terminal_result_feeds_resident_autonomy(tmp_path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    cache_root = tmp_path / "cache"
+    result = asyncio.run(
+        record_director_task_terminal_result(
+            {
+                "workspace": str(workspace),
+                "run_id": "run-resident-terminal",
+                "runtime_metadata": {"cache_root_full": str(cache_root)},
+                "task": {
+                    "id": "TASK-RESIDENT-1",
+                    "title": "Implement resident feedback bridge",
+                    "goal": "Record terminal Director execution facts for resident autonomy.",
+                    "scope_paths": ["src"],
+                },
+                "status": "completed",
+                "summary": "Director task completed with real file changes",
+                "errors": [],
+                "completed_phases": ["planning", "validation", "execution", "verification"],
+                "metadata": {
+                    "changed_files": ["src/app.py"],
+                    "context": {
+                        "changed_files": ["src/app.py"],
+                        "verification_result": {"passed": True, "build_round": 1},
+                        "metadata": {
+                            "director_execution": {
+                                "materialization_mode": "write_tool_and_workspace_diff",
+                                "result_path": str(
+                                    cache_root
+                                    / "workflow"
+                                    / "run-resident-terminal"
+                                    / "TASK-RESIDENT-1"
+                                    / "director.result.json"
+                                ),
+                            }
+                        },
+                    },
+                },
+            }
+        )
+    )
+
+    assert result["success"] is True
+    service = get_resident_service(str(workspace))
+    decisions = service.list_decisions(actor="director")
+    terminal = next(item for item in decisions if item.stage == "task_terminal_result")
+    assert terminal.task_id == "TASK-RESIDENT-1"
+    assert "workspace_mutation" in terminal.strategy_tags
+    assert "verification_feedback" in terminal.strategy_tags
+    assert terminal.actual_outcome["changed_files"] == ["src/app.py"]
+    assert terminal.actual_outcome["verification_result"] == {"passed": True, "build_round": 1}
+    assert terminal.actual_outcome["materialization_mode"] == "write_tool_and_workspace_diff"
+    assert terminal.evidence_refs
+    reset_resident_services()
 
 
 def test_runtime_adapter_resolves_writable_db_path_from_context_root(

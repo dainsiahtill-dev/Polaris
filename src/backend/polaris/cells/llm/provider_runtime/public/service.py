@@ -56,6 +56,17 @@ def _to_mapping(value: Any) -> Mapping[str, Any]:
     return {"value": value}
 
 
+def _is_http_exception(value: BaseException) -> bool:
+    return value.__class__.__name__ == "HTTPException" and hasattr(value, "status_code")
+
+
+def _http_exception_message(value: BaseException) -> str:
+    detail = getattr(value, "detail", None)
+    if detail is not None:
+        return str(detail)
+    return str(value)
+
+
 def execute_provider_action(command: InvokeProviderActionCommandV1) -> ProviderInvocationResultV1:
     """Execute provider action with contract-level error mapping."""
     try:
@@ -88,6 +99,17 @@ def execute_provider_action(command: InvokeProviderActionCommandV1) -> ProviderI
             payload={},
             error_code="provider_action_error",
             error_message=str(exc),
+        )
+    except Exception as exc:
+        if not _is_http_exception(exc):
+            raise
+        return ProviderInvocationResultV1(
+            ok=False,
+            status="failed",
+            provider_kind=command.provider_type,
+            payload={},
+            error_code="provider_action_error",
+            error_message=_http_exception_message(exc),
         )
 
 

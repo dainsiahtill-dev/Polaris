@@ -12,7 +12,7 @@
 > - `TransactionKernel` 主链、`TurnEngine` facade、`KernelGuard`、handoff canonical contract、tool spec SSOT 已完成收口。
 > - 当前事实对账统一见 `../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_CLOSURE_MATRIX_20260416.md`。
 > - `ProjectionEngine` / `ReceiptStore` / `TruthLogService` / `WorkingStateManager` 正式化已落地并完成联合回归；执行与证据统一见 `../../docs/blueprints/CONTEXTOS_SERVICE_HARDENING_BLUEPRINT_20260417.md` 与 `src/backend/docs/governance/templates/verification-cards/vc-20260417-contextos-service-hardening.yaml`。
-> - `ENABLE_SPECULATIVE_EXECUTION` feature flag 已补齐并默认关闭；Speculative 层已完成 stream 路径受控接线（可回滚）。
+> - 2026-06-04 覆盖口径：Speculative execution 已从“默认关闭的受控接线”升级为默认开启的生产路径能力，仍可通过 `ENABLE_SPECULATIVE_EXECUTION` / `KERNELONE_ENABLE_SPECULATIVE_EXECUTION` 显式关闭；写工具推测必须在缺少 registry-backed prepare shadow 时 fail closed。当前证据见 `src/backend/docs/governance/templates/verification-cards/vc-20260604-cognitive-runtime-contextos-production-activation.yaml`。
 > - 灰度观测执行面（`tool_calling_matrix`, stream, workspace=`C:/Temp/`）最新全量 run：`3ce32d24`，结果 `76/78`（`96.85%`，达成门槛 `>=70/74`）；同阶段稳定基线 `febb3027` 为 `76/78`（`97.44%`）。
 > - 本轮 benchmark 根因修复：新增 no-tools contract 强制（benchmark only）与 under-min-tool-calls 单次强化重试（benchmark only），残留 deterministic 失败 `bridge_emits_session_patch`、`l5_sequential_dag` 已在 `run_id=61e23065`（2/2 PASS）收敛。
 > - 实测证据：`C:/Temp/runtime/llm_evaluations/3ce32d24/AGENTIC_EVAL_AUDIT.json`、`C:/Temp/runtime/llm_evaluations/61e23065/AGENTIC_EVAL_AUDIT.json` 与 `X:/.polaris/projects/temp-1df48b9917eb/runtime/llm_evaluations/{3ce32d24,61e23065}/TOOL_CALLING_MATRIX_REPORT.json`。
@@ -264,7 +264,7 @@ class ToolInvocation(BaseModel):
 安全约束：
 - 仅对 `effect_type="read"` 启用
 - 写工具永远不会被推测执行
-- 通过 feature flag `ENABLE_SPECULATIVE_EXECUTION` 控制，默认关闭
+- 通过 feature flag `ENABLE_SPECULATIVE_EXECUTION` 控制；截至 2026-06-04 默认为开启，仍支持显式关闭以便回滚
 
 ### 3.8 Tool Spec Single Source of Truth
 
@@ -288,7 +288,7 @@ class ToolInvocation(BaseModel):
 | `Phase 3` | **Closed** | 四层正式化硬化已在 `CONTEXTOS_SERVICE_HARDENING_BLUEPRINT_20260417.md` 完成并验证 |
 | `Phase 4` | **Closed** | tool runtime 事务化、receipt 强校验、handoff 主路径均已落地 |
 | `Phase 5` | **Implemented Core** | workflow / handoff canonical profile 已具备主干能力，后续仅保留增强空间 |
-| `Phase 6` | **Implemented Core (Flagged)** | speculative 层已接入 stream 主路径但默认关闭，保持低风险可回滚 |
+| `Phase 6` | **Auth (Default-On Guarded)** | speculative 层已接入 stream 主路径并默认开启；写工具推测在无 registry-backed prepare shadow 时 fail closed，显式关闭仍保留为回滚机制 |
 | `Phase 7` | **Implemented Core / Monitoring Baseline Landed** | ToolSpec SSOT 与主路径切流已完成；监控指标已导出到 TurnResult.metrics 与 stream complete.monitoring，剩余是长期观察 |
 
 ### 4.0 实施切片（先文档统一，再代码切主）
@@ -439,7 +439,7 @@ class ToolInvocation(BaseModel):
 
 > 2026-04-17 更新：本阶段已完成“受控接线”。`StreamShadowEngine` 与 `SpeculativeExecutor`
 > 已接入 `TurnTransactionController._call_llm_for_decision_stream`，并通过
-> `ENABLE_SPECULATIVE_EXECUTION`（默认关闭）控制启用，满足低风险可回滚要求。
+> 2026-06-04 覆盖口径：`ENABLE_SPECULATIVE_EXECUTION` / `KERNELONE_ENABLE_SPECULATIVE_EXECUTION` 仍控制启停，但默认状态已是启用；低风险回滚依赖显式关闭开关和写工具 fail-closed 门禁。
 
 - 实现 `StreamShadowEngine`：从 LLM stream delta 中预测 tool_call 意图
 - 实现 `SpeculativeExecutor`：在隔离环境中预执行只读工具
@@ -552,4 +552,4 @@ class ToolInvocation(BaseModel):
 2. **接口兼容性**: `RoleExecutionKernel.run()` / `run_stream()` 签名保持不变，内部切换对调用方透明。
 3. **ContextOS 数据迁移**: 旧 `ContextOSSnapshot` 通过 `rehydrate_persisted_context_os_payload()` 自动迁移，不强制清理历史数据。
 4. **工具 spec 迁移**: `contracts.py` 保留 `@deprecated` wrapper，给下游 Cell 3-6 个月迁移窗口。
-5. **推测执行风险**: 默认关闭，仅对只读工具启用，写工具永远不会被推测执行。
+5. **推测执行风险**: 默认开启但受策略门禁约束；只读/可安全预取工具可推测，写工具只有在 registry-backed prepare shadow 可证明安全时才允许，否则 fail closed。
