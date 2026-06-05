@@ -785,26 +785,32 @@ class RoleRuntimeService(IRoleRuntime):
             service = get_cognitive_runtime_public_service()
             try:
                 turn_envelope = _extract_turn_envelope_metadata(result)
+                result_metadata = _copy_result_metadata(result.metadata)
+                context_os_audit = result_metadata.get("context_os_audit")
+                receipt_payload: dict[str, Any] = {
+                    "source": source,
+                    "role": role,
+                    "task_id": task_id,
+                    "status": result.status,
+                    "ok": result.ok,
+                    "tool_calls": list(result.tool_calls),
+                    "artifacts": list(result.artifacts),
+                    "output_length": len(str(result.output or "")),
+                    "has_thinking": bool(str(result.thinking or "").strip()),
+                    "error_code": result.error_code,
+                    "error_message": result.error_message,
+                    "cognitive_runtime_mode": mode.value,
+                }
+                if isinstance(context_os_audit, Mapping):
+                    receipt_payload["context_os_audit"] = dict(context_os_audit)
+                    evidence["context_os_audit_recorded"] = True
                 receipt_result = service.record_runtime_receipt(
                     RecordRuntimeReceiptCommandV1(
                         workspace=workspace,
                         receipt_type="role_runtime_turn",
                         session_id=session_id,
                         run_id=run_id,
-                        payload={
-                            "source": source,
-                            "role": role,
-                            "task_id": task_id,
-                            "status": result.status,
-                            "ok": result.ok,
-                            "tool_calls": list(result.tool_calls),
-                            "artifacts": list(result.artifacts),
-                            "output_length": len(str(result.output or "")),
-                            "has_thinking": bool(str(result.thinking or "").strip()),
-                            "error_code": result.error_code,
-                            "error_message": result.error_message,
-                            "cognitive_runtime_mode": mode.value,
-                        },
+                        payload=receipt_payload,
                         turn_envelope=turn_envelope,
                     )
                 )
@@ -1617,7 +1623,9 @@ class RoleRuntimeService(IRoleRuntime):
                         maybe_result.execution_stats["cognitive_runtime_evidence_emitted"] = True
                         event["cognitive_runtime_evidence"] = dict(evidence_patch["cognitive_runtime_evidence"])
                         event_metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+                        result_metadata = _copy_result_metadata(maybe_result.metadata)
                         event["metadata"] = {
+                            **result_metadata,
                             **dict(event_metadata),
                             **evidence_patch,
                         }

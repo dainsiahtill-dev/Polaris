@@ -427,7 +427,17 @@ class TestRoleRuntimeServiceStrategy:
                 captured["request"] = request
                 yield {
                     "type": "complete",
-                    "result": RoleTurnResult(content="done", turn_history=[("assistant", "done")]),
+                    "result": RoleTurnResult(
+                        content="done",
+                        turn_history=[("assistant", "done")],
+                        metadata={
+                            "context_os_audit": {
+                                "ok": True,
+                                "llm_call_count": 1,
+                                "latest": {"prompt_digest": "stream123"},
+                            }
+                        },
+                    ),
                 }
 
         async def fake_persist(*_args, **_kwargs) -> None:
@@ -474,8 +484,10 @@ class TestRoleRuntimeServiceStrategy:
         complete_event = events[1]
         assert complete_event["type"] == "complete"
         assert complete_event["cognitive_runtime_evidence"]["receipt_id"] == "receipt-stream"
+        assert complete_event["metadata"]["context_os_audit"]["ok"] is True
         assert complete_event["metadata"]["cognitive_runtime_evidence"]["handoff_id"] == "handoff-stream"
         result = complete_event["result"]
+        assert result.metadata["context_os_audit"]["latest"]["prompt_digest"] == "stream123"
         assert result.metadata["cognitive_runtime_evidence"]["receipt_id"] == "receipt-stream"
         assert result.execution_stats["cognitive_runtime_evidence_emitted"] is True
 
@@ -519,6 +531,13 @@ class TestRoleRuntimeServiceStrategy:
             session_id="session-1",
             run_id="run-1",
             output="done",
+            metadata={
+                "context_os_audit": {
+                    "ok": True,
+                    "llm_call_count": 1,
+                    "latest": {"prompt_digest": "receipt123"},
+                }
+            },
         )
 
         evidence = RoleRuntimeService()._emit_cognitive_runtime_shadow_artifacts(
@@ -537,6 +556,7 @@ class TestRoleRuntimeServiceStrategy:
         assert evidence["required"] is True
         assert evidence["receipt_recorded"] is True
         assert evidence["handoff_exported"] is True
+        assert evidence["context_os_audit_recorded"] is True
         assert evidence["receipt_id"] == "receipt-1"
         assert evidence["handoff_id"] == "handoff-1"
         assert patched.metadata["cognitive_runtime_evidence"]["receipt_id"] == "receipt-1"
@@ -544,6 +564,7 @@ class TestRoleRuntimeServiceStrategy:
         assert fake_service.receipt_command is not None
         assert fake_service.handoff_command is not None
         assert fake_service.receipt_command.payload["role"] == "director"
+        assert fake_service.receipt_command.payload["context_os_audit"]["latest"]["prompt_digest"] == "receipt123"
         assert fake_service.handoff_command.turn_envelope["receipt_ids"] == ["receipt-1"]
 
     def test_required_cognitive_runtime_evidence_fails_closed_when_disabled(self) -> None:

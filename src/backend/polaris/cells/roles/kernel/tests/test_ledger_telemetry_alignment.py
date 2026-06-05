@@ -16,7 +16,7 @@ from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
     TransactionConfig,
     TurnTransactionController,
 )
-from polaris.cells.roles.kernel.public.turn_events import TurnPhaseEvent
+from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, TurnPhaseEvent
 from polaris.kernelone.context.truth_log_service import TruthLogService
 
 
@@ -73,6 +73,47 @@ class TestLedgerTelemetryAlignment:
         ledger = result["ledger"]
         assert isinstance(ledger, TurnLedger)
         assert ledger.llm_calls[0]["metadata"]["context_os_audit"] == audit
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_carries_provider_context_os_audit_into_completion_monitoring(self) -> None:
+        audit = {
+            "ok": True,
+            "expected": True,
+            "source": "test",
+            "prompt_digest": "stream123",
+        }
+
+        async def llm_stream(_request: dict[str, object]):
+            yield {"type": "chunk", "content": "Final answer."}
+            yield {
+                "type": "context_metadata",
+                "model": "test-stream-model",
+                "usage": {
+                    "prompt_tokens": 11,
+                    "completion_tokens": 4,
+                    "total_tokens": 15,
+                },
+                "context_os_audit": audit,
+            }
+
+        controller = TurnTransactionController(
+            llm_provider=AsyncMock(),
+            llm_provider_stream=llm_stream,
+            tool_runtime=AsyncMock(),
+            config=TransactionConfig(domain="document"),
+        )
+
+        events: list[object] = []
+        async for event in controller.execute_stream("turn_stream_audit", [{"role": "user", "content": "say hi"}], []):
+            events.append(event)
+
+        completion = next(event for event in events if isinstance(event, CompletionEvent))
+        monitoring = completion.monitoring or {}
+        context_os_audit = monitoring["context_os_audit"]
+
+        assert context_os_audit["ok"] is True
+        assert context_os_audit["llm_call_count"] == 1
+        assert context_os_audit["latest"]["prompt_digest"] == "stream123"
 
     @pytest.mark.asyncio
     async def test_phase_events_match_ledger_states(self) -> None:

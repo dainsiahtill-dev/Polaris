@@ -876,12 +876,14 @@ class StreamOrchestrator:
                     native_tool_calls = list(event.get("native_tool_calls") or [])
                     if not native_tool_calls and stream_native_tool_calls:
                         native_tool_calls = list(stream_native_tool_calls)
+                    raw_usage = event.get("usage")
+                    response_usage = dict(raw_usage) if isinstance(raw_usage, Mapping) else {}
                     response = RawLLMResponse(
                         content=visible_content,
                         thinking=thinking,
                         native_tool_calls=native_tool_calls,
-                        model="unknown",
-                        usage={},
+                        model=str(event.get("model") or "unknown"),
+                        usage=response_usage,
                     )
                     yield cast(
                         TurnEvent,

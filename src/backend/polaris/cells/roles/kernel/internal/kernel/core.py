@@ -1444,6 +1444,12 @@ class RoleExecutionKernel:
                 }
                 if event.monitoring:
                     event_dict["monitoring"] = dict(event.monitoring)
+                result_metadata: dict[str, Any] = {}
+                monitoring_payload = event.monitoring if isinstance(event.monitoring, dict) else {}
+                context_os_audit = monitoring_payload.get("context_os_audit")
+                if isinstance(context_os_audit, dict):
+                    result_metadata["context_os_audit"] = dict(context_os_audit)
+                    event_dict["metadata"] = dict(result_metadata)
                 # Include RoleTurnResult so that stream consumers can persist turn state
                 turn_history, turn_events_metadata = self._build_turn_history_and_events(
                     turn_id=turn_id,
@@ -1475,6 +1481,7 @@ class RoleExecutionKernel:
                     },
                     turn_history=turn_history,
                     turn_events_metadata=turn_events_metadata,
+                    metadata=result_metadata,
                 )
             elif isinstance(event, ErrorEvent):
                 event_dict = {

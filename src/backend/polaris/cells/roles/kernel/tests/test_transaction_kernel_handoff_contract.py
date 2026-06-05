@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import polaris
 import pytest
 from polaris.cells.factory.cognitive_runtime.public.contracts import (
     ExportHandoffPackCommandV1,
@@ -20,8 +21,6 @@ from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.public import turn_contracts
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
-
-import polaris
 
 
 @dataclass
@@ -269,6 +268,13 @@ class TestTransactionKernelHandoffIntegration:
                 duration_ms=30,
                 llm_calls=1,
                 tool_calls=0,
+                monitoring={
+                    "context_os_audit": {
+                        "ok": True,
+                        "llm_call_count": 1,
+                        "latest": {"prompt_digest": "stream123"},
+                    }
+                },
             )
 
         with (
@@ -294,4 +300,6 @@ class TestTransactionKernelHandoffIntegration:
             ):
                 events.append(event)
 
-        assert any(str(event.get("type")) == "complete" for event in events)
+        complete = next(event for event in events if str(event.get("type")) == "complete")
+        assert complete["metadata"]["context_os_audit"]["ok"] is True
+        assert complete["result"].metadata["context_os_audit"]["latest"]["prompt_digest"] == "stream123"

@@ -132,6 +132,8 @@ class StreamEventHandler:
         emitted_round_content = ""
         emitted_round_thinking = ""
         realtime_seen_tool_signatures: set[str] = set()
+        stream_usage: dict[str, Any] = {}
+        stream_model = "unknown"
 
         async for event in stream_iterator:
             event_type = str(event.get("type") or "").strip()
@@ -193,10 +195,34 @@ class StreamEventHandler:
                 yield {"type": "error", "error": error_message, "iteration": round_index}
                 return
             elif event_type == "context_metadata":
+                raw_usage = event.get("usage")
+                if isinstance(raw_usage, dict):
+                    stream_usage.update(raw_usage)
+                context_os_audit = event.get("context_os_audit")
+                if isinstance(context_os_audit, dict):
+                    stream_usage["context_os_audit"] = dict(context_os_audit)
+                model = str(event.get("model") or "").strip()
+                if model:
+                    stream_model = model
                 continue
             elif event_type == "complete":
                 if content and not full_content:
                     full_content.append(content)
+                raw_metadata = event.get("metadata")
+                metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+                raw_usage = event.get("usage")
+                if not isinstance(raw_usage, dict):
+                    raw_usage = metadata.get("usage")
+                if isinstance(raw_usage, dict):
+                    stream_usage.update(raw_usage)
+                context_os_audit = event.get("context_os_audit")
+                if not isinstance(context_os_audit, dict):
+                    context_os_audit = metadata.get("context_os_audit")
+                if isinstance(context_os_audit, dict):
+                    stream_usage["context_os_audit"] = dict(context_os_audit)
+                model = str(event.get("model") or metadata.get("model") or "").strip()
+                if model:
+                    stream_model = model
 
         # Flush trailing visible content
         output_trailing = self._output_filter.flush()
@@ -250,7 +276,15 @@ class StreamEventHandler:
 
         self._patch_buffer.flush()
 
-        # _internal_materialize is intentionally not yielded to SSE
+        # Internal only: consumed by TransactionKernel, not yielded to SSE clients.
+        yield {
+            "type": "_internal_materialize",
+            "emitted_round_content": emitted_round_content,
+            "thinking_content": list(thinking_content),
+            "native_tool_calls": list(native_tool_calls),
+            "usage": dict(stream_usage),
+            "model": stream_model,
+        }
 
     @staticmethod
     def emit_deltas(
