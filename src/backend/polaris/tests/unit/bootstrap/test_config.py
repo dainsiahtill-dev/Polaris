@@ -346,6 +346,12 @@ class TestSettings:
         assert normalized.endswith("src/backend/polaris/delivery/cli/pm/cli.py")
         assert settings.pm_script_path.exists()
 
+    def test_stale_windows_backend_root_falls_back_to_current_backend(self) -> None:
+        """Stale host settings must not poison PM subprocess script paths."""
+        settings = Settings(backend_root=Path(r"C:\Users\dains\Documents\GitLab\polaris\src\backend"))
+        assert settings.backend_root == get_backend_root()
+        assert settings.pm_script_path.exists()
+
     def test_director_script_path(self) -> None:
         """Should point to canonical Director CLI."""
         settings = Settings()

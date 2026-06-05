@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from polaris.bootstrap.config import (
     Settings,
@@ -53,7 +50,8 @@ class TestSettingsFromEnvBranches:
         assert settings.director.model == "gpt-4-director"
         assert settings.director.iterations == 5
         assert settings.director.execution_mode == "serial"
-        assert settings.director.forever is False  # parsed via _parse_bool -> False for "0"
+        assert settings.director.forever is True
+        assert settings.director.show_output is False  # parsed via _parse_bool -> False for "0"
 
     def test_from_env_runtime_config(self, monkeypatch):
         monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", "/tmp/runtime")
@@ -238,10 +236,16 @@ class TestSettingsPayloadCompleteness:
         settings = Settings(workspace="/tmp/test_ws")
         payload = settings.to_payload()
         director_keys = [
-            "director_iterations", "director_execution_mode", "director_max_parallel_tasks",
-            "director_ready_timeout_seconds", "director_claim_timeout_seconds",
-            "director_phase_timeout_seconds", "director_complete_timeout_seconds",
-            "director_task_timeout_seconds", "director_forever", "director_show_output",
+            "director_iterations",
+            "director_execution_mode",
+            "director_max_parallel_tasks",
+            "director_ready_timeout_seconds",
+            "director_claim_timeout_seconds",
+            "director_phase_timeout_seconds",
+            "director_complete_timeout_seconds",
+            "director_task_timeout_seconds",
+            "director_forever",
+            "director_show_output",
         ]
         for key in director_keys:
             assert key in payload, f"Missing key: {key}"
@@ -250,10 +254,20 @@ class TestSettingsPayloadCompleteness:
         settings = Settings(workspace="/tmp/test_ws")
         payload = settings.to_payload()
         pm_keys = [
-            "pm_backend", "pm_model", "pm_show_output", "pm_runs_director",
-            "pm_director_show_output", "pm_director_timeout", "pm_director_iterations",
-            "pm_director_match_mode", "pm_agents_approval_mode", "pm_agents_approval_timeout",
-            "pm_max_failures", "pm_max_blocked", "pm_max_same", "pm_blocked_strategy",
+            "pm_backend",
+            "pm_model",
+            "pm_show_output",
+            "pm_runs_director",
+            "pm_director_show_output",
+            "pm_director_timeout",
+            "pm_director_iterations",
+            "pm_director_match_mode",
+            "pm_agents_approval_mode",
+            "pm_agents_approval_timeout",
+            "pm_max_failures",
+            "pm_max_blocked",
+            "pm_max_same",
+            "pm_blocked_strategy",
             "pm_blocked_degrade_max_retries",
         ]
         for key in pm_keys:

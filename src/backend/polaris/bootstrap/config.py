@@ -37,6 +37,29 @@ def get_project_root() -> Path:
     return get_backend_root().parents[1]
 
 
+def _is_backend_root(path: Path) -> bool:
+    """Return whether a path looks like the Polaris backend root."""
+    return (path / "polaris" / "delivery" / "cli" / "pm" / "cli.py").is_file()
+
+
+def normalize_backend_root(value: Any) -> Path:
+    """Resolve a backend root, ignoring stale cross-platform settings."""
+    default_backend = get_backend_root()
+    candidates: list[Path] = []
+
+    raw = str(value or "").strip()
+    if raw:
+        configured = Path(raw).expanduser().resolve()
+        candidates.append(configured)
+        candidates.append(configured / "src" / "backend")
+
+    candidates.append(default_backend)
+    for candidate in candidates:
+        if _is_backend_root(candidate):
+            return candidate
+    return default_backend
+
+
 def default_system_cache_base() -> Path:
     """Get default system cache directory."""
     if os.name == "nt":
@@ -215,6 +238,15 @@ class SettingsUpdate(BaseModel):
     json_log_path: str | None = None
     ramdisk_root: str | None = None
 
+    llm: dict[str, Any] | None = None
+    pm: dict[str, Any] | None = None
+    director: dict[str, Any] | None = None
+    runtime: dict[str, Any] | None = None
+    logging: dict[str, Any] | None = None
+    server: dict[str, Any] | None = None
+    jsonl: dict[str, Any] | None = None
+    nats: dict[str, Any] | None = None
+
     model: str | None = None
     pm_backend: str | None = None
     pm_model: str | None = None
@@ -249,7 +281,7 @@ class SettingsUpdate(BaseModel):
     qa_enabled: bool | None = None
     audit_llm_enabled: bool | None = None
     audit_llm_role: str | None = None
-    audit_llm_timeout: int | None = None
+    audit_llm_timeout: Any | None = None
     audit_llm_prefer_local_ollama: bool | None = None
     audit_llm_allow_remote_fallback: bool | None = None
     debug_tracing: bool | None = None
@@ -431,10 +463,15 @@ class Settings(BaseModel):
 
         return data
 
-    @field_validator("workspace", "project_root", "backend_root")
+    @field_validator("workspace", "project_root")
     @classmethod
     def validate_directory(cls, value: Path) -> Path:
         return value.resolve()
+
+    @field_validator("backend_root", mode="before")
+    @classmethod
+    def validate_backend_root(cls, value: Any) -> Path:
+        return normalize_backend_root(value)
 
     @field_validator("audit_llm_role", mode="before")
     @classmethod

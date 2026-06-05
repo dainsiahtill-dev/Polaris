@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 import warnings
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from functools import wraps
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 from polaris.kernelone.tool_execution.validators import (
@@ -24,6 +26,25 @@ from polaris.kernelone.tool_execution.validators import (
 _get_validator = get_validator
 
 ToolSpec = dict[str, Any]
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _deprecated(message: str) -> Callable[[F], F]:
+    """Return a deprecation decorator that works on Python 3.12 and 3.13."""
+    stdlib_deprecated = getattr(warnings, "deprecated", None)
+    if callable(stdlib_deprecated):
+        return cast(Callable[[F], F], stdlib_deprecated(message))
+
+    def decorator(func: F) -> F:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+            return func(*args, **kwargs)
+
+        return cast(F, wrapper)
+
+    return decorator
+
 
 # Tool-level error codes (not in validators.py)
 ERROR_UNKNOWN_TOOL = "UNKNOWN_TOOL"
@@ -41,7 +62,7 @@ TS_DEPENDENT_TOOLS: frozenset[str] = frozenset(
 )
 
 
-@warnings.deprecated("Use ToolSpecRegistry.clear() instead.")
+@_deprecated("Use ToolSpecRegistry.clear() instead.")
 def reset_tool_spec_registry_cache() -> None:
     """Reset the cached ToolSpecRegistry reference for test isolation.
 
@@ -148,7 +169,7 @@ def canonicalize_tool_name(name: str, *, keep_unknown: bool = True) -> str:
     return ToolSpecRegistry.get_canonical(cleaned)
 
 
-@warnings.deprecated(
+@_deprecated(
     "Use _coerce_int/_coerce_bool from polaris.kernelone.llm.toolkit.tool_normalization.normalizers._shared instead."
 )
 def _has_value(value: Any) -> bool:
@@ -168,7 +189,7 @@ def _has_value(value: Any) -> bool:
     return True
 
 
-@warnings.deprecated("Use normalize_tool_arguments() from polaris.kernelone.llm.toolkit.tool_normalization instead.")
+@_deprecated("Use normalize_tool_arguments() from polaris.kernelone.llm.toolkit.tool_normalization instead.")
 def normalize_tool_args(tool: str, args: dict[str, Any] | None) -> dict[str, Any]:
     """Normalize tool arguments by applying alias resolution, type conversions, and defaults.
 
