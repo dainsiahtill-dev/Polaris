@@ -11,6 +11,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
     TransactionConfig,
     TurnTransactionController,
@@ -20,6 +21,59 @@ from polaris.kernelone.context.truth_log_service import TruthLogService
 
 
 class TestLedgerTelemetryAlignment:
+    def test_llm_call_metadata_is_preserved(self) -> None:
+        ledger = TurnLedger(turn_id="turn_audit")
+        audit = {"ok": True, "prompt_digest": "digest1234"}
+
+        ledger.record_llm_call(
+            phase="decision",
+            model="test-model",
+            tokens_in=12,
+            tokens_out=4,
+            metadata={"context_os_audit": audit},
+        )
+
+        assert ledger.llm_calls[0]["metadata"]["context_os_audit"] == audit
+
+    @pytest.mark.asyncio
+    async def test_execute_result_carries_ledger_context_os_audit_for_tool_batches(self) -> None:
+        audit = {"ok": True, "prompt_digest": "digest1234"}
+        llm = AsyncMock(
+            return_value={
+                "content": "Read file.",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": '{"path": "main.py"}'},
+                    }
+                ],
+                "model": "test-model",
+                "usage": {
+                    "prompt_tokens": 20,
+                    "completion_tokens": 10,
+                    "context_os_audit": audit,
+                },
+            }
+        )
+        tool_runtime = AsyncMock(return_value={"success": True, "result": "content"})
+        controller = TurnTransactionController(
+            llm_provider=llm,
+            tool_runtime=tool_runtime,
+            config=TransactionConfig(domain="code"),
+        )
+        from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode
+
+        controller.decoder._default_finalize = FinalizeMode.NONE
+
+        result = await controller.execute(
+            "turn_audit_tool", [{"role": "user", "content": "read"}], [{"name": "read_file"}]
+        )
+
+        ledger = result["ledger"]
+        assert isinstance(ledger, TurnLedger)
+        assert ledger.llm_calls[0]["metadata"]["context_os_audit"] == audit
+
     @pytest.mark.asyncio
     async def test_phase_events_match_ledger_states(self) -> None:
         llm = AsyncMock(

@@ -142,6 +142,17 @@ def test_public_service_resolves_context_scope_and_validation(monkeypatch) -> No
     assert context_result.ok is True
     assert context_result.snapshot is not None
     assert context_result.snapshot.rendered_prompt == "resolved prompt"
+    context_os_summary = context_result.snapshot.context_os_summary
+    assert context_os_summary["state_first_context_os"]["projected"] is True
+    assert context_os_summary["state_first_context_os"]["engine"] == "StateFirstContextOS"
+    assert set(context_os_summary["state_first_context_os"]["layers"]) == {
+        "truth_log",
+        "working_state",
+        "receipt_store",
+        "projection_engine",
+    }
+    assert context_os_summary["context_os_audit"]["ok"] is True
+    assert context_os_summary["context_os_audit"]["state_first_context_os"]["projected"] is True
 
     lease_result = service.lease_edit_scope(
         LeaseEditScopeCommandV1(

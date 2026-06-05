@@ -108,6 +108,14 @@ class StreamEngine:
         emitted_tool_signatures: set[str] = set()
         active_native_tool_mode = "disabled"
         active_tool_protocol = "none"
+        prepared_context_os_audit = getattr(prepared, "context_os_audit", None)
+        context_os_audit = dict(prepared_context_os_audit) if isinstance(prepared_context_os_audit, dict) else {}
+
+        def _with_context_os_audit(payload: dict[str, Any]) -> dict[str, Any]:
+            result = dict(payload)
+            if context_os_audit:
+                result["context_os_audit"] = dict(context_os_audit)
+            return result
 
         def _current_slo(elapsed_ms: float) -> dict[str, Any]:
             return build_stream_slo_metrics(
@@ -131,7 +139,7 @@ class StreamEngine:
             payload.update(_current_slo(elapsed_ms))
             if error_type:
                 payload["error_type"] = error_type
-            return payload
+            return _with_context_os_audit(payload)
 
         context_result = prepared.context_result
         prompt_tokens = context_result.token_estimate if context_result else 0
@@ -148,18 +156,20 @@ class StreamEngine:
             context_tokens_before=context_result.token_estimate if context_result else None,
             compression_strategy=context_result.compression_strategy if context_result else None,
             messages=prepared.messages,
-            metadata={
-                "stream": True,
-                "temperature": getattr(context, "temperature", 0.7),
-                "max_tokens": getattr(context, "max_tokens", 4000),
-                "stream_max_reconnects": max_reconnects,
-                "stream_retry_backoff_seconds": retry_backoff_seconds,
-                "stream_dedupe_reconnect_replay": dedupe_reconnect_replay,
-                "native_tool_mode": prepared.native_tool_mode,
-                "response_format_mode": prepared.response_format_mode,
-                "compression_applied": context_result.compression_applied if context_result else False,
-                "turn_round": turn_round,
-            },
+            metadata=_with_context_os_audit(
+                {
+                    "stream": True,
+                    "temperature": getattr(context, "temperature", 0.7),
+                    "max_tokens": getattr(context, "max_tokens", 4000),
+                    "stream_max_reconnects": max_reconnects,
+                    "stream_retry_backoff_seconds": retry_backoff_seconds,
+                    "stream_dedupe_reconnect_replay": dedupe_reconnect_replay,
+                    "native_tool_mode": prepared.native_tool_mode,
+                    "response_format_mode": prepared.response_format_mode,
+                    "compression_applied": context_result.compression_applied if context_result else False,
+                    "turn_round": turn_round,
+                }
+            ),
         )
 
         if prepared.native_tool_mode == "native_tools_unavailable":
@@ -464,6 +474,7 @@ class StreamEngine:
             "type": "context_metadata",
             "context_tokens": prompt_tokens_val,
             "model_context_window": int(context_result.token_estimate) if context_result else 0,
+            "context_os_audit": dict(context_os_audit),
             "usage": {
                 "prompt_tokens": prompt_tokens_val,
                 "completion_tokens": completion_tokens,
@@ -485,15 +496,17 @@ class StreamEngine:
             compression_strategy=context_result.compression_strategy if context_result else None,
             response_content=_effective_content,
             tool_calls_count=len(emitted_tool_signatures),
-            metadata={
-                "stream": True,
-                "native_tool_mode": active_native_tool_mode,
-                "tool_protocol": active_tool_protocol,
-                "native_tool_calling_fallback": False,
-                "compression_applied": context_result.compression_applied if context_result else False,
-                "turn_round": turn_round,
-                **_current_slo(elapsed_ms),
-            },
+            metadata=_with_context_os_audit(
+                {
+                    "stream": True,
+                    "native_tool_mode": active_native_tool_mode,
+                    "tool_protocol": active_tool_protocol,
+                    "native_tool_calling_fallback": False,
+                    "compression_applied": context_result.compression_applied if context_result else False,
+                    "turn_round": turn_round,
+                    **_current_slo(elapsed_ms),
+                }
+            ),
         )
 
 

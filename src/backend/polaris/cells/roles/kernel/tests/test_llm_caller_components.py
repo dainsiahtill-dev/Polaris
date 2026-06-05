@@ -686,6 +686,71 @@ class TestStreamEngineRunStream:
         # Should have at least context_metadata event
         assert any(e.get("type") == "context_metadata" for e in events)
 
+    async def test_context_os_audit_is_emitted_with_stream_metadata(self) -> None:
+        """ContextOS audit should travel with stream lifecycle metadata."""
+        emit_start = Mock()
+        emit_end = Mock()
+        engine = StreamEngine(
+            workspace="/ws",
+            get_executor=Mock(),
+            allow_native_tool_text_fallback_fn=Mock(return_value=False),
+            emit_call_start_event=emit_start,
+            emit_call_error_event=Mock(),
+            emit_call_end_event=emit_end,
+            emit_call_retry_event=Mock(),
+        )
+
+        context = Mock()
+        context.context_override = {}
+        context.stream_cancelled = False
+        context.temperature = 0.2
+        context.max_tokens = 256
+
+        context_result = Mock()
+        context_result.token_estimate = 12
+        context_result.compression_strategy = "none"
+        context_result.compression_applied = False
+
+        audit = {"ok": True, "prompt_digest": "audit1234"}
+        prepared = Mock()
+        prepared.messages = [{"role": "user", "content": "hello"}]
+        prepared.ai_request = Mock()
+        prepared.native_tool_mode = "disabled"
+        prepared.response_format_mode = "none"
+        prepared.context_result = context_result
+        prepared.context_os_audit = audit
+
+        mock_executor = Mock()
+
+        async def _empty_stream(_request):
+            return
+            yield
+
+        mock_executor.invoke_stream = _empty_stream
+        engine._get_executor = lambda: mock_executor
+
+        events = []
+        async for event in engine.run_stream(
+            profile=Mock(role_id="director"),
+            prepared=prepared,
+            context=context,
+            start_time=0.0,
+            role_id="director",
+            run_id="run_1",
+            task_id="task_1",
+            attempt=0,
+            model="claude",
+            call_id="call_1",
+            event_emitter=None,
+            turn_round=0,
+        ):
+            events.append(event)
+
+        context_metadata = next(event for event in events if event.get("type") == "context_metadata")
+        assert context_metadata["context_os_audit"] == audit
+        assert emit_start.call_args.kwargs["metadata"]["context_os_audit"] == audit
+        assert emit_end.call_args.kwargs["metadata"]["context_os_audit"] == audit
+
 
 async def async_empty_generator() -> Any:
     """Helper: empty async generator."""

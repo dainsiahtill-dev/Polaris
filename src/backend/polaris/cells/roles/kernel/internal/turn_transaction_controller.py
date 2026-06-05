@@ -1057,6 +1057,7 @@ class TurnTransactionController:
                 result = await self._execute_turn(
                     turn_id, context, tool_definitions, state_machine, ledger, stream=False
                 )
+                result.setdefault("ledger", ledger)
                 result["state_trajectory"] = [s[0] for s in ledger.state_history]
                 logger.debug(
                     "[DEBUG] turn_execute_end: turn_id=%s kind=%s terminal=%s",
@@ -1528,19 +1529,24 @@ class TurnTransactionController:
             )
 
         response = await self.llm_provider(request_payload)
+        response_usage = response.get("usage", {}) if isinstance(response.get("usage", {}), dict) else {}
+        response_context_os_audit = response_usage.get("context_os_audit") if isinstance(response_usage, dict) else None
 
         # Phase 3.3: Track usage
-        tokens_used = response.get("usage", {}).get("prompt_tokens", 0) + response.get("usage", {}).get(
-            "completion_tokens", 0
-        )
+        tokens_used = response_usage.get("prompt_tokens", 0) + response_usage.get("completion_tokens", 0)
         cost = response.get("cost", 0.0)
         self._track_token_usage(tokens_used, cost)
 
         ledger.record_llm_call(
             phase="decision",
             model=response.get("model", "unknown"),
-            tokens_in=response.get("usage", {}).get("prompt_tokens", 0),
-            tokens_out=response.get("usage", {}).get("completion_tokens", 0),
+            tokens_in=response_usage.get("prompt_tokens", 0),
+            tokens_out=response_usage.get("completion_tokens", 0),
+            metadata=(
+                {"context_os_audit": dict(response_context_os_audit)}
+                if isinstance(response_context_os_audit, dict)
+                else None
+            ),
         )
 
         thinking = response.get("thinking")
@@ -1551,7 +1557,7 @@ class TurnTransactionController:
             thinking=thinking,
             native_tool_calls=response.get("tool_calls", []),
             model=response.get("model", "unknown"),
-            usage=response.get("usage", {}),
+            usage=response_usage,
         )
 
     async def _call_llm_for_decision_stream(

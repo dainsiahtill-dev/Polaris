@@ -13,6 +13,7 @@ from polaris.cells.roles.kernel.internal.transaction.finalization import Finaliz
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
+from polaris.cells.roles.profile.internal.schema import RoleTurnResult
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 
 
@@ -298,6 +299,116 @@ class TestExecuteTransactionKernelTurn:
         assert result.content == "Hello from TK"
         assert result.is_complete is True
         assert result.execution_stats.get("transaction_kernel") is True
+
+    @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_exposes_context_os_audit_metadata(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="pm")
+        request = _MockRequest(run_id="run_123")
+        fingerprint = _MockFingerprint()
+        audit = {
+            "ok": True,
+            "expected": True,
+            "source": "state_first_context_os.project_messages",
+            "prompt_digest": "abc123",
+            "message_count": 2,
+            "role_counts": {"system": 1, "user": 1},
+            "final_role": "user",
+            "control_plane": {
+                "isolated": True,
+                "content_hits": [],
+                "metadata_key_hits": [],
+            },
+            "requirements": {
+                "context_os_expected": True,
+                "current_user_instruction_preserved": True,
+            },
+        }
+        ledger = TurnLedger("turn_abc")
+        ledger.record_llm_call(
+            phase="decision",
+            model="test-model",
+            tokens_in=10,
+            tokens_out=3,
+            metadata={"context_os_audit": audit},
+        )
+        mock_tk_result = {
+            "turn_id": "turn_abc",
+            "kind": "final_answer",
+            "visible_content": "Hello from TK",
+            "ledger": ledger,
+            "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
+        }
+
+        with (
+            patch.object(
+                kernel,
+                "_create_transaction_kernel",
+                return_value=MagicMock(execute=AsyncMock(return_value=mock_tk_result)),
+            ),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=MagicMock(build_context=AsyncMock(return_value=MagicMock(messages=[]))),
+            ),
+        ):
+            result = await kernel._execute_transaction_kernel_turn(
+                role="pm",
+                profile=profile,
+                request=request,
+                system_prompt="sys",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        context_os_audit = result.metadata.get("context_os_audit")
+        assert context_os_audit is not None
+        assert context_os_audit["ok"] is True
+        assert context_os_audit["llm_call_count"] == 1
+        assert context_os_audit["latest"]["prompt_digest"] == "abc123"
+        assert context_os_audit["latest"]["control_plane"]["isolated"] is True
+
+    @pytest.mark.asyncio
+    async def test_run_preserves_transaction_context_os_audit_metadata(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="pm")
+        kernel.registry = MagicMock(get_profile_or_raise=MagicMock(return_value=profile))
+        prompt_builder = SimpleNamespace(
+            build_system_prompt=lambda _profile, _appendix, **_kwargs: "system-prompt",
+            build_fingerprint=lambda _profile, _appendix: _MockFingerprint(),
+            build_retry_prompt=lambda _system_prompt, _quality_result, _attempt: "retry-prompt",
+        )
+        kernel._prompt_builder = prompt_builder  # type: ignore[assignment]
+        kernel._get_prompt_builder = lambda: prompt_builder  # type: ignore[method-assign]
+        expected_metadata = {
+            "context_os_audit": {
+                "ok": True,
+                "llm_call_count": 1,
+                "latest": {
+                    "prompt_digest": "abc123",
+                    "control_plane": {"isolated": True},
+                },
+            }
+        }
+        transaction_result = RoleTurnResult(
+            content="done",
+            is_complete=True,
+            execution_stats={"transaction_kernel": True},
+            metadata=expected_metadata,
+        )
+
+        with (
+            patch.object(kernel, "_build_context", return_value=MagicMock()),
+            patch.object(
+                kernel,
+                "_execute_transaction_kernel_turn",
+                new=AsyncMock(return_value=transaction_result),
+            ),
+        ):
+            result = await kernel.run("pm", _MockRequest(run_id="run_123", validate_output=False))
+
+        assert result.content == "done"
+        assert result.metadata == expected_metadata
 
     @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_hides_tools_for_proposal_bridge(self) -> None:

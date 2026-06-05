@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import threading
 import uuid
+from collections.abc import Mapping
 from datetime import timedelta
 from fnmatch import fnmatch
 from typing import Any
@@ -29,6 +32,8 @@ from polaris.domain.cognitive_runtime import (
 from polaris.domain.verification.impact_analyzer import ImpactAnalyzer
 from polaris.domain.verification.write_gate import WriteGate
 from polaris.infrastructure.cognitive_runtime import CognitiveRuntimeSqliteStore
+from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
+from polaris.kernelone.context.context_os.runtime.engine import StateFirstContextOS
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
 logger = logging.getLogger(__name__)
@@ -135,6 +140,144 @@ def _dedupe_strings(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _policy_string(policy: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = policy.get(key)
+        if value not in (None, ""):
+            token = str(value).strip()
+            if token:
+                return token
+    return ""
+
+
+def _recent_window_messages(policy: Mapping[str, Any]) -> int:
+    try:
+        return max(1, int(policy.get("recent_window_messages") or 8))
+    except (TypeError, ValueError):
+        return 8
+
+
+def _run_awaitable_sync(awaitable: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    result: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            result["value"] = asyncio.run(awaitable)
+        except BaseException as exc:  # noqa: BLE001 - shuttle async failure to caller
+            result["error"] = exc
+
+    thread = threading.Thread(target=_runner, name="context_os_projection_sync", daemon=True)
+    thread.start()
+    thread.join()
+    error = result.get("error")
+    if error is not None:
+        raise error
+    return result.get("value")
+
+
+async def _project_state_first_context_os(
+    *,
+    workspace: str,
+    domain: str,
+    provider_id: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    existing_snapshot: dict[str, Any] | None,
+    focus: str,
+    recent_window_messages: int,
+) -> tuple[Any, list[dict[str, Any]]]:
+    context_os = StateFirstContextOS(
+        domain=domain,
+        provider_id=provider_id or None,
+        model=model or None,
+        workspace=workspace,
+    )
+    try:
+        projection = await context_os.project(
+            messages=messages,
+            existing_snapshot=existing_snapshot,
+            recent_window_messages=recent_window_messages,
+            focus=focus,
+        )
+        return projection, context_os.project_messages(projection)
+    finally:
+        await context_os.close()
+
+
+def _receipt_ref_count(messages: list[dict[str, Any]]) -> int:
+    count = 0
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        refs = message.get("receipt_refs")
+        if isinstance(refs, (list, tuple)):
+            count += len(refs)
+        elif refs:
+            count += 1
+    return count
+
+
+def _state_first_projection_summary(
+    *,
+    projection: Any,
+    projected_messages: list[dict[str, Any]],
+    audit: dict[str, Any],
+    domain: str,
+    provider_id: str,
+    model: str,
+) -> dict[str, Any]:
+    snapshot = getattr(projection, "snapshot", None)
+    active_window = getattr(projection, "active_window", ()) or ()
+    artifact_stubs = getattr(projection, "artifact_stubs", ()) or ()
+    episode_cards = getattr(projection, "episode_cards", ()) or ()
+    transcript_log = getattr(snapshot, "transcript_log", ()) or ()
+    artifact_store = getattr(snapshot, "artifact_store", ()) or ()
+    episode_store = getattr(snapshot, "episode_store", ()) or ()
+    working_state = getattr(snapshot, "working_state", None)
+    return {
+        "projected": True,
+        "engine": "StateFirstContextOS",
+        "domain": domain,
+        "provider_id": provider_id or None,
+        "model": model or None,
+        "layers": {
+            "truth_log": {
+                "active": True,
+                "snapshot_events": len(transcript_log),
+            },
+            "working_state": {
+                "active": True,
+                "present": working_state is not None,
+            },
+            "receipt_store": {
+                "active": True,
+                "projected_receipt_refs": _receipt_ref_count(projected_messages),
+            },
+            "projection_engine": {
+                "active": True,
+                "projected_messages": len(projected_messages),
+                "prompt_digest": str(audit.get("prompt_digest") or ""),
+            },
+        },
+        "projection": {
+            "active_window_events": len(active_window),
+            "artifact_stubs": len(artifact_stubs),
+            "episode_cards": len(episode_cards),
+            "snapshot_artifacts": len(artifact_store),
+            "snapshot_episodes": len(episode_store),
+            "head_anchor_present": bool(str(getattr(projection, "head_anchor", "") or "").strip()),
+            "tail_anchor_present": bool(str(getattr(projection, "tail_anchor", "") or "").strip()),
+            "run_card_present": getattr(projection, "run_card", None) is not None,
+            "context_slice_plan_present": getattr(projection, "context_slice_plan", None) is not None,
+        },
+    }
+
+
 class CognitiveRuntimeService:
     """Cross-role authority facade on top of Context OS and session truth."""
 
@@ -228,6 +371,75 @@ class CognitiveRuntimeService:
             session_id=session_id or "",
         )
         pack = bundle["context_pack"]
+        source_refs = tuple(
+            str(getattr(item, "id", ""))
+            for item in list(getattr(pack, "items", []))
+            if str(getattr(item, "id", "")).strip()
+        )
+        context_os_summary = dict(bundle.get("context_os_summary") or {})
+        policy_payload = dict(policy or {}) if isinstance(policy, dict) else {}
+        context_override_payload = dict(context_override or {}) if isinstance(context_override, dict) else {}
+        existing_snapshot = context_override_payload.get("context_os_snapshot")
+        safe_existing_snapshot = dict(existing_snapshot) if isinstance(existing_snapshot, dict) else None
+        domain = _policy_string(policy_payload, "context_os_domain", "domain") or str(mode or role or "generic")
+        provider_id = _policy_string(policy_payload, "provider_id", "llm_provider_id")
+        model = _policy_string(policy_payload, "model", "llm_model")
+        projection_messages = [{"role": "user", "content": str(query or "")}]
+        try:
+            projection, projected_messages = _run_awaitable_sync(
+                _project_state_first_context_os(
+                    workspace=workspace,
+                    domain=domain,
+                    provider_id=provider_id,
+                    model=model,
+                    messages=projection_messages,
+                    existing_snapshot=safe_existing_snapshot,
+                    focus=str(query or ""),
+                    recent_window_messages=_recent_window_messages(policy_payload),
+                )
+            )
+            context_os_audit = audit_context_os_prompt_messages(
+                messages=projected_messages,
+                context_sources=(
+                    "state_first_context_os.resolve_context",
+                    "state_first_context_os.project",
+                    *source_refs,
+                ),
+                metadata={
+                    "state_first_mode_active": True,
+                    "resolve_context": True,
+                },
+                current_user_instruction=str(query or ""),
+                expected=True,
+            )
+            context_os_summary["state_first_context_os"] = _state_first_projection_summary(
+                projection=projection,
+                projected_messages=projected_messages,
+                audit=context_os_audit,
+                domain=domain,
+                provider_id=provider_id,
+                model=model,
+            )
+            context_os_summary["context_os_audit"] = context_os_audit
+        except Exception as exc:
+            logger.exception("StateFirstContextOS projection failed during resolve_context")
+            context_os_summary["state_first_context_os"] = {
+                "projected": False,
+                "engine": "StateFirstContextOS",
+                "domain": domain,
+                "error_type": type(exc).__name__,
+            }
+            context_os_summary["context_os_audit"] = {
+                "ok": False,
+                "expected": True,
+                "source": "kernelone.audit.context_os_prompt",
+                "error_type": type(exc).__name__,
+                "requirements": {
+                    "truth_source_context_os": False,
+                    "control_plane_isolated": False,
+                    "current_user_instruction_preserved": False,
+                },
+            }
         return ContextSnapshot(
             workspace=workspace,
             role=role,
@@ -238,12 +450,8 @@ class CognitiveRuntimeService:
             session_id=session_id,
             rendered_prompt=str(bundle["anthropomorphic_context"] or ""),
             token_usage_estimate=int(getattr(pack, "total_tokens", 0) or 0),
-            source_refs=tuple(
-                str(getattr(item, "id", ""))
-                for item in list(getattr(pack, "items", []))
-                if str(getattr(item, "id", "")).strip()
-            ),
-            context_os_summary=dict(bundle.get("context_os_summary") or {}),
+            source_refs=source_refs,
+            context_os_summary=context_os_summary,
         )
 
     def lease_edit_scope(

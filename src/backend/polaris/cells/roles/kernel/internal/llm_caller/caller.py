@@ -20,6 +20,7 @@ from polaris.cells.roles.kernel.internal.interaction_contract import (
     ProviderCapabilities,
     build_interaction_contract,
 )
+from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 
@@ -350,6 +351,19 @@ class LLMCaller:
             provider_id=str(getattr(profile, "provider_id", "")),
         )
         context_summary = compute_context_summary(input_text)
+        context_metadata = (
+            dict(getattr(context_result, "metadata", {}) or {})
+            if getattr(context_result, "metadata", None) is not None
+            else {}
+        )
+        context_sources = tuple(str(item) for item in (getattr(context_result, "context_sources", ()) or ()))
+        context_os_audit = audit_context_os_prompt_messages(
+            messages=messages,
+            context_sources=context_sources,
+            metadata=context_metadata,
+            current_user_instruction=str(getattr(context, "message", "") or ""),
+            expected=True,
+        )
 
         request_timeout_seconds = resolve_timeout_seconds(
             profile,
@@ -439,6 +453,7 @@ class LLMCaller:
                 "native_tool_mode": native_tool_mode,
                 "response_format_mode": response_format_mode,
                 "interaction_contract": contract.to_metadata(),
+                "context_os_audit": context_os_audit,
             },
         )
         return PreparedLLMRequest(
@@ -453,6 +468,7 @@ class LLMCaller:
             response_model=response_model,
             native_response_format=native_response_format,
             response_format_mode=response_format_mode,
+            context_os_audit=context_os_audit,
         )
 
     @staticmethod

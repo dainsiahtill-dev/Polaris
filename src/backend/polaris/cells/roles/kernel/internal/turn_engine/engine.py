@@ -21,6 +21,7 @@ from polaris.cells.roles.kernel.internal.turn_engine.compat import TurnEngineCom
 from polaris.cells.roles.kernel.internal.turn_engine.turn_materializer import TurnMaterializer
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TransactionConfig
 from polaris.cells.roles.profile.public.service import RoleTurnResult
+from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 from polaris.kernelone.context.contracts import (
     TurnEngineContextRequest as ContextRequest,
 )
@@ -182,6 +183,9 @@ class TurnEngine(TurnEngineCompatMixin):
             turn_id=turn_id,
             receipt_ids=receipt_ids,
         )
+        monitoring = execution_stats.get("monitoring")
+        if isinstance(monitoring, dict) and isinstance(monitoring.get("context_os_audit"), dict):
+            metadata["context_os_audit"] = dict(monitoring["context_os_audit"])
         if status == "handoff":
             metadata["transaction_kind"] = "handoff_workflow"
 
@@ -676,6 +680,9 @@ class TurnEngine(TurnEngineCompatMixin):
             turn_id=turn_id,
             receipt_ids=receipt_refs,
         )
+        context_os_audit_summary = summarize_context_os_audit_from_ledger(tk_result.get("ledger"))
+        if context_os_audit_summary:
+            metadata["context_os_audit"] = context_os_audit_summary
         if kind == "handoff_workflow" and workflow_context is not None:
             import time
 

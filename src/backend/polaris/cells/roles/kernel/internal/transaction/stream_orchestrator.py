@@ -55,6 +55,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
     TurnEvent,
     TurnPhaseEvent,
 )
+from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 
 logger = logging.getLogger(__name__)
 
@@ -1112,11 +1113,19 @@ class StreamOrchestrator:
             return
 
         if self.llm_provider_stream is not None:
+            raw_response_usage = llm_response.get("usage", {})
+            response_usage = raw_response_usage if isinstance(raw_response_usage, dict) else {}
+            response_context_os_audit = response_usage.get("context_os_audit")
             ledger.record_llm_call(
                 phase="decision",
                 model=llm_response.get("model", "unknown"),
-                tokens_in=llm_response.get("usage", {}).get("prompt_tokens", 0),
-                tokens_out=llm_response.get("usage", {}).get("completion_tokens", 0),
+                tokens_in=response_usage.get("prompt_tokens", 0),
+                tokens_out=response_usage.get("completion_tokens", 0),
+                metadata=(
+                    {"context_os_audit": dict(response_context_os_audit)}
+                    if isinstance(response_context_os_audit, dict)
+                    else None
+                ),
             )
 
         if (
@@ -1364,13 +1373,18 @@ class StreamOrchestrator:
             "handoff" if _kind == "handoff_workflow" else "suspended" if _kind == "ask_user" else "success"
         )
         _finalization = result.get("finalization") or {}
+        monitoring = self.extract_monitoring_metrics(result.get("metrics", {}))
+        context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
+        if context_os_audit_summary:
+            monitoring = dict(monitoring)
+            monitoring["context_os_audit"] = context_os_audit_summary
         yield CompletionEvent(
             turn_id=turn_id,
             status=completion_status,
             duration_ms=result.get("metrics", {}).get("duration_ms", 0),
             llm_calls=result.get("metrics", {}).get("llm_calls", 0),
             tool_calls=result.get("metrics", {}).get("tool_calls", 0),
-            monitoring=self.extract_monitoring_metrics(result.get("metrics", {})),
+            monitoring=monitoring,
             visible_content=visible_content,
             turn_kind=_kind,
             batch_receipt=batch_receipt or {},

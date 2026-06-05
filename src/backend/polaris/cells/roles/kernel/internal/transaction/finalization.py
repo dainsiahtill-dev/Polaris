@@ -107,11 +107,18 @@ class FinalizationHandler:
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0},
             }
 
+        response_usage = response.get("usage", {}) if isinstance(response.get("usage", {}), dict) else {}
+        response_context_os_audit = response_usage.get("context_os_audit") if isinstance(response_usage, dict) else None
         ledger.record_llm_call(
             phase="finalization",
             model=response.get("model", "unknown"),
-            tokens_in=response.get("usage", {}).get("prompt_tokens", 0),
-            tokens_out=response.get("usage", {}).get("completion_tokens", 0),
+            tokens_in=response_usage.get("prompt_tokens", 0),
+            tokens_out=response_usage.get("completion_tokens", 0),
+            metadata=(
+                {"context_os_audit": dict(response_context_os_audit)}
+                if isinstance(response_context_os_audit, dict)
+                else None
+            ),
         )
 
         finalize_thinking = response.get("thinking")
@@ -123,7 +130,7 @@ class FinalizationHandler:
                 thinking=finalize_thinking,
                 native_tool_calls=response.get("tool_calls", []),
                 model=response.get("model", "unknown"),
-                usage=response.get("usage", {}),
+                usage=response_usage,
             ),
             TurnId(turn_id),
             FinalizeMode.LLM_ONCE,

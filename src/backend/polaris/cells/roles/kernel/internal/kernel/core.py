@@ -58,6 +58,7 @@ from polaris.cells.roles.profile.public.service import (
 )
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 from polaris.infrastructure.log_pipeline.writer import LogEventWriter, get_writer
+from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 from polaris.kernelone.context.context_os.models_v2 import TranscriptEventV2 as TranscriptEvent
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 from polaris.kernelone.storage import resolve_storage_roots
@@ -1230,6 +1231,9 @@ class RoleExecutionKernel:
         }
 
         metadata: dict[str, Any] = {}
+        context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
+        if context_os_audit_summary:
+            metadata["context_os_audit"] = context_os_audit_summary
         if kind == "handoff_workflow" and workflow_context is not None:
             handoff_pack = self._build_context_handoff_pack(tk_result, role, request)
             metadata["handoff_pack"] = handoff_pack.to_dict()
@@ -1748,6 +1752,7 @@ class RoleExecutionKernel:
                     },
                     turn_history=list(te_result.turn_history) if te_result.turn_history else [],
                     turn_events_metadata=list(te_result.turn_events_metadata) if te_result.turn_events_metadata else [],
+                    metadata=dict(getattr(te_result, "metadata", {}) or {}),
                 )
 
             # Quality validation
@@ -1883,6 +1888,7 @@ class RoleExecutionKernel:
                         turn_events_metadata=list(te_result.turn_events_metadata)
                         if te_result.turn_events_metadata
                         else [],
+                        metadata=dict(getattr(te_result, "metadata", {}) or {}),
                     )
 
                 self._emit_event(
@@ -1927,6 +1933,7 @@ class RoleExecutionKernel:
                 },
                 turn_history=list(te_result.turn_history) if te_result.turn_history else [],
                 turn_events_metadata=list(te_result.turn_events_metadata) if te_result.turn_events_metadata else [],
+                metadata=dict(getattr(te_result, "metadata", {}) or {}),
             )
 
         # unreachable

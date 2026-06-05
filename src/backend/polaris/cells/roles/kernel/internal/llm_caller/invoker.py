@@ -53,6 +53,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _with_context_os_audit(metadata: dict[str, Any], prepared: PreparedLLMRequest | None) -> dict[str, Any]:
+    payload = dict(metadata)
+    audit = getattr(prepared, "context_os_audit", None) if prepared is not None else None
+    if isinstance(audit, dict):
+        payload["context_os_audit"] = dict(audit)
+    return payload
+
+
 # Module loaded indicator
 print(f"[LLMInvoker] MODULE LOADED: __name__={__name__}", flush=True)
 
@@ -167,6 +176,7 @@ class LLMInvoker:
         model = profile.model or "default"
 
         start_time = time.perf_counter()
+        prepared: PreparedLLMRequest | None = None
 
         try:
             # Import here to avoid circular dependency
@@ -206,15 +216,18 @@ class LLMInvoker:
                 context_tokens_before=context_result.token_estimate if context_result else None,
                 compression_strategy=context_result.compression_strategy if context_result else None,
                 messages=prepared.messages,
-                metadata={
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "prompt_fingerprint": prompt_fingerprint,
-                    "native_tool_mode": prepared.native_tool_mode,
-                    "response_format_mode": prepared.response_format_mode,
-                    "compression_applied": context_result.compression_applied if context_result else False,
-                    "turn_round": turn_round,
-                },
+                metadata=_with_context_os_audit(
+                    {
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "prompt_fingerprint": prompt_fingerprint,
+                        "native_tool_mode": prepared.native_tool_mode,
+                        "response_format_mode": prepared.response_format_mode,
+                        "compression_applied": context_result.compression_applied if context_result else False,
+                        "turn_round": turn_round,
+                    },
+                    prepared,
+                ),
             )
 
             cache_eligible = self._is_cache_eligible(prepared=prepared, response_model=response_model)
@@ -239,16 +252,19 @@ class LLMInvoker:
                             content=getattr(response, "content", "") or "",
                             error=None,
                             error_category=None,
-                            metadata={
-                                "model": model,
-                                "native_tool_mode": "native_tools_text_fallback",
-                                "response_format_mode": prepared.response_format_mode,
-                                "native_tool_calling_fallback": native_tool_fallback,
-                                "elapsed_ms": round(elapsed_ms, 2),
-                                "run_id": run_id,
-                                "workspace": self.workspace,
-                                "attempt": attempt,
-                            },
+                            metadata=_with_context_os_audit(
+                                {
+                                    "model": model,
+                                    "native_tool_mode": "native_tools_text_fallback",
+                                    "response_format_mode": prepared.response_format_mode,
+                                    "native_tool_calling_fallback": native_tool_fallback,
+                                    "elapsed_ms": round(elapsed_ms, 2),
+                                    "run_id": run_id,
+                                    "workspace": self.workspace,
+                                    "attempt": attempt,
+                                },
+                                prepared,
+                            ),
                         )
                     # Fallback failed, proceed to return error
 
@@ -266,23 +282,29 @@ class LLMInvoker:
                     error_message=tool_error,
                     call_id=call_id,
                     elapsed_ms=elapsed_ms,
-                    metadata={
-                        "native_tool_mode": prepared.native_tool_mode,
-                        "response_format_mode": prepared.response_format_mode,
-                    },
+                    metadata=_with_context_os_audit(
+                        {
+                            "native_tool_mode": prepared.native_tool_mode,
+                            "response_format_mode": prepared.response_format_mode,
+                        },
+                        prepared,
+                    ),
                 )
                 return LLMResponse(
                     content="",
                     error=tool_error,
                     error_category="provider",
-                    metadata={
-                        "model": model,
-                        "native_tool_mode": prepared.native_tool_mode,
-                        "response_format_mode": prepared.response_format_mode,
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                    },
+                    metadata=_with_context_os_audit(
+                        {
+                            "model": model,
+                            "native_tool_mode": prepared.native_tool_mode,
+                            "response_format_mode": prepared.response_format_mode,
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                        },
+                        prepared,
+                    ),
                 )
 
             cache = get_global_llm_cache()
@@ -312,27 +334,33 @@ class LLMInvoker:
                         context_tokens_after=context_result.token_estimate if context_result else None,
                         compression_strategy=context_result.compression_strategy if context_result else None,
                         response_content=cached,
-                        metadata={
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "cached": True,
-                            "source": "cache",
-                            "compression_applied": context_result.compression_applied if context_result else False,
-                            "turn_round": turn_round,
-                        },
+                        metadata=_with_context_os_audit(
+                            {
+                                "elapsed_ms": round(elapsed_ms, 2),
+                                "cached": True,
+                                "source": "cache",
+                                "compression_applied": context_result.compression_applied if context_result else False,
+                                "turn_round": turn_round,
+                            },
+                            prepared,
+                        ),
                     )
                     return LLMResponse(
                         content=cached,
                         token_estimate=len(cached) // 2,
-                        metadata={
-                            "cached": True,
-                            "model": model,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "run_id": run_id,
-                            "workspace": self.workspace,
-                            "attempt": attempt,
-                            "turn_round": turn_round,
-                            "native_tool_mode": prepared.native_tool_mode,
-                        },
+                        metadata=_with_context_os_audit(
+                            {
+                                "cached": True,
+                                "model": model,
+                                "elapsed_ms": round(elapsed_ms, 2),
+                                "run_id": run_id,
+                                "workspace": self.workspace,
+                                "attempt": attempt,
+                                "turn_round": turn_round,
+                                "native_tool_mode": prepared.native_tool_mode,
+                            },
+                            prepared,
+                        ),
                     )
 
             executor = self._get_executor()
@@ -400,30 +428,38 @@ class LLMInvoker:
                     error_message=response_error or "LLM call failed",
                     call_id=call_id,
                     elapsed_ms=elapsed_ms,
-                    metadata={
-                        "native_tool_calling_fallback": native_tool_fallback,
-                        "native_response_format_fallback": native_response_fallback,
-                        "native_tool_mode": str(active_context.get("native_tool_mode") or prepared.native_tool_mode),
-                        "response_format_mode": str(
-                            active_context.get("response_format_mode") or prepared.response_format_mode
-                        ),
-                        "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
-                    },
+                    metadata=_with_context_os_audit(
+                        {
+                            "native_tool_calling_fallback": native_tool_fallback,
+                            "native_response_format_fallback": native_response_fallback,
+                            "native_tool_mode": str(
+                                active_context.get("native_tool_mode") or prepared.native_tool_mode
+                            ),
+                            "response_format_mode": str(
+                                active_context.get("response_format_mode") or prepared.response_format_mode
+                            ),
+                            "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
+                        },
+                        prepared,
+                    ),
                 )
                 return LLMResponse(
                     content="",
                     error=response_error or "LLM call failed",
                     error_category=classified,
-                    metadata={
-                        "model": model,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "native_tool_calling_fallback": native_tool_fallback,
-                        "native_response_format_fallback": native_response_fallback,
-                        "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                    },
+                    metadata=_with_context_os_audit(
+                        {
+                            "model": model,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "native_tool_calling_fallback": native_tool_fallback,
+                            "native_response_format_fallback": native_response_fallback,
+                            "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                        },
+                        prepared,
+                    ),
                 )
 
             raw_payload = response.raw if isinstance(response.raw, dict) else {}
@@ -492,15 +528,18 @@ class LLMInvoker:
                 compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
                 response_content=response_text,
                 tool_calls_count=len(native_tool_calls),
-                metadata={
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "cached": False,
-                    "source": "llm",
-                    "compression_applied": prepared.context_result.compression_applied
-                    if prepared.context_result
-                    else False,
-                    "turn_round": turn_round,
-                },
+                metadata=_with_context_os_audit(
+                    {
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "cached": False,
+                        "source": "llm",
+                        "compression_applied": prepared.context_result.compression_applied
+                        if prepared.context_result
+                        else False,
+                        "turn_round": turn_round,
+                    },
+                    prepared,
+                ),
             )
 
             return LLMResponse(
@@ -510,18 +549,21 @@ class LLMInvoker:
                 else completion_tokens,
                 tool_calls=native_tool_calls,
                 tool_call_provider=native_tool_provider,
-                metadata={
-                    "model": response_model_name,
-                    "provider": response_provider,
-                    "native_tool_calls_count": len(native_tool_calls),
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                    "turn_round": turn_round,
-                    # SSOT Fix: Pass context token count for context panel display
-                    "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
-                },
+                metadata=_with_context_os_audit(
+                    {
+                        "model": response_model_name,
+                        "provider": response_provider,
+                        "native_tool_calls_count": len(native_tool_calls),
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                        "turn_round": turn_round,
+                        # SSOT Fix: Pass context token count for context panel display
+                        "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
+                    },
+                    prepared,
+                ),
             )
 
         except asyncio.CancelledError:
@@ -537,7 +579,7 @@ class LLMInvoker:
                 error_message="call_cancelled",
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata={"error_type": "CancelledError"},
+                metadata=_with_context_os_audit({"error_type": "CancelledError"}, prepared),
             )
             raise
 
@@ -556,18 +598,21 @@ class LLMInvoker:
                 error_message=str(e),
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata={"error_type": type(e).__name__},
+                metadata=_with_context_os_audit({"error_type": type(e).__name__}, prepared),
             )
             return LLMResponse(
                 content="",
                 error=f"LLM call failed: {e}",
                 error_category=error_category,
-                metadata={
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                    "elapsed_ms": round(elapsed_ms, 2),
-                },
+                metadata=_with_context_os_audit(
+                    {
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                    },
+                    prepared,
+                ),
             )
 
         except RuntimeError as e:
@@ -585,18 +630,21 @@ class LLMInvoker:
                 error_message=str(e),
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata={"error_type": type(e).__name__},
+                metadata=_with_context_os_audit({"error_type": type(e).__name__}, prepared),
             )
             return LLMResponse(
                 content="",
                 error=f"LLM call failed: {e}",
                 error_category=error_category,
-                metadata={
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                    "elapsed_ms": round(elapsed_ms, 2),
-                },
+                metadata=_with_context_os_audit(
+                    {
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                    },
+                    prepared,
+                ),
             )
 
     # ========================================================================
@@ -627,6 +675,7 @@ class LLMInvoker:
         model = profile.model or "default"
 
         start_time = time.perf_counter()
+        prepared: PreparedLLMRequest | None = None
 
         try:
             # Import here to avoid circular dependency
@@ -667,15 +716,18 @@ class LLMInvoker:
                 context_tokens_before=context_result.token_estimate if context_result else None,
                 compression_strategy=context_result.compression_strategy if context_result else None,
                 messages=messages,
-                metadata={
-                    "structured": True,
-                    "response_model": response_model.__name__,
-                    "instructor_available": INSTRUCTOR_AVAILABLE,
-                    "native_tool_mode": prepared.native_tool_mode,
-                    "response_format_mode": prepared.response_format_mode,
-                    "compression_applied": context_result.compression_applied if context_result else False,
-                    "turn_round": turn_round,
-                },
+                metadata=_with_context_os_audit(
+                    {
+                        "structured": True,
+                        "response_model": response_model.__name__,
+                        "instructor_available": INSTRUCTOR_AVAILABLE,
+                        "native_tool_mode": prepared.native_tool_mode,
+                        "response_format_mode": prepared.response_format_mode,
+                        "compression_applied": context_result.compression_applied if context_result else False,
+                        "turn_round": turn_round,
+                    },
+                    prepared,
+                ),
             )
 
             # Try native response_format
@@ -707,15 +759,18 @@ class LLMInvoker:
                             if prepared.context_result
                             else None,
                             response_content=content,
-                            metadata={
-                                "structured": True,
-                                "native_response_format": True,
-                                "elapsed_ms": round(elapsed_ms, 2),
-                                "compression_applied": prepared.context_result.compression_applied
-                                if prepared.context_result
-                                else False,
-                                "turn_round": turn_round,
-                            },
+                            metadata=_with_context_os_audit(
+                                {
+                                    "structured": True,
+                                    "native_response_format": True,
+                                    "elapsed_ms": round(elapsed_ms, 2),
+                                    "compression_applied": prepared.context_result.compression_applied
+                                    if prepared.context_result
+                                    else False,
+                                    "turn_round": turn_round,
+                                },
+                                prepared,
+                            ),
                         )
                         return StructuredLLMResponse(
                             data=validated.model_dump(),
@@ -723,12 +778,15 @@ class LLMInvoker:
                             token_estimate=prepared.context_result.token_estimate + len(content) // 2
                             if prepared.context_result
                             else len(content) // 2,
-                            metadata={
-                                "native_response_format": True,
-                                "response_format_mode": prepared.response_format_mode,
-                                "elapsed_ms": round(elapsed_ms, 2),
-                                "turn_round": turn_round,
-                            },
+                            metadata=_with_context_os_audit(
+                                {
+                                    "native_response_format": True,
+                                    "response_format_mode": prepared.response_format_mode,
+                                    "elapsed_ms": round(elapsed_ms, 2),
+                                    "turn_round": turn_round,
+                                },
+                                prepared,
+                            ),
                         )
                     response_error = str(getattr(response, "error", "") or "").strip()
                     if not is_response_format_unsupported(response_error):
@@ -770,29 +828,35 @@ class LLMInvoker:
                         if prepared.context_result
                         else None,
                         response_content=result.model_dump_json(),
-                        metadata={
-                            "structured": True,
-                            "instructor_used": True,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "compression_applied": prepared.context_result.compression_applied
-                            if prepared.context_result
-                            else False,
-                            "turn_round": turn_round,
-                        },
+                        metadata=_with_context_os_audit(
+                            {
+                                "structured": True,
+                                "instructor_used": True,
+                                "elapsed_ms": round(elapsed_ms, 2),
+                                "compression_applied": prepared.context_result.compression_applied
+                                if prepared.context_result
+                                else False,
+                                "turn_round": turn_round,
+                            },
+                            prepared,
+                        ),
                     )
                     return StructuredLLMResponse(
                         data=result.model_dump(),
                         raw_content=result.model_dump_json(),
                         token_estimate=prompt_tokens + len(result.model_dump_json()) // 2,
-                        metadata={
-                            "model": model,
-                            "instructor_used": True,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "run_id": run_id,
-                            "workspace": self.workspace,
-                            "attempt": attempt,
-                            "turn_round": turn_round,
-                        },
+                        metadata=_with_context_os_audit(
+                            {
+                                "model": model,
+                                "instructor_used": True,
+                                "elapsed_ms": round(elapsed_ms, 2),
+                                "run_id": run_id,
+                                "workspace": self.workspace,
+                                "attempt": attempt,
+                                "turn_round": turn_round,
+                            },
+                            prepared,
+                        ),
                     )
                 except RuntimeError as e:
                     logger.warning(f"Instructor structured call failed: {e}, falling back")
@@ -826,21 +890,27 @@ class LLMInvoker:
                     error_message=normalized_error,
                     call_id=call_id,
                     elapsed_ms=elapsed_ms,
-                    metadata={"structured": True, "response_format_mode": response_format_mode},
+                    metadata=_with_context_os_audit(
+                        {"structured": True, "response_format_mode": response_format_mode},
+                        prepared,
+                    ),
                 )
                 return StructuredLLMResponse(
                     data={},
                     raw_content="",
                     error=normalized_error,
                     error_category=classified,
-                    metadata={
-                        "model": model,
-                        "response_format_mode": response_format_mode,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                    },
+                    metadata=_with_context_os_audit(
+                        {
+                            "model": model,
+                            "response_format_mode": response_format_mode,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                        },
+                        prepared,
+                    ),
                 )
 
             content = str(getattr(response, "output", "") or "")
@@ -869,29 +939,35 @@ class LLMInvoker:
                     if prepared.context_result
                     else None,
                     response_content=content,
-                    metadata={
-                        "structured": True,
-                        "instructor_used": False,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "compression_applied": prepared.context_result.compression_applied
-                        if prepared.context_result
-                        else False,
-                        "turn_round": turn_round,
-                    },
+                    metadata=_with_context_os_audit(
+                        {
+                            "structured": True,
+                            "instructor_used": False,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "compression_applied": prepared.context_result.compression_applied
+                            if prepared.context_result
+                            else False,
+                            "turn_round": turn_round,
+                        },
+                        prepared,
+                    ),
                 )
                 return StructuredLLMResponse(
                     data=validated_data,
                     raw_content=content,
                     token_estimate=prompt_tokens + len(content) // 2,
-                    metadata={
-                        "model": model,
-                        "instructor_used": False,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                        "turn_round": turn_round,
-                    },
+                    metadata=_with_context_os_audit(
+                        {
+                            "model": model,
+                            "instructor_used": False,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                            "turn_round": turn_round,
+                        },
+                        prepared,
+                    ),
                 )
             except (RuntimeError, ValueError) as parse_error:
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -907,7 +983,7 @@ class LLMInvoker:
                     error_message=error_msg,
                     call_id=call_id,
                     elapsed_ms=elapsed_ms,
-                    metadata={"structured": True},
+                    metadata=_with_context_os_audit({"structured": True}, prepared),
                 )
                 return StructuredLLMResponse(
                     data={},
@@ -915,13 +991,16 @@ class LLMInvoker:
                     error=error_msg,
                     error_category="validation_fail",
                     validation_errors=[str(parse_error)],
-                    metadata={
-                        "model": model,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                    },
+                    metadata=_with_context_os_audit(
+                        {
+                            "model": model,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                        },
+                        prepared,
+                    ),
                 )
 
         except asyncio.CancelledError:
@@ -937,7 +1016,10 @@ class LLMInvoker:
                 error_message="structured_call_cancelled",
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata={"structured": True, "error_type": "CancelledError"},
+                metadata=_with_context_os_audit(
+                    {"structured": True, "error_type": "CancelledError"},
+                    prepared,
+                ),
             )
             raise
 
@@ -955,19 +1037,22 @@ class LLMInvoker:
                 error_message=str(e),
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata={"structured": True},
+                metadata=_with_context_os_audit({"structured": True}, prepared),
             )
             return StructuredLLMResponse(
                 data={},
                 error=f"Structured LLM call failed: {e}",
                 error_category=error_category,
-                metadata={
-                    "model": model,
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                },
+                metadata=_with_context_os_audit(
+                    {
+                        "model": model,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                    },
+                    prepared,
+                ),
             )
 
     # ========================================================================

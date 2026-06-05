@@ -199,17 +199,25 @@ class TurnLedger:
             self._original_delivery_mode = contract.mode.value
             logger.debug("original_delivery_mode_frozen: %s", self._original_delivery_mode)
 
-    def record_llm_call(self, phase: str, model: str, tokens_in: int, tokens_out: int) -> None:
+    def record_llm_call(
+        self,
+        phase: str,
+        model: str,
+        tokens_in: int,
+        tokens_out: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """记录LLM调用"""
-        self.llm_calls.append(
-            {
-                "phase": phase,
-                "model": model,
-                "tokens_in": tokens_in,
-                "tokens_out": tokens_out,
-                "timestamp_ms": int(time.time() * 1000),
-            }
-        )
+        entry: dict[str, Any] = {
+            "phase": phase,
+            "model": model,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "timestamp_ms": int(time.time() * 1000),
+        }
+        if metadata:
+            entry["metadata"] = dict(metadata)
+        self.llm_calls.append(entry)
 
     def record_tool_execution(self, tool_name: str, call_id: str, status: str, duration_ms: int) -> None:
         """记录工具执行"""

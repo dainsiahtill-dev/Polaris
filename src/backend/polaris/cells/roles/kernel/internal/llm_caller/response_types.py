@@ -94,6 +94,7 @@ class PreparedLLMRequest:
         response_model: Pydantic model for structured output
         native_response_format: OpenAI-format response_format payload
         response_format_mode: Response format mode indicator
+        context_os_audit: Prompt-level ContextOS audit evidence
     """
 
     messages: list[dict[str, str]]
@@ -107,6 +108,7 @@ class PreparedLLMRequest:
     response_model: type | None = None
     native_response_format: dict[str, Any] | None = None
     response_format_mode: str = "plain_text"
+    context_os_audit: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
