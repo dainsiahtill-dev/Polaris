@@ -255,6 +255,22 @@ class TestHasSuccessfulWriteTool:
         assert has_successful_write_tool([{"tool": "edit_file", "success": True, "result": {"path": "a.py"}}]) is True
         assert has_successful_write_tool([{"tool": "patch_apply", "success": True, "result": {"path": "a.py"}}]) is True
 
+    def test_successful_write_with_nested_result_receipt(self) -> None:
+        tool_results = [
+            {
+                "tool": "write_file",
+                "result": {
+                    "success": True,
+                    "payload": {
+                        "file": "src/game/card-catalog.ts",
+                        "effect_receipt": {"file": "src/game/card-catalog.ts"},
+                    },
+                },
+            }
+        ]
+
+        assert has_successful_write_tool(tool_results) is True
+
     def test_plain_tool_call_request_is_not_write_evidence(self) -> None:
         assert has_successful_write_tool([{"tool": "write_file", "success": True}]) is False
 
@@ -348,6 +364,37 @@ class TestExtractKernelToolResults:
         assert len(result) == 1
         assert result[0]["tool"] == "write_file"
         assert result[0]["success"] is True
+
+    def test_from_tool_results_with_nested_result_success(self) -> None:
+        resp = {
+            "tool_results": [
+                {
+                    "event_type": "tool_result",
+                    "tool": "write_file",
+                    "iteration": 0,
+                    "result": {
+                        "success": True,
+                        "payload": {
+                            "file": "src/game/card-catalog.ts",
+                            "bytes_written": 8399,
+                            "effect_receipt": {
+                                "file": "src/game/card-catalog.ts",
+                                "bytes_written": 8399,
+                                "operation": "modify",
+                            },
+                        },
+                    },
+                }
+            ]
+        }
+
+        result = extract_kernel_tool_results(resp)
+
+        assert len(result) == 1
+        assert result[0]["tool"] == "write_file"
+        assert result[0]["success"] is True
+        assert result[0]["status"] == "success"
+        assert has_successful_write_tool(result) is True
 
     def test_from_tool_calls_fallback(self) -> None:
         resp = {"tool_calls": [{"name": "read_file", "success": False, "error": "missing"}]}

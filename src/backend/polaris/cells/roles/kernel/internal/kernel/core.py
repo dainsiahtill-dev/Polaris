@@ -1741,6 +1741,7 @@ class RoleExecutionKernel:
                     thinking=te_result.thinking,
                     tool_calls=te_result.tool_calls or [],
                     tool_results=te_result.tool_results or [],
+                    batch_receipt=dict(te_result.batch_receipt) if isinstance(te_result.batch_receipt, dict) else None,
                     profile_version=profile.version,
                     prompt_fingerprint=fingerprint,
                     tool_policy_id=profile.tool_policy.policy_id,
@@ -1877,6 +1878,11 @@ class RoleExecutionKernel:
                     return RoleTurnResult(
                         content=effective_content,
                         thinking=te_result.thinking,
+                        tool_calls=te_result.tool_calls or [],
+                        tool_results=te_result.tool_results or [],
+                        batch_receipt=dict(te_result.batch_receipt)
+                        if isinstance(te_result.batch_receipt, dict)
+                        else None,
                         profile_version=profile.version,
                         prompt_fingerprint=fingerprint,
                         tool_policy_id=profile.tool_policy.policy_id,
@@ -1922,6 +1928,7 @@ class RoleExecutionKernel:
                 structured_output=final_structured_output,
                 tool_calls=te_result.tool_calls or [],
                 tool_results=te_result.tool_results or [],
+                batch_receipt=dict(te_result.batch_receipt) if isinstance(te_result.batch_receipt, dict) else None,
                 profile_version=profile.version,
                 prompt_fingerprint=fingerprint,
                 tool_policy_id=profile.tool_policy.policy_id,

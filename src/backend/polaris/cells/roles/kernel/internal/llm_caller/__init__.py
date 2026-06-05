@@ -41,6 +41,7 @@ from .helpers import (
     build_native_tool_schemas,
     extract_native_tool_calls,
     messages_to_input,
+    resolve_max_tokens,
     resolve_timeout_seconds,
 )
 from .invoker import LLMInvoker
@@ -87,6 +88,7 @@ __all__ = [
     "is_stream_cancel_requested",
     "messages_to_input",
     "normalize_stream_chunk",
+    "resolve_max_tokens",
     "resolve_stream_runtime_config",
     "resolve_timeout_seconds",
 ]

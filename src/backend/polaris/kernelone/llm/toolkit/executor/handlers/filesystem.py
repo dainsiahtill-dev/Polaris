@@ -248,6 +248,69 @@ def _should_use_whole_file_placeholder_replacement(
     )
 
 
+def _normalize_edit_block_text(text: str) -> str:
+    return str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _drop_final_content_line(text: str) -> str:
+    candidate = text[:-1] if text.endswith("\n") else text
+    if "\n" not in candidate:
+        return ""
+    head, tail = candidate.rsplit("\n", 1)
+    if not tail.strip():
+        return ""
+    return f"{head}\n"
+
+
+def _prefix_search_candidates(search_text: str) -> list[str]:
+    normalized = _normalize_edit_block_text(search_text)
+    variants = [normalized]
+    marker_index = normalized.find("[truncated]")
+    if marker_index >= 0:
+        variants.append(normalized[:marker_index])
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for variant in variants:
+        for candidate in (variant, _drop_final_content_line(variant)):
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            candidates.append(candidate)
+    return candidates
+
+
+def _has_sufficient_whole_file_prefix_evidence(prefix: str) -> bool:
+    stripped = prefix.strip()
+    if len(stripped) < 200:
+        return False
+    non_empty_lines = [line for line in prefix.splitlines() if line.strip()]
+    return len(non_empty_lines) >= 8
+
+
+def _should_use_whole_file_prefix_replacement(
+    *,
+    current_text: str,
+    search_text: str,
+    replace_text: str,
+    rel: str,
+    block_count: int,
+) -> bool:
+    """Allow whole-file replacement when SEARCH is a verified file-prefix snapshot."""
+    suffix = os.path.splitext(rel)[1].lower()
+    if suffix not in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".pyw"}:
+        return False
+    if block_count != 1 or not _looks_like_complete_file_replacement(replace_text, rel):
+        return False
+
+    current = _normalize_edit_block_text(current_text).lstrip("\ufeff")
+    for candidate in _prefix_search_candidates(search_text):
+        prefix = candidate.lstrip("\ufeff")
+        if _has_sufficient_whole_file_prefix_evidence(prefix) and current.startswith(prefix):
+            return True
+    return False
+
+
 def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     """Handle write_file tool call.
 
@@ -945,6 +1008,23 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
                     "file": block_file,
                     "valid": True,
                     "mode": "whole_file_placeholder_replacement",
+                    "search_preview": block.search_text[:100] if block.search_text else "",
+                }
+            )
+        elif _should_use_whole_file_prefix_replacement(
+            current_text=current,
+            search_text=block.search_text,
+            replace_text=block.replace_text,
+            rel=block_rel,
+            block_count=len(blocks),
+        ):
+            file_contents[block_rel] = (original, block.replace_text)
+            validation_results.append(
+                {
+                    "index": i,
+                    "file": block_file,
+                    "valid": True,
+                    "mode": "whole_file_prefix_replacement",
                     "search_preview": block.search_text[:100] if block.search_text else "",
                 }
             )

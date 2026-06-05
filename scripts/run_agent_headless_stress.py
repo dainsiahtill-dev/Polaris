@@ -76,26 +76,146 @@ class Scenario:
 
 
 SCENARIOS: tuple[Scenario, ...] = (
-    Scenario("个人记账簿（账单管理）", "crud", ("账单录入", "分类筛选", "月度汇总"), ("预算预警", "图表统计", "CSV 导入导出"), ("表单状态", "持久化", "一致性校验")),
-    Scenario("待办事项清单（To-Do List）", "crud", ("新增编辑", "完成状态", "优先级与标签"), ("拖拽排序", "分组视图", "提醒或离线缓存"), ("状态流转", "过滤组合", "交互回归")),
-    Scenario("简易 Markdown 编辑器", "editor", ("文本编辑", "实时预览", "文档保存"), ("目录导航", "语法高亮", "导出 HTML/PDF"), ("文本处理", "预览同步", "渲染安全")),
-    Scenario("实时聊天室（WebSocket）", "realtime", ("多人消息", "在线状态", "房间切换"), ("消息历史", "输入中提示", "重连策略"), ("实时连接", "状态同步", "异常恢复")),
-    Scenario("博客系统（CMS）", "cms", ("文章创建", "编辑发布", "列表展示"), ("草稿状态", "分类标签", "搜索与后台"), ("内容模型", "路由组织", "权限边界")),
-    Scenario("天气预报展示器", "api_integration", ("城市查询", "天气卡片", "多日预报"), ("最近搜索", "定位能力", "缓存与错误降级"), ("第三方 API 适配", "缓存", "降级策略")),
-    Scenario("个人简历生成器", "document", ("表单录入", "模板渲染", "导出"), ("多模板切换", "主题配置", "PDF 导出"), ("模板渲染", "结构化数据", "导出质量")),
-    Scenario("抽奖 / 随机点名工具", "tooling", ("名单导入", "随机选择", "结果展示"), ("去重规则", "权重设置", "历史记录"), ("随机逻辑", "状态控制", "交互反馈")),
-    Scenario("番茄钟（专注计时器）", "timer", ("专注倒计时", "休息阶段切换", "记录统计"), ("通知提醒", "声音提示", "周期配置"), ("计时精度", "前后台一致性", "持久化")),
-    Scenario("密码管理器（加密存储）", "security", ("密码条目管理", "本地加密", "解锁查看"), ("主密码", "分类管理", "复制保护与强度提示"), ("加密边界", "敏感数据处理", "误泄漏防御")),
-    Scenario("图片占位符生成器", "tooling", ("尺寸定制", "文字与背景色", "下载输出"), ("批量生成", "预设模板", "URL 参数化"), ("参数校验", "图像生成", "批处理流程")),
-    Scenario("在线剪贴板（跨端传词）", "realtime", ("文本发送", "文本接收", "短期存储"), ("过期时间", "多设备同步", "历史记录"), ("同步一致性", "权限控制", "临时数据清理")),
-    Scenario("聚合搜索工具（一键搜多站）", "tooling", ("统一输入", "多站点跳转", "聚合结果"), ("搜索模板管理", "快捷键", "历史记录"), ("配置化", "跳转逻辑", "结果整合")),
-    Scenario("简易单位转换器（汇率 / 度量）", "calculator", ("单位换算", "双向输入", "结果展示"), ("汇率缓存", "常用组合", "最近记录"), ("计算正确性", "配置扩展", "边界值")),
-    Scenario("文件断点续传器", "file_transfer", ("分片上传", "断点恢复", "进度展示"), ("校验和", "并发上传", "失败重试"), ("文件处理", "恢复逻辑", "异常注入")),
-    Scenario("静态网站生成器（SSG）", "build_pipeline", ("Markdown 输入", "模板渲染", "静态输出"), ("导航生成", "分页", "标签页与构建命令"), ("内容编译链", "文件系统", "构建产物校验")),
-    Scenario("RSS 阅读器", "content", ("订阅源管理", "文章列表", "已读状态"), ("抓取缓存", "关键词过滤", "收藏"), ("抓取兼容性", "解析容错", "状态持久化")),
-    Scenario("自动化签到脚本", "automation", ("登录流程", "签到执行", "结果记录"), ("定时任务", "失败告警", "多站点配置"), ("自动化稳定性", "重试恢复", "凭据管理")),
-    Scenario("屏幕截图 / 录屏工具", "desktop", ("截图", "区域选择", "文件保存"), ("录屏", "快捷键", "历史记录与格式配置"), ("桌面能力", "文件输出", "性能与权限")),
-    Scenario("贪吃蛇 / 俄罗斯方块小游戏", "game", ("游戏循环", "得分统计", "重新开始"), ("难度配置", "排行榜", "本地存档与音效"), ("渲染刷新", "状态机", "输入响应")),
+    Scenario(
+        "个人记账簿（账单管理）",
+        "crud",
+        ("账单录入", "分类筛选", "月度汇总"),
+        ("预算预警", "图表统计", "CSV 导入导出"),
+        ("表单状态", "持久化", "一致性校验"),
+    ),
+    Scenario(
+        "待办事项清单（To-Do List）",
+        "crud",
+        ("新增编辑", "完成状态", "优先级与标签"),
+        ("拖拽排序", "分组视图", "提醒或离线缓存"),
+        ("状态流转", "过滤组合", "交互回归"),
+    ),
+    Scenario(
+        "简易 Markdown 编辑器",
+        "editor",
+        ("文本编辑", "实时预览", "文档保存"),
+        ("目录导航", "语法高亮", "导出 HTML/PDF"),
+        ("文本处理", "预览同步", "渲染安全"),
+    ),
+    Scenario(
+        "实时聊天室（WebSocket）",
+        "realtime",
+        ("多人消息", "在线状态", "房间切换"),
+        ("消息历史", "输入中提示", "重连策略"),
+        ("实时连接", "状态同步", "异常恢复"),
+    ),
+    Scenario(
+        "博客系统（CMS）",
+        "cms",
+        ("文章创建", "编辑发布", "列表展示"),
+        ("草稿状态", "分类标签", "搜索与后台"),
+        ("内容模型", "路由组织", "权限边界"),
+    ),
+    Scenario(
+        "天气预报展示器",
+        "api_integration",
+        ("城市查询", "天气卡片", "多日预报"),
+        ("最近搜索", "定位能力", "缓存与错误降级"),
+        ("第三方 API 适配", "缓存", "降级策略"),
+    ),
+    Scenario(
+        "个人简历生成器",
+        "document",
+        ("表单录入", "模板渲染", "导出"),
+        ("多模板切换", "主题配置", "PDF 导出"),
+        ("模板渲染", "结构化数据", "导出质量"),
+    ),
+    Scenario(
+        "抽奖 / 随机点名工具",
+        "tooling",
+        ("名单导入", "随机选择", "结果展示"),
+        ("去重规则", "权重设置", "历史记录"),
+        ("随机逻辑", "状态控制", "交互反馈"),
+    ),
+    Scenario(
+        "番茄钟（专注计时器）",
+        "timer",
+        ("专注倒计时", "休息阶段切换", "记录统计"),
+        ("通知提醒", "声音提示", "周期配置"),
+        ("计时精度", "前后台一致性", "持久化"),
+    ),
+    Scenario(
+        "密码管理器（加密存储）",
+        "security",
+        ("密码条目管理", "本地加密", "解锁查看"),
+        ("主密码", "分类管理", "复制保护与强度提示"),
+        ("加密边界", "敏感数据处理", "误泄漏防御"),
+    ),
+    Scenario(
+        "图片占位符生成器",
+        "tooling",
+        ("尺寸定制", "文字与背景色", "下载输出"),
+        ("批量生成", "预设模板", "URL 参数化"),
+        ("参数校验", "图像生成", "批处理流程"),
+    ),
+    Scenario(
+        "在线剪贴板（跨端传词）",
+        "realtime",
+        ("文本发送", "文本接收", "短期存储"),
+        ("过期时间", "多设备同步", "历史记录"),
+        ("同步一致性", "权限控制", "临时数据清理"),
+    ),
+    Scenario(
+        "聚合搜索工具（一键搜多站）",
+        "tooling",
+        ("统一输入", "多站点跳转", "聚合结果"),
+        ("搜索模板管理", "快捷键", "历史记录"),
+        ("配置化", "跳转逻辑", "结果整合"),
+    ),
+    Scenario(
+        "简易单位转换器（汇率 / 度量）",
+        "calculator",
+        ("单位换算", "双向输入", "结果展示"),
+        ("汇率缓存", "常用组合", "最近记录"),
+        ("计算正确性", "配置扩展", "边界值"),
+    ),
+    Scenario(
+        "文件断点续传器",
+        "file_transfer",
+        ("分片上传", "断点恢复", "进度展示"),
+        ("校验和", "并发上传", "失败重试"),
+        ("文件处理", "恢复逻辑", "异常注入"),
+    ),
+    Scenario(
+        "静态网站生成器（SSG）",
+        "build_pipeline",
+        ("Markdown 输入", "模板渲染", "静态输出"),
+        ("导航生成", "分页", "标签页与构建命令"),
+        ("内容编译链", "文件系统", "构建产物校验"),
+    ),
+    Scenario(
+        "RSS 阅读器",
+        "content",
+        ("订阅源管理", "文章列表", "已读状态"),
+        ("抓取缓存", "关键词过滤", "收藏"),
+        ("抓取兼容性", "解析容错", "状态持久化"),
+    ),
+    Scenario(
+        "自动化签到脚本",
+        "automation",
+        ("登录流程", "签到执行", "结果记录"),
+        ("定时任务", "失败告警", "多站点配置"),
+        ("自动化稳定性", "重试恢复", "凭据管理"),
+    ),
+    Scenario(
+        "屏幕截图 / 录屏工具",
+        "desktop",
+        ("截图", "区域选择", "文件保存"),
+        ("录屏", "快捷键", "历史记录与格式配置"),
+        ("桌面能力", "文件输出", "性能与权限"),
+    ),
+    Scenario(
+        "贪吃蛇 / 俄罗斯方块小游戏",
+        "game",
+        ("游戏循环", "得分统计", "重新开始"),
+        ("难度配置", "排行榜", "本地存档与音效"),
+        ("渲染刷新", "状态机", "输入响应"),
+    ),
 )
 
 
@@ -223,13 +343,17 @@ async def _resolve_backend_connection(
             if candidate_base_url and candidate_token:
                 state = str(snapshot.get("state") or "").strip().lower()
                 if bool(snapshot.get("ready")) or state == "running" or time.monotonic() >= deadline:
-                    return candidate_base_url, candidate_token, {
-                        "source": "desktop_backend_info",
-                        "path": str(snapshot.get("path") or desktop_info_path),
-                        "state": state,
-                        "ready": bool(snapshot.get("ready")),
-                        "updated_at": str(snapshot.get("updated_at") or "").strip(),
-                    }
+                    return (
+                        candidate_base_url,
+                        candidate_token,
+                        {
+                            "source": "desktop_backend_info",
+                            "path": str(snapshot.get("path") or desktop_info_path),
+                            "state": state,
+                            "ready": bool(snapshot.get("ready")),
+                            "updated_at": str(snapshot.get("updated_at") or "").strip(),
+                        },
+                    )
         if time.monotonic() >= deadline:
             break
         await asyncio.sleep(0.25)
@@ -237,13 +361,17 @@ async def _resolve_backend_connection(
     candidate_base_url = resolved_base_url or str(latest_snapshot.get("base_url") or "").strip()
     candidate_token = resolved_token or str(latest_snapshot.get("token") or "").strip()
     if candidate_base_url and candidate_token:
-        return candidate_base_url, candidate_token, {
-            "source": "desktop_backend_info",
-            "path": str(latest_snapshot.get("path") or desktop_info_path),
-            "state": str(latest_snapshot.get("state") or "").strip().lower(),
-            "ready": bool(latest_snapshot.get("ready")),
-            "updated_at": str(latest_snapshot.get("updated_at") or "").strip(),
-        }
+        return (
+            candidate_base_url,
+            candidate_token,
+            {
+                "source": "desktop_backend_info",
+                "path": str(latest_snapshot.get("path") or desktop_info_path),
+                "state": str(latest_snapshot.get("state") or "").strip().lower(),
+                "ready": bool(latest_snapshot.get("ready")),
+                "updated_at": str(latest_snapshot.get("updated_at") or "").strip(),
+            },
+        )
 
     raise ValueError(
         "Unable to resolve Polaris backend info from --base-url/--token, "
@@ -465,7 +593,12 @@ def _count_director_lineage(task_rows: list[dict[str, Any]]) -> dict[str, Any]:
         if isinstance(metadata, dict) and str(metadata.get("pm_task_id") or "").strip():
             linked += 1
     ratio = round((linked / total) * 100.0, 2) if total > 0 else 0.0
-    return {"total_tasks": total, "linked_task_count": linked, "linked_ratio": ratio, "passed": total > 0 and linked > 0}
+    return {
+        "total_tasks": total,
+        "linked_task_count": linked,
+        "linked_ratio": ratio,
+        "passed": total > 0 and linked > 0,
+    }
 
 
 def _find_latest_runtime_events_path(runtime_root: Path) -> str:
@@ -489,12 +622,15 @@ def _pick_scenario(round_index: int, offset: int = 0) -> Scenario:
     return SCENARIOS[index]
 
 
-def _build_round_directive(scenario: Scenario, *, round_number: int, agent_label: str, complexity_floor_lines: int) -> str:
+def _build_round_directive(
+    scenario: Scenario, *, round_number: int, agent_label: str, complexity_floor_lines: int
+) -> str:
     core = "\n".join(f"- {item}" for item in scenario.core_capabilities)
     enhancements = "\n".join(f"- {item}" for item in scenario.enhancements)
     focus = "\n".join(f"- {item}" for item in scenario.stress_focus)
-    return textwrap.dedent(
-        f"""\
+    return (
+        textwrap.dedent(
+            f"""\
         # Polaris AI Agent Headless Stress Directive
 
         本轮目标不是做一个玩具页面，而是用 Polaris 当前正式执行链去压测 {agent_label} 这类 AI Agent 在复杂项目上的稳定性。
@@ -541,7 +677,9 @@ def _build_round_directive(scenario: Scenario, *, round_number: int, agent_label
         3. 需要真实业务逻辑，不允许空壳 CRUD 或模板占位。
         4. 若出现失败，必须通过 Polaris 自己修复后再回归。
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
 
 
 class RuntimeWsCollector:
@@ -652,10 +790,10 @@ class FactorySseCollector:
                     if line.startswith(":"):
                         continue
                     if line.startswith("event:"):
-                        event_name = line[len("event:"):].strip()
+                        event_name = line[len("event:") :].strip()
                         continue
                     if line.startswith("data:"):
-                        data_lines.append(line[len("data:"):].lstrip())
+                        data_lines.append(line[len("data:") :].lstrip())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -790,9 +928,7 @@ async def _run_single_round(
     report.role_readiness = await _collect_role_readiness(client, roles)
     report.evidence["endpoints"].append("GET /v2/role/{role}/chat/status")
     not_ready_roles = [
-        role
-        for role in DEFAULT_REQUIRED_ROLES
-        if not bool((report.role_readiness.get(role) or {}).get("ready"))
+        role for role in DEFAULT_REQUIRED_ROLES if not bool((report.role_readiness.get(role) or {}).get("ready"))
     ]
     if not_ready_roles:
         report.issues.append("roles_not_ready:" + ",".join(not_ready_roles))
@@ -909,7 +1045,9 @@ async def _run_single_round(
         report.evidence["files"].append(str(plan_path))
     leakage_findings: list[dict[str, Any]] = []
     if pm_contract:
-        leakage_findings.extend(_detect_prompt_leakage(json.dumps(pm_contract, ensure_ascii=False), str(pm_contract_path)))
+        leakage_findings.extend(
+            _detect_prompt_leakage(json.dumps(pm_contract, ensure_ascii=False), str(pm_contract_path))
+        )
     if plan_text:
         leakage_findings.extend(_detect_prompt_leakage(plan_text, str(plan_path)))
     report.prompt_leakage_findings = leakage_findings
@@ -920,7 +1058,8 @@ async def _run_single_round(
     report.qa_result = {
         "path": str(qa_result_path),
         "reason": str(qa_result.get("reason") or "").strip(),
-        "passed": bool(qa_result.get("passed")) or str(qa_result.get("reason") or "").strip() == "integration_qa_passed",
+        "passed": bool(qa_result.get("passed"))
+        or str(qa_result.get("reason") or "").strip() == "integration_qa_passed",
     }
     if qa_result_path.exists():
         report.evidence["files"].append(str(qa_result_path))
@@ -1035,12 +1174,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--rounds", type=int, default=5, help="Maximum round count")
     parser.add_argument("--stable-required", type=int, default=2, help="Stop after N consecutive passing rounds")
-    parser.add_argument("--start-from", default="auto", choices=["auto", "architect", "pm"], help="Factory run start_from mode")
+    parser.add_argument(
+        "--start-from", default="auto", choices=["auto", "architect", "pm"], help="Factory run start_from mode"
+    )
     parser.add_argument("--director-iterations", type=int, default=1, help="Director iterations for each round")
     parser.add_argument("--round-timeout-seconds", type=int, default=1800, help="Timeout budget per factory round")
-    parser.add_argument("--poll-interval-seconds", type=float, default=2.0, help="Factory status poll interval in seconds")
+    parser.add_argument(
+        "--poll-interval-seconds", type=float, default=2.0, help="Factory status poll interval in seconds"
+    )
     parser.add_argument("--scenario-offset", type=int, default=0, help="Rotate scenario selection by an offset")
-    parser.add_argument("--complexity-floor-lines", type=int, default=500, help="Minimum code line target embedded in the directive")
+    parser.add_argument(
+        "--complexity-floor-lines", type=int, default=500, help="Minimum code line target embedded in the directive"
+    )
     parser.add_argument("--report-output", default="", help="Optional final JSON report path")
     return parser.parse_args(argv)
 

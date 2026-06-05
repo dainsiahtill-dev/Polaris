@@ -117,6 +117,7 @@ class ExecuteRoleSessionCommandV1:
     stream: bool = True
     stream_options: StreamTurnOptions | None = None
     host_kind: str | None = None  # Task #2: unified host protocol
+    timeout_seconds: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "role", _require_non_empty("role", self.role))
@@ -129,6 +130,8 @@ class ExecuteRoleSessionCommandV1:
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
         if self.stream_options is not None and not isinstance(self.stream_options, StreamTurnOptions):
             raise TypeError("stream_options must be a StreamTurnOptions instance")
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be > 0 when provided")
 
 
 @dataclass(frozen=True)

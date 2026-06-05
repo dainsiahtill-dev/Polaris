@@ -10,6 +10,7 @@ SCRIPT_PATH = Path(__file__).parent / "quality_check.py"
 def test_quality_check_import():
     """Test that quality_check.py can be imported."""
     import importlib.util
+
     spec = importlib.util.spec_from_file_location("quality_check", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

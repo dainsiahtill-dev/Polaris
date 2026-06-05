@@ -33,6 +33,7 @@ from .helpers import (
     build_native_tool_schemas,
     compute_context_summary,
     messages_to_input,
+    resolve_max_tokens,
     resolve_platform_retry_max,
     resolve_timeout_seconds,
 )
@@ -369,9 +370,13 @@ class LLMCaller:
             profile,
             override if isinstance(override, dict) else None,
         )
+        request_max_tokens = resolve_max_tokens(
+            max_tokens,
+            override if isinstance(override, dict) else None,
+        )
         request_options: dict[str, Any] = {
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_tokens": request_max_tokens,
             "timeout": request_timeout_seconds,
         }
         _copy_provider_policy_options(

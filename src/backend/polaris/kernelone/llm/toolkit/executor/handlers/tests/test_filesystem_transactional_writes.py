@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _should_use_whole_file_placeholder_replacement,
+    _should_use_whole_file_prefix_replacement,
     _write_temp_verify_rename,
 )
 
@@ -129,6 +130,163 @@ class TestEditBlocksPlaceholderFallback:
         assert (
             _should_use_whole_file_placeholder_replacement(
                 search_text="// TODO: implement",
+                replace_text=replacement,
+                rel="src/server/app.ts",
+                block_count=2,
+            )
+            is False
+        )
+
+    def test_allows_file_prefix_search_with_complete_typescript_replacement(self) -> None:
+        current = "\n".join(
+            [
+                "export interface AppRecord {",
+                "  id: string;",
+                "  roomId: string;",
+                "  priority: number;",
+                "}",
+                "",
+                "export class AppRegistry {",
+                "  private readonly rows = new Map<string, AppRecord[]>();",
+                "  list(roomId: string): AppRecord[] {",
+                "    return this.rows.get(roomId) || [];",
+                "  }",
+                "  upsert(record: AppRecord): AppRecord {",
+                "    const current = this.rows.get(record.roomId) || [];",
+                "    const rest = current.filter((item) => item.id !== record.id);",
+                "    this.rows.set(record.roomId, [...rest, record]);",
+                "    return record;",
+                "  }",
+                "}",
+            ]
+        )
+        search = current.split("    const rest", 1)[0] + "    const r\n"
+        replacement = "\n".join(
+            [
+                "import http from 'http';",
+                "",
+                "export interface AppRecord {",
+                "  id: string;",
+                "  roomId: string;",
+                "  priority: number;",
+                "}",
+                "",
+                "export class AppRegistry {",
+                "  private readonly rows = new Map<string, AppRecord[]>();",
+                "  list(roomId: string): AppRecord[] {",
+                "    return this.rows.get(roomId) || [];",
+                "  }",
+                "  upsert(record: AppRecord): AppRecord {",
+                "    const current = this.rows.get(record.roomId) || [];",
+                "    const rest = current.filter((item) => item.id !== record.id);",
+                "    this.rows.set(record.roomId, [...rest, record]);",
+                "    return record;",
+                "  }",
+                "}",
+                "",
+                "export function createServer(): http.Server {",
+                "  return http.createServer();",
+                "}",
+            ]
+        )
+
+        assert (
+            _should_use_whole_file_prefix_replacement(
+                current_text=current,
+                search_text=search,
+                replace_text=replacement,
+                rel="src/server/app.ts",
+                block_count=1,
+            )
+            is True
+        )
+
+    def test_allows_truncated_prefix_search_with_complete_typescript_replacement(self) -> None:
+        current = "\n".join(
+            [
+                "export interface SceneRecord {",
+                "  id: string;",
+                "  roomId: string;",
+                "  payload: Record<string, string>;",
+                "}",
+                "",
+                "export class SceneRegistry {",
+                "  private readonly rows = new Map<string, SceneRecord[]>();",
+                "  list(roomId: string): SceneRecord[] {",
+                "    return this.rows.get(roomId) || [];",
+                "  }",
+                "  upsert(record: SceneRecord): SceneRecord {",
+                "    const current = this.rows.get(record.roomId) || [];",
+                "    const next = { ...record, payload: { ...record.payload } };",
+                "    this.rows.set(record.roomId, [...current, next]);",
+                "    return next;",
+                "  }",
+                "}",
+            ]
+        )
+        search = current.split("    const next", 1)[0] + "    const next = { . ...[truncated]\n"
+        replacement = "\n".join(
+            [
+                "import * as THREE from 'three';",
+                "",
+                "export interface SceneRecord {",
+                "  id: string;",
+                "  roomId: string;",
+                "  payload: Record<string, string>;",
+                "}",
+                "",
+                "export class SceneRegistry {",
+                "  private readonly rows = new Map<string, SceneRecord[]>();",
+                "  list(roomId: string): SceneRecord[] {",
+                "    return this.rows.get(roomId) || [];",
+                "  }",
+                "  upsert(record: SceneRecord): SceneRecord {",
+                "    const current = this.rows.get(record.roomId) || [];",
+                "    const next = { ...record, payload: { ...record.payload } };",
+                "    this.rows.set(record.roomId, [...current, next]);",
+                "    return next;",
+                "  }",
+                "}",
+                "",
+                "export function createScene(): THREE.Scene {",
+                "  return new THREE.Scene();",
+                "}",
+            ]
+        )
+
+        assert (
+            _should_use_whole_file_prefix_replacement(
+                current_text=current,
+                search_text=search,
+                replace_text=replacement,
+                rel="src/client/three-scene.ts",
+                block_count=1,
+            )
+            is True
+        )
+
+    def test_rejects_prefix_fallback_when_search_is_not_file_prefix(self) -> None:
+        replacement = "\n".join(["export const value = 1;"] * 12)
+
+        assert (
+            _should_use_whole_file_prefix_replacement(
+                current_text="export const current = 1;\n",
+                search_text="export const other = 1;\n",
+                replace_text=replacement,
+                rel="src/server/app.ts",
+                block_count=1,
+            )
+            is False
+        )
+
+    def test_rejects_multiblock_prefix_fallback(self) -> None:
+        current = "\n".join(["export const value = 1;"] * 12)
+        replacement = "\n".join(["export const value = 2;"] * 12)
+
+        assert (
+            _should_use_whole_file_prefix_replacement(
+                current_text=current,
+                search_text=current,
                 replace_text=replacement,
                 rel="src/server/app.ts",
                 block_count=2,

@@ -34,9 +34,12 @@ TRIPLE_BACKTICKS = "```"
 
 # 增强的头部匹配模式 - 支持更多变体
 HEAD_PATTERNS = [
-    r"^<{4,9}\s*SEARCH[:\s]*([^\n]*)$",  # <<<< SEARCH[:filename]
-    r"^<{4,9}\s*ORIGINAL[:\s]*([^\n]*)$",  # <<<< ORIGINAL[:filename]
-    r"^<{4,9}\s*SOURCE[:\s]*([^\n]*)$",  # <<<< SOURCE[:filename]
+    r"^<{4,9}\s*SEARCH(\[[^\n]+\])$",  # <<<< SEARCH[filename]
+    r"^<{4,9}\s*ORIGINAL(\[[^\n]+\])$",  # <<<< ORIGINAL[filename]
+    r"^<{4,9}\s*SOURCE(\[[^\n]+\])$",  # <<<< SOURCE[filename]
+    r"^<{4,9}\s*SEARCH[:\s]+([^\n]*)$",  # <<<< SEARCH[:filename]
+    r"^<{4,9}\s*ORIGINAL[:\s]+([^\n]*)$",  # <<<< ORIGINAL[:filename]
+    r"^<{4,9}\s*SOURCE[:\s]+([^\n]*)$",  # <<<< SOURCE[:filename]
 ]
 
 DIVIDER_PATTERNS = [

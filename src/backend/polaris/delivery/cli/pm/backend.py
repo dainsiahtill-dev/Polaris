@@ -329,12 +329,17 @@ def _invoke_generic_role_runtime(
     run_id = str(getattr(usage_ctx, "run_id", "") or "").strip() if usage_ctx else ""
     task_id = str(getattr(usage_ctx, "task_id", "") or "").strip() if usage_ctx else ""
     timeout_seconds = int(getattr(state, "timeout", 0) or 0)
+    role_timeout_seconds = timeout_seconds if timeout_seconds > 0 else None
     requested_backend = str(backend_kind or "").strip().lower() or "generic"
     provider_policy = _provider_policy_for_backend(requested_backend)
     context: dict[str, Any] = {
         "source": "pm_cli_backend",
         "backend": requested_backend,
     }
+    if role_timeout_seconds is not None:
+        context["llm_call_timeout_seconds"] = role_timeout_seconds
+        context["request_timeout_seconds"] = role_timeout_seconds
+        context["timeout_seconds"] = role_timeout_seconds
     metadata: dict[str, Any] = {
         "role_runtime_required": True,
         "cognitive_runtime_required": True,
@@ -361,6 +366,7 @@ def _invoke_generic_role_runtime(
         context=context,
         metadata=metadata,
         stream=False,
+        timeout_seconds=role_timeout_seconds,
         host_kind="pm_cli_backend",
     )
     result = _run_async_from_sync(_create_role_runtime_service().execute_role_session(command))
@@ -481,6 +487,7 @@ def invoke_pm_backend(
         data={
             "backend": resolved_backend,
             "prompt_chars": len(str(prompt or "")),
+            "timeout_seconds": int(getattr(state, "timeout", 0) or 0),
         },
     )
 

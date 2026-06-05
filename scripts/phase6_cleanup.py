@@ -195,6 +195,7 @@ For the current implementation, see:
 
         # Run tests
         import subprocess
+
         result = subprocess.run(
             [sys.executable, str(test_script)],
             capture_output=True,
@@ -218,6 +219,7 @@ For the current implementation, see:
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
             import json
+
             manifest = {
                 "timestamp": datetime.now().isoformat(),
                 "dry_run": self.dry_run,
@@ -281,9 +283,7 @@ For the current implementation, see:
 
 def main() -> int:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Phase 6 cleanup - Remove feature flags and legacy code"
-    )
+    parser = argparse.ArgumentParser(description="Phase 6 cleanup - Remove feature flags and legacy code")
     parser.add_argument(
         "--dry-run",
         action="store_true",

@@ -27,7 +27,10 @@ from polaris.cells.orchestration.pm_planning.internal.pipeline_ports import (
     normalize_pm_payload,
     normalize_priority,
 )
-from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import _CARD3D_PM_REQUIRED_DOMAINS
+from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+    _CARD3D_PM_REQUIRED_DOMAINS,
+    build_card3d_pm_required_domain_contract,
+)
 from polaris.cells.orchestration.pm_planning.pipeline import (
     _autofix_domain_coverage_critical_issues,
     _build_pm_quality_retry_prompt,
@@ -62,7 +65,7 @@ class TestNormalizePriority:
 
 
 class TestAutofixDomainCoverageCriticalIssues:
-    def test_card3d_domain_autofix_is_hard_quality_evidence(self) -> None:
+    def test_card3d_bulk_domain_autofix_is_hard_quality_evidence(self) -> None:
         issues = _autofix_domain_coverage_critical_issues(
             {"card3d_domain_tasks_added": len(_CARD3D_PM_REQUIRED_DOMAINS), "game_domain_tasks_added": 0}
         )
@@ -70,6 +73,13 @@ class TestAutofixDomainCoverageCriticalIssues:
         assert len(issues) == 1
         assert "card3d" in issues[0]
         assert "Regenerate the PM contract" in issues[0]
+
+    def test_card3d_minor_domain_autofix_does_not_force_retry(self) -> None:
+        issues = _autofix_domain_coverage_critical_issues(
+            {"card3d_domain_tasks_added": 2, "game_domain_tasks_added": 0}
+        )
+
+        assert issues == []
 
     def test_card3d_retry_prompt_includes_exact_domain_contract(self) -> None:
         prompt = _build_pm_quality_retry_prompt(
@@ -86,6 +96,8 @@ class TestAutofixDomainCoverageCriticalIssues:
         )
 
         assert "CARD3D HARD CONTRACT" in prompt
+        assert "default 1-3 task batch limit" in prompt
+        assert "Compact output rule" in prompt
         assert "Do not group multiple domains into one task" in prompt
         assert "FINAL NON-NEGOTIABLE DOMAIN CONTRACT" in prompt
         assert "PM-CARD3D-CLIENT3D-01" in prompt
@@ -94,6 +106,16 @@ class TestAutofixDomainCoverageCriticalIssues:
         assert "tests/unit/card-rules.test.ts" in prompt
         assert "tests/e2e/card-table-3d.test.ts" in prompt
         assert "replacing/removing existing trivial arithmetic placeholder tests" in prompt
+
+    def test_card3d_domain_contract_is_canonical_prompt_source(self) -> None:
+        contract = build_card3d_pm_required_domain_contract()
+
+        assert "CARD3D HARD CONTRACT" in contract
+        assert f"Required task count: at least {len(_CARD3D_PM_REQUIRED_DOMAINS)}." in contract
+        assert "default 1-3 task batch limit" in contract
+        assert "exactly 3 execution_checklist items" in contract
+        assert "PM-CARD3D-CLIENT3D-01" in contract
+        assert "PM-CARD3D-TESTS-22" in contract
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +617,44 @@ def test_cell_pm_invoke_port_instantiates() -> None:
     assert port is not None
 
 
+def test_cell_pm_invoke_port_build_prompt_includes_card3d_domain_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    monkeypatch.setattr(
+        "polaris.kernelone.memory.integration.get_anthropomorphic_context",
+        lambda *args, **kwargs: {
+            "persona_instruction": "",
+            "anthropomorphic_context": "",
+            "prompt_context_obj": SimpleNamespace(model_dump=lambda: {}),
+        },
+    )
+    monkeypatch.setattr(
+        "polaris.kernelone.prompts.meta_prompting.build_meta_prompting_appendix",
+        lambda *args, **kwargs: "",
+    )
+
+    prompt = CellPmInvokePort().build_prompt(
+        requirements="构建多人在线创意卡牌游戏，前端 TypeScript + Three.js，后端 Node.js。",
+        plan_text="Card3D client, Node.js server, WebSocket realtime sync, rooms, lobby, rules, and tests.",
+        gap_report="",
+        last_qa="",
+        last_tasks=[],
+        director_result={},
+        pm_state={},
+        workspace_root=str(tmp_path),
+    )
+
+    assert "Card3D multiplayer decomposition override" in prompt
+    assert "CARD3D HARD CONTRACT" in prompt
+    assert "禁止 1-3 小批量" in prompt
+    assert "do not output audit reports" in prompt.lower()
+    assert "This overrides the default 1-3 task batch limit" in prompt
+    assert f"Required task count: at least {len(_CARD3D_PM_REQUIRED_DOMAINS)}." in prompt
+    assert "PM-CARD3D-CLIENT3D-01" in prompt
+    assert "PM-CARD3D-TESTS-22" in prompt
+
+
 def test_cell_pm_invoke_port_normalizes_ollama_response(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
@@ -623,6 +683,53 @@ def test_cell_pm_invoke_port_normalizes_ollama_response(monkeypatch: pytest.Monk
     assert command.metadata["requested_backend"] == "ollama"
     assert command.metadata["allowed_provider_types"] == ("ollama",)
     assert command.context["llm_provider_policy"]["allowed_provider_types"] == ("ollama",)
+
+
+def test_cell_pm_invoke_port_propagates_timeout_to_role_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class TimedState(NoopPmStatePort):
+        @property
+        def timeout(self) -> int:
+            return 300
+
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            captured["command"] = command
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                output='{"tasks": []}',
+            )
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
+    )
+
+    output = CellPmInvokePort().invoke(TimedState(), "prompt", "generic", SimpleNamespace(), None)
+
+    assert output == '{"tasks": []}'
+    command = captured["command"]
+    assert command.timeout_seconds == 300
+    assert command.context["_transaction_kernel_forced_tool_definitions"] == []
+    assert command.context["_transaction_kernel_forced_tool_choice"] == "none"
+    assert command.context["disable_internal_tool_rounds"] is True
+    assert command.metadata["max_tokens"] == 16_000
+    assert command.metadata["timeout_seconds"] == 300
+    assert command.context["llm_max_tokens"] == 16_000
+    assert command.context["max_output_tokens"] == 16_000
+    assert command.context["max_tokens"] == 16_000
+    assert command.context["llm_call_timeout_seconds"] == 300
+    assert command.context["request_timeout_seconds"] == 300
+    assert command.context["suppress_tool_policy_prompt"] is True
+    assert command.context["suppress_working_memory_contract"] is True
+    assert command.context["timeout_seconds"] == 300
 
 
 def test_cell_pm_invoke_port_raises_on_ollama_error(monkeypatch: pytest.MonkeyPatch) -> None:

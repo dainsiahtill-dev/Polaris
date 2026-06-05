@@ -33,9 +33,11 @@ FILES_TO_REMOVE: List[Tuple[str, str]] = [
 # 待清理的重复导入
 IMPORTS_TO_CLEAN: List[Tuple[str, str, str]] = [
     # (文件, 旧导入, 新导入)
-    ("src/backend/app/orchestration/workflows/pm_workflow.py",
-     "from .director_workflow import DirectorWorkflow",
-     "from .generic_pipeline_workflow import GenericPipelineWorkflow"),
+    (
+        "src/backend/app/orchestration/workflows/pm_workflow.py",
+        "from .director_workflow import DirectorWorkflow",
+        "from .generic_pipeline_workflow import GenericPipelineWorkflow",
+    ),
 ]
 
 
@@ -105,13 +107,15 @@ def generate_cleanup_report(dry_run: bool = True) -> str:
         lines.append(f"    大小: {size} bytes")
         lines.append("")
 
-    lines.extend([
-        "-" * 60,
-        f"总计: {total_size} bytes ({total_size / 1024:.2f} KB)",
-        "",
-        "📦 待更新导入:",
-        "-" * 60,
-    ])
+    lines.extend(
+        [
+            "-" * 60,
+            f"总计: {total_size} bytes ({total_size / 1024:.2f} KB)",
+            "",
+            "📦 待更新导入:",
+            "-" * 60,
+        ]
+    )
 
     for filepath, old_import, new_import in IMPORTS_TO_CLEAN:
         exists = check_file_exists(filepath)
@@ -121,23 +125,23 @@ def generate_cleanup_report(dry_run: bool = True) -> str:
         lines.append(f"    + {new_import}")
         lines.append("")
 
-    lines.extend([
-        "=" * 60,
-        "⚠️  注意事项:",
-        "1. 清理前请确保已通过回归测试",
-        "2. 清理文件会被重命名为 .bak 备份",
-        "3. 如需恢复，手动将 .bak 文件重命名即可",
-        "4. 清理后请重新运行架构守护测试",
-        "=" * 60,
-    ])
+    lines.extend(
+        [
+            "=" * 60,
+            "⚠️  注意事项:",
+            "1. 清理前请确保已通过回归测试",
+            "2. 清理文件会被重命名为 .bak 备份",
+            "3. 如需恢复，手动将 .bak 文件重命名即可",
+            "4. 清理后请重新运行架构守护测试",
+            "=" * 60,
+        ]
+    )
 
     return "\n".join(lines)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Polaris Phase 8 清理脚本"
-    )
+    parser = argparse.ArgumentParser(description="Polaris Phase 8 清理脚本")
     parser.add_argument(
         "--dry-run",
         action="store_true",

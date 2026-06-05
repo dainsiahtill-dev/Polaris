@@ -8,6 +8,19 @@ from typing import Any
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 
 _PATH_KEYS: tuple[str, ...] = ("file", "filepath", "path", "target", "target_file", "file_path")
+_NESTED_PATH_KEYS: tuple[str, ...] = (
+    "arguments",
+    "payload",
+    "result",
+    "effect_receipt",
+    "results",
+    "files_modified",
+    "files_created",
+    "modified_files",
+    "changed_files",
+    "affected_files",
+    "new_files",
+)
 _CONTROL_WRITE_BASENAMES: frozenset[str] = frozenset({"session_patch.md"})
 
 
@@ -26,7 +39,7 @@ def extract_target_path_from_payload(payload: Any) -> str | None:
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 return value
-        for nested_key in ("arguments", "result", "effect_receipt"):
+        for nested_key in _NESTED_PATH_KEYS:
             nested_path = extract_target_path_from_payload(payload.get(nested_key))
             if nested_path:
                 return nested_path
@@ -35,6 +48,8 @@ def extract_target_path_from_payload(payload: Any) -> str | None:
             nested_path = extract_target_path_from_payload(item)
             if nested_path:
                 return nested_path
+    elif isinstance(payload, str) and payload.strip():
+        return payload
     return None
 
 

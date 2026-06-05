@@ -706,6 +706,11 @@ def test_build_workflow_director_task_rows_merges_base_contract_fields() -> None
             "title": "Wire Workflow snapshot into main dashboard",
             "goal": "Main dashboard must show current task state",
             "priority": "HIGH",
+            "target_files": ["src/client/lobby.ts"],
+            "scope_paths": ["src/client"],
+            "acceptance_criteria": ["npm run build passes"],
+            "execution_checklist": ["replace the lobby seed module"],
+            "dependencies": ["PM-1"],
         }
     ]
 
@@ -720,6 +725,13 @@ def test_build_workflow_director_task_rows_merges_base_contract_fields() -> None
     assert task_rows[0]["description"] == "Main dashboard must show current task state"
     assert task_rows[0]["status"] == "COMPLETED"
     assert task_rows[0]["priority"] == "HIGH"
+    assert task_rows[0]["target_files"] == ["src/client/lobby.ts"]
+    assert task_rows[0]["scope_paths"] == ["src/client"]
+    assert task_rows[0]["acceptance_criteria"] == ["npm run build passes"]
+    assert task_rows[0]["dependencies"] == ["PM-1"]
+    assert task_rows[0]["metadata"]["target_files"] == ["src/client/lobby.ts"]
+    assert task_rows[0]["metadata"]["scope_paths"] == ["src/client"]
+    assert task_rows[0]["metadata"]["execution_checklist"] == ["replace the lobby seed module"]
 
 
 def test_merge_workflow_tasks_projects_runtime_metadata_fields() -> None:

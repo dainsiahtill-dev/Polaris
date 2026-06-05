@@ -103,6 +103,20 @@ def test_scan_detects_structural_verification_scripts(tmp_path: Path) -> None:
     assert "build verification completed" in errors[0]
 
 
+def test_scan_detects_patch_residue_marker(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "assets" / "card-assets.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "export const assetReady = true;\n>>>> REPLACE src/assets/card-assets.ts\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/assets/card-assets.ts"])
+
+    assert errors
+    assert "patch residue marker" in errors[0]
+
+
 def test_scan_detects_repeated_numeric_helper_filler(tmp_path: Path) -> None:
     target = tmp_path / "src" / "client" / "feature.ts"
     target.parent.mkdir(parents=True, exist_ok=True)

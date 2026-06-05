@@ -174,6 +174,9 @@ class LLMInvoker:
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
         model = profile.model or "default"
+        from .helpers import resolve_max_tokens
+
+        effective_max_tokens = resolve_max_tokens(max_tokens, getattr(context, "context_override", None))
 
         start_time = time.perf_counter()
         prepared: PreparedLLMRequest | None = None
@@ -196,7 +199,7 @@ class LLMInvoker:
                 system_prompt=system_prompt,
                 context=context,
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=effective_max_tokens,
                 stream=False,
                 response_model=response_model,
                 platform_retry_max=platform_retry_max,
@@ -219,7 +222,7 @@ class LLMInvoker:
                 metadata=_with_context_os_audit(
                     {
                         "temperature": temperature,
-                        "max_tokens": max_tokens,
+                        "max_tokens": effective_max_tokens,
                         "prompt_fingerprint": prompt_fingerprint,
                         "native_tool_mode": prepared.native_tool_mode,
                         "response_format_mode": prepared.response_format_mode,

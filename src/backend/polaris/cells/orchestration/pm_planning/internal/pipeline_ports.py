@@ -369,6 +369,10 @@ def _build_pm_prompt_impl(
     workspace_root: str = "",
 ) -> str:
     from polaris.cells.context.engine.public.service import get_anthropomorphic_context_v2
+    from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+        build_card3d_pm_required_domain_contract,
+        should_apply_card3d_pm_domain_contract,
+    )
     from polaris.kernelone.events import emit_event
     from polaris.kernelone.memory.integration import get_anthropomorphic_context
     from polaris.kernelone.prompts.loader import current_profile, get_template, render_template
@@ -446,6 +450,26 @@ def _build_pm_prompt_impl(
             "anthropomorphic_context": anthro["anthropomorphic_context"],
         },
     )
+    apply_card3d_contract = should_apply_card3d_pm_domain_contract(requirements, plan_text)
+    if apply_card3d_contract:
+        rendered = (
+            rendered.replace(
+                "你的工作是选择 1-3 个任务以推进 GLOBAL REQUIREMENTS，",
+                "你的工作是按后文 Card3D 硬合同输出完整任务矩阵以推进 GLOBAL REQUIREMENTS，",
+            )
+            .replace(
+                "- 仅提供 1-3 个任务。",
+                "- Card3D 硬合同场景禁止 1-3 小批量；必须输出全部必需域任务。",
+            )
+            .replace(
+                "Your job is to pick 1-3 tasks that advance the GLOBAL REQUIREMENTS and",
+                "Your job is to emit the complete task matrix required by the Card3D hard contract and",
+            )
+            .replace(
+                "- Provide 1-3 tasks only.",
+                "- For Card3D hard-contract scenarios, the 1-3 task batch rule is disabled; emit every required domain task.",
+            )
+        )
     if is_zh:
         role_boundary_rules = (
             "\n角色权限边界（必遵守）：\n"
@@ -475,6 +499,13 @@ def _build_pm_prompt_impl(
         "pm",
         limit=4,
     )
+    domain_contract = ""
+    if apply_card3d_contract:
+        domain_contract = (
+            "\nCard3D multiplayer decomposition override (required):\n"
+            + build_card3d_pm_required_domain_contract()
+            + "\n"
+        )
     return (
         rendered
         + "\n\nBacklog mapping rule (required):\n"
@@ -517,6 +548,9 @@ def _build_pm_prompt_impl(
         + "- Every task SHOULD include `backlog_ref` mapped to the originating backlog/blueprint item text.\n"
         + "- In docs-stage, every task MUST include `metadata.doc_sections` (array) and `metadata.change_intent`.\n"
         + "- If active docs-stage is enabled, keep all task paths strictly within `active_document` (or its direct doc directory scope only when explicitly needed).\n"
+        + "\nPM planning output boundary (required):\n"
+        + "- Output the PM task JSON object only; do not output audit reports, markdown tables, or `<SESSION_PATCH>` blocks.\n"
+        + domain_contract
         + role_boundary_rules
         + meta_prompt_appendix
     )
@@ -639,7 +673,9 @@ class CellPmInvokePort:
                 source="runtime",
                 data={
                     "backend": resolved_backend,
+                    "max_tokens": 16_000,
                     "prompt_chars": len(str(prompt or "")),
+                    "timeout_seconds": state_timeout if state_timeout > 0 else 360,
                 },
             )
 
@@ -648,11 +684,23 @@ class CellPmInvokePort:
             from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
             runtime_timeout = state_timeout if state_timeout > 0 else 360
+            pm_planning_max_tokens = 16_000
             provider_policy = self._provider_policy_for_backend(resolved_backend)
             role_context: dict[str, Any] = {
+                "_transaction_kernel_forced_tool_definitions": [],
+                "_transaction_kernel_forced_tool_choice": "none",
                 "pm_planning_pipeline": True,
                 "backend_kind": resolved_backend,
+                "disable_internal_tool_rounds": True,
                 "iteration": iteration,
+                "llm_call_timeout_seconds": runtime_timeout,
+                "llm_max_tokens": pm_planning_max_tokens,
+                "max_output_tokens": pm_planning_max_tokens,
+                "max_tokens": pm_planning_max_tokens,
+                "request_timeout_seconds": runtime_timeout,
+                "suppress_tool_policy_prompt": True,
+                "suppress_working_memory_contract": True,
+                "timeout_seconds": runtime_timeout,
             }
             role_metadata: dict[str, Any] = {
                 "source": "orchestration.pm_planning.pipeline_ports",
@@ -661,7 +709,9 @@ class CellPmInvokePort:
                 "context_os_expected": True,
                 "validate_output": False,
                 "max_retries": 0,
+                "max_tokens": pm_planning_max_tokens,
                 "requested_backend": resolved_backend,
+                "timeout_seconds": runtime_timeout,
             }
             if provider_policy:
                 role_context.update(provider_policy)
@@ -679,6 +729,7 @@ class CellPmInvokePort:
                 metadata=role_metadata,
                 stream=False,
                 host_kind="pm_planning_pipeline",
+                timeout_seconds=runtime_timeout,
             )
             runtime_result = _run_async_from_sync(
                 lambda: RoleRuntimeService().execute_role_session(role_command),

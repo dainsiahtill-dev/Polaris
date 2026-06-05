@@ -65,6 +65,10 @@ _TRIVIAL_ARITHMETIC_EXPECT_RE = re.compile(
     r"expect\s*\(\s*\d+\s*(?:[+\-*/])\s*\d+\s*\)\s*\.\s*to(?:Be|Equal)\s*\(\s*\d+\s*\)",
     re.IGNORECASE,
 )
+_PATCH_RESIDUE_RE = re.compile(
+    r"(?m)^\s*(?:<{4,7}\s*SEARCH\b|>{4,7}\s*REPLACE\b|END\s+PATCH_FILE\b|PATCH_FILE(?::|\s+))",
+    re.IGNORECASE,
+)
 
 
 def scan_workspace_artifact_quality(
@@ -173,6 +177,8 @@ def _scan_file(full_path: Path, relative_path: str) -> list[str]:
         )
     if helper_count >= 3 and _GENERIC_STORE_RECORD_RE.search(text) and _GENERIC_STORE_MAP_RE.search(text):
         errors.append(f"Artifact quality scan failed: generic payload/index store scaffold in {relative_path}")
+    if _PATCH_RESIDUE_RE.search(text):
+        errors.append(f"Artifact quality scan failed: patch residue marker in {relative_path}")
     if _is_test_like_artifact_path(relative_path):
         trivial_count = len(_TRIVIAL_ARITHMETIC_EXPECT_RE.findall(text))
         if trivial_count >= 3:

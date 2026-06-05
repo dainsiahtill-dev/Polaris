@@ -44,7 +44,7 @@ class RefactoringValidator:
                 default={"server.port": 8080},
                 persisted={"pm.backend": "embedded"},
                 env={"server.port": "9000"},
-                cli={"server.port": 49977}
+                cli={"server.port": 49977},
             )
 
             assert snapshot.get("server.port") == 49977
@@ -76,9 +76,7 @@ class RefactoringValidator:
     def validate_phase3_orchestration(self) -> bool:
         """验证 Phase 3: RuntimeOrchestrator."""
         try:
-            from core.orchestration import (
-                RuntimeOrchestrator, ServiceDefinition, RunMode
-            )
+            from core.orchestration import RuntimeOrchestrator, ServiceDefinition, RunMode
 
             orchestrator = RuntimeOrchestrator()
             assert len(orchestrator.list_active()) == 0
@@ -130,15 +128,14 @@ class RefactoringValidator:
             return True
         except Exception as e:
             import traceback
+
             self.errors.append(f"Phase 4: {e}\n{traceback.format_exc()}")
             return False
 
     def validate_phase5_observability(self) -> bool:
         """验证 Phase 5: 可观测性."""
         try:
-            from core.orchestration import (
-                create_observability_stack, EventStream
-            )
+            from core.orchestration import create_observability_stack, EventStream
 
             stream = EventStream()
             ui, metrics, health, logger = create_observability_stack(stream)
@@ -191,7 +188,7 @@ class RefactoringValidator:
             event = OrchestrationEvent(
                 event_type=EventType.SPAWNED,
                 source="backend",
-                payload={"event": "backend_started", "port": 49977, "host": "127.0.0.1"}
+                payload={"event": "backend_started", "port": 49977, "host": "127.0.0.1"},
             )
             stream.publish(event)
 
@@ -207,6 +204,7 @@ class RefactoringValidator:
             return True
         except Exception as e:
             import traceback
+
             self.errors.append(f"Electron: {e}\n{traceback.format_exc()}")
             return False
 

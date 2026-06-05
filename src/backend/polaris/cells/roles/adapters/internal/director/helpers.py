@@ -108,9 +108,9 @@ _LOW_QUALITY_PATTERNS = (
 )
 
 _PATCH_RESIDUE_PATTERNS = (
-    re.compile(r"(?m)^<<<<<<<\s*SEARCH\s*$", re.IGNORECASE),
+    re.compile(r"(?m)^<{4,7}\s*SEARCH\b", re.IGNORECASE),
     re.compile(r"(?m)^=======\s*$"),
-    re.compile(r"(?m)^>>>>>>>\s*REPLACE\s*$", re.IGNORECASE),
+    re.compile(r"(?m)^>{4,7}\s*REPLACE\b", re.IGNORECASE),
     re.compile(r"(?m)^END\s+PATCH_FILE\s*$", re.IGNORECASE),
     re.compile(r"(?m)^PATCH_FILE(?::|\s+)", re.IGNORECASE),
 )
@@ -128,9 +128,15 @@ _DOMAIN_STOPWORDS = {
     "task",
     "tasks",
     "project",
+    "src",
     "module",
     "code",
     "implement",
+    "extend",
+    "extends",
+    "according",
+    "execute",
+    "execution",
     "feature",
     "service",
     "system",
@@ -280,14 +286,38 @@ def has_successful_write_tool(tool_results: list[dict[str, Any]]) -> bool:
 
 
 def _is_successful_tool_result(item: Mapping[str, Any]) -> bool:
+    direct_signal = _tool_result_success_signal(item)
+    if direct_signal is not None:
+        return direct_signal
+    result = item.get("result")
+    if isinstance(result, Mapping):
+        nested_signal = _tool_result_success_signal(result)
+        if nested_signal is not None:
+            return nested_signal
+    return False
+
+
+def _tool_result_success_signal(item: Mapping[str, Any]) -> bool | None:
     status = str(item.get("status") or "").strip().lower()
     if status:
         return status == "success"
     if "success" in item:
-        return bool(item.get("success"))
+        return _coerce_tool_success_value(item.get("success"))
     if "ok" in item:
-        return bool(item.get("ok"))
-    return False
+        return _coerce_tool_success_value(item.get("ok"))
+    return None
+
+
+def _coerce_tool_success_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "ok", "success"}:
+            return True
+        if token in {"0", "false", "no", "error", "failed"}:
+            return False
+    return bool(value)
 
 
 def _has_tool_execution_receipt(item: Mapping[str, Any]) -> bool:
@@ -371,7 +401,7 @@ def extract_kernel_tool_results(role_response: dict[str, Any]) -> list[dict[str,
         if not tool_name:
             tool_name = "unknown"
         status = str(item.get("status") or "").strip().lower()
-        success = _is_successful_tool_result(item) if status or "ok" in item else bool(item.get("success", False))
+        success = _is_successful_tool_result(item)
         normalized.append(
             {
                 "tool": tool_name,

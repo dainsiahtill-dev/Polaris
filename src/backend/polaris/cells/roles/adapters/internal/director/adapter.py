@@ -38,6 +38,39 @@ from .state_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _copy_mapping_payload(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, dict):
+            return dict(dumped)
+    return None
+
+
+def _copy_dict_list_payload(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _first_mapping_payload(*values: Any) -> dict[str, Any] | None:
+    for value in values:
+        copied = _copy_mapping_payload(value)
+        if copied:
+            return copied
+    return None
+
+
+def _first_dict_list_payload(*values: Any) -> list[dict[str, Any]]:
+    for value in values:
+        copied = _copy_dict_list_payload(value)
+        if copied:
+            return copied
+    return []
+
+
 def _normalize_director_role_response(role_response: Any) -> dict[str, Any]:
     """Normalize role-kernel output without hiding provider/runtime failures."""
 
@@ -56,16 +89,29 @@ def _normalize_director_role_response(role_response: Any) -> dict[str, Any]:
     provider = str(response_payload.get("provider") or response_payload.get("provider_id") or "").strip()
     model = str(response_payload.get("model") or "").strip()
     metadata_raw = response_payload.get("metadata")
-    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    metadata = _copy_mapping_payload(metadata_raw) or {}
     execution_stats_raw = response_payload.get("execution_stats")
-    execution_stats: dict[str, Any] = execution_stats_raw if isinstance(execution_stats_raw, dict) else {}
-    batch_receipt_raw = response_payload.get("batch_receipt")
-    batch_receipt: dict[str, Any] | None = batch_receipt_raw if isinstance(batch_receipt_raw, dict) else None
-    tool_results_raw = response_payload.get("tool_results")
-    tool_results = (
-        [dict(item) for item in tool_results_raw if isinstance(item, dict)]
-        if isinstance(tool_results_raw, list)
-        else []
+    execution_stats = _copy_mapping_payload(execution_stats_raw) or {}
+    raw_response = (
+        response_payload.get("raw_response") if isinstance(response_payload.get("raw_response"), dict) else {}
+    )
+    raw_metadata = raw_response.get("metadata") if isinstance(raw_response, dict) else {}
+    raw_usage = raw_response.get("usage") if isinstance(raw_response, dict) else {}
+    batch_receipt = _first_mapping_payload(
+        response_payload.get("batch_receipt"),
+        metadata.get("batch_receipt"),
+        execution_stats.get("batch_receipt"),
+        raw_response.get("batch_receipt") if isinstance(raw_response, dict) else None,
+        raw_metadata.get("batch_receipt") if isinstance(raw_metadata, dict) else None,
+        raw_usage.get("batch_receipt") if isinstance(raw_usage, dict) else None,
+    )
+    tool_results = _first_dict_list_payload(
+        response_payload.get("tool_results"),
+        metadata.get("tool_results"),
+        execution_stats.get("tool_results"),
+        raw_response.get("tool_results") if isinstance(raw_response, dict) else None,
+        raw_metadata.get("tool_results") if isinstance(raw_metadata, dict) else None,
+        raw_usage.get("tool_results") if isinstance(raw_usage, dict) else None,
     )
     tool_calls_raw = response_payload.get("tool_calls")
     tool_calls = (
@@ -425,6 +471,16 @@ class DirectorAdapter(BaseRoleAdapter):
         result_usage = dict(getattr(result, "usage", {}) or {})
         output = str(getattr(result, "output", "") or "")
         error = str(getattr(result, "error_message", "") or getattr(result, "error_code", "") or "").strip()
+        batch_receipt = _first_mapping_payload(
+            result_metadata.get("batch_receipt"),
+            result_usage.get("batch_receipt"),
+            getattr(result, "batch_receipt", None),
+        )
+        tool_results = _first_dict_list_payload(
+            result_metadata.get("tool_results"),
+            result_usage.get("tool_results"),
+            getattr(result, "tool_results", None),
+        )
         tool_calls = [
             {"tool": str(name), "tool_name": str(name), "status": "observed", "success": False}
             for name in tuple(getattr(result, "tool_calls", ()) or ())
@@ -446,6 +502,8 @@ class DirectorAdapter(BaseRoleAdapter):
                 **result_usage,
                 "role_runtime_entrypoint": "roles.runtime.execute_role_session",
             },
+            "batch_receipt": batch_receipt,
+            "tool_results": tool_results,
             "tool_calls": tool_calls,
             "artifacts": list(getattr(result, "artifacts", ()) or ()),
             "raw_response": {
@@ -456,6 +514,8 @@ class DirectorAdapter(BaseRoleAdapter):
                 "task_id": str(getattr(result, "task_id", "") or task_id),
                 "metadata": result_metadata,
                 "usage": result_usage,
+                "batch_receipt": batch_receipt,
+                "tool_results": tool_results,
                 "tool_calls": list(getattr(result, "tool_calls", ()) or ()),
                 "artifacts": list(getattr(result, "artifacts", ()) or ()),
                 "error_code": str(getattr(result, "error_code", "") or ""),

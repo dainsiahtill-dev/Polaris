@@ -16,9 +16,7 @@ def run_backend_tests():
     print("=" * 50)
 
     result = subprocess.run(
-        ["python", "-m", "pytest", "src/backend/tests/test_court_mapping.py", "-v"],
-        capture_output=True,
-        text=True
+        ["python", "-m", "pytest", "src/backend/tests/test_court_mapping.py", "-v"], capture_output=True, text=True
     )
 
     print(result.stdout)
@@ -74,13 +72,13 @@ def check_api_endpoints():
     print("=" * 50)
 
     router_file = Path("src/backend/app/routers/court.py")
-    content = router_file.read_text(encoding='utf-8')
+    content = router_file.read_text(encoding="utf-8")
 
     endpoints = [
-        ('GET /court/topology', '/topology'),
-        ('GET /court/state', '/state'),
-        ('GET /court/actors', '/actors'),
-        ('GET /court/scenes', '/scenes'),
+        ("GET /court/topology", "/topology"),
+        ("GET /court/state", "/state"),
+        ("GET /court/actors", "/actors"),
+        ("GET /court/scenes", "/scenes"),
     ]
 
     for name, pattern in endpoints:

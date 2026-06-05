@@ -27,11 +27,9 @@ from polaris.cells.orchestration.pm_planning.internal.shared_quality import (
     evaluate_pm_task_quality as evaluate_shared_pm_task_quality,
 )
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
-    _CARD3D_PM_DOMAIN_SCOPE_PATHS,
-    _CARD3D_PM_DOMAIN_TARGET_FILES,
-    _CARD3D_PM_REQUIRED_DOMAINS,
     _GAME_PM_DOMAIN_SCOPE_PATHS,
     _GAME_PM_REQUIRED_DOMAINS,
+    build_card3d_pm_required_domain_contract,
 )
 
 if TYPE_CHECKING:
@@ -44,6 +42,7 @@ _PM_TASK_QUALITY_MODE_ENV = "KERNELONE_PM_TASK_QUALITY_MODE"
 _PM_TASK_QUALITY_RETRIES_ENV = "KERNELONE_PM_TASK_QUALITY_RETRIES"
 _PM_TASK_QUALITY_MODES = {"off", "warn", "strict"}
 _PM_TASK_QUALITY_DEFAULT_MODE = "strict"
+_PM_DOMAIN_AUTOFIX_BULK_RETRY_THRESHOLD = 3
 
 _PM_PROMPT_LEAK_TOKENS = (
     "you are ",
@@ -160,18 +159,18 @@ def _resolve_pm_task_quality_retries() -> int:
 
 
 def _autofix_domain_coverage_critical_issues(autofix_stats: dict[str, Any]) -> list[str]:
-    """Return hard quality failures when PM domain coverage was synthesized."""
+    """Return hard quality failures when PM domain coverage synthesis is too broad."""
 
     issues: list[str] = []
     card3d_added = int(autofix_stats.get("card3d_domain_tasks_added") or 0)
     game_added = int(autofix_stats.get("game_domain_tasks_added") or 0)
-    if card3d_added > 0:
+    if card3d_added >= _PM_DOMAIN_AUTOFIX_BULK_RETRY_THRESHOLD:
         issues.append(
             "PM omitted multiplayer card3d delivery domains; "
             f"quality autofix synthesized {card3d_added} card3d task(s). "
             "Regenerate the PM contract so those Director tasks come from PM planning."
         )
-    if game_added > 0:
+    if game_added >= _PM_DOMAIN_AUTOFIX_BULK_RETRY_THRESHOLD:
         issues.append(
             "PM omitted required game delivery domains; "
             f"quality autofix synthesized {game_added} game task(s). "
@@ -369,35 +368,7 @@ def _build_pm_json_retry_prompt(invalid_output: str) -> str:
 def _build_domain_retry_guidance(critical_issues: list[str]) -> str:
     joined = "\n".join(critical_issues).lower()
     if "card3d" in joined:
-        lines = [
-            "CARD3D HARD CONTRACT:",
-            "The tasks array MUST contain one Director task for EVERY row below.",
-            "Do not group multiple domains into one task. Do not omit any row. Do not replace this table with bootstrap-only tasks.",
-            f"Required task count: at least {len(_CARD3D_PM_REQUIRED_DOMAINS)}.",
-            "Use the listed id, metadata.domain, target_files, scope_paths, and measurable acceptance for each task:",
-        ]
-        for index, domain in enumerate(_CARD3D_PM_REQUIRED_DOMAINS, start=1):
-            target_files = _CARD3D_PM_DOMAIN_TARGET_FILES.get(
-                domain,
-                (_CARD3D_PM_DOMAIN_SCOPE_PATHS[domain],),
-            )
-            task_id = f"PM-CARD3D-{domain.upper()}-{index:02d}"
-            primary_scope = _CARD3D_PM_DOMAIN_SCOPE_PATHS[domain]
-            lines.append(
-                f"- id={task_id}; metadata.domain={domain}; scope_paths=[{primary_scope}]; "
-                f"target_files=[{', '.join(target_files)}]; "
-                "acceptance must include `npm run build`, `npm run test -- --watch=false`, "
-                "and explicit verification that target files contain no audit-seed or planning scenario markers."
-            )
-        lines.extend(
-            [
-                "Use depends_on to form a safe implementation chain.",
-                "For the tests domain, acceptance and execution_checklist must explicitly require replacing/removing existing trivial arithmetic placeholder tests; appending new tests while leaving old placeholder cases is invalid.",
-                "Do not output package.json, tsconfig.json, dependency-install, or framework migration tasks.",
-                "If you output fewer than the required domain rows above, the contract is invalid even if bootstrap tasks exist.",
-            ]
-        )
-        return "\n".join(lines)
+        return build_card3d_pm_required_domain_contract()
     if "game pm decomposition" in joined or "game_domain" in joined:
         lines = [
             "GAME HARD CONTRACT:",
@@ -452,6 +423,7 @@ def _build_pm_quality_retry_prompt(
         "Your previous PM task list failed strict quality validation.\n"
         "Regenerate the FULL JSON object and fix all issues below.\n"
         "Do not explain. Output JSON only.\n"
+        "Do not output audit reports, markdown tables, or `<SESSION_PATCH>` blocks.\n"
         "Each task must include: phase, execution_checklist (>=3 concrete steps), "
         "acceptance_criteria with measurable command/evidence anchors.\n"
         "For decomposed task lists, include dependency chain via depends_on/dependencies.\n"

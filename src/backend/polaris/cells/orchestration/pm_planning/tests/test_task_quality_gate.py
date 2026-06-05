@@ -979,6 +979,24 @@ class TestAutofixPmContractForQuality:
         assert not any("card3d PM decomposition" in item for item in report["critical_issues"])
         assert not any("game PM decomposition" in item for item in report["critical_issues"])
 
+    def test_card3d_domain_coverage_ignores_context_files(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        task = {
+            "id": "CARD3D-REALTIME",
+            "title": "Build realtime gateway",
+            "goal": "Implement room-scoped realtime messages for the Card3D table.",
+            "scope_paths": ["src/server/realtime-gateway.ts"],
+            "target_files": ["src/server/realtime-gateway.ts"],
+            "context_files": [
+                "src/server/app.ts",
+                "src/server/session-store.ts",
+                "src/auth/session-auth.ts",
+                "src/client/three-scene.ts",
+            ],
+        }
+
+        assert _card3d_domains_for_task(task, workspace) == ["realtime"]
+
     def test_card3d_tasks_with_exact_targets_survive_broad_scope_paths(self, tmp_path: Any) -> None:
         workspace = str(tmp_path)
         payload: dict[str, Any] = {

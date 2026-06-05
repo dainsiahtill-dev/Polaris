@@ -6,6 +6,7 @@ cell for process lifecycle management, as required by the migration specificatio
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -37,6 +38,7 @@ class TestPMServiceExecutionBroker:
         settings = MagicMock()
         settings.workspace = str(tmp_path)
         settings.runtime_base = str(tmp_path / "runtime")
+        settings.backend_root = tmp_path / "backend"
         settings.json_log_path = None
         settings.pm_script_path = str(tmp_path / "pm_script.py")
         settings.timeout = 0
@@ -219,6 +221,54 @@ class TestPMServiceExecutionBroker:
             # Verify workspace env var is set
             assert "KERNELONE_WORKSPACE" in command.env
             assert command.env["KERNELONE_WORKSPACE"] == str(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_spawn_process_prepends_backend_root_to_pythonpath(
+        self,
+        mock_broker: MagicMock,
+        mock_settings: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Verify PM subprocess imports the current backend source tree first."""
+        pm_script = tmp_path / "pm_script.py"
+        pm_script.write_text("import sys; sys.exit(0)", encoding="utf-8")
+
+        mock_process = MagicMock()
+        mock_process.pid = 10001
+        mock_process.poll = MagicMock(return_value=None)
+
+        mock_handle = ExecutionProcessHandleV1(
+            execution_id="test-exec-id-pythonpath",
+            pid=10001,
+            name="pm-service",
+            workspace=str(tmp_path),
+        )
+        mock_broker.launch_process.return_value = ExecutionProcessLaunchResultV1(
+            success=True,
+            handle=mock_handle,
+        )
+        mock_broker.resolve_runtime_process.return_value = mock_process
+
+        with (
+            patch(
+                "polaris.cells.orchestration.pm_planning.service.get_execution_broker_service",
+                return_value=mock_broker,
+            ),
+            patch.dict("os.environ", {"PYTHONPATH": str(tmp_path / "old_backend")}),
+        ):
+            service = PMService(settings=mock_settings)
+            service._storage = StorageLayout(
+                Path(mock_settings.workspace),
+                Path(mock_settings.runtime_base),
+            )
+
+            cmd = [sys.executable, str(pm_script)]
+            await service._spawn_process(cmd, str(tmp_path / "pm.log"))
+
+            command = mock_broker.launch_process.call_args[0][0]
+            pythonpath_parts = str(command.env["PYTHONPATH"]).split(os.pathsep)
+            assert pythonpath_parts[0] == str(mock_settings.backend_root)
+            assert str(tmp_path / "old_backend") in pythonpath_parts
 
     @pytest.mark.asyncio
     async def test_spawn_process_sets_timeout(

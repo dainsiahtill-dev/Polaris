@@ -245,6 +245,38 @@ def _copy_result_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(metadata or {})
 
 
+def _copy_tool_result_metadata(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    copied: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, Mapping):
+            copied.append(dict(item))
+    return copied
+
+
+def _copy_batch_receipt_metadata(receipt: Any) -> dict[str, Any] | None:
+    if isinstance(receipt, Mapping):
+        return dict(receipt)
+    model_dump = getattr(receipt, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, Mapping):
+            return dict(dumped)
+    return None
+
+
+def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
+    metadata = _copy_result_metadata(result.metadata)
+    tool_results = _copy_tool_result_metadata(result.tool_results)
+    if tool_results and "tool_results" not in metadata:
+        metadata["tool_results"] = tool_results
+    batch_receipt = _copy_batch_receipt_metadata(result.batch_receipt)
+    if batch_receipt and "batch_receipt" not in metadata:
+        metadata["batch_receipt"] = batch_receipt
+    return metadata
+
+
 def _metadata_flag_enabled(*payloads: Mapping[str, Any] | None, key: str) -> bool:
     for payload in payloads:
         if not isinstance(payload, Mapping) or key not in payload:
@@ -524,7 +556,7 @@ def _to_contract_result(
         tool_calls=_extract_tool_calls(result),
         artifacts=_extract_artifacts(result),
         usage=dict(result.execution_stats or {}),
-        metadata=_copy_result_metadata(result.metadata),
+        metadata=_contract_result_metadata(result),
         error_code=None if ok else "role_runtime_error",
         error_message=None if ok else (error_message or "unknown runtime error"),
         turn_history=list(result.turn_history) if result.turn_history else [],
@@ -1052,13 +1084,20 @@ class RoleRuntimeService(IRoleRuntime):
         include_session_snapshot: bool = False,
     ) -> RoleTurnRequest:
         metadata = dict(command.metadata)
+        context = dict(command.context)
+        if command.timeout_seconds is not None:
+            timeout_seconds = int(command.timeout_seconds)
+            metadata["timeout_seconds"] = timeout_seconds
+            context.setdefault("llm_call_timeout_seconds", timeout_seconds)
+            context.setdefault("request_timeout_seconds", timeout_seconds)
+            context.setdefault("timeout_seconds", timeout_seconds)
         metadata["session_id"] = command.session_id
         metadata["stream"] = bool(command.stream)
         context_override, metadata = _augment_context_with_handoff_rehydration_impl(
             workspace=command.workspace,
             role=command.role,
             session_id=command.session_id,
-            context=command.context,
+            context=context,
             metadata=metadata,
         )
         execution_domain, _ = RoleRuntimeService._resolve_execution_domain(
@@ -1622,11 +1661,14 @@ class RoleRuntimeService(IRoleRuntime):
                         maybe_result.metadata.update(evidence_patch)
                         maybe_result.execution_stats["cognitive_runtime_evidence_emitted"] = True
                         event["cognitive_runtime_evidence"] = dict(evidence_patch["cognitive_runtime_evidence"])
-                        event_metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+                        raw_event_metadata = event.get("metadata")
+                        event_metadata: dict[str, Any] = (
+                            dict(raw_event_metadata) if isinstance(raw_event_metadata, dict) else {}
+                        )
                         result_metadata = _copy_result_metadata(maybe_result.metadata)
                         event["metadata"] = {
                             **result_metadata,
-                            **dict(event_metadata),
+                            **event_metadata,
                             **evidence_patch,
                         }
                         final_stream_result = maybe_result

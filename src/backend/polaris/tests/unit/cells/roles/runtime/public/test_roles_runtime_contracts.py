@@ -293,6 +293,26 @@ class TestExecuteRoleSessionCommandV1:
         )
         assert cmd.stream_options == opts
 
+    def test_timeout_seconds_accepts_positive_value(self) -> None:
+        cmd = ExecuteRoleSessionCommandV1(
+            role="pm",
+            session_id="s1",
+            workspace="ws",
+            user_message="hello",
+            timeout_seconds=300,
+        )
+        assert cmd.timeout_seconds == 300
+
+    def test_invalid_timeout_seconds_raises(self) -> None:
+        with pytest.raises(ValueError, match="timeout_seconds must be > 0 when provided"):
+            ExecuteRoleSessionCommandV1(
+                role="pm",
+                session_id="s1",
+                workspace="ws",
+                user_message="hello",
+                timeout_seconds=0,
+            )
+
     def test_invalid_stream_options_type_raises(self) -> None:
         with pytest.raises(TypeError, match="stream_options must be a StreamTurnOptions instance"):
             ExecuteRoleSessionCommandV1(

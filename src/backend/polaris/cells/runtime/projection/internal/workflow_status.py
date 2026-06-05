@@ -412,6 +412,36 @@ def load_workflow_base_tasks(workspace: str, cache_root: str) -> list[dict[str, 
     return [dict(item) for item in tasks if isinstance(item, dict)]
 
 
+def _workflow_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        token = value.strip()
+        return [token] if token else []
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        token = str(item or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        items.append(token)
+    return items
+
+
+def _first_workflow_string_list(*values: Any) -> list[str]:
+    for value in values:
+        items = _workflow_string_list(value)
+        if items:
+            return items
+    return []
+
+
+def _set_metadata_list_default(metadata: dict[str, Any], key: str, values: list[str]) -> None:
+    if values and not _workflow_string_list(metadata.get(key)):
+        metadata[key] = values
+
+
 def _workflow_result_run_tokens(workflow_status: dict[str, Any] | None) -> list[str]:
     payload = workflow_status if isinstance(workflow_status, dict) else {}
     record = payload.get("record")
@@ -766,8 +796,35 @@ def build_workflow_task_rows(
         title = str(item.get("title") or item.get("summary") or task_id).strip()
         description = str(item.get("goal") or item.get("summary") or item.get("description") or "").strip()
         item_metadata_raw = item.get("metadata")
-        metadata: dict[str, Any] = item_metadata_raw if isinstance(item_metadata_raw, dict) else {}
+        metadata: dict[str, Any] = dict(item_metadata_raw) if isinstance(item_metadata_raw, dict) else {}
         metadata.setdefault("pm_task_id", task_id)
+        target_files = _first_workflow_string_list(item.get("target_files"), metadata.get("target_files"))
+        scope_paths = _first_workflow_string_list(item.get("scope_paths"), metadata.get("scope_paths"))
+        acceptance_criteria = _first_workflow_string_list(
+            item.get("acceptance_criteria"),
+            item.get("acceptance"),
+            metadata.get("acceptance_criteria"),
+            metadata.get("acceptance"),
+        )
+        execution_checklist = _first_workflow_string_list(
+            item.get("execution_checklist"),
+            metadata.get("execution_checklist"),
+        )
+        dependencies = _first_workflow_string_list(
+            item.get("dependencies"),
+            item.get("depends_on"),
+            item.get("blocked_by"),
+            item.get("blockedBy"),
+            metadata.get("dependencies"),
+            metadata.get("depends_on"),
+            metadata.get("blocked_by"),
+        )
+        _set_metadata_list_default(metadata, "target_files", target_files)
+        _set_metadata_list_default(metadata, "scope_paths", scope_paths)
+        _set_metadata_list_default(metadata, "acceptance_criteria", acceptance_criteria)
+        _set_metadata_list_default(metadata, "execution_checklist", execution_checklist)
+        _set_metadata_list_default(metadata, "dependencies", dependencies)
+        _set_metadata_list_default(metadata, "depends_on", dependencies)
         blueprint_id = str(item.get("blueprint_id") or item.get("blueprintId") or "").strip()
         blueprint_path = str(
             item.get("blueprint_path") or item.get("runtime_blueprint_path") or item.get("blueprintPath") or ""
@@ -810,6 +867,11 @@ def build_workflow_task_rows(
                 "claimed_by": claimed_by or None,
                 "result": result,
                 "metadata": metadata,
+                "target_files": target_files,
+                "scope_paths": scope_paths,
+                "acceptance_criteria": acceptance_criteria,
+                "dependencies": dependencies,
+                "depends_on": dependencies,
                 "blueprint_id": blueprint_id or metadata.get("blueprint_id"),
                 "blueprint_path": blueprint_path or metadata.get("blueprint_path"),
                 "runtime_blueprint_path": runtime_blueprint_path or metadata.get("runtime_blueprint_path"),

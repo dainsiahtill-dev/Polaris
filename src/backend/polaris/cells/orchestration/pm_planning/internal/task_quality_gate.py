@@ -225,6 +225,52 @@ _CARD3D_PM_DOMAIN_TARGET_FILES: dict[str, tuple[str, ...]] = {
     domain: (scope_path,) for domain, scope_path in _CARD3D_PM_DOMAIN_SCOPE_PATHS.items()
 }
 _CARD3D_PM_DOMAIN_TARGET_FILES["tests"] = _CARD3D_PM_TEST_TARGET_FILES
+
+
+def build_card3d_pm_required_domain_contract() -> str:
+    """Return the canonical Card3D PM task decomposition contract."""
+
+    lines = [
+        "CARD3D HARD CONTRACT:",
+        "This overrides the default 1-3 task batch limit and any `仅提供 1-3 个任务` instruction.",
+        "The tasks array MUST contain one Director task for EVERY row below.",
+        "Do not group multiple domains into one task. Do not omit any row. Do not replace this table with bootstrap-only tasks.",
+        f"Required task count: at least {len(_CARD3D_PM_REQUIRED_DOMAINS)}.",
+        "Compact output rule: each task MUST use exactly 3 execution_checklist items and exactly 2 acceptance_criteria items; keep each item concise and do not include required_evidence.must_read or required_evidence.must_find_calls.",
+        "Use the listed id, metadata.domain, target_files, scope_paths, and measurable acceptance for each task:",
+    ]
+    for index, domain in enumerate(_CARD3D_PM_REQUIRED_DOMAINS, start=1):
+        target_files = _CARD3D_PM_DOMAIN_TARGET_FILES.get(
+            domain,
+            (_CARD3D_PM_DOMAIN_SCOPE_PATHS[domain],),
+        )
+        task_id = f"PM-CARD3D-{domain.upper()}-{index:02d}"
+        primary_scope = _CARD3D_PM_DOMAIN_SCOPE_PATHS[domain]
+        lines.append(
+            f"- id={task_id}; metadata.domain={domain}; scope_paths=[{primary_scope}]; "
+            f"target_files=[{', '.join(target_files)}]; "
+            "acceptance must include `npm run build`, `npm run test -- --watch=false`, "
+            "and explicit verification that target files contain no audit-seed or planning scenario markers."
+        )
+    lines.extend(
+        [
+            "Use depends_on to form a safe implementation chain.",
+            "For the tests domain, acceptance and execution_checklist must explicitly require replacing/removing existing trivial arithmetic placeholder tests; appending new tests while leaving old placeholder cases is invalid.",
+            "Do not output package.json, tsconfig.json, dependency-install, or framework migration tasks.",
+            "Prefer `acceptance_criteria` over `acceptance`; use `required_evidence.validation_paths` only if needed.",
+            "If you output fewer than the required domain rows above, the contract is invalid even if bootstrap tasks exist.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def should_apply_card3d_pm_domain_contract(*texts: Any) -> bool:
+    """Return whether PM prompt text describes the Card3D multiplayer scenario."""
+
+    joined = "\n".join(str(text or "") for text in texts)
+    return _has_card3d_text_hints(joined)
+
+
 _CARD3D_PM_DOMAIN_SCOPE_ALIASES = {
     "client3d": (
         "src/client/three-scene.ts",
@@ -894,7 +940,7 @@ def _has_forbidden_game_dependency_policy(task: dict[str, Any]) -> bool:
 
 def _game_domains_for_task(task: dict[str, Any], workspace_full: Any) -> list[str]:
     coverage_paths: set[str] = set()
-    for path in _collect_task_scope_paths(task):
+    for path in _collect_task_delivery_paths(task):
         relative = _workspace_relative_path(path, workspace_full)
         if relative:
             coverage_paths.add(relative)
@@ -912,7 +958,7 @@ def _game_domains_for_task(task: dict[str, Any], workspace_full: Any) -> list[st
 
 def _card3d_domains_for_task(task: dict[str, Any], workspace_full: Any) -> list[str]:
     coverage_paths: set[str] = set()
-    for path in _collect_task_scope_paths(task):
+    for path in _collect_task_delivery_paths(task):
         relative = _workspace_relative_path(path, workspace_full)
         if relative:
             coverage_paths.add(relative)
@@ -1092,6 +1138,13 @@ def _collect_task_scope_paths(task: dict[str, Any]) -> list[str]:
     return paths
 
 
+def _collect_task_delivery_paths(task: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    paths.extend(_normalize_path_list(task.get("scope_paths") or []))
+    paths.extend(_normalize_path_list(task.get("target_files") or []))
+    return paths
+
+
 def _has_card3d_text_hints(text: str) -> bool:
     if not text:
         return False
@@ -1230,7 +1283,7 @@ def _covered_card3d_domains(tasks: list[Any], workspace_full: Any) -> list[str]:
     for task in tasks:
         if not isinstance(task, dict):
             continue
-        for path in _collect_task_scope_paths(task):
+        for path in _collect_task_delivery_paths(task):
             relative = _workspace_relative_path(path, workspace_full)
             if relative:
                 coverage_paths.add(relative)
@@ -1311,7 +1364,7 @@ def _covered_game_domains(tasks: list[Any], workspace_full: Any) -> list[str]:
     for task in tasks:
         if not isinstance(task, dict):
             continue
-        for path in _collect_task_scope_paths(task):
+        for path in _collect_task_delivery_paths(task):
             relative = _workspace_relative_path(path, workspace_full)
             if relative:
                 coverage_paths.add(relative)
@@ -1640,7 +1693,7 @@ def _dedupe_text_items(items: list[str]) -> list[str]:
 
 
 def _primary_task_evidence_path(task: dict[str, Any]) -> str:
-    for path in _collect_task_scope_paths(task):
+    for path in _collect_task_delivery_paths(task):
         normalized = _normalize_path(path)
         if normalized and _is_concrete_pm_scope_path(normalized):
             return normalized

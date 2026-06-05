@@ -36,6 +36,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     extract_json_from_text,
     extract_native_tool_calls,
     messages_to_input,
+    resolve_max_tokens,
     resolve_platform_retry_max,
     resolve_timeout_seconds,
     resolve_tool_call_provider,
@@ -133,6 +134,22 @@ class TestResolvePlatformRetryMax:
         # Cast to bypass type check - testing fallback behavior with invalid input
         result = resolve_platform_retry_max(cast("RoleProfile", profile), cast("int", "not a number"))
         assert result == 1  # default fallback
+
+
+class TestResolveMaxTokens:
+    """resolve_max_tokens allows trusted context to override output budget."""
+
+    def test_context_max_tokens_override_wins_over_requested(self) -> None:
+        assert resolve_max_tokens(4000, {"llm_max_tokens": 16000}) == 16000
+
+    def test_accepts_max_output_tokens_alias(self) -> None:
+        assert resolve_max_tokens(4000, {"max_output_tokens": "12000"}) == 12000
+
+    def test_invalid_context_override_falls_back_to_requested(self) -> None:
+        assert resolve_max_tokens(4096, {"max_tokens": "bad"}) == 4096
+
+    def test_clamps_context_override_to_hard_limit(self) -> None:
+        assert resolve_max_tokens(4000, {"llm_max_tokens": 999_999}) == 128_000
 
 
 class TestResolveToolCallProvider:
@@ -569,6 +586,45 @@ class TestPreparedRequestArchitecture:
         )
 
         assert prepared.request_options["timeout"] == 45
+
+    @pytest.mark.asyncio
+    async def test_prepare_llm_request_honors_context_max_tokens_override(self, monkeypatch) -> None:
+        caller = LLMCaller(workspace="C:/workspace")
+        profile = MockProfile(role_id="pm", model="gpt-5", provider_id="openai")
+        profile.tool_policy = SimpleNamespace(whitelist=[])
+
+        class _FakeGateway:
+            def __init__(self, _profile, _workspace) -> None:
+                pass
+
+            async def build_context(self, _context):
+                return SimpleNamespace(
+                    messages=[{"role": "user", "content": "hello"}],
+                    token_estimate=12,
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
+            _FakeGateway,
+        )
+
+        prepared = await caller._prepare_llm_request(
+            profile=cast("RoleProfile", profile),
+            system_prompt="system",
+            context=cast(
+                "ContextRequest",
+                SimpleNamespace(
+                    task_id=None,
+                    context_override={"llm_max_tokens": 16000},
+                ),
+            ),
+            temperature=0.2,
+            max_tokens=256,
+            stream=False,
+        )
+
+        assert prepared.request_options["max_tokens"] == 16000
+        assert prepared.ai_request.options["max_tokens"] == 16000
 
     @pytest.mark.asyncio
     async def test_prepare_llm_request_stream_enables_native_tools(self, monkeypatch) -> None:

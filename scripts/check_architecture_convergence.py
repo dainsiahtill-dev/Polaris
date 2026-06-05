@@ -76,7 +76,7 @@ def check_runtime_contract() -> list[str]:
         issues.append(
             f"{CONFIG_FILE.relative_to(PROJECT_ROOT)}: SUPPORTED_ORCHESTRATION_RUNTIMES must be workflow-only"
         )
-    if "return \"workflow\"" not in content:
+    if 'return "workflow"' not in content:
         issues.append(
             f"{CONFIG_FILE.relative_to(PROJECT_ROOT)}: resolve_orchestration_runtime must normalize to workflow"
         )
@@ -197,9 +197,7 @@ class ImprovementChecker:
         self.results["checks"]["workflow_runtime"] = await self._check_workflow_runtime()
 
         # Calculate overall score
-        scores = [
-            c["score"] for c in self.results["checks"].values() if "score" in c
-        ]
+        scores = [c["score"] for c in self.results["checks"].values() if "score" in c]
         self.results["overall"]["score"] = sum(scores) / len(scores) if scores else 0.0
         self.results["overall"]["passed"] = self.results["overall"]["score"] >= 0.8
 
@@ -279,8 +277,7 @@ class ImprovementChecker:
 
             # Calculate score
             result["score"] = (
-                result["details"]["classification_accuracy"] * 0.5
-                + 0.5  # Component availability
+                result["details"]["classification_accuracy"] * 0.5 + 0.5  # Component availability
             )
             result["status"] = "passed" if result["score"] >= 0.8 else "failed"
 
@@ -321,10 +318,7 @@ class ImprovementChecker:
                 result["details"]["instantiate_error"] = str(e)
 
             # Calculate score
-            passed = sum(
-                1 for k, v in result["details"].items()
-                if k != "instantiate_error" and v is True
-            )
+            passed = sum(1 for k, v in result["details"].items() if k != "instantiate_error" and v is True)
             total = len([k for k in result["details"].keys() if k != "instantiate_error"])
             result["score"] = passed / total if total > 0 else 0.0
             result["status"] = "passed" if result["score"] >= 0.8 else "failed"
@@ -372,10 +366,7 @@ class ImprovementChecker:
                 result["details"]["operation_error"] = str(e)
 
             # Calculate score
-            passed = sum(
-                1 for k, v in result["details"].items()
-                if not k.endswith("_error") and v is True
-            )
+            passed = sum(1 for k, v in result["details"].items() if not k.endswith("_error") and v is True)
             total = len([k for k in result["details"].keys() if not k.endswith("_error")])
             result["score"] = passed / total if total > 0 else 0.0
             result["status"] = "passed" if result["score"] >= 0.8 else "failed"
@@ -397,7 +388,7 @@ def print_improvement_report(results: dict[str, Any]) -> None:
     print()
 
     for check_name, check_result in results["checks"].items():
-        status = check_result.get('status', 'unknown').upper()
+        status = check_result.get("status", "unknown").upper()
         print(f"\n{check_result['name']}: {status}")
         print("-" * 50)
         print(f"Score: {check_result.get('score', 0) * 100:.1f}%")
@@ -422,9 +413,7 @@ def print_improvement_report(results: dict[str, Any]) -> None:
 
 
 async def async_main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Validate Polaris architecture convergence and improvements."
-    )
+    parser = argparse.ArgumentParser(description="Validate Polaris architecture convergence and improvements.")
     parser.add_argument("--verbose", action="store_true", help="Print success messages when checks pass.")
     parser.add_argument("--workspace", default=".", help="Path to workspace for improvement checks.")
     parser.add_argument("--json", action="store_true", help="Output improvement results as JSON.")

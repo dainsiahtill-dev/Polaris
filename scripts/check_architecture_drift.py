@@ -47,7 +47,7 @@ class ArchitectureChecker:
         "app.llm.usecases.pm_tools",
         "pm_dialogue",
     }
-    
+
     # Soft deprecated - warning only (still needed for tests)
     DEPRECATED_MODULES = {
         "app.roles.workflow_nodes_compat",  # Used by tests
@@ -56,8 +56,8 @@ class ArchitectureChecker:
     # Directories where sys.path manipulation is allowed
     ALLOWED_SYSPATH_DIRS = {
         "scripts",  # CLI entry points
-        "tests",    # Test files
-        "core",     # Core module (contains CLI entry points like role_agent)
+        "tests",  # Test files
+        "core",  # Core module (contains CLI entry points like role_agent)
     }
 
     # Key paths that must exist (relative to project root)
@@ -87,7 +87,7 @@ class ArchitectureChecker:
     def check_deprecated_imports(self) -> bool:
         """Check for imports of deprecated/deleted modules."""
         self.log("Checking for deprecated module imports...")
-        
+
         all_files = list(BACKEND_DIR.rglob("*.py"))
         deleted_issues = []
         deprecated_issues = []
@@ -124,12 +124,12 @@ class ArchitectureChecker:
             self.errors.append("Deleted module imports found (hard error):")
             self.errors.extend(deleted_issues)
             return False
-        
+
         if deprecated_issues:
             self.warnings.append("Deprecated module imports found (soft warning - used by tests):")
             self.warnings.extend(deprecated_issues)
             self.log(f"  Warning: {len(deprecated_issues)} deprecated imports (non-blocking)")
-        
+
         self.log("  No deleted imports found")
         return True
 
@@ -187,10 +187,10 @@ class ArchitectureChecker:
                             if line.strip().startswith("#"):
                                 continue
                             # Skip if it's in a function that cleans up (temporary path mod)
-                            context = "\n".join(lines[max(0, i-10):min(len(lines), i+10)])
+                            context = "\n".join(lines[max(0, i - 10) : min(len(lines), i + 10)])
                             if "try:" in context and "finally:" in context and "sys.path.remove" in context:
                                 continue
-                            issues.append(f"{rel_path}:{i+1}: {line.strip()[:60]}")
+                            issues.append(f"{rel_path}:{i + 1}: {line.strip()[:60]}")
 
         if issues:
             self.errors.append("HARD ERROR: sys.path manipulation found in production code:")
@@ -204,7 +204,7 @@ class ArchitectureChecker:
     def check_required_paths(self) -> bool:
         """Check that required paths exist."""
         self.log("Checking required paths...")
-        
+
         issues = []
         for required_path in self.REQUIRED_PATHS:
             full_path = PROJECT_ROOT / required_path
@@ -225,19 +225,19 @@ class ArchitectureChecker:
     def check_api_routes(self) -> bool:
         """Check that PM/Director APIs use V2 routes."""
         self.log("Checking API route conventions...")
-        
+
         # Check that old routes return 410 or redirect
         old_pm_router = BACKEND_DIR / "app" / "routers" / "pm.py"
         old_director_router = BACKEND_DIR / "app" / "routers" / "director.py"
-        
+
         issues = []
-        
+
         # Check old PM router
         if old_pm_router.exists():
             content = old_pm_router.read_text(encoding="utf-8")
             if "410" not in content and "gone" not in content.lower():
                 issues.append("  app/routers/pm.py: should return 410 Gone for deprecated endpoints")
-        
+
         # Check old director router
         if old_director_router.exists():
             content = old_director_router.read_text(encoding="utf-8")
@@ -247,7 +247,7 @@ class ArchitectureChecker:
         # Check V2 routers exist
         v2_pm_router = BACKEND_DIR / "api" / "v2" / "pm.py"
         v2_director_router = BACKEND_DIR / "api" / "v2" / "director.py"
-        
+
         if not v2_pm_router.exists():
             issues.append("  api/v2/pm.py: V2 PM router not found")
         if not v2_director_router.exists():
@@ -264,14 +264,14 @@ class ArchitectureChecker:
     def check_claude_md(self) -> bool:
         """Check CLAUDE.md references."""
         self.log("Checking CLAUDE.md references...")
-        
+
         claude_md = PROJECT_ROOT / "CLAUDE.md"
         if not claude_md.exists():
             self.errors.append("CLAUDE.md not found")
             return False
 
         content = claude_md.read_text(encoding="utf-8")
-        
+
         # Check for references to deleted modules
         deleted_refs = []
         for deprecated in self.DEPRECATED_MODULES:
@@ -347,31 +347,14 @@ class ArchitectureChecker:
 
 def main() -> int:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Check Polaris for architecture drift"
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Verbose output"
-    )
-    parser.add_argument(
-        "--fix",
-        action="store_true",
-        help="Auto-fix where possible"
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output JSON"
-    )
-    
+    parser = argparse.ArgumentParser(description="Check Polaris for architecture drift")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    parser.add_argument("--fix", action="store_true", help="Auto-fix where possible")
+    parser.add_argument("--json", action="store_true", help="Output JSON")
+
     args = parser.parse_args()
 
-    checker = ArchitectureChecker(
-        verbose=args.verbose,
-        fix=args.fix
-    )
+    checker = ArchitectureChecker(verbose=args.verbose, fix=args.fix)
 
     success = checker.run_all_checks()
 

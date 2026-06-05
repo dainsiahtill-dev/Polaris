@@ -16,10 +16,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
-from polaris.bootstrap.config import Settings, find_workspace_root, get_settings
+from polaris.bootstrap.config import Settings, find_workspace_root, get_backend_root, get_settings
 from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionProcessStatusV1,
     GetExecutionProcessStatusQueryV1,
@@ -75,6 +75,16 @@ def _parse_positive_int(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return parsed if parsed > 0 else 0
+
+
+def _prepend_pythonpath_entry(existing: str | None, entry: Path) -> str:
+    token = str(entry).strip()
+    if not token:
+        return str(existing or "")
+    entry_abs = os.path.abspath(token)
+    parts = [part for part in str(existing or "").split(os.pathsep) if part]
+    remaining = [part for part in parts if os.path.abspath(part) != entry_abs]
+    return os.pathsep.join([token, *remaining])
 
 
 def _clamp_pm_planning_timeout(seconds: int) -> int:
@@ -416,7 +426,7 @@ class PMService:
             try:
                 import ctypes
 
-                kernel32 = ctypes.windll.kernel32
+                kernel32 = cast(Any, ctypes).windll.kernel32
                 handle = kernel32.OpenProcess(1, False, pid)
                 if handle:
                     kernel32.CloseHandle(handle)
@@ -756,7 +766,7 @@ class PMService:
             try:
                 import ctypes
 
-                kernel32 = ctypes.windll.kernel32
+                kernel32 = cast(Any, ctypes).windll.kernel32
                 handle = kernel32.OpenProcess(0x1000, False, int(pid))
                 if handle:
                     kernel32.CloseHandle(handle)
@@ -1047,6 +1057,8 @@ class PMService:
         env = os.environ.copy()
         env.setdefault("PYTHONIOENCODING", "utf-8")
         env.setdefault("KERNELONE_LOOP_MODULE_DIR", str(self._settings.loop_module_dir))
+        backend_root = Path(getattr(self._settings, "backend_root", "") or get_backend_root())
+        env["PYTHONPATH"] = _prepend_pythonpath_entry(env.get("PYTHONPATH"), backend_root)
         env["KERNELONE_RUNTIME_CACHE_ROOT"] = str(self._settings.runtime_base)
         if self._settings.runtime.root:
             env["KERNELONE_RUNTIME_ROOT"] = str(self._settings.runtime.root)
@@ -1120,7 +1132,7 @@ def _terminate_process_impl(handle: ProcessHandle, *, graceful: bool = False, gr
         try:
             import ctypes
 
-            kernel32 = ctypes.windll.kernel32
+            kernel32 = cast(Any, ctypes).windll.kernel32
             handle_ctrl = kernel32.OpenProcess(1, False, pid)
             if handle_ctrl:
                 try:

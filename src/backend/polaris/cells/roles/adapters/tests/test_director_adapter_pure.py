@@ -20,6 +20,7 @@ from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapt
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _apply_deterministic_typescript_reexport_repair,
     _build_existing_workspace_task_evidence,
+    _build_substantive_node_test_script,
     _director_direct_text_patch_only_enabled,
     _director_existing_scope_preflight_enabled,
     _emit_director_adapter_cognitive_receipt,
@@ -120,6 +121,66 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert metadata["run_id"] == "run-1"
         assert metadata["task_id"] == "TASK-1"
         assert metadata["source"] == "caller"
+
+    @pytest.mark.asyncio
+    async def test_role_runtime_session_promotes_metadata_tool_receipts(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import polaris.cells.roles.runtime.public.service as runtime_service_module
+
+        adapter = _make_adapter(tmp_path)
+        receipt = {
+            "results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "success",
+                    "result": {"path": "src/app.ts"},
+                }
+            ]
+        }
+        tool_results = [
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {"path": "src/app.ts"},
+            }
+        ]
+
+        class FakeRuntimeService:
+            async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
+                assert command.role == "director"
+                assert command.stream is False
+                return RoleExecutionResultV1(
+                    ok=True,
+                    status="ok",
+                    role="director",
+                    workspace=str(tmp_path),
+                    session_id=command.session_id,
+                    task_id=command.task_id,
+                    run_id=command.run_id,
+                    output="done",
+                    tool_calls=("write_file",),
+                    metadata={
+                        "batch_receipt": receipt,
+                        "tool_results": tool_results,
+                    },
+                )
+
+        monkeypatch.setattr(runtime_service_module, "RoleRuntimeService", FakeRuntimeService)
+
+        result = await adapter._invoke_role_runtime_session(
+            "write src/app.ts",
+            context={"task_id": "TASK-1", "run_id": "RUN-1"},
+            max_retries=1,
+        )
+
+        assert result["success"] is True
+        assert result["batch_receipt"] == receipt
+        assert result["tool_results"] == tool_results
+        assert result["raw_response"]["batch_receipt"] == receipt
 
     def test_emit_cognitive_runtime_receipt_records_and_exports_handoff(
         self,
@@ -383,6 +444,40 @@ class TestDirectorFailureClosure:
 
         assert result["success"] is True
         assert result["batch_receipt"] == receipt
+
+    def test_role_response_normalization_promotes_runtime_metadata_receipts(self) -> None:
+        receipt = {
+            "results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "success",
+                    "result": {"path": "src/app.ts"},
+                }
+            ]
+        }
+        tool_results = [
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {"path": "src/app.ts"},
+            }
+        ]
+
+        result = _normalize_director_role_response(
+            {
+                "response": "done",
+                "success": True,
+                "metadata": {
+                    "batch_receipt": receipt,
+                    "tool_results": tool_results,
+                },
+            }
+        )
+
+        assert result["success"] is True
+        assert result["batch_receipt"] == receipt
+        assert result["tool_results"] == tool_results
 
     def test_direct_text_patch_flag_resolves_from_context(self, tmp_path: Any) -> None:
         del tmp_path
@@ -706,6 +801,303 @@ class TestDirectorFailureClosure:
         assert adapter_result.get("new_files") == []
         assert adapter_result.get("primary_llm", {}).get("error") == "role_model_not_configured"
         assert adapter_result.get("direct_fallback", {}).get("error") == "runtime_provider_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_execute_accepts_existing_scope_after_read_only_mutation_guard(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "server" / "app.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "\n".join(
+                [
+                    "import http from 'http';",
+                    "",
+                    "export const server = http.createServer((_req, res) => {",
+                    "  res.writeHead(200, { 'Content-Type': 'application/json' });",
+                    "  res.end(JSON.stringify({ status: 'ok' }));",
+                    "});",
+                    "",
+                    "export function startServer(port = 3000): void {",
+                    "  server.listen(port);",
+                    "}",
+                    "",
+                    "export default server;",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Extend Node.js backend entrypoint",
+            description="Implement Node.js backend entrypoint.",
+            metadata={
+                "phase": "implementation",
+                "scope_paths": ["src/server/app.ts"],
+                "target_files": ["src/server/app.ts"],
+                "steps": ["Implement src/server/app.ts"],
+                "acceptance": ["npm run build verifies src/server/app.ts"],
+            },
+        )
+
+        async def _read_only_contract_violation(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {
+                "content": "",
+                "success": False,
+                "error": (
+                    "TransactionKernel execution failed: single_batch_contract_violation: "
+                    "mutation requested but no write tool invocation in decision batch."
+                ),
+            }
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _read_only_contract_violation  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-existing-scope-after-read-only"},
+        )
+
+        assert result["success"] is True
+        assert result["materialization_mode"] == "verified_existing_workspace_scope"
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        assert str(updated.get("status") or "").lower() == "completed"
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("existing_contract_evidence", {}).get("ok") is True
+        assert adapter_result.get("primary_llm", {}).get("error", "").startswith("TransactionKernel execution failed")
+        assert adapter_result.get("direct_fallback", {}).get("error") == "runtime_provider_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_execute_accepts_existing_scope_after_read_write_batch_violation(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "server" / "session-store.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "export class SessionStore {\n"
+            "  private readonly rows = new Map<string, string>();\n"
+            "  save(roomId: string, value: string): void { this.rows.set(roomId, value); }\n"
+            "  load(roomId: string): string | undefined { return this.rows.get(roomId); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Extend multiplayer session persistence",
+            description="Implement multiplayer session persistence.",
+            metadata={
+                "phase": "core",
+                "scope_paths": ["src/server/session-store.ts"],
+                "target_files": ["src/server/session-store.ts"],
+                "acceptance": ["src/server/session-store.ts exposes persistence methods"],
+            },
+        )
+
+        async def _batch_contract_violation(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {
+                "content": "",
+                "success": False,
+                "error": (
+                    "TransactionKernel execution failed: single_batch_contract_violation: "
+                    "Cannot mix Read tools (read_file) and Write tools (write_file) in the same parallel batch."
+                ),
+            }
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _batch_contract_violation  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-existing-scope-after-batch-violation"},
+        )
+
+        assert result["success"] is True
+        assert result["materialization_mode"] == "verified_existing_workspace_scope"
+        assert result["existing_contract_evidence"]["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_execute_accepts_existing_scope_after_successful_no_diff_response(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "server" / "app.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("export const serverReady = true;\n", encoding="utf-8")
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Extend Node.js backend entrypoint",
+            description="Implement Node.js backend entrypoint.",
+            metadata={
+                "phase": "implementation",
+                "scope_paths": ["src/server/app.ts"],
+                "target_files": ["src/server/app.ts"],
+            },
+        )
+
+        async def _successful_no_diff_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "Verified existing backend entrypoint.", "success": True}
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _successful_no_diff_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-existing-scope-after-successful-no-diff"},
+        )
+
+        assert result["success"] is True
+        assert result["materialization_mode"] == "verified_existing_workspace_scope"
+
+    @pytest.mark.asyncio
+    async def test_execute_preflights_existing_verification_scope(self, tmp_path: Any) -> None:
+        target = tmp_path / "tests" / "integration" / "multiplayer-flow.test.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "import { validateRoomStateRecord } from '../../src/server/room-state';\n"
+            "\n"
+            "export function runMultiplayerFlowIntegrationChecks(): string[] {\n"
+            "  const failures: string[] = [];\n"
+            "  const issues = validateRoomStateRecord({ id: 'room-1', roomId: 'room-1' });\n"
+            "  if (issues.length > 0) failures.push(issues.join(','));\n"
+            "  return failures;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Strengthen multiplayer card integration tests",
+            description="Verify multiplayer card integration tests according to acceptance criteria.",
+            metadata={
+                "phase": "verify",
+                "scope_paths": ["tests/integration/multiplayer-flow.test.ts"],
+                "target_files": ["tests/integration/multiplayer-flow.test.ts"],
+                "acceptance": ["No placeholder tests remain"],
+            },
+        )
+
+        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("existing verification scope preflight should finish before LLM dialogue")
+
+        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-existing-verification-scope-preflight"},
+        )
+
+        assert result["success"] is True
+        assert result["materialization_mode"] == "preflight_verified_existing_workspace_scope"
+        raw_evidence = result.get("existing_contract_evidence")
+        evidence: dict[str, Any] = raw_evidence if isinstance(raw_evidence, dict) else {}
+        assert evidence.get("ok") is True
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_overstrict_node_test_contract_before_llm(self, tmp_path: Any) -> None:
+        script = tmp_path / "scripts" / "test.mjs"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(
+            "import { readFileSync } from 'node:fs';\n"
+            "const text = readFileSync('src/analytics/match-analytics.ts', 'utf8');\n"
+            "if (!/validate[A-Za-z]+Record/.test(text)) {\n"
+            "  throw new Error('missing validation contract in src/analytics/match-analytics.ts');\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        source_paths = [
+            "src/analytics/match-analytics.ts",
+            "src/animation/card-animations.ts",
+            "src/assets/card-assets.ts",
+            "src/client/card-table.ts",
+            "src/client/network-client.ts",
+            "src/client/three-scene.ts",
+            "src/game/card-catalog.ts",
+            "src/game/deck-builder.ts",
+            "src/game/rules-engine.ts",
+            "src/lobby/lobby-service.ts",
+            "src/physics/table-layout.ts",
+            "src/server/app.ts",
+            "src/server/matchmaking.ts",
+            "src/server/moderation.ts",
+            "src/server/realtime-gateway.ts",
+            "src/server/room-state.ts",
+            "src/shared/protocol.ts",
+            "src/shared/telemetry.ts",
+        ]
+        for index, rel_path in enumerate(source_paths):
+            target = tmp_path / rel_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"export const module{index}Ready = true;\n", encoding="utf-8")
+
+        required_test_paths = [
+            "tests/unit/card-rules.test.ts",
+            "tests/unit/deck-builder.test.ts",
+            "tests/integration/multiplayer-flow.test.ts",
+            "tests/integration/realtime-sync.test.ts",
+            "tests/e2e/card-table-3d.test.ts",
+        ]
+        for index, rel_path in enumerate(required_test_paths):
+            target = tmp_path / rel_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "import { module0Ready } from '../../src/analytics/match-analytics';\n"
+                f"export function runCard3DChecks{index}(): string[] {{\n"
+                "  const failures: string[] = [];\n"
+                "  if (!module0Ready) failures.push('module not ready');\n"
+                "  return failures;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Strengthen multiplayer card integration test runner",
+            description="Replace the brittle scripts/test.mjs validation-contract gate with substantive test checks.",
+            metadata={
+                "phase": "verify",
+                "scope_paths": ["scripts/test.mjs", "tests/integration/multiplayer-flow.test.ts"],
+                "target_files": ["scripts/test.mjs", "tests/integration/multiplayer-flow.test.ts"],
+                "acceptance": ["npm run test verifies the Card3D behavior test suite"],
+            },
+        )
+
+        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("deterministic test script repair should finish before LLM dialogue")
+
+        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-node-test-script-contract-repair"},
+        )
+
+        rewritten = script.read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert result["materialization_mode"] == "write_tool_and_workspace_diff"
+        assert result["tools_executed"] == 1
+        assert result["changed_files"] == ["scripts/test.mjs"]
+        assert rewritten == _build_substantive_node_test_script()
+        assert "missing validation contract" not in rewritten
+        assert "test file lacks executable check contract" in rewritten
 
     @pytest.mark.asyncio
     async def test_ready_queue_fallback_claim_preserves_selected_task_identity(self, tmp_path: Any) -> None:

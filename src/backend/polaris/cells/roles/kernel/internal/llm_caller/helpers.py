@@ -66,6 +66,33 @@ def _resolve_context_timeout_override(context_override: Any) -> int | None:
     return None
 
 
+def _coerce_context_max_tokens_override(raw: Any) -> int | None:
+    """Parse a per-request max-token override from trusted runtime context."""
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return max(1, min(value, 128_000))
+
+
+def _resolve_context_max_tokens_override(context_override: Any) -> int | None:
+    if not isinstance(context_override, dict):
+        return None
+    for key in (
+        "llm_max_tokens",
+        "max_output_tokens",
+        "max_tokens",
+    ):
+        max_tokens = _coerce_context_max_tokens_override(context_override.get(key))
+        if max_tokens is not None:
+            return max_tokens
+    return None
+
+
 def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -> int:
     """Resolve LLM call timeout based on role profile.
 
@@ -86,6 +113,20 @@ def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -
         return 60
 
     return _get_cached_director_timeout()
+
+
+def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> int:
+    """Resolve LLM output token budget from trusted runtime context."""
+
+    context_max_tokens = _resolve_context_max_tokens_override(context_override)
+    if context_max_tokens is not None:
+        return context_max_tokens
+
+    try:
+        value = int(requested)
+    except (TypeError, ValueError):
+        value = 4000
+    return max(1, min(value, 128_000))
 
 
 def resolve_platform_retry_max(profile: Any, requested: int) -> int:
@@ -275,6 +316,7 @@ __all__ = [
     "extract_json_from_text",
     "extract_native_tool_calls",
     "messages_to_input",
+    "resolve_max_tokens",
     "resolve_platform_retry_max",
     "resolve_timeout_seconds",
     "resolve_tool_call_provider",

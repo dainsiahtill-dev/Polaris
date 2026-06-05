@@ -102,6 +102,17 @@ class TestExtractDomainTokens:
         assert "processing" in result
         assert result.count("payment") == 1
 
+    def test_extracts_scope_path_tokens_before_subject_tokens(self) -> None:
+        task = {
+            "subject": "Extend Node.js backend entrypoint",
+            "description": "Execute according to acceptance criteria",
+            "metadata": {"target_files": ["src/server/app.ts"]},
+        }
+        result = extract_domain_tokens(task)
+        assert result[:2] == ["server", "app"]
+        assert "extend" not in result
+        assert "execute" not in result
+
     def test_limits_to_10(self) -> None:
         task = {"subject": "a1 b2 c3 d4 e5 f6 g7 h8 i9 j10 k11 l12"}
         result = extract_domain_tokens(task)

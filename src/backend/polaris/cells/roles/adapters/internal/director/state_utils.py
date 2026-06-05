@@ -100,9 +100,52 @@ def is_output_sparse(
 
 def extract_domain_tokens(task: dict[str, Any]) -> list[str]:
     """从任务描述中提取领域关键词"""
-    subject = str(task.get("subject") or "").strip().lower()
-    description = str(task.get("description") or "").strip().lower()
-    tokens = re.findall(r"[a-z][a-z0-9_-]{2,}", f"{subject} {description}")
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    text_blocks: list[str] = []
+
+    def append_values(source: dict[str, Any], keys: tuple[str, ...]) -> None:
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, list):
+                text_blocks.extend(str(item or "") for item in value[:20])
+            elif value is not None:
+                text_blocks.append(str(value or ""))
+
+    append_values(
+        task,
+        (
+            "target_files",
+            "scope_paths",
+            "files",
+            "paths",
+        ),
+    )
+    if isinstance(metadata, dict):
+        append_values(
+            metadata,
+            (
+                "target_files",
+                "scope_paths",
+                "files",
+                "paths",
+            ),
+        )
+    append_values(task, ("subject", "description"))
+    if isinstance(metadata, dict):
+        append_values(
+            metadata,
+            (
+                "goal",
+                "scope",
+                "steps",
+                "acceptance",
+                "acceptance_criteria",
+                "backlog_ref",
+                "external_task_id",
+            ),
+        )
+
+    tokens = re.findall(r"[a-z][a-z0-9_-]{2,}", " ".join(text_blocks).lower())
     unique: list[str] = []
     seen: set[str] = set()
     for token in tokens:

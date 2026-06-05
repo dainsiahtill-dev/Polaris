@@ -170,7 +170,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Workspace not found: {workspace}", flush=True)
         return 2
 
-    output_path = _normalize_path(args.output, workspace) if args.output else workspace / ".polaris" / "reports" / "beta-diagnostics.json"
+    output_path = (
+        _normalize_path(args.output, workspace)
+        if args.output
+        else workspace / ".polaris" / "reports" / "beta-diagnostics.json"
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = build_diagnostics(workspace)

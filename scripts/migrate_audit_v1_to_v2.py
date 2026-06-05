@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 class MigrationError(Exception):
     """迁移错误"""
+
     pass
 
 
@@ -202,7 +203,7 @@ class AuditMigrator:
         }
 
         for event in events:
-            if not hasattr(event, 'task') or not hasattr(event, 'context'):
+            if not hasattr(event, "task") or not hasattr(event, "context"):
                 continue
 
             task = event.task or {}
@@ -213,8 +214,8 @@ class AuditMigrator:
             trace_id = ctx.get("trace_id")
 
             entry = {
-                "timestamp": event.timestamp.timestamp() if hasattr(event, 'timestamp') else 0,
-                "event_id": event.event_id if hasattr(event, 'event_id') else "",
+                "timestamp": event.timestamp.timestamp() if hasattr(event, "timestamp") else 0,
+                "event_id": event.event_id if hasattr(event, "event_id") else "",
                 "file_path": str(self.audit_dir / "audit-current.jsonl"),
             }
 
@@ -370,7 +371,7 @@ def main():
 
   # 仅重建索引
   python scripts/migrate_audit_v1_to_v2.py --runtime-root ./.polaris/runtime --rebuild-index
-        """
+        """,
     )
     parser.add_argument(
         "--runtime-root",

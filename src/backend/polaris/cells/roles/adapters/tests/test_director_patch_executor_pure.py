@@ -78,7 +78,7 @@ class TestResolveDirectFallbackTimeoutSeconds:
 
     def test_default_caps_long_primary_budget(self) -> None:
         result = DirectorPatchExecutor.resolve_direct_fallback_timeout_seconds(None, 600.0)
-        assert result == 240.0
+        assert result == 60.0
 
     def test_default_honors_short_primary_budget(self) -> None:
         result = DirectorPatchExecutor.resolve_direct_fallback_timeout_seconds(None, 12.0)
@@ -115,7 +115,40 @@ class TestExtractKernelToolResults:
                 ]
             }
         )
-        assert result == [{"tool": "write_file", "success": True, "result": {"path": "package.json"}, "error": None}]
+        assert result[0]["tool"] == "write_file"
+        assert result[0]["tool_name"] == "write_file"
+        assert result[0]["success"] is True
+        assert result[0]["result"] == {"path": "package.json"}
+        assert result[0]["raw_result"] == {"tool": "write_file", "success": True, "result": {"path": "package.json"}}
+
+
+# ---------------------------------------------------------------------------
+# Output Validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidateGeneratedOutput:
+    def test_accepts_scope_path_domain_signal(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "server" / "app.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "import http from 'http';\n"
+            "const server = http.createServer((_req, res) => res.end('ok'));\n"
+            "export default server;\n",
+            encoding="utf-8",
+        )
+        executor = DirectorPatchExecutor(str(tmp_path))
+
+        error = executor.validate_generated_output(
+            {
+                "subject": "Extend Node.js backend entrypoint",
+                "description": "Execute according to the task contract",
+                "metadata": {"target_files": ["src/server/app.ts"]},
+            },
+            ["src/server/app.ts"],
+        )
+
+        assert error is None
 
 
 # ---------------------------------------------------------------------------
