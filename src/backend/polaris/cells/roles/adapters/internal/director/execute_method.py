@@ -660,10 +660,20 @@ async def _execute_standard_llm_flow(
     modified_files: list[str] = []
     all_affected_files: list[str] = []
     primary_llm_summary: dict[str, Any] | None = None
-    deterministic_tool_results = _apply_deterministic_node_test_script_contract_repair(
-        adapter,
-        task=task,
-        task_id=target_task_id,
+    deterministic_tool_results: list[dict[str, Any]] = []
+    deterministic_tool_results.extend(
+        _apply_deterministic_node_test_script_contract_repair(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+    )
+    deterministic_tool_results.extend(
+        _apply_deterministic_patch_residue_cleanup(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
     )
     if deterministic_tool_results:
         tool_results.extend(deterministic_tool_results)
@@ -1478,6 +1488,102 @@ _TS_NAMED_IMPORT_RE = re.compile(
     re.DOTALL,
 )
 _TS_RUNTIME_EXPORT_TEMPLATE = r"(?:export\s+)?(?:enum|class|const|let|var|function)\s+{symbol}\b"
+_PATCH_RESIDUE_LINE_RE = re.compile(
+    r"(?m)^\s*(?:<{4,7}\s*SEARCH\b.*|>{4,7}\s*REPLACE\b.*|END\s+PATCH_FILE\b.*|PATCH_FILE(?::|\s+).*)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_overstrict_node_test_script_contract(script_text: str) -> bool:
+    """Return true for historical generated test scripts with false-negative export checks."""
+
+    text = str(script_text or "")
+    if "missing validation contract" in text and "validate[A-Za-z]+Record" in text:
+        return True
+    return (
+        "missing export in" in text
+        and "export\\s+(class|function|const|interface|type)" in text
+        and "export\\s*\\{" not in text
+    )
+
+
+def _remove_patch_residue_lines(text: str) -> str:
+    """Remove generated patch protocol markers that leaked into source files."""
+
+    cleaned = _PATCH_RESIDUE_LINE_RE.sub("", text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    if text.endswith("\n") and not cleaned.endswith("\n"):
+        cleaned += "\n"
+    return cleaned
+
+
+def _apply_deterministic_patch_residue_cleanup(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+) -> list[dict[str, Any]]:
+    """Clean leaked patch markers from declared task files before invoking the LLM."""
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+    workspace_name = workspace_path.name
+    results: list[dict[str, Any]] = []
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    executor = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    )
+    for candidate in _extract_task_path_candidates(task):
+        normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
+        if not normalized:
+            continue
+        target_path = (workspace_path / normalized).resolve()
+        try:
+            target_path.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if not target_path.is_file() or target_path.suffix.lower() not in {
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
+        }:
+            continue
+        try:
+            text = target_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        cleaned = _remove_patch_residue_lines(text)
+        if cleaned == text:
+            continue
+        write_result = executor.execute_tool(
+            "write_file",
+            {"file": normalized, "content": cleaned},
+            task_id=task_id,
+        )
+        if not bool(write_result.get("ok")):
+            continue
+        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+            adapter._update_task_progress(task_id, "executing", current_file=normalized)
+        results.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_patch_residue_cleanup",
+                    "file": normalized,
+                    "bytes_written": int(write_result.get("bytes_written") or len(cleaned.encode("utf-8"))),
+                },
+            }
+        )
+    return results
 
 
 def _apply_deterministic_node_test_script_contract_repair(
@@ -1506,7 +1612,7 @@ def _apply_deterministic_node_test_script_contract_repair(
         script_text = script_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return []
-    if "missing validation contract" not in script_text or "validate[A-Za-z]+Record" not in script_text:
+    if not _is_overstrict_node_test_script_contract(script_text):
         return []
 
     new_text = _build_substantive_node_test_script()
@@ -1580,7 +1686,9 @@ for (const file of requiredTestFiles) {
 
 for (const file of sourceFiles) {
   const text = readFileSync(file, 'utf8');
-  if (!/export\\s+(class|function|const|interface|type)/.test(text)) {
+  const moduleExportPattern =
+    /(?:^|\\n)\\s*export\\s+(?:async\\s+)?(?:class|function|const|let|var|interface|type|enum|default)\\b|(?:^|\\n)\\s*export\\s*\\{/;
+  if (!moduleExportPattern.test(text)) {
     throw new Error('missing export in ' + file);
   }
   if (seedMarkerPattern.test(text)) {
@@ -1860,7 +1968,15 @@ def _can_accept_existing_workspace_scope(
     if bool(primary_summary.get("success")) and _safe_int(primary_summary.get("content_length")) > 0:
         return True
     error = str(primary_summary.get("error") or "").strip().lower()
-    return "single_batch_contract_violation" in error
+    transient_unavailable_hints = (
+        "single_batch_contract_violation",
+        "circuit_open",
+        "too many requests",
+        "429",
+        "rate limit",
+        "rate_limit",
+    )
+    return any(hint in error for hint in transient_unavailable_hints)
 
 
 def _task_has_declared_target_files(task: dict[str, Any]) -> bool:

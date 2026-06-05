@@ -319,6 +319,16 @@ async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
     state = get_state(request)
     workspace = active_workspace_value(state.settings)
     cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace)
+    request_body: dict[str, Any] = {}
+    try:
+        raw_body = await request.json()
+        if isinstance(raw_body, dict):
+            request_body = raw_body
+    except (RuntimeError, ValueError):
+        request_body = {}
+    preserve_planning_contracts = bool(
+        request_body.get("preserve_planning_contracts") or request_body.get("task_runtime_only")
+    )
 
     pm_running = False
     pm_external_terminated_pids: list[int] = []
@@ -368,13 +378,24 @@ async def _runtime_reset_tasks_core(request: Request) -> dict[str, Any]:
     clear_stop_flag(workspace, cache_root)
     clear_director_stop_flag(workspace, cache_root)
 
-    state_reset_result = reset_runtime_records(workspace, cache_root)
+    if preserve_planning_contracts:
+        state_reset_result = {
+            "cleared_paths": [],
+            "failed_paths": [],
+            "cleared_count": 0,
+            "failed_count": 0,
+            "preserved_planning_contracts": True,
+        }
+    else:
+        state_reset_result = reset_runtime_records(workspace, cache_root)
     task_runtime_reset_result = reset_runtime_task_records(workspace)
     result = _merge_reset_results(state_reset_result, task_runtime_reset_result)
-    state.last_pm_payload = None
+    if not preserve_planning_contracts:
+        state.last_pm_payload = None
 
     return {
         "ok": True,
+        "preserve_planning_contracts": preserve_planning_contracts,
         "pm_running": pm_running,
         "pm_external_terminated_pids": pm_external_terminated_pids,
         "director_running": director_running,

@@ -3421,12 +3421,35 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     expect(runtimeRoot).not.toBe("");
     if (resumePlanningSeed) {
       const resetEvidencePath = testInfo.outputPath("resume.reset-tasks.json");
-      if (startPhase === "pm") {
+      if (startPhase === "pm" || startPhase === "chief" || startPhase === "director") {
+        const preservePlanningContracts = startPhase === "chief" || startPhase === "director";
         const resetResponse = await requestJson<Record<string, unknown>>(window, "/v2/runtime/reset/tasks", {
           method: "POST",
+          body: preservePlanningContracts ? { preserve_planning_contracts: true } : {},
         });
-        await writeUtf8File(resetEvidencePath, JSON.stringify(resetResponse, null, 2));
+        await writeUtf8File(resetEvidencePath, JSON.stringify({
+          start_phase: startPhase,
+          preserve_planning_contracts: preservePlanningContracts,
+          response: resetResponse,
+        }, null, 2));
         audit.evidence_paths.snapshots.push(toPosixPath(resetEvidencePath));
+      }
+      if (startPhase === "pm" || startPhase === "chief" || startPhase === "director") {
+        const staleRuntimeArtifacts = [
+          "results/director.result.json",
+          "results/integration_qa.result.json",
+        ];
+        const removedArtifacts: string[] = [];
+        for (const relativeArtifact of staleRuntimeArtifacts) {
+          const artifactPath = path.join(runtimeRoot, relativeArtifact);
+          await fs.rm(artifactPath, { force: true });
+          removedArtifacts.push(toPosixPath(artifactPath));
+        }
+        await writeUtf8File(testInfo.outputPath("resume.reset-artifacts.json"), JSON.stringify({
+          start_phase: startPhase,
+          removed_artifacts: removedArtifacts,
+        }, null, 2));
+        audit.evidence_paths.snapshots.push(toPosixPath(testInfo.outputPath("resume.reset-artifacts.json")));
       }
 
       const resumeSeedResult = await writeRuntimePlanningSeed(layout, project.workspace, resumePlanningSeed);

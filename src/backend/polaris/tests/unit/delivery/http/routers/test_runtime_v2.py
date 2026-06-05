@@ -594,6 +594,85 @@ async def test_v2_runtime_reset_tasks_no_services_running(client: AsyncClient) -
 
 
 @pytest.mark.asyncio
+async def test_v2_runtime_reset_tasks_can_preserve_planning_contracts(client: AsyncClient) -> None:
+    """Reset tasks can clear taskboard state without deleting PM planning contracts."""
+    pm_service = MagicMock()
+    pm_service.get_status.return_value = {"running": False}
+
+    director_service = MagicMock()
+    director_service.get_status = AsyncMock(return_value={"state": "IDLE"})
+
+    container = MagicMock()
+
+    def resolve_side_effect(cls):
+        if cls.__name__ == "PMService":
+            return pm_service
+        if cls.__name__ == "DirectorService":
+            return director_service
+        return MagicMock()
+
+    container.resolve = resolve_side_effect
+
+    async def _mock_get_container():
+        return container
+
+    with (
+        patch(
+            "polaris.infrastructure.di.container.get_container",
+            new=_mock_get_container,
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.build_cache_root",
+            return_value="/cache/runtime",
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.terminate_external_loop_pm_processes",
+            return_value=[],
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.build_director_runtime_status",
+            return_value={"running": False, "pid": None},
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.clear_stop_flag",
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.clear_director_stop_flag",
+        ),
+        patch(
+            "polaris.delivery.http.routers.runtime.reset_runtime_records",
+            return_value={
+                "cleared_paths": ["/cache/runtime/contracts/pm_tasks.contract.json"],
+                "failed_paths": [],
+                "cleared_count": 1,
+                "failed_count": 0,
+            },
+        ) as mock_reset,
+        patch(
+            "polaris.delivery.http.routers.runtime.reset_runtime_task_records",
+            return_value={
+                "cleared_paths": ["/cache/runtime/tasks/task_1.json"],
+                "failed_paths": [],
+                "cleared_count": 1,
+                "failed_count": 0,
+            },
+        ) as mock_task_reset,
+    ):
+        response = await client.post(
+            "/v2/runtime/reset/tasks",
+            json={"preserve_planning_contracts": True},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["preserve_planning_contracts"] is True
+    assert data["state_reset"]["preserved_planning_contracts"] is True
+    mock_reset.assert_not_called()
+    mock_task_reset.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_v2_runtime_reset_tasks_services_not_found(client: AsyncClient) -> None:
     """Reset tasks should handle missing services gracefully."""
     container = MagicMock()

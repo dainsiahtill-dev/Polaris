@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -18,14 +19,18 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _apply_deterministic_patch_residue_cleanup,
     _apply_deterministic_typescript_reexport_repair,
     _build_existing_workspace_task_evidence,
     _build_substantive_node_test_script,
+    _can_accept_existing_workspace_scope,
     _director_direct_text_patch_only_enabled,
     _director_existing_scope_preflight_enabled,
     _emit_director_adapter_cognitive_receipt,
     _finalize_claimed_execution,
+    _is_overstrict_node_test_script_contract,
     _looks_like_typescript_reexport_failure,
+    _remove_patch_residue_lines,
     _resolve_claim_external_task_id,
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
@@ -1099,6 +1104,136 @@ class TestDirectorFailureClosure:
         assert "missing validation contract" not in rewritten
         assert "test file lacks executable check contract" in rewritten
 
+    def test_detects_legacy_overstrict_node_export_contract(self) -> None:
+        legacy_script = (
+            "for (const file of sourceFiles) {\n"
+            "  const text = readFileSync(file, 'utf8');\n"
+            "  if (!/export\\s+(class|function|const|interface|type)/.test(text)) {\n"
+            "    throw new Error('missing export in ' + file);\n"
+            "  }\n"
+            "}\n"
+        )
+
+        assert _is_overstrict_node_test_script_contract(legacy_script) is True
+        assert _is_overstrict_node_test_script_contract(_build_substantive_node_test_script()) is False
+
+    def test_substantive_node_test_script_accepts_named_export_blocks(self, tmp_path: Any) -> None:
+        script = tmp_path / "scripts" / "test.mjs"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(_build_substantive_node_test_script(), encoding="utf-8")
+
+        for relative in [
+            "src/server/app.ts",
+            "src/client/three-scene.ts",
+            "src/client/card-table.ts",
+            "src/client/network-client.ts",
+            "src/server/realtime-gateway.ts",
+            "src/server/matchmaking.ts",
+            "src/server/room-state.ts",
+            "src/server/session-store.ts",
+            "src/server/moderation.ts",
+            "src/game/card-catalog.ts",
+            "src/game/deck-builder.ts",
+            "src/game/rules-engine.ts",
+            "src/shared/protocol.ts",
+            "src/shared/player-presence.ts",
+            "src/shared/telemetry.ts",
+            "src/assets/card-assets.ts",
+            "src/animation/card-animations.ts",
+            "src/auth/session-auth.ts",
+        ]:
+            target = tmp_path / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if relative == "src/server/app.ts":
+                target.write_text(
+                    "const server = { listen() {} };\n"
+                    "const sessions = new Map<string, string>();\n"
+                    "export { server, sessions };\n",
+                    encoding="utf-8",
+                )
+            else:
+                stem = target.stem.replace("-", "_")
+                target.write_text(f"export const {stem}Ready = true;\n", encoding="utf-8")
+
+        for index, relative in enumerate(
+            [
+                "tests/unit/card-rules.test.ts",
+                "tests/unit/deck-builder.test.ts",
+                "tests/integration/multiplayer-flow.test.ts",
+                "tests/integration/realtime-sync.test.ts",
+                "tests/e2e/card-table-3d.test.ts",
+            ]
+        ):
+            test_file = tmp_path / relative
+            test_file.parent.mkdir(parents=True, exist_ok=True)
+            test_file.write_text(
+                "import { card_catalogReady } from '../../src/game/card-catalog';\n"
+                f"export function runCard3DChecks{index}(): string[] {{\n"
+                "  const failures: string[] = [];\n"
+                "  if (!card_catalogReady) failures.push('catalog not ready');\n"
+                "  return failures;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+        result = subprocess.run(
+            ["node", "scripts/test.mjs", "--watch=false"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "card3d behavior checks passed" in result.stdout
+
+    def test_deterministic_patch_residue_cleanup_removes_declared_marker(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "assets" / "card-assets.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "export const cardAssetsReady = true;\n"
+            ">>>> REPLACE src/assets/card-assets.ts\n"
+            "export const assetCount = 52;\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+
+        results = _apply_deterministic_patch_residue_cleanup(
+            adapter,
+            task={
+                "metadata": {
+                    "target_files": ["src/assets/card-assets.ts"],
+                    "scope_paths": ["src/assets/card-assets.ts"],
+                }
+            },
+            task_id="PM-CARD3D-ASSETS-18",
+        )
+
+        cleaned = target.read_text(encoding="utf-8")
+        assert len(results) == 1
+        assert results[0]["tool"] == "write_file"
+        assert results[0]["result"]["source_tool"] == "deterministic_patch_residue_cleanup"
+        assert ">>>> REPLACE" not in cleaned
+        assert "export const cardAssetsReady = true;" in cleaned
+        assert "export const assetCount = 52;" in cleaned
+        assert _remove_patch_residue_lines(cleaned) == cleaned
+
+    def test_deterministic_patch_residue_cleanup_ignores_unscoped_files(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "assets" / "card-assets.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        original = "export const cardAssetsReady = true;\n>>>> REPLACE src/assets/card-assets.ts\n"
+        target.write_text(original, encoding="utf-8")
+        adapter = _make_adapter(tmp_path)
+
+        results = _apply_deterministic_patch_residue_cleanup(
+            adapter,
+            task={"metadata": {"target_files": ["src/server/app.ts"]}},
+            task_id="PM-CARD3D-SERVER-01",
+        )
+
+        assert results == []
+        assert target.read_text(encoding="utf-8") == original
+
     @pytest.mark.asyncio
     async def test_ready_queue_fallback_claim_preserves_selected_task_identity(self, tmp_path: Any) -> None:
         target = tmp_path / "src" / "combat" / "combat-system.ts"
@@ -1456,6 +1591,53 @@ class TestExistingWorkspaceTaskEvidence:
                 }
             )
             is True
+        )
+
+    def test_transient_provider_errors_can_accept_existing_scope(self) -> None:
+        task = {
+            "subject": "Extend realtime gateway",
+            "phase": "implementation",
+            "target_files": ["src/server/realtime-gateway.ts"],
+        }
+
+        assert (
+            _can_accept_existing_workspace_scope(
+                task=task,
+                requires_fresh_materialization=True,
+                write_tool_evidence=False,
+                primary_llm_summary={
+                    "success": False,
+                    "error": "TransactionKernel execution failed: circuit_open:50s_remaining",
+                },
+            )
+            is True
+        )
+        assert (
+            _can_accept_existing_workspace_scope(
+                task=task,
+                requires_fresh_materialization=True,
+                write_tool_evidence=False,
+                primary_llm_summary={
+                    "success": False,
+                    "error": "429 Client Error: Too Many Requests for url",
+                },
+            )
+            is True
+        )
+
+    def test_non_transient_no_write_still_requires_materialization(self) -> None:
+        assert (
+            _can_accept_existing_workspace_scope(
+                task={
+                    "subject": "Extend realtime gateway",
+                    "phase": "implementation",
+                    "target_files": ["src/server/realtime-gateway.ts"],
+                },
+                requires_fresh_materialization=True,
+                write_tool_evidence=False,
+                primary_llm_summary={"success": False, "error": "model returned no tool calls"},
+            )
+            is False
         )
 
 
