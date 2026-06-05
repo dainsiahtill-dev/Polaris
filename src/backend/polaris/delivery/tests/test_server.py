@@ -120,9 +120,7 @@ class TestRunBootstrap:
             yield instance
 
     @pytest.mark.asyncio
-    async def test_validation_failure_returns_one(
-        self, mock_request: MagicMock, mock_bootstrapper: MagicMock
-    ) -> None:
+    async def test_validation_failure_returns_one(self, mock_request: MagicMock, mock_bootstrapper: MagicMock) -> None:
         """Test validation failure returns exit code 1."""
         mock_request.validate.return_value = MagicMock(is_valid=False, errors=["error1"])
 
@@ -145,9 +143,7 @@ class TestRunBootstrap:
         assert result == 1
 
     @pytest.mark.asyncio
-    async def test_bootstrap_failure_returns_one(
-        self, mock_request: MagicMock, mock_bootstrapper: MagicMock
-    ) -> None:
+    async def test_bootstrap_failure_returns_one(self, mock_request: MagicMock, mock_bootstrapper: MagicMock) -> None:
         """Test bootstrap failure returns exit code 1."""
         result_mock = MagicMock()
         result_mock.is_success.return_value = False
@@ -176,9 +172,7 @@ class TestRunBootstrap:
         assert result == 1
 
     @pytest.mark.asyncio
-    async def test_keyboard_interrupt_handling(
-        self, mock_request: MagicMock, mock_bootstrapper: MagicMock
-    ) -> None:
+    async def test_keyboard_interrupt_handling(self, mock_request: MagicMock, mock_bootstrapper: MagicMock) -> None:
         """Test KeyboardInterrupt handling."""
         result_mock = MagicMock()
         result_mock.is_success.return_value = True

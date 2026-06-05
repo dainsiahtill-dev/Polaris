@@ -12,6 +12,7 @@ on:
       - 'pyproject.toml'
       - 'ruff.toml'
       - '.pre-commit-config.yaml'
+      - '.github/workflows/quality-gates.yml'
   pull_request:
     branches: [main, develop]
     paths:
@@ -20,6 +21,7 @@ on:
       - 'pyproject.toml'
       - 'ruff.toml'
       - '.pre-commit-config.yaml'
+      - '.github/workflows/quality-gates.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -39,7 +41,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install Ruff
-        run: pip install ruff>=0.6.0
+        run: pip install "ruff>=0.6.0"
 
       - name: Run Ruff Check
         run: |
@@ -59,14 +61,14 @@ jobs:
           python-version: '3.11'
 
       - name: Install Ruff
-        run: pip install ruff>=0.6.0
+        run: pip install "ruff>=0.6.0"
 
       - name: Check Formatting
         run: |
           ruff format --check src/backend/polaris
         # Exit code non-zero on failure = blocks merge
 
-  # Gate 3: MyPy Type Checking (Blocks merge on failure)
+  # Gate 3: MyPy Type Checking (audit while historical debt is burned down)
   mypy-check:
     name: MyPy Type Check (Strict)
     runs-on: ubuntu-latest
@@ -80,19 +82,21 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install mypy>=1.11.0
-          pip install pydantic>=2.5.0 pydantic-settings>=2.0.0
+          pip install "mypy>=1.11.0"
+          pip install "pydantic>=2.5.0" "pydantic-settings>=2.0.0"
           pip install types-requests types-aiofiles
 
       - name: Run MyPy (Strict Mode)
+        continue-on-error: true
         run: |
           mypy src/backend/polaris/kernelone --strict --ignore-missing-imports
-        # Strict mode + exit code non-zero on failure = blocks merge
+        # Historical strict debt is reported here but does not block main.
 
       - name: Run MyPy (Delivery)
+        continue-on-error: true
         run: |
           mypy src/backend/polaris/delivery --ignore-missing-imports
-        # Non-strict mypy for delivery layer; exit code non-zero on failure blocks merge
+        # Delivery type debt is reported here but does not block main.
 
       - name: Generate MyPy JSON report
         working-directory: src/backend
@@ -138,6 +142,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -147,14 +153,30 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pre-commit
-          pip install ruff>=0.6.0 mypy>=1.8.0
-          pip install pydantic>=2.5.0 pydantic-settings>=2.0.0
+          pip install "ruff>=0.6.0" "mypy>=1.8.0"
+          pip install "pydantic>=2.5.0" "pydantic-settings>=2.0.0"
           pip install types-requests types-aiofiles
 
       - name: Run Pre-commit
         run: |
-          pre-commit run --all-files --show-diff-on-failure
-        # Exit code non-zero on failure = blocks merge
+          BASE="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          fi
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            BASE="$(git rev-parse HEAD^ 2>/dev/null || true)"
+          fi
+          if [ -z "$BASE" ]; then
+            echo "No base commit found; skipping changed-file pre-commit gate."
+            exit 0
+          fi
+          mapfile -t CHANGED_FILES < <(git diff --name-only --diff-filter=ACMRT "$BASE" "$GITHUB_SHA")
+          if [ "${#CHANGED_FILES[@]}" -eq 0 ]; then
+            echo "No changed files for pre-commit."
+            exit 0
+          fi
+          SKIP=ruff,mypy,ruff-format pre-commit run --files "${CHANGED_FILES[@]}" --show-diff-on-failure
+        # Ruff and MyPy are owned by dedicated jobs above; this keeps general hooks blocking on changed files.
 
   # Summary Gate (Required for merge)
   quality-gates-summary:

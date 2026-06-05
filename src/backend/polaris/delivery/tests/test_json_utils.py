@@ -43,7 +43,7 @@ class TestParseJsonLine:
 
     def test_json_array_returns_none(self) -> None:
         """Test JSON array returns None (not a dict)."""
-        assert parse_json_line('[1, 2, 3]') is None
+        assert parse_json_line("[1, 2, 3]") is None
 
     def test_json_string_returns_none(self) -> None:
         """Test JSON string returns None (not a dict)."""
@@ -51,15 +51,15 @@ class TestParseJsonLine:
 
     def test_json_number_returns_none(self) -> None:
         """Test JSON number returns None (not a dict)."""
-        assert parse_json_line('42') is None
+        assert parse_json_line("42") is None
 
     def test_json_bool_returns_none(self) -> None:
         """Test JSON boolean returns None (not a dict)."""
-        assert parse_json_line('true') is None
+        assert parse_json_line("true") is None
 
     def test_malformed_json_brace_only(self) -> None:
         """Test malformed JSON with just brace."""
-        assert parse_json_line('{') is None
+        assert parse_json_line("{") is None
 
     def test_nested_json_object(self) -> None:
         """Test parsing nested JSON object."""
@@ -79,7 +79,7 @@ class TestParseJsonLine:
 
     def test_empty_dict(self) -> None:
         """Test parsing empty dict."""
-        result = parse_json_line('{}')
+        result = parse_json_line("{}")
         assert result == {}
 
     def test_json_with_null(self) -> None:
@@ -118,7 +118,7 @@ class TestSanitizeSnapshotLines:
 
     def test_whitespace_json_start(self) -> None:
         """Test whitespace before JSON start is handled."""
-        lines = ["   {\"key\": \"value\"}"]
+        lines = ['   {"key": "value"}']
         assert sanitize_snapshot_lines("llm", lines) == lines
 
     def test_empty_first_element(self) -> None:

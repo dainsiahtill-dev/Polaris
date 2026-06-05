@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = [
+_PUBLIC_NAMES = (
     "ARTIFACT_REGISTRY",
     "LEGACY_KEY_MAPPING",
     "LEGACY_PATH_ALIASES",
@@ -29,7 +29,9 @@ __all__ = [
     "get_artifact_path",
     "get_review_gate",
     "list_artifact_keys",
-]
+)
+
+__all__ = list(_PUBLIC_NAMES)
 
 
 def __getattr__(name: str) -> Any:

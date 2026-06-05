@@ -10,6 +10,7 @@ from typing import Any, Generic, TypeVar
 
 T = TypeVar("T")
 
+
 class Result(Generic[T]):
     # Legacy Result type with backward-compatible API.
     # DEPRECATED: Use polaris.kernelone.contracts.technical.Result instead.
@@ -61,7 +62,7 @@ class Result(Generic[T]):
         try:
             new_val = fn(self.value)
             return Result(is_ok=True, value=new_val)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive monadic boundary
             return Result(is_ok=False, error_message=str(exc))
 
     def and_then(self, fn: Any) -> Result[Any]:
@@ -74,7 +75,7 @@ class Result(Generic[T]):
             )
         try:
             return fn(self.value)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive monadic boundary
             return Result(is_ok=False, error_message=str(exc))
 
     def to_dict(self) -> dict[str, Any]:
@@ -141,6 +142,7 @@ class Result(Generic[T]):
             logger.log(level, "Result.ok: %s", self.value)
         return self
 
+
 class _ErrorCodes:
     # Legacy error codes class.
     # DEPRECATED: Use TaggedError or KernelError instead.
@@ -173,7 +175,7 @@ class _ErrorCodes:
     PROTOCOL_ERROR = "PROTOCOL_ERROR"
     MESSAGE_QUEUE_ERROR = "MESSAGE_QUEUE_ERROR"
 
+
 ErrorCodes = _ErrorCodes
 
-__all__ = ["Result", "ErrorCodes"]
-
+__all__ = ["ErrorCodes", "Result"]

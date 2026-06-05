@@ -147,7 +147,9 @@ class TypedEventBusAdapter:
         self._message_type_to_event: dict[str, str] = {}
 
         # Track MessageBus subscriptions for cleanup
-        self._subscriptions: list[tuple[MessageType, Callable[[Message], Any], str]] = []  # (MessageType, handler_ref, subscription_id)
+        self._subscriptions: list[
+            tuple[MessageType, Callable[[Message], Any], str]
+        ] = []  # (MessageType, handler_ref, subscription_id)
 
         # Track Registry subscriptions for cleanup
         self._registry_subscriptions: list[tuple[str, str]] = []  # (pattern, subscription_id)
@@ -510,9 +512,7 @@ class TypedEventBusAdapter:
                     success = await self._bus.unsubscribe(message_type, handler)
                     if success:
                         self._subscriptions.pop(i)
-                        logger.debug(
-                            "Unsubscribed handler %s from %s", subscription_id, message_type.name
-                        )
+                        logger.debug("Unsubscribed handler %s from %s", subscription_id, message_type.name)
                         return True
                     return False
                 except (RuntimeError, ValueError) as exc:
@@ -552,15 +552,11 @@ class TypedEventBusAdapter:
             try:
                 success = await self._bus.unsubscribe(message_type, handler)
                 if success:
-                    self._subscriptions = [
-                        s for s in self._subscriptions if s[2] != sid
-                    ]
+                    self._subscriptions = [s for s in self._subscriptions if s[2] != sid]
                     removed_count += 1
                 else:
                     failed_count += 1
-                    logger.warning(
-                        "Failed to unsubscribe MessageBus %s: handler not found", message_type.name
-                    )
+                    logger.warning("Failed to unsubscribe MessageBus %s: handler not found", message_type.name)
             except (RuntimeError, ValueError) as exc:
                 failed_count += 1
                 logger.error("Error unsubscribing MessageBus %s: %s", message_type.name, exc)
@@ -569,17 +565,13 @@ class TypedEventBusAdapter:
         for pattern, sid in list(self._registry_subscriptions):
             try:
                 self._registry.unsubscribe(sid)
-                self._registry_subscriptions = [
-                    s for s in self._registry_subscriptions if s[1] != sid
-                ]
+                self._registry_subscriptions = [s for s in self._registry_subscriptions if s[1] != sid]
                 removed_count += 1
             except (RuntimeError, ValueError) as exc:
                 failed_count += 1
                 logger.error("Error unsubscribing Registry %s: %s", pattern, exc)
 
-        logger.info(
-            "Unsubscribed all adapters: %s removed, %s failed", removed_count, failed_count
-        )
+        logger.info("Unsubscribed all adapters: %s removed, %s failed", removed_count, failed_count)
 
 
 # =============================================================================

@@ -45,8 +45,7 @@ class BenchmarkContext:
         self._start_time = time.perf_counter()
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        ...
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None: ...
 
     def record_latency(self, latency_ms: float) -> None:
         """Record a latency measurement in milliseconds."""

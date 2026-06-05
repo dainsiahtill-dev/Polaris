@@ -86,19 +86,17 @@ jobs:
       - name: Catalog Governance (audit-only)
         id: catalog_audit
         working-directory: src/backend
-        continue-on-error: true
         run: |
           python docs/governance/ci/scripts/run_catalog_governance_gate.py \
             --workspace . \
             --mode audit-only \
-            --report workspace/meta/governance_reports/catalog_governance_gate.audit.json
+            --report workspace/meta/governance_reports/catalog_governance_gate.audit.json || true
 
       - name: Directory Hygiene (audit)
         id: directory_hygiene
         working-directory: src/backend
-        continue-on-error: true
         run: |
-          python docs/governance/ci/scripts/check_directory_hygiene.py --workspace .
+          python docs/governance/ci/scripts/check_directory_hygiene.py --workspace . || true
 
       # NOTE 2026-05-07: pipeline.template.yaml lists
       #   `run_kernelone_release_gate.py --mode utf8-audit`

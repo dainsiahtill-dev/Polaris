@@ -35,6 +35,7 @@ def _resolve_docs_autoinit_root(workspace_full: str) -> str:
     """Resolve docs auto initialization root path."""
     try:
         from polaris.kernelone.storage import resolve_workspace_persistent_path
+
         return os.path.abspath(resolve_workspace_persistent_path(workspace_full, "workspace/docs"))
     except (RuntimeError, ValueError) as exc:
         logger.warning(

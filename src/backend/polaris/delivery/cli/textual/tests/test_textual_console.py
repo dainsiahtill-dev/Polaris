@@ -18,7 +18,6 @@ import pytest
 
 # Test imports with skipif for textual
 try:
-
     TEXTUAL_AVAILABLE = True
 except ImportError:
     TEXTUAL_AVAILABLE = False

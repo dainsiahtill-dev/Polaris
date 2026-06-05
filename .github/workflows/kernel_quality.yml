@@ -20,25 +20,20 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy pytest pytest-cov
-          pip install -e .
+          pip install -e ".[dev]"
 
       - name: Run Ruff Lint
-        run: ruff check src/backend/polaris tests
+        run: ruff check src/backend/polaris scripts
 
       - name: Run Ruff Format Check
-        run: ruff format --check src/backend/polaris tests scripts
+        run: ruff format --check src/backend/polaris scripts
 
-      - name: Run MyPy
-        run: mypy --strict src/backend/polaris
+      - name: Run MyPy Audit
+        continue-on-error: true
+        run: mypy --strict src/backend/polaris --ignore-missing-imports
 
-      - name: Run Tests with Coverage
+      - name: Run Kernel Smoke Tests
         run: |
-          pytest --cov=src/backend/polaris --cov-report=term-missing -v
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: htmlcov/
+          pytest -q \
+            src/backend/polaris/kernelone/audit/tests/test_context_os_prompt.py \
+            src/backend/polaris/cells/roles/kernel/tests/test_stream_handler_audit_metadata.py

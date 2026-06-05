@@ -309,7 +309,9 @@ class TruthLogIndex:
     def query_by_role(self, role: str) -> list[dict[str, Any]]:
         """Get all entries from a specific role."""
         with self._data_lock:
-            return [deepcopy(e.entry) for e in self._entries_by_id.values() if e.role and role.lower() in e.role.lower()]
+            return [
+                deepcopy(e.entry) for e in self._entries_by_id.values() if e.role and role.lower() in e.role.lower()
+            ]
 
     def query_by_event_type(self, event_type: str) -> list[dict[str, Any]]:
         """Get all entries of a specific event type."""
@@ -323,7 +325,9 @@ class TruthLogIndex:
     def query_by_time_range(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
         """Get all entries within a time range."""
         with self._data_lock:
-            return [deepcopy(e.entry) for e in self._entries_by_id.values() if e.timestamp and start <= e.timestamp <= end]
+            return [
+                deepcopy(e.entry) for e in self._entries_by_id.values() if e.timestamp and start <= e.timestamp <= end
+            ]
 
     def get_recent(self, n: int = 10) -> list[dict[str, Any]]:
         """Get the N most recent entries by insertion order."""

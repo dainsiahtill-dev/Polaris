@@ -283,8 +283,7 @@ class Task:
         """
         if self.status != TaskStatus.CLAIMED:
             raise TaskStateError(
-                f"Cannot start from {self.status.value!r}; "
-                f"task must be CLAIMED first (use claim() method)"
+                f"Cannot start from {self.status.value!r}; task must be CLAIMED first (use claim() method)"
             )
         self.status = TaskStatus.IN_PROGRESS
         if self.started_at is None:

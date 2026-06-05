@@ -67,13 +67,21 @@ class _PipelineHost:
         role = str((context_config or {}).get("role") or self.role)
         resolved = session_id or f"{role}-s{len(self.ensure_calls) + 1}"
         self.ensure_calls.append({"session_id": session_id, "role": role, "resolved": resolved})
-        return {"id": resolved, "context_config": dict(context_config or {}), "capability_profile": dict(capability_profile or {})}
+        return {
+            "id": resolved,
+            "context_config": dict(context_config or {}),
+            "capability_profile": dict(capability_profile or {}),
+        }
 
     def create_session(self, *, title=None, context_config=None, capability_profile=None):
         role = str((context_config or {}).get("role") or self.role)
         resolved = f"{role}-new-{len(self.create_calls) + 1}"
         self.create_calls.append({"role": role, "resolved": resolved})
-        return {"id": resolved, "context_config": dict(context_config or {}), "capability_profile": dict(capability_profile or {})}
+        return {
+            "id": resolved,
+            "context_config": dict(context_config or {}),
+            "capability_profile": dict(capability_profile or {}),
+        }
 
     async def stream_turn(self, session_id, message, *, context=None, role=None, debug=False, enable_cognitive=None):
         call_record = {"session_id": session_id, "message": message, "role": role, "debug": debug}
@@ -125,7 +133,9 @@ def _noop_ack(**_kw: Any) -> int:
     return 1
 
 
-def _install_market_mocks(monkeypatch, *, claim_batches: list[list[SuperClaimedTask]] | None = None) -> list[dict[str, Any]]:
+def _install_market_mocks(
+    monkeypatch, *, claim_batches: list[list[SuperClaimedTask]] | None = None
+) -> list[dict[str, Any]]:
     """Install monkeypatches for TaskMarket functions. Returns a log list for auditing."""
     log: list[dict[str, Any]] = []
     batch_iter = iter(claim_batches or [])
@@ -237,7 +247,7 @@ class TestFullPipelineE2E:
             '```json\n{"blueprints":['
             '{"task_id":"t-1","blueprint_id":"bp-t-1","summary":"事件流蓝图","scope_paths":["event_stream.py"],"guardrails":["向后兼容"]},'
             '{"task_id":"t-2","blueprint_id":"bp-t-2","summary":"调度蓝图","scope_paths":["dispatch.py"],"guardrails":[]}'
-            ']}\n```'
+            "]}\n```"
         )
         blueprint_items = extract_blueprint_items_from_ce_output(ce_output, claimed_tasks=ce_claims)
         assert len(blueprint_items) == 2
@@ -261,9 +271,7 @@ class TestFullPipelineE2E:
         assert "event_stream.py" in dir_msg
         assert "向后兼容" in dir_msg
 
-    def test_full_pipeline_arch_pm_ce_dir_console(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_full_pipeline_arch_pm_ce_dir_console(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Console-level test: Architect → PM → CE → Director (with loop) via run_role_console."""
         _install_host(monkeypatch)
         import polaris.delivery.cli.director.console_host as console_host_module
@@ -282,7 +290,9 @@ class TestFullPipelineE2E:
             # 1: PM
             lambda **kw: _yield_complete('```json\n{"tasks":[{"subject":"test task","target_files":["x.py"]}]}\n```'),
             # 2: Chief Engineer
-            lambda **kw: _yield_complete('```json\n{"blueprints":[{"task_id":"t-1","blueprint_id":"bp-t-1","summary":"bp ready","scope_paths":["x.py"]}]\n```'),
+            lambda **kw: _yield_complete(
+                '```json\n{"blueprints":[{"task_id":"t-1","blueprint_id":"bp-t-1","summary":"bp ready","scope_paths":["x.py"]}]\n```'
+            ),
             # 3: Director (first turn — needs more work to trigger continuation)
             lambda **kw: _yield_complete("已完成读取，下一回合将修改。"),
             # 4: Director (continuation)
@@ -404,11 +414,11 @@ class TestLoopBPMToChiefEngineer:
     def test_ce_output_parsed_to_blueprint_items(self) -> None:
         """CE's JSON output must be parseable into SuperBlueprintItem objects."""
         ce_output = (
-            '```json\n'
+            "```json\n"
             '{"blueprints":['
             '{"task_id":"t-1","blueprint_id":"bp-t-1","summary":"事件流蓝图","scope_paths":["event_stream.py"],"guardrails":["向后兼容"]},'
             '{"task_id":"t-2","blueprint_id":"bp-t-2","summary":"调度器蓝图","scope_paths":["scheduler.py"],"guardrails":[]}'
-            ']}\n```'
+            "]}\n```"
         )
         claimed = [
             _make_claim("t-1", "pending_design", {"subject": "事件流", "target_files": ["event_stream.py"]}),
@@ -445,8 +455,12 @@ class TestLoopBPMToChiefEngineer:
         )
 
         tasks = [
-            SuperTaskItem(subject="事件流", description="添加异步处理", target_files=("event_stream.py",), estimated_hours=16),
-            SuperTaskItem(subject="调度器", description="实现调度框架", target_files=("scheduler.py",), estimated_hours=8),
+            SuperTaskItem(
+                subject="事件流", description="添加异步处理", target_files=("event_stream.py",), estimated_hours=16
+            ),
+            SuperTaskItem(
+                subject="调度器", description="实现调度框架", target_files=("scheduler.py",), estimated_hours=8
+            ),
         ]
         task_ids = terminal_console._persist_super_tasks_to_board(
             workspace=".",
@@ -473,11 +487,15 @@ class TestLoopCCEToDirector:
     def test_director_task_handoff_contains_blueprint_context(self) -> None:
         """Director must receive task claims with blueprint metadata."""
         claimed = [
-            _make_claim("t-1", "pending_exec", {
-                "subject": "事件流异步化",
-                "target_files": ["event_stream.py"],
-                "blueprint_id": "bp-t-1",
-            }),
+            _make_claim(
+                "t-1",
+                "pending_exec",
+                {
+                    "subject": "事件流异步化",
+                    "target_files": ["event_stream.py"],
+                    "blueprint_id": "bp-t-1",
+                },
+            ),
         ]
         blueprints = [
             SuperBlueprintItem(
@@ -536,8 +554,7 @@ class TestLoopCCEToDirector:
         pm_output = '{"tasks":[{"subject":"task1","target_files":["x.py"]}]}'
 
         ce_output = (
-            '```json\n{"blueprints":[{"task_id":"1","blueprint_id":"bp-1",'
-            '"summary":"bp","scope_paths":["x.py"]}]\n```'
+            '```json\n{"blueprints":[{"task_id":"1","blueprint_id":"bp-1","summary":"bp","scope_paths":["x.py"]}]\n```'
         )
         claimed = [_make_claim("1", "pending_exec", {"subject": "task1", "target_files": ["x.py"]})]
         blueprint_items = extract_blueprint_items_from_ce_output(ce_output, claimed_tasks=claimed)
@@ -646,10 +663,18 @@ class TestTaskMarketStateMachine:
             original_request="test",
             publish_stage="pending_design",
         )
-        ce_claims = terminal_console._claim_super_tasks_from_market(workspace=".", stage="pending_design", worker_role="ce", task_ids=[1])
-        terminal_console._acknowledge_super_claims(workspace=".", claims=ce_claims, next_stage="pending_exec", summary="CE done")
-        dir_claims = terminal_console._claim_super_tasks_from_market(workspace=".", stage="pending_exec", worker_role="director", task_ids=[1])
-        terminal_console._acknowledge_super_claims(workspace=".", claims=dir_claims, next_stage="pending_qa", summary="Director done")
+        ce_claims = terminal_console._claim_super_tasks_from_market(
+            workspace=".", stage="pending_design", worker_role="ce", task_ids=[1]
+        )
+        terminal_console._acknowledge_super_claims(
+            workspace=".", claims=ce_claims, next_stage="pending_exec", summary="CE done"
+        )
+        dir_claims = terminal_console._claim_super_tasks_from_market(
+            workspace=".", stage="pending_exec", worker_role="director", task_ids=[1]
+        )
+        terminal_console._acknowledge_super_claims(
+            workspace=".", claims=dir_claims, next_stage="pending_qa", summary="Director done"
+        )
 
         assert lifecycle == [
             {"step": "publish", "stage": "pending_design"},
@@ -726,9 +751,17 @@ class TestRoutingVerification:
     @pytest.mark.parametrize(
         "message,expected_roles,expected_reason",
         [
-            ("进一步完善编排层，请先制定计划蓝图，然后开始落地执行。", ("architect", "pm", "chief_engineer", "director"), "architect_code_delivery"),
+            (
+                "进一步完善编排层，请先制定计划蓝图，然后开始落地执行。",
+                ("architect", "pm", "chief_engineer", "director"),
+                "architect_code_delivery",
+            ),
             ("请给我一个架构蓝图", ("architect",), "architecture_design"),
-            ("请帮我完善 session orchestrator 相关代码", ("architect", "pm", "chief_engineer", "director"), "code_delivery"),
+            (
+                "请帮我完善 session orchestrator 相关代码",
+                ("architect", "pm", "chief_engineer", "director"),
+                "code_delivery",
+            ),
             ("分析根因并审查代码", ("chief_engineer",), "technical_analysis"),
             ("请做测试验证", ("qa",), "qa_validation"),
             ("hello there", ("director",), "fallback"),
@@ -806,12 +839,14 @@ async def _arch_response(kw: dict, captured: dict):
 
 async def _pm_response(kw: dict, captured: dict):
     captured["pm_message"] = kw.get("message", "")
-    yield {"type": "complete", "data": {"content": '{"tasks":[{"subject":"t","target_files":["x.py"]}]}' }}
+    yield {"type": "complete", "data": {"content": '{"tasks":[{"subject":"t","target_files":["x.py"]}]}'}}
 
 
 async def _ce_response(kw: dict, captured: dict):
     captured["ce_message"] = kw.get("message", "")
     yield {
         "type": "complete",
-        "data": {"content": '```json\n{"blueprints":[{"task_id":"1","blueprint_id":"bp-1","summary":"ready","scope_paths":["x.py"]}]\n```'},
+        "data": {
+            "content": '```json\n{"blueprints":[{"task_id":"1","blueprint_id":"bp-1","summary":"ready","scope_paths":["x.py"]}]\n```'
+        },
     }

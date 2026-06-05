@@ -463,10 +463,10 @@ tags: [testing, tdd, methodology]
 def test_user_can_login_with_valid_credentials():
     # Arrange
     user = create_user("alice", "secret123")
-    
+
     # Act
     result = login("alice", "secret123")
-    
+
     # Assert
     assert result.success is True
     assert result.user_id == user.id
@@ -504,11 +504,11 @@ class Result(Generic[T]):
     success: bool
     value: T | None = None
     error: str = ""
-    
+
     @classmethod
     def ok(cls, value: T) -> "Result[T]":
         return cls(success=True, value=value)
-    
+
     @classmethod
     def fail(cls, error: str) -> "Result[T]":
         return cls(success=False, error=error)
@@ -519,10 +519,10 @@ class Result(Generic[T]):
 def process_order(order):
     if not order.is_valid():
         return Result.fail("Invalid order")
-    
+
     if not has_inventory(order.items):
         return Result.fail("Out of stock")
-    
+
     # Process valid order
     return Result.ok(complete_order(order))
 ```

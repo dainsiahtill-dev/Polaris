@@ -49,6 +49,7 @@ def _handle_command(
     """
     if message in _EXIT_COMMANDS:
         from polaris.delivery.cli.cli_completion import save_history
+
         save_history()
         return True, 0, current_role, active_session_id, current_keymode, current_dry_run
 
@@ -117,8 +118,7 @@ def _handle_command(
             return True, -1, current_role, active_session_id, current_keymode, current_dry_run
         if next_mode not in _JSON_RENDER_MODES:
             print(
-                f"[error] unsupported json render mode={next_mode!r}; "
-                f"allowed={', '.join(sorted(_JSON_RENDER_MODES))}",
+                f"[error] unsupported json render mode={next_mode!r}; allowed={', '.join(sorted(_JSON_RENDER_MODES))}",
                 file=sys.stderr,
             )
             return True, -1, current_role, active_session_id, current_keymode, current_dry_run
@@ -196,6 +196,7 @@ def _handle_command(
             # List available skills
             try:
                 from polaris.kernelone.single_agent.skill_system import SkillLoader
+
                 loader = SkillLoader(str(Path(".").resolve()))
                 skills = loader.list_skills()
                 if skills:
@@ -219,6 +220,7 @@ def _handle_command(
                 return True, -1, current_role, active_session_id, current_keymode, current_dry_run
             try:
                 from polaris.kernelone.single_agent.skill_system import SkillLoader
+
                 loader = SkillLoader(str(Path(".").resolve()))
                 content = loader.load_skill_content(skill_name)
                 if content.startswith("Error:"):
@@ -231,6 +233,7 @@ def _handle_command(
         if skill_cmd == "reload":
             try:
                 from polaris.kernelone.single_agent.skill_system import SkillLoader
+
                 loader = SkillLoader(str(Path(".").resolve()))
                 # Force reload by creating a new instance
                 print(f"[skill] Reloaded {len(loader.list_skills())} skills")
@@ -282,6 +285,7 @@ def _resolve_role_session(
 
 def _build_role_capability_profile(*, role: str, host_kind: str) -> dict[str, Any]:
     from polaris.cells.roles.host.public import get_capability_profile
+
     profile = get_capability_profile(host_kind).to_dict()
     metadata = dict(profile.get("metadata") or {})
     metadata.update(

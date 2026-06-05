@@ -55,11 +55,7 @@ class TestCliRouterSubparsers:
     def test_parser_has_four_subcommands(self, router: CliRouter) -> None:
         """CliRouter parser must expose all four top-level subcommands."""
         parser = router._parser
-        subparsers_actions = [
-            action
-            for action in parser._actions
-            if isinstance(action, argparse._SubParsersAction)
-        ]
+        subparsers_actions = [action for action in parser._actions if isinstance(action, argparse._SubParsersAction)]
         assert len(subparsers_actions) == 1, "Expected exactly one subparsers action"
         choices = subparsers_actions[0].choices
         assert set(choices.keys()) == {"chat", "status", "workflow", "test-window"}

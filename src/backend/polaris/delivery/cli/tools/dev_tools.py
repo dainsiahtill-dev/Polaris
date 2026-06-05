@@ -138,9 +138,7 @@ def cmd_test_cov(args: argparse.Namespace) -> int:
         print("Error: pytest not found. Install with: pip install pytest pytest-cov")
         return 1
 
-    cmd = (
-        ["pytest", *TEST_DIRS, "-v", "--tb=short", "--cov=polaris", "--cov-report=term-missing", "--cov-report=html"]
-    )
+    cmd = ["pytest", *TEST_DIRS, "-v", "--tb=short", "--cov=polaris", "--cov-report=term-missing", "--cov-report=html"]
     return run_command(cmd, "Pytest with coverage")
 
 

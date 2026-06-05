@@ -106,7 +106,7 @@ class TestAtomicWriteJson:
         path = str(tmp_path / "test.json")
         _atomic_write_json(path, {"a": 1}, indent=4)
         content = Path(path).read_text(encoding="utf-8")
-        assert "    \"a\": 1" in content
+        assert '    "a": 1' in content
 
     def test_zero_indent_compact(self, tmp_path: Path) -> None:
         """Indent 0 produces newline-separated compact JSON."""

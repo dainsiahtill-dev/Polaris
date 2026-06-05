@@ -243,6 +243,7 @@ def _build_render_state(
         _normalize_prompt_style,
         _resolve_output_format,
     )
+
     resolved_format = _resolve_output_format(output_format or env_output_format)
     return _ConsoleRenderState(
         prompt_style=_normalize_prompt_style(prompt_style or env_prompt_style),

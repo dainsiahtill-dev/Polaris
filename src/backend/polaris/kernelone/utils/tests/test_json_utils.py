@@ -96,13 +96,13 @@ class TestParseJsonPayload:
 
     def test_json_in_markdown_block(self) -> None:
         """Parse JSON inside markdown code block."""
-        text = "```json\n{\"key\": \"value\"}\n```"
+        text = '```json\n{"key": "value"}\n```'
         result = parse_json_payload(text)
         assert result == {"key": "value"}
 
     def test_json_in_plain_markdown_block(self) -> None:
         """Parse JSON inside plain markdown code block."""
-        text = "```\n{\"key\": \"value\"}\n```"
+        text = '```\n{"key": "value"}\n```'
         result = parse_json_payload(text)
         assert result == {"key": "value"}
 
@@ -166,7 +166,7 @@ class TestFormatJson:
     def test_format_with_custom_indent(self) -> None:
         """Format with custom indentation."""
         result = format_json({"a": 1}, indent=4)
-        assert "    \"a\": 1" in result
+        assert '    "a": 1' in result
 
     def test_unicode_preserved(self) -> None:
         """Unicode characters are preserved."""

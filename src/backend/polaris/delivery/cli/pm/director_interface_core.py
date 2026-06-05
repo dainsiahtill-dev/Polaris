@@ -160,7 +160,9 @@ class CanonicalDirectorAdapter(DirectorInterface):
         adapter_payload = adapter_result if isinstance(adapter_result, dict) else {}
         changed_files = normalize_path_list(metadata.get("changed_files") or adapter_payload.get("changed_files") or [])
         raw_patches = adapter_payload.get("patches")
-        patches = [dict(item) for item in raw_patches if isinstance(item, dict)] if isinstance(raw_patches, list) else []
+        patches = (
+            [dict(item) for item in raw_patches if isinstance(item, dict)] if isinstance(raw_patches, list) else []
+        )
         return DirectorResult(
             success=bool(result.success),
             task_id=task.task_id,

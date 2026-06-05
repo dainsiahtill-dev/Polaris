@@ -10,22 +10,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from polaris.delivery.cli.super_pipeline_config import (
-    PipelineResult,
-    PipelineStage,
-    StageResult,
-    SuperPipelineConfig,
-)
 from polaris.delivery.cli.super_mode import (
     SuperPipelineContext,
     extract_blueprint_items_from_ce_output,
     extract_task_list_from_pm_output,
     write_architect_blueprint_to_disk,
+)
+from polaris.delivery.cli.super_pipeline_config import (
+    PipelineResult,
+    PipelineStage,
+    StageResult,
+    SuperPipelineConfig,
 )
 
 if TYPE_CHECKING:
@@ -169,7 +169,7 @@ class SuperPipelineOrchestrator:
 
         try:
             turn_message = stage.handoff_builder(**handoff_kwargs)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - stage failures are reported as StageResult
             return StageResult(
                 role=stage.role,
                 success=False,
@@ -201,7 +201,7 @@ class SuperPipelineOrchestrator:
                 enable_cognitive=self._enable_cognitive,
                 tool_choice_override=stage.constraint.to_api_tool_choice(),
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - executor failures are reported as StageResult
             return StageResult(
                 role=stage.role,
                 success=False,

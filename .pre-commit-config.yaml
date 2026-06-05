@@ -10,7 +10,7 @@
 repos:
   # Ruff - Python linting and formatting
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.15.16
     hooks:
       # Hook 1: ruff check --fix (mandatory gate)
       - id: ruff

@@ -63,7 +63,7 @@ class TestWebSocketSendError:
 
     def test_special_chars_in_message(self) -> None:
         """Test with special characters in message."""
-        msg = "Error: \n\t\"quoted\" \u4e2d\u6587"
+        msg = 'Error: \n\t"quoted" \u4e2d\u6587'
         err = WebSocketSendError("type", msg)
         assert err.message == msg
 

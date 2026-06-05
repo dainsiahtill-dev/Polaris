@@ -52,8 +52,7 @@ class TestBuildBackoffSeconds:
         base = 2.0
         max_d = 100.0
         results = [
-            build_backoff_seconds(attempt=1, base_delay_seconds=base, max_delay_seconds=max_d)
-            for _ in range(20)
+            build_backoff_seconds(attempt=1, base_delay_seconds=base, max_delay_seconds=max_d) for _ in range(20)
         ]
         for r in results:
             assert base <= r <= base * 1.2
