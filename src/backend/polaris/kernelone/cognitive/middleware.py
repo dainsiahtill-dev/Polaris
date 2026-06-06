@@ -45,6 +45,7 @@ class CognitiveMiddleware:
         self._workspace = workspace or "."
         self._enabled = self._resolve_enabled(enabled)
         self._orchestrator: CognitiveOrchestrator | None = None
+        self._last_init_error: str | None = None
 
     def _resolve_enabled(self, enabled: bool | None) -> bool:
         """Resolve whether cognitive middleware is enabled."""
@@ -76,9 +77,35 @@ class CognitiveMiddleware:
                     enable_governance=None,  # Read from COGNITIVE_ENABLE_GOVERNANCE
                     use_llm=None,  # Read from COGNITIVE_USE_LLM
                 )
-            except (RuntimeError, ValueError):
+            except (RuntimeError, ValueError) as exc:
+                # Telemetry: remember why construction failed so process() can surface
+                # an actionable degraded_reason instead of a state indistinguishable
+                # from "cognition intentionally disabled".
+                self._last_init_error = type(exc).__name__
                 return None
         return self._orchestrator
+
+    @staticmethod
+    def _degraded_context(*, reason: str | None) -> dict[str, Any]:
+        """Build a no-op cognitive context.
+
+        ``reason`` is None for an intentional disable (not a failure) and a short
+        machine-readable string when cognition was attempted but degraded, so the
+        signal is observable instead of silently starved.
+        """
+        return {
+            "enabled": False,
+            "intent_type": "unknown",
+            "confidence": 0.0,
+            "uncertainty_score": 0.0,
+            "execution_path": "unknown",
+            "cognitive_analysis": None,
+            "blocked": False,
+            "block_reason": None,
+            "blocked_tools": (),
+            "degraded": reason is not None,
+            "degraded_reason": reason,
+        }
 
     async def process(
         self,
@@ -108,17 +135,11 @@ class CognitiveMiddleware:
         orchestrator = self._get_orchestrator()
 
         if orchestrator is None:
-            return {
-                "enabled": False,
-                "intent_type": "unknown",
-                "confidence": 0.0,
-                "uncertainty_score": 0.0,
-                "execution_path": "unknown",
-                "cognitive_analysis": None,
-                "blocked": False,
-                "block_reason": None,
-                "blocked_tools": (),
-            }
+            # Distinguish "intentionally disabled" (no signal needed) from "tried to
+            # enable but construction failed" (actionable degraded signal).
+            if self._enabled and self._last_init_error:
+                return self._degraded_context(reason=f"orchestrator_init:{self._last_init_error}")
+            return self._degraded_context(reason=None)
 
         try:
             result = await orchestrator.process(
@@ -143,20 +164,17 @@ class CognitiveMiddleware:
                 "blocked": result.blocked,
                 "block_reason": result.block_reason,
                 "blocked_tools": tuple(str(item) for item in result.blocked_tools if str(item or "").strip()),
+                "degraded": False,
+                "degraded_reason": None,
             }
 
-        except (RuntimeError, ValueError):
-            return {
-                "enabled": False,
-                "intent_type": "unknown",
-                "confidence": 0.0,
-                "uncertainty_score": 0.0,
-                "execution_path": "unknown",
-                "cognitive_analysis": None,
-                "blocked": False,
-                "block_reason": None,
-                "blocked_tools": (),
-            }
+        except (RuntimeError, ValueError, OSError) as exc:
+            # Cognitive preprocessing is an enhancement; an infra failure (bad path,
+            # I/O, etc.) must degrade to a no-op context, never crash the host role turn.
+            # Telemetry refactor: carry an actionable degraded_reason so the caller
+            # (e.g. the mainline preflight) can surface WHY cognition was skipped instead
+            # of absorbing the specific failure into a generic "unavailable".
+            return self._degraded_context(reason=f"process:{type(exc).__name__}")
 
     def inject_into_context(
         self,

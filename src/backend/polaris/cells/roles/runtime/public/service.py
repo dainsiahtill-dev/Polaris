@@ -1203,7 +1203,21 @@ class RoleRuntimeService(IRoleRuntime):
             session_id=session_id,
         )
         if not bool(cognitive_context.get("enabled")):
-            raise RuntimeError("cognitive_runtime_mainline_unavailable")
+            # Telemetry refactor: the middleware degrades to enabled=False on an infra
+            # failure; carry its degraded_reason into the breadcrumb and the raised error
+            # so the actionable cause is not absorbed into a generic "unavailable".
+            degraded_reason = str(cognitive_context.get("degraded_reason") or "").strip()
+            metadata["cognitive_runtime_preflight"] = {
+                "mode": mode.value,
+                "applied": False,
+                "reason": f"mainline_unavailable:{degraded_reason}" if degraded_reason else "mainline_unavailable",
+            }
+            request.metadata = metadata
+            raise RuntimeError(
+                f"cognitive_runtime_mainline_unavailable:{degraded_reason}"
+                if degraded_reason
+                else "cognitive_runtime_mainline_unavailable"
+            )
 
         if bool(cognitive_context.get("blocked")):
             reason = str(cognitive_context.get("block_reason") or "blocked").strip()

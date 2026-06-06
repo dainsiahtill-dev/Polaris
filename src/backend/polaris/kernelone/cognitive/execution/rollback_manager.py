@@ -74,7 +74,16 @@ class RollbackManager:
         unreadable: list[str] = []
         for path_str in target_paths:
             path = Path(path_str)
-            if path.exists() and path.is_file():
+            try:
+                exists = path.exists()
+                is_regular_file = path.is_file() if exists else False
+            except OSError:
+                # Malformed target path (e.g. name too long / invalid bytes) is not a
+                # snapshot-able file. Skip safely — a bad path must never crash rollback
+                # preparation (and thereby the whole cognitive turn and the role call).
+                unreadable.append(path_str)
+                continue
+            if exists and is_regular_file:
                 try:
                     content = path.read_text(encoding="utf-8")
                     file_hash = self._compute_hash(content)
@@ -91,7 +100,7 @@ class RollbackManager:
                     self._snapshots[f"{plan_id}:{path_str}"] = snapshot
                 except (OSError, ValueError):
                     unreadable.append(path_str)
-            elif path.exists():
+            elif exists:
                 unreadable.append(path_str)
             else:
                 # Creating a new file is rollback-capable: snapshot "absence"
@@ -107,6 +116,12 @@ class RollbackManager:
                 self._snapshots[f"{plan_id}:{path_str}"] = snapshot
 
         if unreadable:
+            # State-leak guard: snapshots for the readable targets were already stored
+            # under this plan_id, but the plan is never recorded once we raise — so the
+            # normal plan-keyed cleanup can never reclaim them. Purge them now so a
+            # rejected preparation leaves no dirty snapshot state behind (ContextOS
+            # state-leakage guard).
+            self._cleanup_plan_snapshots(plan_id)
             raise ValueError(f"Cannot prepare rollback: {len(unreadable)} target(s) unreadable: {unreadable}")
 
         # Generate rollback steps (max 3)

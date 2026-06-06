@@ -19,8 +19,11 @@ from polaris.cells.orchestration.pm_planning.internal.shared_quality import (
     _normalize_path_list,
     _normalize_text,
     _parse_command_args,
+    _resolve_repo_tsc,
+    _run_typescript_typecheck,
     _strip_wrapping_quotes,
     _tail_non_empty_lines,
+    _ts_error_is_declared_dep_noise,
     detect_integration_verify_command,
     run_integration_verify_runner,
 )
@@ -336,3 +339,86 @@ class TestRunIntegrationVerifyRunner:
         assert ok is False
         assert "static verification failed" in summary.lower()
         assert any("no test/spec files" in item for item in errors)
+
+
+# ---------------------------------------------------------------------------
+# TypeScript typecheck gate (real `tsc --noEmit`) — false-green prevention
+# ---------------------------------------------------------------------------
+
+
+class TestTypeScriptTypecheckGate:
+    def _write_ts_project(self, root, *, sources: dict[str, str], package: dict | None = None) -> None:
+        (root / "tsconfig.json").write_text(
+            json.dumps(
+                {
+                    "compilerOptions": {
+                        "target": "ES2022",
+                        "module": "NodeNext",
+                        "moduleResolution": "NodeNext",
+                        "strict": True,
+                        "noEmit": True,
+                    },
+                    "include": ["src/**/*.ts"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        if package is not None:
+            (root / "package.json").write_text(json.dumps(package), encoding="utf-8")
+        src = root / "src"
+        src.mkdir(exist_ok=True)
+        for name, content in sources.items():
+            (src / name).write_text(content, encoding="utf-8")
+
+    def test_non_typescript_project_returns_none(self, tmp_path) -> None:
+        (tmp_path / "package.json").write_text(json.dumps({"scripts": {}}), encoding="utf-8")
+        assert _run_typescript_typecheck(str(tmp_path)) is None
+
+    def test_disabled_via_env_returns_none(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("KERNELONE_INTEGRATION_QA_TS_TYPECHECK", "0")
+        self._write_ts_project(tmp_path, sources={"app.ts": "export const ok = true;\n"})
+        assert _run_typescript_typecheck(str(tmp_path)) is None
+
+    def test_syntax_error_fails_gate(self, monkeypatch, tmp_path) -> None:
+        if not _resolve_repo_tsc():
+            pytest.skip("tsc toolchain not available")
+        monkeypatch.delenv("KERNELONE_INTEGRATION_QA_TS_TYPECHECK", raising=False)
+        # A stray top-level '}' reproduces the exact TS1128 failure mode seen in the
+        # gemma-generated card-game (false-green) project.
+        self._write_ts_project(tmp_path, sources={"bad.ts": "export const ok = true;\n}\n"})
+        result = _run_typescript_typecheck(str(tmp_path))
+        assert result is not None
+        passed, summary, errors = result
+        assert passed is False
+        assert "typecheck" in summary.lower() and "fail" in summary.lower()
+        assert any("error TS" in item for item in errors)
+
+    def test_clean_project_passes_gate(self, monkeypatch, tmp_path) -> None:
+        if not _resolve_repo_tsc():
+            pytest.skip("tsc toolchain not available")
+        monkeypatch.delenv("KERNELONE_INTEGRATION_QA_TS_TYPECHECK", raising=False)
+        self._write_ts_project(tmp_path, sources={"app.ts": "export const ok: boolean = true;\n"})
+        result = _run_typescript_typecheck(str(tmp_path))
+        assert result is not None
+        passed, _summary, errors = result
+        assert passed is True
+        assert errors == []
+
+    def test_declared_dependency_missing_is_noise(self) -> None:
+        deps = {"three", "@scope/pkg"}
+        assert _ts_error_is_declared_dep_noise("a.ts(1,1): error TS2307: Cannot find module 'three'.", deps) is True
+        assert (
+            _ts_error_is_declared_dep_noise("a.ts(1,1): error TS2307: Cannot find module '@scope/pkg'.", deps) is True
+        )
+
+    def test_relative_import_missing_is_real_error(self) -> None:
+        assert _ts_error_is_declared_dep_noise("a.ts(1,1): error TS2307: Cannot find module './x'.", {"three"}) is False
+
+    def test_undeclared_module_is_real_error(self) -> None:
+        assert _ts_error_is_declared_dep_noise("a.ts(1,1): error TS2307: Cannot find module 'lodash'.", set()) is False
+
+    def test_syntax_error_is_not_dependency_noise(self) -> None:
+        assert (
+            _ts_error_is_declared_dep_noise("a.ts(1,1): error TS1128: Declaration or statement expected.", {"three"})
+            is False
+        )

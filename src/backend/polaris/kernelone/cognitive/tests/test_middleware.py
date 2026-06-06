@@ -157,6 +157,39 @@ class TestCognitiveMiddleware:
         assert merged["cognitive"]["blocked"] is True
         assert merged["cognitive"]["block_reason"] == "Value alignment rejected"
 
+    @pytest.mark.asyncio
+    async def test_process_emits_degraded_reason_on_failure(self, middleware):
+        """An infra failure inside the pipeline must degrade AND carry a reason.
+
+        Telemetry-starvation guard: a swallowed exception must leave a machine-readable
+        degraded_reason so callers (e.g. the mainline preflight) can surface WHY
+        cognition was skipped instead of a generic 'unavailable'.
+        """
+
+        class _BoomOrchestrator:
+            async def process(self, *, message, session_id, role_id, workspace):
+                _ = (message, session_id, role_id, workspace)
+                raise OSError("simulated infra failure")
+
+        middleware._orchestrator = _BoomOrchestrator()
+
+        result = await middleware.process(message="do something", role_id="director")
+
+        assert result["enabled"] is False
+        assert result["degraded"] is True
+        assert result["degraded_reason"] == "process:OSError"
+
+    @pytest.mark.asyncio
+    async def test_disabled_middleware_is_not_marked_degraded(self, tmp_path):
+        """Intentional disable is not a failure: degraded must be False, reason None."""
+        middleware = CognitiveMiddleware(workspace=str(tmp_path), enabled=False)
+
+        result = await middleware.process(message="anything", role_id="director")
+
+        assert result["enabled"] is False
+        assert result["degraded"] is False
+        assert result["degraded_reason"] is None
+
 
 class TestGetCognitiveMiddleware:
     """Tests for get_cognitive_middleware factory."""

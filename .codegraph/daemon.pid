@@ -1,6 +1,6 @@
 {
-  "pid": 32720,
+  "pid": 18530,
   "version": "0.9.9",
-  "socketPath": "\\\\.\\pipe\\codegraph-192d61c72440c8ea",
-  "startedAt": 1780588188106
+  "socketPath": "/home/dains/Documents/polaris/.codegraph/daemon.sock",
+  "startedAt": 1780683884872
 }

@@ -257,9 +257,12 @@ class RepoIntelligenceFacade:
                 if rel_path.startswith(".polaris"):
                     continue
 
-                # Check language support
+                # Check language support. languages=None means "all supported
+                # languages": previously the `and self._languages` clause made the
+                # default config yield ZERO files (empty repo map), silently blinding
+                # any localizer that relied on the default constructor.
                 lang = get_language_from_filename(name)
-                if lang and self._languages and lang in self._languages:
+                if lang and (self._languages is None or lang in self._languages):
                     yield abs_path
                     count += 1
 

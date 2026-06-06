@@ -1,0 +1,62 @@
+card_id: "vc-20260606-integration-qa-real-typescript-verification"
+bug_summary: >
+  Integration QA false-green: for TypeScript workspaces the verify runner only ran the
+  project's own (structural) npm scripts, so non-compiling gemma-generated code passed
+  with reason=integration_qa_passed / evidence_grade=real_command_passed. Path:
+  polaris/cells/orchestration/pm_planning/internal/shared_quality.py:run_integration_verify_runner.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+  method: "run_integration_verify_runner"
+  symptom: >
+    Desktop full-chain reported "Director 22/22 + build/test green" while real `tsc --noEmit`
+    found 6 TS1128 syntax errors in src/animation/card-animations.ts (code did not parse).
+
+assumptions:
+  - id: "A1"
+    statement: "Integration QA for a node project runs only `npm run test` (structural test.mjs), never compiles TS."
+    status: verified
+    evidence: "shared_quality._detect_node_verify_command returns `npm run test -- --watch=false`; empirically PASSED:True on non-compiling project."
+  - id: "A2"
+    statement: "A real tsc compile distinguishes broken from valid code without installing target deps."
+    status: verified
+    evidence: "repo tsc 5.9.3 on the project -> exit 2 with 6x TS1128; declared-dep (three) misses are filterable noise."
+  - id: "A3"
+    statement: "The full-chain spec already enforces evidence_grade=real_command_passed; only the verifier was hollow."
+    status: verified
+    evidence: "tests/electron/full-chain-audit.spec.ts:3973-4014 requires reason==integration_qa_passed AND evidence_grade==real_command_passed."
+
+pre_mortem:
+  failure_point: >
+    Misclassifying a declared-but-uninstalled dependency resolution miss (TS2307/TS2688/TS7016)
+    as a real error -> false negative; or running on a non-TS / no-tsc environment -> regression.
+  risk_zone:
+    - "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    - "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py (_classify_integration_qa_evidence)"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/orchestration/pm_planning/tests/test_shared_quality.py"
+      description: "TS typecheck gate: syntax error -> fail; clean -> pass; declared-dep miss -> noise; relative/undeclared -> real error; disabled/non-TS -> None."
+      expected: "8 new cases pass; existing 45 unaffected (no tsconfig => gate inert)."
+      status: passing
+  integration_tests:
+    - description: "run_post_dispatch_integration_qa on the broken card-game project returns fail-closed."
+      command: "python -m pytest -q polaris/cells/orchestration/pm_planning/tests/test_shared_quality.py polaris/tests/test_integration_qa_command.py polaris/tests/test_dispatch_pipeline_integration_qa.py polaris/tests/test_orchestration_engine_integration_qa.py"
+      status: passing
+  manual_check:
+    - "End-to-end: run_post_dispatch_integration_qa on ~/Temp/polaris-card-game-e2e -> passed=False, reason=integration_qa_failed, evidence_grade=real_command_failed (6x TS1128)."
+    - "Pre-existing unrelated failure: test_integration_qa_command.py::test_run_integration_verify_runner_fails_when_pytest_assertion_fails fails on HEAD too (pytest 9.x output capture; Python path; out of scope)."
+
+related_adrs:
+  - "n/a (contained cell-internal implementation change; no public contract change)"
+
+blueprint: "docs/blueprints/INTEGRATION_QA_REAL_VERIFICATION_BLUEPRINT_20260606.md"
+
+sign_off:
+  completed_by: "claude-opus-automation-test-director"
+  completed_at: "2026-06-06"
+  verified_by: "claude-opus-automation-test-director"
+  verified_at: "2026-06-06"

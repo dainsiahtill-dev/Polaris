@@ -214,7 +214,7 @@ def _get_ts_parser(language: str) -> Any:
             exc,
         )
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_languages import get_parser  # type: ignore[no-redef]
         except (RuntimeError, ValueError) as exc2:
             logger.warning(
                 "TagsExtractor: failed to import tree_sitter_languages: %s",
@@ -288,7 +288,7 @@ def _read_text(path: str) -> str:
     try:
         with open(path, encoding="utf-8", errors="ignore") as handle:
             return handle.read()
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         logger.warning(
             "TagsExtractor: failed to read %s: %s",
             path,
@@ -384,7 +384,14 @@ class TagsExtractor:
         if not language or not self._is_allowed_language(language):
             return []
 
-        tags = list(self._get_tags_tree_sitter(abs_path, rel_path, language))
+        try:
+            tags = list(self._get_tags_tree_sitter(abs_path, rel_path, language))
+        except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+            # tree-sitter binding API drift (e.g. root_node/parse signature changes
+            # across versions) must NOT blind the indexer. Degrade to the regex
+            # fallback so the repo map is never silently empty.
+            logger.warning("TagsExtractor: tree-sitter extraction failed for %s: %s", abs_path, exc)
+            tags = list(self._get_tags_fallback(abs_path, rel_path, language))
         return tags
 
     def _get_rel_path(self, abs_path: str) -> str:
@@ -413,8 +420,14 @@ class TagsExtractor:
             return
 
         try:
-            tree = parser.parse(content.encode("utf-8", errors="ignore"))
-        except (RuntimeError, ValueError) as exc:
+            try:
+                tree = parser.parse(content.encode("utf-8", errors="ignore"))
+            except TypeError:
+                # Some tree-sitter bindings (version-dependent) expect a str source,
+                # not bytes -> "argument 'source': 'bytes' object is not an instance of
+                # 'str'". Retry with str so the indexer does not emit an empty graph.
+                tree = parser.parse(content)
+        except (RuntimeError, ValueError, TypeError) as exc:
             logger.warning(
                 "TagsExtractor: tree-sitter parse failed for %s: %s",
                 abs_path,

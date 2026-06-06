@@ -1,0 +1,96 @@
+card_id: "vc-20260606-contextos-localization-root-cause"
+bug_summary: >
+  SWE-bench blind localization failed on 16/20 instances (5% score). White-box audit found
+  the cause is NOT model capacity nor ContextOS projection, but a stack of feed/retriever
+  defects: (A) the solver dumped the alphabetical first-200 of 2500+ repo files, silently
+  excluding the gold target (measured: target in shown-200 = 1/14); (B) Polaris's own
+  RepoIntelligence localizer was bypassed AND triple-broken — languages=None scanned 0
+  files, tree-sitter parse raised uncaught TypeError(bytes/str)+AttributeError(root_node)
+  crashing the call, and the networkx-absent fallback ranking drowned relevance under file
+  size. Paths: scripts/swebench/polaris_solve_one.py; polaris/kernelone/context/
+  repo_intelligence/{facade,tags,ranker}.py; polaris/kernelone/context/repo_map.py.
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/context/repo_intelligence/facade.py"
+  method: "_iter_source_files / RepoIntelligenceRanker._compute_simple_ranking / TagsExtractor._get_tags_tree_sitter"
+  symptom: >
+    get_repo_intelligence(ws).scan_repository() with default languages=None scanned 0 files;
+    with languages=['python'] it crashed TypeError 'bytes' is not 'str'; even when scanning,
+    the simple ranking weighted a mentioned-identifier match only +2.0 vs +1.0 per definition,
+    so large files outranked the file that defined the issue's symbol.
+
+assumptions:
+  - id: "A1"
+    statement: "The gold target file was not in the candidate window shown to the model."
+    status: verified
+    evidence: "Measured over 14 empty instances: target in alphabetical shown[:200] = 1/14; within the 400 cap = 3/14."
+  - id: "A2"
+    statement: "languages=None makes _iter_source_files yield zero files."
+    status: verified
+    evidence: "`if lang and self._languages and ...` short-circuits on None; get_repo_map(languages=None) returned scanned=0 ranked=0 before fix."
+  - id: "A3"
+    statement: "tree-sitter parse path raised exceptions the except clause did not catch."
+    status: verified
+    evidence: "parser.parse(bytes) -> TypeError 'bytes' is not 'str'; tree.root_node is a method here -> AttributeError on .children; original except caught only (RuntimeError, ValueError)."
+  - id: "A4"
+    statement: "After the fixes the real retriever surfaces the gold target on fresh repos."
+    status: verified
+    evidence: "Authoritative recall@20 via solver _ranked_candidates on fresh repos (no cache): 1/14 -> 7/14; 4 hits at rank<=2; django-11133 target django/http/response.py rank #1, applied via official handler, compileall rc=0."
+  - id: "A5"
+    statement: "Cognitive-runtime defensive masking did NOT cause the empty patches, but DOES starve telemetry on MAINLINE."
+    status: verified
+    evidence: "_apply_cognitive_runtime_preflight (service.py:1161) early-returns on SHADOW (the solver's mode) before the middleware -> out of the solve path. On MAINLINE, middleware.process swallows the specific OSError/RuntimeError/ValueError into enabled=False and preflight re-raises generic cognitive_runtime_mainline_unavailable -> actionable cause absorbed."
+  - id: "A6"
+    statement: "prepare_rollback leaks snapshots for readable targets when a later target is unreadable."
+    status: verified
+    evidence: "Snapshots are stored under plan_id incrementally; the plan is recorded only AFTER the unreadable raise, so plan-keyed cleanup can never reclaim them. Fixed by _cleanup_plan_snapshots(plan_id) before raise; test_rejected_prepare_leaves_no_snapshot_state asserts _snapshots=={} and _plans=={}."
+  - id: "A7"
+    statement: "Dense-embedding repo retrieval is not buildable in this environment; lexical content retrieval is the feasible substitute."
+    status: verified
+    evidence: "get_default_embedding_port() raises unless bootstrap injects a port (headless solver never does); vLLM serves only gemma (generative), no embedding model; ollama down. AkashicSemanticMemory indexes runtime/semantic/memory.jsonl (a memory store), not repo files. Implemented _content_ranked_candidates (git grep co-occurrence over file CONTENT, test-path filtered), 4 tests passing."
+
+pre_mortem:
+  failure_point: >
+    Broadening tree-sitter excepts / graceful regex fallback could hide a real parser
+    regression — mitigated by keeping per-file get_tags working (73 tags on response.py)
+    and logging every degrade; ranker still ranks from regex-extracted tags (32k on django).
+  risk_zone:
+    - "polaris/kernelone/context/repo_intelligence/{facade,tags,ranker}.py"
+    - "polaris/kernelone/context/repo_map.py"
+    - "scripts/swebench/polaris_solve_one.py (_ranked_candidates, _parse_target full-set match)"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/context/tests/test_repo_intelligence_new.py + test_safety_hardening.py + test_intelligent_compressor.py"
+      description: "Retriever scan/extract/rank + safety-hardening (limits, corrupt/permission, utf-8) + compressor."
+      expected: "60 pre-existing failures -> 0 (70 passed)."
+      status: passing
+    - file: "polaris/kernelone/cognitive/tests/test_middleware.py + test_rollback_manager_integrated.py"
+      description: "Vector 2: middleware emits degraded_reason on failure (not on intentional disable); rejected prepare_rollback leaves no snapshot/plan state."
+      expected: "30 passed (+2 new)."
+      status: passing
+    - file: "scripts/swebench/test_polaris_solve_one.py"
+      description: "Lexical content fallback: surfaces content-correlated source file, filters test paths, degrades to [] outside a git repo / with no idents."
+      expected: "4 passed."
+      status: passing
+  integration_tests:
+    - description: "Gold-target recall@20 via the actual solver localization path on fresh repos."
+      command: "python - (solver _ranked_candidates over the 14 empty instances; rm -rf .polaris first)"
+      status: passing
+      notes: "1/14 (alphabetical) -> 7/14 (relevance-first); 4 at rank<=2."
+  manual_check:
+    - "End-to-end solver on django-11133 (was empty patch): target=django/http/response.py, apply_path=handler, has_diff=True, qa_compileall_rc=0."
+    - "ruff/format/mypy clean on facade/tags/ranker/repo_map/polaris_solve_one."
+
+related_adrs:
+  - "n/a (KernelOne cell-internal retriever hardening + solver wiring; no public contract change)"
+
+blueprint: "docs/blueprints/CONTEXTOS_LOCALIZATION_ROOT_CAUSE_BLUEPRINT_20260606.md"
+
+sign_off:
+  completed_by: "polaris-meta-architect"
+  completed_at: "2026-06-06"
+  verified_by: "polaris-meta-architect"
+  verified_at: "2026-06-06"

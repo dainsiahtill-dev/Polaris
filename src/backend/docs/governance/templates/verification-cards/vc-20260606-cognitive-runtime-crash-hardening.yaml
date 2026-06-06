@@ -1,0 +1,71 @@
+card_id: "vc-20260606-cognitive-runtime-crash-hardening"
+bug_summary: >
+  Cognitive Runtime MAINLINE preflight crashed legitimate headless role calls. On a random
+  SWE-bench sample ~half of ChiefEngineer localizations died with OSError [Errno 36] File
+  name too long (a problem-statement fragment used as a rollback target path) or
+  RuntimeError cognitive_runtime_blocked. Paths:
+  polaris/kernelone/cognitive/execution/rollback_manager.py:prepare_rollback (unguarded
+  path.exists()); polaris/kernelone/cognitive/middleware.py:process (except missing OSError).
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/cognitive/execution/rollback_manager.py"
+  method: "RollbackManager.prepare_rollback"
+  symptom: >
+    path.exists()/.is_file() on line 77 ran outside the try/except; a malformed (too-long)
+    target path raised OSError that escaped CognitiveMiddleware.process (which only caught
+    RuntimeError/ValueError) and crashed RoleRuntimeService._apply_cognitive_runtime_preflight.
+
+assumptions:
+  - id: "A1"
+    statement: "The OSError originates from prepare_rollback's existence check, not the file read."
+    status: verified
+    evidence: "Full traceback: rollback_manager.py:77 `if path.exists() and path.is_file()` -> pathlib stat -> OSError ENAMETOOLONG; the read's try/except never engaged."
+  - id: "A2"
+    statement: "CognitiveMiddleware.process does not catch OSError, so infra errors crash the host turn."
+    status: verified
+    evidence: "middleware.py process except clause was (RuntimeError, ValueError); OSError propagated."
+  - id: "A3"
+    statement: "SHADOW mode bypasses the MAINLINE preflight middleware call entirely."
+    status: verified
+    evidence: "service.py _apply_cognitive_runtime_preflight returns early when mode is not MAINLINE; resolve_cognitive_runtime_mode reads KERNELONE_COGNITIVE_RUNTIME_MODE."
+  - id: "A4"
+    statement: "After the fix, the same CE call succeeds (no crash) in both MAINLINE and SHADOW."
+    status: verified
+    evidence: "django-11133 CE call -> gemma response 1221 chars (target django/http/response.py); blind 20-instance re-run solve rc=1 count 4/8 -> 0."
+
+pre_mortem:
+  failure_point: >
+    Over-broadening middleware except could hide real cognitive bugs — mitigated by keeping it
+    to (RuntimeError, ValueError, OSError) and fixing the concrete path bug at source.
+  risk_zone:
+    - "polaris/kernelone/cognitive/execution/rollback_manager.py"
+    - "polaris/kernelone/cognitive/middleware.py"
+    - "polaris/cells/roles/runtime/public/service.py (_apply_cognitive_runtime_preflight)"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/cognitive/tests/test_rollback_manager_integrated.py"
+      description: "TestRollbackManagerMalformedPath: too-long / newline target path is handled (ValueError domain error), never OSError."
+      expected: "rollback suite 14 passed."
+      status: passing
+  integration_tests:
+    - description: "Cognitive execution + middleware + rollback + bugfixes + benchmark suites pass."
+      command: "python -m pytest -q polaris/kernelone/cognitive/execution/tests/ polaris/kernelone/cognitive/tests/test_rollback_manager_integrated.py polaris/kernelone/cognitive/tests/test_middleware.py polaris/kernelone/cognitive/tests/test_cognitive_benchmark.py polaris/kernelone/cognitive/tests/test_bugfixes_20260410.py"
+      status: passing
+      notes: "87 passed."
+  manual_check:
+    - "Repro django-11133 generate_role_response(chief_engineer) in MAINLINE and SHADOW -> response produced, no OSError/RuntimeError crash."
+    - "Blind 20-instance SWE-bench re-run with solver SHADOW default -> zero solve rc=1 crashes."
+
+related_adrs:
+  - "n/a (KernelOne cell-internal hardening + one solver env default; no public contract change)"
+
+blueprint: "docs/blueprints/COGNITIVE_RUNTIME_CRASH_HARDENING_BLUEPRINT_20260606.md"
+
+sign_off:
+  completed_by: "claude-opus-automation-test-director"
+  completed_at: "2026-06-06"
+  verified_by: "claude-opus-automation-test-director"
+  verified_at: "2026-06-06"

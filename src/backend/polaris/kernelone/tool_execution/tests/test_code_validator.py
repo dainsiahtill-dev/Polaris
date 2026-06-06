@@ -223,6 +223,54 @@ class TestIndentationFix:
         assert len(fixes) > 0
 
 
+class TestRealCodeNotFalseRejected:
+    """Regression: valid real-world code must not be rejected by heuristics.
+
+    Root cause (Phase B Task 2): quick_check() consulted an indentation heuristic
+    AFTER a successful ast.parse(); it flagged PEP 8 continuation-line alignment
+    (leading whitespace not a multiple of 4) as 'inconsistent', and validate() then
+    returned is_valid=False with an EMPTY error list — a silent rejection that blocked
+    legitimate edit_blocks edits to real files (e.g. requests/sessions.py).
+    """
+
+    def test_continuation_line_alignment_is_valid(self):
+        """Operands aligned to an opening delimiter (non-4-multiple) are valid."""
+        code = (
+            "def call():\n"
+            "    result = some_function(arg_one,\n"
+            "                           arg_two,\n"
+            "                           arg_three)\n"
+            "    return result\n"
+        )
+        result = validate_code_syntax(code, "real.py")
+        assert result.is_valid is True
+        assert result.errors is None or result.errors == []
+
+    def test_quick_check_ignores_valid_indentation(self):
+        """quick_check must not flag indentation that already parses as valid."""
+        validator = PythonCodeValidator()
+        aligned = "x = foo(a,\n        b)\n"  # 8-space alignment to '(' -> not %4
+        is_clean, errors = validator.quick_check(aligned)
+        assert is_clean is True
+        assert errors == []
+
+    def test_failure_always_carries_a_diagnostic(self):
+        """Fail-closed-with-evidence: a failure must never have an empty error list."""
+        validator = PythonCodeValidator()
+        # return0 parses (valid identifier reference) but is a hallucination pattern;
+        # validate() must surface it rather than swallow it.
+        result = validator.validate("def f():\n    x = return0\n", "x.py")
+        if result.is_valid is False:
+            assert result.errors, "failure returned with no diagnostic"
+
+    def test_hallucination_still_detected(self):
+        """The genuine hallucination patterns remain active after the fix."""
+        validator = PythonCodeValidator()
+        is_clean, errors = validator.quick_check("    return0\n")
+        assert is_clean is False
+        assert any("return0" in e for e in errors)
+
+
 class TestPostWriteVerification:
     """Test post-write verification."""
 

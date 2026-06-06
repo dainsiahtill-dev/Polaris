@@ -189,6 +189,15 @@ class PythonCodeValidator:
                             )
                         )
                         suggestions.append(error)
+                else:
+                    # Fail-closed-with-evidence: never drop a diagnostic. An error
+                    # string that does not follow the "Line N: ..." shape must still
+                    # surface, otherwise validate() returns is_valid=False with an
+                    # empty error list and callers reject an edit with no reason.
+                    syntax_errors.append(
+                        CodeSyntaxError(line=0, column=0, message=error, error_type="LLMHallucination")
+                    )
+                    suggestions.append(error)
 
             return SyntaxValidationResult.failure(syntax_errors, suggestions)
 
@@ -320,9 +329,13 @@ class PythonCodeValidator:
                     f"Line {line_num}: Pattern '{match.group()}' detected. {suggestion} Found: '{line_text.strip()}'"
                 )
 
-        # Check for indentation inconsistency
-        if self._has_indentation_issues(code):
-            errors.append("Indentation appears inconsistent (mixing tabs and spaces, or non-4-space multiples)")
+        # NOTE: indentation is intentionally NOT heuristically checked here.
+        # quick_check() runs only after a successful ast.parse() in validate(); once
+        # the AST parses, indentation is by definition valid Python (ambiguous
+        # tab/space mixing raises TabError, a SyntaxError already handled upstream).
+        # A "leading whitespace must be a multiple of 4" heuristic false-positives on
+        # PEP 8 continuation-line alignment (operands aligned to an opening delimiter),
+        # so in this position it can only reject legitimate real-world files.
 
         return len(errors) == 0, errors
 
@@ -458,30 +471,6 @@ class PythonCodeValidator:
             fixed_lines.append(line)
 
         return "\n".join(fixed_lines), fixes
-
-    def _has_indentation_issues(self, code: str) -> bool:
-        """检查代码是否有缩进问题。"""
-        lines = code.split("\n")
-        has_tabs = False
-        has_spaces = False
-        inconsistent_indent = False
-
-        for line in lines:
-            if "\t" in line:
-                has_tabs = True
-            if "    " in line:  # 4 spaces
-                has_spaces = True
-            if has_tabs and has_spaces:
-                return True  # Mixed indentation
-
-            # Check if indentation is multiple of 4
-            stripped = line.lstrip()
-            if stripped and stripped != line:  # Has leading whitespace
-                leading = line[: len(line) - len(stripped)]
-                if len(leading) % 4 != 0:
-                    inconsistent_indent = True
-
-        return inconsistent_indent
 
 
 @dataclass

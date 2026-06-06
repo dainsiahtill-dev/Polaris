@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shlex
+import subprocess
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
@@ -397,7 +398,157 @@ def detect_integration_verify_command(workspace_full: str) -> str:
     return "python -m compileall -q ."
 
 
+_TS_TYPECHECK_IGNORE_CODES: tuple[str, ...] = ("TS6053", "TS18003")
+_TS_ERROR_RE = re.compile(r"error (TS\d+):")
+_TS_MODULE_MISSING_RE = re.compile(r"error TS(?:2307|2792): Cannot find module ['\"]([^'\"]+)['\"]")
+_TS_TYPES_MISSING_RE = re.compile(r"error TS2688: Cannot find type definition file for ['\"]([^'\"]+)['\"]")
+_TS_DECL_MISSING_RE = re.compile(r"error TS7016: Could not find a declaration file for module ['\"]([^'\"]+)['\"]")
+
+
+def _resolve_repo_tsc() -> str:
+    """Resolve a usable ``tsc`` executable from env override or the Polaris repo toolchain."""
+    override = str(os.environ.get("KERNELONE_TSC_PATH") or "").strip()
+    if override and os.path.isfile(override):
+        return override
+    current = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        candidate = os.path.join(current, "node_modules", ".bin", "tsc")
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            return ""
+        current = parent
+
+
+def _has_typescript_sources(workspace_full: str) -> bool:
+    """Return True when the workspace contains non-declaration ``.ts``/``.tsx`` sources."""
+    skip_dirs = {"node_modules", "dist", "build", "coverage", ".git", ".polaris"}
+    for rel_root in ("src", "tests", "test"):
+        root = os.path.join(workspace_full, rel_root)
+        if not os.path.isdir(root):
+            continue
+        try:
+            for _current_root, dir_names, file_names in os.walk(root):
+                dir_names[:] = [name for name in dir_names if name not in skip_dirs]
+                for name in file_names:
+                    token = str(name or "").strip().lower()
+                    if token.endswith((".ts", ".tsx")) and not token.endswith(".d.ts"):
+                        return True
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return False
+
+
+def _is_typescript_project(workspace_full: str) -> bool:
+    """Detect a TypeScript project: a ``tsconfig.json`` plus real ``.ts`` sources."""
+    return os.path.isfile(os.path.join(workspace_full, "tsconfig.json")) and _has_typescript_sources(workspace_full)
+
+
+def _declared_dependency_names(package_payload: dict[str, Any]) -> set[str]:
+    """Collect declared npm dependency names across all dependency sections."""
+    names: set[str] = set()
+    for section in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        section_value = package_payload.get(section)
+        if isinstance(section_value, dict):
+            for dep in section_value:
+                token = str(dep or "").strip()
+                if token:
+                    names.add(token)
+    return names
+
+
+def _ts_error_is_declared_dep_noise(line: str, declared_deps: set[str]) -> bool:
+    """True when a tsc error is only a *declared-but-uninstalled* dependency resolution miss.
+
+    Relative-import misses (``./foo``) are real errors and never treated as noise.
+    """
+    match = _TS_MODULE_MISSING_RE.search(line) or _TS_TYPES_MISSING_RE.search(line) or _TS_DECL_MISSING_RE.search(line)
+    if not match:
+        return False
+    module_name = match.group(1).strip()
+    if not module_name or module_name.startswith("."):
+        return False
+    parts = module_name.split("/")
+    root = "/".join(parts[:2]) if module_name.startswith("@") and len(parts) >= 2 else parts[0]
+    return module_name in declared_deps or root in declared_deps
+
+
+def _run_typescript_typecheck(workspace_full: str) -> tuple[bool, str, list[str]] | None:
+    """Run a real ``tsc --noEmit`` typecheck for TypeScript projects.
+
+    Returns ``None`` when the gate is not applicable (disabled via
+    ``KERNELONE_INTEGRATION_QA_TS_TYPECHECK=0``, not a TS project, or no ``tsc``
+    resolvable), preserving prior behavior. Declared-but-uninstalled dependency
+    resolution misses are ignored so the workspace's "no new deps" constraint does
+    not produce false negatives; every other ``error TS####`` (syntax, type
+    errors) fails the gate fail-closed.
+    """
+    flag = str(os.environ.get("KERNELONE_INTEGRATION_QA_TS_TYPECHECK", "1")).strip().lower()
+    if flag in {"0", "false", "no", "off"}:
+        return None
+    if not _is_typescript_project(workspace_full):
+        return None
+    tsc = _resolve_repo_tsc()
+    if not tsc:
+        logger.info("[integration-qa] TypeScript project detected but no tsc resolvable; skipping typecheck gate")
+        return None
+
+    timeout_raw = os.environ.get("KERNELONE_INTEGRATION_QA_TYPECHECK_TIMEOUT_SECONDS", "180")
+    try:
+        timeout_seconds = max(int(timeout_raw), 30)
+    except (TypeError, ValueError):
+        timeout_seconds = 180
+
+    command = [tsc, "--noEmit", "--skipLibCheck", "--pretty", "false", "-p", "tsconfig.json"]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=workspace_full,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        summary = f"Integration verification failed: TypeScript typecheck timed out after {timeout_seconds}s"
+        return False, summary, [summary]
+    except (OSError, ValueError) as exc:
+        logger.info("[integration-qa] tsc invocation failed (skipping typecheck gate): %s", exc)
+        return None
+
+    output = f"{completed.stdout or ''}\n{completed.stderr or ''}"
+    declared_deps = _declared_dependency_names(_read_package_json(workspace_full))
+    real_errors: list[str] = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or not _TS_ERROR_RE.search(line):
+            continue
+        if any(code in line for code in _TS_TYPECHECK_IGNORE_CODES):
+            continue
+        if _ts_error_is_declared_dep_noise(line, declared_deps):
+            continue
+        real_errors.append(line)
+
+    if real_errors:
+        summary = (
+            f"Integration verification failed: TypeScript typecheck reported "
+            f"{len(real_errors)} compiler error(s) (tsc --noEmit)"
+        )
+        return False, summary, real_errors[:20]
+    return True, "TypeScript typecheck passed: tsc --noEmit", []
+
+
 def run_integration_verify_runner(workspace_full: str) -> tuple[bool, str, list[str]]:
+    # Real-compilation gate: for TypeScript projects a genuine `tsc --noEmit`
+    # typecheck must pass before any (possibly structural) project script runs.
+    # This prevents hollow build/test scripts from yielding a false-green.
+    typecheck_result = _run_typescript_typecheck(workspace_full)
+    if typecheck_result is not None:
+        ts_passed, ts_summary, ts_errors = typecheck_result
+        if not ts_passed:
+            return False, ts_summary, ts_errors
+
     command = detect_integration_verify_command(workspace_full)
     timeout_seconds_raw = os.environ.get("KERNELONE_INTEGRATION_QA_TIMEOUT_SECONDS", "300")
     try:

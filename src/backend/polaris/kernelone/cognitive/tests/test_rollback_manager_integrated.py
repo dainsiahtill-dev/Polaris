@@ -560,5 +560,66 @@ class TestActingPhaseHandlerActionHistory:
         assert len(handler._action_history) == 1
 
 
+class TestRollbackManagerMalformedPath:
+    """Regression: a malformed/too-long target path must not crash prepare_rollback.
+
+    Root cause (SWE-bench Arch-B audit): the cognitive acting handler passed a problem-
+    statement fragment as a target path; path.exists() then raised
+    OSError [Errno 36] File name too long, crashing the whole cognitive turn and the
+    host role call. prepare_rollback must treat an un-stat-able path as "not a file".
+    """
+
+    @pytest.mark.asyncio
+    async def test_prepare_rollback_too_long_path_is_handled_not_oserror(self) -> None:
+        manager = RollbackManager()
+        # A single path component far beyond NAME_MAX -> os.stat raises ENAMETOOLONG.
+        # Pre-fix this OSError escaped and crashed the whole cognitive turn; now it must
+        # be routed to the domain "unreadable" path (ValueError), which callers catch.
+        bad_path = "/tmp/" + ("a" * 5000)
+        with pytest.raises(ValueError):
+            await manager.prepare_rollback("noop action", (bad_path,))
+
+    @pytest.mark.asyncio
+    async def test_prepare_rollback_newline_path_no_oserror_crash(self) -> None:
+        manager = RollbackManager()
+        bad_path = "/tmp/some title\nDescription\n\t" + ("x" * 400)
+        try:
+            await manager.prepare_rollback("noop action", (bad_path,))
+        except ValueError:
+            pass  # handled as a domain error — acceptable
+        except OSError as exc:  # pragma: no cover - the bug we fixed
+            pytest.fail(f"malformed path must not raise OSError: {exc}")
+
+
+class TestRollbackManagerNoSnapshotLeak:
+    """State-leakage guard: a rejected prepare_rollback must not leave snapshots behind.
+
+    Root cause (ContextOS state-leakage audit): prepare_rollback stores snapshots for
+    readable targets incrementally, then raises ValueError if any later target is
+    unreadable — but the plan is recorded only AFTER that raise, so plan-keyed cleanup
+    can never reclaim the orphaned snapshots. They must be purged on the reject path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rejected_prepare_leaves_no_snapshot_state(self, tmp_path: Path) -> None:
+        manager = RollbackManager()
+        good = tmp_path / "good.txt"
+        good.write_text("original", encoding="utf-8")
+        # A directory exists but is not a regular file -> classified "unreadable".
+        bad_dir = tmp_path / "subdir"
+        bad_dir.mkdir()
+
+        # good.txt is snapshotted first, then bad_dir triggers the reject.
+        with pytest.raises(ValueError):
+            await manager.prepare_rollback(
+                action_description="leak probe",
+                target_paths=(str(good), str(bad_dir)),
+            )
+
+        # No orphaned snapshots and no plan recorded.
+        assert manager._snapshots == {}
+        assert manager._plans == {}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

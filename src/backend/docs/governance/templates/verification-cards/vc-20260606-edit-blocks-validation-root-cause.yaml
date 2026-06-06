@@ -1,0 +1,72 @@
+card_id: "vc-20260606-edit-blocks-validation-root-cause"
+bug_summary: >
+  edit_blocks "second validation blocker": the official edit_blocks handler rejected
+  valid, byte-exact SEARCH/REPLACE edits ("Validation failed for 1 block(s)"), forcing a
+  hardcoded bypass. Root cause: PythonCodeValidator.quick_check ran an indentation
+  heuristic AFTER a successful ast.parse, flagging PEP 8 continuation-line alignment;
+  validate() then returned is_valid=False with an EMPTY error list (silent rejection).
+  Paths: polaris/kernelone/tool_execution/code_validator.py:quick_check/validate;
+  polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py:_handle_edit_blocks.
+
+classification: structural
+
+bug_path:
+  file: "polaris/kernelone/tool_execution/code_validator.py"
+  method: "PythonCodeValidator.quick_check / PythonCodeValidator.validate"
+  symptom: >
+    validate_code_syntax(<unedited requests/sessions.py>) returns is_valid=False, errors=[]
+    (a real, valid file rejected with no diagnostic); the edit_blocks handler then blocked a
+    correct edit with "Validation failed for 1 block(s). No files were modified."
+
+assumptions:
+  - id: "A1"
+    statement: "quick_check is only ever called after a successful ast.parse() in validate()."
+    status: verified
+    evidence: "code_validator.py: validate() calls ast.parse(fixed_code) then quick_check(fixed_code); grep shows the single call site."
+  - id: "A2"
+    statement: "Once ast.parse succeeds, indentation is valid Python; the multiple-of-4 heuristic can only false-positive here."
+    status: verified
+    evidence: "Ambiguous tab/space mixing raises TabError (SyntaxError) caught upstream; PEP 8 continuation alignment has non-4-multiple leading whitespace and is valid."
+  - id: "A3"
+    statement: "The indentation error message was silently swallowed, producing a failure with empty errors."
+    status: verified
+    evidence: "validate() builds syntax_errors via error.split(':',2)>=3; the indentation string has no 'Line N:' shape -> dropped -> failure([],[])."
+  - id: "A4"
+    statement: "The official edit_blocks handler lands the edit once the validator no longer false-rejects."
+    status: verified
+    evidence: "AgentAccelToolExecutor.execute('edit_blocks') on psf__requests-2317 from base -> ok=True, blocks_applied=1, files_modified=1 (was 'Validation failed for 1 block(s)')."
+
+pre_mortem:
+  failure_point: >
+    Removing the indentation heuristic could let a genuinely broken edit pass — mitigated:
+    ast.parse still hard-fails real SyntaxErrors, and Fix C only suppresses blocking when the
+    pre-edit file was already invalid (edit not the cause).
+  risk_zone:
+    - "polaris/kernelone/tool_execution/code_validator.py"
+    - "polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py (_handle_edit_blocks)"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/tool_execution/tests/test_code_validator.py"
+      description: "TestRealCodeNotFalseRejected: continuation alignment valid; quick_check ignores valid indentation; failure always carries a diagnostic; hallucination patterns still detected."
+      expected: "4 new cases pass; existing code_validator cases unaffected."
+      status: passing
+  integration_tests:
+    - description: "edit/validation pipeline suites pass with no regression from this change."
+      command: "python -m pytest -q polaris/kernelone/tool_execution/tests/ polaris/kernelone/llm/toolkit/tests/ polaris/kernelone/llm/toolkit/executor/handlers/tests/ polaris/kernelone/editing/"
+      status: passing
+      notes: "769 passed; 7 pre-existing failures (ripgrep parsing / nonexistent-path / stream length-audit) fail with this fix stashed too — proven unrelated."
+  manual_check:
+    - "End-to-end: AgentAccelToolExecutor.execute('edit_blocks', requests/sessions.py block) on psf__requests-2317 -> ok=True, blocks_applied=1; patch present in file; workspace reset after."
+    - "Negative: validate_code_syntax('def f():\\nreturn 1') -> is_valid=False WITH non-empty errors (real syntax error still fails, now with evidence)."
+
+related_adrs:
+  - "n/a (contained KernelOne cell-internal implementation change; no public contract change)"
+
+blueprint: "docs/blueprints/EDIT_BLOCKS_VALIDATION_ROOT_CAUSE_BLUEPRINT_20260606.md"
+
+sign_off:
+  completed_by: "claude-opus-automation-test-director"
+  completed_at: "2026-06-06"
+  verified_by: "claude-opus-automation-test-director"
+  verified_at: "2026-06-06"

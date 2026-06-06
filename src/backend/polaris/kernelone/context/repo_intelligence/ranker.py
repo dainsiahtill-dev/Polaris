@@ -414,36 +414,40 @@ class RepoIntelligenceRanker:
         return result
 
     def _compute_simple_ranking(self) -> dict[str, float]:
-        """Compute simple ranking without PageRank (fallback)."""
-        # Count baseline signal per file so fallback still produces deterministic,
-        # non-empty candidates even without explicit mentions.
-        scores: dict[str, float] = defaultdict(float)
+        """Relevance-first fallback ranking (no networkx required).
+
+        A file that DEFINES (or references) an identifier mentioned in the issue is by
+        far the strongest localization signal and must DOMINATE raw definition count.
+        The previous fallback added only +2.0 for an identifier match versus +1.0 per
+        definition, so large files (hundreds of defs) outranked the file that actually
+        defined the mentioned symbol — relevance was drowned by file size. Here a
+        mentioned-identifier match is weighted ~100x above a log-damped size tiebreak.
+        """
+        import math
+
+        relevance: dict[str, float] = defaultdict(float)
+        size: dict[str, float] = defaultdict(float)
 
         for tag in self._tags:
-            if tag.kind == TagKind.DEFINITION:
-                scores[tag.rel_fname] += 1.0
-            elif tag.kind == TagKind.REFERENCE:
-                scores[tag.rel_fname] += 0.3
-
+            size[tag.rel_fname] += 1.0 if tag.kind == TagKind.DEFINITION else 0.3
             if tag.name in self._mentioned_idents:
-                scores[tag.rel_fname] += 2.0
+                # defining the mentioned symbol is a stronger signal than referencing it
+                relevance[tag.rel_fname] += 10.0 if tag.kind == TagKind.DEFINITION else 3.0
 
-        for fname in self._chat_rel_fnames:
-            scores[fname] += 5.0
-
-        for fname in self._mentioned_fnames:
-            scores[fname] += 3.0
-
-        # Ensure all discovered files appear in fallback ranking.
+        scores: dict[str, float] = {}
         for fname in self._all_files:
-            scores[fname] = max(scores.get(fname, 0.0), 0.1)
+            scores[fname] = relevance.get(fname, 0.0) * 100.0 + math.log1p(size.get(fname, 0.0))
+
+        # Conversation-pinned files always float to the top.
+        for fname in self._chat_rel_fnames:
+            scores[fname] = scores.get(fname, 0.0) + 10_000.0
+        for fname in self._mentioned_fnames:
+            scores[fname] = scores.get(fname, 0.0) + 5_000.0
 
         if not scores:
             return {}
 
-        max_score = max(scores.values()) if scores else 1.0
-        if max_score <= 0:
-            return dict.fromkeys(scores, 0.0)
+        max_score = max(scores.values()) or 1.0
         return {fname: float(score) / float(max_score) for fname, score in scores.items()}
 
 

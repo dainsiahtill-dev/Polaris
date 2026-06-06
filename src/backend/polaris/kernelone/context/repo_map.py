@@ -157,15 +157,21 @@ def _build_file_skeleton(path: str, language: str, per_file_lines: int) -> tuple
         return _fallback_skeleton(content, language, per_file_lines, total_lines)
     try:
         parser = get_parser_fn(language)
-        tree = parser.parse(content.encode("utf-8", errors="ignore"))
-    except (RuntimeError, ValueError) as exc:
-        _logger.warning("kernelone.context.repo_map.parse_tree failed for %s: %s", path, exc, exc_info=True)
+        try:
+            tree = parser.parse(content.encode("utf-8", errors="ignore"))
+        except TypeError:
+            # Some tree-sitter bindings expect a str source, not bytes.
+            tree = parser.parse(content)
+        root = tree.root_node
+        class_nodes = _collect_nodes(root, _class_types(language), root_only=True)
+        func_nodes = _collect_nodes(root, _function_types(language), root_only=True)
+    except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+        # Includes tree-sitter binding API drift (parse signature / root_node) so the
+        # skeleton degrades to the regex fallback instead of crashing the repo map.
+        _logger.warning("kernelone.context.repo_map.parse_tree failed for %s: %s", path, exc)
         return _fallback_skeleton(content, language, per_file_lines, total_lines)
     skeleton: list[str] = []
     symbols = 0
-    root = tree.root_node
-    class_nodes = _collect_nodes(root, _class_types(language), root_only=True)
-    func_nodes = _collect_nodes(root, _function_types(language), root_only=True)
     for node in class_nodes:
         name = _ts_extract_name(content, node)
         label = name or "<anonymous>"
@@ -212,26 +218,26 @@ def _fallback_skeleton(
 def _fallback_patterns_str(language: str) -> list[tuple[str, str]]:
     if language == "python":
         return [
-            ("class", r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)"),
-            ("function", r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)"),
+            ("class", r"^\s*class\s+([^\W\d]\w*)"),
+            ("function", r"^\s*def\s+([^\W\d]\w*)"),
         ]
     return [
-        ("class", r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)"),
-        ("function", r"^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)"),
+        ("class", r"^\s*class\s+([^\W\d]\w*)"),
+        ("function", r"^\s*function\s+([^\W\d]\w*)"),
     ]
 
 
 def _fallback_patterns(language: str) -> list[tuple[str, re.Pattern[str]]]:
     if language == "python":
         return [
-            ("class", re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-            ("function", re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
+            ("class", re.compile(r"^\s*class\s+([^\W\d]\w*)", re.MULTILINE)),
+            ("function", re.compile(r"^\s*def\s+([^\W\d]\w*)", re.MULTILINE)),
         ]
     return [
-        ("class", re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
+        ("class", re.compile(r"^\s*class\s+([^\W\d]\w*)", re.MULTILINE)),
         (
             "function",
-            re.compile(r"^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE),
+            re.compile(r"^\s*function\s+([^\W\d]\w*)", re.MULTILINE),
         ),
     ]
 
@@ -250,7 +256,7 @@ def _get_ts_parser(language: str) -> Any:
             exc_info=True,
         )
         try:
-            from tree_sitter_languages import get_parser
+            from tree_sitter_languages import get_parser  # type: ignore[no-redef]
         except (RuntimeError, ValueError) as exc2:
             _logger.warning(
                 "kernelone.context.repo_map.get_parser import(tree_sitter_languages) failed: %s",
@@ -336,6 +342,6 @@ def _read_text(path: str) -> str:
     try:
         with open(path, encoding="utf-8", errors="ignore") as handle:
             return handle.read()
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         _logger.warning("kernelone.context.repo_map.read_text failed: %s", exc, exc_info=True)
         return ""

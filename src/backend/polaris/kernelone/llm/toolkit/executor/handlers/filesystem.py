@@ -958,32 +958,39 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         # Auto-fix hallucinations if possible
         # ========================================================================
         code_extensions = {".py", ".pyw", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs"}
-        if any(block_rel.endswith(ext) for ext in code_extensions) and block.replace_text:
-            replace_validation = validate_code_syntax(block.replace_text, block_rel)
-            if not replace_validation.is_valid:
-                error_msg = format_validation_error(replace_validation, block_rel)
-                validation_results.append(
-                    {
-                        "index": i,
-                        "file": block_file,
-                        "valid": False,
-                        "error": f"Replacement text has syntax errors: {error_msg[:200]}",
-                        "search_preview": block.search_text[:100] if block.search_text else "",
-                    }
-                )
-                all_valid = False
-                continue
-            # Auto-fix: use fixed replacement text if validation result contains fixes
-            if replace_validation.fixed_code is not None:
-                block.replace_text = replace_validation.fixed_code
-                logger.info(
-                    "[PreWriteGuard] Auto-fixed hallucinations in replacement text for %s",
-                    block_rel,
-                )
+        is_code_file = any(block_rel.endswith(ext) for ext in code_extensions)
 
         new_content, metadata = fuzzy_replace(current, block.search_text, block.replace_text)
 
         if metadata.get("success"):
+            # Validate the RESULTING file, not the replace fragment. A SEARCH/REPLACE
+            # replacement is legitimately partial code (leading indentation, an open
+            # construct closed by surrounding lines), so parsing it standalone raises
+            # spurious "unexpected indent"/"unbalanced" errors that previously rejected
+            # valid edits. Checking the full post-apply content still catches edits that
+            # actually break file syntax.
+            if is_code_file and block.replace_text:
+                file_validation = validate_code_syntax(new_content, block_rel)
+                # Gate on the EDIT's effect, not the file's pre-existing state: reject
+                # only when this edit INTRODUCES a syntax error (pre-edit content was
+                # valid, post-edit content is not). If the pre-edit file already failed
+                # validation, the edit is not the cause, so blocking it would force a
+                # hardcoded bypass. This keeps the gate fail-closed without rejecting
+                # legitimate edits to files that merely trip a heuristic.
+                introduced_error = not file_validation.is_valid and validate_code_syntax(current, block_rel).is_valid
+                if introduced_error:
+                    error_msg = format_validation_error(file_validation, block_rel)
+                    validation_results.append(
+                        {
+                            "index": i,
+                            "file": block_file,
+                            "valid": False,
+                            "error": f"Edit introduces syntax errors: {error_msg[:200]}",
+                            "search_preview": block.search_text[:100] if block.search_text else "",
+                        }
+                    )
+                    all_valid = False
+                    continue
             # Update current content for next block targeting same file
             file_contents[block_rel] = (original, new_content)
             validation_results.append(
