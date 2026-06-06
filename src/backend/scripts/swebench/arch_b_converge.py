@@ -38,14 +38,13 @@ from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
 from polaris.kernelone.context.truth_log_service import TruthLogService
 
-# reuse the proven solver primitives (official-handler apply + real cloud usage)
+# reuse the proven solver primitives (official-handler apply + config-driven routing)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from polaris_solve_one import (
-    EDIT_PROVIDER_ID,
     MAX_CONTENT_CHARS,
     _apply_blocks,
-    _cloud_complete,
-    _estimate_tokens,
+    _complete_for_role,
+    _context_budget_max_tokens,
 )
 
 HARNESS_PY = "/home/dains/swebench-harness-venv/bin/python"
@@ -201,6 +200,31 @@ def ce_localize(problem: str, tb: str, repo_files: set[str], ws: Path) -> str:
     return ""
 
 
+def _repair_blueprint(target: str, content: str, problem: str, tb: str, context: str) -> tuple[str, int, int]:
+    """V11 swap-paradigm repair: Kimi (chief_engineer) turns the REAL pytest traceback into a
+    precise, line-level repair spec so the weak local model only transcribes it. This is the
+    "open the model's eyes" step — the strong model READS the failure and prescribes the fix.
+    Returns (spec_text, cloud_in, cloud_out); ("", 0, 0) on failure.
+    """
+    prompt = (
+        f"You are the Chief Engineer. The current fix in `{target}` FAILED its tests. Using the REAL "
+        "pytest traceback, produce a PRECISE, line-level repair spec a junior developer can apply "
+        "mechanically.\n"
+        "State: (1) the exact symbol/line at fault; (2) WHY the test fails (read the assertion/error "
+        "message); (3) the exact corrected line(s) WITH correct indentation; (4) edge cases.\n"
+        "Numbered, code-level; do NOT emit SEARCH/REPLACE markers.\n\n"
+        f"CONTEXTOS PROJECTION (confirmed facts):\n{context}\n\n"
+        f"ISSUE:\n{problem[:4000]}\n\n"
+        f"REAL PYTEST TRACEBACK:\n{tb[:6000]}\n\n"
+        f"CURRENT CONTENT of {target}:\n```\n{content[:MAX_CONTENT_CHARS]}\n```\n"
+    )
+    try:
+        text, usage = _complete_for_role("chief_engineer", prompt, max_tokens=3072)
+    except (RuntimeError, ValueError, OSError, KeyError, TypeError):
+        return "", 0, 0
+    return text, int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0)
+
+
 def render_messages(messages: list[dict[str, Any]]) -> str:
     return "\n".join(f"[{m.get('role')}] {m.get('content')}" for m in messages if m.get("content"))
 
@@ -220,9 +244,15 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
     receipts = ReceiptStore(workspace=str(ws))
     projector = ProjectionEngine()
 
-    # seed round 1 with the prior Phase-A patch if available (the system's first attempt)
+    # seed round 1 with the best prior patch (V11 starts from the v10 hardened state, then
+    # converges via test feedback) — the system's first attempt is round 1's baseline.
     seed = ""
-    for src in ("predictions_batch.jsonl", "predictions_new.jsonl"):
+    for src in (
+        "predictions_v10_final.jsonl",
+        "predictions_v10.jsonl",
+        "predictions_batch.jsonl",
+        "predictions_new.jsonl",
+    ):
         p = work_dir / src
         if p.is_file():
             for line in p.read_text(encoding="utf-8").splitlines():
@@ -346,9 +376,10 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
         }
         messages = projector.project(projection_dict, receipts)
 
-        # ── refine against the real traceback + implicated file content ──
+        # ── V11 swap-paradigm refine (test-driven): Kimi reads the REAL traceback -> repair
+        #    blueprint; local gemma transcribes it into SEARCH/REPLACE. ──
         # Localization cascade: real traceback frame -> seed-patch files (assertion
-        # tests give no source frame) -> local CE (gemma) as last resort.
+        # tests give no source frame) -> local CE as last resort.
         target = impl[0] if impl else ""
         if not target:
             pf = patched_files(patch, repo_files)
@@ -358,18 +389,26 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
         content = ""
         if target and (ws / target).is_file():
             content = (ws / target).read_text(encoding="utf-8", errors="replace")
-        refine_prompt = (
-            f"{render_messages(messages)}\n\n"
-            "Output ONLY Aider SEARCH/REPLACE edit block(s), no prose. Format each EXACTLY as:\n"
+        # strong-model (Kimi) repair blueprint derived from the in-container traceback + ContextOS projection
+        spec, bp_in, bp_out = _repair_blueprint(target, content, problem, tb, render_messages(messages))
+        tokens["cloud_in"] += bp_in
+        tokens["cloud_out"] += bp_out
+        transcribe_prompt = (
+            "Apply the FIX SPEC below to the file. Output ONLY Aider SEARCH/REPLACE block(s), no prose.\n"
+            "Format each block EXACTLY as:\n"
             f"<<<< SEARCH:{target}\n<lines copied VERBATIM from CONTENT>\n====\n<fixed lines>\n>>>> REPLACE\n\n"
-            f"ISSUE:\n{problem[:4000]}\n\n"
-            f"REAL PYTEST TRACEBACK (in-container, round {rnd}):\n{tb[:6000]}\n\n"
+            "Rules: SEARCH copied character-for-character (exact indentation); REPLACE must differ; keep\n"
+            "every block CLOSED with `>>>> REPLACE`; do not touch tests.\n\n"
+            f"FIX SPEC (senior engineer, derived from the REAL test failure):\n{spec or '(spec unavailable; infer from the traceback)'}\n\n"
+            f"REAL PYTEST TRACEBACK (in-container, round {rnd}):\n{tb[:4000]}\n\n"
             f"CONTENT of {target}:\n```\n{content[:MAX_CONTENT_CHARS]}\n```\n"
         )
-        tokens["local_in_est"] += _estimate_tokens(refine_prompt) // 3  # projection synthesis (local-side bookkeeping)
-        draft, usage = _cloud_complete(refine_prompt, EDIT_PROVIDER_ID, max_tokens=4000)
-        tokens["cloud_in"] += usage.get("input_tokens", 0)
-        tokens["cloud_out"] += usage.get("output_tokens", 0)
+        # local gemma transcribes (config-driven director binding); authoritative local usage
+        draft, usage = _complete_for_role(
+            "director", transcribe_prompt, max_tokens=_context_budget_max_tokens(transcribe_prompt)
+        )
+        tokens["local_in_est"] += usage.get("input_tokens", 0)
+        tokens["local_out_est"] += usage.get("output_tokens", 0)
         applied, detail, path = _apply_blocks(str(ws), target, draft)
         truth.append(
             {

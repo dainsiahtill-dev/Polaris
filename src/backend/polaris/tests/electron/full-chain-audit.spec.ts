@@ -1,5 +1,6 @@
 import { existsSync, promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { type Locator, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
@@ -673,6 +674,11 @@ function resolveSafeWorkspaceName(prefix: string): string {
     throw new Error(`Invalid KERNELONE_E2E_WORKSPACE_NAME=${override}`);
   }
   return sanitized;
+}
+
+function resolveGeneratedWorkspaceRoot(): string {
+  return optionalEnvValue("KERNELONE_E2E_GENERATED_WORKSPACE_ROOT")
+    || path.join(os.tmpdir(), "Polaris", "electron-e2e-generated-workspace");
 }
 
 function resolveFullChainStartPhase(): FullChainStartPhase {
@@ -3347,7 +3353,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         metrics: await measureComplexity(path.resolve(resumeWorkspace)),
         scenario,
       }
-      : await createComplexProject("C:/Temp", scenario);
+      : await createComplexProject(resolveGeneratedWorkspaceRoot(), scenario);
     const scenarioSeedMetrics = measureScenarioDefinitionComplexity(scenario);
     audit.workspace = project.workspace;
     audit.seed_metrics = project.metrics;

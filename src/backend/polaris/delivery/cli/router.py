@@ -484,6 +484,34 @@ def _route_agentic_eval(args: argparse.Namespace) -> int:
         return 1
 
 
+def _route_aggregate_audit(args: argparse.Namespace) -> int:
+    """Build an Aggregate LLM runtime audit package."""
+    workspace = WorkspaceGuard.ensure_workspace(getattr(args, "workspace", None))
+    argv = [
+        "--workspace",
+        str(workspace),
+        "--objective",
+        str(getattr(args, "objective", "") or "Audit Polaris aggregate LLM runtime integrations."),
+        "--execution-mode",
+        str(getattr(args, "execution_mode", "") or "plan_only"),
+        "--max-lobe-turns",
+        str(max(1, int(getattr(args, "max_lobe_turns", 1) or 1))),
+    ]
+    output = str(getattr(args, "output", "") or "").strip()
+    if output:
+        argv.extend(["--output", output])
+    if bool(getattr(args, "pretty", False)):
+        argv.append("--pretty")
+    try:
+        from polaris.delivery.cli.aggregate_audit import main as aggregate_audit_main
+
+        return int(aggregate_audit_main(argv))
+    except (RuntimeError, ValueError) as exc:
+        logger.warning("aggregate-audit route failed: %s", exc)
+        print(f"Error running aggregate audit: {exc}", file=sys.stderr)
+        return 1
+
+
 def _route_probe(args: argparse.Namespace) -> int:
     """Run role LLM connectivity probe as a standalone pre-flight check."""
     workspace = WorkspaceGuard.ensure_workspace(getattr(args, "workspace", None))
@@ -829,6 +857,9 @@ class CliRouter:
 
         if cmd == "agentic-eval":
             return _route_agentic_eval(args)
+
+        if cmd == "aggregate-audit":
+            return _route_aggregate_audit(args)
 
         if cmd == "probe":
             return _route_probe(args)

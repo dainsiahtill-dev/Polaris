@@ -1,0 +1,166 @@
+id: vc-20260606-aggregate-role-lobes
+title: Aggregate role lobe planning and single-turn runtime bridge
+date: "2026-06-06"
+classification: pattern
+owner: roles.runtime
+scope:
+  - src/backend/polaris/cells/roles/runtime/public/contracts.py
+  - src/backend/polaris/cells/roles/runtime/public/service.py
+  - src/backend/polaris/cells/roles/runtime/public/__init__.py
+  - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+  - src/backend/polaris/delivery/http/app_factory.py
+  - src/backend/polaris/delivery/http/routers/aggregate_chat.py
+  - src/backend/polaris/delivery/http/routers/test_aggregate_chat.py
+  - src/backend/polaris/delivery/cli/aggregate_audit.py
+  - src/backend/polaris/delivery/cli/tests/test_aggregate_audit.py
+  - src/backend/docs/graph/catalog/cells.yaml
+assumption_register:
+  - id: A1
+    statement: The aggregate-LLM direction needs a stable query contract before execution orchestration.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/contracts.py
+    status: verified
+  - id: A2
+    statement: Virtual lobes such as adversarial_critic must not be represented as current role profiles.
+    evidence:
+      - src/backend/polaris/cells/roles/profile/internal/config/core_roles.yaml
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A3
+    statement: The plan query must be side-effect free and not call role kernels, tools, or LLM providers.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+    status: verified
+  - id: A4
+    statement: The chat-completions wrapper supports side-effect-free plan_only plus stateful single_turn and lobe_chain modes.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/contracts.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A5
+    statement: The /v1/chat/completions route must delegate through roles.runtime public contracts.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/aggregate_chat.py
+      - src/backend/polaris/delivery/http/routers/test_aggregate_chat.py
+    status: verified
+  - id: A6
+    statement: Aggregate plans must expose structured cognitive ledger handoffs and compute policy.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/contracts.py
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A7
+    statement: Failure signals must activate a planned takeover directive and failure_evidence must be checked against required evidence keys.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/contracts.py
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+      - src/backend/polaris/delivery/http/routers/test_aggregate_chat.py
+    status: verified
+  - id: A8
+    statement: single_turn must execute one concrete role through roles.runtime stream execution, not a virtual lobe.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A10
+    statement: lobe_chain must execute a bounded sequence of concrete roles and pass structured handoff plus failure evidence metadata between lobe turns.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+      - src/backend/polaris/delivery/http/routers/test_aggregate_chat.py
+    status: verified
+  - id: A11
+    statement: Hippocampus/memory fallback lobes must call ContextOS MemoryManager and inject a supplementary akashic_recall_pack.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A12
+    statement: Executed aggregate lobe turns must receive a structured polaris.aggregate_lobe_turn.v1 envelope as user_message instead of raw cross-role chat.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A13
+    statement: Aggregate lobe turns must call ContextOS phase budget, deterministic attention scoring, and predictive compression components before role execution.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A14
+    statement: Aggregate lobe turns must snapshot TaskMarketProjection into structured context, metadata, and envelope evidence.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A15
+    statement: Aggregate lobe execution must retrieve existing distilled knowledge before role execution and distill each lobe result after execution.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A16
+    statement: Aggregate lobe execution must inject descriptor, context, verify-pack, and graph-constrained retrieval evidence into structured context.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A17
+    statement: A single aggregate lobe_chain acceptance test must materialize all 16 unique technology ids and verify KnowledgeDistiller writes UTF-8 JSONL through resolve_runtime_path.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+  - id: A18
+    statement: The /v1/chat/completions HTTP route must be able to invoke the default RoleRuntimeService lobe_chain path and materialize aggregate runtime evidence.
+    evidence:
+      - src/backend/polaris/delivery/http/routers/test_aggregate_chat.py
+    status: verified
+  - id: A19
+    statement: Operators must have a repeatable UTF-8 JSON aggregate audit package command through the unified Polaris CLI.
+    evidence:
+      - src/backend/polaris/delivery/cli/aggregate_audit.py
+      - src/backend/polaris/delivery/cli/__main__.py
+      - src/backend/polaris/delivery/cli/router.py
+      - src/backend/polaris/delivery/cli/tests/test_aggregate_audit.py
+    status: verified
+  - id: A9
+    statement: Aggregate runtime audit must dynamically verify production entrypoints before counting integrations as wired.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/contracts.py
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+      - src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    status: verified
+pre_mortem:
+  likely_failure_modes:
+    - Public contract exported from service but not lazy public package.
+    - Virtual lobe language accidentally claiming a current role profile.
+    - Graph catalog not updated for new query/result types.
+    - Chat-completions wrapper claims multi-lobe execution when only single_turn has run.
+    - Delivery route bypasses roles.runtime or silently accepts unknown execution modes.
+    - Cognitive ledger falls back to prose-only communication instead of structured handoff keys.
+    - Failure signals are accepted but do not map to a lobe takeover directive.
+    - Failure evidence is accepted but never checked against the takeover directive evidence keys.
+    - Runtime audit marks planned bridge assets as wired without production entrypoints.
+    - Runtime audit accepts a missing workspace runtime path as verified.
+    - lobe_chain passes prior lobe outputs as chat history instead of structured handoff context.
+    - Hippocampus lobe names Akashic memory but never calls the existing MemoryManager.
+    - Aggregate execution passes the raw objective as role user_message and bypasses the structured lobe-turn envelope.
+    - ContextOS attention/phase/predictive capability is counted as wired without an actual runtime pack.
+    - Task Market is listed in lobe plans but no runtime projection is captured during execution.
+    - Knowledge Distiller retrieves prior knowledge but never distills lobe results into reusable knowledge.
+    - Descriptor/Context/Verify Pack and graph retrieval are counted as wired without context governance pack evidence.
+    - Aggregate runtime audit is green but no stateful lobe_chain test proves all 16 technology ids and packs are present in one execution.
+    - HTTP route tests only mock the aggregate service and never prove the delivery boundary can reach the stateful lobe_chain runtime path.
+    - Aggregate runtime evidence exists only in tests and cannot be exported as a repeatable operator-facing JSON audit package.
+verification_plan:
+  commands:
+    - ruff check src/backend/polaris/cells/roles/runtime/public/contracts.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/public/__init__.py src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py --fix
+    - ruff format src/backend/polaris/cells/roles/runtime/public/contracts.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/public/__init__.py src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    - mypy src/backend/polaris/cells/roles/runtime/public/contracts.py src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
+    - pytest src/backend/polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py src/backend/polaris/delivery/http/routers/test_aggregate_chat.py -v
+    - mypy src/backend/polaris/delivery/http/routers/aggregate_chat.py src/backend/polaris/delivery/http/routers/test_aggregate_chat.py
+    - pytest src/backend/polaris/cells/roles/runtime/tests/test_stream_chat_turn_audit.py src/backend/polaris/cells/roles/runtime/tests/test_role_runtime_strategy.py -v
+    - pytest src/backend/polaris/delivery/cli/tests/test_aggregate_audit.py -v
+expected_outcome: Aggregate role lobe query, runtime audit, and single-turn execution bridge are exported, deterministic where applicable, graph-declared, and tested.

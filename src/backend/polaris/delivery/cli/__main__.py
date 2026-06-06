@@ -708,6 +708,48 @@ def create_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # ── aggregate-audit ─────────────────────────────────────────────────────
+    aggregate_audit_parser = subparsers.add_parser(
+        "aggregate-audit",
+        help="Build a Polaris Aggregate LLM runtime audit package",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Audit the Aggregate LLM runtime contract and production entrypoints. "
+            "Default mode is plan_only; stateful modes require configured LLM runtime."
+        ),
+    )
+    _add_workspace_argument(aggregate_audit_parser)
+    aggregate_audit_parser.add_argument(
+        "--objective",
+        type=str,
+        default="Audit Polaris aggregate LLM runtime integrations.",
+        help="Audit objective embedded in the aggregate chat command",
+    )
+    aggregate_audit_parser.add_argument(
+        "--execution-mode",
+        choices=("plan_only", "single_turn", "lobe_chain"),
+        default="plan_only",
+        help="Aggregate execution mode (default: plan_only)",
+    )
+    aggregate_audit_parser.add_argument(
+        "--max-lobe-turns",
+        type=int,
+        default=1,
+        help="Bound for lobe_chain execution (default: 1)",
+    )
+    aggregate_audit_parser.add_argument(
+        "--output",
+        type=str,
+        default="",
+        help="Output JSON path; defaults to workspace runtime aggregate audit path",
+    )
+    aggregate_audit_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        default=False,
+        help="Print the full JSON package to stdout",
+    )
+
     # ── probe ───────────────────────────────────────────────────────────────
     probe_parser = subparsers.add_parser(
         "probe",

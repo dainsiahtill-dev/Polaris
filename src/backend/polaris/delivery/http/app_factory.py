@@ -145,6 +145,7 @@ def _register_routers(app: FastAPI) -> None:
     from polaris.delivery.http.middleware.metrics import metrics_router
     from polaris.delivery.http.routers import (
         agents,
+        aggregate_chat,
         arsenal,
         cognitive_runtime,
         conversations,
@@ -179,6 +180,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(v2_router)
     app.include_router(factory.router)
 
+    app.include_router(aggregate_chat.router)
     app.include_router(role_chat.router)
     app.include_router(role_session.router)
     app.include_router(pm_chat.router)
