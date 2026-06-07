@@ -72,6 +72,7 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
                 "compact_context",
                 "load_skill",
                 "skill_manifest",
+                "scout_probe",
                 # Legacy/compat tool names still accepted by upstream callers
                 "read_file",
                 "search_code",
@@ -336,6 +337,7 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
                 "edit_file",
                 "append_to_file",
                 "execute_command",
+                "scout_probe",
             ],
             "blacklist": [
                 "delete_file",  # 默认禁止删除
