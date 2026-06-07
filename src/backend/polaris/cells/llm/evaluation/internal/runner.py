@@ -214,7 +214,11 @@ class EvaluationRunner:
 
         # If suite has detailed cases, parse each one
         details = result_data.get("details")
-        cases = details.get("cases") if isinstance(details, dict) else None
+        cases = None
+        if isinstance(details, dict):
+            cases = details.get("cases")
+            if not isinstance(cases, list) or not cases:
+                cases = details.get("results")
         if isinstance(cases, list) and cases:
             for case_data in cases:
                 if not isinstance(case_data, dict):
@@ -223,7 +227,7 @@ class EvaluationRunner:
                     EvaluationResult(
                         case_id=str(case_data.get("id") or case_data.get("case_id") or "unknown"),
                         passed=bool(case_data.get("passed")),
-                        output=str(case_data.get("output") or ""),
+                        output=str(case_data.get("output") or case_data.get("raw_output") or case_data.get("answer") or ""),
                         score=float(case_data.get("score", 1.0 if case_data.get("passed") else 0.0) or 0.0),
                         error=str(case_data.get("error") or ""),
                         latency_ms=int(case_data.get("latency_ms") or 0),

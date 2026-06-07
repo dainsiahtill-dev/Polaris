@@ -22,6 +22,8 @@ from polaris.cells.factory.cognitive_runtime.public.contracts import (
     HandoffPackResultV1,
     RecordRuntimeReceiptCommandV1,
     RuntimeReceiptResultV1,
+    ValidateChangeSetCommandV1,
+    ValidateChangeSetResultV1,
 )
 from polaris.cells.factory.verification_guard.public.contracts import (
     VerificationReport,
@@ -42,7 +44,10 @@ from polaris.cells.policy.permission.public.contracts import (
     PermissionDecisionResultV1,
 )
 from polaris.cells.policy.workspace_guard.public.contracts import (
+    WorkspaceGuardBatchDecisionV1,
     WorkspaceGuardDecisionV1,
+    WorkspaceGuardPathDecisionV1,
+    WorkspaceWriteGuardBatchQueryV1,
     WorkspaceWriteGuardQueryV1,
 )
 from polaris.cells.qa.audit_verdict.public.contracts import (
@@ -131,9 +136,24 @@ class FakeTaskMarketService:
             total=3,
             counts={"pending_exec": 1, "running": 1, "dead_letter": 1},
             items=(
-                {"task_id": "task-a", "stage": "pending_exec", "status": "pending", "priority": "high"},
+                {
+                    "task_id": "task-a",
+                    "stage": "pending_exec",
+                    "status": "pending",
+                    "priority": "high",
+                    "depends_on": ("task-b",),
+                    "projection_ref": "runtime.projection:task:task-a",
+                },
                 {"task_id": "task-b", "stage": "pending_qa", "status": "running", "priority": "medium"},
-                {"task_id": "task-c", "stage": "pending_exec", "status": "dead_letter", "priority": "high"},
+                {
+                    "task_id": "task-c",
+                    "stage": "pending_exec",
+                    "status": "dead_letter",
+                    "priority": "high",
+                    "failed_stage": "pending_exec",
+                    "failure_reason": "lease expired",
+                    "depends_on": ("task-a", "task-b"),
+                },
             ),
         )
 
@@ -234,9 +254,20 @@ class FakeRoleProfileService:
 
 
 class FakeCognitiveRuntimeCommitService:
-    def __init__(self) -> None:
+    def __init__(self, *, validation_ok: bool = True) -> None:
+        self.validation_ok = validation_ok
+        self.validations: list[ValidateChangeSetCommandV1] = []
         self.receipts: list[RecordRuntimeReceiptCommandV1] = []
         self.handoffs: list[ExportHandoffPackCommandV1] = []
+
+    def validate_change_set(self, command: ValidateChangeSetCommandV1) -> ValidateChangeSetResultV1:
+        self.validations.append(command)
+        return ValidateChangeSetResultV1(
+            ok=self.validation_ok,
+            validation=SimpleNamespace(validation_id="validation-1", ok=self.validation_ok),
+            error_code=None if self.validation_ok else "validate_change_set_failed",
+            error_message=None if self.validation_ok else "change set is outside role scope",
+        )
 
     def record_runtime_receipt(self, command: RecordRuntimeReceiptCommandV1) -> RuntimeReceiptResultV1:
         self.receipts.append(command)
@@ -338,15 +369,43 @@ class FakeBudgetGuardService:
 
 
 class FakeWorkspaceGuardService:
-    def __init__(self, *, allowed: bool) -> None:
+    def __init__(self, *, allowed: bool, single_checks_allowed: bool = True) -> None:
         self.allowed = allowed
+        self.single_checks_allowed = single_checks_allowed
         self.checked: list[WorkspaceWriteGuardQueryV1] = []
+        self.batch_checked: list[WorkspaceWriteGuardBatchQueryV1] = []
 
     def check_workspace_write_guard(self, query: WorkspaceWriteGuardQueryV1) -> WorkspaceGuardDecisionV1:
+        if not self.single_checks_allowed:
+            raise AssertionError("single-path workspace guard calls are not allowed for this test")
         self.checked.append(query)
         return WorkspaceGuardDecisionV1(
             allowed=self.allowed,
             reason="allowed" if self.allowed else "outside declared mutation boundary",
+        )
+
+    def check_workspace_write_guard_batch(
+        self,
+        query: WorkspaceWriteGuardBatchQueryV1,
+    ) -> WorkspaceGuardBatchDecisionV1:
+        self.batch_checked.append(query)
+        checked_paths = tuple(dict.fromkeys(query.paths))
+        denied_path = "" if self.allowed or not checked_paths else checked_paths[0]
+        path_decisions = tuple(
+            WorkspaceGuardPathDecisionV1(
+                path=path,
+                operation=query.operation,
+                allowed=self.allowed,
+                reason="allowed" if self.allowed else "outside declared mutation boundary",
+            )
+            for path in checked_paths
+        )
+        return WorkspaceGuardBatchDecisionV1(
+            allowed=self.allowed,
+            reason="allowed" if self.allowed else "outside declared mutation boundary",
+            checked_paths=checked_paths,
+            denied_path=denied_path,
+            path_decisions=path_decisions,
         )
 
 
@@ -906,6 +965,8 @@ def test_role_turn_envelope_and_commit_request_carry_refs_not_foreign_state() ->
         request_id="commit-request-1",
         envelope=envelope,
         changed_asset_refs=("runtime.task_market:task-1",),
+        changed_files=("runtime/tasks/task-1.json",),
+        allowed_scope_paths=("runtime/tasks",),
         evidence_refs=("audit.evidence:evt-1",),
         reason="task-market dispatch committed",
     )
@@ -1069,6 +1130,8 @@ def test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_run
         request_id="commit-request-1",
         envelope=envelope,
         changed_asset_refs=("runtime.task_market:task-1",),
+        changed_files=("runtime/tasks/task-1.json",),
+        allowed_scope_paths=("runtime/tasks",),
         evidence_refs=("audit.evidence:evt-1",),
         reason="task-market dispatch committed",
     )
@@ -1083,8 +1146,16 @@ def test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_run
         "factory.cognitive_runtime:receipt:receipt-1",
     )
     assert receipt.handoff_pack_refs == ("factory.cognitive_runtime:handoff:handoff-1",)
+    assert receipt.change_set_validation_ref == "factory.cognitive_runtime:change-set-validation:validation-1"
+    assert len(cognitive_runtime.validations) == 1
     assert len(cognitive_runtime.receipts) == 1
     assert len(cognitive_runtime.handoffs) == 1
+
+    validation_command = cognitive_runtime.validations[0]
+    assert validation_command.workspace == "/repo"
+    assert validation_command.changed_files == ("runtime/tasks/task-1.json",)
+    assert validation_command.allowed_scope_paths == ("runtime/tasks",)
+    assert validation_command.evidence_refs == ("audit.evidence:evt-1",)
 
     receipt_command = cognitive_runtime.receipts[0]
     assert receipt_command.workspace == "/repo"
@@ -1094,10 +1165,14 @@ def test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_run
     assert receipt_command.payload["request_id"] == "commit-request-1"
     assert receipt_command.payload["role_id"] == "pm"
     assert receipt_command.payload["changed_asset_refs"] == ("runtime.task_market:task-1",)
+    assert receipt_command.payload["change_set_validation_ref"] == (
+        "factory.cognitive_runtime:change-set-validation:validation-1"
+    )
     assert receipt_command.turn_envelope["identity"]["role_id"] == "pm"
     assert receipt_command.turn_envelope["ledger_binding"]["commit_receipt_ref"] == "roles.kernel:commit:turn-1"
     assert "roles.kernel:commit:turn-1" in receipt_command.trace_refs
     assert "audit.evidence:evt-1" in receipt_command.trace_refs
+    assert "factory.cognitive_runtime:change-set-validation:validation-1" in receipt_command.trace_refs
 
     handoff_command = cognitive_runtime.handoffs[0]
     assert handoff_command.workspace == "/repo"
@@ -1107,6 +1182,42 @@ def test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_run
         "factory.cognitive_runtime:receipt:previous",
         "factory.cognitive_runtime:receipt:receipt-1",
     )
+
+
+def test_commit_role_state_rejects_failed_change_set_validation_without_receipt_or_handoff() -> None:
+    envelope = RoleTurnEnvelope(
+        identity=_identity("pm"),
+        profile_binding=_profile_binding("pm"),
+        turn_context=RoleTurnContext(
+            typed_input_ref="pm.task_contract:task-1",
+            context_snapshot_ref="context.engine:snapshot-1",
+        ),
+        capability_invocations=(),
+        ledger_binding=RoleLedgerBinding(
+            turn_ledger_ref="roles.kernel:turn-ledger:run-1",
+            commit_receipt_ref="roles.kernel:commit:turn-1",
+        ),
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:task-1"),
+    )
+    request = RoleStateCommitRequest(
+        request_id="commit-request-invalid-change-set",
+        envelope=envelope,
+        changed_asset_refs=("runtime.task_market:task-1",),
+        changed_files=("outside/task-1.json",),
+        allowed_scope_paths=("runtime/tasks",),
+        evidence_refs=("audit.evidence:evt-1",),
+    )
+    cognitive_runtime = FakeCognitiveRuntimeCommitService(validation_ok=False)
+
+    receipt = commit_role_state(request, cognitive_runtime_service=cognitive_runtime)
+
+    assert receipt.ok is False
+    assert receipt.status == "change_set_validation_failed"
+    assert receipt.error_code == "validate_change_set_failed"
+    assert receipt.error_message == "change set is outside role scope"
+    assert len(cognitive_runtime.validations) == 1
+    assert cognitive_runtime.receipts == []
+    assert cognitive_runtime.handoffs == []
 
 
 def test_commit_role_state_rejects_missing_kernel_commit_receipt_without_runtime_call() -> None:
@@ -1268,6 +1379,17 @@ def test_pm_evaluate_critical_path_reads_task_market_status_contract() -> None:
     assert result.metadata["total_tasks"] == 3
     assert result.metadata["blocked_task_ids"] == ("task-c",)
     assert result.metadata["open_task_ids"] == ("task-a", "task-b", "task-c")
+    assert result.metadata["dependency_edges"] == (
+        {"task_id": "task-a", "depends_on": ("task-b",)},
+        {"task_id": "task-c", "depends_on": ("task-a", "task-b")},
+    )
+    assert result.metadata["failed_stages"] == (
+        {"task_id": "task-c", "stage": "pending_exec", "reason": "lease expired"},
+    )
+    assert result.metadata["projection_refs"] == ("runtime.projection:task:task-a",)
+    assert result.metadata["asset_refs"]["task_graph"] == "runtime.task_market:task-graph"
+    assert result.metadata["asset_refs"]["runtime_projection_state"] == "runtime.projection:runtime-status"
+    assert result.metadata["asset_refs"]["open_loop_registry"] == "runtime.task_market:open-loops"
     assert len(task_market.queried) == 1
     assert task_market.queried[0].workspace == "/repo"
     assert task_market.queried[0].stage == "pending_exec"
@@ -1358,6 +1480,13 @@ def test_chief_engineer_generate_diff_capability_invokes_blueprint_contract() ->
     assert result.status == "generated"
     assert result.result_ref == "chief_engineer.blueprint:blueprint:bp-1"
     assert result.metadata["blueprint_path"] == "runtime/blueprints/bp-1.json"
+    assert result.metadata["asset_refs"] == {
+        "blueprint_database": "chief_engineer.blueprint:runtime/blueprints",
+        "arch_constraint_memo": "chief_engineer.blueprint:arch-constraint-memo",
+        "diff_map_archive": "chief_engineer.blueprint:diff-map-archive",
+    }
+    assert result.metadata["diff_map_archive_ref"] == "chief_engineer.blueprint:diff-map-archive:bp-1"
+    assert result.metadata["arch_memo_ref"] == "chief_engineer.blueprint:arch-constraint-memo:bp-1"
     assert len(blueprint_service.generated) == 1
 
     blueprint_command = blueprint_service.generated[0]
@@ -1369,6 +1498,63 @@ def test_chief_engineer_generate_diff_capability_invokes_blueprint_contract() ->
     assert blueprint_command.constraints == {"cell": "roles.runtime", "effect": "blueprint.generate"}
     assert blueprint_command.context["role_invocation_id"] == "invoke-blueprint-1"
     assert blueprint_command.context["role_capability_id"] == "generate_diff_specification"
+    assert blueprint_command.context["asset_refs"] == {
+        "blueprint_database": "chief_engineer.blueprint:runtime/blueprints",
+        "arch_constraint_memo": "chief_engineer.blueprint:arch-constraint-memo",
+        "diff_map_archive": "chief_engineer.blueprint:diff-map-archive",
+    }
+    assert blueprint_command.context["diff_map_archive_requires_blueprint_ref"] is True
+
+
+def test_chief_engineer_record_arch_memo_targets_arch_constraint_memo_ref() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("chief_engineer")
+    runtime_object = spec.instantiate(
+        identity=_identity("chief_engineer"),
+        profile_binding=_profile_binding("chief_engineer"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:ce-run"),
+        policy_fingerprint="ce-policy",
+        capability_id="record_arch_memo",
+    )
+    blueprint_service = FakeBlueprintService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=RoleCapabilityInvocation(
+                invocation_id="invoke-arch-memo-1",
+                capability_id="record_arch_memo",
+                role_id="chief_engineer",
+                command_contract="GenerateTaskBlueprintCommandV1",
+                payload_ref="roles.runtime:typed-input:ce-arch-memo-1",
+                fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+            ),
+            payload={
+                "task_id": "ce-memo-1",
+                "run_id": "run-1",
+                "objective": "Record a governance-backed architecture constraint memo",
+                "constraints": {"source_ref": "docs/graph/catalog/cells.yaml"},
+                "context": {"memo_subject": "roles.runtime boundary"},
+            },
+        ),
+        blueprint_service=blueprint_service,
+    )
+
+    assert result.ok is True
+    assert result.owner_cell == "chief_engineer.blueprint"
+    assert result.command_contract == "GenerateTaskBlueprintCommandV1"
+    assert result.metadata["target_asset_mount"] == "ArchConstraintMemo"
+    assert result.metadata["target_asset_ref"] == "chief_engineer.blueprint:arch-constraint-memo"
+    assert result.metadata["arch_memo_ref"] == "chief_engineer.blueprint:arch-constraint-memo:bp-1"
+    assert "memo_subject" not in result.metadata
+
+    assert len(blueprint_service.generated) == 1
+    blueprint_command = blueprint_service.generated[0]
+    assert blueprint_command.context["role_capability_id"] == "record_arch_memo"
+    assert blueprint_command.context["target_asset_mount"] == "ArchConstraintMemo"
+    assert blueprint_command.context["target_asset_ref"] == "chief_engineer.blueprint:arch-constraint-memo"
+    assert blueprint_command.context["asset_refs"]["arch_constraint_memo"] == (
+        "chief_engineer.blueprint:arch-constraint-memo"
+    )
 
 
 def test_capability_fingerprint_mismatch_is_denied_before_blueprint_call() -> None:
@@ -2021,7 +2207,7 @@ def test_non_architect_mutation_guard_is_denied_without_workspace_guard_call() -
         ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:pm-run"),
         policy_fingerprint="pm-policy",
     )
-    workspace_guard = FakeWorkspaceGuardService(allowed=True)
+    workspace_guard = FakeWorkspaceGuardService(allowed=True, single_checks_allowed=False)
 
     result = execute_role_capability_invocation(
         ExecuteRoleCapabilityInvocationCommandV1(
@@ -2099,7 +2285,12 @@ def test_architect_validate_cell_boundary_change_invokes_permission_guard_and_de
     assert len(permission.evaluated) == 1
     assert permission.evaluated[0].context["capability_id"] == "validate_cell_boundary_change"
     assert "depends_on_delta" not in permission.evaluated[0].context
-    assert len(workspace_guard.checked) == 2
+    assert workspace_guard.checked == []
+    assert len(workspace_guard.batch_checked) == 1
+    assert workspace_guard.batch_checked[0].paths == (
+        "src/backend/polaris/cells/roles/runtime/public/service.py",
+        "src/backend/polaris/cells/roles/runtime/public/contracts.py",
+    )
     assert len(architect_design.generated) == 1
     design_command = architect_design.generated[0]
     assert design_command.workspace == "/repo"
@@ -2158,7 +2349,7 @@ def test_architect_validate_cell_boundary_workspace_guard_denial_has_allowed_fal
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     permission = FakePermissionService(allowed=True)
-    workspace_guard = FakeWorkspaceGuardService(allowed=False)
+    workspace_guard = FakeWorkspaceGuardService(allowed=False, single_checks_allowed=False)
     architect_design = FakeArchitectDesignService()
 
     result = execute_role_capability_invocation(
@@ -2182,7 +2373,9 @@ def test_architect_validate_cell_boundary_workspace_guard_denial_has_allowed_fal
     assert result.metadata["capability_available"] is True
     assert result.metadata["workspace_guard_allowed"] is False
     assert result.metadata["denied_path"] == "../outside-project/secret.py"
-    assert len(workspace_guard.checked) == 1
+    assert workspace_guard.checked == []
+    assert len(workspace_guard.batch_checked) == 1
+    assert workspace_guard.batch_checked[0].paths == ("../outside-project/secret.py",)
     assert architect_design.generated == []
 
 

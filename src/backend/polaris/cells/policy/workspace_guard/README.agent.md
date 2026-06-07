@@ -11,16 +11,19 @@ Enforce workspace path legality, scope constraints, and write-guard checks.
 ## Public Inputs
 
 - `WorkspaceWriteGuardQueryV1`
+- `WorkspaceWriteGuardBatchQueryV1`
 - `WorkspaceArchiveWriteGuardQueryV1`
 
 ## Public Outputs
 
 - `WorkspaceGuardDecisionV1`
+- `WorkspaceGuardBatchDecisionV1`
 - `WorkspaceGuardViolationEventV1`
 
 ## Public Service
 
 - `check_workspace_write_guard(query: WorkspaceWriteGuardQueryV1)`
+- `check_workspace_write_guard_batch(query: WorkspaceWriteGuardBatchQueryV1)`
 
 ## Depends On
 

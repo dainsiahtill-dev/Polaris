@@ -13,13 +13,15 @@
     "commands": [],
     "queries": [
       "WorkspaceWriteGuardQueryV1",
+      "WorkspaceWriteGuardBatchQueryV1",
       "WorkspaceArchiveWriteGuardQueryV1"
     ],
     "events": [
       "WorkspaceGuardViolationEventV1"
     ],
     "results": [
-      "WorkspaceGuardDecisionV1"
+      "WorkspaceGuardDecisionV1",
+      "WorkspaceGuardBatchDecisionV1"
     ],
     "errors": [
       "WorkspaceGuardErrorV1"
@@ -57,4 +59,3 @@
     "expand_to_neighbors_only_when_needed": true
   }
 }
-

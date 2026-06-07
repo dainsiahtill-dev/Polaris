@@ -495,8 +495,11 @@ class RoleStateCommitRequest:
     request_id: str
     envelope: RoleTurnEnvelope
     changed_asset_refs: tuple[str, ...]
+    changed_files: tuple[str, ...] = field(default_factory=tuple)
+    allowed_scope_paths: tuple[str, ...] = field(default_factory=tuple)
     evidence_refs: tuple[str, ...] = field(default_factory=tuple)
     reason: str = ""
+    require_change_validation: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", _require_non_empty("request_id", self.request_id))
@@ -507,8 +510,15 @@ class RoleStateCommitRequest:
             "changed_asset_refs",
             _normalize_string_tuple("changed_asset_refs", self.changed_asset_refs),
         )
+        object.__setattr__(self, "changed_files", _normalize_string_tuple("changed_files", self.changed_files))
+        object.__setattr__(
+            self,
+            "allowed_scope_paths",
+            _normalize_string_tuple("allowed_scope_paths", self.allowed_scope_paths),
+        )
         object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
         object.__setattr__(self, "reason", str(self.reason or "").strip())
+        object.__setattr__(self, "require_change_validation", bool(self.require_change_validation))
 
 
 @dataclass(frozen=True)
@@ -518,6 +528,7 @@ class RoleStateCommitReceipt:
     request_id: str
     ok: bool
     commit_receipt_ref: str | None = None
+    change_set_validation_ref: str | None = None
     runtime_receipt_refs: tuple[str, ...] = field(default_factory=tuple)
     handoff_pack_refs: tuple[str, ...] = field(default_factory=tuple)
     turn_outcome_ref: str | None = None
@@ -531,6 +542,11 @@ class RoleStateCommitReceipt:
         object.__setattr__(self, "request_id", _require_non_empty("request_id", self.request_id))
         object.__setattr__(self, "ok", bool(self.ok))
         object.__setattr__(self, "commit_receipt_ref", _normalize_optional_string(self.commit_receipt_ref))
+        object.__setattr__(
+            self,
+            "change_set_validation_ref",
+            _normalize_optional_string(self.change_set_validation_ref),
+        )
         object.__setattr__(
             self,
             "runtime_receipt_refs",

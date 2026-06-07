@@ -1552,6 +1552,57 @@ class TestAutofixPmContractForQuality:
         assert stats["game_domain_tasks_added"] == 0
         assert len(payload["tasks"]) == 1
 
+    def test_enterprise_task_management_terms_do_not_trigger_game_domain_expansion(self, tmp_path: Any) -> None:
+        payload: dict[str, Any] = {
+            "workspace": str(tmp_path),
+            "overall_goal": "构建支持多租户隔离的企业级任务管理系统。",
+            "focus": "Tenant lifecycle, RBAC, audit trail, task workflow, and reporting APIs.",
+            "notes": (
+                "Out of scope: AI/ML预测式任务调度优化；"
+                "任务内容本身的业务逻辑实现（仅管理执行壳）；"
+                "工具侧只覆盖管理、审计和交付验证。"
+            ),
+            "tasks": [
+                {
+                    "id": "T01-tenant-api",
+                    "title": "Implement tenant lifecycle API",
+                    "goal": "Implement tenant creation, suspension, and isolation checks.",
+                    "description": "Deliver enterprise task management tenant boundaries.",
+                    "acceptance_criteria": ["verify src/api/tenants.ts exists", "Run `npm test` exits 0"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Read tenant requirements", "Implement API", "Run tests"],
+                    "scope_paths": ["src/api/tenants.ts"],
+                    "target_files": ["src/api/tenants.ts", "tests/tenant-api.test.ts"],
+                },
+                {
+                    "id": "T02-rbac-audit",
+                    "title": "Implement RBAC audit workflow",
+                    "goal": "Implement role checks and audit event persistence for task operations.",
+                    "description": "工具 and content refer to enterprise workflow operations.",
+                    "acceptance_criteria": ["verify src/security/rbac.ts exists", "Run `npm test` exits 0"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["T01-tenant-api"],
+                    "execution_checklist": ["Read RBAC contract", "Implement audit flow", "Run tests"],
+                    "scope_paths": ["src/security/rbac.ts"],
+                    "target_files": ["src/security/rbac.ts", "tests/rbac-audit.test.ts"],
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        assert stats["game_context_attached"] == 0
+        assert stats["game_domain_tasks_added"] == 0
+        assert len(payload["tasks"]) == 2
+        assert not any(
+            task.get("metadata", {}).get("autofix_reason") == "game_pm_domain_coverage"
+            for task in payload["tasks"]
+            if isinstance(task, dict)
+        )
+
     def test_empty_tasks_returns_empty_stats(self) -> None:
         payload: dict[str, Any] = {"tasks": []}
         stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")

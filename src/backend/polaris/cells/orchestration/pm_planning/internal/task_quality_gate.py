@@ -431,7 +431,7 @@ _CARD3D_PM_DOMAIN_TITLES = {
     "tests": "Add multiplayer card integration tests",
 }
 _GAME_PM_HINT_RE = re.compile(
-    r"(game|roguelike|tactical|combat|renderer|gameplay|content|progression|economy|audio|tooling|游戏|玩家|敌人|战斗|地图|世界|回合|存档|内容|进度|经济|音频|工具)",
+    r"(game|roguelike|tactical|combat|gameplay|procedural\s+map|terrain|encounter|action\s+point|behavior\s+tree|enemy|loot|游戏|玩家|敌人|战斗|地图|地图生成|世界|回合|存档|地形|遭遇|行动点|行为树|掉落)",
     re.IGNORECASE,
 )
 _CARD3D_PM_CORE_HINT_RE = re.compile(r"(card|deck|tabletop|卡牌|牌组|卡组|牌桌|桌游)", re.IGNORECASE)

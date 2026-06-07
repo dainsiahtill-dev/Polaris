@@ -9,6 +9,7 @@ This script provides a stable CI entrypoint for KernelOne release gating:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import subprocess
@@ -19,6 +20,9 @@ from pathlib import Path
 from typing import Iterable
 
 BACKEND_ROOT = Path(__file__).resolve().parents[4]
+_ROLE_RUNTIME_PUBLIC_IMPORT_BOUNDARY_STAGE = "roles_runtime_public_import_boundary"
+_ROLE_RUNTIME_PUBLIC_ROOT = Path("polaris/cells/roles/runtime/public")
+_ROLE_RUNTIME_OWN_INTERNAL_PREFIX = "polaris.cells.roles.runtime.internal"
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,55 @@ def _run_pytest(stage: str, pytest_args: Iterable[str]) -> GateRunResult:
     )
 
 
+def _iter_import_modules(tree: ast.AST) -> Iterable[tuple[int, str]]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield node.lineno, alias.name
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module:
+            yield node.lineno, node.module
+
+
+def _is_cross_cell_internal_import(module: str) -> bool:
+    if not module.startswith("polaris.cells."):
+        return False
+    if ".internal" not in module:
+        return False
+    return not module.startswith(_ROLE_RUNTIME_OWN_INTERNAL_PREFIX)
+
+
+def _check_role_runtime_public_import_boundaries() -> GateRunResult:
+    started = time.monotonic()
+    public_root = BACKEND_ROOT / _ROLE_RUNTIME_PUBLIC_ROOT
+    command = ["static", _ROLE_RUNTIME_PUBLIC_IMPORT_BOUNDARY_STAGE, public_root.as_posix()]
+    violations: list[str] = []
+
+    for path in sorted(public_root.rglob("*.py")):
+        if not path.is_file():
+            continue
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+            violations.append(f"{rel_path}: parse failed: {exc}")
+            continue
+        for lineno, module in _iter_import_modules(tree):
+            if _is_cross_cell_internal_import(module):
+                violations.append(f"{rel_path}:{lineno}: cross-cell internal import: {module}")
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_ROLE_RUNTIME_PUBLIC_IMPORT_BOUNDARY_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
 def _write_report(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -116,6 +169,7 @@ def main() -> int:
     suite_paths = _discover_suite_paths()
 
     stage_results: list[GateRunResult] = []
+    stage_results.append(_check_role_runtime_public_import_boundaries())
 
     if args.mode in {"collect", "all"}:
         stage_results.append(_run_pytest("collect", ["--collect-only", "-q", *suite_paths]))

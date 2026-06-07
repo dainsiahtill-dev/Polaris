@@ -902,7 +902,7 @@ class TestRunInterviewSuite:
         with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
-            with patch("polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits") as mock_hits:
+            with patch("polaris.cells.llm.evaluation.internal.interview.semantic_criteria_hits") as mock_hits:
                 # Return hits indicating all criteria met
                 mock_hits.return_value = {
                     "prioritize": 0.8,
@@ -918,7 +918,7 @@ class TestRunInterviewSuite:
 
         # With semantic scoring, average should be > 0.6
         assert result["ok"] is True
-        assert result["score"] == pytest.approx(0.7125)  # (0.8 + 0.7 + 0.6 + 0.75) / 4
+        assert result["score"] == pytest.approx(0.9425)
         assert len(result["details"]["results"]) == 2  # 2 questions
 
     @pytest.mark.asyncio
@@ -940,17 +940,13 @@ class TestRunInterviewSuite:
         with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
-            with patch(
-                "polaris.cells.llm.evaluation.internal.suites.INTERVIEW_SEMANTIC_ENABLED",
-                True,
-            ):
-                result = await run_interview_suite(
-                    provider_cfg={"type": "test"},
-                    model="test-model",
-                )
+            result = await run_interview_suite(
+                provider_cfg={"type": "test"},
+                model="test-model",
+            )
 
-        # Short answer (< 80 chars) falls back to 0.0
-        assert result["score"] == 0.0
+        # Short answers without thinking receive only the structural answer/non-deflection base.
+        assert result["score"] == 0.5
         assert result["ok"] is False
 
     @pytest.mark.asyncio
@@ -980,7 +976,7 @@ class TestRunInterviewSuite:
 
             # Disable semantic scoring
             with patch(
-                "polaris.cells.llm.evaluation.internal.suites.INTERVIEW_SEMANTIC_ENABLED",
+                "polaris.cells.llm.evaluation.internal.interview.INTERVIEW_SEMANTIC_ENABLED",
                 False,
             ):
                 result = await run_interview_suite(
@@ -991,6 +987,94 @@ class TestRunInterviewSuite:
         # Without semantic, long answer gets 0.5
         assert result["score"] == 0.5
         assert result["ok"] is False  # 0.5 is not > 0.6
+
+    @pytest.mark.asyncio
+    async def test_semantic_scorer_unavailable_preserves_output_and_uses_structural_fallback(self) -> None:
+        """Test interview scoring falls back when semantic embeddings are unavailable."""
+
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            return InvokeResult(
+                ok=True,
+                output=(
+                    "<thinking>I will answer with concrete execution details.</thinking>\n"
+                    "<answer>"
+                    "I handle production QA pressure by prioritizing the highest-risk checks, "
+                    "communicating scope and evidence clearly, reproducing defects systematically, "
+                    "isolating the failing boundary, and validating the fix with targeted tests "
+                    "before reopening the broader acceptance gate."
+                    "</answer>"
+                ),
+                latency_ms=100,
+                usage=Usage(0, 0, 0),
+            )
+
+        fake = FakeProvider()
+        fake.invoke = MagicMock(side_effect=invoke_side_effect)
+
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
+            mock_pm.return_value.get_provider_instance.return_value = fake
+
+            with patch(
+                "polaris.cells.llm.evaluation.internal.interview.semantic_criteria_hits",
+                side_effect=RuntimeError("KernelEmbeddingPort is not set"),
+            ):
+                result = await run_interview_suite(
+                    provider_cfg={"type": "test"},
+                    model="test-model",
+                )
+
+        assert result["ok"] is True
+        assert result["score"] >= 0.8
+        assert len(result["details"]["cases"]) == 2
+        first_case = result["details"]["cases"][0]
+        assert first_case["passed"] is True
+        assert first_case["output"].startswith("<thinking>")
+        assert "error" not in first_case
+
+    @pytest.mark.asyncio
+    async def test_low_semantic_score_does_not_fail_structurally_valid_answer(self) -> None:
+        """Test weak/stub embeddings do not override a complete interview answer."""
+
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            return InvokeResult(
+                ok=True,
+                output=(
+                    "<thinking>I will provide a structured answer with concrete evidence.</thinking>\n"
+                    "<answer>"
+                    "I handle QA ownership by prioritizing release risks, communicating the "
+                    "current confidence level, reproducing failures with precise steps, isolating "
+                    "the component boundary, and validating the final fix with focused regression "
+                    "tests before reopening the production gate."
+                    "</answer>"
+                ),
+                latency_ms=100,
+                usage=Usage(0, 0, 0),
+            )
+
+        fake = FakeProvider()
+        fake.invoke = MagicMock(side_effect=invoke_side_effect)
+
+        zero_hits = {
+            "prioritize": 0.0,
+            "communicate": 0.0,
+            "scope": 0.0,
+            "quality": 0.0,
+        }
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
+            mock_pm.return_value.get_provider_instance.return_value = fake
+
+            with patch(
+                "polaris.cells.llm.evaluation.internal.interview.semantic_criteria_hits",
+                return_value=zero_hits,
+            ):
+                result = await run_interview_suite(
+                    provider_cfg={"type": "test"},
+                    model="test-model",
+                )
+
+        assert result["ok"] is True
+        assert result["score"] >= 0.8
+        assert all(case["passed"] for case in result["details"]["cases"])
 
     @pytest.mark.asyncio
     async def test_average_score_above_threshold(self) -> None:
@@ -1018,7 +1102,7 @@ class TestRunInterviewSuite:
         with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
-            with patch("polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits") as mock_hits:
+            with patch("polaris.cells.llm.evaluation.internal.interview.semantic_criteria_hits") as mock_hits:
                 # All criteria hit with high scores
                 mock_hits.return_value = {
                     "prioritize": 0.9,
@@ -1063,7 +1147,7 @@ class TestRunInterviewSuite:
         with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
 
-            with patch("polaris.cells.llm.evaluation.internal.suites.semantic_criteria_hits") as mock_hits:
+            with patch("polaris.cells.llm.evaluation.internal.interview.semantic_criteria_hits") as mock_hits:
                 mock_hits.return_value = {
                     "prioritize": 0.8,
                     "communicate": 0.7,

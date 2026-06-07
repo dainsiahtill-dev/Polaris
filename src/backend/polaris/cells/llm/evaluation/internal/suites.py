@@ -8,10 +8,9 @@ from typing import Any
 
 from polaris.cells.llm.provider_runtime.public.service import get_provider_manager
 
-from .constants import INTERVIEW_SEMANTIC_ENABLED
+from .interview import evaluate_interview_answer
 from .utils import (
     looks_like_deflection,
-    semantic_criteria_hits,
     split_thinking_output,
 )
 
@@ -465,23 +464,27 @@ Provide your answer in <thinking> and <answer> tags."""
             output = str(result.output or "")
             _thinking, answer = split_thinking_output(output)
 
-            # 语义评分
-            if INTERVIEW_SEMANTIC_ENABLED and len(answer) >= 80:
-                hits = semantic_criteria_hits(answer, list(q["criteria"]))  # type: ignore[arg-type]
-                score = sum(hits.values()) / len(hits) if hits else 0.5
-            else:
-                score = 0.5 if len(answer) > 50 else 0.0
+            evaluation = evaluate_interview_answer(output, list(q["criteria"]), q["question"])  # type: ignore[arg-type]
+            score = float(evaluation.get("score") or 0.0)
+            scoring_mode = "structural_semantic"
 
             total_score += score
 
-            results.append(
-                {
-                    "id": q["id"],
-                    "question": q["question"],
-                    "score": score,
-                    "passed": score > 0.5,
-                }
-            )
+            case = {
+                "id": q["id"],
+                "question": q["question"],
+                "score": score,
+                "passed": score > 0.5,
+                "output": output,
+                "answer": answer,
+                "latency_ms": int(result.latency_ms or 0),
+                "scoring_mode": scoring_mode,
+                "has_thinking": bool(evaluation.get("has_thinking")),
+                "has_answer": bool(evaluation.get("has_answer")),
+                "not_deflection": bool(evaluation.get("not_deflection")),
+                "semantic_score": float(evaluation.get("semantic_score") or 0.0),
+            }
+            results.append(case)
 
         except (RuntimeError, ValueError) as e:
             results.append(
@@ -498,7 +501,7 @@ Provide your answer in <thinking> and <answer> tags."""
 
     return {
         "ok": avg_score > 0.6,
-        "details": {"results": results},
+        "details": {"cases": results, "results": results},
         "score": avg_score,
     }
 

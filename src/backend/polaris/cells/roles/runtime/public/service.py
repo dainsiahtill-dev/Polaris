@@ -164,6 +164,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleIdentity,
     RoleLedgerBinding,
     RoleProfileBinding,
+    RoleRuntimeObject,
     RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt,
     RoleStateCommitRequest,
@@ -294,6 +295,40 @@ def _payload_string_tuple(payload: Mapping[str, Any], key: str) -> tuple[str, ..
     return None
 
 
+def _mapping_string_tuple(payload: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    value = payload.get(key)
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        token = value.strip()
+        return (token,) if token else ()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        rows: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            token = str(item or "").strip()
+            if token and token not in seen:
+                rows.append(token)
+                seen.add(token)
+        return tuple(rows)
+    return ()
+
+
+def _asset_mount_ref(runtime_object: RoleRuntimeObject, mount_name: str) -> str:
+    try:
+        return runtime_object.asset_mounts.get(mount_name).asset_ref.ref
+    except KeyError:
+        return ""
+
+
+def _chief_engineer_asset_refs(runtime_object: RoleRuntimeObject) -> dict[str, str]:
+    return {
+        "blueprint_database": _asset_mount_ref(runtime_object, "BlueprintDatabase"),
+        "arch_constraint_memo": _asset_mount_ref(runtime_object, "ArchConstraintMemo"),
+        "diff_map_archive": _asset_mount_ref(runtime_object, "DiffMapArchive"),
+    }
+
+
 def _capability_available_metadata(
     capability_id: str,
     metadata: Mapping[str, Any] | None = None,
@@ -318,30 +353,21 @@ def _check_workspace_guard_paths(
     paths: tuple[str, ...],
     operation: str,
     workspace_guard_service: Any | None,
-    max_workers: int,
 ) -> tuple[bool, tuple[str, ...], str, str]:
-    from polaris.cells.policy.workspace_guard.public.contracts import WorkspaceWriteGuardQueryV1
-    from polaris.cells.policy.workspace_guard.public.service import check_workspace_write_guard
+    from polaris.cells.policy.workspace_guard.public.contracts import WorkspaceWriteGuardBatchQueryV1
+    from polaris.cells.policy.workspace_guard.public.service import check_workspace_write_guard_batch
 
     if not paths:
         return True, (), "", ""
 
-    def _check(path: str) -> tuple[str, bool, str]:
-        query = WorkspaceWriteGuardQueryV1(path=path, operation=operation)
-        if workspace_guard_service is None:
-            decision = check_workspace_write_guard(query)
-        else:
-            decision = workspace_guard_service.check_workspace_write_guard(query)
-        return path, bool(decision.allowed), str(decision.reason or "")
-
-    workers = max(1, min(max_workers, len(paths)))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        decisions = list(executor.map(_check, paths))
-
-    for path, allowed, reason in decisions:
-        if not allowed:
-            return False, paths, path, reason
-    return True, paths, "", ""
+    query = WorkspaceWriteGuardBatchQueryV1(paths=paths, operation=operation)
+    if workspace_guard_service is None:
+        decision = check_workspace_write_guard_batch(query)
+    else:
+        decision = workspace_guard_service.check_workspace_write_guard_batch(query)
+    checked_paths = tuple(decision.checked_paths)
+    denied_path = str(decision.denied_path or "")
+    return bool(decision.allowed), checked_paths, denied_path, str(decision.reason or "")
 
 
 def _merge_refs(*groups: str | tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
@@ -361,6 +387,10 @@ def _merge_refs(*groups: str | tuple[str, ...] | list[str] | None) -> tuple[str,
 
 def _runtime_receipt_ref(receipt_id: str) -> str:
     return f"factory.cognitive_runtime:receipt:{receipt_id}"
+
+
+def _change_set_validation_ref(validation_id: str) -> str:
+    return f"factory.cognitive_runtime:change-set-validation:{validation_id}"
 
 
 def _handoff_pack_ref(handoff_id: str) -> str:
@@ -743,15 +773,6 @@ def commit_role_state(
         )
 
     turn_envelope = _serialize_role_state_commit_envelope(request)
-    trace_refs = _merge_refs(
-        commit_receipt_ref,
-        ledger.turn_ledger_ref,
-        ledger.receipt_refs,
-        request.changed_asset_refs,
-        request.evidence_refs,
-        envelope.turn_context.handoff_refs,
-        envelope.turn_context.task_refs,
-    )
     payload = {
         "request_id": request.request_id,
         "role_id": identity.role_id,
@@ -759,6 +780,8 @@ def commit_role_state(
         "session_id": identity.session_id,
         "run_id": identity.run_id,
         "changed_asset_refs": request.changed_asset_refs,
+        "changed_files": request.changed_files,
+        "allowed_scope_paths": request.allowed_scope_paths,
         "evidence_refs": request.evidence_refs,
         "reason": request.reason,
         "commit_receipt_ref": commit_receipt_ref,
@@ -771,6 +794,7 @@ def commit_role_state(
         from polaris.cells.factory.cognitive_runtime.public.contracts import (
             ExportHandoffPackCommandV1,
             RecordRuntimeReceiptCommandV1,
+            ValidateChangeSetCommandV1,
         )
         from polaris.cells.factory.cognitive_runtime.public.service import (
             get_cognitive_runtime_public_service,
@@ -778,6 +802,53 @@ def commit_role_state(
 
         if service is None:
             service = get_cognitive_runtime_public_service()
+
+        validation_result = service.validate_change_set(
+            ValidateChangeSetCommandV1(
+                workspace=identity.workspace,
+                changed_files=request.changed_files,
+                allowed_scope_paths=request.allowed_scope_paths or ("runtime/", "workspace/"),
+                evidence_refs=request.evidence_refs,
+                require_change=request.require_change_validation or bool(request.changed_files),
+            )
+        )
+        if not bool(getattr(validation_result, "ok", False)):
+            error_message = str(getattr(validation_result, "error_message", "") or "").strip()
+            error_code = str(getattr(validation_result, "error_code", "") or "").strip()
+            return RoleStateCommitReceipt(
+                request_id=request.request_id,
+                ok=False,
+                commit_receipt_ref=commit_receipt_ref,
+                runtime_receipt_refs=ledger.receipt_refs,
+                status="change_set_validation_failed",
+                error_code=error_code or "change_set_validation_failed",
+                error_message=error_message or "Cognitive Runtime change-set validation failed",
+            )
+        validation = getattr(validation_result, "validation", None)
+        validation_id = str(getattr(validation, "validation_id", "") or "").strip()
+        if not validation_id:
+            return RoleStateCommitReceipt(
+                request_id=request.request_id,
+                ok=False,
+                commit_receipt_ref=commit_receipt_ref,
+                runtime_receipt_refs=ledger.receipt_refs,
+                status="change_set_validation_failed",
+                error_code="change_set_validation_missing_id",
+                error_message="Cognitive Runtime change-set validation response did not include validation_id",
+            )
+        change_set_validation_ref = _change_set_validation_ref(validation_id)
+        payload["change_set_validation_ref"] = change_set_validation_ref
+        trace_refs = _merge_refs(
+            commit_receipt_ref,
+            ledger.turn_ledger_ref,
+            ledger.receipt_refs,
+            request.changed_asset_refs,
+            request.changed_files,
+            request.evidence_refs,
+            envelope.turn_context.handoff_refs,
+            envelope.turn_context.task_refs,
+            change_set_validation_ref,
+        )
 
         receipt_result = service.record_runtime_receipt(
             RecordRuntimeReceiptCommandV1(
@@ -797,6 +868,7 @@ def commit_role_state(
                 request_id=request.request_id,
                 ok=False,
                 commit_receipt_ref=commit_receipt_ref,
+                change_set_validation_ref=change_set_validation_ref,
                 runtime_receipt_refs=ledger.receipt_refs,
                 status="receipt_failed",
                 error_code=error_code or "runtime_receipt_failed",
@@ -809,6 +881,7 @@ def commit_role_state(
                 request_id=request.request_id,
                 ok=False,
                 commit_receipt_ref=commit_receipt_ref,
+                change_set_validation_ref=change_set_validation_ref,
                 runtime_receipt_refs=ledger.receipt_refs,
                 status="receipt_failed",
                 error_code="runtime_receipt_missing_id",
@@ -840,6 +913,7 @@ def commit_role_state(
                     request_id=request.request_id,
                     ok=False,
                     commit_receipt_ref=commit_receipt_ref,
+                    change_set_validation_ref=change_set_validation_ref,
                     runtime_receipt_refs=runtime_receipt_refs,
                     status="handoff_failed",
                     error_code=error_code or "handoff_export_failed",
@@ -852,6 +926,7 @@ def commit_role_state(
                     request_id=request.request_id,
                     ok=False,
                     commit_receipt_ref=commit_receipt_ref,
+                    change_set_validation_ref=change_set_validation_ref,
                     runtime_receipt_refs=runtime_receipt_refs,
                     status="handoff_failed",
                     error_code="handoff_missing_id",
@@ -863,6 +938,7 @@ def commit_role_state(
             request_id=request.request_id,
             ok=True,
             commit_receipt_ref=commit_receipt_ref,
+            change_set_validation_ref=change_set_validation_ref,
             runtime_receipt_refs=runtime_receipt_refs,
             handoff_pack_refs=handoff_pack_refs,
             turn_outcome_ref=str(envelope.metadata.get("turn_outcome_ref") or "").strip() or None,
@@ -1325,7 +1401,6 @@ def execute_role_capability_invocation(
                 paths=changed_paths,
                 operation=_payload_string(command.payload, "operation", "write"),
                 workspace_guard_service=workspace_guard_service,
-                max_workers=int(command.payload.get("workspace_guard_max_workers", 8)),
             )
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
@@ -1500,6 +1575,33 @@ def execute_role_capability_invocation(
         open_task_ids = tuple(
             str(item.get("task_id") or "").strip() for item in open_items if str(item.get("task_id") or "").strip()
         )
+        dependency_edges = tuple(
+            {"task_id": task_id, "depends_on": depends_on}
+            for item in status_result.items
+            if (task_id := str(item.get("task_id") or "").strip())
+            if (depends_on := _mapping_string_tuple(item, "depends_on"))
+        )
+        failed_stages = tuple(
+            {
+                "task_id": task_id,
+                "stage": failed_stage,
+                "reason": str(item.get("failure_reason") or item.get("reason") or "").strip(),
+            }
+            for item in status_result.items
+            if (task_id := str(item.get("task_id") or "").strip())
+            if (failed_stage := str(item.get("failed_stage") or item.get("stage") or "").strip())
+            if str(item.get("status") or "").lower() in blocked_statuses
+        )
+        projection_refs = tuple(
+            ref
+            for item in status_result.items
+            if (ref := str(item.get("projection_ref") or item.get("runtime_projection_ref") or "").strip())
+        )
+        asset_refs = {
+            "task_graph": _asset_mount_ref(runtime_object, "TaskGraph"),
+            "runtime_projection_state": _asset_mount_ref(runtime_object, "RuntimeProjectionState"),
+            "open_loop_registry": _asset_mount_ref(runtime_object, "OpenLoopRegistry"),
+        }
         result_ref = f"runtime.task_market:critical-path:{invocation.invocation_id}"
         return RoleCapabilityInvocationResultV1(
             ok=True,
@@ -1520,6 +1622,10 @@ def execute_role_capability_invocation(
                 "blocked_task_ids": blocked_task_ids,
                 "open_task_count": len(open_task_ids),
                 "blocked_task_count": len(blocked_task_ids),
+                "dependency_edges": dependency_edges,
+                "failed_stages": failed_stages,
+                "projection_refs": projection_refs,
+                "asset_refs": asset_refs,
             },
         )
 
@@ -2232,14 +2338,22 @@ def execute_role_capability_invocation(
                 error_code="invalid_blueprint_constraints",
                 error_message="payload.constraints must be a mapping when provided",
             )
+        ce_asset_refs = _chief_engineer_asset_refs(runtime_object)
+        target_asset_mount = str(capability.metadata.get("asset_mount") or "").strip()
+        target_asset_ref = _asset_mount_ref(runtime_object, target_asset_mount) if target_asset_mount else ""
         blueprint_context.update(
             {
                 "role_invocation_id": invocation.invocation_id,
                 "role_payload_ref": invocation.payload_ref,
                 "role_fingerprint_ref": invocation.fingerprint_ref,
                 "role_capability_id": capability.capability_id,
+                "asset_refs": ce_asset_refs,
+                "diff_map_archive_requires_blueprint_ref": True,
             }
         )
+        if target_asset_mount:
+            blueprint_context["target_asset_mount"] = target_asset_mount
+            blueprint_context["target_asset_ref"] = target_asset_ref
         try:
             from polaris.cells.chief_engineer.blueprint.public.contracts import GenerateTaskBlueprintCommandV1
             from polaris.cells.chief_engineer.blueprint.public.service import generate_task_blueprint
@@ -2283,7 +2397,17 @@ def execute_role_capability_invocation(
             "summary": blueprint_result.summary,
             "recommendations": tuple(blueprint_result.recommendations),
             "risks": tuple(blueprint_result.risks),
+            "asset_refs": ce_asset_refs,
+            "diff_map_archive_ref": f"{ce_asset_refs['diff_map_archive']}:{blueprint_ref_id}"
+            if ce_asset_refs["diff_map_archive"]
+            else "",
+            "arch_memo_ref": f"{ce_asset_refs['arch_constraint_memo']}:{blueprint_ref_id}"
+            if ce_asset_refs["arch_constraint_memo"]
+            else "",
         }
+        if target_asset_mount:
+            metadata["target_asset_mount"] = target_asset_mount
+            metadata["target_asset_ref"] = target_asset_ref
         if not blueprint_result.ok:
             return RoleCapabilityInvocationResultV1(
                 ok=False,

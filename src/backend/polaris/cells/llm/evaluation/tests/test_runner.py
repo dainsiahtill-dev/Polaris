@@ -433,6 +433,30 @@ class TestSuiteResultConversion:
         assert len(suite_result.results) == 3
         assert suite_result.results[1].error == "bad json"
 
+    def test_convert_result_with_legacy_results(self, runner) -> None:
+        """Test converting legacy detailed results from interview suites."""
+        result_data = {
+            "ok": False,
+            "details": {
+                "results": [
+                    {
+                        "id": "q1",
+                        "passed": False,
+                        "output": "<answer>Model produced a concrete answer.</answer>",
+                        "score": 0.8,
+                        "error": "semantic scorer unavailable",
+                    }
+                ]
+            },
+        }
+        suite_result = runner._convert_suite_result("interview", result_data)
+
+        assert suite_result.total_cases == 1
+        assert suite_result.passed_cases == 0
+        assert suite_result.results[0].case_id == "q1"
+        assert suite_result.results[0].output == "<answer>Model produced a concrete answer.</answer>"
+        assert suite_result.results[0].error == "semantic scorer unavailable"
+
     def test_convert_timeout_result(self, runner) -> None:
         """Test converting timeout result."""
         result_data = {

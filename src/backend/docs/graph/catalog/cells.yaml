@@ -178,11 +178,13 @@ cells:
       commands: []
       queries:
         - WorkspaceWriteGuardQueryV1
+        - WorkspaceWriteGuardBatchQueryV1
         - WorkspaceArchiveWriteGuardQueryV1
       events:
         - WorkspaceGuardViolationEventV1
       results:
         - WorkspaceGuardDecisionV1
+        - WorkspaceGuardBatchDecisionV1
       errors:
         - WorkspaceGuardErrorV1
     depends_on:

@@ -71,6 +71,9 @@ Defined in `public/contracts.py`:
   adapter call paths are migration targets and must not gain new behavior.
 - Role capability invocation validates mounted ports, role allow-lists, and
   declared command contracts before delegating to the target Cell public API.
+- Architect boundary validation uses `WorkspaceWriteGuardBatchQueryV1` for
+  changed path checks so the runtime does not issue N public guard calls for a
+  single boundary request.
 - Role object instantiation uses `instantiate_role_runtime_object(InstantiateRoleRuntimeObjectCommandV1)`
   to bind `roles.profile` via `GetRoleProfileQueryV1`; runtime stores only
   profile/tool/prompt/data policy refs and a profile fingerprint.
@@ -86,11 +89,15 @@ Defined in `public/contracts.py`:
   existing `roles.kernel` commit receipt to `factory.cognitive_runtime`
   `RecordRuntimeReceiptCommandV1` and `ExportHandoffPackCommandV1`; runtime does
   not create a second Turn Ledger or receipt store.
-- PM dispatch delegates to `runtime.task_market`; Chief Engineer diff-spec
-  generation delegates to `chief_engineer.blueprint`.
+- PM dispatch delegates to `runtime.task_market`; Chief Engineer diff-spec and
+  architecture memo generation delegate to `chief_engineer.blueprint` with
+  mounted `BlueprintDatabase`, `ArchConstraintMemo`, and `DiffMapArchive` refs
+  in the command context/result metadata.
 - PM critical-path evaluation reads `runtime.task_market` through
-  `QueryTaskMarketStatusV1`; PM runtime status projection delegates to an
-  injected `runtime.projection` public service using `RuntimeProjectionQueryV1`.
+  `QueryTaskMarketStatusV1` and derives task DAG dependency edges, failed
+  stages, projection refs, and mounted asset refs from that public result; PM
+  runtime status projection delegates to an injected `runtime.projection` public
+  service using `RuntimeProjectionQueryV1`.
 - QA pytest verification delegates to `factory.verification_guard` and requires
   both the `qa` role runtime object and QA capability fingerprint before any
   verification command is built, even if a capability port is misconfigured.
