@@ -1,12 +1,12 @@
-from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
 from polaris.cells.roles.scout.internal.planner import build_read_plan
+from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
 
 
 def test_locate_plan_searches_each_term_with_bounded_max() -> None:
     plan = build_read_plan(ScoutProbeTargetV1(query="payment gateway", mode="locate"))
     tools = [t for t, _ in plan]
     assert tools.count("repo_rg") >= 2
-    rg_args = [a for t, a in plan if t == "repo_rg"][0]
+    rg_args = next(a for t, a in plan if t == "repo_rg")
     assert "--max" in rg_args
 
 

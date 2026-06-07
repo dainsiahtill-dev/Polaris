@@ -1,14 +1,35 @@
 """Target descriptor normalization for roles.scout (UTF-8)."""
+
 from __future__ import annotations
 
 import re
 
 from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
 
-_STOPWORDS = frozenset({
-    "the", "is", "in", "a", "an", "of", "to", "for", "and", "or", "where",
-    "what", "how", "why", "this", "that", "it", "on", "at", "by",
-})
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "is",
+        "in",
+        "a",
+        "an",
+        "of",
+        "to",
+        "for",
+        "and",
+        "or",
+        "where",
+        "what",
+        "how",
+        "why",
+        "this",
+        "that",
+        "it",
+        "on",
+        "at",
+        "by",
+    }
+)
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 
 

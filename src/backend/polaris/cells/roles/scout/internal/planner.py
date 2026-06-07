@@ -1,8 +1,9 @@
 """Build a bounded, read-only retrieval plan for a probe target (UTF-8)."""
+
 from __future__ import annotations
 
-from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
 from polaris.cells.roles.scout.internal.target import extract_terms, hint_globs, hint_paths
+from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
 
 _RG_MAX = "40"
 _SYMBOL_PREFIXES = ("def ", "class ", "func ", "function ", "interface ", "type ")

@@ -1,5 +1,5 @@
-from polaris.cells.roles.scout.public.contracts import ScoutFinding, ScoutProbeTargetV1
 from polaris.cells.roles.scout.internal.ranker import rank
+from polaris.cells.roles.scout.public.contracts import ScoutFinding, ScoutProbeTargetV1
 
 
 def test_rank_dedupes_by_path_and_line() -> None:

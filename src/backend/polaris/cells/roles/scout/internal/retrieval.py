@@ -1,10 +1,11 @@
 """Execute a read plan via a ReadToolPort and collect findings (UTF-8)."""
+
 from __future__ import annotations
 
 from typing import Any
 
-from polaris.cells.roles.scout.public.contracts import ScoutFinding
 from polaris.cells.roles.scout.internal.ports import ReadToolPort
+from polaris.cells.roles.scout.public.contracts import ScoutFinding
 
 
 def retrieve(
@@ -50,6 +51,6 @@ def retrieve(
 
 def _as_int(value: object) -> int | None:
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         return None

@@ -1,5 +1,5 @@
-from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
 from polaris.cells.roles.scout.internal.target import extract_terms, hint_paths
+from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
 
 
 def test_extract_terms_splits_and_lowercases_and_dedupes() -> None:

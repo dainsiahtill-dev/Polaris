@@ -1,4 +1,5 @@
 """Public contracts for the roles.scout cell (UTF-8)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -99,5 +100,5 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _normalize(value[k]) for k in sorted(value)}
     if isinstance(value, list):
-        return sorted((json.dumps(_normalize(v), sort_keys=True, ensure_ascii=False) for v in value))
+        return sorted(json.dumps(_normalize(v), sort_keys=True, ensure_ascii=False) for v in value)
     return value

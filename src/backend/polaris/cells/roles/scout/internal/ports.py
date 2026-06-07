@@ -1,4 +1,5 @@
 """Ports (interfaces) for roles.scout + in-memory fakes for tests (UTF-8)."""
+
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable

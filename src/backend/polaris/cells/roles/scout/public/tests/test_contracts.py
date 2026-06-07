@@ -1,6 +1,8 @@
 import pytest
 from polaris.cells.roles.scout.public.contracts import (
-    ScoutFinding, ScoutProbeTargetV1, ScoutReportV1,
+    ScoutFinding,
+    ScoutProbeTargetV1,
+    ScoutReportV1,
 )
 
 
@@ -23,8 +25,12 @@ def test_target_cache_key_is_stable_and_order_independent() -> None:
 def test_report_to_dict_roundtrips_findings() -> None:
     f = ScoutFinding(path="x.py", snippet="def f()", symbol="f", line=1, confidence=0.5)
     r = ScoutReportV1(
-        findings=(f,), summary="s", coverage={"truncated": False},
-        confidence=0.5, content_hash="h", usage={"tokens": 0},
+        findings=(f,),
+        summary="s",
+        coverage={"truncated": False},
+        confidence=0.5,
+        content_hash="h",
+        usage={"tokens": 0},
     )
     d = r.to_dict()
     assert d["findings"][0]["symbol"] == "f"

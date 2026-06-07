@@ -1,4 +1,4 @@
-from polaris.cells.roles.scout.internal.ports import FakeReadTool, FakeDistiller
+from polaris.cells.roles.scout.internal.ports import FakeDistiller, FakeReadTool
 
 
 def test_fake_read_tool_returns_scripted_result() -> None:

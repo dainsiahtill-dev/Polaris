@@ -1,11 +1,12 @@
 """Score, de-duplicate and cap reconnaissance findings (UTF-8)."""
+
 from __future__ import annotations
 
 import re
 from dataclasses import replace
 
-from polaris.cells.roles.scout.public.contracts import ScoutFinding, ScoutProbeTargetV1
 from polaris.cells.roles.scout.internal.target import extract_terms
+from polaris.cells.roles.scout.public.contracts import ScoutFinding, ScoutProbeTargetV1
 
 _DEF_RE = re.compile(r"\b(?:def|class|func|function|interface|type)\s+(\w+)")
 
