@@ -162,6 +162,7 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
                 "read_artifact",
                 "read_episode",
                 "get_state",
+                "scout_probe",
             ],
             "blacklist": [],
             "allow_code_write": False,  # Architect只读分析
@@ -239,6 +240,7 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
                 "read_artifact",
                 "read_episode",
                 "get_state",
+                "scout_probe",
             ],
             "blacklist": [],
             "allow_code_write": False,  # CE只分析不执行
@@ -418,6 +420,7 @@ BUILTIN_PROFILES: list[dict[str, Any]] = [
                 "read_episode",
                 "get_state",
                 "execute_command",
+                "scout_probe",
             ],
             "blacklist": [],
             "allow_code_write": False,  # QA只读审查

@@ -50,6 +50,7 @@ roles:
         - glob
         - list_directory
         - file_exists
+        - scout_probe  # read-only reconnaissance
       blacklist: []
       allow_code_write: false      # PM禁止代码写入
       allow_command_execution: false
@@ -136,6 +137,7 @@ roles:
         - glob
         - list_directory
         - file_exists
+        - scout_probe  # read-only reconnaissance
       blacklist: []
       allow_code_write: false      # Architect只读分析
       allow_command_execution: false
@@ -223,6 +225,7 @@ roles:
         - glob
         - list_directory
         - file_exists
+        - scout_probe  # read-only reconnaissance
       blacklist: []
       allow_code_write: false      # CE只分析不执行
       allow_command_execution: false
@@ -324,6 +327,7 @@ roles:
         - append_to_file
         # 执行类（运行测试、验证修改）
         - execute_command
+        - scout_probe  # read-only reconnaissance
         # NOTE: Director 不负责宽泛探索。repo_tree / glob / search_code 等
         # 探索工具已移除；repo_rg 仅用于编辑前的精确定位。
         # 模糊需求应由 PM/Architect 先制定蓝图，Director 只执行明确任务。
@@ -411,6 +415,7 @@ roles:
         - glob
         - list_directory
         - file_exists
+        - scout_probe  # read-only reconnaissance
         # 执行类（用于运行测试）
         - execute_command
       blacklist: []
