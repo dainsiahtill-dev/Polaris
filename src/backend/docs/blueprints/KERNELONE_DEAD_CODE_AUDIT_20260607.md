@@ -69,3 +69,23 @@ Verification Card + ADR，确认非路线图后再删。
 
 `ruff check --fix` + `ruff format` + `mypy`（受影响面）+ `pytest`（相关 + import-fence
 `test_kernelone_release_gates` + `pytest --collect-only` 无新增 error）。fail-closed。
+
+## 7. 多专家裁决结果（2026-06-07，已执行）
+
+Workflow `kernelone-deadcode-adjudication`（64 agent：每子系统 1 审计员 + 每 DELETE 1 对抗反驳）。
+**42 个静态死子系统中 31 个被推翻保留**——反驳专家找到了静态图漏掉的真实消费者
+（`register_handlers()` 动态加载的工具 handler、包 `__init__` 的 eager/lazy re-export、
+活 cell 的导入）。教训：子系统粒度的静态"死"假阳性率 ~74%，对抗式复核不可省。
+
+净结果 7 DELETE / 1 WIRE / 2 ESCALATE，已落地：
+- **Wave 2**（commit `11dbb8f9`）：删除 `testing`、`tool_creation`、`ws`（被 `delivery/ws` 取代）、
+  `planning.self_reflective_engine`，共 2510 行。
+- **Wave 2b**（commit `4f8c0951`）：删除 `prompts.catalog`/`prompts.utils`，并把 workspace-escape
+  安全测试**迁移**到活的后继 `StreamingPatchBuffer`/`StrictOperationApplier`（已验证通过，未丢覆盖）。
+- **HELD**（与"保留的死簇"交叉纠缠，须整簇处理）：`prompt_registry`（被保留的
+  `prompt_registry_hot_reload` + `benchmark.holographic.runner` 导入）、`runtime.run_id`
+  （被死的 `audit.evidence_paths` 导入）→ 并入 benchmark/holographic 死簇专项。
+- **WIRE**（待专项实现）：`editing` 按 ADR-0062 把 OpenCode replacer 链接入
+  `apply_fuzzy_search_replace`；ADR 要求做成 pre-processor（改编辑热路径行为）→ 需回归语料后再落。
+- **ESCALATE**（产品决策，勿自动删）：`multi_agent`（neural_syndicate 愿景，今日审计已为其留 ADR 口）、
+  `messages`（OpenCode Part 类型，是某 ENFORCED CI 门禁声明的收敛锚点，删除会触发门禁）。
