@@ -1,9 +1,9 @@
 """ScoutProbeService — contract-first facade for roles.scout (UTF-8)."""
+
 from __future__ import annotations
 
 import time
 
-from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1, ScoutReportV1
 from polaris.cells.roles.scout.internal.cache import TTLCache
 from polaris.cells.roles.scout.internal.distiller import DeterministicDistiller
 from polaris.cells.roles.scout.internal.evidence import build_content_hash
@@ -11,6 +11,7 @@ from polaris.cells.roles.scout.internal.planner import build_read_plan
 from polaris.cells.roles.scout.internal.ports import DistillerPort, ReadToolPort
 from polaris.cells.roles.scout.internal.ranker import rank
 from polaris.cells.roles.scout.internal.retrieval import retrieve
+from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1, ScoutReportV1
 
 
 class ScoutProbeService:
@@ -37,10 +38,14 @@ class ScoutProbeService:
         raw_findings, coverage = retrieve(self._read_tool, plan)
         findings = rank(raw_findings, target)
         summary = await self._distiller.distill(
-            query=target.query, findings=findings, token_budget=target.token_budget,
+            query=target.query,
+            findings=findings,
+            token_budget=target.token_budget,
         )
         content_hash = build_content_hash(
-            task_id=target.task_id, findings=findings, summary=summary,
+            task_id=target.task_id,
+            findings=findings,
+            summary=summary,
             tools_used=coverage.get("tools_used", []),
         )
         confidence = max((f.confidence for f in findings), default=0.0)
@@ -65,6 +70,7 @@ class ScoutProbeService:
 
 def _with_cache_hit(report: ScoutReportV1) -> ScoutReportV1:
     from dataclasses import replace
+
     return replace(report, cache_hit=True)
 
 
@@ -76,4 +82,5 @@ def _estimate_context_saved(coverage: dict) -> int:  # type: ignore[type-arg]
 def build_default_scout_service(workspace: str) -> ScoutProbeService:
     """Production factory: registry-backed read tools + deterministic distiller."""
     from polaris.cells.roles.scout.internal.read_tool_adapter import RegistryReadTool
+
     return ScoutProbeService(read_tool=RegistryReadTool(workspace=workspace))

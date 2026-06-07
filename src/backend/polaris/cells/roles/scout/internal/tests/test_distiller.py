@@ -1,7 +1,8 @@
 """Tests for DeterministicDistiller (UTF-8)."""
+
 import pytest
-from polaris.cells.roles.scout.public.contracts import ScoutFinding
 from polaris.cells.roles.scout.internal.distiller import DeterministicDistiller
+from polaris.cells.roles.scout.public.contracts import ScoutFinding
 
 
 @pytest.mark.asyncio

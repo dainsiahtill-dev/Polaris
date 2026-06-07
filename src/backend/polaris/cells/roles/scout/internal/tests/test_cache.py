@@ -1,4 +1,5 @@
 """Tests for TTLCache (UTF-8)."""
+
 from polaris.cells.roles.scout.internal.cache import TTLCache
 
 

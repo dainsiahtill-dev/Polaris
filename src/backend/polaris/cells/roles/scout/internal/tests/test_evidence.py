@@ -1,6 +1,7 @@
 """Tests for build_content_hash (UTF-8)."""
-from polaris.cells.roles.scout.public.contracts import ScoutFinding
+
 from polaris.cells.roles.scout.internal.evidence import build_content_hash
+from polaris.cells.roles.scout.public.contracts import ScoutFinding
 
 
 def test_build_content_hash_is_stable_and_changes_with_summary() -> None:

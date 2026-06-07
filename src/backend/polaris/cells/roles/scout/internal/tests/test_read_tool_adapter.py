@@ -1,6 +1,7 @@
 """Tests for RegistryReadTool (UTF-8)."""
+
 import pytest
-from polaris.cells.roles.scout.internal.read_tool_adapter import RegistryReadTool, ReadOnlyViolation
+from polaris.cells.roles.scout.internal.read_tool_adapter import ReadOnlyViolation, RegistryReadTool
 
 
 def test_adapter_refuses_non_read_tool() -> None:

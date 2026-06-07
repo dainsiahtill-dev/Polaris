@@ -166,11 +166,15 @@ cells:
       for runtime and history operations.
     current_modules:
       - polaris.cells.policy.workspace_guard.service
+      - polaris.cells.policy.workspace_guard.public.contracts
+      - polaris.cells.policy.workspace_guard.public.service
     owned_paths:
       - polaris/cells/policy/workspace_guard/service.py
+      - polaris/cells/policy/workspace_guard/public/**
     public_contracts:
       modules:
         - polaris.cells.policy.workspace_guard.public.contracts
+        - polaris.cells.policy.workspace_guard.public.service
       commands: []
       queries:
         - WorkspaceWriteGuardQueryV1
@@ -1355,6 +1359,7 @@ cells:
         - RoleRuntimeErrorV1
     depends_on:
       - llm.control_plane
+      - context.catalog
       - context.engine
       - runtime.execution_broker
       - runtime.state_owner
@@ -1398,6 +1403,9 @@ cells:
       - task_market.publish:*
       - blueprint.generate:*
       - process.spawn:qa/pytest
+      - budget.reserve:context
+      - mutation.guard:workspace
+      - architect.validate_cell_boundary
     verification:
       tests:
         - tests/test_roles_kernel.py
@@ -2305,11 +2313,14 @@ cells:
       - polaris.cells.architect.design.internal.architect_service
       - polaris.cells.architect.design.internal.architect_agent
       - polaris.cells.architect.design.internal.architect_cli
+      - polaris.cells.architect.design.public.service
     owned_paths:
       - polaris/cells/architect/design/internal/**
+      - polaris/cells/architect/design/public/**
     public_contracts:
       modules:
         - polaris.cells.architect.design.public.contracts
+        - polaris.cells.architect.design.public.service
       commands:
         - GenerateArchitectureDesignCommandV1
       queries:
@@ -2769,15 +2780,18 @@ cells:
       - polaris.cells.policy.permission.internal.role_graph
       - polaris.cells.policy.permission.internal.condition_evaluator
       - polaris.cells.policy.permission.internal.non_llm_gates
+      - polaris.cells.policy.permission.public.service
       - polaris.domain.entities.capability
       - polaris.domain.entities.policy
     owned_paths:
       - polaris/cells/policy/permission/internal/**
+      - polaris/cells/policy/permission/public/**
       - polaris/domain/entities/capability.py
       - polaris/domain/entities/policy.py
     public_contracts:
       modules:
         - polaris.cells.policy.permission.public.contracts
+        - polaris.cells.policy.permission.public.service
         - polaris.cells.policy.protocol.public.contracts
       commands:
         - EvaluatePermissionCommandV1
@@ -2808,6 +2822,7 @@ cells:
         - tests/test_permission_service.py
         - tests/test_permission_role_inheritance.py
         - tests/test_permission_conditions.py
+        - polaris/cells/policy/permission/public/tests/test_public_contracts.py
       gaps:
         - Some policy checks are still executed directly in service call-sites.
 
@@ -2821,11 +2836,14 @@ cells:
       Enforce token and execution budget controls with explicit reserve/consume
       accounting and threshold signals.
     current_modules:
+      - polaris.cells.finops.budget_guard.public.contracts
+      - polaris.cells.finops.budget_guard.public.service
       - polaris.kernelone.runtime.usage_metrics
       - polaris.domain.services.token_service
       - polaris.infrastructure.accel.query.adaptive_budget
       - polaris.infrastructure.accel.token_estimator
     owned_paths:
+      - polaris/cells/finops/budget_guard/public/**
       - polaris/kernelone/runtime/usage_metrics.py
       - polaris/domain/services/token_service.py
       - polaris/infrastructure/accel/query/adaptive_budget.py
@@ -2833,6 +2851,7 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.finops.budget_guard.public.contracts
+        - polaris.cells.finops.budget_guard.public.service
       commands:
         - ReserveBudgetCommandV1
         - RecordUsageCommandV1
@@ -3427,3 +3446,55 @@ cells:
       gaps:
         - Public contracts not yet fully defined.
         - Protocol enforcement mechanisms still being designed.
+
+  - id: roles.scout
+    title: Roles Scout (探子)
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: roles
+    purpose: >
+      Auxiliary, synchronous, read-only code/symbol reconnaissance role.
+      Called inline by PM/Director within its own Turn — side-effect-free,
+      no TaskMarket, no persistence. Entry point: ScoutProbeService.probe().
+    tags:
+      - read_only
+      - auxiliary
+      - no_task_market
+    current_modules:
+      - polaris.cells.roles.scout.public.service
+      - polaris.cells.roles.scout.internal
+    owned_paths:
+      - polaris/cells/roles/scout/public/**
+      - polaris/cells/roles/scout/internal/**
+    public_contracts:
+      modules:
+        - polaris.cells.roles.scout.public.contracts
+      commands: []
+      queries: []
+      events: []
+      results:
+        - ScoutReportV1
+        - ScoutFinding
+        - ScoutProbeTargetV1
+      errors:
+        - ReadOnlyViolationError
+    depends_on:
+      - kernelone.tool_execution
+      - domain.verification
+    subgraphs: []
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+    verification:
+      tests:
+        - polaris/cells/roles/scout/public/tests/test_contracts.py
+        - polaris/cells/roles/scout/public/tests/test_service.py
+        - polaris/cells/roles/scout/internal/tests/test_distiller.py
+        - polaris/cells/roles/scout/internal/tests/test_evidence.py
+        - polaris/cells/roles/scout/internal/tests/test_cache.py
+        - polaris/cells/roles/scout/internal/tests/test_read_tool_adapter.py
+      gaps:
+        - repo_rg handler_module/handler_function not populated in ToolSpecRegistry (P2 gap).
+        - LLM-backed distiller (P2) not yet wired.
+        - scout_probe tool registration in SSOT deferred to P2.

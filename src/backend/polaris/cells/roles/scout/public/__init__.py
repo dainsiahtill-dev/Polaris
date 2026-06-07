@@ -1,4 +1,5 @@
 """Public surface for roles.scout (UTF-8)."""
+
 from polaris.cells.roles.scout.public.contracts import (
     ScoutFinding,
     ScoutProbeTargetV1,

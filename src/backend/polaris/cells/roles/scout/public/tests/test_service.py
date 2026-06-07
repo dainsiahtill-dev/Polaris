@@ -1,15 +1,17 @@
 """Tests for ScoutProbeService (UTF-8)."""
+
 import pytest
+from polaris.cells.roles.scout.internal.ports import FakeDistiller, FakeReadTool
 from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
 from polaris.cells.roles.scout.public.service import ScoutProbeService
-from polaris.cells.roles.scout.internal.ports import FakeReadTool, FakeDistiller
 
 
 @pytest.mark.asyncio
 async def test_probe_returns_report_with_findings_and_hash() -> None:
     fake_reads = FakeReadTool({})
     fake_reads._scripted[("repo_rg", ("(def|class|func|function|interface|type)\\s+\\w*payment", "--max", "40"))] = {
-        "ok": True, "hits": [{"file": "pay.py", "line": 10, "text": "def payment():"}],
+        "ok": True,
+        "hits": [{"file": "pay.py", "line": 10, "text": "def payment():"}],
     }
     svc = ScoutProbeService(read_tool=fake_reads, distiller=FakeDistiller("PACK"))
     report = await svc.probe(ScoutProbeTargetV1(query="payment", mode="locate"))

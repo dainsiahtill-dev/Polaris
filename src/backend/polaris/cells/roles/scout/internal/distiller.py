@@ -3,9 +3,13 @@
 P1: deterministic (zero-LLM). P2 adds an LLM-backed implementation behind the
 same DistillerPort.
 """
+
 from __future__ import annotations
 
-from polaris.cells.roles.scout.public.contracts import ScoutFinding
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from polaris.cells.roles.scout.public.contracts import ScoutFinding
 
 _CHARS_PER_TOKEN = 4
 
