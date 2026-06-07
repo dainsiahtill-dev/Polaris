@@ -197,6 +197,10 @@ class ProjectionEngine:
         if not events:
             return []
 
+        # Sequence ceiling is invariant across the window; compute it once here
+        # instead of re-deriving it inside the per-element sort key (was O(n^2)).
+        max_seq = max((int(getattr(e, "sequence", 0)) for e in events), default=1)
+
         # Compute adaptive priority key using current weights
         def event_priority_key(event: Any) -> tuple[int, float, float, float, int]:
             sequence = int(getattr(event, "sequence", 0))
@@ -211,7 +215,6 @@ class ProjectionEngine:
             route_score = float(self._ROUTE_PRIORITY.get(route, 0)) / 3.0
 
             # Recency score (normalized to 0-1 based on position)
-            max_seq = max((int(getattr(e, "sequence", 0)) for e in events), default=1)
             recency_score = sequence / max(1, max_seq) if max_seq > 0 else 0.0
 
             # Combined confidence with dialog act bonus
@@ -219,7 +222,7 @@ class ProjectionEngine:
 
             # Weighted composite score (lower = higher priority in sort)
             composite = (
-                -sequence,  # Primary: earlier events first
+                sequence,  # Primary: earlier events first (ascending by sequence)
                 -(self._weights.route_weight * route_score),  # Route contribution
                 -(self._weights.confidence_weight * combined_confidence),  # Confidence contribution
                 -(self._weights.recency_weight * recency_score),  # Recency contribution
