@@ -11,7 +11,14 @@ from __future__ import annotations
 import logging
 import os
 
+from polaris.kernelone.constants import RoleId
+
 logger = logging.getLogger(__name__)
+
+#: Valid TaskMarket consumer-role tokens accepted in WS role filters.
+#: Single source of truth (RoleId.consumer_roles()); previously the literal
+#: ``{"pm", "director", "qa"}`` was duplicated across three WS endpoint modules.
+CONSUMER_ROLE_TOKENS: frozenset[str] = frozenset(role.value for role in RoleId.consumer_roles())
 
 
 # =============================================================================
@@ -94,7 +101,7 @@ def normalize_roles(roles: str | None) -> set[str]:
     normalized: set[str] = set()
     for raw in str(roles).split(","):
         token = raw.strip().lower()
-        if token in {"pm", "director", "qa"}:
+        if token in CONSUMER_ROLE_TOKENS:
             normalized.add(token)
     return normalized
 

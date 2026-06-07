@@ -20,6 +20,7 @@ from polaris.cells.runtime.projection.public.service import (
     build_pm_status_async,
     build_status_payload_sync,
 )
+from polaris.delivery.ws.endpoints.channel_utils import CONSUMER_ROLE_TOKENS
 from polaris.delivery.ws.endpoints.helpers import (
     filter_status_payload_by_roles,
     resolve_runtime_v2_workspace_key,
@@ -107,7 +108,7 @@ async def handle_v2_message(
             roles_filter.clear()
             for value in raw_roles:
                 role_token = str(value or "").strip().lower()
-                if role_token in {"pm", "director", "qa"}:
+                if role_token in CONSUMER_ROLE_TOKENS:
                     roles_filter.add(role_token)
 
         # Extract subscription params
@@ -216,14 +217,16 @@ async def handle_v2_message(
         else:
             channels_ref[0] = [ch for ch in channels_ref[0] if ch not in normalized_channels]
 
-        consumer_manager = consumer_manager_ref[0]
-        if consumer_manager:
+        active_consumer_manager = consumer_manager_ref[0]
+        if active_consumer_manager:
             if not channels_ref[0]:
-                await consumer_manager.disconnect()
+                await active_consumer_manager.disconnect()
                 consumer_manager_ref[0] = None
             else:
                 # Keep consumer alive for partial unsubscribe and update in-process filter.
-                consumer_manager.channels = [ch[4:] if ch.startswith("log.") else ch for ch in channels_ref[0]]
+                active_consumer_manager.channels = [
+                    ch[4:] if ch.startswith("log.") else ch for ch in channels_ref[0]
+                ]
 
         await send_json_safe(
             websocket,

@@ -18,12 +18,19 @@ try:
 except ImportError:
     YAML_AVAILABLE = False
 
+from polaris.kernelone.constants import RoleId
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.text_ops import write_text_atomic
 
 from .schema import RoleProfile, profile_from_dict, profile_to_dict
 
 logger = logging.getLogger(__name__)
+
+# 核心角色ID（单一事实来源: polaris.kernelone.constants.RoleId）。
+# 历史上本文件分别硬编码了一份 list (RoleProfileRegistry.CORE_ROLES) 和一份
+# set (_CORE_ROLES)——同一份角色名册在同一文件里写了两遍,会各自漂移。
+# 现统一从 RoleId.core_roles() 派生,不可再分叉。
+_CORE_ROLE_IDS: tuple[str, ...] = tuple(role.value for role in RoleId.core_roles())
 
 
 class RoleProfileRegistry:
@@ -38,8 +45,8 @@ class RoleProfileRegistry:
         >>> all_roles = registry.get_all_profiles()
     """
 
-    # 核心角色ID列表
-    CORE_ROLES = ["pm", "architect", "chief_engineer", "director", "qa"]
+    # 核心角色ID列表（派生自 RoleId.core_roles() SSOT）
+    CORE_ROLES = list(_CORE_ROLE_IDS)
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -410,7 +417,8 @@ def _ensure_role_model_bindings(reg: RoleProfileRegistry) -> None:
 
 
 # Core roles that MUST have model bindings from llm_config.json
-_CORE_ROLES = {"pm", "director", "qa", "architect", "chief_engineer"}
+# (派生自同一 SSOT,与 RoleProfileRegistry.CORE_ROLES 不可能再漂移)
+_CORE_ROLES = set(_CORE_ROLE_IDS)
 
 
 def _load_builtin_profiles(reg: RoleProfileRegistry) -> None:

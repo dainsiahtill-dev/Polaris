@@ -447,6 +447,27 @@ class RoleId(StrEnum):
         except ValueError:
             return False
 
+    @classmethod
+    def core_roles(cls) -> tuple[RoleId, ...]:
+        """The five core agent roles (canonical order).
+
+        Single source of truth for "the core roles" — the set of roles that
+        own a profile in ``core_roles.yaml`` and MUST have a model binding.
+        Excludes auxiliary ``SCOUT`` and the pseudo-roles ``SYSTEM`` /
+        ``DEFAULT``. Derive any ``CORE_ROLES`` list/set from this instead of
+        re-hardcoding the literal roster.
+        """
+        return (cls.PM, cls.ARCHITECT, cls.CHIEF_ENGINEER, cls.DIRECTOR, cls.QA)
+
+    @classmethod
+    def consumer_roles(cls) -> tuple[RoleId, ...]:
+        """The roles that consume TaskMarket tasks (pm, director, qa).
+
+        Single source of truth for the recurring ``{"pm", "director", "qa"}``
+        literal scattered across the WS / runtime layers.
+        """
+        return (cls.PM, cls.DIRECTOR, cls.QA)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Workflow Task Status - P2-002

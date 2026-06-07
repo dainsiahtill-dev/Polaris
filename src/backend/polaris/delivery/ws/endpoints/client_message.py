@@ -14,6 +14,7 @@ import os
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from polaris.delivery.ws.endpoints.channel_utils import CONSUMER_ROLE_TOKENS
 from polaris.delivery.ws.endpoints.helpers import (
     channel_max_chars,
     resolve_channel_path,
@@ -240,7 +241,7 @@ async def _handle_subscribe(
         roles_filter.clear()
         for value in raw_roles:
             role_token = str(value or "").strip().lower()
-            if role_token in {"pm", "director", "qa"}:
+            if role_token in CONSUMER_ROLE_TOKENS:
                 roles_filter.add(role_token)
 
     requested_lines = message.get("tail_lines")
