@@ -11,6 +11,7 @@ Slice B (2026-04-16): TurnEngine has been cut over to a pure facade.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 import warnings
@@ -148,6 +149,72 @@ class TurnEngine(TurnEngineCompatMixin):
         batch_id = str(batch_receipt.get("batch_id", "")).strip()
         return [batch_id] if batch_id else []
 
+    @staticmethod
+    def _build_turn_transcript(
+        *,
+        turn_id: str,
+        user_message: str,
+        assistant_content: str,
+        tool_results: list[dict[str, Any]],
+    ) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
+        """Build (turn_history, turn_events_metadata) for ContextOS persistence.
+
+        Single source of truth shared by ``run()`` (non-streaming) and
+        ``_build_stream_result()`` (streaming) so both paths emit byte-identical
+        transcript shapes. Self-contained — depends only on its arguments, never
+        on the kernel, so stub/mock kernels in tests keep working.
+        """
+        turn_history: list[tuple[str, str]] = []
+        turn_events_metadata: list[dict[str, Any]] = []
+
+        normalized_user = str(user_message or "").strip()
+        if normalized_user:
+            turn_history.append(("user", normalized_user))
+            turn_events_metadata.append(
+                {
+                    "role": "user",
+                    "content": normalized_user,
+                    "event_id": f"user_{turn_id}",
+                    "kind": "user_turn",
+                }
+            )
+
+        normalized_assistant = str(assistant_content or "").strip()
+        if normalized_assistant:
+            turn_history.append(("assistant", normalized_assistant))
+            turn_events_metadata.append(
+                {
+                    "role": "assistant",
+                    "content": normalized_assistant,
+                    "event_id": f"assistant_{turn_id}",
+                    "kind": "assistant_turn",
+                }
+            )
+
+        for tr in tool_results:
+            if not isinstance(tr, dict):
+                continue
+            tool_name = str(tr.get("tool") or "tool").strip() or "tool"
+            result_value = tr.get("result")
+            if result_value is not None:
+                result_text = json.dumps(result_value, ensure_ascii=False)
+            else:
+                error_text = str(tr.get("error") or "").strip()
+                result_text = f"Error: {error_text}" if error_text else ""
+            if result_text:
+                turn_history.append(("tool", result_text))
+                turn_events_metadata.append(
+                    {
+                        "role": "tool",
+                        "content": result_text,
+                        "event_id": f"tool_{tr.get('call_id', turn_id)}",
+                        "kind": "tool_result",
+                        "tool": tool_name,
+                    }
+                )
+
+        return turn_history, turn_events_metadata
+
     def _build_stream_result(
         self,
         *,
@@ -190,53 +257,12 @@ class TurnEngine(TurnEngineCompatMixin):
             metadata["transaction_kind"] = "handoff_workflow"
 
         # Build turn history and events metadata for ContextOS persistence
-        import json
-
-        turn_history: list[tuple[str, str]] = []
-        turn_events_metadata: list[dict[str, Any]] = []
-        user_message = str(getattr(request, "message", "") or "").strip()
-        if user_message:
-            turn_history.append(("user", user_message))
-            turn_events_metadata.append(
-                {
-                    "role": "user",
-                    "content": user_message,
-                    "event_id": f"user_{turn_id}",
-                    "kind": "user_turn",
-                }
-            )
-        assistant_content = str(content or "").strip()
-        if assistant_content:
-            turn_history.append(("assistant", assistant_content))
-            turn_events_metadata.append(
-                {
-                    "role": "assistant",
-                    "content": assistant_content,
-                    "event_id": f"assistant_{turn_id}",
-                    "kind": "assistant_turn",
-                }
-            )
-        for tr in tool_results:
-            if not isinstance(tr, dict):
-                continue
-            tool_name = str(tr.get("tool") or "tool").strip() or "tool"
-            result_value = tr.get("result")
-            if result_value is not None:
-                result_text = json.dumps(result_value, ensure_ascii=False)
-            else:
-                error_text = str(tr.get("error") or "").strip()
-                result_text = f"Error: {error_text}" if error_text else ""
-            if result_text:
-                turn_history.append(("tool", result_text))
-                turn_events_metadata.append(
-                    {
-                        "role": "tool",
-                        "content": result_text,
-                        "event_id": f"tool_{tr.get('call_id', turn_id)}",
-                        "kind": "tool_result",
-                        "tool": tool_name,
-                    }
-                )
+        turn_history, turn_events_metadata = self._build_turn_transcript(
+            turn_id=turn_id,
+            user_message=str(getattr(request, "message", "") or ""),
+            assistant_content=content,
+            tool_results=tool_results,
+        )
 
         return RoleTurnResult(
             content=content,
@@ -752,53 +778,12 @@ class TurnEngine(TurnEngineCompatMixin):
             final_thinking = finalization.get("final_visible_message")
 
         # Build turn history and events metadata for ContextOS persistence
-        import json
-
-        turn_history: list[tuple[str, str]] = []
-        turn_events_metadata: list[dict[str, Any]] = []
-        user_message = str(getattr(request, "message", "") or "").strip()
-        if user_message:
-            turn_history.append(("user", user_message))
-            turn_events_metadata.append(
-                {
-                    "role": "user",
-                    "content": user_message,
-                    "event_id": f"user_{turn_id}",
-                    "kind": "user_turn",
-                }
-            )
-        assistant_content = str(visible_content or "").strip()
-        if assistant_content:
-            turn_history.append(("assistant", assistant_content))
-            turn_events_metadata.append(
-                {
-                    "role": "assistant",
-                    "content": assistant_content,
-                    "event_id": f"assistant_{turn_id}",
-                    "kind": "assistant_turn",
-                }
-            )
-        for tr in tool_results:
-            if not isinstance(tr, dict):
-                continue
-            tool_name = str(tr.get("tool") or "tool").strip() or "tool"
-            result_value = tr.get("result")
-            if result_value is not None:
-                result_text = json.dumps(result_value, ensure_ascii=False)
-            else:
-                error_text = str(tr.get("error") or "").strip()
-                result_text = f"Error: {error_text}" if error_text else ""
-            if result_text:
-                turn_history.append(("tool", result_text))
-                turn_events_metadata.append(
-                    {
-                        "role": "tool",
-                        "content": result_text,
-                        "event_id": f"tool_{tr.get('call_id', turn_id)}",
-                        "kind": "tool_result",
-                        "tool": tool_name,
-                    }
-                )
+        turn_history, turn_events_metadata = self._build_turn_transcript(
+            turn_id=turn_id,
+            user_message=str(getattr(request, "message", "") or ""),
+            assistant_content=visible_content,
+            tool_results=tool_results,
+        )
 
         return RoleTurnResult(
             content=visible_content,
