@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 CATALOG_PATH = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
 SUBGRAPHS_DIR = BACKEND_ROOT / "docs" / "graph" / "subgraphs"
 FINAL_SPEC_PATH = BACKEND_ROOT / "docs" / "FINAL_SPEC.md"
@@ -22,17 +22,31 @@ EXPECTED_PUBLIC_CELLS = {
     "context.engine",
 }
 
+# Public surface per cell. Most cells expose only their `public.contracts`
+# (DTO/command/query/event definitions); cells that also publish a callable
+# service entrypoint declare `public.service` as a second public module. These
+# lists mirror the governance truth in docs/graph/catalog/cells.yaml (the test
+# below also asserts catalog and cell.yaml manifest stay in lockstep with them).
 EXPECTED_MODULES = {
-    "context.catalog": "polaris.cells.context.catalog.public.contracts",
-    "delivery.api_gateway": "polaris.cells.delivery.api_gateway.public.contracts",
-    "policy.workspace_guard": "polaris.cells.policy.workspace_guard.public.contracts",
-    "runtime.state_owner": "polaris.cells.runtime.state_owner.public.contracts",
-    "runtime.projection": "polaris.cells.runtime.projection.public.contracts",
-    "audit.evidence": "polaris.cells.audit.evidence.public.contracts",
-    "archive.run_archive": "polaris.cells.archive.run_archive.public.contracts",
-    "archive.task_snapshot_archive": ("polaris.cells.archive.task_snapshot_archive.public.contracts"),
-    "archive.factory_archive": "polaris.cells.archive.factory_archive.public.contracts",
-    "context.engine": "polaris.cells.context.engine.public.contracts",
+    "context.catalog": ["polaris.cells.context.catalog.public.contracts"],
+    "delivery.api_gateway": ["polaris.cells.delivery.api_gateway.public.contracts"],
+    "policy.workspace_guard": [
+        "polaris.cells.policy.workspace_guard.public.contracts",
+        "polaris.cells.policy.workspace_guard.public.service",
+    ],
+    "runtime.state_owner": ["polaris.cells.runtime.state_owner.public.contracts"],
+    "runtime.projection": ["polaris.cells.runtime.projection.public.contracts"],
+    "audit.evidence": [
+        "polaris.cells.audit.evidence.public.contracts",
+        "polaris.cells.audit.evidence.public.service",
+    ],
+    "archive.run_archive": ["polaris.cells.archive.run_archive.public.contracts"],
+    "archive.task_snapshot_archive": ["polaris.cells.archive.task_snapshot_archive.public.contracts"],
+    "archive.factory_archive": ["polaris.cells.archive.factory_archive.public.contracts"],
+    "context.engine": [
+        "polaris.cells.context.engine.public.contracts",
+        "polaris.cells.context.engine.public.service",
+    ],
 }
 
 UNDECLARED_DRAFT_CELLS = {
@@ -94,8 +108,8 @@ def test_catalog_matches_current_phase1_public_cells() -> None:
 
         manifest = _load_yaml(manifest_path)
         assert manifest["id"] == cell_id
-        assert manifest["public_contracts"]["modules"] == [EXPECTED_MODULES[cell_id]]
-        assert catalog_item["public_contracts"]["modules"] == [EXPECTED_MODULES[cell_id]]
+        assert manifest["public_contracts"]["modules"] == EXPECTED_MODULES[cell_id]
+        assert catalog_item["public_contracts"]["modules"] == EXPECTED_MODULES[cell_id]
         assert manifest.get("generated_artifacts") == ["generated/context.pack.json"]
 
         declared_subgraphs.update(str(value) for value in catalog_item.get("subgraphs", []))

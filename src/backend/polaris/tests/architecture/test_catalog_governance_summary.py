@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "summarize_catalog_governance_gate.py"
 
 
