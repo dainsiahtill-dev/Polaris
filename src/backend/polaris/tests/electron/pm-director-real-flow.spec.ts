@@ -2,6 +2,11 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { type Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
+import {
+  assertExpandedTechEvidenceMatrix,
+  collectExpandedTechEvidenceMatrix,
+  writeExpandedTechEvidenceMatrix,
+} from "./helpers/expandedTechEvidenceMatrix";
 
 type BackendInfo = {
   baseUrl?: string;
@@ -464,4 +469,12 @@ test("real PM -> Director flow reaches PM and Director workspaces", async ({ win
       intervals: [500, 1000, 2000, 3000],
     })
     .toBeGreaterThan(0);
+
+  const expandedTechMatrix = await collectExpandedTechEvidenceMatrix(window, {
+    requireRealChain: true,
+    runtimeRootOverride: runtimeRoot,
+    workspaceOverride: path.resolve(String(settings.workspace || "")),
+  });
+  await writeExpandedTechEvidenceMatrix(testInfo, expandedTechMatrix, "pm-director-expanded-tech-evidence-matrix.json");
+  assertExpandedTechEvidenceMatrix(expandedTechMatrix);
 });

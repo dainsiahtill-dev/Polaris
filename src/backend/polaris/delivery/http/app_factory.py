@@ -40,15 +40,24 @@ async def lifespan(app: FastAPI):
     reset_resident_services()
     container = await get_container()
 
-    try:
-        await ensure_local_nats_runtime(str(getattr(app.state.settings.nats, "url", "") or ""))
-    except (RuntimeError, ValueError) as exc:
-        logger.critical(
-            "[startup] Managed NATS bootstrap failed – application cannot start safely: %s",
-            exc,
-            exc_info=True,
-        )
-        raise
+    nats_settings = getattr(app.state.settings, "nats", None)
+    nats_enabled = bool(getattr(nats_settings, "enabled", True))
+    nats_required = bool(getattr(nats_settings, "required", True))
+    if nats_enabled:
+        try:
+            await ensure_local_nats_runtime(str(getattr(nats_settings, "url", "") or ""))
+        except (RuntimeError, ValueError) as exc:
+            log_method = logger.critical if nats_required else logger.warning
+            log_method(
+                "[startup] Managed NATS bootstrap failed%s: %s",
+                " – application cannot start safely" if nats_required else " but NATS is not required",
+                exc,
+                exc_info=True,
+            )
+            if nats_required:
+                raise
+    else:
+        logger.info("[startup] NATS bootstrap skipped because settings.nats.enabled is false.")
 
     # Delegate assembly to bootstrap layer.
     # Wrap in an explicit error boundary: a failed bootstrap must never leave

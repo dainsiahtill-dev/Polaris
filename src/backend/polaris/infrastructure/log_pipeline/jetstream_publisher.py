@@ -36,6 +36,17 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 
+def _env_bool(key: str, default: bool) -> bool:
+    raw = str(os.environ.get(key) or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off", "disabled"}
+
+
+def _nats_transport_enabled() -> bool:
+    return _env_bool("KERNELONE_NATS_ENABLED", _env_bool("NATS_ENABLED", True))
+
+
 _DEFAULT_QUEUE_SIZE = max(256, _env_int("KERNELONE_JETSTREAM_PUBLISH_QUEUE_SIZE", 4096))
 _DEFAULT_RETRY_ATTEMPTS = max(1, _env_int("KERNELONE_JETSTREAM_PUBLISH_MAX_ATTEMPTS", 6))
 _DEFAULT_RETRY_BASE_SEC = max(0.05, _env_float("KERNELONE_JETSTREAM_PUBLISH_RETRY_BASE_SEC", 0.25))
@@ -100,6 +111,9 @@ class JetStreamPublisher:
         Returns:
             True when the event is accepted into the publisher queue.
         """
+        if not _nats_transport_enabled():
+            logger.debug("JetStream publish skipped because NATS transport is disabled.")
+            return True
         if self._stop_event.is_set():
             return False
         self.start()
@@ -135,6 +149,10 @@ class JetStreamPublisher:
                 loop.close()
 
     async def _publish_with_retry(self, request: JetStreamPublishRequest) -> None:
+        if not _nats_transport_enabled():
+            logger.debug("JetStream publish skipped because NATS transport is disabled.")
+            return
+
         delay = self._retry_base_sec
         last_error: Exception | None = None
 
@@ -168,6 +186,8 @@ class JetStreamPublisher:
         )
 
     async def _get_client(self) -> NATSClient:
+        if not _nats_transport_enabled():
+            raise RuntimeError("NATS transport is disabled")
         if self._client and self._client.is_connected:
             return self._client
 

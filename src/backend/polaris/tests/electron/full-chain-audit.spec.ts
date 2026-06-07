@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { type Locator, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
+import {
+  assertExpandedTechEvidenceMatrix,
+  collectExpandedTechEvidenceMatrix,
+  writeExpandedTechEvidenceMatrix,
+} from "./helpers/expandedTechEvidenceMatrix";
 
 type BackendInfo = { baseUrl?: string; token?: string };
 type SettingsPayload = {
@@ -3280,6 +3285,19 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     seed_metrics: ComplexityMetrics | null;
     runtime_contribution: RuntimeContributionMetrics | null;
     complexity_contribution_breakdown: ComplexityContributionBreakdown | null;
+    expanded_tech_evidence_matrix: {
+      report_path: string;
+      candidate_count: number;
+      summary: Record<string, unknown>;
+      core_runtime_integrations: Record<string, unknown>;
+      core_runtime_evidence_placement: {
+        row_count: number;
+        missing: string[];
+        receipt_id: string;
+        handoff_id: string;
+        task_projection: Record<string, unknown>;
+      } | null;
+    } | null;
     qa_gate: {
       passed: boolean | null;
       reason: string;
@@ -3314,6 +3332,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     seed_metrics: null,
     runtime_contribution: null,
     complexity_contribution_breakdown: null,
+    expanded_tech_evidence_matrix: null,
     qa_gate: null,
     issues_fixed: [],
     acceptance_results: {
@@ -4102,6 +4121,34 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
     if (latestQaReason && latestQaReason !== "integration_qa_passed") {
       audit.next_risks.push(`Latest QA reason: ${latestQaReason}`);
     }
+
+    const expandedTechMatrix = await collectExpandedTechEvidenceMatrix(window, {
+      requireRealChain: true,
+      runtimeRootOverride: runtimeRoot,
+      workspaceOverride: audit.workspace,
+    });
+    const expandedTechMatrixPath = await writeExpandedTechEvidenceMatrix(
+      testInfo,
+      expandedTechMatrix,
+      "full-chain-expanded-tech-evidence-matrix.json",
+    );
+    audit.evidence_paths.snapshots.push(toPosixPath(expandedTechMatrixPath));
+    audit.expanded_tech_evidence_matrix = {
+      report_path: toPosixPath(expandedTechMatrixPath),
+      candidate_count: expandedTechMatrix.expanded_candidates.length,
+      summary: expandedTechMatrix.summary,
+      core_runtime_integrations: expandedTechMatrix.core_runtime_integrations,
+      core_runtime_evidence_placement: expandedTechMatrix.core_runtime_evidence_placement
+        ? {
+            row_count: expandedTechMatrix.core_runtime_evidence_placement.rows.length,
+            missing: expandedTechMatrix.core_runtime_evidence_placement.missing,
+            receipt_id: expandedTechMatrix.core_runtime_evidence_placement.receipt_id,
+            handoff_id: expandedTechMatrix.core_runtime_evidence_placement.handoff_id,
+            task_projection: expandedTechMatrix.core_runtime_evidence_placement.task_projection,
+          }
+        : null,
+    };
+    assertExpandedTechEvidenceMatrix(expandedTechMatrix);
 
     const pass = (
       audit.acceptance_results.court_phase === "PASS"

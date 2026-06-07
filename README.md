@@ -313,7 +313,24 @@ npm run dev
 
 这会启动前端开发服务器并拉起 Electron。
 
-### 3. 仅启动后端
+### 3. 启动网页端开发环境（WSL 推荐）
+
+```bash
+npm run dev:web
+```
+
+这会启动受 token 保护的 backend，并启动 Vite 前端。脚本会把 backend URL/token 注入浏览器端，
+因此可以直接用 Windows 或 Ubuntu 浏览器打开终端输出的 `http://127.0.0.1:<port>` 地址。
+
+静态预览模式也可用：
+
+```bash
+npm run start:web
+```
+
+桌面端入口保持不变：`npm run dev` / `npm run start` 仍然启动 Electron。
+
+### 4. 仅启动后端
 
 推荐使用安装后的 canonical CLI：
 
@@ -329,7 +346,7 @@ python src/backend/server.py --host 127.0.0.1 --port 49977
 
 canonical 实现位于 [src/backend/polaris/delivery/server.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/delivery/server.py)，兼容 shim 位于 [src/backend/server.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/server.py)。
 
-### 4. 单独运行角色 CLI
+### 5. 单独运行角色 CLI
 
 ```bash
 pm --workspace . --start-from pm
@@ -338,7 +355,7 @@ python -m polaris.cells.architect.design.internal.architect_cli --mode interacti
 python -m polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli --mode interactive --workspace .
 ```
 
-### 5. 前端测试
+### 6. 前端测试
 
 ```bash
 npm test

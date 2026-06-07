@@ -254,6 +254,23 @@ class TestConfigLoaderLoadEnv:
         assert snapshot.get("runtime.cache_root") == "/tmp/runtime-cache"
         assert snapshot.get("runtime.use_ramdisk") is False
 
+    def test_load_env_nats_policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should preserve NATS env policy in the merged config snapshot."""
+        monkeypatch.setenv("KERNELONE_NATS_ENABLED", "0")
+        monkeypatch.setenv("KERNELONE_NATS_REQUIRED", "0")
+        monkeypatch.setenv("KERNELONE_NATS_URL", "nats://127.0.0.1:4555")
+        monkeypatch.setenv("KERNELONE_NATS_CONNECT_TIMEOUT", "4.5")
+        monkeypatch.setenv("KERNELONE_NATS_MAX_RECONNECT", "7")
+
+        loader = ConfigLoader()
+        snapshot = loader.load()
+
+        assert snapshot.get("nats.enabled") is False
+        assert snapshot.get("nats.required") is False
+        assert snapshot.get("nats.url") == "nats://127.0.0.1:4555"
+        assert snapshot.get("nats.connect_timeout_sec") == 4.5
+        assert snapshot.get("nats.max_reconnect_attempts") == 7
+
 
 class TestConfigLoaderFlattenDict:
     """Test nested dictionary flattening."""

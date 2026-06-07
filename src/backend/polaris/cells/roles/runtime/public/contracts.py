@@ -6,6 +6,7 @@ execution, status query, and event/result payloads.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -40,6 +41,13 @@ def _normalize_optional_domain(value: str | None) -> str | None:
     if not token:
         return None
     return token
+
+
+def _normalize_optional_string(value: str | None) -> str | None:
+    if value is None:
+        return None
+    token = str(value).strip()
+    return token or None
 
 
 def _normalize_history(history: Any) -> tuple[tuple[str, str], ...]:
@@ -92,6 +100,460 @@ def _normalize_string_tuple(name: str, values: Any) -> tuple[str, ...]:
             normalized.append(token)
             seen.add(token)
     return tuple(normalized)
+
+
+@dataclass(frozen=True)
+class RoleIdentity:
+    """Stable identity for one instantiated role runtime object."""
+
+    role_id: str
+    run_id: str | None
+    task_id: str | None
+    session_id: str | None
+    workspace: str
+    host_kind: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        object.__setattr__(self, "run_id", _normalize_optional_string(self.run_id))
+        object.__setattr__(self, "task_id", _normalize_optional_string(self.task_id))
+        object.__setattr__(self, "session_id", _normalize_optional_string(self.session_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "host_kind", _require_non_empty("host_kind", self.host_kind))
+
+
+@dataclass(frozen=True)
+class RoleProfileBinding:
+    """Binding to `roles.profile` state without copying profile-owned truth."""
+
+    role_id: str
+    profile_ref: str
+    tool_policy_ref: str
+    prompt_policy_ref: str
+    data_policy_ref: str
+    profile_fingerprint: str
+    owner_cell: str = "roles.profile"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        object.__setattr__(self, "profile_ref", _require_non_empty("profile_ref", self.profile_ref))
+        object.__setattr__(
+            self,
+            "tool_policy_ref",
+            _require_non_empty("tool_policy_ref", self.tool_policy_ref),
+        )
+        object.__setattr__(
+            self,
+            "prompt_policy_ref",
+            _require_non_empty("prompt_policy_ref", self.prompt_policy_ref),
+        )
+        object.__setattr__(self, "data_policy_ref", _require_non_empty("data_policy_ref", self.data_policy_ref))
+        object.__setattr__(
+            self,
+            "profile_fingerprint",
+            _require_non_empty("profile_fingerprint", self.profile_fingerprint),
+        )
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+
+
+@dataclass(frozen=True)
+class RoleAssetRef:
+    """Reference to an asset owned by another Cell public boundary."""
+
+    asset_id: str
+    owner_cell: str
+    contract_name: str
+    ref: str
+    asset_kind: str = "asset"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "asset_id", _require_non_empty("asset_id", self.asset_id))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(self, "contract_name", _require_non_empty("contract_name", self.contract_name))
+        object.__setattr__(self, "ref", _require_non_empty("ref", self.ref))
+        object.__setattr__(self, "asset_kind", _require_non_empty("asset_kind", self.asset_kind))
+
+
+@dataclass(frozen=True)
+class RoleAssetMount:
+    """One named mount in a runtime object asset table."""
+
+    mount_name: str
+    asset_ref: RoleAssetRef
+    access_mode: str = "read"
+    required: bool = True
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "mount_name", _require_non_empty("mount_name", self.mount_name))
+        if not isinstance(self.asset_ref, RoleAssetRef):
+            raise TypeError("asset_ref must be a RoleAssetRef")
+        access_mode = _require_non_empty("access_mode", self.access_mode).lower()
+        if access_mode not in {"read", "write", "read_write", "execute"}:
+            raise ValueError("access_mode must be one of: read, write, read_write, execute")
+        object.__setattr__(self, "access_mode", access_mode)
+        object.__setattr__(self, "required", bool(self.required))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleAssetMountTable:
+    """Immutable table of mounted asset references for one role object."""
+
+    mounts: tuple[RoleAssetMount, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        normalized = tuple(self.mounts)
+        seen: set[str] = set()
+        for mount in normalized:
+            if not isinstance(mount, RoleAssetMount):
+                raise TypeError("mounts entries must be RoleAssetMount instances")
+            key = mount.mount_name
+            if key in seen:
+                raise ValueError(f"duplicate asset mount: {key}")
+            seen.add(key)
+        object.__setattr__(self, "mounts", normalized)
+
+    def get(self, mount_name: str) -> RoleAssetMount:
+        key = _require_non_empty("mount_name", mount_name)
+        for mount in self.mounts:
+            if mount.mount_name == key:
+                return mount
+        raise KeyError(key)
+
+
+@dataclass(frozen=True)
+class RoleCapabilityDescriptor:
+    """Public-contract port descriptor for a role-owned capability call."""
+
+    capability_id: str
+    owner_cell: str
+    contract_name: str
+    effect: str
+    allowed_roles: tuple[str, ...] = field(default_factory=tuple)
+    endpoint_ref: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(self, "contract_name", _require_non_empty("contract_name", self.contract_name))
+        object.__setattr__(self, "effect", _require_non_empty("effect", self.effect))
+        object.__setattr__(self, "allowed_roles", _normalize_string_tuple("allowed_roles", self.allowed_roles))
+        object.__setattr__(self, "endpoint_ref", str(self.endpoint_ref or "").strip())
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleCapabilityPorts:
+    """Immutable capability port table for one role object."""
+
+    capabilities: tuple[RoleCapabilityDescriptor, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        normalized = tuple(self.capabilities)
+        seen: set[str] = set()
+        for capability in normalized:
+            if not isinstance(capability, RoleCapabilityDescriptor):
+                raise TypeError("capabilities entries must be RoleCapabilityDescriptor instances")
+            key = capability.capability_id
+            if key in seen:
+                raise ValueError(f"duplicate capability: {key}")
+            seen.add(key)
+        object.__setattr__(self, "capabilities", normalized)
+
+    def get(self, capability_id: str) -> RoleCapabilityDescriptor:
+        key = _require_non_empty("capability_id", capability_id)
+        for capability in self.capabilities:
+            if capability.capability_id == key:
+                return capability
+        raise KeyError(key)
+
+
+@dataclass(frozen=True)
+class RoleCapabilityFingerprint:
+    """Auditable fingerprint for role + capability + effect + tool + policy."""
+
+    role_id: str
+    capability_id: str
+    effect: str
+    tool: str
+    policy_fingerprint: str
+    profile_fingerprint: str
+    fingerprint: str = ""
+
+    def __post_init__(self) -> None:
+        role_id = _require_non_empty("role_id", self.role_id)
+        capability_id = _require_non_empty("capability_id", self.capability_id)
+        effect = _require_non_empty("effect", self.effect)
+        tool = _require_non_empty("tool", self.tool)
+        policy_fingerprint = _require_non_empty("policy_fingerprint", self.policy_fingerprint)
+        profile_fingerprint = _require_non_empty("profile_fingerprint", self.profile_fingerprint)
+        object.__setattr__(self, "role_id", role_id)
+        object.__setattr__(self, "capability_id", capability_id)
+        object.__setattr__(self, "effect", effect)
+        object.__setattr__(self, "tool", tool)
+        object.__setattr__(self, "policy_fingerprint", policy_fingerprint)
+        object.__setattr__(self, "profile_fingerprint", profile_fingerprint)
+        if not self.fingerprint:
+            content = "\n".join(
+                (
+                    role_id,
+                    capability_id,
+                    effect,
+                    tool,
+                    policy_fingerprint,
+                    profile_fingerprint,
+                )
+            )
+            object.__setattr__(self, "fingerprint", hashlib.sha256(content.encode("utf-8")).hexdigest())
+        else:
+            object.__setattr__(self, "fingerprint", _require_non_empty("fingerprint", self.fingerprint))
+
+
+@dataclass(frozen=True)
+class RoleCapabilityInvocation:
+    """One capability call request, carrying refs instead of payload ownership."""
+
+    invocation_id: str
+    capability_id: str
+    role_id: str
+    command_contract: str
+    payload_ref: str
+    fingerprint_ref: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "invocation_id", _require_non_empty("invocation_id", self.invocation_id))
+        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        object.__setattr__(self, "command_contract", _require_non_empty("command_contract", self.command_contract))
+        object.__setattr__(self, "payload_ref", _require_non_empty("payload_ref", self.payload_ref))
+        object.__setattr__(self, "fingerprint_ref", _require_non_empty("fingerprint_ref", self.fingerprint_ref))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleCapabilityDecision:
+    """Structured sandbox decision for one capability invocation."""
+
+    invocation_id: str
+    capability_id: str
+    role_id: str
+    allowed: bool
+    reason: str = ""
+    denial_code: str | None = None
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "invocation_id", _require_non_empty("invocation_id", self.invocation_id))
+        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        object.__setattr__(self, "allowed", bool(self.allowed))
+        object.__setattr__(self, "reason", str(self.reason or "").strip())
+        object.__setattr__(self, "denial_code", _normalize_optional_string(self.denial_code))
+        object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
+        if not self.allowed and not (self.reason or self.denial_code):
+            raise ValueError("denied capability decision must include reason or denial_code")
+
+
+@dataclass(frozen=True)
+class RoleTurnContext:
+    """Typed turn context refs for current input, context, handoff, and task state."""
+
+    typed_input_ref: str
+    context_snapshot_ref: str
+    handoff_refs: tuple[str, ...] = field(default_factory=tuple)
+    task_refs: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "typed_input_ref", _require_non_empty("typed_input_ref", self.typed_input_ref))
+        object.__setattr__(
+            self,
+            "context_snapshot_ref",
+            _require_non_empty("context_snapshot_ref", self.context_snapshot_ref),
+        )
+        object.__setattr__(self, "handoff_refs", _normalize_string_tuple("handoff_refs", self.handoff_refs))
+        object.__setattr__(self, "task_refs", _normalize_string_tuple("task_refs", self.task_refs))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleLedgerBinding:
+    """Refs to kernel ledger/commit and Cognitive Runtime receipt contracts."""
+
+    turn_ledger_ref: str
+    commit_contract: str = "CommitReceipt"
+    runtime_receipt_contract: str = "RecordRuntimeReceiptCommandV1"
+    receipt_refs: tuple[str, ...] = field(default_factory=tuple)
+    commit_receipt_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "turn_ledger_ref", _require_non_empty("turn_ledger_ref", self.turn_ledger_ref))
+        object.__setattr__(self, "commit_contract", _require_non_empty("commit_contract", self.commit_contract))
+        object.__setattr__(
+            self,
+            "runtime_receipt_contract",
+            _require_non_empty("runtime_receipt_contract", self.runtime_receipt_contract),
+        )
+        object.__setattr__(self, "receipt_refs", _normalize_string_tuple("receipt_refs", self.receipt_refs))
+        object.__setattr__(self, "commit_receipt_ref", _normalize_optional_string(self.commit_receipt_ref))
+
+
+@dataclass(frozen=True)
+class RoleTaskMarketBinding:
+    """Public task-market lifecycle contract names and active work refs."""
+
+    publish_contract: str = "PublishTaskWorkItemCommandV1"
+    claim_contract: str = "ClaimTaskWorkItemCommandV1"
+    lease_contract: str = "RenewTaskLeaseCommandV1"
+    ack_contract: str = "AcknowledgeTaskStageCommandV1"
+    fail_contract: str = "FailTaskStageCommandV1"
+    requeue_contract: str = "RequeueTaskCommandV1"
+    work_item_ref: str | None = None
+    lease_token_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "publish_contract",
+            "claim_contract",
+            "lease_contract",
+            "ack_contract",
+            "fail_contract",
+            "requeue_contract",
+        ):
+            object.__setattr__(self, name, _require_non_empty(name, getattr(self, name)))
+        object.__setattr__(self, "work_item_ref", _normalize_optional_string(self.work_item_ref))
+        object.__setattr__(self, "lease_token_ref", _normalize_optional_string(self.lease_token_ref))
+
+
+@dataclass(frozen=True)
+class RoleTurnEnvelope:
+    """Single typed turn envelope consumed by runtime/kernel boundaries."""
+
+    identity: RoleIdentity
+    profile_binding: RoleProfileBinding
+    turn_context: RoleTurnContext
+    capability_invocations: tuple[RoleCapabilityInvocation, ...]
+    ledger_binding: RoleLedgerBinding
+    task_market_binding: RoleTaskMarketBinding
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, RoleIdentity):
+            raise TypeError("identity must be a RoleIdentity")
+        if not isinstance(self.profile_binding, RoleProfileBinding):
+            raise TypeError("profile_binding must be a RoleProfileBinding")
+        if not isinstance(self.turn_context, RoleTurnContext):
+            raise TypeError("turn_context must be a RoleTurnContext")
+        invocations = tuple(self.capability_invocations)
+        if any(not isinstance(item, RoleCapabilityInvocation) for item in invocations):
+            raise TypeError("capability_invocations entries must be RoleCapabilityInvocation instances")
+        if not isinstance(self.ledger_binding, RoleLedgerBinding):
+            raise TypeError("ledger_binding must be a RoleLedgerBinding")
+        if not isinstance(self.task_market_binding, RoleTaskMarketBinding):
+            raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
+        object.__setattr__(self, "capability_invocations", invocations)
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleStateCommitRequest:
+    """Request to commit role-object turn state through existing kernel contracts."""
+
+    request_id: str
+    envelope: RoleTurnEnvelope
+    changed_asset_refs: tuple[str, ...]
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "request_id", _require_non_empty("request_id", self.request_id))
+        if not isinstance(self.envelope, RoleTurnEnvelope):
+            raise TypeError("envelope must be a RoleTurnEnvelope")
+        object.__setattr__(
+            self,
+            "changed_asset_refs",
+            _normalize_string_tuple("changed_asset_refs", self.changed_asset_refs),
+        )
+        object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
+        object.__setattr__(self, "reason", str(self.reason or "").strip())
+
+
+@dataclass(frozen=True)
+class RoleStateCommitReceipt:
+    """Receipt refs produced after role state commit reaches kernel/runtime stores."""
+
+    request_id: str
+    ok: bool
+    commit_receipt_ref: str | None = None
+    runtime_receipt_refs: tuple[str, ...] = field(default_factory=tuple)
+    turn_outcome_ref: str | None = None
+    commit_contract: str = "CommitReceipt"
+    runtime_receipt_contract: str = "RecordRuntimeReceiptCommandV1"
+    status: str = "committed"
+    error_code: str | None = None
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "request_id", _require_non_empty("request_id", self.request_id))
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "commit_receipt_ref", _normalize_optional_string(self.commit_receipt_ref))
+        object.__setattr__(
+            self,
+            "runtime_receipt_refs",
+            _normalize_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs),
+        )
+        object.__setattr__(self, "turn_outcome_ref", _normalize_optional_string(self.turn_outcome_ref))
+        object.__setattr__(self, "commit_contract", _require_non_empty("commit_contract", self.commit_contract))
+        object.__setattr__(
+            self,
+            "runtime_receipt_contract",
+            _require_non_empty("runtime_receipt_contract", self.runtime_receipt_contract),
+        )
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
+        object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        if self.ok and not self.commit_receipt_ref:
+            raise ValueError("successful commit receipt must include commit_receipt_ref")
+        if not self.ok and not (self.error_code or self.error_message):
+            raise ValueError("failed commit receipt must include error_code or error_message")
+
+
+@dataclass(frozen=True)
+class RoleRuntimeObject:
+    """Instantiated role object composed from refs, ports, and bindings only."""
+
+    identity: RoleIdentity
+    profile_binding: RoleProfileBinding
+    asset_mounts: RoleAssetMountTable
+    capability_ports: RoleCapabilityPorts
+    ledger_binding: RoleLedgerBinding
+    task_market_binding: RoleTaskMarketBinding
+    capability_fingerprint: RoleCapabilityFingerprint
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, RoleIdentity):
+            raise TypeError("identity must be a RoleIdentity")
+        if not isinstance(self.profile_binding, RoleProfileBinding):
+            raise TypeError("profile_binding must be a RoleProfileBinding")
+        if self.identity.role_id != self.profile_binding.role_id:
+            raise ValueError("identity.role_id must match profile_binding.role_id")
+        if not isinstance(self.asset_mounts, RoleAssetMountTable):
+            raise TypeError("asset_mounts must be a RoleAssetMountTable")
+        if not isinstance(self.capability_ports, RoleCapabilityPorts):
+            raise TypeError("capability_ports must be a RoleCapabilityPorts")
+        if not isinstance(self.ledger_binding, RoleLedgerBinding):
+            raise TypeError("ledger_binding must be a RoleLedgerBinding")
+        if not isinstance(self.task_market_binding, RoleTaskMarketBinding):
+            raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
+        if not isinstance(self.capability_fingerprint, RoleCapabilityFingerprint):
+            raise TypeError("capability_fingerprint must be a RoleCapabilityFingerprint")
+        if self.identity.role_id != self.capability_fingerprint.role_id:
+            raise ValueError("identity.role_id must match capability_fingerprint.role_id")
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
 @dataclass(frozen=True)
@@ -808,10 +1270,27 @@ __all__ = [
     "IRoleRuntime",
     "MessageType",
     "RoleAgent",
+    "RoleAssetMount",
+    "RoleAssetMountTable",
+    "RoleAssetRef",
+    "RoleCapabilityDecision",
+    "RoleCapabilityDescriptor",
+    "RoleCapabilityFingerprint",
+    "RoleCapabilityInvocation",
+    "RoleCapabilityPorts",
     "RoleExecutionResultV1",
+    "RoleIdentity",
+    "RoleLedgerBinding",
+    "RoleProfileBinding",
     "RoleRuntimeError",
+    "RoleRuntimeObject",
+    "RoleStateCommitReceipt",
+    "RoleStateCommitRequest",
     "RoleTaskCompletedEventV1",
+    "RoleTaskMarketBinding",
     "RoleTaskStartedEventV1",
+    "RoleTurnContext",
+    "RoleTurnEnvelope",
     # ── Stream Contract Types (Task #2) ───────────────────────────────────
     "StandardStreamEvent",
     "StreamTurnOptions",

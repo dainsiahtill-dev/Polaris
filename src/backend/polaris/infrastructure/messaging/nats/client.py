@@ -102,6 +102,13 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off", "disabled"}
+
+
 def _build_runtime_stream_config() -> Any:
     config_kwargs = {
         "name": JetStreamConstants.STREAM_NAME,
@@ -162,6 +169,7 @@ class NATSConfig:
         )
     )
     default_timeout: float = DEFAULT_SHORT_TIMEOUT_SECONDS
+    enabled: bool = field(default_factory=lambda: _env_bool("KERNELONE_NATS_ENABLED", True))
 
 
 # =============================================================================
@@ -178,6 +186,7 @@ class ConnectionState:
     RECONNECTING = "reconnecting"
     CLOSING = "closing"
     CLOSED = "closed"
+    DISABLED = "disabled"
 
 
 # =============================================================================
@@ -221,6 +230,11 @@ class NATSClient:
         return self._nc is not None and self._nc.is_connected
 
     @property
+    def is_disabled(self) -> bool:
+        """Return whether NATS transport is explicitly disabled by configuration."""
+        return not self._config.enabled or self._state == ConnectionState.DISABLED
+
+    @property
     def state(self) -> str:
         r"""Get current connection state.
 
@@ -260,6 +274,10 @@ class NATSClient:
         """
         async with self._lock:
             if self.is_connected:
+                return
+
+            if not self._config.enabled:
+                self._set_state(ConnectionState.DISABLED)
                 return
 
             self._set_state(ConnectionState.CONNECTING)

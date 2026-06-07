@@ -29,6 +29,11 @@ function getDefaultBackendUrl(): string {
   return `http://${host}:${port}`;
 }
 
+function getEnvBackendToken(): string | null {
+  const token = import.meta.env.VITE_BACKEND_TOKEN;
+  return typeof token === "string" && token.trim() ? token.trim() : null;
+}
+
 export async function getBackendInfo(): Promise<BackendInfo> {
   if (cachedInfo) {
     return cachedInfo;
@@ -41,6 +46,7 @@ export async function getBackendInfo(): Promise<BackendInfo> {
       getDefaultBackendUrl();
     const fallbackToken =
       devBackend?.token ||
+      getEnvBackendToken() ||
       localStorage.getItem("polaris.token") ||
       null;
     const info: BackendInfo = {

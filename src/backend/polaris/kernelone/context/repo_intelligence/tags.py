@@ -234,19 +234,110 @@ def _get_ts_parser(language: str) -> Any:
         return None
 
 
+# ---------------------------------------------------------------------------
+# tree-sitter binding compatibility shim
+#
+# Two incompatible tree-sitter Python ABIs exist in the wild and ship through the
+# different language-pack distributions:
+#   * py-tree-sitter (C bindings): node.type / node.children / node.start_point /
+#     node.start_byte are PROPERTIES; tree.root_node is a PROPERTY.
+#   * the Rust-style binding bundled by recent ``tree_sitter_language_pack``: the same
+#     accessors are zero-arg METHODS (node.kind() / node.child_count()+node.child(i) /
+#     node.start_position().row / node.start_byte()); tree.root_node() is a METHOD.
+# Writing the traversal against only one ABI made the *other* raise AttributeError, which
+# get_tags() caught and silently degraded to the regex fallback — so the repo map ran
+# blind to methods/structure on every install with the "wrong" binding. These helpers
+# resolve each accessor regardless of ABI so tree-sitter extraction actually fires.
+# ---------------------------------------------------------------------------
+
+
+def _ts_call(value: Any) -> Any:
+    """Resolve an accessor that may be a property (C ABI) or a zero-arg method (Rust ABI)."""
+    return value() if callable(value) else value
+
+
+def _ts_node_kind(node: Any) -> str:
+    """Node type string across ABIs (``.type`` vs ``.kind()``)."""
+    raw = getattr(node, "type", None)
+    if raw is None:
+        raw = getattr(node, "kind", None)
+    resolved = _ts_call(raw)
+    return str(resolved) if resolved is not None else ""
+
+
+def _ts_node_children(node: Any) -> list[Any]:
+    """Child nodes across ABIs (``.children`` list vs ``.child_count()`` + ``.child(i)``)."""
+    raw = getattr(node, "children", None)
+    if raw is not None:
+        resolved = _ts_call(raw)
+        if resolved is not None:
+            return list(resolved)
+    count_attr = getattr(node, "child_count", None)
+    if count_attr is None:
+        return []
+    try:
+        count = int(_ts_call(count_attr))
+    except (TypeError, ValueError):
+        return []
+    out: list[Any] = []
+    for index in range(count):
+        child = node.child(index)
+        if child is not None:
+            out.append(child)
+    return out
+
+
+def _ts_root_node(tree: Any) -> Any:
+    """Root node across ABIs (``tree.root_node`` property vs ``tree.root_node()`` method)."""
+    return _ts_call(getattr(tree, "root_node", None))
+
+
+def _ts_start_row(node: Any) -> int:
+    """0-based start line across ABIs (``.start_point[0]`` vs ``.start_position().row``)."""
+    point = getattr(node, "start_point", None)
+    if point is not None:
+        resolved = _ts_call(point)
+        try:
+            return int(resolved[0])
+        except (TypeError, KeyError, IndexError):
+            row = getattr(resolved, "row", None)
+            if row is not None:
+                return int(row)
+    pos = getattr(node, "start_position", None)
+    if pos is not None:
+        resolved = _ts_call(pos)
+        row = getattr(resolved, "row", None)
+        if row is not None:
+            return int(row)
+        try:
+            return int(resolved[0])
+        except (TypeError, KeyError, IndexError):
+            return 0
+    return 0
+
+
+def _ts_byte_span(node: Any) -> tuple[int, int]:
+    """``(start_byte, end_byte)`` across ABIs (properties vs methods)."""
+    try:
+        return int(_ts_call(getattr(node, "start_byte", 0))), int(_ts_call(getattr(node, "end_byte", 0)))
+    except (TypeError, ValueError):
+        return 0, 0
+
+
 def _ts_extract_name(content: str, node: Any) -> str:
-    """Extract name from a tree-sitter node."""
+    """Extract name from a tree-sitter node (ABI-agnostic)."""
     name_node = node.child_by_field_name("name")
     if name_node is None:
         name_node = node.child_by_field_name("property")
     if name_node is None:
-        for child in node.children:
-            if child.type == "identifier":
+        for child in _ts_node_children(node):
+            if _ts_node_kind(child) == "identifier":
                 name_node = child
                 break
     if name_node is None:
         return ""
-    return content[name_node.start_byte : name_node.end_byte]
+    start, end = _ts_byte_span(name_node)
+    return content[start:end]
 
 
 def _collect_nodes(
@@ -257,16 +348,16 @@ def _collect_nodes(
     """Collect nodes matching given types."""
     nodes: list[Any] = []
     if root_only:
-        for child in root.children:
-            if child.type in types:
+        for child in _ts_node_children(root):
+            if _ts_node_kind(child) in types:
                 nodes.append(child)
         return nodes
     stack = [root]
     while stack:
         node = stack.pop()
-        if node.type in types:
+        if _ts_node_kind(node) in types:
             nodes.append(node)
-        for child in node.children:
+        for child in _ts_node_children(node):
             stack.append(child)
     return nodes
 
@@ -275,10 +366,10 @@ def _collect_methods(class_node: Any, language: str) -> list[Any]:
     """Collect method nodes from a class node."""
     method_types = _METHOD_TYPES.get(language, ())
     methods: list[Any] = []
-    for child in class_node.children:
-        if child.type in ("block", "body", "class_body"):
-            for grandchild in child.children:
-                if grandchild.type in method_types:
+    for child in _ts_node_children(class_node):
+        if _ts_node_kind(child) in ("block", "body", "class_body"):
+            for grandchild in _ts_node_children(child):
+                if _ts_node_kind(grandchild) in method_types:
                     methods.append(grandchild)
     return methods
 
@@ -436,7 +527,7 @@ class TagsExtractor:
             yield from self._get_tags_fallback(abs_path, rel_path, language)
             return
 
-        root = tree.root_node
+        root = _ts_root_node(tree)
 
         # Extract class definitions
         class_types = _CLASS_TYPES.get(language, ())
@@ -449,7 +540,7 @@ class TagsExtractor:
                     fname=abs_path,
                     name=name,
                     kind=TagKind.DEFINITION,
-                    line=node.start_point[0],
+                    line=_ts_start_row(node),
                 )
 
             # Extract methods
@@ -461,7 +552,7 @@ class TagsExtractor:
                         fname=abs_path,
                         name=method_name,
                         kind=TagKind.DEFINITION,
-                        line=method.start_point[0],
+                        line=_ts_start_row(method),
                     )
 
         # Extract function definitions (top-level)
@@ -475,7 +566,7 @@ class TagsExtractor:
                     fname=abs_path,
                     name=name,
                     kind=TagKind.DEFINITION,
-                    line=node.start_point[0],
+                    line=_ts_start_row(node),
                 )
 
     def _get_tags_fallback(

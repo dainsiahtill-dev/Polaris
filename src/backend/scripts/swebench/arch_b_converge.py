@@ -24,6 +24,7 @@ Emits a convergence trace (per-round JSON) proving the cognitive evolution.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -38,13 +39,19 @@ from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
 from polaris.kernelone.context.truth_log_service import TruthLogService
 
-# reuse the proven solver primitives (official-handler apply + config-driven routing)
+# reuse the proven solver primitives (official-handler apply + config-driven routing +
+# the embedding-free RepoIntelligence localization stack — Reuse First, AGENTS.md §4.2.1)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from polaris_solve_one import (
+    CONTENT_FALLBACK_MIN_RANKED,
     MAX_CONTENT_CHARS,
     _apply_blocks,
     _complete_for_role,
+    _content_ranked_candidates,
     _context_budget_max_tokens,
+    _extract_identifiers,
+    _is_test_path,
+    _ranked_candidates,
 )
 
 HARNESS_PY = "/home/dains/swebench-harness-venv/bin/python"
@@ -200,6 +207,216 @@ def ce_localize(problem: str, tb: str, repo_files: set[str], ws: Path) -> str:
     return ""
 
 
+# ── Embedding-free localization for the empty-traceback-frame case (V12) ──
+# Wires the proven RepoIntelligence ranker (#10) + AST test-symbol idents into the
+# convergence loop so assertion-failure tests (implicated==[]) stop falling through to
+# the alphabetical-truncated ce_localize. See blueprint
+# SWEBENCH_V12_LOCALIZATION_CONVERGENCE_BLUEPRINT_20260607.md.
+
+# Test-framework / stdlib noise that never names the code under test.
+_TEST_IDENT_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "self",
+        "assert",
+        "assertEqual",
+        "assertNotEqual",
+        "assertTrue",
+        "assertFalse",
+        "assertRaises",
+        "assertRaisesRegex",
+        "assertIn",
+        "assertNotIn",
+        "assertIs",
+        "assertIsNot",
+        "assertIsNone",
+        "assertIsNotNone",
+        "assertIsInstance",
+        "assertListEqual",
+        "assertDictEqual",
+        "assertSetEqual",
+        "assertGreater",
+        "assertLess",
+        "assertAlmostEqual",
+        "setUp",
+        "tearDown",
+        "setUpClass",
+        "tearDownClass",
+        "addCleanup",
+        "skipUnless",
+        "skipIf",
+        "pytest",
+        "raises",
+        "fixture",
+        "parametrize",
+        "mark",
+        "Mock",
+        "MagicMock",
+        "patch",
+        "mock",
+        "TestCase",
+        "SimpleTestCase",
+        "expected",
+        "actual",
+        "result",
+        "value",
+        "values",
+        "client",
+        "response",
+        "request",
+        "data",
+        "args",
+        "kwargs",
+        "context",
+        "format",
+        "print",
+        "range",
+        "len",
+        "list",
+        "dict",
+        "tuple",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "None",
+        "True",
+        "False",
+    }
+)
+
+
+def _split_test_node(node_id: str) -> tuple[str, str]:
+    """Parse a FAIL_TO_PASS entry into ``(file-or-module hint, function name)``.
+
+    SWE-bench mixes two node-id dialects, and the unittest one (django) has no ``::`` —
+    failing to parse it dropped the test-symbol localization signal on exactly the largest
+    repos. Handles all three shapes:
+
+      pytest path :  ``tests/test_x.py::Cls::test_m``   -> ("tests/test_x.py", "test_m")
+      pytest dotted: ``pkg.mod::test_m``                -> ("pkg.mod", "test_m")
+      unittest     : ``test_m (pkg.mod.tests.ClassName)`` -> ("pkg.mod.tests", "test_m")
+    """
+    nid = node_id.strip()
+    match = re.match(r"^([A-Za-z_]\w*)\s*\(([\w.]+)\)\s*$", nid)
+    if match:
+        func = match.group(1)
+        parts = match.group(2).split(".")
+        # the trailing CamelCase component is the TestCase class; the rest is the module.
+        module = ".".join(parts[:-1]) if len(parts) > 1 else parts[0]
+        return module, func
+    head = nid.split("::", 1)[0].strip()
+    func = nid.split("::")[-1].strip() if "::" in nid else ""
+    return head, func
+
+
+def _resolve_test_file(node_id: str, repo_files: set[str]) -> str:
+    """Resolve a FAIL_TO_PASS entry to a repo-relative test file path.
+
+    Handles pytest path ids (``path/to/test_x.py::Cls::m``), pytest dotted ids
+    (``tests.pkg.test_x::m``) and django unittest ids (``m (pkg.mod.Class)``), plus
+    ``/testbed/`` prefixes and suffix matches. Returns "" when no repo file matches.
+    """
+    head, _func = _split_test_node(node_id)
+    if head.endswith(".py"):
+        rel = head.lstrip("/").replace("/testbed/", "")
+        if rel in repo_files:
+            return rel
+        for f in repo_files:
+            if f == rel or f.endswith("/" + rel) or rel.endswith("/" + f):
+                return f
+        return ""
+    if not head:
+        return ""
+    dotted = head.replace(".", "/") + ".py"
+    if dotted in repo_files:
+        return dotted
+    for f in repo_files:
+        if f == dotted or f.endswith("/" + dotted):
+            return f
+    return ""
+
+
+def _test_func_nodes(tree: ast.AST, func_name: str) -> list[ast.AST]:
+    """Locate the AST node(s) of the specific failing test function (params stripped)."""
+    base = func_name.split("[", 1)[0].strip()
+    if not base:
+        return []
+    out: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == base:
+            out.append(node)
+    return out
+
+
+def _extract_test_symbols(ws: Path, failing_tests: list[str], repo_files: set[str], limit: int = 20) -> list[str]:
+    """Identifiers referenced by the failing test bodies — the strongest localization signal
+    when the traceback has no source frame.
+
+    Assertion-failure tests (expected exception not raised) point only at the test file, so
+    ``implicated_files`` is empty. The failing test's OWN body, however, names the code under
+    test: the classes it constructs, the functions it calls, the attributes it reads. We
+    AST-parse the specific failing function(s) and collect those names, dropping test-framework
+    noise. Never raises — degrades to whatever it could collect.
+    """
+    scores: dict[str, int] = {}
+    seen_files: set[str] = set()
+    for node_id in failing_tests:
+        rel = _resolve_test_file(node_id, repo_files)
+        if not rel or rel in seen_files:
+            continue
+        seen_files.add(rel)
+        fp = ws / rel
+        if not fp.is_file():
+            continue
+        try:
+            tree = ast.parse(fp.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, ValueError, OSError):
+            continue
+        _, func_name = _split_test_node(node_id)
+        for func_node in _test_func_nodes(tree, func_name):
+            for sub in ast.walk(func_node):
+                if isinstance(sub, ast.Name) and len(sub.id) >= 4:
+                    scores[sub.id] = scores.get(sub.id, 0) + 2
+                elif isinstance(sub, ast.Attribute) and len(sub.attr) >= 4:
+                    scores[sub.attr] = scores.get(sub.attr, 0) + 1
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    return [k for k, _ in ranked if k not in _TEST_IDENT_STOPWORDS][:limit]
+
+
+def _next_hypothesis(candidates: list[str], tried: list[str]) -> str:
+    """First candidate not yet attempted — drives the across-round hypothesis cascade."""
+    tried_set = set(tried)
+    for cand in candidates:
+        if cand not in tried_set:
+            return cand
+    return ""
+
+
+def _candidate_files(problem: str, failing_tests: list[str], repo_files: set[str], ws: Path) -> list[str]:
+    """Ranked non-test source files for the empty-traceback-frame case (embedding-free).
+
+    Fuses idents from BOTH the issue and the failing test bodies, ranks via the proven
+    RepoIntelligence repo map (#10, tree-sitter + PageRank), and falls back to lexical
+    ``git grep`` content ranking when the symbol ranker is thin/degraded. Returns [] if every
+    signal fails (caller then uses ``ce_localize`` as last resort). Never raises.
+    """
+    test_idents = _extract_test_symbols(ws, failing_tests, repo_files)
+    augmented = problem
+    if test_idents:
+        augmented = problem + "\n\nFailing-test symbols: " + " ".join(f"`{t}`" for t in test_idents)
+    ranked, tel = _ranked_candidates(str(ws), augmented)
+    if bool(tel.get("degraded")) or len(ranked) < CONTENT_FALLBACK_MIN_RANKED:
+        merged_idents = list(dict.fromkeys([*_extract_identifiers(augmented), *test_idents]))
+        for cand in _content_ranked_candidates(str(ws), merged_idents):
+            if cand not in ranked:
+                ranked.append(cand)
+    out: list[str] = []
+    for rel in ranked:
+        if rel in repo_files and not _is_test_path(rel) and rel not in out:
+            out.append(rel)
+    return out
+
+
 def _repair_blueprint(target: str, content: str, problem: str, tb: str, context: str) -> tuple[str, int, int]:
     """V11 swap-paradigm repair: Kimi (chief_engineer) turns the REAL pytest traceback into a
     precise, line-level repair spec so the weak local model only transcribes it. This is the
@@ -219,7 +436,8 @@ def _repair_blueprint(target: str, content: str, problem: str, tb: str, context:
         f"CURRENT CONTENT of {target}:\n```\n{content[:MAX_CONTENT_CHARS]}\n```\n"
     )
     try:
-        text, usage = _complete_for_role("chief_engineer", prompt, max_tokens=3072)
+        # Reasoning-model headroom (deepseek-v4-pro spends output tokens thinking first).
+        text, usage = _complete_for_role("chief_engineer", prompt, max_tokens=8192)
     except (RuntimeError, ValueError, OSError, KeyError, TypeError):
         return "", 0, 0
     return text, int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0)
@@ -277,6 +495,10 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
     tokens = {"local_in_est": 0, "local_out_est": 0, "cloud_in": 0, "cloud_out": 0}
     resolved = False
     confirmed_facts: list[str] = []
+    # V12 across-round hypothesis cascade state (empty-traceback-frame localization only).
+    tried_targets: list[str] = []
+    last_hypothesis_target = ""
+    cand_cache: list[str] | None = None
 
     for rnd in range(1, max_rounds + 1):
         patch = current_patch(ws)
@@ -350,6 +572,40 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
         if rnd == max_rounds:
             break
 
+        # ── V12 localization cascade with across-round hypothesis advance ──
+        # If last round's RepoIntelligence hypothesis made no FAIL_TO_PASS progress, revert
+        # that (wrong) edit so patched_files won't pin us to it and the cascade can advance
+        # to the next candidate. Gated to the empty-frame path only (cloud cost unchanged).
+        if last_hypothesis_target and len(f2p_pass) == 0:
+            run_git(["checkout", base_commit, "--", last_hypothesis_target], cwd=ws)
+            patch = current_patch(ws)
+        last_hypothesis_target = ""
+
+        impl = implicated_files(tb, repo_files)
+        loc_source = ""
+        target = impl[0] if impl else ""
+        if target:
+            loc_source = "traceback"
+        if not target:
+            pf = patched_files(patch, repo_files)
+            target = pf[0] if pf else ""
+            if target:
+                loc_source = "patch"
+        if not target:
+            # Empty-frame (assertion-failure) main path: RepoIntelligence-ranked candidates
+            # (#10/#9), advanced across rounds so a wrong pick is retried with the next one.
+            if cand_cache is None:
+                cand_cache = _candidate_files(problem, f2p_fail, repo_files, ws)
+            target = _next_hypothesis(cand_cache, tried_targets)
+            if target:
+                tried_targets.append(target)
+                last_hypothesis_target = target
+                loc_source = "repomap"
+        if not target:
+            target = ce_localize(problem, tb, repo_files, ws)
+            if target:
+                loc_source = "ce"
+
         # ── ContextOS projection -> next-turn messages (NOT raw history concat) ──
         confirmed_facts = [
             f"Round {rnd}: patch applied={applied_ok}; FAIL_TO_PASS {len(f2p_pass)} pass / {len(f2p_fail)} fail.",
@@ -358,9 +614,14 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
             confirmed_facts.append(f"Still failing target tests: {', '.join(t.split('::')[-1] for t in f2p_fail)}.")
         if p2p_fail:
             confirmed_facts.append(f"Regressions introduced (must not happen): {len(p2p_fail)} PASS_TO_PASS now fail.")
-        impl = implicated_files(tb, repo_files)
         if impl:
             confirmed_facts.append(f"Traceback points at source file(s): {', '.join(impl[:3])}.")
+        elif loc_source == "repomap":
+            alts = [c for c in (cand_cache or []) if c != target][:2]
+            confirmed_facts.append(
+                "No traceback source frame (assertion-failure); repo-map localized to "
+                f"{target}" + (f" (alternates: {', '.join(alts)})" if alts else "") + "."
+            )
 
         projection_dict = {
             "system_hint": (
@@ -371,21 +632,13 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
             "turns": [{"role": "assistant", "content": t["summary"]} for t in truth.get_recent(6)],
             "tail_hint": (
                 f"Next target: make {', '.join(t.split('::')[-1] for t in f2p_fail) or 'the failing tests'} pass "
-                f"by fixing {', '.join(impl[:2]) or 'the implicated file'}."
+                f"by fixing {target or ', '.join(impl[:2]) or 'the implicated file'}."
             ),
         }
         messages = projector.project(projection_dict, receipts)
 
         # ── V11 swap-paradigm refine (test-driven): Kimi reads the REAL traceback -> repair
         #    blueprint; local gemma transcribes it into SEARCH/REPLACE. ──
-        # Localization cascade: real traceback frame -> seed-patch files (assertion
-        # tests give no source frame) -> local CE as last resort.
-        target = impl[0] if impl else ""
-        if not target:
-            pf = patched_files(patch, repo_files)
-            target = pf[0] if pf else ""
-        if not target:
-            target = ce_localize(problem, tb, repo_files, ws)
         content = ""
         if target and (ws / target).is_file():
             content = (ws / target).read_text(encoding="utf-8", errors="replace")
@@ -416,13 +669,15 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
                 "role": "director",
                 "round": rnd,
                 "target": target,
+                "loc_source": loc_source,
                 "applied": applied,
                 "apply_path": path,
-                "summary": f"round {rnd} refine: target={target} applied={applied} via {path}",
+                "summary": f"round {rnd} refine: target={target} loc={loc_source} applied={applied} via {path}",
             }
         )
         print(
-            f"[arch-b] {iid} round {rnd} refine: target={target} applied={applied} via {path} ({detail[:80]})",
+            f"[arch-b] {iid} round {rnd} refine: target={target} loc={loc_source} "
+            f"applied={applied} via {path} ({detail[:80]})",
             flush=True,
         )
         if not applied:

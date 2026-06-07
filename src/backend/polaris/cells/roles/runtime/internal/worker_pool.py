@@ -580,12 +580,16 @@ class AsyncWorker:
 
             error_msg = ""
             if not success:
+                exit_code = wait_result.exit_code
+                exit_code_text = f"Exit code: {exit_code}" if exit_code is not None else "Exit code: unknown"
                 if wait_result.timed_out:
                     error_msg = f"Timeout after {task.timeout}s"
                 elif wait_result.error_message:
                     error_msg = str(wait_result.error_message)
+                    if exit_code is not None:
+                        error_msg = f"{error_msg} ({exit_code_text})"
                 else:
-                    error_msg = f"Exit code: {wait_result.exit_code}"
+                    error_msg = exit_code_text
 
             return WorkerResult(
                 task_id=task.task_id,

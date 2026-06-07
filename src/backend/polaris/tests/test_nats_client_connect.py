@@ -108,6 +108,34 @@ def test_nats_config_numeric_fields_follow_environment(
     assert config.connect_timeout == 0.5
 
 
+def test_default_nats_client_disabled_policy_does_not_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _run() -> None:
+        await nats_client_module.close_default_client()
+        monkeypatch.setattr(nats_client_module, "_last_connect_failure_error", None)
+        monkeypatch.setattr(nats_client_module, "_last_connect_failure_at", 0.0)
+        monkeypatch.setenv("KERNELONE_NATS_ENABLED", "0")
+        connect_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+        async def _fake_connect(*args: Any, **kwargs: Any) -> _FakeNATSConnection:
+            connect_calls.append((args, kwargs))
+            return _FakeNATSConnection()
+
+        monkeypatch.setattr(nats_client_module.nats, "connect", _fake_connect)
+
+        client = await nats_client_module.get_default_client()
+
+        assert client.is_disabled is True
+        assert client.is_connected is False
+        assert client.state == nats_client_module.ConnectionState.DISABLED
+        assert connect_calls == []
+
+        await nats_client_module.close_default_client()
+
+    asyncio.run(_run())
+
+
 def test_nats_client_self_heal_does_not_delete_runtime_stream_after_publish_failure() -> None:
     async def _run() -> None:
         client = nats_client_module.NATSClient()

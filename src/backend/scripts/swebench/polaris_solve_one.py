@@ -623,7 +623,10 @@ def _blueprint_for_file(target: str, content: str, problem: str, ce_text: str) -
         f"CURRENT CONTENT of {target}:\n```\n{content[:MAX_CONTENT_CHARS]}\n```\n"
     )
     try:
-        text, usage = _complete_for_role("chief_engineer", prompt, max_tokens=3072)
+        # Generous headroom: the CE may be a reasoning model (deepseek-v4-pro) that spends
+        # output tokens on a thinking block BEFORE the spec — too small a cap truncates mid-
+        # reasoning and yields an empty spec. Only the text block is used downstream.
+        text, usage = _complete_for_role("chief_engineer", prompt, max_tokens=8192)
     except (RuntimeError, ValueError, OSError, KeyError, TypeError):
         return "", 0, 0
     return text, int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0)

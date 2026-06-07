@@ -113,6 +113,29 @@ function cleanupIsolatedE2EHome(target: string): void {
   }
 }
 
+async function closeElectronAppWithTimeout(
+  app: ElectronApplication,
+  appProcess: ReturnType<ElectronApplication["process"]> | null,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const closePromise = app.close().then(
+    () => true,
+    () => true,
+  );
+  const closed = await Promise.race([
+    closePromise,
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+  if (closed) {
+    return;
+  }
+  try {
+    appProcess?.kill();
+  } catch {
+    // Ignore teardown kill failures.
+  }
+}
+
 function resolveFirstExistingPath(candidates: string[], label: string): string {
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
@@ -353,6 +376,8 @@ export const test = base.extend<Fixtures>({
       KERNELONE_E2E: "1",
       KERNELONE_E2E_ALLOW_MULTI_INSTANCE: "1",
       KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK: process.env.KERNELONE_RATE_LIMIT_EXEMPT_LOOPBACK || "1",
+      KERNELONE_NATS_ENABLED: process.env.KERNELONE_NATS_ENABLED || "0",
+      KERNELONE_NATS_REQUIRED: process.env.KERNELONE_NATS_REQUIRED || "0",
     };
     delete env.ELECTRON_RUN_AS_NODE;
 
@@ -434,7 +459,7 @@ export const test = base.extend<Fixtures>({
       appProcess?.stdout?.off("data", onStdout);
       appProcess?.stderr?.off("data", onStderr);
       if (app) {
-        await app.close();
+        await closeElectronAppWithTimeout(app, appProcess);
       }
       if (devUrl.devServer) {
         await devUrl.devServer.close();

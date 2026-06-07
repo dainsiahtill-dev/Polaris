@@ -77,6 +77,13 @@ class ConfigLoader:
         "jsonl.flush_interval_sec": 1.0,
         "jsonl.flush_batch": 50,
         "jsonl.max_buffer": 2000,
+        "nats.enabled": True,
+        "nats.required": True,
+        "nats.url": "nats://127.0.0.1:4222",
+        "nats.connect_timeout_sec": 3.0,
+        "nats.reconnect_wait_sec": 1.0,
+        "nats.max_reconnect_attempts": -1,
+        "nats.stream_name": "HP_RUNTIME",
     }
 
     # Environment variable mappings
@@ -119,6 +126,23 @@ class ConfigLoader:
             lambda v: v.lower() in ("1", "true", "yes", "on"),
         ),
         "runtime.ramdisk_root": ("KERNELONE_RAMDISK_ROOT", None, None),
+        "nats.enabled": (
+            "KERNELONE_NATS_ENABLED",
+            None,
+            lambda v: v.lower() in ("1", "true", "yes", "on"),
+        ),
+        "nats.required": (
+            "KERNELONE_NATS_REQUIRED",
+            None,
+            lambda v: v.lower() in ("1", "true", "yes", "on"),
+        ),
+        "nats.url": ("KERNELONE_NATS_URL", None, None),
+        "nats.user": ("KERNELONE_NATS_USER", None, None),
+        "nats.password": ("KERNELONE_NATS_PASSWORD", None, None),
+        "nats.connect_timeout_sec": ("KERNELONE_NATS_CONNECT_TIMEOUT", None, float),
+        "nats.reconnect_wait_sec": ("KERNELONE_NATS_RECONNECT_WAIT", None, float),
+        "nats.max_reconnect_attempts": ("KERNELONE_NATS_MAX_RECONNECT", None, int),
+        "nats.stream_name": ("KERNELONE_NATS_STREAM_NAME", None, None),
         "workspace": ("KERNELONE_WORKSPACE", None, None),
         "self_upgrade_mode": (
             "KERNELONE_SELF_UPGRADE_MODE",
