@@ -1702,6 +1702,17 @@ def _print_baseline_pull_human(payload: Mapping[str, Any]) -> None:
 
 
 def run_agentic_eval_command(args: argparse.Namespace) -> int:
+    # The tool-calling matrix measures the MODEL's own tool-call sequence. Speculative
+    # execution is a latency optimization that transforms the observed calls — it
+    # dedups/adopts repeated reads (failing required_tool_call_count) and aborts
+    # post-hoc recovered writes — corrupting that measurement. Disable it for the
+    # matrix BEFORE kernel bootstrap reads the flag; respect an explicit user override.
+    _eval_suite = _normalize_suite_name(getattr(args, "suite", "agentic_benchmark"))
+    _prev_speculative = os.environ.get("ENABLE_SPECULATIVE_EXECUTION")
+    _disable_speculative = _eval_suite == "tool_calling_matrix" and _prev_speculative is None
+    if _disable_speculative:
+        os.environ["ENABLE_SPECULATIVE_EXECUTION"] = "0"
+
     # Ensure minimal kernel bindings (including audit store factory) are registered.
     # Without this, audit events cannot be persisted to disk.
     from polaris.bootstrap.assembly import assemble_core_services
@@ -1890,16 +1901,6 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     # Get mode from args - default handled by argparse, but safe fallback
     mode = str(getattr(args, "mode", "agentic") or "agentic").strip().lower() or "agentic"
 
-    # The tool-calling matrix measures the MODEL's own tool-call sequence. Speculative
-    # execution is a latency optimization that transforms the observed calls — it
-    # dedups/adopts repeated reads (failing required_tool_call_count) and aborts
-    # post-hoc recovered writes — which corrupts that measurement. Default it off for
-    # the matrix so checks see the model's actual calls; respect an explicit user
-    # override via the environment.
-    _prev_speculative = os.environ.get("ENABLE_SPECULATIVE_EXECUTION")
-    _disable_speculative = suite == "tool_calling_matrix" and _prev_speculative is None
-    if _disable_speculative:
-        os.environ["ENABLE_SPECULATIVE_EXECUTION"] = "0"
     try:
         if suite == "tool_calling_matrix":
             # tool_calling_matrix uses its own runner (ignores mode)
