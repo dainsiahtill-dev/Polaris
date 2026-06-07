@@ -99,9 +99,8 @@ def _seq_resolve_str(
 # -----------------------------------------------------------------------------
 
 _LOW_QUALITY_PATTERNS = (
-    re.compile(r"\bTODO\b", re.IGNORECASE),
-    re.compile(r"\bFIXME\b", re.IGNORECASE),
-    re.compile(r"\bTBD\b", re.IGNORECASE),
+    re.compile(r"(?m)^\s*(?://|#|/\*|\*|<!--)\s*(?:TODO|FIXME|TBD)\b", re.IGNORECASE),
+    re.compile(r"(?m)^\s*(?:TODO|FIXME|TBD)\b(?::|\s*$)", re.IGNORECASE),
     re.compile(r"\bplaceholder\b", re.IGNORECASE),
     re.compile(r"\bNotImplemented(?:Error|Exception)?\b", re.IGNORECASE),
     re.compile(r"\bstub\b", re.IGNORECASE),

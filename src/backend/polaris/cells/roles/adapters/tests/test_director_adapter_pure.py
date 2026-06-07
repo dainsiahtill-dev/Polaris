@@ -35,6 +35,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
 )
+from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 
 # ---------------------------------------------------------------------------
@@ -49,6 +50,57 @@ def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = Non
     else:
         adapter = DirectorAdapter(workspace=str(tmp_path), task_board=task_board, task_runtime=task_runtime)
     return adapter
+
+
+def test_validate_generated_output_allows_todo_status_enum_value(tmp_path: Any) -> None:
+    executor = DirectorPatchExecutor(str(tmp_path))
+    target = tmp_path / "src" / "models" / "task.model.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "export enum TaskStatus {\n"
+        "  Todo = 'TODO',\n"
+        "  InProgress = 'IN_PROGRESS',\n"
+        "  Done = 'DONE',\n"
+        "}\n\n"
+        "export interface Task {\n"
+        "  id: string;\n"
+        "  tenant_id: string;\n"
+        "  status: TaskStatus;\n"
+        "  version: number;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    error = executor.validate_generated_output(
+        {
+            "subject": "Task model version status",
+            "description": "Implement tenant task status and version model",
+        },
+        ["src/models/task.model.ts"],
+    )
+
+    assert error is None
+
+
+def test_validate_generated_output_rejects_todo_comment(tmp_path: Any) -> None:
+    executor = DirectorPatchExecutor(str(tmp_path))
+    target = tmp_path / "src" / "models" / "task.model.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "// TODO implement task versioning\nexport interface Task {\n  tenant_id: string;\n  version: number;\n}\n",
+        encoding="utf-8",
+    )
+
+    error = executor.validate_generated_output(
+        {
+            "subject": "Task model version status",
+            "description": "Implement tenant task status and version model",
+        },
+        ["src/models/task.model.ts"],
+    )
+
+    assert error is not None
+    assert "generic/placeholder content detected" in error
 
 
 # ---------------------------------------------------------------------------
@@ -702,6 +754,498 @@ class TestDirectorFailureClosure:
         assert adapter_result.get("materialization_error") == "director_materialization_quality_failed"
 
     @pytest.mark.asyncio
+    async def test_execute_repairs_npm_default_failing_test_script_before_failing_quality_gate(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Build web e2e testing workspace",
+            description="Create a runnable web e2e workspace with source code and tests.",
+            metadata={
+                "target_files": [
+                    "package.json",
+                    "src/index.js",
+                    "tests/index.test.js",
+                    "scripts/test.mjs",
+                ],
+                "scope_paths": ["package.json", "src", "tests", "scripts"],
+                "steps": ["Create package scripts", "Create source module", "Create executable tests"],
+                "acceptance": ["npm test exits 0 and exercises the web e2e source module"],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _gemma_like_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_labels.append(str(kwargs.get("stage_label") or ""))
+            package_json = tmp_path / "package.json"
+            package_json.write_text(
+                """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"Error: no test specified\\" && exit 1",
+    "start": "node src/index.js"
+  }
+}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            if stage_labels[-1] == "quality_repair":
+                package_json.write_text(
+                    """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs",
+    "start": "node src/index.js"
+  }
+}
+""".strip()
+                    + "\n",
+                    encoding="utf-8",
+                )
+                src = tmp_path / "src" / "index.js"
+                src.parent.mkdir(parents=True, exist_ok=True)
+                src.write_text(
+                    "export function createWebE2eStatus() {\n  return { name: 'web-e2e-workspace', ready: true };\n}\n",
+                    encoding="utf-8",
+                )
+                tests = tmp_path / "tests" / "index.test.js"
+                tests.parent.mkdir(parents=True, exist_ok=True)
+                tests.write_text(
+                    "import { createWebE2eStatus } from '../src/index.js';\n"
+                    "export function runWebE2eChecks() {\n"
+                    "  const status = createWebE2eStatus();\n"
+                    "  if (!status.ready) throw new Error('web e2e status not ready');\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+                script = tmp_path / "scripts" / "test.mjs"
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.write_text(
+                    "import { runWebE2eChecks } from '../tests/index.test.js';\n"
+                    "runWebE2eChecks();\n"
+                    "console.log('web e2e checks passed');\n",
+                    encoding="utf-8",
+                )
+                changed = [
+                    "package.json",
+                    "src/index.js",
+                    "tests/index.test.js",
+                    "scripts/test.mjs",
+                ]
+            else:
+                changed = ["package.json"]
+            return {
+                "content": "Wrote workspace files.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": path},
+                    }
+                    for path in changed
+                ],
+            }
+
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("direct fallback should not run after authoritative write evidence")
+
+        adapter._invoke_role_dialogue_with_timeout = _gemma_like_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-package-quality-repair"},
+        )
+
+        assert result["success"] is True
+        assert stage_labels == ["first_call", "quality_repair"]
+        assert result["tools_executed"] >= 5
+        assert "package.json" in result["changed_files"]
+        assert "Error: no test specified" not in (tmp_path / "package.json").read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_npm_default_test_script_deterministically(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Create package manifest",
+            description="Create a package.json with a runnable local test script.",
+            metadata={
+                "target_files": ["package.json"],
+                "scope_paths": ["package.json"],
+                "steps": ["Create package manifest"],
+                "acceptance": ["npm test runs a local package manifest check"],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _bad_package_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_labels.append(str(kwargs.get("stage_label") or ""))
+            package_json = tmp_path / "package.json"
+            package_json.write_text(
+                """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"Error: no test specified\\" && exit 0"
+  }
+}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote package manifest.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "package.json"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _bad_package_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-package-deterministic-test-script-repair"},
+        )
+
+        package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert stage_labels == ["first_call"]
+        assert "Error: no test specified" not in package_text
+        assert "package manifest check passed" in package_text
+        assert "package.json" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_typescript_return_object_property_semicolon(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Create task model summary",
+            description="Create a task model summary function with valid TypeScript syntax.",
+            metadata={
+                "target_files": ["src/models/task.ts"],
+                "scope_paths": ["src/models/task.ts"],
+                "steps": ["Create task model"],
+                "acceptance": ["src/models/task.ts typechecks"],
+            },
+        )
+
+        async def _bad_typescript_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target = tmp_path / "src" / "models" / "task.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                """
+export function summary() {
+  const lanes: Record<string, number> = {};
+  return {
+    total: 1,
+    lanes;
+  };
+}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote task model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/task.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _bad_typescript_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-typescript-return-object-semicolon-repair"},
+        )
+
+        repaired = (tmp_path / "src" / "models" / "task.ts").read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert "    lanes,\n" in repaired
+        assert "    lanes;\n" not in repaired
+        assert "src/models/task.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_declares_runtime_dependency_when_quality_repair_repeats_undeclared_import(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "tenant-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {}
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Define tenant model",
+            description="Create the tenant model with runtime imports declared in package.json.",
+            metadata={
+                "target_files": ["src/models/tenant.model.ts"],
+                "scope_paths": ["src/models/tenant.model.ts", "package.json"],
+                "steps": ["Create tenant model"],
+                "acceptance": ["No undeclared runtime imports remain"],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _repeating_gemma_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_labels.append(str(kwargs.get("stage_label") or ""))
+            target = tmp_path / "src" / "models" / "tenant.model.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "import { Entity, OneToMany, PrimaryColumn } from 'typeorm';\n"
+                "@Entity('tenants')\n"
+                "export class TenantModel {\n"
+                "  @PrimaryColumn()\n"
+                "  id: string;\n"
+                "\n"
+                "  @OneToMany(() => Task, (task) => task.tenant)\n"
+                "  tasks: Task[];\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote tenant model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/tenant.model.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _repeating_gemma_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-undeclared-import-deterministic-repair"},
+        )
+
+        package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        tenant_text = (tmp_path / "src" / "models" / "tenant.model.ts").read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert stage_labels == ["first_call"]
+        assert '"typeorm":' in package_text
+        assert "from 'typeorm'" not in tenant_text
+        assert "@Entity" not in tenant_text
+        assert "tasks: unknown[] = [];" in tenant_text
+        assert "package.json" in result["changed_files"]
+        assert "src/models/tenant.model.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_missing_declared_target_from_nearby_existing_module(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        existing_task = tmp_path / "src" / "models" / "task.ts"
+        existing_task.parent.mkdir(parents=True, exist_ok=True)
+        existing_task.write_text(
+            "export interface TaskModel {\n  id: string;\n  tenantId: string;\n  title: string;\n}\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Define tenant and task model files",
+            description="Create explicit tenant.model.ts and task.model.ts model files.",
+            metadata={
+                "target_files": ["src/models/tenant.model.ts", "src/models/task.model.ts"],
+                "scope_paths": ["src/models"],
+                "steps": ["Create tenant and task model files"],
+                "acceptance": ["Both declared target model files exist"],
+            },
+        )
+
+        async def _tenant_only_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target = tmp_path / "src" / "models" / "tenant.model.ts"
+            target.write_text(
+                "export interface TenantModel {\n  id: string;\n  name: string;\n}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote tenant model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/tenant.model.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _tenant_only_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-missing-target-nearby-repair"},
+        )
+
+        repaired_task = tmp_path / "src" / "models" / "task.model.ts"
+        assert result["success"] is True
+        assert repaired_task.read_text(encoding="utf-8") == existing_task.read_text(encoding="utf-8")
+        assert "src/models/task.model.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_does_not_copy_low_quality_nearby_declared_target_source(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        existing_task = tmp_path / "src" / "models" / "task.ts"
+        existing_task.parent.mkdir(parents=True, exist_ok=True)
+        existing_task.write_text(
+            "export const taskScenario = { tags: ['audit-seed'] };\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Define tenant and task model files",
+            description="Create explicit tenant.model.ts and task.model.ts model files.",
+            metadata={
+                "target_files": ["src/models/tenant.model.ts", "src/models/task.model.ts"],
+                "scope_paths": ["src/models"],
+                "steps": ["Create tenant and task model files"],
+                "acceptance": ["Both declared target model files exist"],
+            },
+        )
+
+        async def _tenant_only_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target = tmp_path / "src" / "models" / "tenant.model.ts"
+            target.write_text(
+                "export interface TenantModel {\n  id: string;\n  tenantId: string;\n}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote tenant model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/tenant.model.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _tenant_only_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-missing-target-dirty-source-repair"},
+        )
+
+        repaired_text = (tmp_path / "src" / "models" / "task.model.ts").read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert "audit-seed" not in repaired_text
+        assert "export class TaskModel" in repaired_text
+        assert "src/models/task.model.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_synthesizes_missing_declared_targets_without_nearby_source(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Design tenant user permission model files",
+            description="Create explicit tenant, user, and permission model files.",
+            metadata={
+                "target_files": [
+                    "src/models/tenant.ts",
+                    "src/models/user.ts",
+                    "src/models/permission.ts",
+                ],
+                "scope_paths": ["src/models"],
+                "steps": ["Create tenant, user, and permission model files"],
+                "acceptance": ["All declared model files exist"],
+            },
+        )
+
+        async def _tenant_only_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target = tmp_path / "src" / "models" / "tenant.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "export interface TenantRecord {\n  id: string;\n  tenantId: string;\n}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote tenant model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/tenant.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _tenant_only_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-missing-target-synthesized-repair"},
+        )
+
+        user_text = (tmp_path / "src" / "models" / "user.ts").read_text(encoding="utf-8")
+        permission_text = (tmp_path / "src" / "models" / "permission.ts").read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert "export class User" in user_text
+        assert "export class Permission" in permission_text
+        assert "tenantId: string" in user_text
+        assert "tenantId: string" in permission_text
+        assert "src/models/user.ts" in result["changed_files"]
+        assert "src/models/permission.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
     async def test_execute_fails_when_changed_file_has_no_domain_signal(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         target = tmp_path / "src" / "fish" / "arena.ts"
@@ -971,6 +1515,18 @@ class TestDirectorFailureClosure:
 
     @pytest.mark.asyncio
     async def test_execute_preflights_existing_verification_scope(self, tmp_path: Any) -> None:
+        source = tmp_path / "src" / "server" / "room-state.ts"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            "export interface RoomStateRecord { id: string; roomId: string; }\n"
+            "export function validateRoomStateRecord(record: RoomStateRecord): string[] {\n"
+            "  const failures: string[] = [];\n"
+            "  if (!record.id) failures.push('missing id');\n"
+            "  if (!record.roomId) failures.push('missing roomId');\n"
+            "  return failures;\n"
+            "}\n",
+            encoding="utf-8",
+        )
         target = tmp_path / "tests" / "integration" / "multiplayer-flow.test.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(

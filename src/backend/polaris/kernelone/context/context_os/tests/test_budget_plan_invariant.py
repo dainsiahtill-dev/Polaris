@@ -165,6 +165,20 @@ class TestBudgetPlanInvariant:
         with pytest.raises(BudgetExceededError):
             plan.validate_invariants()
 
+    def test_recorded_budget_validation_error_does_not_bypass_invariant(self) -> None:
+        """A recorded planner overrun must still fail when the projection is over window."""
+        plan = self._make_budget_plan(
+            model_context_window=16384,
+            expected_next_input_tokens=24340,
+            validation_error=(
+                "BudgetPlan invariant violated: expected_next_input_tokens "
+                "(24340) exceeds model_context_window (16384) by 7956 tokens"
+            ),
+        )
+
+        with pytest.raises(BudgetExceededError):
+            plan.validate_invariants()
+
     def test_negative_expected_tokens_passes(self) -> None:
         """Negative expected_next_input_tokens should pass (edge case)."""
         plan = self._make_budget_plan(

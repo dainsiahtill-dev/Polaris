@@ -11,6 +11,11 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
+    has_textual_tool_calls,
+    recover_textual_tool_calls,
+    strip_textual_tool_call_markers,
+)
 from polaris.kernelone.telemetry import debug_stream as _debug_stream_module
 from polaris.kernelone.trace import get_trace_id
 
@@ -69,6 +74,31 @@ def normalize_stream_usage(raw_usage: dict[str, Any] | None) -> Usage:
         total_tokens=max(0, total_tokens),
         estimated=False,
     )
+
+
+def _requested_tool_names(invoke_cfg: dict[str, Any]) -> set[str]:
+    """Extract the set of tool names actually sent in the request (lowercased).
+
+    Used to gate textual tool-call recovery: a recovered call is only accepted
+    when its name is in the tool set the request advertised, so recovery cannot
+    fabricate calls for tools the model was never offered.
+    """
+    tools = invoke_cfg.get("tools")
+    names: set[str] = set()
+    if not isinstance(tools, list):
+        return names
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        name = ""
+        if isinstance(function, dict):
+            name = str(function.get("name") or "").strip()
+        if not name:
+            name = str(tool.get("name") or "").strip()
+        if name:
+            names.add(name.lower())
+    return names
 
 
 class StreamExecutor:
@@ -465,6 +495,26 @@ class StreamExecutor:
                     )
             yield AIStreamEvent.error_event(str(exc))
             return
+
+        # Compatibility recovery for models/servers without native function-calling
+        # (e.g. Gemma served by llama.cpp): the provider returned NO native tool
+        # calls but the assembled content carries a textual tool-call format
+        # `<|tool_call>call:NAME{...}`. Recover them into canonical tool_call events.
+        # Gated on (1) no native tool calls, (2) tools were actually requested,
+        # (3) recovered tool name is in the requested set — native-FC providers
+        # (deepseek/kimi) return native tool_calls so this never triggers.
+        if not emitted_tool_calls and collected_output and has_textual_tool_calls(collected_output):
+            allowed_tool_names = _requested_tool_names(invoke_cfg)
+            if allowed_tool_names:
+                recovered = recover_textual_tool_calls(collected_output, allowed_tool_names)
+                for recovered_call in recovered:
+                    emitted_tool_calls.append(dict(recovered_call))
+                    yield AIStreamEvent.tool_call_event(
+                        dict(recovered_call),
+                        meta={"provider": provider_type, "trace_id": trace_id, "textual_recovery": True},
+                    )
+                if recovered:
+                    collected_output = strip_textual_tool_call_markers(collected_output, allowed_tool_names)
 
         latency_ms = int((time.time() - start_time) * 1000)
         if self.telemetry:

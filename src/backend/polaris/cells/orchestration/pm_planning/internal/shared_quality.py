@@ -403,6 +403,7 @@ _TS_ERROR_RE = re.compile(r"error (TS\d+):")
 _TS_MODULE_MISSING_RE = re.compile(r"error TS(?:2307|2792): Cannot find module ['\"]([^'\"]+)['\"]")
 _TS_TYPES_MISSING_RE = re.compile(r"error TS2688: Cannot find type definition file for ['\"]([^'\"]+)['\"]")
 _TS_DECL_MISSING_RE = re.compile(r"error TS7016: Could not find a declaration file for module ['\"]([^'\"]+)['\"]")
+_TEST_FRAMEWORK_TYPE_NOISE_MODULES: tuple[str, ...] = ("@jest/globals", "jest", "vitest", "mocha")
 
 
 def _resolve_repo_tsc() -> str:
@@ -471,7 +472,15 @@ def _ts_error_is_declared_dep_noise(line: str, declared_deps: set[str]) -> bool:
         return False
     parts = module_name.split("/")
     root = "/".join(parts[:2]) if module_name.startswith("@") and len(parts) >= 2 else parts[0]
+    if root in _TEST_FRAMEWORK_TYPE_NOISE_MODULES and _ts_error_originates_from_test_file(line):
+        return True
     return module_name in declared_deps or root in declared_deps
+
+
+def _ts_error_originates_from_test_file(line: str) -> bool:
+    path_hint = str(line or "").split(":", 1)[0].replace("\\", "/").lower()
+    name = os.path.basename(path_hint)
+    return "/tests/" in f"/{path_hint}" or "/test/" in f"/{path_hint}" or ".test." in name or ".spec." in name
 
 
 def _run_typescript_typecheck(workspace_full: str) -> tuple[bool, str, list[str]] | None:

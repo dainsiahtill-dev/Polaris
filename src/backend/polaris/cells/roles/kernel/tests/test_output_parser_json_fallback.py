@@ -257,16 +257,14 @@ class TestOutputParserJSONFallbackException:
 
         assert result == []
 
-    def test_json_without_arguments_field(self) -> None:
-        """JSON without arguments field should return call with empty args."""
+    def test_json_without_arguments_field_is_not_tool_call(self) -> None:
+        """Bare JSON name metadata should not be parsed as a tool call."""
         parser = OutputParser()
         content = '{"name": "ping"}'
 
         result = parser.parse_execution_tool_calls(content=content)
 
-        assert len(result) == 1
-        assert result[0].tool == "ping"
-        assert result[0].args == {}
+        assert result == []
 
     def test_empty_content(self) -> None:
         """Empty content should return empty list."""
@@ -511,3 +509,41 @@ class TestOutputParserJSONFallbackIntegration:
         assert len(result) == 1
         assert result[0].args["path"] == "中文文件.txt"
         assert result[0].args["content"] == "Hello 世界"
+
+
+class TestOutputParserTextualRecoveryFallback:
+    """Layer-3 textual recovery for non-function-calling models (Gemma format)."""
+
+    GEMMA = '<|tool_call>call:repo_read_head{file:<|"|>src/utils/helpers.py<|"|>,n:50}<tool_call|>'
+
+    def test_textual_recovery_when_no_native_or_json(self) -> None:
+        parser = OutputParser()
+        result = parser.parse_execution_tool_calls(content=self.GEMMA)
+        assert len(result) == 1
+        assert result[0].tool == "repo_read_head"
+        assert result[0].args == {"file": "src/utils/helpers.py", "n": 50}
+
+    def test_native_calls_take_precedence_over_textual(self) -> None:
+        parser = OutputParser()
+        native_calls = [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "native_tool", "arguments": json.dumps({"key": "value"})},
+            }
+        ]
+        result = parser.parse_execution_tool_calls(content=self.GEMMA, native_tool_calls=native_calls)
+        assert len(result) == 1
+        assert result[0].tool == "native_tool"
+
+    def test_textual_recovery_respects_allowed_tool_names(self) -> None:
+        parser = OutputParser()
+        result = parser.parse_execution_tool_calls(
+            content=self.GEMMA,
+            allowed_tool_names=["read_file"],  # repo_read_head not allowed
+        )
+        assert result == []
+
+    def test_plain_text_yields_no_tool_calls(self) -> None:
+        parser = OutputParser()
+        assert parser.parse_execution_tool_calls(content="Just a normal answer.") == []

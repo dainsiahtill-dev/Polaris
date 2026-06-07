@@ -20,6 +20,10 @@ from typing import TYPE_CHECKING, Any
 
 # Import canonical ToolCall for P0-002 unification
 from polaris.kernelone.llm.contracts.tool import ToolCall
+from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
+    has_textual_tool_calls,
+    recover_textual_tool_calls,
+)
 
 # Import canonical dangerous pattern detection
 from polaris.kernelone.security.dangerous_patterns import (
@@ -185,6 +189,20 @@ class OutputParser:
                     seen,
                     tool_name=call.tool,
                     arguments=call.args,
+                    allowed=allowed,
+                )
+
+        # Layer 3: textual tool-call recovery for models/servers without native
+        # function-calling (e.g. Gemma's `<|tool_call>call:NAME{...}` returned as
+        # plain content). Gated on no native calls, no JSON calls, and a textual
+        # marker present — native-FC providers never reach here.
+        if not native_calls and not normalized and content and has_textual_tool_calls(content):
+            for recovered in recover_textual_tool_calls(content, allowed_tool_names):
+                self._append_unique_tool_call(
+                    normalized,
+                    seen,
+                    tool_name=str(recovered.get("tool") or ""),
+                    arguments=dict(recovered.get("arguments") or {}),
                     allowed=allowed,
                 )
 

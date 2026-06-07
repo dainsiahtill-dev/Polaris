@@ -103,6 +103,124 @@ def test_scan_detects_structural_verification_scripts(tmp_path: Path) -> None:
     assert "build verification completed" in errors[0]
 
 
+def test_scan_detects_npm_default_failing_test_script(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"Error: no test specified\\" && exit 1"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert errors
+    assert "npm default failing test script" in errors[0]
+
+
+def test_scan_detects_npm_no_test_specified_even_when_exit_code_is_zero(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"Error: no test specified\\" && exit 0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert errors
+    assert "npm default failing test script" in errors[0]
+
+
+def test_scan_detects_return_object_property_semicolon(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "models" / "task.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        """
+export function summary() {
+  const lanes: Record<string, number> = {};
+  return {
+    total: 1,
+    lanes;
+  };
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/models/task.ts"])
+
+    assert errors
+    assert "semicolon-terminated property" in errors[0]
+
+
+def test_scan_detects_python_runtime_masquerading_as_npm_manifest(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "main": "src/main.py",
+  "scripts": {
+    "start": "python src/main.py"
+  },
+  "dependencies": {
+    "pytest": "^7.0.0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("Python runtime entrypoint" in error for error in errors)
+    assert any("Python command" in error for error in errors)
+    assert any("Python package dependency 'pytest'" in error for error in errors)
+
+
+def test_scan_detects_unresolved_runtime_typescript_imports(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        '{"name":"tenant-workspace","scripts":{"test":"node scripts/test.mjs"}}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "middleware" / "tenant.middleware.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "import { Request, Response, NextFunction } from 'express';\n"
+        "import { RequestContext } from '../context';\n"
+        "export const tenantMiddleware = true;\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["src/middleware/tenant.middleware.ts"],
+    )
+
+    assert any("undeclared runtime import 'express'" in error for error in errors)
+    assert any("unresolved relative import '../context'" in error for error in errors)
+
+
 def test_scan_detects_patch_residue_marker(tmp_path: Path) -> None:
     target = tmp_path / "src" / "assets" / "card-assets.ts"
     target.parent.mkdir(parents=True, exist_ok=True)

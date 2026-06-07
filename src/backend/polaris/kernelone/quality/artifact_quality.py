@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Iterable
@@ -69,6 +70,44 @@ _PATCH_RESIDUE_RE = re.compile(
     r"(?m)^\s*(?:<{4,7}\s*SEARCH\b|>{4,7}\s*REPLACE\b|END\s+PATCH_FILE\b|PATCH_FILE(?::|\s+))",
     re.IGNORECASE,
 )
+_TS_RETURN_OBJECT_BLOCK_RE = re.compile(r"return\s*\{(?P<body>.*?)^\s*\};", re.DOTALL | re.MULTILINE)
+_TS_OBJECT_PROPERTY_SEMICOLON_RE = re.compile(r"(?m)^\s*[A-Za-z_$][\w$]*\s*;\s*$")
+_IMPORT_SPECIFIER_RE = re.compile(
+    r"(?:^|\n)\s*(?:import\s+(?:type\s+)?(?:[^'\"\n]*?\s+from\s+)?|export\s+[^'\"\n]*?\s+from\s+)"
+    r"[\"']([^\"']+)[\"']",
+    re.IGNORECASE,
+)
+_TS_JS_SOURCE_EXTS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
+_NODE_BUILTIN_IMPORTS = {
+    "assert",
+    "buffer",
+    "child_process",
+    "crypto",
+    "events",
+    "fs",
+    "http",
+    "https",
+    "os",
+    "path",
+    "process",
+    "stream",
+    "timers",
+    "url",
+    "util",
+    "zlib",
+}
+_TEST_FRAMEWORK_IMPORTS = {"@jest/globals", "jest", "vitest", "mocha"}
+_PYTHON_COMMAND_IN_NPM_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(python3?|pytest|pip3?)(?:$|[\s;&|])", re.IGNORECASE)
+_PYTHON_PACKAGE_MANIFEST_DEPENDENCIES = {
+    "django",
+    "fastapi",
+    "flask",
+    "pandas",
+    "pydantic",
+    "pytest",
+    "sqlalchemy",
+    "uvicorn",
+}
 
 
 def scan_workspace_artifact_quality(
@@ -102,7 +141,7 @@ def scan_workspace_artifact_quality(
             if len(errors) >= 50:
                 return errors
             relative_path = full_path.relative_to(root_full).as_posix()
-            errors.extend(_scan_file(full_path, relative_path))
+            errors.extend(_scan_file(root_full, full_path, relative_path))
     except (OSError, RuntimeError, ValueError) as exc:
         return [f"Artifact quality scan failed: {exc}"]
     return errors
@@ -156,16 +195,20 @@ def _iter_target_files(root_full: Path, relative_paths: Iterable[str] | None) ->
 
 
 def _is_source_artifact(path: Path) -> bool:
-    return path.suffix.lower() in _ARTIFACT_QUALITY_SOURCE_EXTS
+    return path.name.lower() == "package.json" or path.suffix.lower() in _ARTIFACT_QUALITY_SOURCE_EXTS
 
 
-def _scan_file(full_path: Path, relative_path: str) -> list[str]:
+def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str]:
     try:
         text = full_path.read_text(encoding="utf-8", errors="replace")[:1_000_000]
     except (OSError, RuntimeError, ValueError):
         return []
 
     errors: list[str] = []
+    if os.path.basename(relative_path).lower() == "package.json":
+        errors.extend(_scan_package_manifest(text, relative_path))
+    errors.extend(_scan_typescript_imports(root_full, full_path, text, relative_path))
+    errors.extend(_scan_typescript_syntax_red_flags(full_path, text, relative_path))
     for marker in _DETERMINISTIC_SCAFFOLD_MARKERS:
         if marker in text:
             errors.append(f"Artifact quality scan failed: deterministic scaffold marker {marker!r} in {relative_path}")
@@ -187,6 +230,138 @@ def _scan_file(full_path: Path, relative_path: str) -> list[str]:
                 f"tests in {relative_path} (count={trivial_count})"
             )
     return errors
+
+
+def _scan_typescript_syntax_red_flags(full_path: Path, text: str, relative_path: str) -> list[str]:
+    if full_path.suffix.lower() not in _TS_JS_SOURCE_EXTS:
+        return []
+    for match in _TS_RETURN_OBJECT_BLOCK_RE.finditer(text):
+        if _TS_OBJECT_PROPERTY_SEMICOLON_RE.search(match.group("body")):
+            return [
+                "Artifact quality scan failed: TypeScript return object contains "
+                f"semicolon-terminated property in {relative_path}"
+            ]
+    return []
+
+
+def _scan_package_manifest(text: str, relative_path: str) -> list[str]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    errors: list[str] = []
+    scripts = payload.get("scripts")
+    if isinstance(scripts, dict):
+        test_script = str(scripts.get("test") or "")
+        lowered = test_script.lower()
+        if "no test specified" in lowered:
+            errors.append(f"Artifact quality scan failed: npm default failing test script in {relative_path}")
+        for script_name, script_value in scripts.items():
+            script_text = str(script_value or "")
+            if _PYTHON_COMMAND_IN_NPM_SCRIPT_RE.search(script_text):
+                errors.append(
+                    "Artifact quality scan failed: npm package manifest contains "
+                    f"Python command in script {str(script_name)!r} in {relative_path}"
+                )
+                break
+    main_entry = str(payload.get("main") or "").strip().replace("\\", "/").lower()
+    if main_entry.endswith(".py"):
+        errors.append(
+            f"Artifact quality scan failed: npm package manifest contains Python runtime entrypoint in {relative_path}"
+        )
+    for section_name in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        section = payload.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for package_name in section:
+            normalized = str(package_name or "").strip().lower()
+            if normalized in _PYTHON_PACKAGE_MANIFEST_DEPENDENCIES:
+                errors.append(
+                    "Artifact quality scan failed: npm package manifest declares "
+                    f"Python package dependency {package_name!r} in {relative_path}"
+                )
+                return errors
+    return errors
+
+
+def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
+    if full_path.suffix.lower() not in _TS_JS_SOURCE_EXTS:
+        return []
+    declared_dependencies = _declared_package_dependencies(root_full)
+    errors: list[str] = []
+    for match in _IMPORT_SPECIFIER_RE.finditer(text):
+        specifier = str(match.group(1) or "").strip()
+        if not specifier or specifier.startswith("node:"):
+            continue
+        if specifier.startswith((".", "/")):
+            if not _relative_import_exists(root_full, full_path, specifier):
+                errors.append(
+                    f"Artifact quality scan failed: unresolved relative import {specifier!r} in {relative_path}"
+                )
+            continue
+        if _is_test_like_artifact_path(relative_path) and _package_root_name(specifier) in _TEST_FRAMEWORK_IMPORTS:
+            continue
+        root_name = _package_root_name(specifier)
+        if root_name in _NODE_BUILTIN_IMPORTS or root_name in declared_dependencies:
+            continue
+        if not _is_test_like_artifact_path(relative_path):
+            errors.append(f"Artifact quality scan failed: undeclared runtime import {specifier!r} in {relative_path}")
+    return errors
+
+
+def _declared_package_dependencies(root_full: Path) -> set[str]:
+    package_path = root_full / "package.json"
+    try:
+        payload = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    declared: set[str] = set()
+    for section_name in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        section = payload.get(section_name)
+        if isinstance(section, dict):
+            declared.update(str(name).strip() for name in section if str(name).strip())
+    return declared
+
+
+def _package_root_name(specifier: str) -> str:
+    token = str(specifier or "").strip()
+    if token.startswith("@"):
+        parts = token.split("/")
+        return "/".join(parts[:2]) if len(parts) >= 2 else token
+    return token.split("/", 1)[0]
+
+
+def _relative_import_exists(root_full: Path, importer_path: Path, specifier: str) -> bool:
+    base = (
+        (importer_path.parent / specifier).resolve() if specifier.startswith(".") else (root_full / specifier).resolve()
+    )
+    try:
+        base.relative_to(root_full)
+    except ValueError:
+        return False
+    for candidate in _relative_import_candidates(base):
+        try:
+            candidate.relative_to(root_full)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return True
+    return False
+
+
+def _relative_import_candidates(base: Path) -> list[Path]:
+    suffixes = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts")
+    candidates: list[Path] = [base]
+    if base.suffix:
+        candidates.extend(base.with_suffix(suffix) for suffix in suffixes)
+    else:
+        candidates.extend(base.with_suffix(suffix) for suffix in suffixes)
+        candidates.extend(base / f"index{suffix}" for suffix in suffixes)
+    return candidates
 
 
 def _is_test_like_artifact_path(relative_path: str) -> bool:

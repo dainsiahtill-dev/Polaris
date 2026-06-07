@@ -193,6 +193,9 @@ class TestHasExecutableOrFileAcceptanceAnchor:
     def test_verified_file_path_is_anchor(self) -> None:
         assert _has_executable_or_file_acceptance_anchor(["verify src/engine/game-loop.ts exists"]) is True
 
+    def test_directory_path_is_not_file_evidence_anchor(self) -> None:
+        assert _has_executable_or_file_acceptance_anchor(["verify src/models exists"]) is False
+
     def test_status_only_is_not_anchor(self) -> None:
         assert _has_executable_or_file_acceptance_anchor(["page returns 200"]) is False
 
@@ -725,6 +728,38 @@ class TestAutofixPmContractForQuality:
 
         assert stats["acceptance_hardened"] == 1
         assert "verify ./package.json exists" in payload["tasks"][0]["acceptance_criteria"]
+        assert not any("requires executable command or file evidence" in item for item in report["critical_issues"])
+
+    def test_hardens_directory_acceptance_with_representative_file_evidence(self, tmp_path: Any) -> None:
+        models_dir = tmp_path / "src" / "models"
+        repositories_dir = tmp_path / "src" / "repositories"
+        models_dir.mkdir(parents=True)
+        repositories_dir.mkdir(parents=True)
+        (models_dir / "task.ts").write_text("export interface Task { id: string }\n", encoding="utf-8")
+        (repositories_dir / "task-repository.ts").write_text("export class TaskRepository {}\n", encoding="utf-8")
+        payload = {
+            "tasks": [
+                {
+                    "id": "PM-0001-1",
+                    "title": "设计并实现多租户隔离数据模型",
+                    "goal": "建立带 tenant_id 的核心实体模型和租户隔离仓储边界。",
+                    "acceptance_criteria": [
+                        "验证租户 A 无法通过 API 查询到租户 B 的任何数据",
+                        "verify src/models exists",
+                    ],
+                    "assigned_to": "director",
+                    "target_files": [],
+                    "scope_mode": "module",
+                    "scope_paths": ["src/models", "src/repositories"],
+                }
+            ]
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+        report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
+
+        assert stats["acceptance_hardened"] == 1
+        assert "verify src/models/task.ts exists" in payload["tasks"][0]["acceptance_criteria"]
         assert not any("requires executable command or file evidence" in item for item in report["critical_issues"])
 
     def test_adds_dependencies(self) -> None:

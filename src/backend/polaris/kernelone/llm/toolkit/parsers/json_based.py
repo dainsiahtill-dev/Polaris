@@ -178,6 +178,10 @@ class JSONToolParser:
             return []
 
         # Extract arguments
+        data_lower = {k.lower(): v for k, v in data.items()}
+        if not any(key in data_lower for key in self.ARGUMENT_KEYS):
+            return []
+
         arguments = self._extract_arguments(data)
         if arguments is None:
             arguments = {}

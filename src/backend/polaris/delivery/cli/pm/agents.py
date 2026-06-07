@@ -174,7 +174,7 @@ def maybe_generate_agents_draft(
 
         write_text_atomic(draft_full, content)
         return draft_full
-    except (RuntimeError, ValueError) as e:
+    except Exception as e:  # noqa: BLE001 - draft generation falls back on any backend/write failure.
         logger.error("[pm] error generating AGENTS.md: %s", e)
         content = _build_fallback(docs_text, root_text, feedback_text, str(e))
         write_text_atomic(draft_full, content)

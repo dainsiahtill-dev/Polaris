@@ -40,6 +40,34 @@ def _is_forbidden_role_object_owner_cell(owner_cell: str) -> bool:
     return token in _FORBIDDEN_ROLE_OBJECT_OWNER_CELLS or token.startswith("polaris.kernelone.roles.")
 
 
+def _is_forbidden_role_object_ref_namespace(ref: str) -> bool:
+    namespace = str(ref or "").strip().split(":", 1)[0]
+    return _is_forbidden_role_object_owner_cell(namespace)
+
+
+def _is_roles_profile_ref_namespace(ref: str) -> bool:
+    namespace = str(ref or "").strip().split(":", 1)[0]
+    return namespace == "roles.profile"
+
+
+def _has_ref_namespace(ref: str, namespace: str) -> bool:
+    return str(ref or "").strip().split(":", 1)[0] == namespace
+
+
+def _require_refs_namespace(name: str, refs: tuple[str, ...], namespace: str) -> None:
+    if any(not _has_ref_namespace(ref, namespace) for ref in refs):
+        raise ValueError(f"{name} must point to {namespace}")
+
+
+def _has_any_ref_namespace(ref: str, namespaces: tuple[str, ...]) -> bool:
+    return any(_has_ref_namespace(ref, namespace) for namespace in namespaces)
+
+
+def _is_hex_sha256(value: str) -> bool:
+    token = str(value or "").strip()
+    return len(token) == 64 and all(char in "0123456789abcdef" for char in token.lower())
+
+
 def _require_non_empty(name: str, value: str) -> str:
     normalized = str(value).strip()
     if not normalized:
@@ -119,6 +147,15 @@ def _normalize_string_tuple(name: str, values: Any) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+def _require_ref_superset(message: str, container_refs: tuple[str, ...], required_refs: tuple[str, ...]) -> None:
+    if not required_refs:
+        return
+    container = set(container_refs)
+    missing_refs = tuple(ref for ref in required_refs if ref not in container)
+    if missing_refs:
+        raise ValueError(f"{message}: {', '.join(missing_refs)}")
+
+
 @dataclass(frozen=True)
 class RoleIdentity:
     """Stable identity for one instantiated role runtime object."""
@@ -152,25 +189,27 @@ class RoleProfileBinding:
     owner_cell: str = "roles.profile"
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
-        object.__setattr__(self, "profile_ref", _require_non_empty("profile_ref", self.profile_ref))
-        object.__setattr__(
-            self,
-            "tool_policy_ref",
-            _require_non_empty("tool_policy_ref", self.tool_policy_ref),
-        )
-        object.__setattr__(
-            self,
-            "prompt_policy_ref",
-            _require_non_empty("prompt_policy_ref", self.prompt_policy_ref),
-        )
-        object.__setattr__(self, "data_policy_ref", _require_non_empty("data_policy_ref", self.data_policy_ref))
-        object.__setattr__(
-            self,
-            "profile_fingerprint",
-            _require_non_empty("profile_fingerprint", self.profile_fingerprint),
-        )
-        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        role_id = _require_non_empty("role_id", self.role_id)
+        profile_ref = _require_non_empty("profile_ref", self.profile_ref)
+        tool_policy_ref = _require_non_empty("tool_policy_ref", self.tool_policy_ref)
+        prompt_policy_ref = _require_non_empty("prompt_policy_ref", self.prompt_policy_ref)
+        data_policy_ref = _require_non_empty("data_policy_ref", self.data_policy_ref)
+        profile_fingerprint = _require_non_empty("profile_fingerprint", self.profile_fingerprint)
+        owner_cell = _require_non_empty("owner_cell", self.owner_cell)
+
+        if owner_cell != "roles.profile":
+            raise ValueError("profile binding owner_cell must be roles.profile")
+        refs = (profile_ref, tool_policy_ref, prompt_policy_ref, data_policy_ref)
+        if any(not _is_roles_profile_ref_namespace(ref) for ref in refs):
+            raise ValueError("profile binding refs must point to roles.profile")
+
+        object.__setattr__(self, "role_id", role_id)
+        object.__setattr__(self, "profile_ref", profile_ref)
+        object.__setattr__(self, "tool_policy_ref", tool_policy_ref)
+        object.__setattr__(self, "prompt_policy_ref", prompt_policy_ref)
+        object.__setattr__(self, "data_policy_ref", data_policy_ref)
+        object.__setattr__(self, "profile_fingerprint", profile_fingerprint)
+        object.__setattr__(self, "owner_cell", owner_cell)
 
 
 @dataclass(frozen=True)
@@ -233,6 +272,11 @@ class RoleAssetMountTable:
                     f"asset mount {mount.mount_name!r} must be owned by a business or platform state Cell; "
                     f"got {owner_cell!r}"
                 )
+            asset_ref = mount.asset_ref.ref
+            if _is_forbidden_role_object_ref_namespace(asset_ref):
+                raise ValueError(
+                    f"asset mount {mount.mount_name!r} asset ref must point to the real owner Cell; got {asset_ref!r}"
+                )
             key = mount.mount_name
             if key in seen:
                 raise ValueError(f"duplicate asset mount: {key}")
@@ -261,7 +305,12 @@ class RoleCapabilityDescriptor:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
-        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        owner_cell = _require_non_empty("owner_cell", self.owner_cell)
+        if _is_forbidden_role_object_owner_cell(owner_cell):
+            raise ValueError(
+                "capability owner_cell must be a target public Cell, not a role runtime/kernel/profile/session owner"
+            )
+        object.__setattr__(self, "owner_cell", owner_cell)
         object.__setattr__(self, "contract_name", _require_non_empty("contract_name", self.contract_name))
         object.__setattr__(self, "effect", _require_non_empty("effect", self.effect))
         object.__setattr__(self, "allowed_roles", _normalize_string_tuple("allowed_roles", self.allowed_roles))
@@ -354,12 +403,24 @@ class RoleCapabilityInvocation:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "invocation_id", _require_non_empty("invocation_id", self.invocation_id))
-        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
-        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
-        object.__setattr__(self, "command_contract", _require_non_empty("command_contract", self.command_contract))
-        object.__setattr__(self, "payload_ref", _require_non_empty("payload_ref", self.payload_ref))
-        object.__setattr__(self, "fingerprint_ref", _require_non_empty("fingerprint_ref", self.fingerprint_ref))
+        invocation_id = _require_non_empty("invocation_id", self.invocation_id)
+        capability_id = _require_non_empty("capability_id", self.capability_id)
+        role_id = _require_non_empty("role_id", self.role_id)
+        command_contract = _require_non_empty("command_contract", self.command_contract)
+        payload_ref = _require_non_empty("payload_ref", self.payload_ref)
+        fingerprint_ref = _require_non_empty("fingerprint_ref", self.fingerprint_ref)
+
+        if not _has_any_ref_namespace(payload_ref, ("roles.runtime", "runtime.task_market")):
+            raise ValueError("payload_ref must point to roles.runtime or runtime.task_market")
+        if not _is_hex_sha256(fingerprint_ref):
+            raise ValueError("fingerprint_ref must be a 64-character hex capability fingerprint")
+
+        object.__setattr__(self, "invocation_id", invocation_id)
+        object.__setattr__(self, "capability_id", capability_id)
+        object.__setattr__(self, "role_id", role_id)
+        object.__setattr__(self, "command_contract", command_contract)
+        object.__setattr__(self, "payload_ref", payload_ref)
+        object.__setattr__(self, "fingerprint_ref", fingerprint_ref)
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
@@ -382,7 +443,9 @@ class RoleCapabilityDecision:
         object.__setattr__(self, "allowed", bool(self.allowed))
         object.__setattr__(self, "reason", str(self.reason or "").strip())
         object.__setattr__(self, "denial_code", _normalize_optional_string(self.denial_code))
-        object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
+        evidence_refs = _normalize_string_tuple("evidence_refs", self.evidence_refs)
+        _require_refs_namespace("evidence_refs", evidence_refs, "audit.evidence")
+        object.__setattr__(self, "evidence_refs", evidence_refs)
         if not self.allowed and not (self.reason or self.denial_code):
             raise ValueError("denied capability decision must include reason or denial_code")
 
@@ -398,14 +461,22 @@ class RoleTurnContext:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "typed_input_ref", _require_non_empty("typed_input_ref", self.typed_input_ref))
-        object.__setattr__(
-            self,
-            "context_snapshot_ref",
-            _require_non_empty("context_snapshot_ref", self.context_snapshot_ref),
-        )
-        object.__setattr__(self, "handoff_refs", _normalize_string_tuple("handoff_refs", self.handoff_refs))
-        object.__setattr__(self, "task_refs", _normalize_string_tuple("task_refs", self.task_refs))
+        typed_input_ref = _require_non_empty("typed_input_ref", self.typed_input_ref)
+        context_snapshot_ref = _require_non_empty("context_snapshot_ref", self.context_snapshot_ref)
+        handoff_refs = _normalize_string_tuple("handoff_refs", self.handoff_refs)
+        task_refs = _normalize_string_tuple("task_refs", self.task_refs)
+
+        if not _has_any_ref_namespace(typed_input_ref, ("roles.runtime", "runtime.task_market")):
+            raise ValueError("typed_input_ref must point to roles.runtime or runtime.task_market")
+        if not _has_any_ref_namespace(context_snapshot_ref, ("context.engine", "roles.session")):
+            raise ValueError("context_snapshot_ref must point to context.engine or roles.session")
+        _require_refs_namespace("handoff_refs", handoff_refs, "factory.cognitive_runtime")
+        _require_refs_namespace("task_refs", task_refs, "runtime.task_market")
+
+        object.__setattr__(self, "typed_input_ref", typed_input_ref)
+        object.__setattr__(self, "context_snapshot_ref", context_snapshot_ref)
+        object.__setattr__(self, "handoff_refs", handoff_refs)
+        object.__setattr__(self, "task_refs", task_refs)
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
@@ -420,15 +491,27 @@ class RoleLedgerBinding:
     commit_receipt_ref: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "turn_ledger_ref", _require_non_empty("turn_ledger_ref", self.turn_ledger_ref))
-        object.__setattr__(self, "commit_contract", _require_non_empty("commit_contract", self.commit_contract))
-        object.__setattr__(
-            self,
+        turn_ledger_ref = _require_non_empty("turn_ledger_ref", self.turn_ledger_ref)
+        commit_contract = _require_non_empty("commit_contract", self.commit_contract)
+        runtime_receipt_contract = _require_non_empty(
             "runtime_receipt_contract",
-            _require_non_empty("runtime_receipt_contract", self.runtime_receipt_contract),
+            self.runtime_receipt_contract,
         )
-        object.__setattr__(self, "receipt_refs", _normalize_string_tuple("receipt_refs", self.receipt_refs))
-        object.__setattr__(self, "commit_receipt_ref", _normalize_optional_string(self.commit_receipt_ref))
+        receipt_refs = _normalize_string_tuple("receipt_refs", self.receipt_refs)
+        commit_receipt_ref = _normalize_optional_string(self.commit_receipt_ref)
+
+        if not _has_ref_namespace(turn_ledger_ref, "roles.kernel"):
+            raise ValueError("turn_ledger_ref must point to roles.kernel")
+        if commit_receipt_ref and not _has_ref_namespace(commit_receipt_ref, "roles.kernel"):
+            raise ValueError("commit_receipt_ref must point to roles.kernel")
+        if any(not _has_ref_namespace(ref, "factory.cognitive_runtime") for ref in receipt_refs):
+            raise ValueError("receipt_refs must point to factory.cognitive_runtime")
+
+        object.__setattr__(self, "turn_ledger_ref", turn_ledger_ref)
+        object.__setattr__(self, "commit_contract", commit_contract)
+        object.__setattr__(self, "runtime_receipt_contract", runtime_receipt_contract)
+        object.__setattr__(self, "receipt_refs", receipt_refs)
+        object.__setattr__(self, "commit_receipt_ref", commit_receipt_ref)
 
 
 @dataclass(frozen=True)
@@ -454,8 +537,13 @@ class RoleTaskMarketBinding:
             "requeue_contract",
         ):
             object.__setattr__(self, name, _require_non_empty(name, getattr(self, name)))
-        object.__setattr__(self, "work_item_ref", _normalize_optional_string(self.work_item_ref))
-        object.__setattr__(self, "lease_token_ref", _normalize_optional_string(self.lease_token_ref))
+        work_item_ref = _normalize_optional_string(self.work_item_ref)
+        lease_token_ref = _normalize_optional_string(self.lease_token_ref)
+        active_refs = tuple(ref for ref in (work_item_ref, lease_token_ref) if ref)
+        if any(not _has_ref_namespace(ref, "runtime.task_market") for ref in active_refs):
+            raise ValueError("task-market binding refs must point to runtime.task_market")
+        object.__setattr__(self, "work_item_ref", work_item_ref)
+        object.__setattr__(self, "lease_token_ref", lease_token_ref)
 
 
 @dataclass(frozen=True)
@@ -549,23 +637,31 @@ class RoleStateCommitReceipt:
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", _require_non_empty("request_id", self.request_id))
         object.__setattr__(self, "ok", bool(self.ok))
-        object.__setattr__(self, "commit_receipt_ref", _normalize_optional_string(self.commit_receipt_ref))
-        object.__setattr__(
-            self,
-            "change_set_validation_ref",
-            _normalize_optional_string(self.change_set_validation_ref),
-        )
-        object.__setattr__(
-            self,
-            "runtime_receipt_refs",
-            _normalize_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs),
-        )
-        object.__setattr__(
-            self,
-            "handoff_pack_refs",
-            _normalize_string_tuple("handoff_pack_refs", self.handoff_pack_refs),
-        )
-        object.__setattr__(self, "turn_outcome_ref", _normalize_optional_string(self.turn_outcome_ref))
+        commit_receipt_ref = _normalize_optional_string(self.commit_receipt_ref)
+        change_set_validation_ref = _normalize_optional_string(self.change_set_validation_ref)
+        runtime_receipt_refs = _normalize_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs)
+        handoff_pack_refs = _normalize_string_tuple("handoff_pack_refs", self.handoff_pack_refs)
+        turn_outcome_ref = _normalize_optional_string(self.turn_outcome_ref)
+
+        if commit_receipt_ref and not _has_ref_namespace(commit_receipt_ref, "roles.kernel"):
+            raise ValueError("commit_receipt_ref must point to roles.kernel")
+        if change_set_validation_ref and not _has_ref_namespace(
+            change_set_validation_ref,
+            "factory.cognitive_runtime",
+        ):
+            raise ValueError("change_set_validation_ref must point to factory.cognitive_runtime")
+        if any(not _has_ref_namespace(ref, "factory.cognitive_runtime") for ref in runtime_receipt_refs):
+            raise ValueError("runtime_receipt_refs must point to factory.cognitive_runtime")
+        if any(not _has_ref_namespace(ref, "factory.cognitive_runtime") for ref in handoff_pack_refs):
+            raise ValueError("handoff_pack_refs must point to factory.cognitive_runtime")
+        if turn_outcome_ref and not _has_ref_namespace(turn_outcome_ref, "roles.kernel"):
+            raise ValueError("turn_outcome_ref must point to roles.kernel")
+
+        object.__setattr__(self, "commit_receipt_ref", commit_receipt_ref)
+        object.__setattr__(self, "change_set_validation_ref", change_set_validation_ref)
+        object.__setattr__(self, "runtime_receipt_refs", runtime_receipt_refs)
+        object.__setattr__(self, "handoff_pack_refs", handoff_pack_refs)
+        object.__setattr__(self, "turn_outcome_ref", turn_outcome_ref)
         object.__setattr__(self, "commit_contract", _require_non_empty("commit_contract", self.commit_contract))
         object.__setattr__(
             self,
@@ -577,6 +673,8 @@ class RoleStateCommitReceipt:
         object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
         if self.ok and not self.commit_receipt_ref:
             raise ValueError("successful commit receipt must include commit_receipt_ref")
+        if self.ok and not self.runtime_receipt_refs:
+            raise ValueError("successful commit receipt must include runtime_receipt_refs")
         if not self.ok and not (self.error_code or self.error_message):
             raise ValueError("failed commit receipt must include error_code or error_message")
 
@@ -601,22 +699,50 @@ class RoleRuntimeChainStepRef:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
-        object.__setattr__(self, "stage", _require_non_empty("stage", self.stage))
-        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
-        object.__setattr__(
-            self,
+        role_id = _require_non_empty("role_id", self.role_id)
+        stage = _require_non_empty("stage", self.stage)
+        capability_id = _require_non_empty("capability_id", self.capability_id)
+        capability_fingerprint_ref = _require_non_empty(
             "capability_fingerprint_ref",
-            _require_non_empty("capability_fingerprint_ref", self.capability_fingerprint_ref),
+            self.capability_fingerprint_ref,
         )
-        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
-        object.__setattr__(self, "command_contract", _require_non_empty("command_contract", self.command_contract))
-        object.__setattr__(self, "result_ref", _require_non_empty("result_ref", self.result_ref))
-        object.__setattr__(self, "task_ref", _normalize_optional_string(self.task_ref))
-        object.__setattr__(self, "work_item_ref", _normalize_optional_string(self.work_item_ref))
-        object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
-        object.__setattr__(self, "receipt_refs", _normalize_string_tuple("receipt_refs", self.receipt_refs))
-        object.__setattr__(self, "handoff_refs", _normalize_string_tuple("handoff_refs", self.handoff_refs))
+        if not _has_ref_namespace(capability_fingerprint_ref, "roles.runtime"):
+            raise ValueError("capability_fingerprint_ref must point to roles.runtime")
+        owner_cell = _require_non_empty("owner_cell", self.owner_cell)
+        if _is_forbidden_role_object_owner_cell(owner_cell):
+            raise ValueError(
+                "chain step owner_cell must be a target public Cell, not a role runtime/kernel/profile/session owner"
+            )
+        command_contract = _require_non_empty("command_contract", self.command_contract)
+        result_ref = _require_non_empty("result_ref", self.result_ref)
+        if not _has_ref_namespace(result_ref, owner_cell):
+            raise ValueError("result_ref must point to owner_cell")
+        task_ref = _normalize_optional_string(self.task_ref)
+        work_item_ref = _normalize_optional_string(self.work_item_ref)
+        _require_refs_namespace(
+            "chain step task/work item refs",
+            tuple(ref for ref in (task_ref, work_item_ref) if ref),
+            "runtime.task_market",
+        )
+        evidence_refs = _normalize_string_tuple("evidence_refs", self.evidence_refs)
+        receipt_refs = _normalize_string_tuple("receipt_refs", self.receipt_refs)
+        handoff_refs = _normalize_string_tuple("handoff_refs", self.handoff_refs)
+        _require_refs_namespace("evidence_refs", evidence_refs, "audit.evidence")
+        _require_refs_namespace("receipt_refs", receipt_refs, "factory.cognitive_runtime")
+        _require_refs_namespace("handoff_refs", handoff_refs, "factory.cognitive_runtime")
+
+        object.__setattr__(self, "role_id", role_id)
+        object.__setattr__(self, "stage", stage)
+        object.__setattr__(self, "capability_id", capability_id)
+        object.__setattr__(self, "capability_fingerprint_ref", capability_fingerprint_ref)
+        object.__setattr__(self, "owner_cell", owner_cell)
+        object.__setattr__(self, "command_contract", command_contract)
+        object.__setattr__(self, "result_ref", result_ref)
+        object.__setattr__(self, "task_ref", task_ref)
+        object.__setattr__(self, "work_item_ref", work_item_ref)
+        object.__setattr__(self, "evidence_refs", evidence_refs)
+        object.__setattr__(self, "receipt_refs", receipt_refs)
+        object.__setattr__(self, "handoff_refs", handoff_refs)
         object.__setattr__(self, "status", str(self.status or "").strip())
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
@@ -650,32 +776,69 @@ class RoleRuntimeChainEnvelope:
         if any(not isinstance(step, RoleRuntimeChainStepRef) for step in steps):
             raise TypeError("steps entries must be RoleRuntimeChainStepRef instances")
         object.__setattr__(self, "steps", steps)
-        object.__setattr__(self, "turn_ledger_ref", _require_non_empty("turn_ledger_ref", self.turn_ledger_ref))
-        object.__setattr__(
-            self,
-            "task_market_refs",
-            _normalize_string_tuple("task_market_refs", self.task_market_refs),
-        )
-        object.__setattr__(
-            self,
-            "audit_evidence_refs",
-            _normalize_string_tuple("audit_evidence_refs", self.audit_evidence_refs),
-        )
-        object.__setattr__(
-            self,
+        turn_ledger_ref = _require_non_empty("turn_ledger_ref", self.turn_ledger_ref)
+        if not _has_ref_namespace(turn_ledger_ref, "roles.kernel"):
+            raise ValueError("turn_ledger_ref must point to roles.kernel")
+        task_market_refs = _normalize_string_tuple("task_market_refs", self.task_market_refs)
+        audit_evidence_refs = _normalize_string_tuple("audit_evidence_refs", self.audit_evidence_refs)
+        runtime_projection_refs = _normalize_string_tuple(
             "runtime_projection_refs",
-            _normalize_string_tuple("runtime_projection_refs", self.runtime_projection_refs),
+            self.runtime_projection_refs,
         )
-        object.__setattr__(
-            self,
+        capability_fingerprint_refs = _normalize_string_tuple(
             "capability_fingerprint_refs",
-            _normalize_string_tuple("capability_fingerprint_refs", self.capability_fingerprint_refs),
+            self.capability_fingerprint_refs,
         )
-        object.__setattr__(self, "handoff_refs", _normalize_string_tuple("handoff_refs", self.handoff_refs))
-        object.__setattr__(
-            self,
-            "runtime_receipt_refs",
-            _normalize_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs),
+        handoff_refs = _normalize_string_tuple("handoff_refs", self.handoff_refs)
+        runtime_receipt_refs = _normalize_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs)
+
+        _require_refs_namespace("task_market_refs", task_market_refs, "runtime.task_market")
+        _require_refs_namespace("audit_evidence_refs", audit_evidence_refs, "audit.evidence")
+        _require_refs_namespace("runtime_projection_refs", runtime_projection_refs, "runtime.projection")
+        _require_refs_namespace("capability_fingerprint_refs", capability_fingerprint_refs, "roles.runtime")
+        _require_refs_namespace("handoff_refs", handoff_refs, "factory.cognitive_runtime")
+        _require_refs_namespace("runtime_receipt_refs", runtime_receipt_refs, "factory.cognitive_runtime")
+
+        object.__setattr__(self, "turn_ledger_ref", turn_ledger_ref)
+        object.__setattr__(self, "task_market_refs", task_market_refs)
+        object.__setattr__(self, "audit_evidence_refs", audit_evidence_refs)
+        object.__setattr__(self, "runtime_projection_refs", runtime_projection_refs)
+        object.__setattr__(self, "capability_fingerprint_refs", capability_fingerprint_refs)
+        object.__setattr__(self, "handoff_refs", handoff_refs)
+        object.__setattr__(self, "runtime_receipt_refs", runtime_receipt_refs)
+        step_task_market_refs = tuple(
+            ref
+            for step in steps
+            for ref in (
+                step.task_ref,
+                step.work_item_ref,
+            )
+            if ref
+        )
+        _require_ref_superset(
+            "task_market_refs must include step task/work item refs",
+            task_market_refs,
+            step_task_market_refs,
+        )
+        _require_ref_superset(
+            "audit_evidence_refs must include step evidence refs",
+            audit_evidence_refs,
+            tuple(ref for step in steps for ref in step.evidence_refs),
+        )
+        _require_ref_superset(
+            "capability_fingerprint_refs must include step capability fingerprint refs",
+            capability_fingerprint_refs,
+            tuple(step.capability_fingerprint_ref for step in steps),
+        )
+        _require_ref_superset(
+            "handoff_refs must include step handoff refs",
+            handoff_refs,
+            tuple(ref for step in steps for ref in step.handoff_refs),
+        )
+        _require_ref_superset(
+            "runtime_receipt_refs must include step receipt refs",
+            runtime_receipt_refs,
+            tuple(ref for step in steps for ref in step.receipt_refs),
         )
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
@@ -752,6 +915,7 @@ class RoleRuntimeObject:
 
     identity: RoleIdentity
     profile_binding: RoleProfileBinding
+    turn_context: RoleTurnContext
     asset_mounts: RoleAssetMountTable
     capability_ports: RoleCapabilityPorts
     ledger_binding: RoleLedgerBinding
@@ -766,6 +930,8 @@ class RoleRuntimeObject:
             raise TypeError("profile_binding must be a RoleProfileBinding")
         if self.identity.role_id != self.profile_binding.role_id:
             raise ValueError("identity.role_id must match profile_binding.role_id")
+        if not isinstance(self.turn_context, RoleTurnContext):
+            raise TypeError("turn_context must be a RoleTurnContext")
         if not isinstance(self.asset_mounts, RoleAssetMountTable):
             raise TypeError("asset_mounts must be a RoleAssetMountTable")
         if not isinstance(self.capability_ports, RoleCapabilityPorts):
@@ -779,6 +945,25 @@ class RoleRuntimeObject:
         if self.identity.role_id != self.capability_fingerprint.role_id:
             raise ValueError("identity.role_id must match capability_fingerprint.role_id")
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+def _derive_role_turn_context(identity: RoleIdentity) -> RoleTurnContext:
+    run_token = identity.run_id or "run"
+    task_token = identity.task_id or "task"
+    session_token = identity.session_id or f"{identity.role_id}:{run_token}"
+    task_refs = (f"runtime.task_market:task:{identity.task_id}",) if identity.task_id else ()
+    return RoleTurnContext(
+        typed_input_ref=f"roles.runtime:typed-input:{identity.role_id}:{run_token}:{task_token}",
+        context_snapshot_ref=f"roles.session:context-snapshot:{session_token}",
+        task_refs=task_refs,
+        metadata={
+            "source": "roles.runtime.spec.instantiate",
+            "role_id": identity.role_id,
+            "run_id": identity.run_id,
+            "task_id": identity.task_id,
+            "session_id": identity.session_id,
+        },
+    )
 
 
 @dataclass(frozen=True)
@@ -931,21 +1116,56 @@ class RoleCapabilityInvocationResultV1:
     error_message: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "ok", bool(self.ok))
-        object.__setattr__(self, "invocation_id", _require_non_empty("invocation_id", self.invocation_id))
-        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
-        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
-        object.__setattr__(self, "command_contract", _require_non_empty("command_contract", self.command_contract))
-        object.__setattr__(self, "allowed", bool(self.allowed))
-        object.__setattr__(self, "payload_ref", str(self.payload_ref or "").strip())
-        object.__setattr__(self, "owner_cell", str(self.owner_cell or "").strip())
-        object.__setattr__(self, "result_ref", _normalize_optional_string(self.result_ref))
-        object.__setattr__(self, "task_id", str(self.task_id or "").strip())
-        object.__setattr__(self, "status", str(self.status or "").strip())
-        object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
-        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
-        object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
-        object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        ok = bool(self.ok)
+        invocation_id = _require_non_empty("invocation_id", self.invocation_id)
+        role_id = _require_non_empty("role_id", self.role_id)
+        capability_id = _require_non_empty("capability_id", self.capability_id)
+        command_contract = _require_non_empty("command_contract", self.command_contract)
+        allowed = bool(self.allowed)
+        payload_ref = str(self.payload_ref or "").strip()
+        owner_cell = str(self.owner_cell or "").strip()
+        result_ref = _normalize_optional_string(self.result_ref)
+        task_id = str(self.task_id or "").strip()
+        status = str(self.status or "").strip()
+        evidence_refs = _normalize_string_tuple("evidence_refs", self.evidence_refs)
+        metadata = _to_dict_copy(self.metadata)
+        error_code = _normalize_optional_string(self.error_code)
+        error_message = _normalize_optional_string(self.error_message)
+
+        if owner_cell and _is_forbidden_role_object_owner_cell(owner_cell):
+            raise ValueError("capability invocation result owner_cell must be a target public Cell")
+        if result_ref:
+            if not owner_cell:
+                raise ValueError("result_ref requires owner_cell")
+            if not _has_ref_namespace(result_ref, owner_cell):
+                raise ValueError("result_ref must point to owner_cell")
+        if (
+            payload_ref
+            and payload_ref != result_ref
+            and not _has_any_ref_namespace(
+                payload_ref,
+                ("roles.runtime", "runtime.task_market"),
+            )
+        ):
+            raise ValueError("payload_ref must point to roles.runtime or runtime.task_market")
+        if not ok and allowed:
+            raise ValueError("failed capability invocation result must set allowed=False")
+
+        object.__setattr__(self, "ok", ok)
+        object.__setattr__(self, "invocation_id", invocation_id)
+        object.__setattr__(self, "role_id", role_id)
+        object.__setattr__(self, "capability_id", capability_id)
+        object.__setattr__(self, "command_contract", command_contract)
+        object.__setattr__(self, "allowed", allowed)
+        object.__setattr__(self, "payload_ref", payload_ref)
+        object.__setattr__(self, "owner_cell", owner_cell)
+        object.__setattr__(self, "result_ref", result_ref)
+        object.__setattr__(self, "task_id", task_id)
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "evidence_refs", evidence_refs)
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(self, "error_code", error_code)
+        object.__setattr__(self, "error_message", error_message)
         if self.ok and not self.allowed:
             raise ValueError("successful capability invocation result must be allowed")
         if not self.ok and not (self.error_code or self.error_message):
@@ -991,6 +1211,7 @@ class RoleRuntimeObjectSpec:
         policy_fingerprint: str,
         capability_id: str | None = None,
         tool: str | None = None,
+        turn_context: RoleTurnContext | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> RoleRuntimeObject:
         """Instantiate a `RoleRuntimeObject` from this spec and runtime bindings."""
@@ -1000,6 +1221,8 @@ class RoleRuntimeObjectSpec:
             raise TypeError("profile_binding must be a RoleProfileBinding")
         if not isinstance(ledger_binding, RoleLedgerBinding):
             raise TypeError("ledger_binding must be a RoleLedgerBinding")
+        if turn_context is not None and not isinstance(turn_context, RoleTurnContext):
+            raise TypeError("turn_context must be a RoleTurnContext")
         if identity.role_id != self.role_id:
             raise ValueError("identity.role_id must match spec.role_id")
         if profile_binding.role_id != self.role_id:
@@ -1019,6 +1242,7 @@ class RoleRuntimeObjectSpec:
         return RoleRuntimeObject(
             identity=identity,
             profile_binding=profile_binding,
+            turn_context=turn_context or _derive_role_turn_context(identity),
             asset_mounts=self.asset_mounts,
             capability_ports=self.capability_ports,
             ledger_binding=ledger_binding,

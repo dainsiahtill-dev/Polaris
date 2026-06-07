@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 from collections import Counter
@@ -1741,7 +1742,6 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     # Force runtime artifacts to RAMDISK X:/ for benchmark runs.
     # This must be set before ensure_minimal_kernelone_bindings() so that
     # storage-root resolution picks it up from the cache key.
-    import os
 
     os.environ.setdefault("KERNELONE_RUNTIME_ROOT", "X:/")
 
@@ -1890,6 +1890,16 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     # Get mode from args - default handled by argparse, but safe fallback
     mode = str(getattr(args, "mode", "agentic") or "agentic").strip().lower() or "agentic"
 
+    # The tool-calling matrix measures the MODEL's own tool-call sequence. Speculative
+    # execution is a latency optimization that transforms the observed calls — it
+    # dedups/adopts repeated reads (failing required_tool_call_count) and aborts
+    # post-hoc recovered writes — which corrupts that measurement. Default it off for
+    # the matrix so checks see the model's actual calls; respect an explicit user
+    # override via the environment.
+    _prev_speculative = os.environ.get("ENABLE_SPECULATIVE_EXECUTION")
+    _disable_speculative = suite == "tool_calling_matrix" and _prev_speculative is None
+    if _disable_speculative:
+        os.environ["ENABLE_SPECULATIVE_EXECUTION"] = "0"
     try:
         if suite == "tool_calling_matrix":
             # tool_calling_matrix uses its own runner (ignores mode)
@@ -1917,6 +1927,9 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
             )
     except (RuntimeError, ValueError) as exc:
         run_result = {"ok": False, "error": str(exc), "details": {}}
+    finally:
+        if _disable_speculative:
+            os.environ.pop("ENABLE_SPECULATIVE_EXECUTION", None)
 
     package = build_agentic_eval_audit_package(
         workspace=workspace,

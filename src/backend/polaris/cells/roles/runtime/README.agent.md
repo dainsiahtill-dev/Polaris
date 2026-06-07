@@ -88,35 +88,80 @@ Defined in `public/contracts.py`:
   adapter call paths are migration targets and must not gain new behavior.
 - Role capability invocation validates mounted ports, role allow-lists, and
   declared command contracts before delegating to the target Cell public API.
+  `RoleCapabilityInvocation` rejects payload refs outside `roles.runtime` or
+  `runtime.task_market`, and its fingerprint unlock token must be a 64-character
+  hex capability fingerprint value. `RoleCapabilityDecision` evidence refs must
+  point to `audit.evidence`. `RoleCapabilityInvocationResultV1` rejects role
+  runtime/kernel/profile/session owner cells, requires target result refs to
+  point to the declared owner Cell, and only permits non-result payload refs from
+  runtime typed input or task-market refs. Failed capability invocation results
+  must always report `allowed=false`; after fingerprint unlock and before any
+  target Cell public call, `execute_role_capability_invocation` requires the
+  invocation payload ref to match the runtime object's current `RoleTurnContext`
+  typed input ref or task refs. Capability discoverability is represented only
+  by `metadata.capability_available`. The KernelOne release gate enforces this
+  with an AST check against public runtime code, so static
+  `RoleCapabilityInvocationResultV1(ok=False, allowed=True)` constructors are
+  rejected before release.
 - Architect boundary validation uses `WorkspaceWriteGuardBatchQueryV1` for
   changed path checks so the runtime does not issue N public guard calls for a
   single boundary request.
 - Role object instantiation uses `instantiate_role_runtime_object(InstantiateRoleRuntimeObjectCommandV1)`
   to bind `roles.profile` via `GetRoleProfileQueryV1`; runtime stores only
   profile/tool/prompt/data policy refs and a profile fingerprint.
+  `RoleProfileBinding` rejects any owner or profile/policy ref namespace outside
+  `roles.profile`. `RoleRuntimeObject` also carries a refs-only
+  `RoleTurnContext`; built-in specs derive typed input, context snapshot, and
+  task refs from `RoleIdentity` when an explicit turn context is not supplied.
 - `RoleTurnEnvelope` rejects identity/profile role mismatches and task-market
   work refs that are not listed in the current turn context task refs, so
   inconsistent typed envelopes cannot enter ledger/commit boundaries.
+  `RoleTurnContext` rejects typed input refs outside `roles.runtime` or
+  `runtime.task_market`, context snapshot refs outside `context.engine` or
+  `roles.session`, handoff refs outside `factory.cognitive_runtime`, and task
+  refs outside `runtime.task_market`.
 - Role asset mount tables and capability ports reject `roles.runtime`, role
   adapter/kernel/profile/session cells, and `kernelone.roles` paths as owners.
   Business assets and capabilities must be owned by their real business or
-  platform state Cell and mounted only by public contract/ref.
+  platform state Cell and mounted only by public contract/ref. Asset mount refs
+  also reject role-runtime and KernelOne role-template namespaces, so a business
+  owner cannot point at a `roles.runtime:*` or template-backed asset ref.
+  Capability descriptors reject the same role-runtime and KernelOne role-template
+  owner cells before they can be mounted into a port table. The KernelOne
+  release gate scans all `roles.runtime` owned Python paths from `cell.yaml`
+  (`public/**`, `internal/**`, `role_chat.py`, and `role_session.py`) and rejects
+  cross-Cell `polaris.cells.*.internal` imports before release. It also scans
+  `polaris/kernelone/roles/**` and rejects business-role filenames or Python
+  definitions for PM, Chief Engineer, Architect, QA, and Director so that
+  KernelOne stays limited to shared types and low-level role templates.
 - Role task-market lifecycle operations use
   `execute_role_task_market_lifecycle(ExecuteRoleTaskMarketLifecycleCommandV1)`
   to translate role-bound claim/lease/ack/fail/requeue requests into
-  `runtime.task_market` public contracts.
+  `runtime.task_market` public contracts. `RoleTaskMarketBinding` rejects active
+  work item and lease token refs outside `runtime.task_market`.
 - Phase 5 chain assembly uses
   `assemble_role_runtime_chain(AssembleRoleRuntimeChainCommandV1)` to assemble
   PM, Chief Engineer, Director, QA, audit evidence, Turn Ledger, receipt,
   handoff, Task Market, Runtime Projection, and per-step capability fingerprint
   refs into a typed `RoleRuntimeChainEnvelope`; it is pure refs-only assembly
   and does not write a second Task Market, ledger, handoff pack, receipt store,
-  or projection.
+  or projection. `RoleRuntimeChainEnvelope` rejects aggregate refs that omit
+  step task/work-item, evidence, capability fingerprint, handoff, or runtime
+  receipt refs, and chain steps cannot name role runtime/kernel/profile/session
+  or KernelOne role templates as capability owner cells. Chain step result refs
+  must point to the declared owner Cell, and aggregate refs must point to their
+  real owner namespaces (`roles.kernel`, `runtime.task_market`,
+  `audit.evidence`, `runtime.projection`, `roles.runtime`, and
+  `factory.cognitive_runtime`).
 - Role state commits use `commit_role_state(RoleStateCommitRequest)` to bind an
   existing `roles.kernel` commit receipt to `factory.cognitive_runtime`
   `ValidateChangeSetCommandV1`, `RecordRuntimeReceiptCommandV1`, and
   `ExportHandoffPackCommandV1`; runtime does not create a second Turn Ledger,
-  change-set validator, handoff system, or receipt store.
+  change-set validator, handoff system, or receipt store. Successful
+  ledger/commit refs must point to `roles.kernel`, and runtime receipt,
+  handoff, and change-set refs must point to `factory.cognitive_runtime`.
+  `RoleStateCommitReceipt` values must include both a kernel commit receipt ref
+  and at least one Cognitive Runtime receipt ref.
 - PM dispatch delegates to `runtime.task_market`; Chief Engineer diff-spec and
   architecture memo generation delegate to `chief_engineer.blueprint` with
   mounted `BlueprintDatabase`, `ArchConstraintMemo`, and `DiffMapArchive` refs
@@ -143,13 +188,17 @@ Defined in `public/contracts.py`:
   `CheckLlmModelCapabilityQueryV1` and only calls
   `qa.audit_verdict.public.service.run_visual_qa_audit` with
   `RunVisualQaAuditCommandV1` after an explicit `image_input` capability ref is
-  returned. Text-only models receive `allowed=false` before QA is invoked.
+  returned. The required model capability comes from the mounted capability
+  descriptor; payload attempts to downgrade it are denied before model preflight.
+  Text-only models receive `allowed=false` before QA is invoked.
 - Architect context-budget allocation delegates to `finops.budget_guard`; illegal
   mutation interception delegates to `policy.workspace_guard`.
 - Architect Cell boundary validation delegates lightweight authorization to
   `policy.permission`, checks unique changed paths through `policy.workspace_guard`,
   and invokes `architect.design` through `GenerateArchitectureDesignCommandV1`.
-  Denied sandbox checks return `allowed=false`; mounted capability discoverability
-  is represented only by `metadata.capability_available`.
+  Empty `changed_paths` requests are denied before permission, guard, or design
+  calls so mutation validation cannot bypass workspace guard. Denied sandbox
+  checks return `allowed=false`; mounted capability discoverability is
+  represented only by `metadata.capability_available`.
 - Product host direction is `polaris-cli` under `polaris/delivery/cli/`:
   one host, multi-role, multi-mode.

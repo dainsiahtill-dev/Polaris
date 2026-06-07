@@ -175,14 +175,12 @@ class TestExtractToolCallsFromTextException:
 
         assert result == []
 
-    def test_missing_arguments_is_valid(self) -> None:
-        """Exception: JSON without arguments field returns call with empty args."""
+    def test_missing_arguments_is_not_tool_call(self) -> None:
+        """Bare JSON name metadata is not a tool call without arguments."""
         text = '{"name": "ping"}'
         result = _extract_tool_calls_from_text(text)
 
-        assert len(result) == 1
-        assert result[0]["function"]["name"] == "ping"
-        assert json.loads(result[0]["function"]["arguments"]) == {}
+        assert result == []
 
     def test_invalid_name_type(self) -> None:
         """Exception: Name field is not a string."""

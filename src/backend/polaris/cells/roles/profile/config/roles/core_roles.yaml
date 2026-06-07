@@ -314,6 +314,14 @@ roles:
         - repo_read_slice
         - repo_read_tail
         - repo_read_around
+        # 目录结构列举：constraints 明确要求"列出目录结构时必须使用 repo_tree"，
+        # 工具调用矩阵（l1_directory_listing / l1_directory_navigation）亦要求 repo_tree。
+        # 该工具为只读、轻量级目录列举，属于"执行明确任务"而非宽泛探索。
+        - repo_tree
+        # 只读的精确定位/存在性判断（工具调用矩阵 l2_glob / l5_conditional / l7 要求；
+        # 均为注册的可执行只读工具，属于"执行明确任务"，非宽泛探索）。
+        - glob
+        - file_exists
         # Canonical 搜索能力（搜索-后-编辑所需；quality_checklist 要求先用 repo_rg 定位）
         - repo_rg
         # Canonical 编辑能力
@@ -328,9 +336,9 @@ roles:
         # 执行类（运行测试、验证修改）
         - execute_command
         - scout_probe  # read-only reconnaissance
-        # NOTE: Director 不负责宽泛探索。repo_tree / glob / search_code 等
-        # 探索工具已移除；repo_rg 仅用于编辑前的精确定位。
-        # 模糊需求应由 PM/Architect 先制定蓝图，Director 只执行明确任务。
+        # NOTE: Director 不负责宽泛探索（search_code 等仍移除）；repo_rg 用于编辑前的精确定位，
+        # repo_tree/glob/file_exists 仅用于"明确的定位/列举/存在性判断任务"（见 constraints 与工具调用矩阵），
+        # 不属于宽泛探索。模糊需求应由 PM/Architect 先制定蓝图，Director 只执行明确任务。
       blacklist:
         - delete_file              # 默认禁止删除
       allow_code_write: true       # Director允许代码写入

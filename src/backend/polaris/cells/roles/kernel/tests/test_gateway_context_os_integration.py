@@ -138,9 +138,8 @@ class TestGatewayBudgetValidation:
 
     @pytest.mark.asyncio
     async def test_gateway_budget_triggers_truncation(self) -> None:
-        """Verify budget overrun triggers BudgetExceededError."""
+        """Verify budget overrun produces an audited truncated projection."""
         from polaris.kernelone.context.context_os.policies import ContextWindowPolicy
-        from polaris.kernelone.errors import BudgetExceededError
 
         policy = StateFirstContextOSPolicy(
             context_window=ContextWindowPolicy(
@@ -171,11 +170,15 @@ class TestGatewayBudgetValidation:
             },
         ]
 
-        with pytest.raises(BudgetExceededError):
-            await context_os.project(
-                messages=messages,
-                recent_window_messages=4,
-            )
+        projection = await context_os.project(
+            messages=messages,
+            recent_window_messages=4,
+        )
+
+        budget_plan = projection.snapshot.budget_plan
+        assert budget_plan is not None
+        assert budget_plan.validation_error.startswith("BudgetPlan invariant violated")
+        assert budget_plan.expected_next_input_tokens == budget_plan.model_context_window
 
     @pytest.mark.asyncio
     async def test_gateway_handles_empty_messages(self, context_os: StateFirstContextOS) -> None:

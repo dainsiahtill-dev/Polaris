@@ -178,14 +178,19 @@ class TestJSONToolParserException:
 
         assert result == []
 
-    def test_parse_missing_arguments_is_valid(self) -> None:
-        """Exception: JSON without arguments field returns call with empty args."""
+    def test_parse_missing_arguments_returns_empty(self) -> None:
+        """Exception: JSON without arguments field is not a tool call."""
         text = '{"name": "ping"}'
         result = JSONToolParser.parse(text)
 
-        assert len(result) == 1
-        assert result[0].name == "ping"
-        assert result[0].arguments == {}
+        assert result == []
+
+    def test_package_json_name_is_not_tool_call(self) -> None:
+        """Regression: package.json metadata must not be parsed as a tool call."""
+        text = '{"name": "bootstrap-project", "version": "1.0.0", "scripts": {"test": "vitest"}}'
+        result = JSONToolParser.parse(text)
+
+        assert result == []
 
     def test_parse_empty_string_returns_empty(self) -> None:
         """Exception: Empty string returns empty list."""

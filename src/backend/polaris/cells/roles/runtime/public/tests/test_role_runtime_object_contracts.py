@@ -73,6 +73,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleAssetMount,
     RoleAssetMountTable,
     RoleAssetRef,
+    RoleCapabilityDecision,
     RoleCapabilityDescriptor,
     RoleCapabilityFingerprint,
     RoleCapabilityInvocation,
@@ -82,6 +83,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleLedgerBinding,
     RoleProfileBinding,
     RoleRuntimeChainAssemblyResultV1,
+    RoleRuntimeChainEnvelope,
     RoleRuntimeChainStepRef,
     RoleRuntimeObject,
     RoleRuntimeObjectResultV1,
@@ -567,6 +569,43 @@ def _profile_binding(role_id: str = "pm") -> RoleProfileBinding:
     )
 
 
+def test_profile_binding_rejects_non_profile_owner_cell() -> None:
+    with pytest.raises(ValueError, match=r"profile binding owner_cell must be roles\.profile"):
+        RoleProfileBinding(
+            role_id="pm",
+            profile_ref="roles.profile:pm",
+            tool_policy_ref="roles.profile:pm:tool_policy",
+            prompt_policy_ref="roles.profile:pm:prompt_policy",
+            data_policy_ref="roles.profile:pm:data_policy",
+            profile_fingerprint="profile-fp",
+            owner_cell="roles.runtime",
+        )
+
+
+@pytest.mark.parametrize(
+    "ref_overrides",
+    (
+        {"profile_ref": "roles.runtime:pm"},
+        {"tool_policy_ref": "qa.audit_verdict:pm:tool_policy"},
+        {"prompt_policy_ref": "roles.session:pm:prompt_policy"},
+        {"data_policy_ref": "kernelone.roles:pm:data_policy"},
+    ),
+)
+def test_profile_binding_rejects_refs_outside_roles_profile(ref_overrides: dict[str, str]) -> None:
+    payload = {
+        "role_id": "pm",
+        "profile_ref": "roles.profile:pm",
+        "tool_policy_ref": "roles.profile:pm:tool_policy",
+        "prompt_policy_ref": "roles.profile:pm:prompt_policy",
+        "data_policy_ref": "roles.profile:pm:data_policy",
+        "profile_fingerprint": "profile-fp",
+    }
+    payload.update(ref_overrides)
+
+    with pytest.raises(ValueError, match=r"profile binding refs must point to roles\.profile"):
+        RoleProfileBinding(**payload)
+
+
 def _architect_validation_runtime_object() -> RoleRuntimeObject:
     spec = runtime_contracts.get_builtin_role_runtime_spec("architect")
     return spec.instantiate(
@@ -655,23 +694,32 @@ def test_role_runtime_object_mounts_assets_and_ports_by_public_contract_refs() -
         policy_fingerprint="policy-fp",
         profile_fingerprint="profile-fp",
     )
+    turn_context = RoleTurnContext(
+        typed_input_ref="roles.runtime:typed-input:pm-run-1",
+        context_snapshot_ref="roles.session:context-snapshot:session-1",
+        handoff_refs=("factory.cognitive_runtime:handoff:run-1",),
+        task_refs=("runtime.task_market:task:task-1",),
+    )
 
     runtime_object = RoleRuntimeObject(
         identity=_identity(),
         profile_binding=_profile_binding(),
+        turn_context=turn_context,
         asset_mounts=_pm_mount_table(),
         capability_ports=_capability_ports(),
         ledger_binding=RoleLedgerBinding(
             turn_ledger_ref="roles.kernel:turn-ledger:run-1",
             commit_contract="CommitReceipt",
             runtime_receipt_contract="RecordRuntimeReceiptCommandV1",
-            receipt_refs=("receipt-1",),
+            receipt_refs=("factory.cognitive_runtime:receipt-1",),
         ),
         task_market_binding=RoleTaskMarketBinding(),
         capability_fingerprint=fingerprint,
     )
 
     assert runtime_object.identity.role_id == "pm"
+    assert runtime_object.turn_context is turn_context
+    assert runtime_object.turn_context.task_refs == ("runtime.task_market:task:task-1",)
     assert runtime_object.asset_mounts.get("TaskGraph").asset_ref.owner_cell == "runtime.task_market"
     assert (
         runtime_object.capability_ports.get("dispatch_task_to_market").contract_name == "PublishTaskWorkItemCommandV1"
@@ -680,6 +728,23 @@ def test_role_runtime_object_mounts_assets_and_ports_by_public_contract_refs() -
     assert runtime_object.ledger_binding.runtime_receipt_contract == "RecordRuntimeReceiptCommandV1"
     assert runtime_object.capability_fingerprint.fingerprint == fingerprint.fingerprint
     assert dataclasses.is_dataclass(runtime_object)
+
+
+def test_runtime_spec_instantiation_derives_refs_only_turn_context() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
+
+    runtime_object = spec.instantiate(
+        identity=_identity("pm"),
+        profile_binding=_profile_binding("pm"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:pm-run"),
+        policy_fingerprint="pm-policy",
+    )
+
+    assert isinstance(runtime_object.turn_context, RoleTurnContext)
+    assert runtime_object.turn_context.typed_input_ref == "roles.runtime:typed-input:pm:run-1:task-1"
+    assert runtime_object.turn_context.context_snapshot_ref == "roles.session:context-snapshot:session-1"
+    assert runtime_object.turn_context.task_refs == ("runtime.task_market:task:task-1",)
+    assert runtime_object.turn_context.metadata["source"] == "roles.runtime.spec.instantiate"
 
 
 def test_builtin_pm_runtime_spec_mounts_pm_assets_and_task_market_capabilities() -> None:
@@ -925,6 +990,34 @@ def test_asset_mount_table_rejects_role_runtime_or_kernelone_role_asset_owners()
             )
 
 
+@pytest.mark.parametrize(
+    "asset_ref",
+    (
+        "roles.runtime:fake-business-asset",
+        "roles.kernel:turn-ledger-as-asset",
+        "roles.profile:profile-as-business-asset",
+        "roles.session:session-as-business-asset",
+        "kernelone.roles:template-as-business-asset",
+        "polaris.kernelone.roles.business:template-as-business-asset",
+    ),
+)
+def test_asset_mount_table_rejects_role_runtime_or_kernelone_role_asset_refs(asset_ref: str) -> None:
+    with pytest.raises(ValueError, match="asset ref must point to the real owner Cell"):
+        RoleAssetMountTable(
+            mounts=(
+                RoleAssetMount(
+                    mount_name="invalid-ref-owner",
+                    asset_ref=RoleAssetRef(
+                        asset_id="invalid-ref-owner",
+                        owner_cell="qa.audit_verdict",
+                        contract_name="RunQaAuditCommandV1",
+                        ref=asset_ref,
+                    ),
+                ),
+            )
+        )
+
+
 def test_capability_ports_reject_duplicate_capability_ids() -> None:
     capability = RoleCapabilityDescriptor(
         capability_id="dispatch_task_to_market",
@@ -936,6 +1029,30 @@ def test_capability_ports_reject_duplicate_capability_ids() -> None:
 
     with pytest.raises(ValueError, match="duplicate capability"):
         RoleCapabilityPorts(capabilities=(capability, capability))
+
+
+@pytest.mark.parametrize(
+    "owner_cell",
+    (
+        "roles.runtime",
+        "roles.adapters",
+        "roles.kernel",
+        "roles.profile",
+        "roles.session",
+        "kernelone.roles",
+        "polaris.kernelone.roles",
+        "polaris.kernelone.roles.business",
+    ),
+)
+def test_capability_descriptor_rejects_role_runtime_or_kernelone_role_owners(owner_cell: str) -> None:
+    with pytest.raises(ValueError, match="capability owner_cell must be a target public Cell"):
+        RoleCapabilityDescriptor(
+            capability_id=f"invalid-{owner_cell}",
+            owner_cell=owner_cell,
+            contract_name="InvalidRoleCapabilityCommandV1",
+            effect="role.capability.invalid",
+            allowed_roles=("pm",),
+        )
 
 
 def test_capability_ports_reject_role_runtime_or_kernelone_role_capability_owners() -> None:
@@ -950,7 +1067,7 @@ def test_capability_ports_reject_role_runtime_or_kernelone_role_capability_owner
     )
 
     for owner_cell in forbidden_owner_cells:
-        with pytest.raises(ValueError, match="must be owned by a target public Cell"):
+        with pytest.raises(ValueError, match="must be a target public Cell"):
             RoleCapabilityPorts(
                 capabilities=(
                     RoleCapabilityDescriptor(
@@ -1002,15 +1119,15 @@ def test_role_turn_envelope_and_commit_request_carry_refs_not_foreign_state() ->
         role_id="pm",
         command_contract="PublishTaskWorkItemCommandV1",
         payload_ref="runtime.task_market:work-item:task-1",
-        fingerprint_ref="capability-fp",
+        fingerprint_ref="a" * 64,
     )
     envelope = RoleTurnEnvelope(
         identity=_identity(),
         profile_binding=_profile_binding(),
         turn_context=RoleTurnContext(
-            typed_input_ref="pm.task_contract:task-1",
+            typed_input_ref="roles.runtime:typed-input:task-1",
             context_snapshot_ref="context.engine:snapshot-1",
-            handoff_refs=("handoff-1",),
+            handoff_refs=("factory.cognitive_runtime:handoff:handoff-1",),
             task_refs=("runtime.task_market:task-1",),
         ),
         capability_invocations=(invocation,),
@@ -1038,10 +1155,282 @@ def test_role_turn_envelope_and_commit_request_carry_refs_not_foreign_state() ->
         turn_outcome_ref="roles.kernel:turn-outcome:turn-1",
     )
 
-    assert request.envelope.turn_context.handoff_refs == ("handoff-1",)
+    assert request.envelope.turn_context.handoff_refs == ("factory.cognitive_runtime:handoff:handoff-1",)
     assert request.envelope.capability_invocations[0].payload_ref == "runtime.task_market:work-item:task-1"
     assert receipt.commit_contract == "CommitReceipt"
     assert receipt.runtime_receipt_contract == "RecordRuntimeReceiptCommandV1"
+
+
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {"payload_ref": "roles.profile:prompt:pm"},
+            r"payload_ref must point to roles\.runtime or runtime\.task_market",
+        ),
+        (
+            {"fingerprint_ref": "capability-fp"},
+            r"fingerprint_ref must be a 64-character hex capability fingerprint",
+        ),
+        (
+            {"fingerprint_ref": "z" * 64},
+            r"fingerprint_ref must be a 64-character hex capability fingerprint",
+        ),
+    ),
+)
+def test_role_capability_invocation_rejects_unowned_payload_or_invalid_fingerprint(
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
+    invocation_payload: dict[str, object] = {
+        "invocation_id": "invoke-invalid-ref",
+        "capability_id": "dispatch_task_to_market",
+        "role_id": "pm",
+        "command_contract": "PublishTaskWorkItemCommandV1",
+        "payload_ref": "roles.runtime:typed-input:pm-task-1",
+        "fingerprint_ref": "a" * 64,
+    }
+    invocation_payload.update(payload)
+
+    with pytest.raises(ValueError, match=expected_error):
+        RoleCapabilityInvocation(**invocation_payload)
+
+
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {"typed_input_ref": "roles.profile:prompt:pm"},
+            r"typed_input_ref must point to roles\.runtime or runtime\.task_market",
+        ),
+        (
+            {"context_snapshot_ref": "roles.runtime:snapshot:1"},
+            r"context_snapshot_ref must point to context\.engine or roles\.session",
+        ),
+        (
+            {"handoff_refs": ("roles.session:handoff:1",)},
+            r"handoff_refs must point to factory\.cognitive_runtime",
+        ),
+        (
+            {"task_refs": ("roles.kernel:task:1",)},
+            r"task_refs must point to runtime\.task_market",
+        ),
+    ),
+)
+def test_role_turn_context_rejects_refs_outside_source_of_truth(
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
+    context_payload: dict[str, object] = {
+        "typed_input_ref": "roles.runtime:typed-input:pm-task-1",
+        "context_snapshot_ref": "context.engine:snapshot-1",
+        "handoff_refs": ("factory.cognitive_runtime:handoff:1",),
+        "task_refs": ("runtime.task_market:task:1",),
+    }
+    context_payload.update(payload)
+
+    with pytest.raises(ValueError, match=expected_error):
+        RoleTurnContext(**context_payload)
+
+
+def test_role_capability_decision_rejects_evidence_refs_outside_audit_evidence() -> None:
+    with pytest.raises(ValueError, match=r"evidence_refs must point to audit\.evidence"):
+        RoleCapabilityDecision(
+            invocation_id="decision-invalid-evidence",
+            capability_id="dispatch_task_to_market",
+            role_id="pm",
+            allowed=False,
+            denial_code="policy_denied",
+            evidence_refs=("roles.kernel:evidence:decision-1",),
+        )
+
+
+def test_role_capability_invocation_result_rejects_failed_allowed_true() -> None:
+    with pytest.raises(ValueError, match=r"failed capability invocation result must set allowed=False"):
+        RoleCapabilityInvocationResultV1(
+            ok=False,
+            invocation_id="invoke-failed-allowed-true",
+            role_id="architect",
+            capability_id="validate_cell_boundary_change",
+            command_contract="GenerateArchitectureDesignCommandV1",
+            allowed=True,
+            owner_cell="architect.design",
+            payload_ref="roles.runtime:typed-input:architect-boundary-1",
+            metadata={"capability_available": True},
+            error_code="invalid_architect_boundary_context",
+            error_message="payload.context must be a mapping when provided",
+        )
+
+
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {
+                "ok": True,
+                "allowed": True,
+                "owner_cell": "roles.runtime",
+                "result_ref": "roles.runtime:result:1",
+                "payload_ref": "roles.runtime:result:1",
+            },
+            r"capability invocation result owner_cell must be a target public Cell",
+        ),
+        (
+            {
+                "ok": True,
+                "allowed": True,
+                "owner_cell": "qa.audit_verdict",
+                "result_ref": "runtime.task_market:result:1",
+                "payload_ref": "runtime.task_market:result:1",
+            },
+            r"result_ref must point to owner_cell",
+        ),
+        (
+            {
+                "ok": False,
+                "allowed": False,
+                "owner_cell": "",
+                "result_ref": None,
+                "payload_ref": "roles.profile:prompt:pm",
+                "error_code": "capability_not_mounted",
+                "error_message": "not mounted",
+            },
+            r"payload_ref must point to roles\.runtime or runtime\.task_market",
+        ),
+    ),
+)
+def test_role_capability_invocation_result_rejects_unowned_result_refs(
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
+    result_payload: dict[str, object] = {
+        "ok": True,
+        "invocation_id": "invoke-result-invalid",
+        "role_id": "qa",
+        "capability_id": "issue_audit_verdict",
+        "command_contract": "RunQaAuditCommandV1",
+        "allowed": True,
+        "payload_ref": "qa.audit_verdict:verdict:task-1",
+        "owner_cell": "qa.audit_verdict",
+        "result_ref": "qa.audit_verdict:verdict:task-1",
+    }
+    result_payload.update(payload)
+
+    with pytest.raises(ValueError, match=expected_error):
+        RoleCapabilityInvocationResultV1(**result_payload)
+
+
+def test_successful_role_state_commit_receipt_requires_runtime_receipt_ref() -> None:
+    with pytest.raises(ValueError, match="successful commit receipt must include runtime_receipt_refs"):
+        RoleStateCommitReceipt(
+            request_id="commit-request-without-runtime-receipt",
+            ok=True,
+            commit_receipt_ref="roles.kernel:commit:turn-1",
+        )
+
+
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {
+                "request_id": "bad-commit-ref",
+                "ok": True,
+                "commit_receipt_ref": "runtime.task_market:commit:turn-1",
+                "runtime_receipt_refs": ("factory.cognitive_runtime:receipt-1",),
+            },
+            r"commit_receipt_ref must point to roles\.kernel",
+        ),
+        (
+            {
+                "request_id": "bad-runtime-receipt-ref",
+                "ok": True,
+                "commit_receipt_ref": "roles.kernel:commit:turn-1",
+                "runtime_receipt_refs": ("roles.kernel:receipt-1",),
+            },
+            r"runtime_receipt_refs must point to factory\.cognitive_runtime",
+        ),
+        (
+            {
+                "request_id": "bad-change-set-ref",
+                "ok": True,
+                "commit_receipt_ref": "roles.kernel:commit:turn-1",
+                "runtime_receipt_refs": ("factory.cognitive_runtime:receipt-1",),
+                "change_set_validation_ref": "roles.kernel:change-set-validation-1",
+            },
+            r"change_set_validation_ref must point to factory\.cognitive_runtime",
+        ),
+        (
+            {
+                "request_id": "bad-handoff-ref",
+                "ok": True,
+                "commit_receipt_ref": "roles.kernel:commit:turn-1",
+                "runtime_receipt_refs": ("factory.cognitive_runtime:receipt-1",),
+                "handoff_pack_refs": ("roles.session:handoff-1",),
+            },
+            r"handoff_pack_refs must point to factory\.cognitive_runtime",
+        ),
+        (
+            {
+                "request_id": "bad-turn-outcome-ref",
+                "ok": True,
+                "commit_receipt_ref": "roles.kernel:commit:turn-1",
+                "runtime_receipt_refs": ("factory.cognitive_runtime:receipt-1",),
+                "turn_outcome_ref": "roles.runtime:turn-outcome-1",
+            },
+            r"turn_outcome_ref must point to roles\.kernel",
+        ),
+    ),
+)
+def test_role_state_commit_receipt_rejects_refs_outside_source_of_truth(
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        RoleStateCommitReceipt(**payload)
+
+
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {"turn_ledger_ref": "roles.runtime:turn-ledger:run-1"},
+            r"turn_ledger_ref must point to roles\.kernel",
+        ),
+        (
+            {
+                "turn_ledger_ref": "roles.kernel:turn-ledger:run-1",
+                "commit_receipt_ref": "factory.cognitive_runtime:commit:turn-1",
+            },
+            r"commit_receipt_ref must point to roles\.kernel",
+        ),
+        (
+            {
+                "turn_ledger_ref": "roles.kernel:turn-ledger:run-1",
+                "receipt_refs": ("roles.kernel:receipt:turn-1",),
+            },
+            r"receipt_refs must point to factory\.cognitive_runtime",
+        ),
+    ),
+)
+def test_role_ledger_binding_rejects_refs_outside_source_of_truth(
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        RoleLedgerBinding(**payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"work_item_ref": "roles.runtime:task-1"},
+        {"lease_token_ref": "roles.session:lease-1"},
+    ),
+)
+def test_role_task_market_binding_rejects_refs_outside_task_market(payload: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match=r"task-market binding refs must point to runtime\.task_market"):
+        RoleTaskMarketBinding(**payload)
 
 
 def test_role_turn_envelope_rejects_profile_role_mismatch() -> None:
@@ -1050,7 +1439,7 @@ def test_role_turn_envelope_rejects_profile_role_mismatch() -> None:
             identity=_identity("pm"),
             profile_binding=_profile_binding("qa"),
             turn_context=RoleTurnContext(
-                typed_input_ref="pm.task_contract:task-1",
+                typed_input_ref="roles.runtime:typed-input:task-1",
                 context_snapshot_ref="context.engine:snapshot-1",
             ),
             capability_invocations=(),
@@ -1068,7 +1457,7 @@ def test_role_turn_envelope_rejects_task_market_ref_outside_turn_context() -> No
             identity=_identity("chief_engineer"),
             profile_binding=_profile_binding("chief_engineer"),
             turn_context=RoleTurnContext(
-                typed_input_ref="chief_engineer.blueprint:request:task-1",
+                typed_input_ref="roles.runtime:typed-input:task-1",
                 context_snapshot_ref="context.engine:snapshot-1",
                 task_refs=("runtime.task_market:task-1",),
             ),
@@ -1200,13 +1589,13 @@ def test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_run
         role_id="pm",
         command_contract="PublishTaskWorkItemCommandV1",
         payload_ref="runtime.task_market:work-item:task-1",
-        fingerprint_ref="capability-fp",
+        fingerprint_ref="a" * 64,
     )
     envelope = RoleTurnEnvelope(
         identity=_identity("pm"),
         profile_binding=_profile_binding("pm"),
         turn_context=RoleTurnContext(
-            typed_input_ref="pm.task_contract:task-1",
+            typed_input_ref="roles.runtime:typed-input:task-1",
             context_snapshot_ref="context.engine:snapshot-1",
             handoff_refs=("factory.cognitive_runtime:handoff:previous",),
             task_refs=("runtime.task_market:task-1",),
@@ -1283,7 +1672,7 @@ def test_commit_role_state_rejects_failed_change_set_validation_without_receipt_
         identity=_identity("pm"),
         profile_binding=_profile_binding("pm"),
         turn_context=RoleTurnContext(
-            typed_input_ref="pm.task_contract:task-1",
+            typed_input_ref="roles.runtime:typed-input:task-1",
             context_snapshot_ref="context.engine:snapshot-1",
         ),
         capability_invocations=(),
@@ -1319,7 +1708,7 @@ def test_commit_role_state_rejects_missing_kernel_commit_receipt_without_runtime
         identity=_identity("pm"),
         profile_binding=_profile_binding("pm"),
         turn_context=RoleTurnContext(
-            typed_input_ref="pm.task_contract:task-1",
+            typed_input_ref="roles.runtime:typed-input:task-1",
             context_snapshot_ref="context.engine:snapshot-1",
         ),
         capability_invocations=(),
@@ -1500,6 +1889,217 @@ def test_role_runtime_chain_assembly_aggregates_capability_fingerprint_refs() ->
     assert result.chain.capability_fingerprint_refs == ("roles.runtime:capability-fingerprint:pm-dispatch",)
 
 
+@pytest.mark.parametrize(
+    "owner_cell",
+    (
+        "roles.runtime",
+        "roles.adapters",
+        "roles.kernel",
+        "roles.profile",
+        "roles.session",
+        "kernelone.roles",
+        "polaris.kernelone.roles",
+        "polaris.kernelone.roles.business",
+    ),
+)
+def test_role_runtime_chain_step_rejects_role_runtime_or_kernelone_role_owners(owner_cell: str) -> None:
+    with pytest.raises(ValueError, match="chain step owner_cell must be a target public Cell"):
+        RoleRuntimeChainStepRef(
+            role_id="pm",
+            stage="task_market_dispatch",
+            capability_id="dispatch_task_to_market",
+            capability_fingerprint_ref="roles.runtime:capability-fingerprint:pm-dispatch",
+            owner_cell=owner_cell,
+            command_contract="PublishTaskWorkItemCommandV1",
+            result_ref="runtime.task_market:work-item:task-1",
+        )
+
+
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {"capability_fingerprint_ref": "factory.cognitive_runtime:capability-fingerprint:qa-audit"},
+            r"capability_fingerprint_ref must point to roles\.runtime",
+        ),
+        (
+            {"result_ref": "runtime.task_market:verdict:task-1"},
+            r"result_ref must point to owner_cell",
+        ),
+        (
+            {"task_ref": "roles.runtime:task:task-1"},
+            r"chain step task/work item refs must point to runtime\.task_market",
+        ),
+        (
+            {"work_item_ref": "roles.profile:work-item:task-1"},
+            r"chain step task/work item refs must point to runtime\.task_market",
+        ),
+        (
+            {"evidence_refs": ("roles.kernel:evidence:task-1",)},
+            r"evidence_refs must point to audit\.evidence",
+        ),
+        (
+            {"receipt_refs": ("roles.kernel:receipt:task-1",)},
+            r"receipt_refs must point to factory\.cognitive_runtime",
+        ),
+        (
+            {"handoff_refs": ("roles.session:handoff:task-1",)},
+            r"handoff_refs must point to factory\.cognitive_runtime",
+        ),
+    ),
+)
+def test_role_runtime_chain_step_rejects_refs_outside_source_of_truth(
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
+    base_payload: dict[str, object] = {
+        "role_id": "qa",
+        "stage": "audit",
+        "capability_id": "issue_audit_verdict",
+        "capability_fingerprint_ref": "roles.runtime:capability-fingerprint:qa-audit",
+        "owner_cell": "qa.audit_verdict",
+        "command_contract": "RunQaAuditCommandV1",
+        "result_ref": "qa.audit_verdict:verdict:task-1",
+    }
+    base_payload.update(payload)
+
+    with pytest.raises(ValueError, match=expected_error):
+        RoleRuntimeChainStepRef(**base_payload)
+
+
+@pytest.mark.parametrize(
+    ("missing_field", "error_message"),
+    (
+        ("task_market_refs", "task_market_refs must include step task/work item refs"),
+        ("audit_evidence_refs", "audit_evidence_refs must include step evidence refs"),
+        ("capability_fingerprint_refs", "capability_fingerprint_refs must include step capability fingerprint refs"),
+        ("handoff_refs", "handoff_refs must include step handoff refs"),
+        ("runtime_receipt_refs", "runtime_receipt_refs must include step receipt refs"),
+    ),
+)
+def test_role_runtime_chain_envelope_rejects_missing_step_aggregate_refs(
+    missing_field: str,
+    error_message: str,
+) -> None:
+    step = RoleRuntimeChainStepRef(
+        role_id="qa",
+        stage="audit",
+        capability_id="issue_audit_verdict",
+        capability_fingerprint_ref="roles.runtime:capability-fingerprint:qa-audit",
+        owner_cell="qa.audit_verdict",
+        command_contract="RunQaAuditCommandV1",
+        result_ref="qa.audit_verdict:verdict:task-1",
+        task_ref="runtime.task_market:task:task-1",
+        evidence_refs=("audit.evidence:qa:task-1",),
+        receipt_refs=("factory.cognitive_runtime:receipt:qa-1",),
+        handoff_refs=("factory.cognitive_runtime:handoff:qa-to-audit",),
+    )
+    aggregate_refs: dict[str, tuple[str, ...]] = {
+        "task_market_refs": ("runtime.task_market:task:task-1",),
+        "audit_evidence_refs": ("audit.evidence:qa:task-1",),
+        "capability_fingerprint_refs": ("roles.runtime:capability-fingerprint:qa-audit",),
+        "handoff_refs": ("factory.cognitive_runtime:handoff:qa-to-audit",),
+        "runtime_receipt_refs": ("factory.cognitive_runtime:receipt:qa-1",),
+    }
+    aggregate_refs[missing_field] = ()
+
+    with pytest.raises(ValueError, match=error_message):
+        RoleRuntimeChainEnvelope(
+            chain_id="phase5-chain-inconsistent",
+            workspace="/repo",
+            run_id="run-1",
+            task_id="task-1",
+            steps=(step,),
+            turn_ledger_ref="roles.kernel:turn-ledger:run-1",
+            **aggregate_refs,
+        )
+
+
+@pytest.mark.parametrize(
+    "envelope_overrides, expected_error",
+    (
+        (
+            {"turn_ledger_ref": "roles.runtime:turn-ledger:run-1"},
+            r"turn_ledger_ref must point to roles\.kernel",
+        ),
+        (
+            {"task_market_refs": ("runtime.task_market:task:task-1", "roles.kernel:task:task-1")},
+            r"task_market_refs must point to runtime\.task_market",
+        ),
+        (
+            {"audit_evidence_refs": ("audit.evidence:qa:task-1", "roles.kernel:evidence:qa")},
+            r"audit_evidence_refs must point to audit\.evidence",
+        ),
+        (
+            {"runtime_projection_refs": ("runtime.projection:runtime:run-1", "context.engine:snapshot-1")},
+            r"runtime_projection_refs must point to runtime\.projection",
+        ),
+        (
+            {
+                "capability_fingerprint_refs": (
+                    "roles.runtime:capability-fingerprint:qa-audit",
+                    "factory.cognitive_runtime:capability-fingerprint:qa-audit",
+                )
+            },
+            r"capability_fingerprint_refs must point to roles\.runtime",
+        ),
+        (
+            {
+                "handoff_refs": (
+                    "factory.cognitive_runtime:handoff:qa-to-audit",
+                    "roles.session:handoff:qa-to-audit",
+                )
+            },
+            r"handoff_refs must point to factory\.cognitive_runtime",
+        ),
+        (
+            {
+                "runtime_receipt_refs": (
+                    "factory.cognitive_runtime:receipt:qa-1",
+                    "roles.kernel:receipt:qa-1",
+                )
+            },
+            r"runtime_receipt_refs must point to factory\.cognitive_runtime",
+        ),
+    ),
+)
+def test_role_runtime_chain_envelope_rejects_aggregate_refs_outside_source_of_truth(
+    envelope_overrides: dict[str, object],
+    expected_error: str,
+) -> None:
+    step = RoleRuntimeChainStepRef(
+        role_id="qa",
+        stage="audit",
+        capability_id="issue_audit_verdict",
+        capability_fingerprint_ref="roles.runtime:capability-fingerprint:qa-audit",
+        owner_cell="qa.audit_verdict",
+        command_contract="RunQaAuditCommandV1",
+        result_ref="qa.audit_verdict:verdict:task-1",
+        task_ref="runtime.task_market:task:task-1",
+        evidence_refs=("audit.evidence:qa:task-1",),
+        receipt_refs=("factory.cognitive_runtime:receipt:qa-1",),
+        handoff_refs=("factory.cognitive_runtime:handoff:qa-to-audit",),
+    )
+    envelope_payload: dict[str, object] = {
+        "chain_id": "phase5-chain-bad-owner",
+        "workspace": "/repo",
+        "run_id": "run-1",
+        "task_id": "task-1",
+        "steps": (step,),
+        "turn_ledger_ref": "roles.kernel:turn-ledger:run-1",
+        "task_market_refs": ("runtime.task_market:task:task-1",),
+        "audit_evidence_refs": ("audit.evidence:qa:task-1",),
+        "runtime_projection_refs": ("runtime.projection:runtime:run-1",),
+        "capability_fingerprint_refs": ("roles.runtime:capability-fingerprint:qa-audit",),
+        "handoff_refs": ("factory.cognitive_runtime:handoff:qa-to-audit",),
+        "runtime_receipt_refs": ("factory.cognitive_runtime:receipt:qa-1",),
+    }
+    envelope_payload.update(envelope_overrides)
+
+    with pytest.raises(ValueError, match=expected_error):
+        RoleRuntimeChainEnvelope(**envelope_payload)
+
+
 def test_pm_dispatch_capability_invokes_task_market_publish_contract() -> None:
     spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
     runtime_object = spec.instantiate(
@@ -1513,7 +2113,7 @@ def test_pm_dispatch_capability_invokes_task_market_publish_contract() -> None:
         capability_id="dispatch_task_to_market",
         role_id="pm",
         command_contract="PublishTaskWorkItemCommandV1",
-        payload_ref="roles.runtime:typed-input:pm-task-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     task_market = FakeTaskMarketService()
@@ -1555,6 +2155,45 @@ def test_pm_dispatch_capability_invokes_task_market_publish_contract() -> None:
     assert publish_command.depends_on == ("dep-1",)
 
 
+def test_capability_invocation_rejects_payload_ref_outside_current_turn_context() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
+    runtime_object = spec.instantiate(
+        identity=_identity("pm"),
+        profile_binding=_profile_binding("pm"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:pm-run"),
+        policy_fingerprint="pm-policy",
+    )
+    task_market = FakeTaskMarketService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=RoleCapabilityInvocation(
+                invocation_id="invoke-dispatch-outside-turn-1",
+                capability_id="dispatch_task_to_market",
+                role_id="pm",
+                command_contract="PublishTaskWorkItemCommandV1",
+                payload_ref="roles.runtime:typed-input:foreign-turn",
+                fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+            ),
+            payload={
+                "trace_id": "trace-foreign",
+                "run_id": "run-1",
+                "task_id": "pm-task-foreign",
+                "stage": "pending_design",
+                "payload": {"objective": "must not publish"},
+            },
+        ),
+        task_market_service=task_market,
+    )
+
+    assert result.ok is False
+    assert result.allowed is False
+    assert result.error_code == "payload_ref_outside_turn_context"
+    assert result.metadata["turn_typed_input_ref"] == runtime_object.turn_context.typed_input_ref
+    assert task_market.published == []
+
+
 def test_non_pm_dispatch_capability_is_structurally_denied_without_task_market_call() -> None:
     spec = runtime_contracts.get_builtin_role_runtime_spec("chief_engineer")
     runtime_object = spec.instantiate(
@@ -1573,7 +2212,7 @@ def test_non_pm_dispatch_capability_is_structurally_denied_without_task_market_c
                 capability_id="dispatch_task_to_market",
                 role_id="chief_engineer",
                 command_contract="PublishTaskWorkItemCommandV1",
-                payload_ref="roles.runtime:typed-input:ce-task-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={
@@ -1608,7 +2247,7 @@ def test_pm_evaluate_critical_path_reads_task_market_status_contract() -> None:
         capability_id="evaluate_critical_path",
         role_id="pm",
         command_contract="QueryTaskMarketStatusV1",
-        payload_ref="roles.runtime:typed-input:pm-critical-path-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     task_market = FakeTaskMarketService()
@@ -1662,7 +2301,7 @@ def test_pm_project_runtime_status_invokes_runtime_projection_contract() -> None
         capability_id="project_runtime_status",
         role_id="pm",
         command_contract="RuntimeProjectionQueryV1",
-        payload_ref="roles.runtime:typed-input:pm-runtime-projection-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     projection = FakeRuntimeProjectionService()
@@ -1700,7 +2339,7 @@ def test_director_execute_capability_invokes_director_execution_public_contract(
         capability_id="execute_director_task",
         role_id="director",
         command_contract="ExecuteDirectorTaskCommandV1",
-        payload_ref="roles.runtime:typed-input:director-task-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     director_execution = FakeDirectorExecutionService()
@@ -1763,7 +2402,7 @@ def test_chief_engineer_generate_diff_capability_invokes_blueprint_contract() ->
         capability_id="generate_diff_specification",
         role_id="chief_engineer",
         command_contract="GenerateTaskBlueprintCommandV1",
-        payload_ref="roles.runtime:typed-input:ce-task-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     blueprint_service = FakeBlueprintService()
@@ -1840,7 +2479,7 @@ def test_chief_engineer_record_arch_memo_targets_arch_constraint_memo_ref() -> N
                 capability_id="record_arch_memo",
                 role_id="chief_engineer",
                 command_contract="GenerateTaskBlueprintCommandV1",
-                payload_ref="roles.runtime:typed-input:ce-arch-memo-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={
@@ -1890,8 +2529,8 @@ def test_capability_fingerprint_mismatch_is_denied_before_blueprint_call() -> No
                 capability_id="generate_diff_specification",
                 role_id="chief_engineer",
                 command_contract="GenerateTaskBlueprintCommandV1",
-                payload_ref="roles.runtime:typed-input:ce-task-1",
-                fingerprint_ref="wrong-fingerprint",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
+                fingerprint_ref="b" * 64,
             ),
             payload={
                 "task_id": "ce-task-1",
@@ -1922,7 +2561,7 @@ def test_chief_engineer_verify_ast_dependency_invokes_code_intelligence_contract
         capability_id="verify_ast_dependency",
         role_id="chief_engineer",
         command_contract="VerifyAstDependencyQueryV1",
-        payload_ref="roles.runtime:typed-input:ce-code-intel-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     code_intelligence = FakeCodeIntelligenceService()
@@ -1969,7 +2608,7 @@ def test_qa_pytest_capability_invokes_verification_guard_contract() -> None:
         capability_id="invoke_container_pytest",
         role_id="qa",
         command_contract="VerifyCompletionCommandV1",
-        payload_ref="roles.runtime:typed-input:qa-pytest-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     verification_guard = FakeVerificationGuardService()
@@ -2028,7 +2667,7 @@ def test_non_qa_pytest_capability_is_denied_without_verification_guard_call() ->
                 capability_id="invoke_container_pytest",
                 role_id="pm",
                 command_contract="VerifyCompletionCommandV1",
-                payload_ref="roles.runtime:typed-input:pm-pytest-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={
@@ -2051,6 +2690,11 @@ def test_non_qa_pytest_capability_is_denied_even_if_misconfigured_as_mounted() -
     runtime_object = RoleRuntimeObject(
         identity=_identity("pm"),
         profile_binding=_profile_binding("pm"),
+        turn_context=RoleTurnContext(
+            typed_input_ref="roles.runtime:typed-input:pm-pytest-misconfigured-1",
+            context_snapshot_ref="roles.session:context-snapshot:pm-run",
+            task_refs=("runtime.task_market:task:pm-pytest-misconfigured-1",),
+        ),
         asset_mounts=RoleAssetMountTable(),
         capability_ports=RoleCapabilityPorts(
             capabilities=(
@@ -2084,7 +2728,7 @@ def test_non_qa_pytest_capability_is_denied_even_if_misconfigured_as_mounted() -
                 capability_id="invoke_container_pytest",
                 role_id="pm",
                 command_contract="VerifyCompletionCommandV1",
-                payload_ref="roles.runtime:typed-input:pm-pytest-misconfigured-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={
@@ -2118,7 +2762,7 @@ def test_qa_issue_audit_verdict_invokes_qa_audit_contract() -> None:
         capability_id="issue_audit_verdict",
         role_id="qa",
         command_contract="RunQaAuditCommandV1",
-        payload_ref="roles.runtime:typed-input:qa-verdict-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     qa_audit = FakeQaAuditVerdictService()
@@ -2182,7 +2826,7 @@ def test_qa_visual_audit_rejects_without_image_capable_model_before_qa_call() ->
                 capability_id="issue_visual_audit_verdict",
                 role_id="qa",
                 command_contract="RunVisualQaAuditCommandV1",
-                payload_ref="roles.runtime:typed-input:qa-visual-denied-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={
@@ -2202,6 +2846,49 @@ def test_qa_visual_audit_rejects_without_image_capable_model_before_qa_call() ->
     assert result.metadata["required_capability"] == "image_input"
     assert len(llm_control_plane.queried) == 1
     assert llm_control_plane.queried[0].capability == "image_input"
+    assert qa_audit.visual_audit_commands == []
+
+
+def test_qa_visual_audit_rejects_payload_model_capability_downgrade_before_preflight() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("qa")
+    runtime_object = spec.instantiate(
+        identity=_identity("qa"),
+        profile_binding=_profile_binding("qa"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:qa-run"),
+        policy_fingerprint="qa-policy",
+        capability_id="issue_visual_audit_verdict",
+    )
+    qa_audit = FakeQaAuditVerdictService()
+    llm_control_plane = FakeLlmControlPlaneService(supported=True)
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=RoleCapabilityInvocation(
+                invocation_id="invoke-qa-visual-downgrade-1",
+                capability_id="issue_visual_audit_verdict",
+                role_id="qa",
+                command_contract="RunVisualQaAuditCommandV1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
+                fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+            ),
+            payload={
+                "task_id": "qa-visual-1",
+                "image_refs": ("audit.evidence:image:screenshot-1",),
+                "criteria": {"assertions": ("no visual overlap",)},
+                "required_model_capability": "text_output",
+            },
+        ),
+        qa_audit_service=qa_audit,
+        llm_control_plane_service=llm_control_plane,
+    )
+
+    assert result.ok is False
+    assert result.allowed is False
+    assert result.error_code == "visual_model_capability_override_denied"
+    assert result.metadata["required_capability"] == "image_input"
+    assert result.metadata["requested_capability"] == "text_output"
+    assert llm_control_plane.queried == []
     assert qa_audit.visual_audit_commands == []
 
 
@@ -2225,7 +2912,7 @@ def test_qa_visual_audit_invokes_qa_contract_after_image_capability_preflight() 
                 capability_id="issue_visual_audit_verdict",
                 role_id="qa",
                 command_contract="RunVisualQaAuditCommandV1",
-                payload_ref="roles.runtime:typed-input:qa-visual-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={
@@ -2277,7 +2964,7 @@ def test_non_qa_issue_audit_verdict_is_denied_without_qa_audit_call() -> None:
                 capability_id="issue_audit_verdict",
                 role_id="pm",
                 command_contract="RunQaAuditCommandV1",
-                payload_ref="roles.runtime:typed-input:pm-verdict-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={
@@ -2308,7 +2995,7 @@ def test_qa_parse_traceback_frames_invokes_failure_signal_contract() -> None:
         capability_id="parse_traceback_frames",
         role_id="qa",
         command_contract="ParseTracebackFramesCommandV1",
-        payload_ref="roles.runtime:typed-input:qa-traceback-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     qa_audit = FakeQaAuditVerdictService()
@@ -2369,7 +3056,7 @@ def test_non_qa_parse_traceback_frames_is_denied_without_qa_audit_call() -> None
                 capability_id="parse_traceback_frames",
                 role_id="pm",
                 command_contract="ParseTracebackFramesCommandV1",
-                payload_ref="roles.runtime:typed-input:pm-traceback-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={"task_id": "qa-task-2", "traceback_text": "ValueError: boom"},
@@ -2397,7 +3084,7 @@ def test_architect_budget_capability_invokes_finops_budget_contract() -> None:
         capability_id="allocate_context_token_budget",
         role_id="architect",
         command_contract="ReserveBudgetCommandV1",
-        payload_ref="roles.runtime:typed-input:architect-budget-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     budget_guard = FakeBudgetGuardService()
@@ -2450,7 +3137,7 @@ def test_architect_budget_denial_has_allowed_false_and_capability_available_meta
                 capability_id="allocate_context_token_budget",
                 role_id="architect",
                 command_contract="ReserveBudgetCommandV1",
-                payload_ref="roles.runtime:typed-input:architect-budget-denied-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={
@@ -2485,7 +3172,7 @@ def test_architect_intercept_illegal_mutation_uses_workspace_guard_refusal() -> 
         capability_id="intercept_illegal_mutations",
         role_id="architect",
         command_contract="WorkspaceWriteGuardQueryV1",
-        payload_ref="roles.runtime:typed-input:architect-mutation-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     workspace_guard = FakeWorkspaceGuardService(allowed=False)
@@ -2532,7 +3219,7 @@ def test_non_architect_mutation_guard_is_denied_without_workspace_guard_call() -
                 capability_id="intercept_illegal_mutations",
                 role_id="pm",
                 command_contract="WorkspaceWriteGuardQueryV1",
-                payload_ref="roles.runtime:typed-input:pm-mutation-1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
                 fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
             ),
             payload={"path": "src/backend/example.py", "operation": "write"},
@@ -2553,7 +3240,7 @@ def test_architect_validate_cell_boundary_change_invokes_permission_guard_and_de
         capability_id="validate_cell_boundary_change",
         role_id="architect",
         command_contract="GenerateArchitectureDesignCommandV1",
-        payload_ref="roles.runtime:typed-input:architect-boundary-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     permission = FakePermissionService(allowed=True)
@@ -2622,7 +3309,7 @@ def test_architect_validate_cell_boundary_permission_denial_has_allowed_false() 
         capability_id="validate_cell_boundary_change",
         role_id="architect",
         command_contract="GenerateArchitectureDesignCommandV1",
-        payload_ref="roles.runtime:typed-input:architect-boundary-denied-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     permission = FakePermissionService(allowed=False)
@@ -2660,7 +3347,7 @@ def test_architect_validate_cell_boundary_workspace_guard_denial_has_allowed_fal
         capability_id="validate_cell_boundary_change",
         role_id="architect",
         command_contract="GenerateArchitectureDesignCommandV1",
-        payload_ref="roles.runtime:typed-input:architect-boundary-guard-denied-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
     permission = FakePermissionService(allowed=True)
@@ -2694,6 +3381,85 @@ def test_architect_validate_cell_boundary_workspace_guard_denial_has_allowed_fal
     assert architect_design.generated == []
 
 
+def test_architect_validate_cell_boundary_rejects_empty_changed_paths_before_guards() -> None:
+    runtime_object = _architect_validation_runtime_object()
+    invocation = RoleCapabilityInvocation(
+        invocation_id="invoke-boundary-empty-paths-1",
+        capability_id="validate_cell_boundary_change",
+        role_id="architect",
+        command_contract="GenerateArchitectureDesignCommandV1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
+        fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+    )
+    permission = FakePermissionService(allowed=True)
+    workspace_guard = FakeWorkspaceGuardService(allowed=True, single_checks_allowed=False)
+    architect_design = FakeArchitectDesignService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=invocation,
+            payload={
+                "objective": "Validate pathless change",
+                "target_cell": "roles.runtime",
+                "changed_paths": (),
+            },
+        ),
+        permission_service=permission,
+        workspace_guard_service=workspace_guard,
+        architect_design_service=architect_design,
+    )
+
+    assert result.ok is False
+    assert result.allowed is False
+    assert result.error_code == "invalid_architect_boundary_changed_paths"
+    assert permission.evaluated == []
+    assert workspace_guard.checked == []
+    assert workspace_guard.batch_checked == []
+    assert architect_design.generated == []
+
+
+def test_architect_validate_cell_boundary_invalid_context_has_allowed_false() -> None:
+    runtime_object = _architect_validation_runtime_object()
+    invocation = RoleCapabilityInvocation(
+        invocation_id="invoke-boundary-invalid-context-1",
+        capability_id="validate_cell_boundary_change",
+        role_id="architect",
+        command_contract="GenerateArchitectureDesignCommandV1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
+        fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+    )
+    permission = FakePermissionService(allowed=True)
+    workspace_guard = FakeWorkspaceGuardService(allowed=True, single_checks_allowed=False)
+    architect_design = FakeArchitectDesignService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=invocation,
+            payload={
+                "objective": "Validate malformed change",
+                "target_cell": "roles.runtime",
+                "changed_paths": ("src/backend/polaris/cells/roles/runtime/public/service.py",),
+                "context": "not-a-mapping",
+            },
+        ),
+        permission_service=permission,
+        workspace_guard_service=workspace_guard,
+        architect_design_service=architect_design,
+    )
+
+    assert result.ok is False
+    assert result.allowed is False
+    assert result.error_code == "invalid_architect_boundary_context"
+    assert result.metadata["capability_available"] is True
+    assert result.metadata["capability_id"] == "validate_cell_boundary_change"
+    assert permission.evaluated == []
+    assert workspace_guard.checked == []
+    assert workspace_guard.batch_checked == []
+    assert architect_design.generated == []
+
+
 def test_architect_validate_cell_boundary_design_timeout_has_structured_failure() -> None:
     runtime_object = _architect_validation_runtime_object()
     invocation = RoleCapabilityInvocation(
@@ -2701,7 +3467,7 @@ def test_architect_validate_cell_boundary_design_timeout_has_structured_failure(
         capability_id="validate_cell_boundary_change",
         role_id="architect",
         command_contract="GenerateArchitectureDesignCommandV1",
-        payload_ref="roles.runtime:typed-input:architect-boundary-timeout-1",
+        payload_ref=runtime_object.turn_context.typed_input_ref,
         fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
     )
 

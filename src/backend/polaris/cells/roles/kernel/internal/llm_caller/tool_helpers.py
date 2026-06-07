@@ -13,6 +13,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_GEMMA_INLINE_TOOL_CALL_RE = re.compile(
+    r"<\|tool_call\>\s*call:(?P<name>[A-Za-z_][A-Za-z0-9_-]{0,63})\{(?P<body>.*?)\}<tool_call\|>",
+    re.DOTALL,
+)
+_GEMMA_INLINE_ARG_RE = re.compile(
+    r"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*<\|\"\|>(?P<value>.*?)<\|\"\|>\s*(?:,|$)",
+    re.DOTALL,
+)
+
 
 def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
     """Resolve tool call format provider hint.
@@ -253,8 +262,6 @@ def extract_native_tool_calls(
     # as fenced full-file blocks, because real source files like package.json
     # commonly contain a top-level "name" field that is not a tool name.
     if response_text:
-        if _looks_like_file_or_patch_delivery(response_text):
-            return [], provider_hint
         text_calls = _extract_tool_calls_from_text(response_text, provider_hint=provider_hint)
         if text_calls:
             logger.debug("[LLMCaller] Fallback: extracted %d tool calls from text", len(text_calls))
@@ -292,6 +299,11 @@ def _extract_tool_calls_from_text(text: str, *, provider_hint: str = "auto") -> 
         List of tool calls in OpenAI-like format
     """
     if not text or not isinstance(text, str):
+        return []
+    gemma_inline_calls = _extract_gemma_inline_tool_calls_from_text(text)
+    if gemma_inline_calls:
+        return gemma_inline_calls
+    if "<|tool_call>" in text and "call:" in text:
         return []
     if _looks_like_file_or_patch_delivery(text):
         return []
@@ -346,6 +358,36 @@ def _extract_tool_calls_from_text(text: str, *, provider_hint: str = "auto") -> 
     return results
 
 
+def _extract_gemma_inline_tool_calls_from_text(text: str) -> list[dict[str, Any]]:
+    """Extract Gemma-style inline tool calls from plain response text."""
+    results: list[dict[str, Any]] = []
+    for match in _GEMMA_INLINE_TOOL_CALL_RE.finditer(text):
+        name = str(match.group("name") or "").strip()
+        if not name:
+            continue
+
+        arguments: dict[str, Any] = {}
+        body = str(match.group("body") or "")
+        for arg_match in _GEMMA_INLINE_ARG_RE.finditer(body):
+            key = str(arg_match.group("key") or "").strip()
+            if not key:
+                continue
+            arguments[key] = str(arg_match.group("value") or "")
+
+        results.append(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "function",
+                "function": {
+                    "name": name.replace("-", "_"),
+                    "arguments": json.dumps(arguments),
+                },
+            }
+        )
+
+    return results
+
+
 def _convert_json_to_tool_call(data: dict[str, Any]) -> dict[str, Any] | None:
     """Convert JSON dict to OpenAI tool call format.
 
@@ -376,7 +418,12 @@ def _convert_json_to_tool_call(data: dict[str, Any]) -> dict[str, Any] | None:
     if not re.match(r"^[a-z][a-z0-9_]{0,63}$", name, re.IGNORECASE):
         return None
 
-    # Extract arguments
+    # Extract arguments. A bare {"name": "..."} object is often ordinary
+    # data such as package.json metadata, not a tool call.
+    has_arguments_key = any(key in data_lower for key in ("arguments", "args", "params", "parameters"))
+    if not has_arguments_key:
+        return None
+
     arguments = {}
     for key in ("arguments", "args", "params", "parameters"):
         value = data_lower.get(key)

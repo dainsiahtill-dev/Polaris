@@ -59,13 +59,53 @@ if TYPE_CHECKING:
     from polaris.bootstrap.config import Settings
 
 
+def _canonicalize_judge_arg_keys(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Remap declared arg-name aliases to canonical names (SSOT: ToolSpecRegistry).
+
+    A model calling a tool with a *declared* arg alias is behaving correctly —
+    the runtime applies the same ``arg_aliases`` at execution time (e.g. for
+    ``repo_tree`` ``dir``/``directory``/``root`` -> ``path``). The judge observes
+    pre-execution args, so without this step a model using a valid alias would
+    fail ``first_call_arg_equals`` checks that reference the canonical key.
+
+    Args:
+        tool_name: Canonical tool name.
+        args: Raw tool arguments.
+
+    Returns:
+        Arguments with alias keys mapped to canonical keys. Explicitly-provided
+        canonical keys take precedence over aliased duplicates.
+    """
+    if not args:
+        return args
+    try:
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        canonical = ToolSpecRegistry.get_canonical(tool_name)
+        spec = ToolSpecRegistry.get_all_specs().get(canonical) or {}
+        aliases = spec.get("arg_aliases") if isinstance(spec, dict) else None
+    except (ImportError, AttributeError, KeyError, TypeError):
+        return args
+    if not isinstance(aliases, dict) or not aliases:
+        return args
+
+    remapped: dict[str, Any] = {}
+    for key, value in args.items():
+        canonical_key = aliases.get(key, key)
+        if canonical_key in remapped and key != canonical_key:
+            # An explicitly-provided canonical key wins over an aliased duplicate.
+            continue
+        remapped[canonical_key] = value
+    return remapped
+
+
 def _normalize_judge_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Normalize tool arguments for benchmark compatibility.
 
-    This function adds无损兼容层 for path directory normalization.
-    When a search tool (repo_rg, ripgrep, grep_search) is called with a path
-    that should end in '/' (indicating a directory), this function normalizes
-    the path before validation.
+    Two layers, both lossless:
+    1. Arg-name alias canonicalization via ToolSpecRegistry (``dir`` -> ``path``).
+    2. Path directory formatting tolerance (``./backend`` -> ``backend``;
+       search-tool directory suffix normalization).
 
     Args:
         tool_name: Canonical tool name
@@ -77,7 +117,10 @@ def _normalize_judge_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any
     if not args:
         return args
 
-    # Check if this is a tool with path-like arguments that need compatibility normalization.
+    # Layer 1: canonicalize declared arg-name aliases (applies to all tools).
+    args = _canonicalize_judge_arg_keys(tool_name, args)
+
+    # Layer 2: path-like formatting normalization for search/tree tools.
     search_tools = {"repo_rg", "ripgrep", "grep_search", "grep", "search_code"}
     tree_tools = {"repo_tree", "list_directory", "ls"}
     if tool_name not in search_tools and tool_name not in tree_tools:
@@ -2116,6 +2159,12 @@ async def run_tool_calling_matrix_suite(
     weighted_score_sum = 0.0
     weighted_denominator = 0.0
     critical_failures = 0
+    # Early-stop guard: when ``max_failed`` is set, stop running cases once that
+    # many failures accumulate, so a clearly-failing run does not grind through
+    # all cases (fast debug loop instead of a long blind run).
+    max_failed = max(0, _to_int(options_payload.get("max_failed"), default=0))
+    failed_count = 0
+    early_stopped = False
     _emit_progress(
         context_payload,
         {
@@ -2279,6 +2328,32 @@ async def run_tool_calling_matrix_suite(
             },
         )
 
+        if not verdict.passed:
+            failed_count += 1
+        if max_failed > 0 and failed_count >= max_failed:
+            early_stopped = True
+            logger.warning(
+                "[tool_calling_matrix] early stop: %d failures reached max_failed=%d after %d/%d cases (run_id=%s)",
+                failed_count,
+                max_failed,
+                index,
+                len(cases),
+                run_id,
+            )
+            _emit_progress(
+                context_payload,
+                {
+                    "type": "early_stopped",
+                    "suite": "tool_calling_matrix",
+                    "run_id": run_id,
+                    "ran_cases": index,
+                    "total_cases": len(cases),
+                    "failed_count": failed_count,
+                    "max_failed": max_failed,
+                },
+            )
+            break
+
     total_cases = len(case_payloads)
     passed_cases = sum(1 for item in case_payloads if bool(dict(item.get("judge") or {}).get("passed")))
     average_score = (weighted_score_sum / weighted_denominator) if weighted_denominator > 0 else 0.0
@@ -2303,6 +2378,9 @@ async def run_tool_calling_matrix_suite(
             "average_score": average_score,
             "score_threshold": score_threshold,
             "critical_failures": critical_failures,
+            "early_stopped": early_stopped,
+            "planned_cases": len(cases),
+            "max_failed": max_failed,
         },
         "final": {
             "ready": overall_ok,

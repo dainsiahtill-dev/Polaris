@@ -129,6 +129,39 @@ def test_run_integration_verify_runner_runs_self_contained_node_script_with_decl
     assert errors == []
 
 
+def test_run_integration_verify_runner_ignores_uninstalled_test_framework_import_noise(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    src_dir = tmp_path / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/test.mjs"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext","target":"ES2022","strict":true},'
+        '"include":["src/**/*.ts","tests/**/*.ts"]}\n',
+        encoding="utf-8",
+    )
+    (src_dir / "index.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    (tests_dir / "sample.test.ts").write_text(
+        'import { describe, expect, it } from "@jest/globals";\n'
+        "describe('ready', () => { it('is true', () => expect(true).toBe(true)); });\n",
+        encoding="utf-8",
+    )
+    (scripts_dir / "test.mjs").write_text("console.log('SELF_CONTAINED_TEST_PASS');\n", encoding="utf-8")
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is True
+    assert summary == "Integration verification passed: npm run test -- --watch=false"
+    assert errors == []
+
+
 def test_run_integration_verify_runner_fails_on_deterministic_scaffold_marker(
     tmp_path: Path,
 ) -> None:

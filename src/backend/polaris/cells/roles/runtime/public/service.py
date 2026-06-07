@@ -250,17 +250,20 @@ def _capability_invocation_failure(
     metadata: Mapping[str, Any] | None = None,
 ) -> RoleCapabilityInvocationResultV1:
     invocation = command.invocation
+    failure_metadata: Mapping[str, Any] = metadata or {}
+    if allowed:
+        failure_metadata = _capability_available_metadata(invocation.capability_id, failure_metadata)
     return RoleCapabilityInvocationResultV1(
         ok=False,
         invocation_id=invocation.invocation_id,
         role_id=command.runtime_object.identity.role_id,
         capability_id=invocation.capability_id,
         command_contract=invocation.command_contract,
-        allowed=allowed,
+        allowed=False,
         owner_cell=owner_cell,
         payload_ref=invocation.payload_ref,
         evidence_refs=evidence_refs,
-        metadata=metadata or {},
+        metadata=failure_metadata,
         error_code=error_code,
         error_message=error_message,
     )
@@ -268,6 +271,11 @@ def _capability_invocation_failure(
 
 def _payload_string(payload: Mapping[str, Any], key: str, default: str = "") -> str:
     return str(payload.get(key) or default).strip()
+
+
+def _normalize_model_capability(value: Any, default: str = "image_input") -> str:
+    token = str(value or default).strip().lower().replace("-", "_")
+    return token or default
 
 
 def _payload_mapping(payload: Mapping[str, Any], key: str) -> dict[str, Any] | None:
@@ -386,6 +394,13 @@ def _merge_refs(*groups: str | tuple[str, ...] | list[str] | None) -> tuple[str,
                 refs.append(ref)
                 seen.add(ref)
     return tuple(refs)
+
+
+def _turn_context_payload_refs(runtime_object: RoleRuntimeObject) -> tuple[str, ...]:
+    return _merge_refs(
+        runtime_object.turn_context.typed_input_ref,
+        runtime_object.turn_context.task_refs,
+    )
 
 
 def _runtime_receipt_ref(receipt_id: str) -> str:
@@ -1092,6 +1107,21 @@ def execute_role_capability_invocation(
             owner_cell=capability.owner_cell,
         )
 
+    allowed_payload_refs = _turn_context_payload_refs(runtime_object)
+    if invocation.payload_ref not in allowed_payload_refs:
+        return _capability_invocation_failure(
+            command,
+            allowed=False,
+            owner_cell=capability.owner_cell,
+            error_code="payload_ref_outside_turn_context",
+            error_message="capability invocation payload_ref must match the current RoleTurnContext typed input or task refs",
+            metadata={
+                "turn_typed_input_ref": runtime_object.turn_context.typed_input_ref,
+                "turn_task_refs": runtime_object.turn_context.task_refs,
+                "payload_ref": invocation.payload_ref,
+            },
+        )
+
     is_not_task_market_dispatch = (
         capability.capability_id != "dispatch_task_to_market"
         or capability.owner_cell != "runtime.task_market"
@@ -1397,6 +1427,18 @@ def execute_role_capability_invocation(
                 error_code="invalid_architect_boundary_changed_paths",
                 error_message="payload.changed_paths must be a sequence of strings when provided",
             )
+        if not changed_paths:
+            return _capability_invocation_failure(
+                command,
+                allowed=False,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_architect_boundary_changed_paths",
+                error_message="payload.changed_paths must include at least one changed path",
+                metadata=_capability_available_metadata(
+                    capability.capability_id,
+                    {"required_field": "changed_paths"},
+                ),
+            )
         target_cell = _payload_string(command.payload, "target_cell")
         if not target_cell:
             return _capability_invocation_failure(
@@ -1572,7 +1614,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=result_ref,
                 result_ref=result_ref,
@@ -1825,7 +1867,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=result_ref,
                 result_ref=result_ref,
@@ -1940,7 +1982,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=result_ref,
                 result_ref=result_ref,
@@ -2044,7 +2086,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=result_ref,
                 result_ref=result_ref,
@@ -2099,6 +2141,31 @@ def execute_role_capability_invocation(
                 error_code="invalid_visual_audit_evidence_paths",
                 error_message="payload.evidence_paths must be a sequence of strings when provided",
             )
+        required_model_capability = _normalize_model_capability(
+            capability.metadata.get("required_model_capability"),
+            "image_input",
+        )
+        requested_model_capability = _payload_string(command.payload, "required_model_capability")
+        normalized_requested_model_capability = _normalize_model_capability(requested_model_capability, "")
+        if normalized_requested_model_capability and normalized_requested_model_capability != required_model_capability:
+            return _capability_invocation_failure(
+                command,
+                allowed=False,
+                owner_cell="llm.control_plane",
+                error_code="visual_model_capability_override_denied",
+                error_message=(
+                    "visual QA audit requires "
+                    f"{required_model_capability!r}; payload requested "
+                    f"{normalized_requested_model_capability!r}"
+                ),
+                metadata=_capability_available_metadata(
+                    capability.capability_id,
+                    {
+                        "required_capability": required_model_capability,
+                        "requested_capability": normalized_requested_model_capability,
+                    },
+                ),
+            )
         try:
             from polaris.cells.llm.control_plane.public.contracts import CheckLlmModelCapabilityQueryV1
             from polaris.cells.llm.control_plane.public.service import check_llm_model_capability
@@ -2106,7 +2173,7 @@ def execute_role_capability_invocation(
             model_query = CheckLlmModelCapabilityQueryV1(
                 workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
                 role=_payload_string(command.payload, "llm_role", "qa"),
-                capability=_payload_string(command.payload, "required_model_capability", "image_input"),
+                capability=required_model_capability,
                 model=_payload_string(command.payload, "model") or None,
                 metadata={
                     "role_invocation_id": invocation.invocation_id,
@@ -2224,7 +2291,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=result_ref,
                 result_ref=result_ref,
@@ -2363,7 +2430,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=result_ref,
                 result_ref=result_ref,
@@ -2485,7 +2552,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=blueprint_ref,
                 result_ref=blueprint_ref,
@@ -2594,7 +2661,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=result_ref,
                 result_ref=result_ref,
@@ -2724,7 +2791,7 @@ def execute_role_capability_invocation(
             role_id=role_id,
             capability_id=capability.capability_id,
             command_contract=capability.contract_name,
-            allowed=True,
+            allowed=False,
             owner_cell=capability.owner_cell,
             payload_ref=task_ref,
             result_ref=task_ref,

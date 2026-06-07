@@ -92,6 +92,9 @@ _PM_MEASURABLE_RESULT_RE = re.compile(
 _PM_MEASURABLE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+)",
 )
+_PM_FILE_EVIDENCE_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+\.[A-Za-z0-9]+)",
+)
 _PM_MEASURABLE_BACKTICK_RE = re.compile(r"`[^`]{2,}`")
 _PM_EXECUTABLE_BACKTICK_RE = re.compile(r"`([^`]{2,})`")
 _PM_SCOPE_ROOTS = {
@@ -667,6 +670,27 @@ def _is_concrete_pm_scope_path(value: Any) -> bool:
     if parts[0] in _PM_SCOPE_ROOTS and (len(parts) > 1 or raw.endswith("/")):
         return True
     return token.rstrip("/") in _PM_SCOPE_ROOTS
+
+
+def _is_file_like_pm_scope_path(value: Any) -> bool:
+    raw = _strip_wrapping_quotes(str(value or "").strip()).replace("\\", "/")
+    if not raw:
+        return False
+    token = raw
+    while token.startswith("./"):
+        token = token[2:]
+    token = re.sub(r"/+", "/", token.strip("/"))
+    if not token or token in {".", "*", "**"}:
+        return False
+    parts = [part for part in token.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        return False
+    filename = parts[-1]
+    return (
+        token in _PM_SCOPE_FILENAMES
+        or filename in _PM_SCOPE_FILENAMES
+        or os.path.splitext(filename)[1].lower() in _PM_SCOPE_SUFFIXES
+    )
 
 
 def _workspace_prefix(workspace_full: Any) -> str:
@@ -1670,7 +1694,7 @@ def _has_executable_or_file_acceptance_anchor(acceptance_items: list[str]) -> bo
         for match in _PM_EXECUTABLE_BACKTICK_RE.finditer(normalized):
             if _PM_MEASURABLE_COMMAND_RE.search(match.group(1)):
                 return True
-        if _PM_MEASURABLE_ASSERT_RE.search(normalized) and _PM_MEASURABLE_PATH_RE.search(normalized):
+        if _PM_MEASURABLE_ASSERT_RE.search(normalized) and _PM_FILE_EVIDENCE_PATH_RE.search(normalized):
             return True
     return False
 
@@ -1692,15 +1716,76 @@ def _dedupe_text_items(items: list[str]) -> list[str]:
     return deduped
 
 
-def _primary_task_evidence_path(task: dict[str, Any]) -> str:
+def _representative_workspace_file_for_scope(scope_path: Any, workspace_full: Any) -> str:
+    relative = _workspace_relative_path(scope_path, workspace_full)
+    if not relative:
+        relative = _normalize_path(scope_path)
+    if not relative:
+        return ""
+    if _is_file_like_pm_scope_path(relative):
+        return relative
+
+    workspace_prefix = _workspace_prefix(workspace_full)
+    if not workspace_prefix:
+        return ""
+    try:
+        scope_root = Path(workspace_prefix) / relative
+    except (OSError, ValueError):
+        return ""
+    if not scope_root.is_dir():
+        return ""
+
+    skipped_dirs = {".git", ".polaris", "__pycache__", "build", "coverage", "dist", "node_modules"}
+    try:
+        for current_root, dirs, files in os.walk(scope_root):
+            dirs[:] = sorted(
+                directory for directory in dirs if directory not in skipped_dirs and not directory.startswith(".")
+            )
+            for filename in sorted(files):
+                candidate = Path(current_root) / filename
+                try:
+                    relative_candidate = candidate.relative_to(workspace_prefix).as_posix()
+                except ValueError:
+                    continue
+                if _is_file_like_pm_scope_path(relative_candidate):
+                    return relative_candidate
+    except OSError:
+        return ""
+    return ""
+
+
+def _fallback_file_evidence_path_for_scope(scope_path: Any) -> str:
+    normalized = _normalize_path(scope_path)
+    if not normalized or not _is_concrete_pm_scope_path(normalized):
+        return ""
+    if _is_file_like_pm_scope_path(normalized):
+        return normalized
+    if normalized.startswith(("src/", "tests/")) or normalized in {"src", "tests"}:
+        return f"{normalized.rstrip('/')}/index.ts"
+    if normalized.startswith("docs/") or normalized == "docs":
+        return f"{normalized.rstrip('/')}/README.md"
+    if normalized.startswith("scripts/") or normalized == "scripts":
+        return f"{normalized.rstrip('/')}/index.js"
+    return f"{normalized.rstrip('/')}/README.md"
+
+
+def _primary_task_evidence_path(task: dict[str, Any], workspace_full: Any = "") -> str:
     for path in _normalize_path_list(task.get("target_files") or []):
         normalized = _normalize_path(path)
-        if normalized and _is_concrete_pm_scope_path(normalized):
+        if normalized and _is_file_like_pm_scope_path(normalized):
             return normalized
     for path in _collect_task_delivery_paths(task):
         normalized = _normalize_path(path)
-        if normalized and _is_concrete_pm_scope_path(normalized):
+        if normalized and _is_file_like_pm_scope_path(normalized):
             return normalized
+    for path in _collect_task_delivery_paths(task):
+        representative = _representative_workspace_file_for_scope(path, workspace_full)
+        if representative:
+            return representative
+    for path in _collect_task_delivery_paths(task):
+        fallback = _fallback_file_evidence_path_for_scope(path)
+        if fallback:
+            return fallback
     return _GAME_PM_DOMAIN_SCOPE_PATHS["engine"]
 
 
@@ -2091,7 +2176,7 @@ def autofix_pm_contract_for_quality(
                 ]
             stats["acceptance_added"] += 1
         elif not _has_executable_or_file_acceptance_anchor([str(item) for item in acceptance_items]):
-            evidence_path = _primary_task_evidence_path(task)
+            evidence_path = _primary_task_evidence_path(task, workspace_full)
             evidence_ref = evidence_path if "/" in evidence_path else f"./{evidence_path}"
             task["acceptance_criteria"] = _dedupe_text_items(
                 [*[str(item) for item in acceptance_items if str(item).strip()], f"verify {evidence_ref} exists"]

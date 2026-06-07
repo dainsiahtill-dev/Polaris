@@ -401,3 +401,59 @@ def test_tool_calling_matrix_suite_collects_post_handoff_stream_events() -> None
     assert len(stream_observed["tool_calls"]) == 2
     assert "API_HOST" in str(stream_observed.get("output") or "")
     assert "127.0.0.1" in str(stream_observed.get("output") or "")
+
+
+def test_tool_calling_matrix_suite_early_stops_on_max_failed() -> None:
+    """max_failed stops the run once that many failures accumulate."""
+    tmp_path = _local_tmp_dir("matrix-early-stop")
+    # Both cases get empty stream plans -> no tool calls -> both fail their
+    # required-tool checks. With max_failed=1 the run must stop after the first.
+    executor = _FakeMatrixExecutor(stream_plans={}, non_stream_results={})
+
+    result = asyncio.run(
+        run_tool_calling_matrix_suite(
+            {},
+            "fake-model",
+            "director",
+            workspace=str(tmp_path),
+            context={"provider_id": "runtime_binding", "role_session_executor": executor},
+            options={
+                "matrix_case_ids": ["l1_single_tool_accuracy", "l1_directory_listing"],
+                "matrix_transport": "stream",
+                "max_failed": 1,
+            },
+        )
+    )
+
+    report = result["details"]["report"]
+    assert report["summary"]["early_stopped"] is True
+    assert report["summary"]["planned_cases"] == 2
+    assert report["summary"]["max_failed"] == 1
+    # Stopped after the first failure -> only one case actually executed.
+    assert len(report["cases"]) == 1
+    assert report["summary"]["total_cases"] == 1
+
+
+def test_tool_calling_matrix_suite_no_early_stop_when_max_failed_zero() -> None:
+    """max_failed=0 (default) runs all selected cases even when they fail."""
+    tmp_path = _local_tmp_dir("matrix-no-early-stop")
+    executor = _FakeMatrixExecutor(stream_plans={}, non_stream_results={})
+
+    result = asyncio.run(
+        run_tool_calling_matrix_suite(
+            {},
+            "fake-model",
+            "director",
+            workspace=str(tmp_path),
+            context={"provider_id": "runtime_binding", "role_session_executor": executor},
+            options={
+                "matrix_case_ids": ["l1_single_tool_accuracy", "l1_directory_listing"],
+                "matrix_transport": "stream",
+                "max_failed": 0,
+            },
+        )
+    )
+
+    report = result["details"]["report"]
+    assert report["summary"]["early_stopped"] is False
+    assert len(report["cases"]) == 2

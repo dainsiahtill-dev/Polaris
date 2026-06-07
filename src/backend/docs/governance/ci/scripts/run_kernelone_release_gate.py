@@ -19,10 +19,29 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
+import yaml
+
 BACKEND_ROOT = Path(__file__).resolve().parents[4]
 _ROLE_RUNTIME_PUBLIC_IMPORT_BOUNDARY_STAGE = "roles_runtime_public_import_boundary"
+_ROLE_RUNTIME_CELL_IMPORT_BOUNDARY_STAGE = "roles_runtime_cell_import_boundary"
+_ROLE_RUNTIME_CAPABILITY_RESULT_SANDBOX_STAGE = "roles_runtime_capability_result_sandbox"
+_KERNELONE_ROLES_BUSINESS_BOUNDARY_STAGE = "kernelone_roles_business_boundary"
 _ROLE_RUNTIME_PUBLIC_ROOT = Path("polaris/cells/roles/runtime/public")
+_ROLE_RUNTIME_CELL_YAML = Path("polaris/cells/roles/runtime/cell.yaml")
+_KERNELONE_ROLES_ROOT = Path("polaris/kernelone/roles")
 _ROLE_RUNTIME_OWN_INTERNAL_PREFIX = "polaris.cells.roles.runtime.internal"
+_BUSINESS_ROLE_TOKENS = frozenset(
+    {
+        "architect",
+        "ce",
+        "chief_engineer",
+        "director",
+        "pm",
+        "project_manager",
+        "qa",
+        "quality_assurance",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -104,6 +123,153 @@ def _is_cross_cell_internal_import(module: str) -> bool:
     return not module.startswith(_ROLE_RUNTIME_OWN_INTERNAL_PREFIX)
 
 
+def _is_role_capability_invocation_result_call(node: ast.Call) -> bool:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == "RoleCapabilityInvocationResultV1"
+    if isinstance(func, ast.Attribute):
+        return func.attr == "RoleCapabilityInvocationResultV1"
+    return False
+
+
+def _literal_bool_keyword(node: ast.Call, keyword_name: str) -> bool | None:
+    for keyword in node.keywords:
+        if keyword.arg != keyword_name:
+            continue
+        value = keyword.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, bool):
+            return value.value
+        return None
+    return None
+
+
+def _split_identifier_tokens(value: str) -> set[str]:
+    normalized_chars: list[str] = []
+    previous = ""
+    for char in value:
+        if char.isupper() and previous and (previous.islower() or previous.isdigit()):
+            normalized_chars.append("_")
+        if char.isalnum():
+            normalized_chars.append(char.lower())
+        else:
+            normalized_chars.append("_")
+        previous = char
+    normalized = "".join(normalized_chars)
+    tokens = {token for token in normalized.split("_") if token}
+    if "chief" in tokens and "engineer" in tokens:
+        tokens.add("chief_engineer")
+    if "project" in tokens and "manager" in tokens:
+        tokens.add("project_manager")
+    if "quality" in tokens and "assurance" in tokens:
+        tokens.add("quality_assurance")
+    return tokens
+
+
+def _contains_business_role_token(value: str) -> bool:
+    return bool(_split_identifier_tokens(value) & _BUSINESS_ROLE_TOKENS)
+
+
+def _load_roles_runtime_owned_path_patterns() -> tuple[list[str], list[str]]:
+    cell_yaml = BACKEND_ROOT / _ROLE_RUNTIME_CELL_YAML
+    errors: list[str] = []
+    try:
+        payload = yaml.safe_load(cell_yaml.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        return [], [f"{_ROLE_RUNTIME_CELL_YAML.as_posix()}: parse failed: {exc}"]
+
+    if not isinstance(payload, dict):
+        return [], [f"{_ROLE_RUNTIME_CELL_YAML.as_posix()}: expected mapping payload"]
+    if payload.get("id") != "roles.runtime":
+        errors.append(f"{_ROLE_RUNTIME_CELL_YAML.as_posix()}: expected id roles.runtime")
+
+    raw_owned_paths = payload.get("owned_paths")
+    if not isinstance(raw_owned_paths, list):
+        return [], [*errors, f"{_ROLE_RUNTIME_CELL_YAML.as_posix()}: owned_paths must be a list"]
+
+    patterns: list[str] = []
+    for index, value in enumerate(raw_owned_paths):
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{_ROLE_RUNTIME_CELL_YAML.as_posix()}: owned_paths[{index}] must be a non-empty string")
+            continue
+        patterns.append(value.strip())
+    return patterns, errors
+
+
+def _iter_python_files_for_owned_path(pattern: str) -> Iterable[Path]:
+    if pattern.endswith("/**"):
+        root = BACKEND_ROOT / pattern.removesuffix("/**")
+        if root.is_dir():
+            yield from sorted(root.rglob("*.py"))
+        return
+
+    if "*" in pattern:
+        for path in sorted(BACKEND_ROOT.glob(pattern)):
+            if path.is_dir():
+                yield from sorted(path.rglob("*.py"))
+            elif path.suffix == ".py":
+                yield path
+        return
+
+    path = BACKEND_ROOT / pattern
+    if path.is_dir():
+        yield from sorted(path.rglob("*.py"))
+    elif path.suffix == ".py":
+        yield path
+
+
+def _iter_roles_runtime_owned_python_files(patterns: Iterable[str]) -> Iterable[Path]:
+    yielded: set[Path] = set()
+    for pattern in patterns:
+        for path in _iter_python_files_for_owned_path(pattern):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            if path in yielded:
+                continue
+            yielded.add(path)
+            yield path
+
+
+def _is_pytest_raises_call(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == "raises"
+    if isinstance(func, ast.Attribute):
+        return func.attr == "raises"
+    return False
+
+
+class _RoleCapabilityResultSandboxVisitor(ast.NodeVisitor):
+    def __init__(self, rel_path: str) -> None:
+        self.rel_path = rel_path
+        self.violations: list[str] = []
+        self._pytest_raises_depth = 0
+
+    def visit_With(self, node: ast.With) -> None:
+        guarded_by_pytest_raises = any(_is_pytest_raises_call(item.context_expr) for item in node.items)
+        if guarded_by_pytest_raises:
+            self._pytest_raises_depth += 1
+        self.generic_visit(node)
+        if guarded_by_pytest_raises:
+            self._pytest_raises_depth -= 1
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if self._pytest_raises_depth:
+            self.generic_visit(node)
+            return
+        if _is_role_capability_invocation_result_call(node):
+            ok_value = _literal_bool_keyword(node, "ok")
+            allowed_value = _literal_bool_keyword(node, "allowed")
+            if ok_value is False and allowed_value is True:
+                self.violations.append(
+                    f"{self.rel_path}:{node.lineno}: "
+                    "RoleCapabilityInvocationResultV1(ok=False, allowed=True) is forbidden; "
+                    "use allowed=False and metadata.capability_available for discoverability"
+                )
+        self.generic_visit(node)
+
+
 def _check_role_runtime_public_import_boundaries() -> GateRunResult:
     started = time.monotonic()
     public_root = BACKEND_ROOT / _ROLE_RUNTIME_PUBLIC_ROOT
@@ -127,6 +293,108 @@ def _check_role_runtime_public_import_boundaries() -> GateRunResult:
     stderr = "\n".join(violations)
     return GateRunResult(
         stage=_ROLE_RUNTIME_PUBLIC_IMPORT_BOUNDARY_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
+def _check_roles_runtime_cell_import_boundaries() -> GateRunResult:
+    started = time.monotonic()
+    owned_patterns, violations = _load_roles_runtime_owned_path_patterns()
+    command = ["static", _ROLE_RUNTIME_CELL_IMPORT_BOUNDARY_STAGE, _ROLE_RUNTIME_CELL_YAML.as_posix(), *owned_patterns]
+
+    for path in _iter_roles_runtime_owned_python_files(owned_patterns):
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+            violations.append(f"{rel_path}: parse failed: {exc}")
+            continue
+        for lineno, module in _iter_import_modules(tree):
+            if _is_cross_cell_internal_import(module):
+                violations.append(f"{rel_path}:{lineno}: cross-cell internal import: {module}")
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_ROLE_RUNTIME_CELL_IMPORT_BOUNDARY_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
+def _check_role_runtime_capability_result_sandbox() -> GateRunResult:
+    started = time.monotonic()
+    public_root = BACKEND_ROOT / _ROLE_RUNTIME_PUBLIC_ROOT
+    command = ["static", _ROLE_RUNTIME_CAPABILITY_RESULT_SANDBOX_STAGE, public_root.as_posix()]
+    violations: list[str] = []
+
+    for path in sorted(public_root.rglob("*.py")):
+        if not path.is_file():
+            continue
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+            violations.append(f"{rel_path}: parse failed: {exc}")
+            continue
+        visitor = _RoleCapabilityResultSandboxVisitor(rel_path)
+        visitor.visit(tree)
+        violations.extend(visitor.violations)
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_ROLE_RUNTIME_CAPABILITY_RESULT_SANDBOX_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
+def _check_kernelone_roles_business_boundary() -> GateRunResult:
+    started = time.monotonic()
+    roles_root = BACKEND_ROOT / _KERNELONE_ROLES_ROOT
+    command = ["static", _KERNELONE_ROLES_BUSINESS_BOUNDARY_STAGE, roles_root.as_posix()]
+    violations: list[str] = []
+
+    if roles_root.exists():
+        for path in sorted(roles_root.rglob("*.py")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+            if _contains_business_role_token(path.stem):
+                violations.append(
+                    f"{rel_path}: business role filename is forbidden in polaris/kernelone/roles; "
+                    "move PM/CE/Architect/QA/Director objects to their owner Cell"
+                )
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+            except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+                violations.append(f"{rel_path}: parse failed: {exc}")
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                    _contains_business_role_token(node.name)
+                ):
+                    violations.append(
+                        f"{rel_path}:{node.lineno}: business role definition {node.name!r} "
+                        "is forbidden in polaris/kernelone/roles; use roles.runtime composition "
+                        "and the role owner Cell public contract"
+                    )
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_KERNELONE_ROLES_BUSINESS_BOUNDARY_STAGE,
         command=command,
         returncode=1 if violations else 0,
         duration_seconds=float(round(duration_seconds, 3)),
@@ -170,6 +438,9 @@ def main() -> int:
 
     stage_results: list[GateRunResult] = []
     stage_results.append(_check_role_runtime_public_import_boundaries())
+    stage_results.append(_check_roles_runtime_cell_import_boundaries())
+    stage_results.append(_check_role_runtime_capability_result_sandbox())
+    stage_results.append(_check_kernelone_roles_business_boundary())
 
     if args.mode in {"collect", "all"}:
         stage_results.append(_run_pytest("collect", ["--collect-only", "-q", *suite_paths]))
