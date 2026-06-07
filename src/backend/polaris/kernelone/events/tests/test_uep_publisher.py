@@ -91,6 +91,64 @@ class TestUEPEventPublisher:
 
         assert result is False
 
+    def test_disk_fallback_swallows_os_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        """Journal fallback must never raise on disk errors (OSError swallowed).
+
+        Runtime-root resolution is pinned to a writable tmp dir so the code path
+        actually reaches the journal open(); open() is then forced to raise
+        OSError, which must be swallowed (on the narrow baseline except it would
+        propagate and break the live turn stream).
+        """
+        import builtins
+
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path))
+        real_open = builtins.open
+
+        def _boom_open(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(path).endswith(".llm.events.jsonl"):
+                raise OSError("read-only filesystem")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _boom_open)
+        publisher = UEPEventPublisher(bus=None)
+
+        # Must not raise despite the underlying filesystem error.
+        publisher._emit_stream_event_to_disk_fallback(
+            {
+                "topic": "runtime.stream",
+                "event_type": "content_chunk",
+                "run_id": "run-os-err",
+                "workspace": str(tmp_path),
+                "role": "director",
+                "payload": {"content": "x"},
+            }
+        )
+
+    def test_disk_fallback_swallows_serialization_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        """Journal fallback must never raise on a non-serializable payload (TypeError)."""
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path))
+        publisher = UEPEventPublisher(bus=None)
+
+        # object() is not JSON-serializable; json.dumps would raise TypeError.
+        publisher._emit_stream_event_to_disk_fallback(
+            {
+                "topic": "runtime.stream",
+                "event_type": "content_chunk",
+                "run_id": "run-type-err",
+                "workspace": str(tmp_path),
+                "role": "director",
+                "payload": {"content": object()},
+            }
+        )
+
     @pytest.mark.asyncio
     async def test_publish_via_typed_adapter_when_available(
         self,

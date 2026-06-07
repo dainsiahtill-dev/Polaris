@@ -317,8 +317,13 @@ class UEPEventPublisher:
                 event_type,
                 run_id,
             )
-        except (RuntimeError, ValueError):
-            # Audit emission must never break the main flow.
+        except (OSError, RuntimeError, ValueError, TypeError):
+            # Audit emission must never break the main flow. The write does real
+            # file I/O (OSError: permission/disk-full/bad path) and JSON
+            # serialization (TypeError: non-serializable payload), so both must be
+            # swallowed here — otherwise a disk/serialization failure would
+            # propagate up and break the live turn stream this fallback exists to
+            # protect.
             logger.warning(
                 "UEP stream event fallback journal write failed (event will be dropped): topic=%s",
                 payload.get("topic"),
