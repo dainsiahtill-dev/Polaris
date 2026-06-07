@@ -37,18 +37,40 @@ logger = logging.getLogger(__name__)
 def tool_call_signature_from_parsed(call: Any) -> str:
     """Build stable signature for parsed tool calls (tool + canonical args).
 
+    Accepts both mapping-form calls (``{"tool"|"name", "args"|"arguments"}``)
+    and object-form calls (attributes ``tool``/``name`` and ``args``/
+    ``arguments``). Only genuine string tool names and dict argument payloads
+    are honored, so a spurious attribute (e.g. a value present under ``tool``
+    that is not a real name) never corrupts the dedup signature.
+
     Args:
-        call: Parsed tool call object with tool/name and args/arguments.
+        call: Parsed tool call (dict or object) with tool/name and args/arguments.
 
     Returns:
         Stable signature string for deduplication.
     """
-    tool = str(getattr(call, "tool", "") or getattr(call, "name", "") or "").strip().lower()
-    raw_args = getattr(call, "args", {}) or getattr(call, "arguments", {}) or {}
-    args = raw_args if isinstance(raw_args, dict) else {}
+    if isinstance(call, dict):
+        tool_candidates = (call.get("tool"), call.get("name"))
+        arg_candidates = (call.get("args"), call.get("arguments"))
+    else:
+        tool_candidates = (getattr(call, "tool", None), getattr(call, "name", None))
+        arg_candidates = (getattr(call, "args", None), getattr(call, "arguments", None))
+
+    tool = ""
+    for candidate in tool_candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            tool = candidate.strip().lower()
+            break
+
+    args: dict[str, Any] = {}
+    for candidate in arg_candidates:
+        if isinstance(candidate, dict):
+            args = candidate
+            break
+
     try:
         args_token = json.dumps(args, ensure_ascii=False, sort_keys=True)
-    except (RuntimeError, ValueError):
+    except (TypeError, ValueError):
         args_token = str(args)
     return f"{tool}::{args_token}"
 
