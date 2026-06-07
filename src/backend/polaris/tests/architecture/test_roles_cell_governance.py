@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 CELLS_ROOT = BACKEND_ROOT / "polaris" / "cells"
 
 
@@ -32,12 +32,20 @@ def _deps(cell_id: str) -> set[str]:
 def test_roles_runtime_depends_on_matches_imports() -> None:
     deps = _deps("roles.runtime")
     expected = {
+        "archive.run_archive",
         "architect.design",
+        "audit.diagnosis",
         "chief_engineer.blueprint",
+        "cognitive.knowledge_distiller",
+        "context.catalog",
+        "context.engine",
         "director.execution",
+        "factory.verification_guard",
         "finops.budget_guard",
         "llm.control_plane",
         "orchestration.pm_planning",
+        "policy.permission",
+        "policy.workspace_guard",
         "qa.audit_verdict",
         "roles.adapters",
         "roles.engine",
@@ -45,6 +53,7 @@ def test_roles_runtime_depends_on_matches_imports() -> None:
         "roles.profile",
         "roles.session",
         "runtime.state_owner",
+        "runtime.task_market",
     }
     assert deps == expected
     assert "kernelone.events" not in deps
@@ -54,11 +63,14 @@ def test_roles_kernel_depends_on_matches_imports() -> None:
     deps = _deps("roles.kernel")
     expected = {
         "director.execution",
+        "factory.cognitive_runtime",
         "llm.dialogue",
         "roles.adapters",
         "roles.profile",
+        "roles.runtime",
         "roles.session",
         "runtime.task_runtime",
+        "storage.layout",
     }
     assert deps == expected
     assert "llm.provider_runtime" not in deps

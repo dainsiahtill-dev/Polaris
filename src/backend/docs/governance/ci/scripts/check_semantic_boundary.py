@@ -420,6 +420,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
                 result.compliant_sites.append(site)
             elif self._is_workspace_level_acceptable(site):
                 # Workspace-level search is acceptable
+                site.reasoning = "Workspace-level memory search - not for Cell boundary retrieval"
                 result.compliant_sites.append(site)
             else:
                 # Determine if we can make a definitive judgment

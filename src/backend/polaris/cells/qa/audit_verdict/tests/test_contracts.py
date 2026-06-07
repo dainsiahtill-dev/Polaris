@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from polaris.cells.qa.audit_verdict.public.contracts import (
+    FailureSignalV1,
     GetQaVerdictQueryV1,
+    ParseTracebackFramesCommandV1,
+    ParseTracebackFramesResultV1,
     QaAuditError,
     QaAuditResultV1,
     QaVerdictIssuedEventV1,
     RunQaAuditCommandV1,
+    TracebackFrameV1,
 )
+from polaris.cells.qa.audit_verdict.public.service import parse_traceback_frames, run_qa_audit
 
 
 class TestRunQaAuditCommandV1:
@@ -154,6 +161,45 @@ class TestQaAuditResultV1:
         assert r.findings == ("a", "b")
 
 
+class TestTracebackFailureSignalContracts:
+    def test_traceback_frame_requires_positive_line(self) -> None:
+        frame = TracebackFrameV1(path="app.py", line=12, function="handle", code="return explode()")
+        assert frame.path == "app.py"
+        assert frame.line == 12
+
+        with pytest.raises(ValueError, match="line must be >= 1"):
+            TracebackFrameV1(path="app.py", line=0, function="handle")
+
+    def test_failure_signal_carries_typed_frames(self) -> None:
+        frame = TracebackFrameV1(path="app.py", line=12, function="handle")
+        signal = FailureSignalV1(
+            signal_id="sig-1",
+            task_id="qa-task-1",
+            workspace="/repo",
+            signal_type="ValueError",
+            summary="ValueError: boom",
+            frames=(frame,),
+        )
+        assert signal.frames == (frame,)
+        assert signal.severity == "error"
+
+    def test_parse_traceback_command_requires_traceback_text(self) -> None:
+        with pytest.raises(ValueError, match="traceback_text must be a non-empty string"):
+            ParseTracebackFramesCommandV1(task_id="qa-task-1", workspace="/repo", traceback_text="")
+
+    def test_parse_traceback_result_wraps_signal(self) -> None:
+        signal = FailureSignalV1(
+            signal_id="sig-1",
+            task_id="qa-task-1",
+            workspace="/repo",
+            signal_type="RuntimeError",
+            summary="RuntimeError: boom",
+        )
+        result = ParseTracebackFramesResultV1(ok=True, task_id="qa-task-1", workspace="/repo", signal=signal)
+        assert result.signal.signal_id == "sig-1"
+        assert result.frame_count == 0
+
+
 class TestQaAuditError:
     """QaAuditError structured error."""
 
@@ -174,3 +220,83 @@ class TestQaAuditError:
     def test_empty_code_raises(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
             QaAuditError("msg", code="")  # type: ignore[arg-type]
+
+
+def test_run_qa_audit_public_service_executes_typed_command(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "service.py").write_text("def ok() -> str:\n    return 'ok'\n", encoding="utf-8")
+
+    result = run_qa_audit(
+        RunQaAuditCommandV1(
+            task_id="qa-task-1",
+            workspace=str(workspace),
+            run_id="run-1",
+            criteria={
+                "task_subject": "Audit changed Python service",
+                "changed_files": ("service.py",),
+                "require_changed_files": True,
+            },
+            evidence_paths=("pytest-report.xml",),
+        )
+    )
+
+    assert isinstance(result, QaAuditResultV1)
+    assert result.ok is True
+    assert result.task_id == "qa-task-1"
+    assert result.workspace == str(workspace)
+    assert result.verdict == "PASS"
+    assert result.score == 1.0
+    assert result.findings == ()
+
+
+def test_run_qa_audit_public_service_reports_missing_director_evidence(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    result = run_qa_audit(
+        RunQaAuditCommandV1(
+            task_id="qa-task-2",
+            workspace=str(workspace),
+            criteria={
+                "task_subject": "Audit task without director changed_files evidence",
+                "require_changed_files": True,
+            },
+        )
+    )
+
+    assert result.ok is False
+    assert result.verdict == "FAIL"
+    assert result.score == 0.0
+    assert any("Director changed_files evidence is required" in finding for finding in result.findings)
+
+
+def test_parse_traceback_frames_public_service_returns_typed_failure_signal() -> None:
+    traceback_text = """Traceback (most recent call last):
+  File "/repo/app.py", line 10, in handle
+    return explode()
+  File "/repo/app.py", line 6, in explode
+    raise ValueError("boom")
+ValueError: boom
+"""
+
+    result = parse_traceback_frames(
+        ParseTracebackFramesCommandV1(
+            task_id="qa-task-3",
+            workspace="/repo",
+            run_id="run-1",
+            traceback_text=traceback_text,
+            metadata={"source": "pytest"},
+        )
+    )
+
+    assert isinstance(result, ParseTracebackFramesResultV1)
+    assert result.ok is True
+    assert result.task_id == "qa-task-3"
+    assert result.signal.signal_type == "ValueError"
+    assert result.signal.summary == "ValueError: boom"
+    assert result.frame_count == 2
+    assert result.signal.frames[0].path == "/repo/app.py"
+    assert result.signal.frames[0].line == 10
+    assert result.signal.frames[0].function == "handle"
+    assert result.signal.frames[0].code == "return explode()"

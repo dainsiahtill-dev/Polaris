@@ -16,6 +16,10 @@ Enforce token and execution budget controls with explicit reserve and consume ac
 - results: BudgetDecisionResultV1
 - errors: FinOpsBudgetErrorV1
 
+## Public Service
+
+- `reserve_budget(command: ReserveBudgetCommandV1)`
+
 ## Depends On
 
 - `policy.permission`

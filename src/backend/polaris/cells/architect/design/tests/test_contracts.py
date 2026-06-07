@@ -11,6 +11,7 @@ from polaris.cells.architect.design.public.contracts import (
     GenerateArchitectureDesignCommandV1,
     QueryArchitectureDesignStatusV1,
 )
+from polaris.cells.architect.design.public.service import generate_architecture_design
 
 # ---------------------------------------------------------------------------
 # GenerateArchitectureDesignCommandV1
@@ -249,3 +250,26 @@ class TestArchitectDesignErrorAlias:
         assert isinstance(err, ArchitectDesignErrorV1)
         assert isinstance(err, ArchitectDesignError)
         assert err.code == "architect_design_error"
+
+
+class TestGenerateArchitectureDesignPublicService:
+    def test_generate_architecture_design_returns_typed_result(self) -> None:
+        result = generate_architecture_design(
+            GenerateArchitectureDesignCommandV1(
+                workspace="/repo",
+                objective="Validate roles.runtime boundary change",
+                constraints={"depends_on_delta": ("architect.design",)},
+                context={
+                    "target_cell": "roles.runtime",
+                    "changed_paths": ("src/backend/polaris/cells/roles/runtime/public/service.py",),
+                },
+            )
+        )
+
+        assert isinstance(result, ArchitectureDesignResultV1)
+        assert result.ok is True
+        assert result.workspace == "/repo"
+        assert result.status == "completed"
+        assert result.design_id.startswith("boundary-")
+        assert "roles.runtime" in result.summary
+        assert result.recommendation_paths == ("runtime/state/architect/boundary-validation.json",)

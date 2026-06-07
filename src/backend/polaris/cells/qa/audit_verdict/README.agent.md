@@ -21,13 +21,20 @@ Run independent QA or Auditor validation and emit structured acceptance verdicts
 ```
 public/
   contracts.py   — 5 frozen dataclasses: Command, Query, Event, Result, Error
-  service.py     — Re-exports from audit.verdict public boundary
+  service.py     — run_qa_audit(Command) plus public re-exports from audit.verdict
 
 internal/
   qa_agent.py   — QAAgent extends RoleAgent; review lifecycle + protocol FSM
   qa_service.py — QAService: audit_task(), path validation, Python syntax check
   quality_service.py — QualityService: ruff lint integration
 ```
+
+## Public Service
+
+- `run_qa_audit(RunQaAuditCommandV1) -> QaAuditResultV1` is the owner-cell
+  adapter for QA verdict issuance. Cross-role callers, including
+  `roles.runtime`, must call this public service and must not import
+  `qa.audit_verdict.internal.*`.
 
 ## Cross-Cell Dependencies
 

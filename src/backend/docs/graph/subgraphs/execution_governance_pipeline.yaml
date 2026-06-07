@@ -134,6 +134,26 @@ relations:
     to: factory.verification_guard
     type: commands
     contract: VerifyCompletionCommandV1
+  - from: roles.runtime
+    to: qa.audit_verdict
+    type: commands
+    contract: RunQaAuditCommandV1
+  - from: roles.runtime
+    to: finops.budget_guard
+    type: commands
+    contract: ReserveBudgetCommandV1
+  - from: roles.runtime
+    to: policy.workspace_guard
+    type: queries
+    contract: WorkspaceWriteGuardQueryV1
+  - from: roles.runtime
+    to: policy.permission
+    type: commands
+    contract: EvaluatePermissionCommandV1
+  - from: roles.runtime
+    to: architect.design
+    type: commands
+    contract: GenerateArchitectureDesignCommandV1
   - from: qa.audit_verdict
     to: runtime.task_runtime
     type: commands
@@ -173,6 +193,7 @@ critical_contracts:
   - ExecuteRoleCapabilityInvocationCommandV1
   - GenerateTaskBlueprintCommandV1
   - VerifyCompletionCommandV1
+  - WorkspaceWriteGuardQueryV1
   - PublishTaskWorkItemCommandV1
   - ClaimTaskWorkItemCommandV1
   - AcknowledgeTaskStageCommandV1
@@ -182,6 +203,7 @@ critical_contracts:
   - RefreshProjectionBackMappingCommandV1
   - RunQaAuditCommandV1
   - EvaluatePermissionCommandV1
+  - GenerateArchitectureDesignCommandV1
   - ReserveBudgetCommandV1
   - StartWorkflowCommandV1
   - LaunchExecutionProcessCommandV1

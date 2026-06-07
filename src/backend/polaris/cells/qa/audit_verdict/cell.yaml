@@ -10,12 +10,15 @@ purpose: 'Run independent QA or Auditor validation and emit structured acceptanc
   '
 current_modules:
 - polaris.cells.qa.audit_verdict.public.contracts
+- polaris.cells.qa.audit_verdict.public.service
 tags: []
 owned_paths:
+- polaris/cells/qa/audit_verdict/public/**
 - polaris/cells/qa/audit_verdict/internal/**
 public_contracts:
   modules:
   - polaris.cells.qa.audit_verdict.public.contracts
+  - polaris.cells.qa.audit_verdict.public.service
   commands:
   - RunQaAuditCommandV1
   queries:
@@ -47,9 +50,11 @@ effects_allowed:
 - process.spawn:qa/*
 verification:
   tests:
+  - polaris/cells/qa/audit_verdict/tests/test_contracts.py
+  - polaris/cells/qa/audit_verdict/tests/test_integration.py
   - tests/test_integration_qa_command.py
   - tests/test_quality_checker_director_tool_calls.py
   gaps:
-  - Initial business-cell declaration; implementation convergence is in progress.
+  - Legacy integration_qa entrypoints still proxy into this Cell during cutover.
   smoke_commands: []
 generated_artifacts: []

@@ -27,6 +27,7 @@ from docs.governance.ci.scripts.run_catalog_governance_gate import (
     _load_baseline_fingerprints,
     _load_manifest,
     _manifest_owned_path_contained,
+    _validate_schema_targets,
     _write_mismatch_baseline,
 )
 
@@ -210,6 +211,36 @@ class TestMismatchCounting:
         fps = _load_baseline_fingerprints(baseline_file)
         assert "fp1" in fps
         assert "fp2" in fps
+
+
+class TestSchemaIssuePaths:
+    """Tests for portable governance issue paths."""
+
+    def test_schema_validation_issues_use_repo_relative_paths(self, tmp_path: Path):
+        schema_path = tmp_path / "docs" / "governance" / "schemas" / "cell.schema.yaml"
+        target_path = tmp_path / "polaris" / "cells" / "demo" / "cell" / "cell.yaml"
+        schema_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        schema_path.write_text(
+            "type: object\n"
+            "required:\n"
+            "  - id\n"
+            "additionalProperties: false\n",
+            encoding="utf-8",
+        )
+        target_path.write_text("name: invalid\n", encoding="utf-8")
+        issues = []
+
+        _validate_schema_targets(
+            repo_root=tmp_path,
+            schema_path=schema_path,
+            target_patterns=("polaris/cells/*/*/cell.yaml",),
+            rule_id="manifest_schema_valid",
+            issues=issues,
+        )
+
+        assert issues
+        assert issues[0].path == "polaris/cells/demo/cell/cell.yaml"
 
 
 class TestCatalogCellIndex:

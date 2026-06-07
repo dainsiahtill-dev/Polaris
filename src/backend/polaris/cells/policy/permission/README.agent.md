@@ -16,6 +16,12 @@ Own role capability matrix evaluation and permission decisions for tool, command
 - results: PermissionDecisionResultV1
 - errors: PermissionPolicyErrorV1
 
+## Public Service
+
+- `evaluate_permission(command: EvaluatePermissionCommandV1)` maps public role,
+  action, resource, workspace, and lightweight context into a typed permission
+  decision. It does not evaluate structural architecture deltas.
+
 ## Depends On
 
 - `policy.workspace_guard`

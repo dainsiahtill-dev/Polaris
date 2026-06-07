@@ -9,7 +9,8 @@ import importlib
 import importlib.util
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from threading import Lock
 from types import SimpleNamespace
@@ -283,12 +284,67 @@ def _payload_string_tuple(payload: Mapping[str, Any], key: str) -> tuple[str, ..
     return None
 
 
+def _capability_available_metadata(
+    capability_id: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = dict(metadata or {})
+    payload["capability_available"] = True
+    payload["capability_id"] = capability_id
+    return payload
+
+
+def _run_with_timeout(callable_obj: Callable[[], Any], timeout_seconds: float) -> Any:
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(callable_obj)
+    try:
+        return future.result(timeout=timeout_seconds)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _check_workspace_guard_paths(
+    *,
+    paths: tuple[str, ...],
+    operation: str,
+    workspace_guard_service: Any | None,
+    max_workers: int,
+) -> tuple[bool, tuple[str, ...], str, str]:
+    from polaris.cells.policy.workspace_guard.public.contracts import WorkspaceWriteGuardQueryV1
+    from polaris.cells.policy.workspace_guard.public.service import check_workspace_write_guard
+
+    if not paths:
+        return True, (), "", ""
+
+    def _check(path: str) -> tuple[str, bool, str]:
+        query = WorkspaceWriteGuardQueryV1(path=path, operation=operation)
+        if workspace_guard_service is None:
+            decision = check_workspace_write_guard(query)
+        else:
+            decision = workspace_guard_service.check_workspace_write_guard(query)
+        return path, bool(decision.allowed), str(decision.reason or "")
+
+    workers = max(1, min(max_workers, len(paths)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        decisions = list(executor.map(_check, paths))
+
+    for path, allowed, reason in decisions:
+        if not allowed:
+            return False, paths, path, reason
+    return True, paths, "", ""
+
+
 def execute_role_capability_invocation(
     command: ExecuteRoleCapabilityInvocationCommandV1,
     *,
     task_market_service: Any | None = None,
     blueprint_service: Any | None = None,
     verification_guard_service: Any | None = None,
+    qa_audit_service: Any | None = None,
+    budget_guard_service: Any | None = None,
+    workspace_guard_service: Any | None = None,
+    permission_service: Any | None = None,
+    architect_design_service: Any | None = None,
 ) -> RoleCapabilityInvocationResultV1:
     """Execute a mounted role capability through its declared public contract."""
     if not isinstance(command, ExecuteRoleCapabilityInvocationCommandV1):
@@ -358,6 +414,536 @@ def execute_role_capability_invocation(
         and capability.owner_cell == "factory.verification_guard"
         and capability.contract_name == "VerifyCompletionCommandV1"
     )
+    is_qa_audit_verdict = (
+        capability.capability_id == "issue_audit_verdict"
+        and capability.owner_cell == "qa.audit_verdict"
+        and capability.contract_name == "RunQaAuditCommandV1"
+    )
+    is_architect_budget_reservation = (
+        capability.capability_id == "allocate_context_token_budget"
+        and capability.owner_cell == "finops.budget_guard"
+        and capability.contract_name == "ReserveBudgetCommandV1"
+    )
+    is_architect_workspace_guard = (
+        capability.capability_id == "intercept_illegal_mutations"
+        and capability.owner_cell == "policy.workspace_guard"
+        and capability.contract_name == "WorkspaceWriteGuardQueryV1"
+    )
+    is_architect_boundary_validation = (
+        capability.capability_id == "validate_cell_boundary_change"
+        and capability.owner_cell == "architect.design"
+        and capability.contract_name == "GenerateArchitectureDesignCommandV1"
+    )
+
+    if is_architect_budget_reservation:
+        budget_metadata = _payload_mapping(command.payload, "metadata")
+        if budget_metadata is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_budget_metadata",
+                error_message="payload.metadata must be a mapping when provided",
+            )
+        budget_metadata.update(
+            {
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+            }
+        )
+        try:
+            token_budget = int(command.payload.get("token_budget", command.payload.get("context_token_budget", 0)))
+            from polaris.cells.finops.budget_guard.public.contracts import ReserveBudgetCommandV1
+            from polaris.cells.finops.budget_guard.public.service import reserve_budget
+
+            reserve_command = ReserveBudgetCommandV1(
+                scope_id=_payload_string(command.payload, "scope_id", invocation.invocation_id),
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                role=role_id,
+                token_budget=token_budget,
+                metadata=budget_metadata,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_budget_command",
+                error_message=str(exc),
+            )
+
+        try:
+            if budget_guard_service is None:
+                budget_result = reserve_budget(reserve_command)
+            else:
+                budget_result = budget_guard_service.reserve_budget(reserve_command)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="budget_guard_failed",
+                error_message=str(exc),
+            )
+
+        result_ref = f"finops.budget_guard:budget:{reserve_command.scope_id}"
+        metadata = {
+            "budget_allowed": budget_result.allowed,
+            "remaining_tokens": budget_result.remaining_tokens,
+            "estimated_cost_usd": budget_result.estimated_cost_usd,
+            "reason": budget_result.reason,
+        }
+        if not budget_result.allowed:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=runtime_object.identity.task_id or "",
+                status="DENIED",
+                metadata=metadata,
+                error_code="budget_denied",
+                error_message=budget_result.reason or "budget reservation denied",
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=runtime_object.identity.task_id or "",
+            status="RESERVED",
+            metadata=metadata,
+        )
+
+    if is_architect_workspace_guard:
+        target_path = _payload_string(command.payload, "path")
+        operation = _payload_string(command.payload, "operation", "write")
+        if not target_path:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_workspace_guard_path",
+                error_message="payload.path must be a non-empty string",
+            )
+        try:
+            from polaris.cells.policy.workspace_guard.public.contracts import WorkspaceWriteGuardQueryV1
+            from polaris.cells.policy.workspace_guard.public.service import check_workspace_write_guard
+
+            guard_query = WorkspaceWriteGuardQueryV1(
+                path=target_path,
+                operation=operation,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_workspace_guard_query",
+                error_message=str(exc),
+            )
+
+        try:
+            if workspace_guard_service is None:
+                guard_result = check_workspace_write_guard(guard_query)
+            else:
+                guard_result = workspace_guard_service.check_workspace_write_guard(guard_query)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="workspace_guard_failed",
+                error_message=str(exc),
+            )
+
+        result_ref = f"policy.workspace_guard:decision:{invocation.invocation_id}"
+        metadata = {
+            "capability_available": True,
+            "mutation_allowed": guard_result.allowed,
+            "guard_reason": guard_result.reason,
+            "path": guard_query.path,
+            "operation": guard_query.operation,
+        }
+        if not guard_result.allowed:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=False,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=runtime_object.identity.task_id or "",
+                status="DENIED",
+                metadata=metadata,
+                error_code="workspace_guard_denied",
+                error_message=guard_result.reason or "workspace guard denied mutation",
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=runtime_object.identity.task_id or "",
+            status="ALLOWED",
+            metadata=metadata,
+        )
+
+    if is_architect_boundary_validation:
+        boundary_context = _payload_mapping(command.payload, "context")
+        if boundary_context is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_architect_boundary_context",
+                error_message="payload.context must be a mapping when provided",
+            )
+        boundary_constraints = _payload_mapping(command.payload, "constraints")
+        if boundary_constraints is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_architect_boundary_constraints",
+                error_message="payload.constraints must be a mapping when provided",
+            )
+        changed_paths = _payload_string_tuple(command.payload, "changed_paths")
+        if changed_paths is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_architect_boundary_changed_paths",
+                error_message="payload.changed_paths must be a sequence of strings when provided",
+            )
+        target_cell = _payload_string(command.payload, "target_cell")
+        if not target_cell:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_architect_boundary_target_cell",
+                error_message="payload.target_cell must be a non-empty string",
+            )
+
+        permission_context = {
+            "resource_type": "api",
+            "task_id": runtime_object.identity.task_id or "",
+            "session_id": runtime_object.identity.session_id or "",
+            "request_id": invocation.invocation_id,
+            "capability_id": capability.capability_id,
+            "target_cell": target_cell,
+            "role_payload_ref": invocation.payload_ref,
+            "role_fingerprint_ref": invocation.fingerprint_ref,
+        }
+        try:
+            from polaris.cells.policy.permission.public.contracts import EvaluatePermissionCommandV1
+            from polaris.cells.policy.permission.public.service import evaluate_permission
+
+            permission_command = EvaluatePermissionCommandV1(
+                role=role_id,
+                action="execute",
+                resource="architect.design:validate_cell_boundary_change",
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                context=permission_context,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_permission_command",
+                error_message=str(exc),
+            )
+
+        try:
+            if permission_service is None:
+                permission_result = evaluate_permission(permission_command)
+            else:
+                permission_result = permission_service.evaluate_permission(permission_command)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="permission_evaluation_failed",
+                error_message=str(exc),
+            )
+
+        permission_metadata = {
+            "permission_allowed": permission_result.allowed,
+            "permission_reason": permission_result.reason,
+            "permission_matched_policy": permission_result.matched_policy or "",
+        }
+        if not permission_result.allowed:
+            return _capability_invocation_failure(
+                command,
+                allowed=False,
+                owner_cell=capability.owner_cell,
+                error_code="permission_denied",
+                error_message=permission_result.reason or "permission denied",
+                metadata=_capability_available_metadata(capability.capability_id, permission_metadata),
+            )
+
+        try:
+            guard_allowed, checked_paths, denied_path, guard_reason = _check_workspace_guard_paths(
+                paths=changed_paths,
+                operation=_payload_string(command.payload, "operation", "write"),
+                workspace_guard_service=workspace_guard_service,
+                max_workers=int(command.payload.get("workspace_guard_max_workers", 8)),
+            )
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="workspace_guard_failed",
+                error_message=str(exc),
+            )
+        guard_metadata = {
+            **permission_metadata,
+            "workspace_guard_allowed": guard_allowed,
+            "checked_paths": checked_paths,
+            "denied_path": denied_path,
+            "guard_reason": guard_reason,
+        }
+        if not guard_allowed:
+            return _capability_invocation_failure(
+                command,
+                allowed=False,
+                owner_cell=capability.owner_cell,
+                error_code="workspace_guard_denied",
+                error_message=guard_reason or "workspace guard denied mutation",
+                metadata=_capability_available_metadata(capability.capability_id, guard_metadata),
+            )
+
+        boundary_context.update(
+            {
+                "target_cell": target_cell,
+                "changed_paths": changed_paths,
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+                "permission_ref": "policy.permission:decision",
+                "workspace_guard_ref": "policy.workspace_guard:decision",
+            }
+        )
+        try:
+            from polaris.cells.architect.design.public.contracts import GenerateArchitectureDesignCommandV1
+            from polaris.cells.architect.design.public.service import generate_architecture_design
+
+            design_command = GenerateArchitectureDesignCommandV1(
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                objective=_payload_string(command.payload, "objective"),
+                constraints=boundary_constraints,
+                context=boundary_context,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_architect_design_command",
+                error_message=str(exc),
+            )
+
+        timeout_seconds = float(command.payload.get("timeout_seconds", 30.0))
+        try:
+            if architect_design_service is None:
+                design_result = _run_with_timeout(
+                    lambda: generate_architecture_design(design_command),
+                    timeout_seconds,
+                )
+            else:
+                design_result = _run_with_timeout(
+                    lambda: architect_design_service.generate_architecture_design(design_command),
+                    timeout_seconds,
+                )
+        except FutureTimeoutError:
+            return _capability_invocation_failure(
+                command,
+                allowed=False,
+                owner_cell=capability.owner_cell,
+                error_code="architect_design_timeout",
+                error_message=f"architect design timed out after {timeout_seconds:g}s",
+                metadata=_capability_available_metadata(capability.capability_id, guard_metadata),
+            )
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="architect_design_failed",
+                error_message=str(exc),
+            )
+
+        result_ref = f"architect.design:boundary-validation:{design_result.design_id}"
+        metadata = {
+            **guard_metadata,
+            "design_id": design_result.design_id,
+            "summary": design_result.summary,
+            "recommendation_paths": tuple(design_result.recommendation_paths),
+        }
+        if not design_result.ok:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=runtime_object.identity.task_id or "",
+                status=design_result.status,
+                metadata=metadata,
+                error_code="architect_design_rejected",
+                error_message=design_result.summary or "architect design rejected boundary change",
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=runtime_object.identity.task_id or "",
+            status=design_result.status,
+            metadata=metadata,
+        )
+
+    if is_qa_audit_verdict:
+        audit_criteria = _payload_mapping(command.payload, "criteria")
+        if audit_criteria is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_qa_audit_criteria",
+                error_message="payload.criteria must be a mapping when provided",
+            )
+        evidence_paths = _payload_string_tuple(command.payload, "evidence_paths")
+        if evidence_paths is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_qa_audit_evidence_paths",
+                error_message="payload.evidence_paths must be a sequence of strings when provided",
+            )
+        audit_criteria.update(
+            {
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+            }
+        )
+        try:
+            from polaris.cells.qa.audit_verdict.public.contracts import RunQaAuditCommandV1
+            from polaris.cells.qa.audit_verdict.public.service import run_qa_audit
+
+            audit_command = RunQaAuditCommandV1(
+                task_id=_payload_string(command.payload, "task_id", runtime_object.identity.task_id or ""),
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                run_id=_payload_string(command.payload, "run_id", runtime_object.identity.run_id or "") or None,
+                criteria=audit_criteria,
+                evidence_paths=evidence_paths,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_qa_audit_command",
+                error_message=str(exc),
+            )
+
+        try:
+            if qa_audit_service is None:
+                audit_result = run_qa_audit(audit_command)
+            else:
+                audit_result = qa_audit_service.run_qa_audit(audit_command)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="qa_audit_failed",
+                error_message=str(exc),
+            )
+
+        result_ref = f"qa.audit_verdict:verdict:{audit_result.task_id}"
+        metadata = _capability_available_metadata(
+            capability.capability_id,
+            {
+                "verdict": audit_result.verdict,
+                "score": audit_result.score,
+                "findings": tuple(audit_result.findings),
+                "suggestions": tuple(audit_result.suggestions),
+                "evidence_paths": evidence_paths,
+            },
+        )
+        if not audit_result.ok:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=audit_result.task_id,
+                status=audit_result.verdict,
+                evidence_refs=evidence_paths,
+                metadata=metadata,
+                error_code="qa_audit_rejected",
+                error_message="; ".join(audit_result.findings) or "QA audit rejected the task",
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=audit_result.task_id,
+            status=audit_result.verdict,
+            evidence_refs=evidence_paths,
+            metadata=metadata,
+        )
+
     if is_qa_pytest_verification:
         verification_commands = _payload_string_tuple(command.payload, "verification_commands")
         if verification_commands is None or not verification_commands:

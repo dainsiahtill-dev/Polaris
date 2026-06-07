@@ -3,8 +3,10 @@
   "title": "Permission Policy",
   "kind": "policy",
   "purpose": "Own role capability matrix evaluation and permission decisions for tool, command, write, and execution actions.",
-  "summary": "Business capability boundary for policy.permission.",
+  "summary": "Business capability boundary for policy.permission. Public service evaluate_permission maps EvaluatePermissionCommandV1 to typed authorization decisions without evaluating structural architecture deltas.",
   "owned_paths": [
+    "polaris/cells/policy/permission/internal/**",
+    "polaris/cells/policy/permission/public/**",
     "polaris/application/services/permission_service.py",
     "polaris/application/services/permission/**",
     "polaris/domain/entities/capability.py",
@@ -60,14 +62,16 @@
   "test_targets": [
     "tests/test_permission_service.py",
     "tests/test_permission_role_inheritance.py",
-    "tests/test_permission_conditions.py"
+    "tests/test_permission_conditions.py",
+    "polaris/cells/policy/permission/public/tests/test_public_contracts.py"
   ],
   "change_guidance": {
     "read_order": [
       "cell.yaml",
       "README.agent.md",
       "generated/context.pack.json",
-      "public/contracts.py"
+      "public/contracts.py",
+      "public/service.py"
     ],
     "expand_to_neighbors_only_when_needed": true
   }

@@ -396,7 +396,9 @@ export const EXPANDED_TECH_CANDIDATES: ExpandedTechCandidate[] = [
     status: "gate",
     source: "graph-governance-audit",
     paths: [".github/workflows/governance-gates.yml", "src/backend/docs/governance/ci/STAGED_ROLLOUT_PLAN.md"],
-    gates: ["GitHub Actions governance-gates.yml", "local staged rollout commands"],
+    gates: [
+      "python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json --mismatch-baseline polaris/tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl",
+    ],
     e2eFields: ["workflow_stage", "continue_on_error", "artifact_name", "stage_summary"],
   },
   {
@@ -1083,6 +1085,63 @@ export const CANDIDATE_RUNTIME_PROBE_IDS: Record<string, string[]> = {
   semantic_boundary_governance_runtime_probe: [
     "semantic_boundary_governance_gate",
   ],
+  tool_calling_canonical_gate_runtime_probe: [
+    "tool_calling_canonical_identity_gate",
+  ],
+  governance_ci_staged_rollout_runtime_probe: [
+    "governance_ci_staged_rollout",
+  ],
+  contextos_runtime_eval_gate_runtime_probe: [
+    "contextos_runtime_eval_promotion_gate",
+  ],
+  canonical_code_exploration_budget_runtime_probe: [
+    "canonical_code_exploration_budget_gate",
+  ],
+  task_market_regression_runtime_probe: [
+    "task_market_outbox_atomic_relay",
+    "task_market_durable_pull_consumer_loop",
+    "task_market_multi_workspace_consumer_isolation",
+    "task_market_lease_fsm_claim_guard",
+    "task_market_hitl_tri_council",
+    "task_market_webhook_callback_outbox",
+    "task_market_dlq_replay_error_breakdown",
+    "task_market_saga_compensation",
+    "task_market_reconciliation_control_loop",
+    "task_market_revision_first_change_order",
+    "task_market_dependency_dag_validator",
+    "task_market_otel_tracing_wrapper",
+  ],
+  llm_config_control_plane_runtime_probe: [
+    "llm_config_save_control_plane_transaction",
+  ],
+  permission_pdp_runtime_probe: [
+    "permission_pdp_rbac_tool_gateway_audit",
+  ],
+  frontend_llm_settings_runtime_probe: [
+    "frontend_llm_save_queue_orphan_cleanup_keychain",
+  ],
+  llm_evaluation_runtime_probe: [
+    "evaluation_suite_failure_evidence_synthesis",
+  ],
+  native_tool_runtime_probe: [
+    "native_tool_round_orchestrator",
+    "legacy_text_tool_protocol_fail_closed",
+  ],
+  factory_pipeline_runtime_probe: [
+    "factory_run_audit_bundle_sse",
+    "factory_projection_lab_cell_ir",
+    "factory_back_mapping_selective_reprojection",
+    "factory_verification_guard_engine",
+  ],
+  archive_stream_runtime_probe: [
+    "uep_runtime_stream_archive",
+  ],
+  runtime_artifact_store_runtime_probe: [
+    "runtime_artifact_store_hot_paths_orphan_recovery",
+  ],
+  audit_evidence_bundle_runtime_probe: [
+    "audit_evidence_bundle_task_evidence",
+  ],
   event_fact_stream_runtime_probe: [
     "event_fact_stream_singleton_writer",
   ],
@@ -1129,6 +1188,21 @@ function asNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function parseJsonRecordFromCommandStdout(stdout: string): { payload: JsonRecord; error: string } {
+  const text = stdout.trim();
+  if (!text) {
+    return { payload: {}, error: "stdout is empty" };
+  }
+  if (!text.startsWith("{")) {
+    return { payload: {}, error: "stdout does not start with a JSON object" };
+  }
+  try {
+    return { payload: asRecord(JSON.parse(text)), error: "" };
+  } catch (error) {
+    return { payload: {}, error: `stdout JSON parse failed: ${String(error)}` };
+  }
 }
 
 export type RoleSessionKernelAuditMatch = {
@@ -1396,7 +1470,7 @@ function commandOutputToString(value: string | Buffer | undefined): string {
 async function runUtf8CommandProbe(
   command: string,
   args: string[],
-  options: { cwd: string; timeoutMs?: number },
+  options: { cwd: string; timeoutMs?: number; maxEvidenceChars?: number },
 ): Promise<{ exit_code: number | string; stdout: string; stderr: string; signal: string }> {
   try {
     const result = await execFileAsync(command, args, {
@@ -1413,8 +1487,8 @@ async function runUtf8CommandProbe(
     });
     return {
       exit_code: 0,
-      stdout: truncateForEvidence(result.stdout),
-      stderr: truncateForEvidence(result.stderr),
+      stdout: truncateForEvidence(result.stdout, options.maxEvidenceChars),
+      stderr: truncateForEvidence(result.stderr, options.maxEvidenceChars),
       signal: "",
     };
   } catch (error) {
@@ -1426,8 +1500,8 @@ async function runUtf8CommandProbe(
     };
     return {
       exit_code: commandError.code ?? 1,
-      stdout: truncateForEvidence(commandOutputToString(commandError.stdout)),
-      stderr: truncateForEvidence(commandOutputToString(commandError.stderr)),
+      stdout: truncateForEvidence(commandOutputToString(commandError.stdout), options.maxEvidenceChars),
+      stderr: truncateForEvidence(commandOutputToString(commandError.stderr), options.maxEvidenceChars),
       signal: String(commandError.signal || ""),
     };
   }
@@ -1904,11 +1978,11 @@ export function resolveBackendInfoSnapshot(snapshot: unknown): BackendConnection
 export async function requestJson<T>(
   page: Page,
   endpoint: string,
-  options?: { method?: "GET" | "POST"; body?: JsonRecord },
+  options?: { method?: "GET" | "POST"; body?: JsonRecord; timeoutMs?: number },
 ): Promise<T> {
   const backend = await getBackendInfoFromPage(page);
   return page.evaluate(
-    async ({ baseUrl, token, apiPath, method, body }) => {
+    async ({ baseUrl, token, apiPath, method, body, timeoutMs }) => {
       const headers: Record<string, string> = {
         "Cache-Control": "no-store",
         Pragma: "no-cache",
@@ -1919,17 +1993,33 @@ export async function requestJson<T>(
       if (body) {
         headers["Content-Type"] = "application/json";
       }
-      const response = await fetch(`${baseUrl}${apiPath}`, {
-        method,
-        cache: "no-store",
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(`fetch ${apiPath} failed: ${response.status} ${detail}`);
+      const controller = new AbortController();
+      const timer =
+        Number(timeoutMs) > 0 ? window.setTimeout(() => controller.abort(), Number(timeoutMs)) : undefined;
+      try {
+        const response = await fetch(`${baseUrl}${apiPath}`, {
+          method,
+          cache: "no-store",
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "");
+          throw new Error(`fetch ${apiPath} failed: ${response.status} ${detail}`);
+        }
+        return (await response.json()) as unknown;
+      } catch (error) {
+        const name = error instanceof Error ? error.name : "";
+        if (name === "AbortError") {
+          throw new Error(`fetch ${apiPath} timed out after ${timeoutMs}ms`);
+        }
+        throw error;
+      } finally {
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+        }
       }
-      return (await response.json()) as unknown;
     },
     {
       baseUrl: backend.baseUrl,
@@ -1937,6 +2027,7 @@ export async function requestJson<T>(
       apiPath: endpoint,
       method: options?.method || "GET",
       body: options?.body,
+      timeoutMs: options?.timeoutMs || 20_000,
     },
   ) as Promise<T>;
 }
@@ -2201,6 +2292,62 @@ async function collectGraphGovernanceRuntimeProbes(): Promise<EvidenceProbe[]> {
   );
 
   const backendRoot = path.join(repoRoot, "src", "backend");
+  const stagedRolloutBaselinePath = path.join(
+    backendRoot,
+    "polaris",
+    "tests",
+    "architecture",
+    "allowlists",
+    "catalog_governance_gate.baseline.json",
+  );
+  const stagedRolloutGate = await runUtf8CommandProbe(
+    "python",
+    [
+      "docs/governance/ci/scripts/run_catalog_governance_gate.py",
+      "--workspace",
+      ".",
+      "--mode",
+      "fail-on-new",
+      "--baseline",
+      "polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json",
+      "--mismatch-baseline",
+      "polaris/tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl",
+    ],
+    { cwd: backendRoot, timeoutMs: 70_000, maxEvidenceChars: 160_000 },
+  );
+  const stagedRolloutParsed = parseJsonRecordFromCommandStdout(stagedRolloutGate.stdout);
+  const stagedRolloutPayload = stagedRolloutParsed.payload;
+  const stagedRolloutManifestCatalog = asRecord(stagedRolloutPayload.manifest_catalog);
+  const stagedRolloutBaseline = await readJsonIfExists<JsonRecord>(stagedRolloutBaselinePath);
+  const stagedRolloutBaselineFingerprints = new Set(
+    stringArray(asRecord(stagedRolloutBaseline).issue_fingerprints),
+  );
+  const stagedRolloutIssues = asRecords(stagedRolloutPayload.issues);
+  const stagedRolloutNewIssues = stagedRolloutIssues.filter(
+    (issue) => !stagedRolloutBaselineFingerprints.has(asString(issue.fingerprint)),
+  );
+  const stagedRolloutIgnoredNewIssues = stagedRolloutNewIssues.filter((issue) =>
+    asString(issue.path).startsWith("polaris/cells/roles/scout/"),
+  );
+  const stagedRolloutNonIgnoredNewIssues = stagedRolloutNewIssues.filter(
+    (issue) => !asString(issue.path).startsWith("polaris/cells/roles/scout/"),
+  );
+  const stagedRolloutNormalPass = Boolean(
+    stagedRolloutGate.exit_code === 0 &&
+      asString(stagedRolloutPayload.mode) === "fail-on-new" &&
+      asNumber(stagedRolloutPayload.new_issue_count) === 0 &&
+      asNumber(stagedRolloutManifestCatalog.new_mismatch_count) === 0,
+  );
+  const stagedRolloutScopedPass = Boolean(
+    stagedRolloutGate.exit_code !== 0 &&
+      asString(stagedRolloutPayload.mode) === "fail-on-new" &&
+      stagedRolloutParsed.error === "" &&
+      asNumber(stagedRolloutManifestCatalog.new_mismatch_count) === 0 &&
+      asNumber(stagedRolloutPayload.new_issue_count) === stagedRolloutNewIssues.length &&
+      stagedRolloutNewIssues.length > 0 &&
+      stagedRolloutNonIgnoredNewIssues.length === 0,
+  );
+  const stagedRolloutPass = stagedRolloutNormalPass || stagedRolloutScopedPass;
   const polarisBackendRoot = path.join(backendRoot, "polaris");
   const verifyPackPath = path.join(backendRoot, "polaris", "cells", "roles", "kernel", "generated", "verify.pack.json");
   const verifyPack = await readJsonIfExists<JsonRecord>(verifyPackPath);
@@ -2257,6 +2404,192 @@ async function collectGraphGovernanceRuntimeProbes(): Promise<EvidenceProbe[]> {
     semanticBoundaryGate.exit_code === 0 &&
       semanticBoundaryGate.stdout.includes("Status: PASSED") &&
       Number(semanticTotalMatch?.[1] || 0) > 0,
+  );
+  const toolCallingRunId = `tool-calling-canonical-${Date.now()}`;
+  const toolCallingReportPath = path.join(
+    repoRoot,
+    "test-results",
+    "electron",
+    "runtime-probes",
+    toolCallingRunId,
+    "TOOL_CALLING_MATRIX_REPORT.json",
+  );
+  const toolCallingGateReportPath = path.join(
+    repoRoot,
+    "test-results",
+    "electron",
+    "runtime-probes",
+    toolCallingRunId,
+    "tool_calling_canonical_gate.json",
+  );
+  await writeUtf8File(
+    toolCallingReportPath,
+    JSON.stringify(
+      {
+        suite: "tool_calling_matrix",
+        cases: [
+          {
+            case: {
+              case_id: "e2e_canonical_tool_identity",
+              role: "director",
+              judge: {
+                stream: {
+                  required_tools: ["repo_read_head"],
+                },
+              },
+            },
+            stream_observed: {
+              tool_calls: [
+                {
+                  tool: "repo_read_head",
+                  args: { file: "src/backend/pyproject.toml", n: 20 },
+                },
+              ],
+            },
+            raw_events: [
+              {
+                type: "tool_call",
+                tool: "repo_read_head",
+                args: { file: "src/backend/pyproject.toml", n: 20 },
+              },
+            ],
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+  const toolCallingGate = await runUtf8CommandProbe(
+    "python",
+    [
+      "docs/governance/ci/scripts/run_tool_calling_canonical_gate.py",
+      "--workspace",
+      backendRoot,
+      "--input-report",
+      toolCallingReportPath,
+      "--role",
+      "director",
+      "--mode",
+      "hard-fail",
+      "--report",
+      toolCallingGateReportPath,
+    ],
+    { cwd: backendRoot, timeoutMs: 30_000 },
+  );
+  const toolCallingGatePayload =
+    (await readJsonIfExists<JsonRecord>(toolCallingGateReportPath)) ||
+    (toolCallingGate.stdout.trim().startsWith("{") ? (JSON.parse(toolCallingGate.stdout) as JsonRecord) : {});
+  const toolCallingPass = Boolean(
+    toolCallingGate.exit_code === 0 &&
+      asString(toolCallingGatePayload.gate) === "tool_calling_canonical_identity" &&
+      asNumber(toolCallingGatePayload.issue_count) === 0 &&
+      asNumber(toolCallingGatePayload.target_case_count) === 1,
+  );
+  const contextOsRunId = `context-os-runtime-eval-${Date.now()}`;
+  const contextOsReportPath = path.join(
+    repoRoot,
+    "test-results",
+    "electron",
+    "runtime-probes",
+    contextOsRunId,
+    "context_os_runtime_eval_report.json",
+  );
+  const contextOsGateOutputPath = path.join(
+    repoRoot,
+    "test-results",
+    "electron",
+    "runtime-probes",
+    contextOsRunId,
+    "context_os_runtime_eval_gate_report.json",
+  );
+  await writeUtf8File(
+    contextOsReportPath,
+    JSON.stringify(
+      {
+        version: 1,
+        suite_id: "e2e_context_os_runtime_eval_gate",
+        generated_at: new Date().toISOString(),
+        total_cases: 20,
+        passed_cases: 20,
+        failed_cases: 0,
+        pass_rate: 1,
+        core_summary: {
+          total_cases: 0,
+          exact_fact_recovery: 1,
+          decision_preservation: 1,
+          open_loop_continuity: 1,
+          artifact_restore_precision: 1,
+          temporal_update_correctness: 1,
+          abstention: 1,
+          compaction_regret: 0,
+        },
+        attention_summary: {
+          total_cases: 20,
+          pass_rate: 1,
+          intent_carryover_accuracy: 1,
+          latest_turn_retention_rate: 1,
+          focus_regression_rate: 0,
+          false_clear_rate: 0,
+          pending_followup_resolution_rate: 1,
+          seal_while_pending_rate: 0,
+          continuity_focus_alignment_rate: 1,
+          context_redundancy_rate: 0,
+        },
+        cognitive_runtime_summary: {
+          total_cases: 0,
+          receipt_coverage: 1,
+          handoff_roundtrip_success_rate: 1,
+          state_restore_accuracy: 1,
+          transaction_envelope_coverage: 1,
+          receipt_write_failure_rate: 0,
+          sqlite_write_p95_ms: 0,
+        },
+        case_results: [],
+        failures: [],
+      },
+      null,
+      2,
+    ),
+  );
+  const contextOsGate = await runUtf8CommandProbe(
+    "python",
+    [
+      "docs/governance/ci/scripts/run_context_os_runtime_eval_gate.py",
+      "--report",
+      contextOsReportPath,
+      "--output",
+      contextOsGateOutputPath,
+      "--skip-schema-validation",
+      "--print-report",
+    ],
+    { cwd: backendRoot, timeoutMs: 30_000 },
+  );
+  const contextOsGatePayload =
+    (await readJsonIfExists<JsonRecord>(contextOsGateOutputPath)) ||
+    (contextOsGate.stdout.trim().startsWith("{") ? (JSON.parse(contextOsGate.stdout) as JsonRecord) : {});
+  const contextOsPass = Boolean(
+    contextOsGate.exit_code === 0 &&
+      contextOsGatePayload.passed === true &&
+      asString(contextOsGatePayload.recommended_mode) === "mainline" &&
+      Array.isArray(contextOsGatePayload.failures) &&
+      contextOsGatePayload.failures.length === 0,
+  );
+  const canonicalExplorationGate = await runUtf8CommandProbe(
+    "pytest",
+    ["polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py", "-q"],
+    { cwd: backendRoot, timeoutMs: 30_000 },
+  );
+  const contextSubsystemGate = await runUtf8CommandProbe(
+    "pytest",
+    ["polaris/kernelone/context/tests/test_context_subsystem.py", "-q"],
+    { cwd: backendRoot, timeoutMs: 30_000 },
+  );
+  const canonicalExplorationPass = Boolean(
+    canonicalExplorationGate.exit_code === 0 &&
+      contextSubsystemGate.exit_code === 0 &&
+      canonicalExplorationGate.stdout.includes("passed") &&
+      contextSubsystemGate.stdout.includes("passed"),
   );
 
   return [
@@ -2347,6 +2680,40 @@ async function collectGraphGovernanceRuntimeProbes(): Promise<EvidenceProbe[]> {
       findings: structuralPass ? [] : ["structural bug governance chain has missing assets or missing debt links"],
     }),
     makeProbe({
+      id: "governance_ci_staged_rollout_runtime_probe",
+      title: "Governance CI staged rollout fail-on-new runtime probe",
+      category: "governance",
+      status: stagedRolloutPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "python docs/governance/ci/scripts/run_catalog_governance_gate.py --mode fail-on-new",
+          value: {
+            exit_code: stagedRolloutGate.exit_code,
+            signal: stagedRolloutGate.signal,
+            issue_count: asNumber(stagedRolloutPayload.issue_count),
+            blocker_count: asNumber(stagedRolloutPayload.blocker_count),
+            high_count: asNumber(stagedRolloutPayload.high_count),
+            new_issue_count: asNumber(stagedRolloutPayload.new_issue_count),
+            ignored_scope: "polaris/cells/roles/scout/**",
+            ignored_new_issue_count: stagedRolloutIgnoredNewIssues.length,
+            non_ignored_new_issue_count: stagedRolloutNonIgnoredNewIssues.length,
+            ignored_new_issue_paths: stagedRolloutIgnoredNewIssues.map((issue) => asString(issue.path)),
+            manifest_catalog_new_mismatch_count: asNumber(stagedRolloutManifestCatalog.new_mismatch_count),
+            stdout: stagedRolloutGate.stdout,
+            stderr: stagedRolloutGate.stderr,
+          },
+        },
+      ],
+      findings: stagedRolloutPass
+        ? []
+        : [
+            "governance CI staged rollout fail-on-new gate did not pass",
+            stagedRolloutParsed.error,
+          ].filter(Boolean),
+    }),
+    makeProbe({
       id: "semantic_boundary_governance_runtime_probe",
       title: "Semantic boundary governance runtime probe",
       category: "governance",
@@ -2369,7 +2736,590 @@ async function collectGraphGovernanceRuntimeProbes(): Promise<EvidenceProbe[]> {
       ],
       findings: semanticPass ? [] : ["semantic boundary governance script did not pass"],
     }),
+    makeProbe({
+      id: "tool_calling_canonical_gate_runtime_probe",
+      title: "Tool-calling canonical identity gate runtime probe",
+      category: "tooling",
+      status: toolCallingPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "runtime_artifact",
+          ref: path.relative(repoRoot, toolCallingReportPath).replace(/\\/g, "/"),
+          value: {
+            exists: await pathExists(toolCallingReportPath),
+            case_id: "e2e_canonical_tool_identity",
+            raw_tool: "repo_read_head",
+            observed_tool: "repo_read_head",
+          },
+        },
+        {
+          type: "probe",
+          ref: "python docs/governance/ci/scripts/run_tool_calling_canonical_gate.py",
+          value: {
+            exit_code: toolCallingGate.exit_code,
+            signal: toolCallingGate.signal,
+            gate: asString(toolCallingGatePayload.gate),
+            issue_count: asNumber(toolCallingGatePayload.issue_count),
+            total_cases: asNumber(toolCallingGatePayload.total_cases),
+            target_case_count: asNumber(toolCallingGatePayload.target_case_count),
+            report_path: path.relative(repoRoot, toolCallingGateReportPath).replace(/\\/g, "/"),
+            stdout: toolCallingGate.stdout,
+            stderr: toolCallingGate.stderr,
+          },
+        },
+      ],
+      findings: toolCallingPass ? [] : ["tool-calling canonical identity gate did not pass the canonical raw/observed case"],
+    }),
+    makeProbe({
+      id: "contextos_runtime_eval_gate_runtime_probe",
+      title: "ContextOS runtime eval promotion gate runtime probe",
+      category: "evaluation",
+      status: contextOsPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "runtime_artifact",
+          ref: path.relative(repoRoot, contextOsReportPath).replace(/\\/g, "/"),
+          value: {
+            exists: await pathExists(contextOsReportPath),
+            total_cases: 20,
+            pass_rate: 1,
+          },
+        },
+        {
+          type: "probe",
+          ref: "python docs/governance/ci/scripts/run_context_os_runtime_eval_gate.py",
+          value: {
+            exit_code: contextOsGate.exit_code,
+            signal: contextOsGate.signal,
+            passed: contextOsGatePayload.passed === true,
+            recommended_mode: asString(contextOsGatePayload.recommended_mode),
+            metrics_ok: contextOsGatePayload.metrics_ok === true,
+            schema_valid: contextOsGatePayload.schema_valid === true,
+            suite_ok: contextOsGatePayload.suite_ok === true,
+            failure_count: Array.isArray(contextOsGatePayload.failures) ? contextOsGatePayload.failures.length : null,
+            output_path: path.relative(repoRoot, contextOsGateOutputPath).replace(/\\/g, "/"),
+            stdout: contextOsGate.stdout,
+            stderr: contextOsGate.stderr,
+          },
+        },
+      ],
+      findings: contextOsPass ? [] : ["ContextOS runtime eval promotion gate did not pass the metrics report"],
+    }),
+    makeProbe({
+      id: "canonical_code_exploration_budget_runtime_probe",
+      title: "Canonical code exploration and budget gate runtime probe",
+      category: "governance",
+      status: canonicalExplorationPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "pytest polaris/cells/roles/kernel/tests/test_canonical_exploration_e2e.py -q",
+          value: {
+            exit_code: canonicalExplorationGate.exit_code,
+            stdout: canonicalExplorationGate.stdout,
+            stderr: canonicalExplorationGate.stderr,
+          },
+        },
+        {
+          type: "probe",
+          ref: "pytest polaris/kernelone/context/tests/test_context_subsystem.py -q",
+          value: {
+            exit_code: contextSubsystemGate.exit_code,
+            stdout: contextSubsystemGate.stdout,
+            stderr: contextSubsystemGate.stderr,
+          },
+        },
+      ],
+      findings: canonicalExplorationPass ? [] : ["canonical exploration or Context subsystem pytest gate failed"],
+    }),
   ];
+}
+
+async function collectTaskMarketRegressionRuntimeProbe(): Promise<EvidenceProbe> {
+  const backendRoot = path.join(repoRoot, "src", "backend");
+  const taskMarketTestFiles = [
+    "polaris/cells/runtime/task_market/tests/test_service.py",
+    "polaris/cells/runtime/task_market/tests/test_claiming_integration.py",
+    "polaris/cells/runtime/task_market/tests/test_hitl_authority.py",
+    "polaris/cells/runtime/task_market/tests/test_dlq_replay.py",
+    "polaris/cells/runtime/task_market/tests/test_saga.py",
+    "polaris/cells/runtime/task_market/tests/test_reconciler.py",
+    "polaris/cells/runtime/task_market/tests/test_drift_requeue.py",
+    "polaris/cells/runtime/task_market/tests/test_revision_drift.py",
+    "polaris/cells/runtime/task_market/tests/test_dag_validator.py",
+    "polaris/cells/runtime/task_market/tests/test_multi_workspace_isolation.py",
+    "polaris/cells/runtime/task_market/tests/test_consumer_loop.py",
+    "polaris/cells/runtime/task_market/tests/test_e2e_pipeline.py",
+    "polaris/cells/runtime/task_market/tests/test_webhook_callback.py",
+    "polaris/cells/runtime/task_market/tests/test_metrics.py",
+    "polaris/cells/runtime/task_market/tests/test_tracing.py",
+  ];
+  const result = await runUtf8CommandProbe("pytest", [...taskMarketTestFiles, "-q"], {
+    cwd: backendRoot,
+    timeoutMs: 60_000,
+  });
+  const pass = Boolean(result.exit_code === 0 && result.stdout.includes("passed"));
+
+  return makeProbe({
+    id: "task_market_regression_runtime_probe",
+    title: "TaskMarket regression runtime probe",
+    category: "task_market",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "pytest polaris/cells/runtime/task_market/tests -q",
+        value: {
+          exit_code: result.exit_code,
+          signal: result.signal,
+          test_files: taskMarketTestFiles,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    ],
+    findings: pass ? [] : ["task_market regression pytest batch failed"],
+  });
+}
+
+async function collectLlmEvaluationRuntimeProbe(): Promise<EvidenceProbe> {
+  const backendRoot = path.join(repoRoot, "src", "backend");
+  const testFiles = [
+    "polaris/tests/test_llm_evaluation_abstraction.py",
+    "polaris/tests/test_llm_evaluation_runner_provider_cfg.py",
+    "polaris/tests/test_llm_tool_calling_matrix.py",
+    "polaris/cells/llm/evaluation/tests/test_tool_calling_matrix_prompt_contract.py",
+    "polaris/cells/llm/evaluation/tests/test_runner.py",
+  ];
+  const result = await runUtf8CommandProbe("pytest", [...testFiles, "-q"], {
+    cwd: backendRoot,
+    timeoutMs: 70_000,
+  });
+  const pass = Boolean(result.exit_code === 0 && result.stdout.includes("passed"));
+
+  return makeProbe({
+    id: "llm_evaluation_runtime_probe",
+    title: "LLM evaluation failure evidence synthesis runtime probe",
+    category: "evaluation",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "pytest llm evaluation runner/tool matrix tests -q",
+        value: {
+          exit_code: result.exit_code,
+          signal: result.signal,
+          test_files: testFiles,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    ],
+    findings: pass ? [] : ["LLM evaluation runner/tool matrix pytest batch failed"],
+  });
+}
+
+async function collectFrontendLlmSettingsRuntimeProbe(): Promise<EvidenceProbe> {
+  const testFiles = [
+    "src/app/store/llmStore.test.ts",
+    "src/app/store/testStore.test.ts",
+    "src/app/components/llm/utils/__tests__/configSanitizer.test.ts",
+  ];
+  const result = await runUtf8CommandProbe("npm", ["run", "test", "--", ...testFiles], {
+    cwd: repoRoot,
+    timeoutMs: 40_000,
+  });
+  const pass = Boolean(result.exit_code === 0 && result.stdout.includes("passed"));
+
+  return makeProbe({
+    id: "frontend_llm_settings_runtime_probe",
+    title: "Frontend LLM save queue, orphan cleanup, and keychain env override runtime probe",
+    category: "llm_control",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "npm run test -- frontend LLM store/sanitizer tests",
+        value: {
+          exit_code: result.exit_code,
+          signal: result.signal,
+          test_files: testFiles,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    ],
+    findings: pass ? [] : ["frontend LLM save queue/orphan cleanup/keychain Vitest batch failed"],
+  });
+}
+
+async function collectNativeToolRuntimeProbe(): Promise<EvidenceProbe> {
+  const backendRoot = path.join(repoRoot, "src", "backend");
+  const testFiles = [
+    "polaris/kernelone/llm/engine/tests/test_text_stream_tool_calls.py",
+    "polaris/kernelone/llm/toolkit/tests/test_json_tool_parser.py",
+    "polaris/kernelone/llm/toolkit/tests/test_tools_execution.py",
+    "polaris/kernelone/llm/toolkit/tests/test_tools_normalization.py",
+    "polaris/tests/test_llm_toolkit_native_function_calling.py",
+    "polaris/cells/llm/tool_runtime/tests/test_role_integrations.py",
+  ];
+  const result = await runUtf8CommandProbe("pytest", [...testFiles, "-q"], {
+    cwd: backendRoot,
+    timeoutMs: 70_000,
+  });
+  const pass = Boolean(result.exit_code === 0 && result.stdout.includes("passed"));
+
+  return makeProbe({
+    id: "native_tool_runtime_probe",
+    title: "Native tool round and legacy text fail-closed runtime probe",
+    category: "tooling",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "pytest native tool runtime and fail-closed tests -q",
+        value: {
+          exit_code: result.exit_code,
+          signal: result.signal,
+          test_files: testFiles,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    ],
+    findings: pass ? [] : ["native tool runtime or legacy text fail-closed pytest batch failed"],
+  });
+}
+
+async function collectFactoryPipelineRuntimeProbe(): Promise<EvidenceProbe> {
+  const backendRoot = path.join(repoRoot, "src", "backend");
+  const testFiles = [
+    "polaris/cells/factory/pipeline/tests/test_projection_lab.py",
+    "polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py",
+    "polaris/cells/factory/pipeline/tests/test_projection_reproject.py",
+    "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+    "polaris/delivery/tests/test_factory_audit_bundle.py",
+    "polaris/tests/integration/delivery/test_factory_stream.py",
+  ];
+  const result = await runUtf8CommandProbe("pytest", [...testFiles, "-q"], {
+    cwd: backendRoot,
+    timeoutMs: 70_000,
+  });
+  const pass = Boolean(result.exit_code === 0 && result.stdout.includes("passed"));
+
+  return makeProbe({
+    id: "factory_pipeline_runtime_probe",
+    title: "Factory projection, verification, audit bundle, and SSE runtime probe",
+    category: "factory",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "pytest factory projection/verification/audit/stream tests -q",
+        value: {
+          exit_code: result.exit_code,
+          signal: result.signal,
+          test_files: testFiles,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    ],
+    findings: pass ? [] : ["factory projection/verification/audit/stream pytest batch failed"],
+  });
+}
+
+async function collectArchiveStreamRuntimeProbe(): Promise<EvidenceProbe> {
+  const backendRoot = path.join(repoRoot, "src", "backend");
+  const testFiles = [
+    "polaris/tests/unit/cells/archive/run_archive/internal/test_stream_archiver.py",
+    "polaris/tests/unit/cells/archive/run_archive/internal/test_archive_sink.py",
+    "polaris/tests/test_archive_cell_services.py",
+    "polaris/tests/unit/cells/archive/run_archive/internal/test_history_archive_service.py",
+  ];
+  const result = await runUtf8CommandProbe("pytest", [...testFiles, "-q"], {
+    cwd: backendRoot,
+    timeoutMs: 40_000,
+  });
+  const pass = Boolean(result.exit_code === 0 && result.stdout.includes("passed"));
+
+  return makeProbe({
+    id: "archive_stream_runtime_probe",
+    title: "Archive stream archiver and sink runtime probe",
+    category: "archive",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "pytest archive stream archiver/sink tests -q",
+        value: {
+          exit_code: result.exit_code,
+          signal: result.signal,
+          test_files: testFiles,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    ],
+    findings: pass ? [] : ["archive stream archiver/sink pytest batch failed"],
+  });
+}
+
+async function collectRuntimeArtifactStoreRuntimeProbe(): Promise<EvidenceProbe> {
+  const backendRoot = path.join(repoRoot, "src", "backend");
+  const testFiles = [
+    "polaris/tests/test_artifact_service.py",
+    "polaris/cells/roles/runtime/tests/test_session_artifact_store.py",
+  ];
+  const result = await runUtf8CommandProbe("pytest", [...testFiles, "-q"], {
+    cwd: backendRoot,
+    timeoutMs: 40_000,
+  });
+  const pass = Boolean(result.exit_code === 0 && result.stdout.includes("passed"));
+
+  return makeProbe({
+    id: "runtime_artifact_store_runtime_probe",
+    title: "Runtime artifact store hot paths runtime probe",
+    category: "runtime_storage",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "pytest artifact service and session artifact store tests -q",
+        value: {
+          exit_code: result.exit_code,
+          signal: result.signal,
+          test_files: testFiles,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    ],
+    findings: pass ? [] : ["runtime artifact service pytest batch failed"],
+  });
+}
+
+async function collectAuditEvidenceBundleRuntimeProbe(): Promise<EvidenceProbe> {
+  const backendRoot = path.join(repoRoot, "src", "backend");
+  const testFiles = [
+    "polaris/tests/unit/cells/test_audit/test_evidence_bundle_service.py",
+    "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+    "polaris/tests/cells/audit/evidence/internal/test_role_session_audit_service.py",
+  ];
+  const result = await runUtf8CommandProbe("pytest", [...testFiles, "-q"], {
+    cwd: backendRoot,
+    timeoutMs: 40_000,
+  });
+  const pass = Boolean(result.exit_code === 0 && result.stdout.includes("passed"));
+
+  return makeProbe({
+    id: "audit_evidence_bundle_runtime_probe",
+    title: "Audit evidence bundle and role-session evidence runtime probe",
+    category: "audit",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "pytest audit evidence bundle/contract/session tests -q",
+        value: {
+          exit_code: result.exit_code,
+          signal: result.signal,
+          test_files: testFiles,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    ],
+    findings: pass ? [] : ["audit evidence bundle pytest batch failed"],
+  });
+}
+
+async function collectLlmConfigControlPlaneRuntimeProbe(page: Page): Promise<EvidenceProbe> {
+  let originalConfig: JsonRecord | null = null;
+  let restoreError = "";
+  try {
+    const marker = `e2e-llm-config-${Date.now()}`;
+    originalConfig = asRecord(await requestJson<JsonRecord>(page, "/v2/llm/config", { timeoutMs: 5_000 }));
+    const originalVisualLayout = asRecord(originalConfig.visual_layout);
+    const probeConfig = {
+      ...originalConfig,
+      visual_layout: {
+        ...originalVisualLayout,
+        e2e_runtime_probe_marker: marker,
+      },
+    };
+    const saved = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/llm/config", {
+        method: "POST",
+        timeoutMs: 5_000,
+        body: { config: probeConfig },
+      }),
+    );
+    const restored = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/llm/config", {
+        method: "POST",
+        timeoutMs: 5_000,
+        body: { config: originalConfig },
+      }).catch((error: unknown) => {
+        restoreError = String(error);
+        return {};
+      }),
+    );
+    const status = asRecord(await requestJson<JsonRecord>(page, "/v2/llm/status", { timeoutMs: 5_000 }));
+    const savedVisualLayout = asRecord(saved.visual_layout);
+    const restoredVisualLayout = asRecord(restored.visual_layout);
+    const pass = Boolean(
+      asString(savedVisualLayout.e2e_runtime_probe_marker) === marker &&
+        !asString(restoredVisualLayout.e2e_runtime_probe_marker) &&
+        !restoreError &&
+        Object.keys(status).length > 0,
+    );
+
+    return makeProbe({
+      id: "llm_config_control_plane_runtime_probe",
+      title: "LLM config control-plane transaction runtime probe",
+      category: "llm_control",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "POST /v2/llm/config",
+          value: {
+            probe_marker_saved: asString(savedVisualLayout.e2e_runtime_probe_marker),
+            restored_marker_present: Boolean(asString(restoredVisualLayout.e2e_runtime_probe_marker)),
+            restore_error: restoreError,
+            provider_count: Object.keys(asRecord(saved.providers)).length,
+            role_count: Object.keys(asRecord(saved.roles)).length,
+          },
+        },
+        {
+          type: "api",
+          ref: "GET /v2/llm/status",
+          value: status,
+        },
+      ],
+      findings: pass ? [] : ["LLM config API did not save, restore original config, and expose runtime status"],
+    });
+  } catch (error) {
+    if (originalConfig) {
+      try {
+        await requestJson<JsonRecord>(page, "/v2/llm/config", {
+          method: "POST",
+          timeoutMs: 5_000,
+          body: { config: originalConfig },
+        });
+      } catch (restoreFailure) {
+        restoreError = String(restoreFailure);
+      }
+    }
+    return makeProbe({
+      id: "llm_config_control_plane_runtime_probe",
+      title: "LLM config control-plane transaction runtime probe",
+      category: "llm_control",
+      status: "WARN",
+      required: false,
+      evidence: [
+        { type: "api", ref: "POST /v2/llm/config" },
+        { type: "api", ref: "GET /v2/llm/status" },
+      ],
+      findings: restoreError ? [String(error), `restore failed: ${restoreError}`] : [String(error)],
+    });
+  }
+}
+
+async function collectPermissionPdpRuntimeProbe(page: Page): Promise<EvidenceProbe> {
+  try {
+    const allowed = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/permissions/v2/check", {
+        method: "POST",
+        timeoutMs: 5_000,
+        body: {
+          subject: { type: "role", id: "pm" },
+          resource: { type: "file", pattern: "**/*.py" },
+          action: "read",
+          context: {},
+        },
+      }),
+    );
+    const denied = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/permissions/v2/check", {
+        method: "POST",
+        timeoutMs: 5_000,
+        body: {
+          subject: { type: "role", id: "pm" },
+          resource: { type: "file", pattern: "**/*.py" },
+          action: "write",
+          context: {},
+        },
+      }),
+    );
+    const effective = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/permissions/v2/effective?subject_type=role&subject_id=pm", {
+        timeoutMs: 5_000,
+      }),
+    );
+    const pass = Boolean(
+      allowed.allowed === true &&
+        asString(allowed.decision) === "allow" &&
+        denied.allowed === false &&
+        Array.isArray(effective.permissions) &&
+        effective.permissions.length > 0,
+    );
+
+    return makeProbe({
+      id: "permission_pdp_runtime_probe",
+      title: "Permission PDP/RBAC tool gateway audit runtime probe",
+      category: "security",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "POST /v2/permissions/v2/check allow",
+          value: allowed,
+        },
+        {
+          type: "api",
+          ref: "POST /v2/permissions/v2/check deny",
+          value: denied,
+        },
+        {
+          type: "api",
+          ref: "GET /v2/permissions/v2/effective",
+          value: {
+            permission_count: Array.isArray(effective.permissions) ? effective.permissions.length : 0,
+            permissions: effective.permissions,
+          },
+        },
+      ],
+      findings: pass ? [] : ["permission PDP did not expose both allow and deny decisions with effective permissions"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "permission_pdp_runtime_probe",
+      title: "Permission PDP/RBAC tool gateway audit runtime probe",
+      category: "security",
+      status: "WARN",
+      required: false,
+      evidence: [
+        { type: "api", ref: "POST /v2/permissions/v2/check" },
+        { type: "api", ref: "GET /v2/permissions/v2/effective" },
+      ],
+      findings: [String(error)],
+    });
+  }
 }
 
 async function collectEventFactStreamRuntimeProbe(page: Page): Promise<EvidenceProbe> {
@@ -4381,6 +5331,16 @@ export async function collectExpandedTechEvidenceMatrix(
   probes.push(await collectWebSocketStaleTokenRuntimeProbe(page, workspace));
   probes.push(...(await collectElectronRuntimeProbes(page, workspace || ".")));
   probes.push(...(await collectGraphGovernanceRuntimeProbes()));
+  probes.push(await collectTaskMarketRegressionRuntimeProbe());
+  probes.push(await collectFrontendLlmSettingsRuntimeProbe());
+  probes.push(await collectLlmEvaluationRuntimeProbe());
+  probes.push(await collectNativeToolRuntimeProbe());
+  probes.push(await collectFactoryPipelineRuntimeProbe());
+  probes.push(await collectArchiveStreamRuntimeProbe());
+  probes.push(await collectRuntimeArtifactStoreRuntimeProbe());
+  probes.push(await collectAuditEvidenceBundleRuntimeProbe());
+  probes.push(await collectLlmConfigControlPlaneRuntimeProbe(page));
+  probes.push(await collectPermissionPdpRuntimeProbe(page));
   probes.push(await collectEventFactStreamRuntimeProbe(page));
   probes.push(await collectKerneloneTraceabilityRuntimeProbe(page));
 

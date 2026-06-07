@@ -15,10 +15,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from polaris.cells.policy.permission.public import (
     DecisionContext,
     PermissionService,
+    get_permission_service,
 )
 from polaris.cells.roles.profile.public import (
     Action,
@@ -28,7 +29,7 @@ from polaris.cells.roles.profile.public import (
     SubjectType,
 )
 from polaris.delivery.http.dependencies import require_auth
-from polaris.delivery.http.routers._shared import StructuredHTTPException
+from polaris.delivery.http.routers._shared import StructuredHTTPException, active_workspace_value, get_state
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -138,10 +139,10 @@ class PolicyListResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def _get_permission_service(response_model=PermissionCheckResponse, dependencies=None) -> None:
-    if dependencies is None:
-        dependencies = [Depends(require_auth)]
-    pass
+async def _get_permission_service(request: Request) -> PermissionService:
+    state = get_state(request)
+    workspace = active_workspace_value(state.settings)
+    return await get_permission_service(str(workspace or ""))
 
 
 @router.post("/check", response_model=PermissionCheckResponse, dependencies=[Depends(require_auth)])  # DEPRECATED

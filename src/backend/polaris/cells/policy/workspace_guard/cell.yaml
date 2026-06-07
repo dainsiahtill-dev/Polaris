@@ -10,12 +10,15 @@ purpose: 'Enforce workspace/path/scope checks for runtime and archive operations
   '
 current_modules:
 - polaris.cells.policy.workspace_guard.public.contracts
+- polaris.cells.policy.workspace_guard.public.service
 tags: []
 owned_paths:
 - polaris/cells/policy/workspace_guard/service.py
+- polaris/cells/policy/workspace_guard/public/**
 public_contracts:
   modules:
   - polaris.cells.policy.workspace_guard.public.contracts
+  - polaris.cells.policy.workspace_guard.public.service
   commands: []
   queries:
   - WorkspaceWriteGuardQueryV1

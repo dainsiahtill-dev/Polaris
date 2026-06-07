@@ -10,9 +10,11 @@ purpose: 'Produce architecture-level design decisions and implementation bluepri
   '
 current_modules:
 - polaris.cells.architect.design.public.contracts
+- polaris.cells.architect.design.public.service
 tags: []
 owned_paths:
 - polaris/cells/architect/design/internal/**
+- polaris/cells/architect/design/public/**
 public_contracts:
   modules:
   - polaris.cells.architect.design.public.contracts

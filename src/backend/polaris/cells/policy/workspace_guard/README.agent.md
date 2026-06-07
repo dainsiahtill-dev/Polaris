@@ -18,6 +18,10 @@ Enforce workspace path legality, scope constraints, and write-guard checks.
 - `WorkspaceGuardDecisionV1`
 - `WorkspaceGuardViolationEventV1`
 
+## Public Service
+
+- `check_workspace_write_guard(query: WorkspaceWriteGuardQueryV1)`
+
 ## Depends On
 
 - `audit.evidence`
@@ -47,4 +51,3 @@ Enforce workspace path legality, scope constraints, and write-guard checks.
 ## Verification
 
 - `tests/architecture/test_polaris_kernel_fs_guard.py`
-

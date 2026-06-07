@@ -1,0 +1,62 @@
+id: vc-20260607-architect-boundary-validation
+title: Architect role boundary validation runtime capability
+date: "2026-06-07"
+classification: structural
+owner: architecture-team
+scope:
+  cells:
+    - roles.runtime
+    - policy.permission
+    - policy.workspace_guard
+    - architect.design
+  governance_assets:
+    - docs/graph/catalog/cells.yaml
+    - docs/graph/subgraphs/execution_governance_pipeline.yaml
+assumption_register:
+  - id: A1
+    statement: RoleCapabilityInvocationResultV1.allowed is an execution-authorization signal.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/contracts.py
+      - src/backend/polaris/cells/roles/runtime/public/service.py
+    decision: Denied capability, permission, workspace guard, and fingerprint checks return allowed=false.
+  - id: A2
+    statement: Capability discoverability is separate from execution authorization.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/public/contracts.py
+    decision: Denial metadata may include capability_available=true.
+  - id: A3
+    statement: roles.runtime may orchestrate but must not own architect.design, permission, or workspace guard state.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/cell.yaml
+      - src/backend/polaris/cells/architect/design/cell.yaml
+      - src/backend/polaris/cells/policy/permission/cell.yaml
+      - src/backend/polaris/cells/policy/workspace_guard/cell.yaml
+    decision: Runtime calls only public service wrappers.
+pre_mortem:
+  likely_failure_modes:
+    - Runtime returns ok=false but allowed=true on a denied guard result.
+    - Permission wrapper imports or exposes foreign internal state to roles.runtime.
+    - Workspace guard path checks run once per duplicate path and cause avoidable latency.
+    - Architect design call blocks indefinitely without a structured timeout result.
+    - roles.runtime.public imports a foreign Cell internal module.
+verification_plan:
+  tests:
+    - path: src/backend/polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py
+      expected: Architect validation success, permission denial, workspace guard denial, deduped guard paths, and timeout are covered.
+    - path: src/backend/polaris/cells/policy/permission/public/tests/test_public_contracts.py
+      expected: evaluate_permission maps EvaluatePermissionCommandV1 to PermissionDecisionResultV1.
+    - path: src/backend/polaris/cells/architect/design/tests/test_contracts.py
+      expected: generate_architecture_design returns typed ArchitectureDesignResultV1.
+    - path: src/backend/polaris/tests/architecture/test_kernelone_roles_runtime_public_import_fence.py
+      expected: roles.runtime.public has no foreign Cell internal imports.
+  commands:
+    - ruff check src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/public/contracts.py src/backend/polaris/cells/policy/permission/public/service.py src/backend/polaris/cells/policy/permission/internal/permission_service.py src/backend/polaris/cells/architect/design/public/service.py src/backend/polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py src/backend/polaris/cells/policy/permission/public/tests/test_public_contracts.py src/backend/polaris/cells/architect/design/tests/test_contracts.py src/backend/polaris/tests/architecture/test_kernelone_roles_runtime_public_import_fence.py --fix
+    - ruff format src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/public/contracts.py src/backend/polaris/cells/policy/permission/public/service.py src/backend/polaris/cells/policy/permission/internal/permission_service.py src/backend/polaris/cells/architect/design/public/service.py src/backend/polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py src/backend/polaris/cells/policy/permission/public/tests/test_public_contracts.py src/backend/polaris/cells/architect/design/tests/test_contracts.py src/backend/polaris/tests/architecture/test_kernelone_roles_runtime_public_import_fence.py
+    - mypy src/backend/polaris/cells/roles/runtime/public/service.py src/backend/polaris/cells/roles/runtime/public/contracts.py src/backend/polaris/cells/policy/permission/public/service.py src/backend/polaris/cells/policy/permission/internal/permission_service.py src/backend/polaris/cells/architect/design/public/service.py
+    - python -m pytest -q src/backend/polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py src/backend/polaris/cells/policy/permission/public/tests/test_public_contracts.py src/backend/polaris/cells/architect/design/tests/test_contracts.py src/backend/polaris/tests/architecture/test_kernelone_roles_runtime_public_import_fence.py
+    - python -m pytest -q src/backend/polaris/cells/roles/kernel/tests
+    - python -m pytest -q src/backend/polaris/cells/roles/runtime/tests
+    - python -m pytest -q src/backend/polaris/cells/runtime/task_market/tests
+    - python src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+rollback:
+  strategy: Revert the runtime adapter branch and public wrappers in one commit; keep ADR and verification card if they document the rejected design.

@@ -10,6 +10,7 @@ from polaris.cells.policy.permission.public.contracts import (
     PermissionPolicyError,
     QueryPermissionMatrixV1,
 )
+from polaris.cells.policy.permission.public.service import evaluate_permission
 
 
 class TestEvaluatePermissionCommandV1HappyPath:
@@ -172,3 +173,44 @@ class TestPermissionPolicyError:
     def test_empty_message_raises(self) -> None:
         with pytest.raises(ValueError, match="message"):
             PermissionPolicyError("")
+
+
+class TestEvaluatePermissionPublicService:
+    def test_architect_boundary_validation_is_allowed_by_builtin_policy(self) -> None:
+        result = evaluate_permission(
+            EvaluatePermissionCommandV1(
+                role="architect",
+                action="execute",
+                resource="architect.design:validate_cell_boundary_change",
+                workspace="/repo",
+                context={
+                    "resource_type": "api",
+                    "task_id": "task-1",
+                    "session_id": "session-1",
+                    "request_id": "invoke-boundary-1",
+                },
+            )
+        )
+
+        assert result.allowed is True
+        assert result.role == "architect"
+        assert result.action == "execute"
+        assert result.resource == "architect.design:validate_cell_boundary_change"
+        assert result.matched_policy == "architect-execute-boundary-validation"
+        assert result.context["decision"] == "allow"
+
+    def test_pm_boundary_validation_is_denied(self) -> None:
+        result = evaluate_permission(
+            EvaluatePermissionCommandV1(
+                role="pm",
+                action="execute",
+                resource="architect.design:validate_cell_boundary_change",
+                workspace="/repo",
+                context={"resource_type": "api"},
+            )
+        )
+
+        assert result.allowed is False
+        assert result.role == "pm"
+        assert result.reason
+        assert result.context["decision"] == "deny"

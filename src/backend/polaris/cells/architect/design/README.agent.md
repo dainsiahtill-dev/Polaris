@@ -25,3 +25,9 @@ consume.
 - `ArchitectureDesignGeneratedEventV1`
 - `ArchitectureDesignResultV1`
 - `ArchitectDesignErrorV1`
+
+## Public Service
+
+- `generate_architecture_design(command: GenerateArchitectureDesignCommandV1)`
+  returns a typed `ArchitectureDesignResultV1` for runtime boundary validation.
+  Runtime callers must use this public service and must not import `internal/**`.

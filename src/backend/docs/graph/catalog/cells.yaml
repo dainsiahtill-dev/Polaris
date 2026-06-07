@@ -1403,6 +1403,7 @@ cells:
       - task_market.publish:*
       - blueprint.generate:*
       - process.spawn:qa/pytest
+      - qa.verdict.issue
       - budget.reserve:context
       - mutation.guard:workspace
       - architect.validate_cell_boundary
@@ -2654,14 +2655,18 @@ cells:
       Run independent QA/Auditor validation and emit structured acceptance
       verdicts for Director outputs.
     current_modules:
+      - polaris.cells.qa.audit_verdict.public.contracts
+      - polaris.cells.qa.audit_verdict.public.service
       - polaris.cells.qa.audit_verdict.internal.qa_service
       - polaris.cells.qa.audit_verdict.internal.quality_service
       - polaris.cells.qa.audit_verdict.internal.qa_agent
     owned_paths:
+      - polaris/cells/qa/audit_verdict/public/**
       - polaris/cells/qa/audit_verdict/internal/**
     public_contracts:
       modules:
         - polaris.cells.qa.audit_verdict.public.contracts
+        - polaris.cells.qa.audit_verdict.public.service
       commands:
         - RunQaAuditCommandV1
       queries:
@@ -2695,10 +2700,12 @@ cells:
       - process.spawn:qa/*
     verification:
       tests:
+        - polaris/cells/qa/audit_verdict/tests/test_contracts.py
+        - polaris/cells/qa/audit_verdict/tests/test_integration.py
         - tests/test_integration_qa_command.py
         - tests/test_quality_checker_director_tool_calls.py
       gaps:
-        - QA acceptance is still partially coupled with legacy integration_qa entrypoints.
+        - Legacy integration_qa entrypoints still proxy into this Cell during cutover.
 
   - id: resident.autonomy
     title: Resident Autonomy

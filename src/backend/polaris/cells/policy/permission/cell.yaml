@@ -11,9 +11,11 @@ purpose: 'Own role capability matrix evaluation and permission decisions for too
   '
 current_modules:
 - polaris.cells.policy.permission.public.contracts
+- polaris.cells.policy.permission.public.service
 tags: []
 owned_paths:
 - polaris/cells/policy/permission/internal/**
+- polaris/cells/policy/permission/public/**
 - polaris/domain/entities/capability.py
 - polaris/domain/entities/policy.py
 public_contracts:
@@ -49,6 +51,7 @@ verification:
   - tests/test_permission_conditions.py
   - tests/test_permission_service_audit.py
   - tests/test_kernelone_safety_regressions.py::test_policy_allow_implementation_requires_approval
+  - polaris/cells/policy/permission/public/tests/test_public_contracts.py
   gaps:
   - Initial business-cell declaration; implementation convergence is in progress.
   smoke_commands: []

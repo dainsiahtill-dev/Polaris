@@ -141,6 +141,14 @@ def _normalize_rel(path: str) -> str:
     return str(path or "").replace("\\", "/")
 
 
+def _repo_relative_path(repo_root: Path, candidate: Path | str) -> str:
+    path = Path(candidate)
+    try:
+        return _normalize_rel(path.resolve().relative_to(repo_root.resolve()).as_posix())
+    except (OSError, ValueError):
+        return _normalize_rel(str(candidate))
+
+
 def _read_yaml(path: Path) -> Any:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
@@ -259,7 +267,7 @@ def _manifest_owned_path_contained(
             if manifest_path == cat_path:
                 return True
             prefix = cat_path.replace("**", "").rstrip("/")
-            if manifest_path.startswith(prefix + "/") or manifest_path.startswith(prefix + "\\"):
+            if manifest_path == prefix or manifest_path.startswith(prefix + "/") or manifest_path.startswith(prefix + "\\"):
                 return True
         elif manifest_path == cat_path:
             return True
@@ -449,7 +457,7 @@ def _validate_schema_targets(
                 rule_id=rule_id,
                 severity=_SEVERITY_BLOCKER,
                 message=f"Schema file missing: {schema_path.relative_to(repo_root).as_posix()}",
-                path=str(schema_path),
+                path=_repo_relative_path(repo_root, schema_path),
             )
         )
         return
@@ -489,7 +497,7 @@ def _validate_schema_targets(
                         rule_id=rule_id,
                         severity=_SEVERITY_BLOCKER,
                         message=f"Failed to parse YAML: {exc}",
-                        path=str(target),
+                        path=_repo_relative_path(repo_root, target),
                     )
                 )
                 continue
@@ -503,7 +511,7 @@ def _validate_schema_targets(
                         rule_id=rule_id,
                         severity=_SEVERITY_BLOCKER,
                         message=message,
-                        path=str(target),
+                        path=_repo_relative_path(repo_root, target),
                     )
                 )
 
@@ -891,7 +899,7 @@ def run_governance_gate(
             rule_id="manifest_schema_valid",
             severity=_SEVERITY_BLOCKER,
             message="Missing catalog file docs/graph/catalog/cells.yaml",
-            path=str(catalog_path),
+            path=_repo_relative_path(repo_root, catalog_path),
         )
         issues = (issue,)
         new_issue_count = _count_new_issues(issues, mode=mode, baseline_path=baseline_path)

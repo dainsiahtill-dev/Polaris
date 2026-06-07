@@ -30,6 +30,10 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 - `task_market.publish:*`
 - `blueprint.generate:*`
 - `process.spawn:qa/pytest`
+- `qa.verdict.issue`
+- `budget.reserve:context`
+- `mutation.guard:workspace`
+- `architect.validate_cell_boundary`
 
 ## Public Contracts
 Defined in `public/contracts.py`:
@@ -54,5 +58,14 @@ Defined in `public/contracts.py`:
   generation delegates to `chief_engineer.blueprint`.
 - QA pytest verification delegates to `factory.verification_guard` and requires
   the QA capability fingerprint before any verification command is built.
+- QA verdict issuance delegates to `qa.audit_verdict.public.service.run_qa_audit`
+  with `RunQaAuditCommandV1`; runtime objects keep only result refs and metadata.
+- Architect context-budget allocation delegates to `finops.budget_guard`; illegal
+  mutation interception delegates to `policy.workspace_guard`.
+- Architect Cell boundary validation delegates lightweight authorization to
+  `policy.permission`, checks unique changed paths through `policy.workspace_guard`,
+  and invokes `architect.design` through `GenerateArchitectureDesignCommandV1`.
+  Denied sandbox checks return `allowed=false`; mounted capability discoverability
+  is represented only by `metadata.capability_available`.
 - Product host direction is `polaris-cli` under `polaris/delivery/cli/`:
   one host, multi-role, multi-mode.

@@ -1,6 +1,7 @@
 import { _electron as electron, type ElectronApplication, type Page, type TestInfo, test as base } from "@playwright/test";
 import fs from "fs";
 import http from "http";
+import type { Socket } from "net";
 import os from "os";
 import path from "path";
 
@@ -242,6 +243,7 @@ function resolveMimeType(filePath: string): string {
 
 async function startStaticDevServer(distDir: string): Promise<StaticDevServerHandle> {
   const distRoot = path.resolve(distDir);
+  const sockets = new Set<Socket>();
   const server = http.createServer((request, response) => {
     try {
       const method = String(request.method || "GET").toUpperCase();
@@ -304,6 +306,12 @@ async function startStaticDevServer(distDir: string): Promise<StaticDevServerHan
       response.end(`Internal Server Error: ${String(error)}`);
     }
   });
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => {
+      sockets.delete(socket);
+    });
+  });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -320,14 +328,35 @@ async function startStaticDevServer(distDir: string): Promise<StaticDevServerHan
   return {
     url,
     close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
+      new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) {
             return;
           }
+          settled = true;
+          clearTimeout(forceDestroyTimer);
+          clearTimeout(hardStopTimer);
           resolve();
+        };
+        const forceDestroyTimer = setTimeout(() => {
+          server.closeAllConnections?.();
+          for (const socket of sockets) {
+            socket.destroy();
+          }
+        }, 500);
+        const hardStopTimer = setTimeout(finish, 5_000);
+        server.close((error) => {
+          if (error) {
+            for (const socket of sockets) {
+              socket.destroy();
+            }
+          }
+          finish();
         });
+        for (const socket of sockets) {
+          socket.end();
+        }
       }),
   };
 }

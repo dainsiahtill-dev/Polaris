@@ -15,7 +15,7 @@ rules:
       - validate docs/graph/catalog/cells.yaml
       - validate docs/graph/subgraphs/*.yaml
       - validate generated context packs
-      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json
 
   - id: migration_ledger_schema_valid
     severity: blocker
@@ -43,7 +43,7 @@ rules:
       - map file path to owning Cell
       - parse imports
       - fail if import crosses ownership without public contract allowance
-      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json
 
   - id: declared_cell_dependencies_match_imports
     severity: high
@@ -60,7 +60,7 @@ rules:
       - parse absolute imports that target other Cells
       - aggregate source Cell -> target Cell edges
       - fail on any new edge missing from catalog `depends_on`
-      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json
 
   - id: owned_paths_do_not_overlap
     severity: blocker
@@ -74,7 +74,7 @@ rules:
       - expand globs
       - detect duplicate ownership
       - report owning Cells and paths
-      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json
 
   - id: single_state_owner
     severity: blocker
@@ -87,7 +87,7 @@ rules:
     desired_automation:
       - aggregate `state_owners`
       - fail on duplicate ownership
-      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json
 
   - id: explicit_utf8_text_io
     severity: blocker
@@ -129,7 +129,7 @@ rules:
     desired_automation:
       - scan for subprocess, requests, socket, file write, db client usage
       - compare against `effects_allowed`
-      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json
 
   - id: context_pack_is_primary_ai_entry
     severity: high
@@ -215,7 +215,7 @@ rules:
     desired_automation:
       - validate non-empty `verify_targets`
       - confirm referenced files exist
-      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline tests/architecture/allowlists/catalog_governance_gate.baseline.json
+      - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json
 
   - id: migration_gaps_are_explicit
     severity: medium
@@ -401,9 +401,9 @@ rules:
       - polaris/cells/*/*/cell.yaml
     current_status: enforced_non_regressive
     desired_automation:
-      - run python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --mismatch-baseline tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl
+      - run python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --mismatch-baseline polaris/tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl
       - fail if new mismatches introduced
-      - write: --write-mismatch-baseline tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl
+      - write: --write-mismatch-baseline polaris/tests/architecture/allowlists/manifest_catalog_mismatches.baseline.jsonl
   - id: delivery_cli_import_hygiene
     severity: high
     description: >

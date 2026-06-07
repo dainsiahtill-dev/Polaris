@@ -38,11 +38,15 @@ public_contracts:
 depends_on:
 - architect.design
 - chief_engineer.blueprint
+- context.catalog
+- context.engine
 - director.execution
 - factory.verification_guard
 - finops.budget_guard
 - llm.control_plane
 - orchestration.pm_planning
+- policy.permission
+- policy.workspace_guard
 - qa.audit_verdict
 - roles.adapters
 - roles.engine
@@ -71,12 +75,17 @@ effects_allowed:
 - task_market.publish:*
 - blueprint.generate:*
 - process.spawn:qa/pytest
+- qa.verdict.issue
+- budget.reserve:context
+- mutation.guard:workspace
+- architect.validate_cell_boundary
 verification:
   tests:
   - tests/test_roles_kernel.py
   - tests/test_runtime_role_binding.py
   - tests/test_roles_state_ownership.py
   - tests/test_roles_runtime_bus.py
+  - polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py
   - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
   gaps:
   - Role kernel is converged; business-role cell extraction still has remaining call-site

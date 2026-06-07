@@ -101,7 +101,8 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
 
         monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
-        return await factory_router_module.get_factory_run_audit_bundle(run.id, limit=1, state=state)
+        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=1, state=state)
+        return response.model_dump(mode="json")
 
     payload = asyncio.run(_exercise())
 
@@ -129,4 +130,8 @@ def test_get_factory_run_audit_bundle_missing_run_returns_404(
         asyncio.run(factory_router_module.get_factory_run_audit_bundle("missing", state=state))
 
     assert exc_info.value.status_code == 404
-    assert exc_info.value.detail == "Run missing not found"
+    assert exc_info.value.detail == {
+        "code": "RUN_NOT_FOUND",
+        "message": "Run missing not found",
+        "details": {},
+    }

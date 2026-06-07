@@ -194,6 +194,15 @@ class PermissionService:
                 actions=[Action.READ],
                 priority=10,
             ),
+            Policy(
+                id="architect-execute-boundary-validation",
+                name="Architect validate Cell boundary changes",
+                effect=PolicyEffect.ALLOW,
+                subjects=[Subject(type=SubjectType.ROLE, id="architect")],
+                resources=[Resource(type=ResourceType.API, pattern="architect.design:validate_cell_boundary_change")],
+                actions=[Action.EXECUTE],
+                priority=40,
+            ),
             # Chief Engineer 角色策略 - 只读分析
             Policy(
                 id="chief-engineer-read-all",

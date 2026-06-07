@@ -929,6 +929,89 @@ def _build_chief_engineer_runtime_spec() -> RoleRuntimeObjectSpec:
     )
 
 
+def _build_architect_runtime_spec() -> RoleRuntimeObjectSpec:
+    return RoleRuntimeObjectSpec(
+        role_id="architect",
+        asset_mounts=RoleAssetMountTable(
+            mounts=(
+                _mount(
+                    "ConstraintTopology",
+                    _asset_ref(
+                        asset_id="constraint-topology",
+                        owner_cell="context.catalog",
+                        contract_name="SearchCellsQueryV1",
+                        ref="docs.graph:cells",
+                        asset_kind="constraint_topology",
+                        metadata={"graph_source_ref": "docs/graph/**", "target_cell": "architect.design"},
+                    ),
+                ),
+                _mount(
+                    "ContextBudgetProfile",
+                    _asset_ref(
+                        asset_id="context-budget-profile",
+                        owner_cell="finops.budget_guard",
+                        contract_name="GetBudgetStatusQueryV1",
+                        ref="finops.budget_guard:context-budget-profile",
+                        asset_kind="context_budget_profile",
+                        metadata={"context_owner_cell": "context.engine"},
+                    ),
+                ),
+                _mount(
+                    "MutationBoundaryMap",
+                    _asset_ref(
+                        asset_id="mutation-boundary-map",
+                        owner_cell="policy.workspace_guard",
+                        contract_name="WorkspaceWriteGuardQueryV1",
+                        ref="policy.workspace_guard:mutation-boundary-map",
+                        asset_kind="mutation_boundary_map",
+                        metadata={
+                            "derived_from": ("docs/graph/**", "policy.workspace_guard", "policy.permission"),
+                            "permission_owner_cell": "policy.permission",
+                        },
+                    ),
+                ),
+            )
+        ),
+        capability_ports=RoleCapabilityPorts(
+            capabilities=(
+                _capability(
+                    capability_id="allocate_context_token_budget",
+                    owner_cell="finops.budget_guard",
+                    contract_name="ReserveBudgetCommandV1",
+                    effect="budget.reserve:context",
+                    allowed_roles=("architect",),
+                    endpoint_ref="polaris.cells.finops.budget_guard.public.service.reserve_budget",
+                    metadata={"asset_mount": "ContextBudgetProfile"},
+                ),
+                _capability(
+                    capability_id="intercept_illegal_mutations",
+                    owner_cell="policy.workspace_guard",
+                    contract_name="WorkspaceWriteGuardQueryV1",
+                    effect="mutation.guard:workspace",
+                    allowed_roles=("architect",),
+                    endpoint_ref="polaris.cells.policy.workspace_guard.public.service.check_workspace_write_guard",
+                    metadata={"asset_mount": "MutationBoundaryMap"},
+                ),
+                _capability(
+                    capability_id="validate_cell_boundary_change",
+                    owner_cell="architect.design",
+                    contract_name="GenerateArchitectureDesignCommandV1",
+                    effect="architect.validate_cell_boundary",
+                    allowed_roles=("architect",),
+                    endpoint_ref="polaris.cells.architect.design.public.service.generate_architecture_design",
+                    metadata={
+                        "requires_asset_mounts": ("ConstraintTopology", "MutationBoundaryMap"),
+                        "permission_contract": "EvaluatePermissionCommandV1",
+                    },
+                ),
+            )
+        ),
+        default_capability_id="intercept_illegal_mutations",
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:pending_architecture"),
+        metadata={"owner_cell": "roles.runtime", "business_role": "architect"},
+    )
+
+
 def _build_qa_runtime_spec() -> RoleRuntimeObjectSpec:
     return RoleRuntimeObjectSpec(
         role_id="qa",
@@ -1013,6 +1096,8 @@ def get_builtin_role_runtime_spec(role_id: str) -> RoleRuntimeObjectSpec:
         "project_manager": "pm",
         "ce": "chief_engineer",
         "chiefengineer": "chief_engineer",
+        "architecture": "architect",
+        "design_architect": "architect",
         "quality_assurance": "qa",
         "auditor": "qa",
     }
@@ -1021,6 +1106,8 @@ def get_builtin_role_runtime_spec(role_id: str) -> RoleRuntimeObjectSpec:
         return _build_pm_runtime_spec()
     if normalized == "chief_engineer":
         return _build_chief_engineer_runtime_spec()
+    if normalized == "architect":
+        return _build_architect_runtime_spec()
     if normalized == "qa":
         return _build_qa_runtime_spec()
     raise KeyError(normalized)

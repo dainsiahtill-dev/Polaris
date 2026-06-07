@@ -159,7 +159,7 @@ def get_embedding_vector(text: str, model: str = "nomic-embed-text") -> list[flo
             str(text or ""),
             model=str(model or "nomic-embed-text") or None,
         )
-    except (RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         logging.getLogger(__name__).warning("get_embedding_vector: embedding port raised: %s", exc)
         return None
 

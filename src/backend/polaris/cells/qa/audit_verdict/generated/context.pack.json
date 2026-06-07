@@ -3,12 +3,10 @@
   "title": "QA Audit Verdict",
   "kind": "workflow",
   "purpose": "Run independent QA or Auditor validation and emit structured acceptance verdicts for Director outputs.",
-  "summary": "Business capability boundary for qa.audit_verdict.",
+  "summary": "QA audit verdict owner Cell. Public callers use RunQaAuditCommandV1 through public.service.run_qa_audit; state and audit implementation stay inside this Cell.",
   "owned_paths": [
-    "polaris/application/services/qa_service.py",
-    "polaris/application/services/review_gate.py",
-    "polaris/application/services/quality_service.py",
-    "polaris/application/role_agent/qa_agent.py"
+    "polaris/cells/qa/audit_verdict/public/**",
+    "polaris/cells/qa/audit_verdict/internal/**"
   ],
   "public_contracts": {
     "commands": [
@@ -31,9 +29,11 @@
     "director.execution",
     "policy.permission",
     "policy.workspace_guard",
+    "roles.runtime",
     "runtime.projection",
     "audit.evidence",
-    "events.fact_stream"
+    "events.fact_stream",
+    "audit.verdict"
   ],
   "state_owners": [
     "runtime/state/qa/*"
@@ -51,12 +51,15 @@
     "All text file reads and writes must use explicit UTF-8."
   ],
   "hotspots": [
-    "polaris/application/services/qa_service.py",
-    "polaris/application/services/review_gate.py",
-    "polaris/application/services/quality_service.py",
-    "polaris/application/role_agent/qa_agent.py"
+    "polaris/cells/qa/audit_verdict/public/contracts.py",
+    "polaris/cells/qa/audit_verdict/public/service.py",
+    "polaris/cells/qa/audit_verdict/internal/qa_service.py",
+    "polaris/cells/qa/audit_verdict/internal/quality_service.py",
+    "polaris/cells/qa/audit_verdict/internal/qa_agent.py"
   ],
   "test_targets": [
+    "polaris/cells/qa/audit_verdict/tests/test_contracts.py",
+    "polaris/cells/qa/audit_verdict/tests/test_integration.py",
     "tests/test_integration_qa_command.py",
     "tests/test_quality_checker_director_tool_calls.py"
   ],
@@ -65,7 +68,9 @@
       "cell.yaml",
       "README.agent.md",
       "generated/context.pack.json",
-      "public/contracts.py"
+      "public/contracts.py",
+      "public/service.py",
+      "internal/qa_service.py"
     ],
     "expand_to_neighbors_only_when_needed": true
   }

@@ -154,9 +154,87 @@ async def client(
             yield ac
 
 
+@pytest.fixture
+async def client_with_real_permission_dependency(
+    mock_settings: Settings,
+    mock_permission_service: MagicMock,
+) -> AsyncIterator[tuple[AsyncClient, AsyncMock]]:
+    """Create a client that exercises the real FastAPI permission dependency."""
+    from polaris.delivery.http.app_factory import create_app
+
+    app = create_app(settings=mock_settings)
+
+    class _AllowAllAuth:
+        def check(self, _auth_header: str) -> bool:
+            return True
+
+    app.state.auth = _AllowAllAuth()
+
+    with (
+        patch(
+            "polaris.infrastructure.messaging.nats.server_runtime.ensure_local_nats_runtime",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.bootstrap.assembly.assemble_core_services",
+        ),
+        patch(
+            "polaris.infrastructure.di.container.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.kernelone.process.terminate_external_loop_pm_processes",
+            return_value=[],
+        ),
+        patch(
+            "polaris.delivery.http.app_factory.sync_process_settings_environment",
+        ),
+        patch(
+            "polaris.delivery.http.routers.primary.get_settings",
+            return_value=mock_settings,
+        ),
+        patch(
+            "polaris.delivery.http.routers.permissions.get_permission_service",
+            new=AsyncMock(return_value=mock_permission_service),
+            create=True,
+        ) as mock_get_permission_service,
+        patch.dict(
+            "os.environ",
+            {
+                "KERNELONE_METRICS_ENABLED": "false",
+                "KERNELONE_RATE_LIMIT_ENABLED": "false",
+            },
+        ),
+    ):
+        mock_container.return_value = MagicMock()
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as ac:
+            yield ac, mock_get_permission_service
+
+
 # ---------------------------------------------------------------------------
 # POST /v2/permissions/v2/check
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_v2_permissions_check_uses_real_dependency(
+    client_with_real_permission_dependency: tuple[AsyncClient, AsyncMock],
+) -> None:
+    """Production dependency should resolve the policy.permission public service."""
+    client, mock_get_permission_service = client_with_real_permission_dependency
+    response = await client.post(
+        "/v2/permissions/v2/check",
+        json={
+            "subject": {"type": "role", "id": "pm"},
+            "resource": {"type": "file", "pattern": "**/*.py"},
+            "action": "read",
+            "context": {},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["allowed"] is True
+    mock_get_permission_service.assert_awaited_once_with(".")
 
 
 @pytest.mark.asyncio

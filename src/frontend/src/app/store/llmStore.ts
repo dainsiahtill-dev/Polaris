@@ -11,6 +11,7 @@ import type {
   ProviderConfig,
   RoleConfig,
 } from '@/app/components/llm/types';
+import { sanitizeLlmConfigForSave } from '@/app/components/llm/utils/configSanitizer';
 import { apiFetch } from '@/api';
 
 // ============================================================================
@@ -269,7 +270,7 @@ export const useLLMStore = create<LLMState & LLMActions>()(
           let success = true;
 
           while (llmSavePendingRef) {
-            const configToSave = llmSavePendingRef;
+            const configToSave = sanitizeLlmConfigForSave(llmSavePendingRef);
             llmSavePendingRef = null;
             try {
               const res = await apiFetch('/v2/llm/config', {

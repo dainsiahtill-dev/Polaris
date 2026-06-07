@@ -10,8 +10,10 @@ purpose: 'Enforce token and execution budget controls with explicit reserve and 
   '
 current_modules:
 - polaris.cells.finops.budget_guard.public.contracts
+- polaris.cells.finops.budget_guard.public.service
 tags: []
 owned_paths:
+- polaris/cells/finops/budget_guard/public/**
 - polaris/kernelone/runtime/usage_metrics.py
 - polaris/domain/services/token_service.py
 - polaris/infrastructure/accel/query/adaptive_budget.py
@@ -19,6 +21,7 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.finops.budget_guard.public.contracts
+  - polaris.cells.finops.budget_guard.public.service
   commands:
   - ReserveBudgetCommandV1
   - RecordUsageCommandV1

@@ -5,6 +5,7 @@
   "exports": [
     "ArchitectService",
     "ArchitectConfig",
-    "ArchitectureDoc"
+    "ArchitectureDoc",
+    "generate_architecture_design"
   ]
 }
