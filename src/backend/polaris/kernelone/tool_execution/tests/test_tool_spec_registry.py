@@ -543,3 +543,15 @@ class TestMigrationFromContracts:
         assert spec is not None
         assert spec.response_format_hint != ""
         assert "Tree" in spec.response_format_hint or "tree" in spec.response_format_hint.lower()
+
+    def test_scout_probe_is_classified_as_read_tool(self) -> None:
+        """scout_probe must be registered and classified as a side-effect-free read tool."""
+        spec = ToolSpecRegistry.get("scout_probe")
+        assert spec is not None
+        assert spec.canonical_name == "scout_probe"
+        assert spec.is_read_tool() is True
+        assert spec.is_write_tool() is False
+        assert spec.is_exec_tool() is False
+        # query is the only required argument; mode is optional.
+        assert spec.parameters["required"] == ["query"]
+        assert "mode" in spec.parameters["properties"]

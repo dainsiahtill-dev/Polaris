@@ -123,6 +123,7 @@ class ToolHandlerRegistry:
             filesystem,
             navigation,
             repo,
+            scout,
             search,
             session_memory,
             skills,
@@ -132,6 +133,7 @@ class ToolHandlerRegistry:
         cls.register_from_module(filesystem.register_handlers())
         cls.register_from_module(navigation.register_handlers())
         cls.register_from_module(repo.register_handlers())
+        cls.register_from_module(scout.register_handlers())
         cls.register_from_module(search.register_handlers())
         cls.register_from_module(session_memory.register_handlers())
         cls.register_from_module(skills.register_handlers())

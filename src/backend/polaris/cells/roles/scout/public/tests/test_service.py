@@ -51,3 +51,44 @@ async def test_probe_real_executor_surfaces_finding(tmp_path) -> None:  # type: 
     report = await svc.probe(ScoutProbeTargetV1(query="payment_gateway"))
     assert any(f.path.endswith("pay.py") for f in report.findings)
     assert "repo_tree" in report.coverage["tools_used"]
+
+
+def test_scout_probe_dispatches_through_real_executor(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """End-to-end: ``scout_probe`` is dispatched AS a tool by the real executor.
+
+    This exercises the full role-kernel path:
+    ``AgentAccelToolExecutor.execute('scout_probe', ...)`` -> ToolHandlerRegistry
+    handler -> ``build_default_scout_service`` -> real read tools. The executor
+    wraps a successful handler payload under ``result``.
+    """
+    from polaris.kernelone.llm.toolkit import AgentAccelToolExecutor
+
+    (tmp_path / "pay.py").write_text("def payment_gateway():\n    return 1\n", encoding="utf-8")
+
+    executor = AgentAccelToolExecutor(str(tmp_path))
+    try:
+        outcome = executor.execute("scout_probe", {"query": "payment_gateway"})
+    finally:
+        executor.close_sync()
+
+    assert outcome["ok"] is True
+    payload = outcome["result"]
+    # content_hash is always present on a real report.
+    assert payload["content_hash"]
+    # repo_tree reliably surfaces pay.py in this env; assert the real finding.
+    findings = payload["findings"]
+    assert any(str(f.get("path", "")).endswith("pay.py") for f in findings)
+
+
+def test_scout_probe_rejects_empty_query(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """An empty query is rejected fail-closed at validation (no probe runs)."""
+    from polaris.kernelone.llm.toolkit import AgentAccelToolExecutor
+
+    executor = AgentAccelToolExecutor(str(tmp_path))
+    try:
+        outcome = executor.execute("scout_probe", {"query": "   "})
+    finally:
+        executor.close_sync()
+
+    assert outcome["ok"] is False
+    assert "error" in outcome

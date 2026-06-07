@@ -1116,6 +1116,31 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "required_any": [("path",)],
         "required_doc": "args.path required",
     },
+    "scout_probe": {
+        "category": "read",
+        "description": (
+            "Read-only code/symbol reconnaissance sub-agent. Dispatches a side-effect-free "
+            "probe that runs canonical read tools (repo_rg, repo_tree, repo_symbols_index, ...) "
+            "and returns a distilled, ranked set of findings plus a summary. Use this to locate "
+            "where a symbol/feature lives without manually chaining multiple read calls. "
+            "Never writes, edits, or executes commands."
+        ),
+        "aliases": [],
+        "arg_aliases": {"q": "query"},
+        "arguments": [
+            {"name": "query", "type": "string", "required": True},
+            {
+                "name": "mode",
+                "type": "string",
+                "required": False,
+                "default": "locate",
+                "enum": ["locate", "boundary"],
+            },
+        ],
+        "response_format_hint": "Distilled summary plus ranked findings (path:line:snippet) with a content hash",
+        "required_any": [("query",)],
+        "required_doc": "args.query required; args.mode optional (default 'locate')",
+    },
 }
 
 
