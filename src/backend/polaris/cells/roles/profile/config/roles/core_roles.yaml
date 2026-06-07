@@ -311,6 +311,8 @@ roles:
         - repo_read_slice
         - repo_read_tail
         - repo_read_around
+        # Canonical 搜索能力（搜索-后-编辑所需；quality_checklist 要求先用 repo_rg 定位）
+        - repo_rg
         # Canonical 编辑能力
         - edit_blocks  # RECOMMENDED: Aider-style SEARCH/REPLACE format
         - precision_edit  # DEPRECATED: use edit_blocks instead
@@ -322,8 +324,8 @@ roles:
         - append_to_file
         # 执行类（运行测试、验证修改）
         - execute_command
-        # NOTE: Director 不负责探索/搜索。
-        # repo_tree, repo_rg, glob, search_code 等探索工具已移除。
+        # NOTE: Director 不负责宽泛探索。repo_tree / glob / search_code 等
+        # 探索工具已移除；repo_rg 仅用于编辑前的精确定位。
         # 模糊需求应由 PM/Architect 先制定蓝图，Director 只执行明确任务。
       blacklist:
         - delete_file              # 默认禁止删除
