@@ -1,1 +1,0 @@
-"""Messages module tests."""

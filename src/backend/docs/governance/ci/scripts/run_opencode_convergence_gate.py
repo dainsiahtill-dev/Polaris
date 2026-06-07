@@ -83,12 +83,11 @@ _RULES: tuple[ConvergenceRule, ...] = (
         allowed_owner_prefixes=("polaris/kernelone/tool/",),
         message="tool state imports must use package-level tool exports",
     ),
-    ConvergenceRule(
-        deep_prefix="polaris.kernelone.messages.part_types",
-        canonical_import="from polaris.kernelone.messages import Part, MessageContent, ...",
-        allowed_owner_prefixes=("polaris/kernelone/messages/",),
-        message="message part imports must use package-level message exports",
-    ),
+    # NOTE: the polaris.kernelone.messages.part_types convergence rule was
+    # retired on 2026-06-07. The messages Part-type package was a dead OpenCode
+    # convergence anchor with zero production importers (the intended convergence
+    # never landed); it was removed rather than left dead-but-kept. See
+    # docs/blueprints/KERNELONE_DEAD_CODE_AUDIT_20260607.md §8.4.
     ConvergenceRule(
         deep_prefix="polaris.kernelone.editing.replacers.opencode_replacers",
         canonical_import="from polaris.kernelone.editing.replacers import ...",

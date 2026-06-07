@@ -125,12 +125,25 @@ ruff+mypy 干净。replacer 链由此从死代码转为生产可达，满足收�
 （KnowledgeSharingBus）为死叶——multi_agent 是无 `__init__` 的命名空间包，唯一引用是其自带测试。
 删除模块 + 测试（355+289 行）。multi_agent 套件 26 passed。
 
-### 8.4 messages → 仍待产品定夺（未动）
+### 8.4 messages → 彻底下线（DELETE + 退役门禁，已执行）
 `messages` + `messages.part_types`（460 行 OpenCode Part 类型）**零生产导入者**（grep 命中皆为
-`kernelone_messages_dropped_total` 指标串，非 import），是真正"建好未接线"。但它是
-`opencode_convergence_gate._RULES` 中显式声明的收敛锚点（`deep_prefix=messages.part_types`，
-canonical=`from polaris.kernelone.messages import Part, ...`），且属 staged-rollout 治理范围。
-门禁规则当前**空转**（无人深导入即不触发），删除规则后亦不报错。两条"彻底"路径都重：
-(A) 大型 WIRE——把 handoff/消息体系迁到 Part 类型（ADR 级，数周）；(B) 删除 + 退役门禁规则 +
-更新 staged-rollout（治理反转）。鉴于并发提交者正活跃于 OpenCode/role-runtime 区域，
-不宜单方面删除已声明的收敛目标 → 留待人类定夺（见对话）。其余三桶已全部彻底接入或彻底删除。
+`kernelone_messages_dropped_total` 指标串与一处 JS 字符串 fixture，非 import），是真正"建好未接线"。
+它曾是 `opencode_convergence_gate._RULES` 中显式声明的收敛锚点，但**收敛从未发生**——门禁四个
+锚点里唯独它指向无人使用的包（events.typed / tool.state_machine / editing.replacers 皆活）。
+
+价值评估：代码做工不错，但价值是潜在/愿景性的——死着时价值=0；要兑现需把 provider-adapter /
+roles.kernel transcript IR（受 AGENTS.md §8.2 保护的 canonical 契约）真正迁过来，数周 ADR 级
+跨切面工程，且与并发提交者高撞车风险；一个"构造但不消费"的半接入只会再添第三套并行表示、债更重。
+依"不要死而不删"铁律，选择**彻底删除 + 退役治理声明**（与 benchmark 死簇同策），留 git 历史可恢复。
+
+落地：删除 `kernelone/messages/**`（含 tests）；从 `run_opencode_convergence_gate.py._RULES`
+移除 `messages.part_types` 规则（留退役注释）；`fitness-rules.yaml` 的
+`opencode_canonical_entrypoint_non_regressive` 描述去掉"part types"、evidence 移除
+`messages/__init__.py`。验证：收敛门禁 executor 绿（exit 0 / issue_count 0）、ruff 干净、
+yaml 可解析、全仓 collect-only 30202/0 error。
+（注：`test_opencode_convergence_gate.py` 的 2 个 pytest 用例仍红，但属**既有环境缺陷**——它把
+`fitness-rules.yaml` 解析到错误的 `polaris/docs/...` 路径，已在干净 HEAD 的 worktree 上复现同样
+失败，与本次改动无关。）
+
+**四桶收口**：editing→接入(`72acb405`)、benchmark 死簇→精确删除(`bb738a08`/`8482c115`)、
+multi_agent→已活仅删死叶 knowledge_share(`47c3bfda`)、messages→彻底下线。无"死而不删"残留。

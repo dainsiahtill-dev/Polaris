@@ -105,14 +105,14 @@ rules:
   - id: opencode_canonical_entrypoint_non_regressive
     severity: high
     description: >
-      OpenCode-derived mechanisms (typed events, tool state, part types,
-      replacer chain) must be consumed through package-level canonical
-      entrypoints to prevent deep-module forks and parallel semantics.
+      OpenCode-derived mechanisms (typed events, tool state, replacer chain)
+      must be consumed through package-level canonical entrypoints to prevent
+      deep-module forks and parallel semantics. (The messages part-type anchor
+      was retired 2026-06-07 as dead; see KERNELONE_DEAD_CODE_AUDIT_20260607.md §8.4.)
     evidence:
       - docs/KERNELONE_OPENCODE_INTEGRATION_ARCHITECTURE.md
       - polaris/kernelone/events/typed/__init__.py
       - polaris/kernelone/tool/__init__.py
-      - polaris/kernelone/messages/__init__.py
       - polaris/kernelone/editing/replacers/__init__.py
     current_status: enforced
     desired_automation:
