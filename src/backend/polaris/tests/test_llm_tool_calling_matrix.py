@@ -7,10 +7,24 @@ from typing import Any
 from uuid import uuid4
 
 from polaris.cells.llm.evaluation.internal.tool_calling_matrix import (
+    MATRIX_TOOL_EQUIVALENCE_GROUPS,
     load_builtin_tool_calling_matrix_cases,
     run_tool_calling_matrix_suite,
 )
 from polaris.kernelone.storage import resolve_runtime_path
+
+
+def test_edit_tool_equivalence_includes_recommended_edit_blocks() -> None:
+    """edit_blocks (director's RECOMMENDED edit tool) must satisfy edit-tool checks.
+
+    Cases require search_replace|edit_file|precision_edit; a model using the
+    recommended edit_blocks must not be failed by required_tool / required_any_tools.
+    """
+    edit_class = {"search_replace", "edit_file", "precision_edit", "edit_blocks", "repo_apply_diff"}
+    for tool in edit_class:
+        group = MATRIX_TOOL_EQUIVALENCE_GROUPS.get(tool, {tool})
+        assert "edit_blocks" in group, f"{tool} equivalence must accept edit_blocks"
+        assert edit_class <= group, f"{tool} must map to the full edit-tool class"
 
 
 class _FakeMatrixExecutor:
