@@ -65,7 +65,7 @@ The `roles.runtime.public` package must not import any owner Cell `internal` mod
    - `target_cell`: non-empty Cell id
    - `change_id`: defaults to invocation id when omitted
    - `objective`: non-empty validation objective
-   - `changed_paths`: sequence of path strings
+   - `changed_paths`: unique sequence of path strings, normalized by the adapter before guard evaluation
    - `effects_requested`: sequence of effect strings
    - `depends_on_delta`: mapping
    - `state_owner_delta`: mapping
@@ -76,22 +76,36 @@ The `roles.runtime.public` package must not import any owner Cell `internal` mod
    - `action`: `validate_cell_boundary_change`
    - `resource`: `target_cell`
    - `workspace`: runtime workspace
-   - `context`: change id, payload ref, fingerprint ref, changed paths, requested effects, dependency delta, state owner delta
+   - `context`: change id, payload ref, fingerprint ref, target cell, and role capability id
+
+   Permission evaluation stays lightweight. It answers whether the `architect`
+   role may request boundary validation for the target Cell. It does not decide
+   whether the proposed graph delta is architecturally valid; that remains the
+   responsibility of `architect.design`.
 
 4. If permission is denied, return a structured `RoleCapabilityInvocationResultV1`:
    - `ok=False`
-   - `allowed=True`
+   - `allowed=False`
    - `owner_cell="policy.permission"`
    - `error_code="permission_denied"`
+   - metadata includes `capability_available=True` and the permission reason
    - no workspace guard or architect design call is made
 
-5. If permission is allowed, `roles.runtime` checks each changed path with `WorkspaceWriteGuardQueryV1`.
+5. If permission is allowed, `roles.runtime` checks changed paths with `WorkspaceWriteGuardQueryV1`.
+
+   `WorkspaceWriteGuardQueryV1` is currently a single-path query. To avoid a
+   sequential N+1 latency cliff, the adapter must de-duplicate paths and evaluate
+   them through a bounded concurrent helper. The helper returns all guard
+   decisions so the caller receives complete evidence, not only the first
+   failure. A future batch query can replace the helper without changing the
+   role capability contract.
 
 6. If any workspace guard decision denies, return a structured result:
    - `ok=False`
-   - `allowed=True`
+   - `allowed=False`
    - `owner_cell="policy.workspace_guard"`
    - `error_code="workspace_guard_denied"`
+   - metadata includes `capability_available=True` and all guard decisions
    - no architect design call is made
 
 7. If all guards allow, `roles.runtime` constructs `GenerateArchitectureDesignCommandV1`:
@@ -101,6 +115,11 @@ The `roles.runtime.public` package must not import any owner Cell `internal` mod
    - `context`: permission decision, workspace guard decisions, role invocation refs, capability fingerprint ref, asset mount refs
 
 8. `roles.runtime` calls `architect.design` through a public service adapter.
+
+   This call is bounded by an explicit timeout from payload metadata or a
+   conservative runtime default. If the design backend is later made asynchronous,
+   the public result may return `status="PROCESSING"` with a stable `design_id`
+   and `result_ref`; the runtime adapter must not busy-wait.
 
 9. The success result uses:
    - `ok=True`
@@ -118,6 +137,7 @@ All refusals and adapter failures are typed:
 - `invalid_boundary_change_payload`: payload shape is invalid.
 - `permission_denied`: `policy.permission` refused the boundary validation.
 - `workspace_guard_denied`: at least one path guard denied the mutation.
+- `architect_design_timeout`: the public architecture design call exceeded its bounded runtime budget.
 - `architect_design_failed`: the public architecture design call failed.
 - `boundary_validation_rejected`: `architect.design` returned `ok=False`.
 
@@ -132,8 +152,17 @@ Add tests in `roles.runtime.public.tests.test_role_runtime_object_contracts`:
 - Workspace guard denial stops before architect design.
 - Non-Architect invocation is denied before any owner service call.
 - Fingerprint mismatch is denied before any owner service call.
+- Permission and workspace guard denials set `allowed=False` and place
+  `capability_available=True` in metadata.
+- Multiple changed paths are de-duplicated before guard evaluation, and tests
+  assert that all unique paths produce guard evidence.
+- Architect design timeout returns `architect_design_timeout`.
 
 Add owner Cell wrapper tests if new public service wrappers are introduced.
+
+Add or extend an architecture/import-fence test so `roles.runtime.public` cannot
+import owner Cell `internal` modules. Keep the manual `rg` scan as local evidence,
+but make the invariant enforceable by CI.
 
 ## Verification
 
@@ -148,7 +177,8 @@ After implementation, run:
 - `python -m pytest -q polaris/cells/runtime/task_market/tests`
 - `python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all`
 - `git diff --check`
-- `rg` scan proving `roles.runtime.public` does not import owner Cell `internal` modules
+- architecture/import-fence test proving `roles.runtime.public` does not import owner Cell `internal` modules
+- `rg` scan as supporting evidence for the same import-fence invariant
 
 ## Self-Review
 
@@ -156,3 +186,4 @@ After implementation, run:
 - Consistency check: `roles.runtime` remains an adapter/composition boundary, not an owner of Architect or policy state.
 - Scope check: the design is limited to the Architect boundary-validation capability and its required sandbox checks.
 - Ambiguity check: refusal order is explicit: runtime gates, permission, workspace guard, then architect design.
+- Review incorporation: policy/workspace refusals use `allowed=False`; permission context is deliberately small; path guard checks are bounded and evidence-preserving; architecture design calls have timeout semantics.
