@@ -1,0 +1,34 @@
+id: roles.scout
+title: Scout (探子)
+kind: capability
+visibility: public
+stateful: false
+owner: roles
+purpose: >
+  Auxiliary, synchronous, read-only code/symbol reconnaissance role.
+  Called inline by PM/Director; no TaskMarket, no writes, no persistence.
+
+current_modules:
+- polaris.cells.roles.scout.public.contracts
+- polaris.cells.roles.scout.public.service
+tags:
+- read_only
+- side_effect_free
+owned_paths:
+- polaris/cells/roles/scout/public/**
+- polaris/cells/roles/scout/internal/**
+public_contracts:
+  modules:
+  - polaris.cells.roles.scout.public.contracts
+  results:
+  - ScoutReportV1
+  - ScoutFinding
+  queries:
+  - ScoutProbeTargetV1
+depends_on:
+- kernelone.tool_execution
+- domain.verification
+constraints:
+- read_only
+- no_task_market
+- side_effect_free
