@@ -1,22 +1,27 @@
 """Tests for ScoutProbeService (UTF-8)."""
 
 import pytest
-from polaris.cells.roles.scout.internal.ports import FakeDistiller, FakeReadTool
+from polaris.cells.roles.scout.internal.ports import FakeDistiller, FakeReadTool, canonical_args_key
 from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
-from polaris.cells.roles.scout.public.service import ScoutProbeService
+from polaris.cells.roles.scout.public.service import ScoutProbeService, build_default_scout_service
 
 
 @pytest.mark.asyncio
 async def test_probe_returns_report_with_findings_and_hash() -> None:
-    fake_reads = FakeReadTool({})
-    fake_reads._scripted[("repo_rg", ("(def|class|func|function|interface|type)\\s+\\w*payment", "--max", "40"))] = {
-        "ok": True,
-        "hits": [{"file": "pay.py", "line": 10, "text": "def payment():"}],
-    }
+    # Symbol-biased rg pattern the planner emits first for the term "payment".
+    rg_args = {"pattern": r"(def|class|func|function|interface|type)\s+\w*payment", "max_results": 40}
+    fake_reads = FakeReadTool(
+        {
+            ("repo_rg", canonical_args_key(rg_args)): {
+                "ok": True,
+                "results": [{"file": "pay.py", "line": 10, "snippet": "def payment():"}],
+            },
+        }
+    )
     svc = ScoutProbeService(read_tool=fake_reads, distiller=FakeDistiller("PACK"))
     report = await svc.probe(ScoutProbeTargetV1(query="payment", mode="locate"))
     assert report.summary == "PACK"
-    assert report.findings and report.findings[0].path == "pay.py"
+    assert any(f.path == "pay.py" for f in report.findings)
     assert report.content_hash
     assert report.cache_hit is False
 
@@ -29,3 +34,20 @@ async def test_probe_second_call_is_cache_hit() -> None:
     second = await svc.probe(target)
     assert first.cache_hit is False
     assert second.cache_hit is True
+
+
+@pytest.mark.asyncio
+async def test_probe_real_executor_surfaces_finding(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """End-to-end: the production factory runs REAL read tools and returns a real finding.
+
+    Execution flows through ``build_default_scout_service`` ->
+    ``RegistryReadTool`` -> ``AgentAccelToolExecutor`` against a temp workspace.
+    The ``repo_tree`` read tool reliably surfaces ``pay.py`` here; ``repo_rg`` /
+    ``repo_symbols_index`` fail soft (rg binary / tree-sitter unavailable) and are
+    recorded under coverage errors without aborting the probe.
+    """
+    (tmp_path / "pay.py").write_text("def payment_gateway():\n    return 1\n", encoding="utf-8")
+    svc = build_default_scout_service(str(tmp_path))
+    report = await svc.probe(ScoutProbeTargetV1(query="payment_gateway"))
+    assert any(f.path.endswith("pay.py") for f in report.findings)
+    assert "repo_tree" in report.coverage["tools_used"]
