@@ -457,3 +457,82 @@ roles:
     version: "1.0.0"
     version: "1.0.0"
     version: "1.0.0"
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Scout - Scout (只读代码探索) — auxiliary role, NOT a core role.
+  # Resolvable via load_core_roles() so ScoutProbeService escalation can run a
+  # governed read-only scout role-session. System prompt comes from the shared
+  # SCOUT_TEMPLATE (core_template_id: scout); read-only is enforced by
+  # allow_code_write=false plus the kernel sandbox policy.
+  # ═══════════════════════════════════════════════════════════════════════
+  - role_id: scout
+    display_name: "Scout (Scout)"
+    description: "代码探索与文档阅读角色，负责初步认知和总结"
+    responsibilities:
+      - 快速扫描项目结构和文件列表
+      - 根据关键词或正则搜索相关代码实现
+      - 阅读关键模块和配置文件，提取核心功能点
+      - 生成结构化的代码库现状报告
+      - 回答关于项目结构和代码实现的简单咨询
+
+    prompt_policy:
+      core_template_id: scout
+      allow_appendix: true
+      allow_override: false
+      output_format: text
+      include_thinking: true
+      quality_checklist:
+        - 报告结构清晰，层次分明
+        - 对项目结构的描述准确无误
+        - 关键类和函数的功能提取准确
+        - 不包含未验证的猜测（幻觉）
+        - 已识别主要的第三方依赖和自建组件
+
+    tool_policy:
+      whitelist:
+        - read_file
+        - search_code
+        - grep
+        - ripgrep
+        - glob
+        - list_directory
+        - file_exists
+        - search_memory
+        - read_artifact
+        - read_episode
+        - get_state
+      blacklist: []
+      allow_code_write: false       # Scout仅允许只读
+      allow_command_execution: false
+      allow_file_delete: false
+      max_tool_calls_per_turn: 50
+      tool_timeout_seconds: 120
+
+    context_policy:
+      max_context_tokens: 16000
+      max_history_turns: 5
+      include_project_structure: true
+      include_code_snippets: true
+      max_code_lines: 5000
+      include_task_history: false
+      compression_strategy: adaptive_sliding_window
+
+    data_policy:
+      data_subdir: scout
+      encoding: utf-8
+      atomic_write: true
+      backup_before_write: false
+      retention_days: 7
+      encrypt_at_rest: false
+      allowed_extensions:
+        - .json
+        - .md
+        - .txt
+
+    library_policy:
+      core_libraries: []
+      optional_libraries: []
+      forbidden_libraries: []
+      version_constraints: {}
+
+    version: "1.0.0"
