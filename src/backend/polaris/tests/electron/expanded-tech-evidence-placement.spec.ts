@@ -731,6 +731,52 @@ test("candidate runtime coverage maps runtime isolation and history archive prob
   expect(coverage.not_runtime_proved_ids).toEqual([]);
 });
 
+test("candidate runtime coverage maps single state owner hard-fail governance probe", () => {
+  const candidates: ExpandedTechCandidate[] = [
+    {
+      id: "single_state_owner_effects_gate",
+      title: "Single state owner and declared effects gate",
+      category: "governance",
+      status: "gate",
+      source: "test",
+      paths: ["src/backend/docs/graph/catalog/cells.yaml"],
+      gates: ["python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode hard-fail"],
+      e2eFields: ["state_owner_duplicates", "undeclared_effects", "effects_prefix_counts"],
+    },
+  ];
+  const probes: EvidenceProbe[] = [
+    {
+      id: "single_state_owner_effects_runtime_probe",
+      title: "Single state owner/effects hard-fail runtime probe",
+      category: "governance",
+      status: "PASS",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "python docs/governance/ci/scripts/run_catalog_governance_gate.py --mode hard-fail",
+          value: {
+            ignored_scope: "polaris/cells/roles/scout/**",
+            non_ignored_issue_count: 0,
+          },
+        },
+      ],
+      findings: [],
+    },
+  ];
+
+  const coverage = buildExpandedCandidateRuntimeCoverage({
+    candidates,
+    probes,
+    runtimeProbeCandidateIds: CANDIDATE_RUNTIME_PROBE_IDS,
+    sourceProbeCandidateIds: {},
+  });
+
+  expect(coverage.runtime_proved_count).toBe(1);
+  expect(coverage.not_runtime_proved_ids).toEqual([]);
+  expect(coverage.rows[0].evidence_probe_ids).toEqual(["single_state_owner_effects_runtime_probe"]);
+});
+
 test("role-session kernel audit matching accepts canonical and raw audit JSONL records", () => {
   const sessionId = "session-123";
   const rawEvent = {

@@ -179,6 +179,7 @@ class TestTaskService:
         task = await task_service.create_task(subject="To start")
         task_id: str = task.id if isinstance(task.id, str) else str(task.id)
 
+        await task_service.on_task_claimed(task_id, "worker-1")
         started = await task_service.on_task_started(task_id)
         assert started is True
 

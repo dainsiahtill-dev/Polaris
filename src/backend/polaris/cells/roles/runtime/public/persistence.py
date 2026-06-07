@@ -45,7 +45,7 @@ def resolve_session_override(session_id: str) -> dict[str, Any] | None:
         Strategy override dict from session context_config, or None if unavailable.
     """
     try:
-        from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
+        from polaris.cells.roles.session.public import RoleSessionService
 
         with RoleSessionService() as svc:
             session = svc.get_session(session_id)

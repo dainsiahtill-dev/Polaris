@@ -94,6 +94,56 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
             yield ac
 
 
+def _pm_startup_diagnostics(
+    *,
+    workspace: str = ".",
+    can_start: bool = True,
+    startup_blockers: list[str] | None = None,
+    issues: list[str] | None = None,
+) -> object:
+    """Build a PM diagnostics payload for guarded PM endpoint tests."""
+    from polaris.delivery.http.v2.pm import (
+        PMDiagnosticsLanceDBStatus,
+        PMDiagnosticsLLMStatus,
+        PMDiagnosticsPlanningInputStatus,
+        PMDiagnosticsResponse,
+        PMDiagnosticsWorkspaceStatus,
+    )
+
+    blockers = list(startup_blockers or [])
+    issue_tokens = list(issues if issues is not None else blockers)
+    return PMDiagnosticsResponse(
+        ok=not issue_tokens,
+        can_start=can_start,
+        generated_at="2026-05-24T00:00:00Z",
+        lancedb=PMDiagnosticsLanceDBStatus(ok=True, state="ready"),
+        llm=PMDiagnosticsLLMStatus(
+            ok=True,
+            state="ready",
+            blocked_roles=[],
+            unsupported_roles=[],
+            required_ready_roles=["pm"],
+        ),
+        workspace=PMDiagnosticsWorkspaceStatus(
+            ok=True,
+            status="ok",
+            workspace=workspace,
+            docs_present=True,
+        ),
+        planning_input=PMDiagnosticsPlanningInputStatus(
+            ok=True,
+            status="ready",
+            source="workspace_requirements",
+            path=f"{workspace}/docs/product/requirements.md",
+            bytes=128,
+            chars=120,
+            checked_paths=[f"{workspace}/docs/product/requirements.md"],
+        ),
+        issues=issue_tokens,
+        startup_blockers=blockers,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Health / Primary Router
 # ---------------------------------------------------------------------------
@@ -258,10 +308,16 @@ async def test_pm_status_with_auth(client: AsyncClient) -> None:
     mock_pm = MagicMock()
     mock_pm.get_status.return_value = {"running": False, "state": "IDLE"}
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ),
+    ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         response = await client.get("/v2/pm/status")
         assert response.status_code == 200
@@ -276,10 +332,16 @@ async def test_pm_start_stop(client: AsyncClient) -> None:
     mock_pm.start_loop = AsyncMock(return_value={"ok": True, "state": "RUNNING"})
     mock_pm.stop = AsyncMock(return_value={"ok": True, "state": "STOPPED"})
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ),
+    ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
 
         start_resp = await client.post("/v2/pm/start")
@@ -297,10 +359,16 @@ async def test_pm_run_once(client: AsyncClient) -> None:
     mock_pm = MagicMock()
     mock_pm.run_once = AsyncMock(return_value={"ok": True, "result": "done"})
 
-    with patch(
-        "polaris.delivery.http.dependencies.get_container",
-        new_callable=AsyncMock,
-    ) as mock_container:
+    with (
+        patch(
+            "polaris.delivery.http.dependencies.get_container",
+            new_callable=AsyncMock,
+        ) as mock_container,
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
+        ),
+    ):
         mock_container.return_value.resolve_async = AsyncMock(return_value=mock_pm)
         response = await client.post("/v2/pm/run_once")
         assert response.status_code == 200
@@ -321,6 +389,10 @@ async def test_pm_run_orchestration(client: AsyncClient) -> None:
         patch(
             "polaris.delivery.http.v2.pm.get_orchestration_service",
             new_callable=AsyncMock,
+        ),
+        patch(
+            "polaris.delivery.http.v2.pm._build_pm_diagnostics_for_request",
+            return_value=_pm_startup_diagnostics(),
         ),
         patch(
             "polaris.cells.roles.adapters.public.service.register_all_adapters",
@@ -899,7 +971,7 @@ async def test_pm_chat_empty_message(client: AsyncClient) -> None:
 async def test_pm_chat_success(client: AsyncClient) -> None:
     """PM chat with valid message should return response."""
     with patch(
-        "polaris.delivery.http.routers.pm_chat.generate_role_response",
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
         new_callable=AsyncMock,
     ) as mock_generate:
         mock_generate.return_value = {

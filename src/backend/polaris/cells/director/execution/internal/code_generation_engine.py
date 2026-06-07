@@ -6,7 +6,7 @@ The implementation lives in
 
 from __future__ import annotations
 
-from polaris.cells.director.tasking.internal.code_generation_engine import (
+from polaris.cells.director.tasking.public import (
     CODE_WRITING_FORBIDDEN_WARNING,
     CodeGenerationEngine,
     CodeGenerationPolicyViolationError,

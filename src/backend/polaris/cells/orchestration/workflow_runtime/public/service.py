@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from ..internal.config import SUPPORTED_ORCHESTRATION_RUNTIMES, WorkflowConfig, resolve_orchestration_runtime
+from ..internal.director_result_artifacts import (
+    build_integration_qa_tasks_from_director_result,
+    persist_director_result_from_runtime,
+)
 from ..internal.event_stream import EventLevel, EventStream, EventType, OrchestrationEvent
 from ..internal.models import PMWorkflowInput, director_workflow_id, qa_workflow_id
 from ..internal.observability import (
@@ -126,6 +130,7 @@ __all__ = [
     "WorkflowExecutionStartedEventV1",
     "WorkflowRuntimeError",
     "WorkflowSubmissionResult",
+    "build_integration_qa_tasks_from_director_result",
     "cancel_workflow_sync",
     "configure_orchestration_role_adapter_factory",
     "create_observability_stack",
@@ -133,6 +138,7 @@ __all__ = [
     "director_workflow_id",
     "get_adapter",
     "get_orchestration_service",
+    "persist_director_result_from_runtime",
     "qa_workflow_id",
     "query_workflow_sync",
     "reset_orchestration_service",

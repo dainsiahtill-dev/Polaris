@@ -2266,10 +2266,10 @@ async def director_run_integration_qa(
 ) -> DirectorIntegrationQaResponse:
     """Run the canonical post-dispatch integration QA after Director reaches terminal state."""
     try:
-        from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
+        from polaris.cells.orchestration.pm_dispatch.public.service import (
             run_post_dispatch_integration_qa,
         )
-        from polaris.cells.orchestration.workflow_runtime.internal.director_result_artifacts import (
+        from polaris.cells.orchestration.workflow_runtime.public.service import (
             build_integration_qa_tasks_from_director_result,
             persist_director_result_from_runtime,
         )

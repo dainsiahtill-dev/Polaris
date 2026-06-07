@@ -10,13 +10,18 @@ purpose: 'Assemble role-facing execution context through graph-constrained conte
   '
 current_modules:
 - polaris.cells.context.engine.public.contracts
+- polaris.cells.context.engine.public.service
+- polaris.cells.context.engine.internal.search_gateway
+- polaris.cells.context.engine.internal.precision_mode
 tags: []
 owned_paths:
+- polaris/cells/context/engine/public/**
 - polaris/cells/context/engine/internal/search_gateway.py
 - polaris/cells/context/engine/internal/precision_mode.py
 public_contracts:
   modules:
   - polaris.cells.context.engine.public.contracts
+  - polaris.cells.context.engine.public.service
   commands:
   - BuildRoleContextCommandV1
   queries:
@@ -39,6 +44,8 @@ effects_allowed:
 verification:
   tests:
   - tests/architecture/test_architecture_invariants.py
+  - polaris/cells/context/engine/tests/test_public_service.py
+  - polaris/cells/context/engine/tests/test_search_gateway.py
   gaps:
   - Context assembly currently remains partially distributed in role adapters.
   smoke_commands: []

@@ -235,8 +235,8 @@ class TestDirectorExecutionConsumerPollOnce:
                 }
 
         monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.adapter.DirectorAdapter",
-            FakeDirectorAdapter,
+            "polaris.cells.roles.adapters.public.service.create_role_adapter",
+            lambda role_id, workspace: FakeDirectorAdapter(workspace),
         )
 
         consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
@@ -285,8 +285,8 @@ class TestDirectorExecutionConsumerPollOnce:
                 }
 
         monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.adapter.DirectorAdapter",
-            FakeDirectorAdapter,
+            "polaris.cells.roles.adapters.public.service.create_role_adapter",
+            lambda role_id, workspace: FakeDirectorAdapter(workspace),
         )
 
         consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")

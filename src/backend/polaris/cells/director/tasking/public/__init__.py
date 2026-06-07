@@ -19,6 +19,15 @@ from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
     get_python_bootstrap_files,
     get_typescript_bootstrap_files,
 )
+from polaris.cells.director.tasking.internal.code_generation_engine import (
+    CODE_WRITING_FORBIDDEN_WARNING,
+    CodeGenerationEngine,
+    CodeGenerationPolicyViolationError,
+    _raise_policy_violation,
+    generate_bootstrap_with_llm,
+    generate_fallback_code_content,
+    generate_phase_aware_fallback_content,
+)
 from polaris.cells.director.tasking.internal.existence_gate import (
     ExecutionMode,
     GateResult,
@@ -65,11 +74,14 @@ from polaris.cells.director.tasking.public.contracts import (
 )
 
 __all__ = [
+    "CODE_WRITING_FORBIDDEN_WARNING",
     # Patch apply
     "ApplyIntegrity",
     "ApplyResult",
     # Contracts
     "CancelTaskCommandV1",
+    "CodeGenerationEngine",
+    "CodeGenerationPolicyViolationError",
     # Worker
     "CodeGenerationResult",
     "CreateTaskCommandV1",
@@ -98,10 +110,14 @@ __all__ = [
     "WorkerExecutor",
     "WorkerPoolConfig",
     "WorkerService",
+    "_raise_policy_violation",
     "apply_all_operations",
     "apply_operation",
     "apply_operations_strict",
     "check_mode",
+    "generate_bootstrap_with_llm",
+    "generate_fallback_code_content",
+    "generate_phase_aware_fallback_content",
     # Bootstrap catalog
     "get_generic_bootstrap_files",
     "get_intelligent_bootstrap_files",

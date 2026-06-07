@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -354,6 +356,91 @@ class TestConcurrency:
 
         assert not errors, f"Errors during mixed read/write: {errors}"
         assert read_count[0] > 0, "No reads completed"
+
+    def test_interview_save_and_status_do_not_deadlock(self, temp_workspace: str) -> None:
+        """Concurrent interview saves must not block LLM status reads."""
+        runtime_root = Path(temp_workspace).parent / "runtime-root"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        script = f"""
+import concurrent.futures
+import os
+import time
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from polaris.cells.llm.evaluation.public.service import save_interview_report
+from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+from polaris.kernelone.storage.layout import resolve_storage_roots
+
+workspace = Path({temp_workspace!r})
+runtime_root = Path(os.environ["KERNELONE_RUNTIME_ROOT"])
+runtime_root.mkdir(parents=True, exist_ok=True)
+print("runtime_root", runtime_root)
+print("workspace", workspace)
+print("storage_roots", resolve_storage_roots(str(workspace)).runtime_root)
+settings = MagicMock()
+settings.workspace = str(workspace)
+settings.workspace_path = str(workspace)
+settings.ramdisk_root = ""
+settings.qa_enabled = True
+config_payload = {{
+    "schema_version": 1,
+    "providers": {{"e2e-provider": {{"type": "openai_compat", "base_url": "http://127.0.0.1:1"}}}},
+    "roles": {{"pm": {{"provider_id": "e2e-provider", "model": "e2e-model"}}}},
+    "policies": {{"required_ready_roles": ["pm"]}},
+}}
+
+def save_once(i):
+    result = save_interview_report(
+        workspace=str(workspace),
+        role="pm",
+        provider_id="e2e-provider",
+        model="e2e-model",
+        session_id=f"e2e-{{i}}",
+        report={{
+            "id": f"e2e-{{i}}",
+            "overallStatus": "PASS",
+            "target": {{"role": "pm", "provider_id": "e2e-provider", "model": "e2e-model"}},
+            "summary": {{"ready": True, "grade": "PASS"}},
+            "evaluation": {{"passed": True}},
+        }},
+    )
+    return result["readiness_updated"]
+
+def status_once(_i):
+    status = build_llm_status(settings)
+    return status.get("state")
+
+with patch("polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config", return_value=config_payload):
+    started = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        futures = []
+        for i in range(12):
+            futures.append(pool.submit(save_once, i))
+            futures.append(pool.submit(status_once, i))
+        done, pending = concurrent.futures.wait(futures, timeout=5)
+        if pending:
+            raise SystemExit(f"deadlocked pending={{len(pending)}} elapsed={{time.monotonic() - started:.2f}}")
+        for future in done:
+            future.result()
+print("ok")
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parents[1],
+            env={
+                **os.environ,
+                "PYTHONPATH": ".",
+                "KERNELONE_RUNTIME_ROOT": str(runtime_root),
+                "KERNELONE_RUNTIME_CACHE_ROOT": str(runtime_root),
+            },
+            timeout=8,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_reports_port_injection_thread_safe(self) -> None:
         """Test that set_reports_port is thread-safe.

@@ -181,10 +181,10 @@ class TestRoleExecutionKernelModeLogging:
     def test_kernel_module_has_mode_logging(self) -> None:
         """RoleExecutionKernel source must log request.mode.value in event emission."""
         import ast
+        from pathlib import Path
 
-        kernel_path = (
-            "C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/kernel/core.py"
-        )
+        repo_root = Path(__file__).resolve().parents[5]
+        kernel_path = repo_root / "polaris" / "cells" / "roles" / "kernel" / "internal" / "kernel" / "core.py"
         with open(kernel_path, encoding="utf-8") as fh:
             source = fh.read()
 

@@ -872,6 +872,8 @@ cells:
       Assemble role-facing execution context by consuming context.catalog and
       graph constraints rather than allowing ad-hoc role-local context assembly.
     current_modules:
+      - polaris.cells.context.engine.public.contracts
+      - polaris.cells.context.engine.public.service
       - polaris.cells.context.engine.internal.search_gateway
       - polaris.cells.context.engine.internal.precision_mode
       - polaris.kernelone.context.context_os.models
@@ -886,11 +888,13 @@ cells:
       - polaris.kernelone.context.context_os.policies
       - polaris.kernelone.context.context_os.ports
     owned_paths:
+      - polaris/cells/context/engine/public/**
       - polaris/cells/context/engine/internal/search_gateway.py
       - polaris/cells/context/engine/internal/precision_mode.py
     public_contracts:
       modules:
         - polaris.cells.context.engine.public.contracts
+        - polaris.cells.context.engine.public.service
       commands:
         - BuildRoleContextCommandV1
       queries:
@@ -914,6 +918,8 @@ cells:
     verification:
       tests:
         - tests/architecture/test_architecture_invariants.py
+        - polaris/cells/context/engine/tests/test_public_service.py
+        - polaris/cells/context/engine/tests/test_search_gateway.py
       gaps:
         - Context assembly logic is still distributed across role adapters.
 

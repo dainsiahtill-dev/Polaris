@@ -565,6 +565,65 @@ class RoleRuntimeObject:
 
 
 @dataclass(frozen=True)
+class InstantiateRoleRuntimeObjectCommandV1:
+    """Instantiate one stateful role runtime object from public profile bindings."""
+
+    role_id: str
+    workspace: str
+    host_kind: str
+    turn_ledger_ref: str
+    policy_fingerprint: str
+    run_id: str | None = None
+    task_id: str | None = None
+    session_id: str | None = None
+    capability_id: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "host_kind", _require_non_empty("host_kind", self.host_kind))
+        object.__setattr__(self, "turn_ledger_ref", _require_non_empty("turn_ledger_ref", self.turn_ledger_ref))
+        object.__setattr__(
+            self,
+            "policy_fingerprint",
+            _require_non_empty("policy_fingerprint", self.policy_fingerprint),
+        )
+        object.__setattr__(self, "run_id", _normalize_optional_string(self.run_id))
+        object.__setattr__(self, "task_id", _normalize_optional_string(self.task_id))
+        object.__setattr__(self, "session_id", _normalize_optional_string(self.session_id))
+        object.__setattr__(self, "capability_id", _normalize_optional_string(self.capability_id))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleRuntimeObjectResultV1:
+    """Structured result for role runtime object instantiation."""
+
+    ok: bool
+    role_id: str
+    runtime_object: RoleRuntimeObject | None = None
+    profile_ref: str = ""
+    error_code: str | None = None
+    error_message: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        if self.runtime_object is not None and not isinstance(self.runtime_object, RoleRuntimeObject):
+            raise TypeError("runtime_object must be a RoleRuntimeObject when provided")
+        object.__setattr__(self, "profile_ref", str(self.profile_ref or "").strip())
+        object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
+        object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        if self.ok and self.runtime_object is None:
+            raise ValueError("successful runtime object result must include runtime_object")
+        if not self.ok and not (self.error_code or self.error_message):
+            raise ValueError("failed runtime object result must include error_code or error_message")
+
+
+@dataclass(frozen=True)
 class ExecuteRoleCapabilityInvocationCommandV1:
     """Execute one mounted role capability through its public contract port."""
 
@@ -1832,6 +1891,7 @@ __all__ = [
     "ExecuteRoleTaskCommandV1",
     "GetRoleRuntimeStatusQueryV1",
     "IRoleRuntime",
+    "InstantiateRoleRuntimeObjectCommandV1",
     "MessageType",
     "RoleAgent",
     "RoleAssetMount",
@@ -1849,6 +1909,7 @@ __all__ = [
     "RoleProfileBinding",
     "RoleRuntimeError",
     "RoleRuntimeObject",
+    "RoleRuntimeObjectResultV1",
     "RoleRuntimeObjectSpec",
     "RoleStateCommitReceipt",
     "RoleStateCommitRequest",

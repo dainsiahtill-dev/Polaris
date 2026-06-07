@@ -615,9 +615,62 @@ function saveSecrets(payload) {
   }
 }
 
+function selectedSecretStorageBackend() {
+  if (typeof safeStorage.getSelectedStorageBackend !== "function") {
+    return "";
+  }
+  try {
+    return safeStorage.getSelectedStorageBackend();
+  } catch {
+    return "";
+  }
+}
+
+function secretStorageStatus() {
+  const strongEncryptionAvailable = safeStorage.isEncryptionAvailable();
+  let fallbackEnabled = false;
+  let fallbackError = "";
+
+  if (!strongEncryptionAvailable && process.platform === "linux" && typeof safeStorage.setUsePlainTextEncryption === "function") {
+    try {
+      safeStorage.setUsePlainTextEncryption(true);
+      fallbackEnabled = true;
+    } catch (error) {
+      fallbackError = String(error);
+    }
+  }
+
+  const available = safeStorage.isEncryptionAvailable();
+  const selectedBackend = selectedSecretStorageBackend();
+  const storageMode = strongEncryptionAvailable
+    ? "os_keyring"
+    : available && fallbackEnabled
+      ? "basic_text_fallback"
+      : selectedBackend || "unavailable";
+
+  return {
+    ok: true,
+    available,
+    encryption_available: strongEncryptionAvailable,
+    fallback_enabled: fallbackEnabled,
+    fallback_error: fallbackError,
+    selected_storage_backend: selectedBackend,
+    storage_mode: storageMode,
+  };
+}
+
+function ensureSecretStorageAvailable() {
+  const status = secretStorageStatus();
+  if (!status.available) {
+    return { ok: false, error: status.fallback_error || "safeStorage unavailable", status };
+  }
+  return { ok: true, status };
+}
+
 function setSecret(key, value) {
-  if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, error: "safeStorage unavailable" };
+  const availability = ensureSecretStorageAvailable();
+  if (!availability.ok) {
+    return availability;
   }
   if (!key) {
     return { ok: false, error: "key required" };
@@ -626,12 +679,13 @@ function setSecret(key, value) {
   const encrypted = safeStorage.encryptString(String(value));
   data[key] = encrypted.toString("base64");
   saveSecrets(data);
-  return { ok: true };
+  return { ok: true, storage_mode: availability.status.storage_mode };
 }
 
 function getSecret(key) {
-  if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, error: "safeStorage unavailable" };
+  const availability = ensureSecretStorageAvailable();
+  if (!availability.ok) {
+    return availability;
   }
   if (!key) {
     return { ok: false, error: "key required" };
@@ -643,7 +697,7 @@ function getSecret(key) {
   }
   try {
     const decrypted = safeStorage.decryptString(Buffer.from(encoded, "base64"));
-    return { ok: true, value: decrypted };
+    return { ok: true, value: decrypted, storage_mode: availability.status.storage_mode };
   } catch (err) {
     return { ok: false, error: String(err) };
   }
@@ -1263,7 +1317,7 @@ if (hasSingleInstanceLock) {
       return { ok: true, error: null };
     });
     ipcMain.handle("hp:secrets-available", async () => {
-      return { ok: true, available: safeStorage.isEncryptionAvailable() };
+      return secretStorageStatus();
     });
     ipcMain.handle("hp:secrets-set", async (_event, payload) => {
       let key;

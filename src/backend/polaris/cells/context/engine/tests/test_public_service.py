@@ -6,6 +6,7 @@ from unittest.mock import patch
 from polaris.cells.context.engine.public.service import (
     build_context_window,
     get_anthropomorphic_context_v2,
+    get_search_service,
 )
 from polaris.kernelone.context.engine import ContextBudget, ContextItem, ContextPack
 
@@ -66,6 +67,21 @@ def _context_override() -> dict[str, object]:
 
 
 class TestBuildContextWindowContextOSOverlay:
+    def test_get_search_service_delegates_to_public_context_engine_boundary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_search_service = object()
+
+        def _fake_get_search_service() -> object:
+            return fake_search_service
+
+        monkeypatch.setattr(
+            "polaris.cells.context.engine.internal.search_gateway.get_search_service",
+            _fake_get_search_service,
+        )
+
+        assert get_search_service() is fake_search_service
+
     def test_build_context_window_prepends_context_os_overlay(self) -> None:
         with patch(
             "polaris.cells.context.engine.public.service._build_context_pack",

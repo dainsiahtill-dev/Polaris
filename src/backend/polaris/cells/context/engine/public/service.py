@@ -159,6 +159,13 @@ def get_anthropomorphic_context_v2(
     }
 
 
+def get_search_service() -> Any:
+    """Return the graph-constrained semantic search service via the public boundary."""
+    from polaris.cells.context.engine.internal.search_gateway import get_search_service as _get_search_service
+
+    return _get_search_service()
+
+
 def _build_context_request(
     run_id: str,
     step: int,
@@ -347,4 +354,5 @@ __all__ = [
     "RoleContextResultV1",
     "build_context_window",
     "get_anthropomorphic_context_v2",
+    "get_search_service",
 ]

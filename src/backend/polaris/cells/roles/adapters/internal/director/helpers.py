@@ -10,7 +10,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.cells.roles.kernel.internal.transaction.write_authority import is_authoritative_write_result
+from polaris.cells.roles.kernel.public.service import is_authoritative_write_result
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
 
 # -----------------------------------------------------------------------------

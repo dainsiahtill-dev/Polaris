@@ -61,6 +61,8 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleCapabilityInvocationResultV1,
     RoleCapabilityPorts,
     RoleIdentity,
+    RoleRuntimeObjectResultV1,
+    InstantiateRoleRuntimeObjectCommandV1,
     RoleLedgerBinding,
     RoleProfileBinding,
     RoleRuntimeObject,
@@ -70,7 +72,11 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleTurnContext,
     RoleTurnEnvelope,
 )
-from polaris.cells.roles.runtime.public.service import commit_role_state, execute_role_capability_invocation
+from polaris.cells.roles.runtime.public.service import (
+    commit_role_state,
+    execute_role_capability_invocation,
+    instantiate_role_runtime_object,
+)
 from polaris.cells.runtime.projection.public.contracts import RuntimeProjectionQueryV1, RuntimeProjectionResultV1
 from polaris.cells.runtime.task_market.public import (
     PublishTaskWorkItemCommandV1,
@@ -125,6 +131,28 @@ class FakeRuntimeProjectionService:
                 "completed_task_count": 4,
                 "last_director_status": "passed",
             }
+        )
+
+
+class FakeRoleProfileService:
+    def __init__(self) -> None:
+        self.queries: list[object] = []
+
+    def get_profile(self, query: object) -> object:
+        from polaris.cells.roles.profile.public.contracts import RoleProfileResultV1
+
+        self.queries.append(query)
+        return RoleProfileResultV1(
+            ok=True,
+            role_id="pm",
+            payload={
+                "role_id": "pm",
+                "prompt_policy": {"core_template_id": "pm"},
+                "tool_policy": {"whitelist": ["task_market.publish"]},
+                "data_policy": {"data_subdir": "pm"},
+                "version": "1.0.0",
+                "profile_fingerprint": "pm-profile-fp",
+            },
         )
 
 
@@ -481,6 +509,40 @@ def test_builtin_pm_runtime_spec_mounts_pm_assets_and_task_market_capabilities()
     assert runtime_object.identity.role_id == "pm"
     assert runtime_object.capability_fingerprint.capability_id == "dispatch_task_to_market"
     assert runtime_object.task_market_binding.publish_contract == "PublishTaskWorkItemCommandV1"
+
+
+def test_runtime_instantiation_binds_profile_via_roles_profile_public_contract() -> None:
+    profile_service = FakeRoleProfileService()
+
+    result = instantiate_role_runtime_object(
+        InstantiateRoleRuntimeObjectCommandV1(
+            role_id="pm",
+            run_id="run-1",
+            task_id="task-1",
+            session_id="session-1",
+            workspace="/workspace",
+            host_kind="task_market_worker",
+            turn_ledger_ref="roles.kernel:turn-ledger:run-1",
+            policy_fingerprint="pm-policy-fp",
+            capability_id="evaluate_critical_path",
+        ),
+        profile_service=profile_service,
+    )
+
+    assert isinstance(result, RoleRuntimeObjectResultV1)
+    assert result.ok is True
+    assert result.runtime_object is not None
+    assert result.runtime_object.identity.role_id == "pm"
+    assert result.runtime_object.identity.run_id == "run-1"
+    assert result.runtime_object.profile_binding.owner_cell == "roles.profile"
+    assert result.runtime_object.profile_binding.profile_ref == "roles.profile:pm:profile:pm-profile-fp"
+    assert result.runtime_object.profile_binding.tool_policy_ref == "roles.profile:pm:tool_policy:pm-profile-fp"
+    assert result.runtime_object.profile_binding.prompt_policy_ref == "roles.profile:pm:prompt_policy:pm-profile-fp"
+    assert result.runtime_object.profile_binding.data_policy_ref == "roles.profile:pm:data_policy:pm-profile-fp"
+    assert result.runtime_object.capability_fingerprint.capability_id == "evaluate_critical_path"
+    assert result.runtime_object.capability_fingerprint.profile_fingerprint == "pm-profile-fp"
+    assert result.runtime_object.metadata["profile_ref"] == "roles.profile:pm:profile:pm-profile-fp"
+    assert len(profile_service.queries) == 1
 
 
 def test_builtin_chief_engineer_runtime_spec_mounts_blueprint_assets_and_code_intel_capabilities() -> None:

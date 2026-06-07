@@ -708,10 +708,10 @@ class DirectorExecutionConsumer:
             )
             return {"changed_files": [], "duration": 0, "side_effects": []}
 
-        from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+        from polaris.cells.roles.adapters.public.service import create_role_adapter
 
         started_at = time.monotonic()
-        adapter = DirectorAdapter(workspace=str(workspace_path))
+        adapter = create_role_adapter("director", str(workspace_path))
         adapter_input = _build_director_adapter_input(task_id, payload, lease_token)
         context = {
             "run_id": str(payload.get("run_id") or f"task-market-director-{task_id}"),

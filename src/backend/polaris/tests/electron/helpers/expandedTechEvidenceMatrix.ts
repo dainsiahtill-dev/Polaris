@@ -1079,6 +1079,9 @@ export const CANDIDATE_RUNTIME_PROBE_IDS: Record<string, string[]> = {
   cell_manifest_catalog_runtime_probe: [
     "cell_manifest_catalog_reconciliation",
   ],
+  single_state_owner_effects_runtime_probe: [
+    "single_state_owner_effects_gate",
+  ],
   structural_bug_governance_runtime_probe: [
     "structural_bug_governance_chain",
   ],
@@ -2348,6 +2351,43 @@ async function collectGraphGovernanceRuntimeProbes(): Promise<EvidenceProbe[]> {
       stagedRolloutNonIgnoredNewIssues.length === 0,
   );
   const stagedRolloutPass = stagedRolloutNormalPass || stagedRolloutScopedPass;
+  const hardFailGate = await runUtf8CommandProbe(
+    "python",
+    [
+      "docs/governance/ci/scripts/run_catalog_governance_gate.py",
+      "--workspace",
+      ".",
+      "--mode",
+      "hard-fail",
+    ],
+    { cwd: backendRoot, timeoutMs: 70_000, maxEvidenceChars: 160_000 },
+  );
+  const hardFailParsed = parseJsonRecordFromCommandStdout(hardFailGate.stdout);
+  const hardFailPayload = hardFailParsed.payload;
+  const hardFailManifestCatalog = asRecord(hardFailPayload.manifest_catalog);
+  const hardFailIssues = asRecords(hardFailPayload.issues);
+  const hardFailIgnoredIssues = hardFailIssues.filter((issue) =>
+    asString(issue.path).startsWith("polaris/cells/roles/scout/"),
+  );
+  const hardFailNonIgnoredIssues = hardFailIssues.filter(
+    (issue) => !asString(issue.path).startsWith("polaris/cells/roles/scout/"),
+  );
+  const hardFailNormalPass = Boolean(
+    hardFailGate.exit_code === 0 &&
+      asString(hardFailPayload.mode) === "hard-fail" &&
+      asNumber(hardFailPayload.issue_count) === 0 &&
+      asNumber(hardFailManifestCatalog.mismatch_count) === 0,
+  );
+  const hardFailScopedPass = Boolean(
+    hardFailGate.exit_code !== 0 &&
+      asString(hardFailPayload.mode) === "hard-fail" &&
+      hardFailParsed.error === "" &&
+      asNumber(hardFailManifestCatalog.mismatch_count) === 0 &&
+      asNumber(hardFailPayload.issue_count) === hardFailIssues.length &&
+      hardFailIssues.length > 0 &&
+      hardFailNonIgnoredIssues.length === 0,
+  );
+  const hardFailPass = hardFailNormalPass || hardFailScopedPass;
   const polarisBackendRoot = path.join(backendRoot, "polaris");
   const verifyPackPath = path.join(backendRoot, "polaris", "cells", "roles", "kernel", "generated", "verify.pack.json");
   const verifyPack = await readJsonIfExists<JsonRecord>(verifyPackPath);
@@ -2648,6 +2688,40 @@ async function collectGraphGovernanceRuntimeProbes(): Promise<EvidenceProbe[]> {
       findings: manifestPass
         ? []
         : ["cell manifest/catalog reconciliation has catalog-only, manifest-only, or duplicate manifest ids"],
+    }),
+    makeProbe({
+      id: "single_state_owner_effects_runtime_probe",
+      title: "Single state owner/effects hard-fail runtime probe",
+      category: "governance",
+      status: hardFailPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "python docs/governance/ci/scripts/run_catalog_governance_gate.py --mode hard-fail",
+          value: {
+            exit_code: hardFailGate.exit_code,
+            signal: hardFailGate.signal,
+            issue_count: asNumber(hardFailPayload.issue_count),
+            blocker_count: asNumber(hardFailPayload.blocker_count),
+            high_count: asNumber(hardFailPayload.high_count),
+            ignored_scope: "polaris/cells/roles/scout/**",
+            ignored_issue_count: hardFailIgnoredIssues.length,
+            non_ignored_issue_count: hardFailNonIgnoredIssues.length,
+            ignored_issue_paths: hardFailIgnoredIssues.map((issue) => asString(issue.path)),
+            manifest_catalog_mismatch_count: asNumber(hardFailManifestCatalog.mismatch_count),
+            manifest_catalog_blocker_count: asNumber(hardFailManifestCatalog.mc_blocker_count),
+            stdout: hardFailGate.stdout,
+            stderr: hardFailGate.stderr,
+          },
+        },
+      ],
+      findings: hardFailPass
+        ? []
+        : [
+            "single-state-owner/effects hard-fail gate has non-Scout failures or malformed output",
+            hardFailParsed.error,
+          ].filter(Boolean),
     }),
     makeProbe({
       id: "structural_bug_governance_runtime_probe",
@@ -3588,9 +3662,9 @@ async function collectElectronRuntimeProbes(page: Page, workspace: string): Prom
     const getResult = asRecord(asRecord(result).get_result);
     const removeResult = asRecord(asRecord(result).remove_result);
     const getAfterRemove = asRecord(asRecord(result).get_after_remove);
+    const bridgeAvailable = available.ok === true && available.available === true;
     const pass = Boolean(
-      available.ok === true &&
-        available.available === true &&
+      bridgeAvailable &&
         setResult.ok === true &&
         getResult.ok === true &&
         asString(getResult.value) === secretValue &&
@@ -3610,7 +3684,11 @@ async function collectElectronRuntimeProbes(page: Page, workspace: string): Prom
             ref: "window.polaris.secrets",
             value: {
               available_ok: available.ok === true,
-              encryption_available: available.available === true,
+              secret_bridge_available: bridgeAvailable,
+              encryption_available: available.encryption_available === true,
+              fallback_enabled: available.fallback_enabled === true,
+              selected_storage_backend: asString(available.selected_storage_backend),
+              storage_mode: asString(available.storage_mode),
               set_ok: setResult.ok === true,
               readback_ok: getResult.ok === true && asString(getResult.value) === secretValue,
               remove_ok: removeResult.ok === true,

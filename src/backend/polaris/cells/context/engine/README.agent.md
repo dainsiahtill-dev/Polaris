@@ -12,6 +12,8 @@ Assemble role-facing execution context through graph-constrained context lookup.
 
 - `BuildRoleContextCommandV1`
 - `ResolveRoleContextQueryV1`
+- `build_context_window(...)`
+- `get_search_service()`
 
 ## Public Outputs
 
@@ -22,6 +24,7 @@ Assemble role-facing execution context through graph-constrained context lookup.
 
 - `context.catalog`
 - `policy.workspace_guard`
+- `roles.session`
 
 ## State Ownership
 
@@ -43,9 +46,11 @@ Assemble role-facing execution context through graph-constrained context lookup.
 1. `cell.yaml`
 2. `generated/context.pack.json`
 3. `public/contracts.py`
-4. owned implementation files only if needed
+4. `public/service.py`
+5. owned implementation files only if needed
 
 ## Verification
 
 - `tests/architecture/test_architecture_invariants.py`
-
+- `polaris/cells/context/engine/tests/test_public_service.py`
+- `polaris/cells/context/engine/tests/test_search_gateway.py`

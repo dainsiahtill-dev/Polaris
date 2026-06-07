@@ -157,10 +157,16 @@ from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleTaskCommandV1,
     GetRoleRuntimeStatusQueryV1,
     IRoleRuntime,
+    InstantiateRoleRuntimeObjectCommandV1,
     RoleCapabilityInvocationResultV1,
     RoleExecutionResultV1,
+    RoleIdentity,
+    RoleLedgerBinding,
+    RoleProfileBinding,
+    RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt,
     RoleStateCommitRequest,
+    get_builtin_role_runtime_spec,
 )
 
 # Wave 1: Persistence module extracted to public/persistence.py
@@ -357,6 +363,115 @@ def _runtime_receipt_ref(receipt_id: str) -> str:
 
 def _handoff_pack_ref(handoff_id: str) -> str:
     return f"factory.cognitive_runtime:handoff:{handoff_id}"
+
+
+def _profile_policy_ref(role_id: str, policy_name: str, profile_fingerprint: str) -> str:
+    return f"roles.profile:{role_id}:{policy_name}:{profile_fingerprint}"
+
+
+def instantiate_role_runtime_object(
+    command: InstantiateRoleRuntimeObjectCommandV1,
+    *,
+    profile_service: Any | None = None,
+) -> RoleRuntimeObjectResultV1:
+    """Instantiate a stateful role object from public profile and runtime contracts."""
+    if not isinstance(command, InstantiateRoleRuntimeObjectCommandV1):
+        raise TypeError("command must be an InstantiateRoleRuntimeObjectCommandV1")
+
+    try:
+        spec = get_builtin_role_runtime_spec(command.role_id)
+    except KeyError as exc:
+        return RoleRuntimeObjectResultV1(
+            ok=False,
+            role_id=command.role_id,
+            error_code="unknown_role_runtime_spec",
+            error_message=f"role runtime spec {command.role_id!r} was not found",
+        )
+
+    try:
+        from polaris.cells.roles.profile.public.contracts import GetRoleProfileQueryV1, RoleProfileResultV1
+        from polaris.cells.roles.profile.public.service import get_profile as get_role_profile
+
+        query = GetRoleProfileQueryV1(role_id=spec.role_id)
+        profile_result = (
+            profile_service.get_profile(query) if profile_service is not None else get_role_profile(query)
+        )
+        if not isinstance(profile_result, RoleProfileResultV1):
+            raise TypeError("profile service returned non-RoleProfileResultV1")
+    except Exception as exc:  # noqa: BLE001 - public facade returns structured failure
+        return RoleRuntimeObjectResultV1(
+            ok=False,
+            role_id=spec.role_id,
+            error_code="profile_binding_failed",
+            error_message=str(exc),
+        )
+
+    if not profile_result.ok:
+        return RoleRuntimeObjectResultV1(
+            ok=False,
+            role_id=spec.role_id,
+            error_code=profile_result.error_code or "profile_not_available",
+            error_message=profile_result.error_message or f"profile {spec.role_id!r} is not available",
+        )
+
+    profile_payload = dict(profile_result.payload)
+    profile_fingerprint = str(profile_payload.get("profile_fingerprint") or "").strip()
+    if not profile_fingerprint:
+        payload_bytes = json.dumps(profile_payload, sort_keys=True, default=str).encode("utf-8")
+        profile_fingerprint = hashlib.sha256(payload_bytes).hexdigest()[:16]
+    profile_ref = str(profile_payload.get("profile_ref") or "").strip() or _profile_policy_ref(
+        spec.role_id,
+        "profile",
+        profile_fingerprint,
+    )
+    profile_binding = RoleProfileBinding(
+        role_id=spec.role_id,
+        profile_ref=profile_ref,
+        tool_policy_ref=_profile_policy_ref(spec.role_id, "tool_policy", profile_fingerprint),
+        prompt_policy_ref=_profile_policy_ref(spec.role_id, "prompt_policy", profile_fingerprint),
+        data_policy_ref=_profile_policy_ref(spec.role_id, "data_policy", profile_fingerprint),
+        profile_fingerprint=profile_fingerprint,
+    )
+
+    try:
+        runtime_object = spec.instantiate(
+            identity=RoleIdentity(
+                role_id=spec.role_id,
+                run_id=command.run_id,
+                task_id=command.task_id,
+                session_id=command.session_id,
+                workspace=command.workspace,
+                host_kind=command.host_kind,
+            ),
+            profile_binding=profile_binding,
+            ledger_binding=RoleLedgerBinding(turn_ledger_ref=command.turn_ledger_ref),
+            policy_fingerprint=command.policy_fingerprint,
+            capability_id=command.capability_id,
+            metadata={
+                **dict(command.metadata),
+                "profile_ref": profile_ref,
+                "profile_owner_cell": "roles.profile",
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - public facade returns structured failure
+        return RoleRuntimeObjectResultV1(
+            ok=False,
+            role_id=spec.role_id,
+            error_code="runtime_object_instantiation_failed",
+            error_message=str(exc),
+        )
+
+    return RoleRuntimeObjectResultV1(
+        ok=True,
+        role_id=spec.role_id,
+        runtime_object=runtime_object,
+        profile_ref=profile_ref,
+        metadata={
+            "profile_ref": profile_ref,
+            "default_capability_id": spec.default_capability_id,
+            "capability_id": runtime_object.capability_fingerprint.capability_id,
+        },
+    )
 
 
 def _serialize_role_state_commit_envelope(request: RoleStateCommitRequest) -> dict[str, Any]:
@@ -3285,8 +3400,7 @@ def _build_aggregate_context_governance_pack(
         ),
     ]
     try:
-        from polaris.cells.context.engine.internal.search_gateway import get_search_service
-        from polaris.cells.context.engine.public.service import build_context_window
+        from polaris.cells.context.engine.public.service import build_context_window, get_search_service
 
         retrieval_candidates = get_search_service().search(query, limit=5)
         pack, policy, budget, sources_enabled = build_context_window(

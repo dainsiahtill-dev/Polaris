@@ -71,6 +71,14 @@ from polaris.cells.roles.kernel.internal.token_budget import (
     get_global_token_budget,
 )
 from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway, ToolAuthorizationError, ToolGatewayManager
+from polaris.cells.roles.kernel.internal.transaction.write_authority import (
+    extract_target_path_from_payload,
+    is_authoritative_write_invocation,
+    is_authoritative_write_path,
+    is_authoritative_write_result,
+    is_control_plane_write_path,
+    normalize_write_target_path,
+)
 from polaris.cells.roles.kernel.public.contracts import ToolGatewayPort
 from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
@@ -123,13 +131,19 @@ __all__ = [
     "ViolationLevel",
     "classify_error",
     "emit_llm_event",
+    "extract_target_path_from_payload",
     "get_global_emitter",
     "get_global_llm_cache",
     "get_global_token_budget",
     "get_kernel_metrics_collector",
     "get_max_retries",
     "is_action_allowed",
+    "is_authoritative_write_invocation",
+    "is_authoritative_write_path",
+    "is_authoritative_write_result",
+    "is_control_plane_write_path",
     "is_retryable",
+    "normalize_write_target_path",
     "reset_metrics_collector_for_test",
     "reset_role_action_registry_for_test",
     "set_global_llm_cache",
