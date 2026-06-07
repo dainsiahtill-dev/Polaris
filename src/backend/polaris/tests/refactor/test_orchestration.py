@@ -15,9 +15,6 @@ import pytest
 if importlib.util.find_spec("polaris.cells.orchestration.workflow_runtime.public") is None:
     pytest.skip("Module not available: polaris.cells.orchestration.workflow_runtime.public", allow_module_level=True)
 
-# Add src/backend to path
-sys.path.insert(0, str(Path(__file__).parents[2] / "src" / "backend"))
-
 
 from polaris.cells.orchestration.workflow_runtime.public import (
     EventLevel,
@@ -250,7 +247,9 @@ class TestIntegration:
 
         assert request.name == "pm"
         assert request.role == "pm"
-        assert "cli.py" in request.command[-1] or "pm" in request.command
+        # The command invokes the pm CLI; later args (--workspace/--iterations) mean
+        # the cli path is no longer the final element, so scan the whole command.
+        assert any("cli.py" in part for part in request.command), request.command
 
     @pytest.mark.asyncio
     async def test_director_launch_request(self):

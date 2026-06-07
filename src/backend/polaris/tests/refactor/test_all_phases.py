@@ -17,14 +17,15 @@ import pytest
 if importlib.util.find_spec("polaris.bootstrap") is None:
     pytest.skip("Module not available: polaris.bootstrap", allow_module_level=True)
 
-sys.path.insert(0, str(Path(__file__).parents[2] / "src" / "backend"))
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_phase1_config_snapshot():
     """Phase 1: ConfigSnapshot with source tracking."""
     print("\n=== Phase 1: ConfigSnapshot ===")
 
-    from polaris.bootstrap.config_loader import ConfigSnapshot, SourceType
+    from polaris.bootstrap.config_loader import ConfigSnapshot
+    from polaris.domain.models.config_snapshot import SourceType
 
     # Test merge priority: default < persisted < env < cli
     snapshot = ConfigSnapshot.merge_sources(
@@ -53,7 +54,7 @@ def test_phase2_backend_bootstrap():
     print("\n=== Phase 2: BackendBootstrapper ===")
 
     from polaris.bootstrap import BackendBootstrapper, ConfigLoader
-    from polaris.bootstrap.contracts import BackendLaunchRequest
+    from polaris.bootstrap.contracts.backend_launch import BackendLaunchRequest
 
     # Test ConfigLoader
     loader = ConfigLoader()
@@ -94,10 +95,10 @@ def test_phase3_orchestration():
         EventType,
         OrchestrationEvent,
         ProcessLauncher,
-        RunMode,
         RuntimeOrchestrator,
         ServiceDefinition,
     )
+    from polaris.cells.orchestration.workflow_runtime.public.process_launch import RunMode
 
     # Test ServiceDefinition
     definition = ServiceDefinition(
@@ -145,8 +146,8 @@ def test_dto_consistency():
     """Test DTO consistency across phases."""
     print("\n=== DTO Consistency ===")
 
-    from polaris.bootstrap.contracts import BackendLaunchResult
-    from polaris.cells.orchestration.workflow_runtime.public.contracts import ProcessLaunchResult
+    from polaris.bootstrap.contracts.backend_launch import BackendLaunchResult
+    from polaris.cells.orchestration.workflow_runtime.public.process_launch import ProcessLaunchResult
 
     # BackendLaunchResult
     backend_result = BackendLaunchResult(
@@ -180,7 +181,7 @@ def test_architecture_compliance():
 
     import ast
 
-    backend_dir = Path(__file__).parents[2] / "src" / "backend"
+    backend_dir = BACKEND_ROOT
 
     violations = []
     cli_files = {"server.py", "cli.py", "main.py"}
@@ -198,17 +199,19 @@ def test_architecture_compliance():
 
             for node in ast.walk(tree):
                 # Check for sys.argv access
-                if isinstance(node, ast.Attribute):
-                    if node.attr == "argv":
-                        if isinstance(node.value, ast.Name) and node.value.id == "sys":
-                            rel_path = py_file.relative_to(backend_dir)
-                            violations.append(f"{rel_path}: sys.argv")
+                if (
+                    isinstance(node, ast.Attribute)
+                    and node.attr == "argv"
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "sys"
+                ):
+                    rel_path = py_file.relative_to(backend_dir)
+                    violations.append(f"{rel_path}: sys.argv")
 
                 # Check for ArgumentParser creation
-                if isinstance(node, ast.Call):
-                    if isinstance(node.func, ast.Name) and node.func.id == "ArgumentParser":
-                        rel_path = py_file.relative_to(backend_dir)
-                        violations.append(f"{rel_path}: ArgumentParser()")
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "ArgumentParser":
+                    rel_path = py_file.relative_to(backend_dir)
+                    violations.append(f"{rel_path}: ArgumentParser()")
 
         except SyntaxError:
             continue
@@ -239,9 +242,10 @@ def main():
         print("=" * 60)
         return 0
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - top-level manual-runner catch-all
         print(f"\n❌ Test failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
