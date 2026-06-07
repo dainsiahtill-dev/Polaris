@@ -142,9 +142,17 @@ async def test_batch_adopts_completed_shadow_task(
 
 
 @pytest.mark.asyncio
-async def test_stream_write_tool_without_prepare_shadow_fails_closed(
+async def test_stream_write_tool_without_prepare_shadow_replays(
     controller: TurnTransactionController, shadow_engine: StreamShadowEngine
 ) -> None:
+    """A stream write tool with no speculative prepare-shadow must REPLAY via the
+    authoritative batch, not abort the turn.
+
+    A missing prepare-shadow is a benign optimization miss: recovered/post-hoc write
+    tool calls (e.g. surfaced from non-function-calling models after streaming) never
+    get a speculative prepare. The authoritative path executes the write safely —
+    identical to running with speculation disabled — so the turn must not fail closed.
+    """
     decision = TurnDecision(
         turn_id=TurnId("t_write_prepare_required"),
         kind=TurnDecisionKind.TOOL_BATCH,
@@ -167,17 +175,18 @@ async def test_stream_write_tool_without_prepare_shadow_fails_closed(
     state_machine = _setup_state_machine("t_write_prepare_required")
     ledger = TurnLedger(turn_id="t_write_prepare_required")
 
-    with pytest.raises(RuntimeError, match="speculative_write_prepare_failed"):
-        await controller._execute_tool_batch(
-            decision,
-            state_machine,
-            ledger,
-            context=[],
-            stream=True,
-            shadow_engine=shadow_engine,
-        )
+    # Must NOT raise: the write falls back to authoritative batch execution.
+    await controller._execute_tool_batch(
+        decision,
+        state_machine,
+        ledger,
+        context=[],
+        stream=True,
+        shadow_engine=shadow_engine,
+    )
 
-    controller.tool_runtime.assert_not_awaited()
+    # The write executed exactly once via the authoritative tool_runtime (replay).
+    assert controller.tool_runtime.await_count == 1
 
 
 @pytest.mark.asyncio

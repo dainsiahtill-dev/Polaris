@@ -22,6 +22,7 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_invocation_tool_name,
     extract_target_file_from_invocation_args,
     extract_target_files_from_message,
+    filter_out_of_scope_write_invocations,
     receipts_have_stale_edit_failure,
     resolve_mutation_target_guard_violation,
     tool_batch_has_authoritative_write_invocation,
@@ -453,6 +454,18 @@ class ToolBatchExecutor:
                     + ", ".join(sorted(set(disallowed_tools)))
                 )
 
+        latest_user_request = extract_latest_user_message(context)
+        invocations, dropped_out_of_scope_writes = filter_out_of_scope_write_invocations(
+            latest_user_request,
+            invocations,
+        )
+        if dropped_out_of_scope_writes:
+            reason = (
+                f"mutation write target drift sanitized; dropped_out_of_scope={list(dropped_out_of_scope_writes)[:6]}"
+            )
+            logger.warning("%s turn_id=%s", reason, turn_id)
+            ledger.record_mutation_guard_warning(reason=reason, user_request=latest_user_request)
+
         # --- READ-WRITE BARRIER LOGIC ---
         # BUG-NEW-1 fix: the Barrier must be bypassed in Benchmark single-batch mode.
         # Benchmark contracts explicitly require read + write in the SAME batch
@@ -723,7 +736,6 @@ class ToolBatchExecutor:
                     "or verify the fix manually. No verification tool detected — ending session."
                 )
 
-        latest_user_request = extract_latest_user_message(context)
         requires_mutation = enforce_mutation_write_guard and self.requires_mutation_intent(latest_user_request)
         known_target_files = extract_target_files_from_message(latest_user_request)
         target_files_known = bool(known_target_files) or bool(ledger.mutation_obligation.target_files_known)
@@ -855,18 +867,39 @@ class ToolBatchExecutor:
                     raise
                 except (RuntimeError, TypeError, ValueError) as exc:
                     if stream and WriteToolPhases.is_write_tool(tool_name):
-                        raise RuntimeError(
-                            "speculative_write_prepare_failed: "
-                            f"shadow resolution failed for write tool {tool_name!r}: {exc}"
-                        ) from exc
+                        # Speculative resolution errored for a write tool. Fall back to
+                        # authoritative batch execution (below) rather than aborting the
+                        # whole turn — the authoritative path executes the write safely,
+                        # identical to running with speculation disabled.
+                        logger.debug(
+                            "[tool_batch] speculative resolution error for write tool %r "
+                            "(call_id=%s): %s; replaying via authoritative batch",
+                            tool_name,
+                            call_id,
+                            exc,
+                        )
+                        replay_invocations.append(invocation)
+                        continue
                     resolution = {"action": "replay", "result": None, "error": str(exc)}
                 action = str(resolution.get("action", "replay"))
                 is_write_tool = WriteToolPhases.is_write_tool(tool_name)
                 if stream and is_write_tool and action == "block":
+                    # A missing/blocked speculative prepare-shadow is a benign optimization
+                    # miss: recovered/post-hoc write tool calls (e.g. from non-function-calling
+                    # models, surfaced after streaming) never get a speculative prepare, so the
+                    # shadow is legitimately absent. Fall back to authoritative batch execution
+                    # (identical to speculation-disabled, which executes writes through the same
+                    # path) instead of aborting the entire turn and discarding the model's work.
                     error = str(resolution.get("error") or "write_tool_prepare_shadow_blocked")
-                    raise RuntimeError(
-                        f"speculative_write_prepare_failed: {error}; tool={tool_name!r}; call_id={call_id!r}"
+                    logger.debug(
+                        "[tool_batch] speculative prepare miss for write tool %r "
+                        "(call_id=%s, reason=%s); replaying via authoritative batch",
+                        tool_name,
+                        call_id,
+                        error,
                     )
+                    replay_invocations.append(invocation)
+                    continue
                 if action in ("adopt", "join") and not is_write_tool:
                     adopted_result = {
                         "call_id": call_id,
