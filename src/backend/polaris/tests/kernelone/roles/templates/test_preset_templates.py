@@ -53,7 +53,7 @@ class TestPresetTemplates:
     def test_scout_template_attributes(self) -> None:
         assert SCOUT_TEMPLATE.name == "scout"
         assert "Scout" in SCOUT_TEMPLATE.description
-        assert "codebase_search" in SCOUT_TEMPLATE.tools
+        assert "repo_rg" in SCOUT_TEMPLATE.tools
         assert "Read-only operations only" in SCOUT_TEMPLATE.constraints
 
 
@@ -62,9 +62,7 @@ class TestPresetRegistry:
 
     def test_registry_has_all_six_roles(self) -> None:
         assert len(PRESET_TEMPLATES) == 6
-        assert set(PRESET_TEMPLATES.keys()) == {
-            "pm", "architect", "chief_engineer", "director", "qa", "scout"
-        }
+        assert set(PRESET_TEMPLATES.keys()) == {"pm", "architect", "chief_engineer", "director", "qa", "scout"}
 
     def test_registry_values_are_templates(self) -> None:
         for template in PRESET_TEMPLATES.values():
@@ -129,6 +127,7 @@ class TestRegisterPresetTemplates:
         register_preset_templates(manager)
         # Duplicate registration should raise RoleAlreadyExistsError
         from polaris.kernelone.roles.dynamic_role import RoleAlreadyExistsError
+
         with pytest.raises(RoleAlreadyExistsError):
             register_preset_templates(manager)
 
@@ -165,9 +164,21 @@ class TestTemplateTools:
         assert "file_delete" in DIRECTOR_TEMPLATE.tools
 
     def test_scout_has_read_only_tools(self) -> None:
-        assert "file_read" in SCOUT_TEMPLATE.tools
-        assert "codebase_search" in SCOUT_TEMPLATE.tools
-        assert "grep" in SCOUT_TEMPLATE.tools
+        # Tools must be a subset of the real read-tool set (+ scout_probe allowed)
+        real_read = {
+            "repo_rg",
+            "repo_tree",
+            "repo_glob",
+            "repo_read_slice",
+            "repo_symbols_index",
+            "file_exists",
+            "scout_probe",
+        }
+        assert set(SCOUT_TEMPLATE.tools).issubset(real_read), (
+            f"SCOUT_TEMPLATE.tools contains fictional or write tools: {set(SCOUT_TEMPLATE.tools) - real_read}"
+        )
+        # Must retain the read-only constraint
+        assert "Read-only operations only" in SCOUT_TEMPLATE.constraints
 
     def test_no_template_has_empty_tools(self) -> None:
         for template in PRESET_TEMPLATES.values():

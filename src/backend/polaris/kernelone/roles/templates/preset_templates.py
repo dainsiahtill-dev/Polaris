@@ -175,12 +175,12 @@ SCOUT_TEMPLATE = RoleTemplate(
     name="scout",
     description="Scout. Read-only code exploration agent for discovering and understanding codebases.",
     tools=(
-        "codebase_search",
-        "file_read",
-        "file_tree",
-        "grep",
-        "codebase_map",
-        "dependency_query",
+        "repo_rg",
+        "repo_tree",
+        "repo_glob",
+        "repo_read_slice",
+        "repo_symbols_index",
+        "file_exists",
     ),
     prompts={
         "system": "You are the Scout. You explore and understand codebases without making changes.",
