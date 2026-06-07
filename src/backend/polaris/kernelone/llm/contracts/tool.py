@@ -214,8 +214,6 @@ class ToolExecutionResult:
             (Parse phase: has tool, args fields)
         - polaris.kernelone.benchmark.llm.tool_accuracy.ToolCallResult
             (Benchmark phase: has case_id, execution_time_ms, error)
-        - polaris.kernelone.agent.tools.contracts.ToolExecutionResult
-            (Agent phase: uses ToolStatus enum instead of bool success)
 
     Attributes:
         tool_call_id: ID of the tool call that produced this result.

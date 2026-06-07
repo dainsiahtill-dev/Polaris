@@ -79,7 +79,7 @@ class SkillLoader:
                 try:
                     shutil.copyfile(skill_file, target)
                 except (RuntimeError, ValueError) as exc:
-                    logger.warning("kernelone.agent.skill_system.copy_skill_file failed: %s", exc, exc_info=True)
+                    logger.warning("kernelone.single_agent.skill_system.copy_skill_file failed: %s", exc, exc_info=True)
                     continue
 
         self._skills: dict[str, Skill] = {}

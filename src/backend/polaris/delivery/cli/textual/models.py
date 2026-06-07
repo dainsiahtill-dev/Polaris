@@ -3,10 +3,8 @@
 定义可折叠消息、DEBUG 项、工具调用等数据结构。
 
 P1-TYPE-008: ToolStatus 说明
-    - 本地 ToolStatus 枚举保留，用于 TUI 显示状态
-    - canonical ToolStatus 位于 polaris.kernelone.agent.tools.contracts
-    - 两者有语义差异：本地有 PENDING/RUNNING，canonical 有 BLOCKED/TIMEOUT
-    - 这两个是不同层级的状态：TUI 显示层 vs 执行层
+    - 本地 ToolStatus 枚举保留，用于 TUI 显示状态（PENDING/RUNNING 等显示层语义）
+    - 这是 TUI 显示层状态，与执行层的工具结果类型不同层级
 """
 
 from __future__ import annotations
