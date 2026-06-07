@@ -1693,6 +1693,10 @@ def _dedupe_text_items(items: list[str]) -> list[str]:
 
 
 def _primary_task_evidence_path(task: dict[str, Any]) -> str:
+    for path in _normalize_path_list(task.get("target_files") or []):
+        normalized = _normalize_path(path)
+        if normalized and _is_concrete_pm_scope_path(normalized):
+            return normalized
     for path in _collect_task_delivery_paths(task):
         normalized = _normalize_path(path)
         if normalized and _is_concrete_pm_scope_path(normalized):
@@ -1987,6 +1991,7 @@ def autofix_pm_contract_for_quality(
         "deps_added": 0,
         "deps_normalized": 0,
         "acceptance_added": 0,
+        "acceptance_hardened": 0,
         "acceptance_sanitized": 0,
         "descriptions_added": 0,
         "game_domain_tasks_added": 0,
@@ -2085,6 +2090,13 @@ def autofix_pm_contract_for_quality(
                     f"Run `{verify_command}` passes",
                 ]
             stats["acceptance_added"] += 1
+        elif not _has_executable_or_file_acceptance_anchor([str(item) for item in acceptance_items]):
+            evidence_path = _primary_task_evidence_path(task)
+            evidence_ref = evidence_path if "/" in evidence_path else f"./{evidence_path}"
+            task["acceptance_criteria"] = _dedupe_text_items(
+                [*[str(item) for item in acceptance_items if str(item).strip()], f"verify {evidence_ref} exists"]
+            )
+            stats["acceptance_hardened"] += 1
 
         description = task.get("description")
         if not description or len(str(description).strip()) < 20:

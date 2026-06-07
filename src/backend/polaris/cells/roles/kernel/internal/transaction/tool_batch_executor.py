@@ -70,6 +70,25 @@ logger = logging.getLogger(__name__)
 # 路径辅助
 # ---------------------------------------------------------------------------
 
+_TOOL_NAME_CANONICAL_ALIASES = {
+    "project_scaffolding": "project_scaffold",
+}
+
+
+def _normalize_allowed_tool_name_alias(name: str) -> str:
+    normalized = str(name or "").strip().lower().replace("-", "_")
+    return _TOOL_NAME_CANONICAL_ALIASES.get(normalized, normalized)
+
+
+def _tool_name_allowed_by_alias(tool_name: str, allowed_tool_names: set[str]) -> bool:
+    if tool_name in allowed_tool_names:
+        return True
+    normalized_tool_name = _normalize_allowed_tool_name_alias(tool_name)
+    if not normalized_tool_name:
+        return False
+    normalized_allowed = {_normalize_allowed_tool_name_alias(name) for name in allowed_tool_names}
+    return normalized_tool_name in normalized_allowed
+
 
 def _tool_requires_existing_file(tool_name: str) -> bool:
     return tool_name in {
@@ -426,7 +445,7 @@ class ToolBatchExecutor:
             disallowed_tools = []
             for invocation in invocations:
                 tname = extract_invocation_tool_name(invocation)
-                if tname and tname not in allowed_tool_names:
+                if tname and not _tool_name_allowed_by_alias(tname, allowed_tool_names):
                     disallowed_tools.append(tname)
             if disallowed_tools:
                 raise RuntimeError(

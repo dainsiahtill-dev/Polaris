@@ -20,29 +20,42 @@ owned_paths:
 - polaris/delivery/http/routers/role_session.py
 public_contracts:
   modules:
-  - polaris.cells.roles.runtime.public.contracts
+    - polaris.cells.roles.runtime.public.contracts
   commands:
-  - InstantiateRoleRuntimeObjectCommandV1
-- ExecuteRoleTaskMarketLifecycleCommandV1
-- ExecuteRoleCapabilityInvocationCommandV1
-- AssembleRoleRuntimeChainCommandV1
-- RoleStateCommitRequest
-  - ExecuteRoleTaskCommandV1
-  - ExecuteRoleSessionCommandV1
+    - InstantiateRoleRuntimeObjectCommandV1
+    - ExecuteRoleTaskMarketLifecycleCommandV1
+    - ExecuteRoleCapabilityInvocationCommandV1
+    - AssembleRoleRuntimeChainCommandV1
+    - RoleStateCommitRequest
+    - ExecuteRoleTaskCommandV1
+    - ExecuteRoleSessionCommandV1
+    - AggregateChatCompletionsCommandV1
   queries:
-  - GetRoleRuntimeStatusQueryV1
+    - GetRoleRuntimeStatusQueryV1
+    - BuildAggregateRolePlanQueryV1
+    - AuditAggregateRuntimeIntegrationsQueryV1
   events:
-  - RoleTaskStartedEventV1
-  - RoleTaskCompletedEventV1
+    - RoleTaskStartedEventV1
+    - RoleTaskCompletedEventV1
   results:
-  - RoleRuntimeObjectResultV1
-- RoleTaskMarketLifecycleResultV1
-- RoleCapabilityInvocationResultV1
-- RoleRuntimeChainAssemblyResultV1
-- RoleStateCommitReceipt
-  - RoleExecutionResultV1
+    - RoleRuntimeObjectResultV1
+    - RoleTaskMarketLifecycleResultV1
+    - RoleCapabilityInvocationResultV1
+    - RoleRuntimeChainAssemblyResultV1
+    - RoleStateCommitReceipt
+    - RoleExecutionResultV1
+    - AggregateRolePlanResultV1
+    - AggregateRoleLobeV1
+    - AggregateCognitiveLedgerEntryV1
+    - AggregateTakeoverDirectiveV1
+    - AggregateRuntimeIntegrationV1
+    - AggregateRuntimeEntrypointCheckV1
+    - AggregateRuntimeAuditResultV1
+    - AggregateChatCompletionsResultV1
+    - AggregateChatChoiceV1
+    - AggregateChatMessageV1
   errors:
-  - RoleRuntimeErrorV1
+    - RoleRuntimeErrorV1
 depends_on:
 - architect.design
 - chief_engineer.blueprint

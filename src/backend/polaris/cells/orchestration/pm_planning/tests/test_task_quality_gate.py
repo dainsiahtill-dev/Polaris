@@ -701,6 +701,32 @@ class TestAutofixPmContractForQuality:
         assert stats["acceptance_added"] == 1
         assert "acceptance_criteria" in payload["tasks"][0]
 
+    def test_hardens_existing_acceptance_with_file_evidence(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "PM-0001-1",
+                    "title": "项目基础架构初始化",
+                    "goal": "建立 Node.js/TypeScript 项目基础结构，包括依赖管理、TS 配置及目录骨架。",
+                    "acceptance": [
+                        "package.json 包含基础依赖及 scripts",
+                        "tsconfig.json 配置正确且可编译",
+                    ],
+                    "assigned_to": "director",
+                    "target_files": ["package.json", "tsconfig.json", "src/server/index.ts"],
+                    "scope_mode": "module",
+                    "scope_paths": ["src/"],
+                }
+            ]
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+        report = evaluate_pm_task_quality(payload, workspace_full="/fake")
+
+        assert stats["acceptance_hardened"] == 1
+        assert "verify ./package.json exists" in payload["tasks"][0]["acceptance_criteria"]
+        assert not any("requires executable command or file evidence" in item for item in report["critical_issues"])
+
     def test_adds_dependencies(self) -> None:
         payload = {
             "tasks": [

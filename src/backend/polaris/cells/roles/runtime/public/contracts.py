@@ -475,6 +475,8 @@ class RoleTurnEnvelope:
             raise TypeError("identity must be a RoleIdentity")
         if not isinstance(self.profile_binding, RoleProfileBinding):
             raise TypeError("profile_binding must be a RoleProfileBinding")
+        if self.identity.role_id != self.profile_binding.role_id:
+            raise ValueError("identity.role_id must match profile_binding.role_id")
         if not isinstance(self.turn_context, RoleTurnContext):
             raise TypeError("turn_context must be a RoleTurnContext")
         invocations = tuple(self.capability_invocations)
@@ -484,6 +486,12 @@ class RoleTurnEnvelope:
             raise TypeError("ledger_binding must be a RoleLedgerBinding")
         if not isinstance(self.task_market_binding, RoleTaskMarketBinding):
             raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
+        if (
+            self.task_market_binding.work_item_ref
+            and self.turn_context.task_refs
+            and self.task_market_binding.work_item_ref not in self.turn_context.task_refs
+        ):
+            raise ValueError("task_market_binding.work_item_ref must be listed in turn_context.task_refs")
         object.__setattr__(self, "capability_invocations", invocations)
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
@@ -580,6 +588,7 @@ class RoleRuntimeChainStepRef:
     role_id: str
     stage: str
     capability_id: str
+    capability_fingerprint_ref: str
     owner_cell: str
     command_contract: str
     result_ref: str
@@ -595,6 +604,11 @@ class RoleRuntimeChainStepRef:
         object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
         object.__setattr__(self, "stage", _require_non_empty("stage", self.stage))
         object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
+        object.__setattr__(
+            self,
+            "capability_fingerprint_ref",
+            _require_non_empty("capability_fingerprint_ref", self.capability_fingerprint_ref),
+        )
         object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
         object.__setattr__(self, "command_contract", _require_non_empty("command_contract", self.command_contract))
         object.__setattr__(self, "result_ref", _require_non_empty("result_ref", self.result_ref))
@@ -620,6 +634,7 @@ class RoleRuntimeChainEnvelope:
     task_market_refs: tuple[str, ...] = field(default_factory=tuple)
     audit_evidence_refs: tuple[str, ...] = field(default_factory=tuple)
     runtime_projection_refs: tuple[str, ...] = field(default_factory=tuple)
+    capability_fingerprint_refs: tuple[str, ...] = field(default_factory=tuple)
     handoff_refs: tuple[str, ...] = field(default_factory=tuple)
     runtime_receipt_refs: tuple[str, ...] = field(default_factory=tuple)
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -650,6 +665,11 @@ class RoleRuntimeChainEnvelope:
             self,
             "runtime_projection_refs",
             _normalize_string_tuple("runtime_projection_refs", self.runtime_projection_refs),
+        )
+        object.__setattr__(
+            self,
+            "capability_fingerprint_refs",
+            _normalize_string_tuple("capability_fingerprint_refs", self.capability_fingerprint_refs),
         )
         object.__setattr__(self, "handoff_refs", _normalize_string_tuple("handoff_refs", self.handoff_refs))
         object.__setattr__(
@@ -2239,10 +2259,10 @@ __all__ = [
     "RoleIdentity",
     "RoleLedgerBinding",
     "RoleProfileBinding",
-    "RoleRuntimeError",
     "RoleRuntimeChainAssemblyResultV1",
     "RoleRuntimeChainEnvelope",
     "RoleRuntimeChainStepRef",
+    "RoleRuntimeError",
     "RoleRuntimeObject",
     "RoleRuntimeObjectResultV1",
     "RoleRuntimeObjectSpec",

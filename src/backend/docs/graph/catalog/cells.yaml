@@ -1446,6 +1446,7 @@ cells:
         - tests/test_roles_kernel.py
         - tests/test_runtime_role_binding.py
         - tests/test_roles_state_ownership.py
+        - polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py
         - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
         - polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
         - polaris/delivery/http/routers/test_aggregate_chat.py

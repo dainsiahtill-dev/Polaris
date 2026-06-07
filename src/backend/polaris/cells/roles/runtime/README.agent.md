@@ -57,7 +57,10 @@ Defined in `public/contracts.py`:
 - `RoleStateCommitRequest`
 - `ExecuteRoleTaskCommandV1`
 - `ExecuteRoleSessionCommandV1`
+- `AggregateChatCompletionsCommandV1`
 - `GetRoleRuntimeStatusQueryV1`
+- `BuildAggregateRolePlanQueryV1`
+- `AuditAggregateRuntimeIntegrationsQueryV1`
 - `RoleRuntimeObjectResultV1`
 - `RoleTaskMarketLifecycleResultV1`
 - `RoleCapabilityInvocationResultV1`
@@ -66,6 +69,16 @@ Defined in `public/contracts.py`:
 - `RoleTaskStartedEventV1`
 - `RoleTaskCompletedEventV1`
 - `RoleExecutionResultV1`
+- `AggregateRolePlanResultV1`
+- `AggregateRoleLobeV1`
+- `AggregateCognitiveLedgerEntryV1`
+- `AggregateTakeoverDirectiveV1`
+- `AggregateRuntimeIntegrationV1`
+- `AggregateRuntimeEntrypointCheckV1`
+- `AggregateRuntimeAuditResultV1`
+- `AggregateChatCompletionsResultV1`
+- `AggregateChatChoiceV1`
+- `AggregateChatMessageV1`
 - `RoleRuntimeErrorV1`
 
 ## Design Notes
@@ -81,6 +94,9 @@ Defined in `public/contracts.py`:
 - Role object instantiation uses `instantiate_role_runtime_object(InstantiateRoleRuntimeObjectCommandV1)`
   to bind `roles.profile` via `GetRoleProfileQueryV1`; runtime stores only
   profile/tool/prompt/data policy refs and a profile fingerprint.
+- `RoleTurnEnvelope` rejects identity/profile role mismatches and task-market
+  work refs that are not listed in the current turn context task refs, so
+  inconsistent typed envelopes cannot enter ledger/commit boundaries.
 - Role asset mount tables and capability ports reject `roles.runtime`, role
   adapter/kernel/profile/session cells, and `kernelone.roles` paths as owners.
   Business assets and capabilities must be owned by their real business or
@@ -92,9 +108,10 @@ Defined in `public/contracts.py`:
 - Phase 5 chain assembly uses
   `assemble_role_runtime_chain(AssembleRoleRuntimeChainCommandV1)` to assemble
   PM, Chief Engineer, Director, QA, audit evidence, Turn Ledger, receipt,
-  handoff, Task Market, and Runtime Projection refs into a typed
-  `RoleRuntimeChainEnvelope`; it is pure refs-only assembly and does not write a
-  second Task Market, ledger, handoff pack, receipt store, or projection.
+  handoff, Task Market, Runtime Projection, and per-step capability fingerprint
+  refs into a typed `RoleRuntimeChainEnvelope`; it is pure refs-only assembly
+  and does not write a second Task Market, ledger, handoff pack, receipt store,
+  or projection.
 - Role state commits use `commit_role_state(RoleStateCommitRequest)` to bind an
   existing `roles.kernel` commit receipt to `factory.cognitive_runtime`
   `ValidateChangeSetCommandV1`, `RecordRuntimeReceiptCommandV1`, and

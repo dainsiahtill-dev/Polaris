@@ -994,6 +994,7 @@ def assemble_role_runtime_chain(
         command.audit_evidence_refs,
         *(step.evidence_refs for step in command.steps),
     )
+    capability_fingerprint_refs = _merge_refs(tuple(step.capability_fingerprint_ref for step in command.steps))
     handoff_refs = _merge_refs(*(step.handoff_refs for step in command.steps))
     runtime_receipt_refs = _merge_refs(*(step.receipt_refs for step in command.steps))
     chain = RoleRuntimeChainEnvelope(
@@ -1006,6 +1007,7 @@ def assemble_role_runtime_chain(
         task_market_refs=task_market_refs,
         audit_evidence_refs=audit_evidence_refs,
         runtime_projection_refs=command.runtime_projection_refs,
+        capability_fingerprint_refs=capability_fingerprint_refs,
         handoff_refs=handoff_refs,
         runtime_receipt_refs=runtime_receipt_refs,
         metadata={

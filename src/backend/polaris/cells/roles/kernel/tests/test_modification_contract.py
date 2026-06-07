@@ -321,6 +321,58 @@ class TestPreExecutionGateIntegration:
     """tool_batch_executor readiness gate integration tests."""
 
     @pytest.mark.asyncio
+    async def test_allowed_tool_names_match_hyphenated_native_tool_alias(
+        self, mock_emit_event: Any, mock_guard_assert: Any
+    ) -> None:
+        executor = _make_executor(mock_emit_event, mock_guard_assert)
+        decision = _make_tool_batch_decision(
+            "turn_alias_1",
+            "batch_alias_1",
+            "project-scaffold",
+            {"files": []},
+        )
+        sm = _make_state_machine("turn_alias_1")
+        ledger = TurnLedger(turn_id="turn_alias_1")
+        context = [{"role": "user", "content": "Create the project scaffold."}]
+
+        result = await executor.execute_tool_batch(
+            decision,
+            sm,
+            ledger,
+            context,
+            stream=False,
+            allowed_tool_names={"project_scaffold"},
+        )
+
+        assert result.get("turn_id") == "turn_alias_1"
+
+    @pytest.mark.asyncio
+    async def test_allowed_tool_names_match_project_scaffolding_synonym(
+        self, mock_emit_event: Any, mock_guard_assert: Any
+    ) -> None:
+        executor = _make_executor(mock_emit_event, mock_guard_assert)
+        decision = _make_tool_batch_decision(
+            "turn_alias_2",
+            "batch_alias_2",
+            "project-scaffolding",
+            {"files": []},
+        )
+        sm = _make_state_machine("turn_alias_2")
+        ledger = TurnLedger(turn_id="turn_alias_2")
+        context = [{"role": "user", "content": "Create the project scaffold."}]
+
+        result = await executor.execute_tool_batch(
+            decision,
+            sm,
+            ledger,
+            context,
+            stream=False,
+            allowed_tool_names={"project_scaffold"},
+        )
+
+        assert result.get("turn_id") == "turn_alias_2"
+
+    @pytest.mark.asyncio
     async def test_readiness_gate_allows_reads_when_needs_plan(
         self, mock_emit_event: Any, mock_guard_assert: Any
     ) -> None:
