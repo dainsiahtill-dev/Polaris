@@ -16,13 +16,20 @@ from pathlib import Path
 
 import pytest
 
+# src/backend root. This test file lives at src/backend/polaris/tests/refactor/,
+# so parents[3] is src/backend. (Historically this was written as
+# parents[2]/"src"/"backend" for a pre-ACGA2 layout where the file sat at the repo
+# root; after the move that resolved to a non-existent src/backend/polaris/src/backend
+# tree and every guard silently failed at its first .exists() check.)
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
+
 
 class TestOrchestratorUniqueness:
     """Verify only one production RuntimeOrchestrator exists"""
 
     def test_only_one_production_orchestrator(self):
         """Only one production RuntimeOrchestrator implementation is allowed"""
-        backend_root = Path(__file__).parent.parent.parent / "src" / "backend"
+        backend_root = BACKEND_ROOT
 
         # New version (only production implementation)
         new_orchestrator = backend_root / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "internal" / "runtime_orchestrator.py"
@@ -38,7 +45,7 @@ class TestOrchestratorUniqueness:
 
     def test_no_new_orchestrator_imports(self):
         """Prohibit new references to the old orchestrator"""
-        backend_root = Path(__file__).parent.parent.parent / "src" / "backend"
+        backend_root = BACKEND_ROOT
 
         # Scan new files to ensure they don't import the old orchestrator
         for py_file in backend_root.rglob("*.py"):
@@ -53,13 +60,12 @@ class TestOrchestratorUniqueness:
             # Check if old version is incorrectly imported.
             # The literal string "from core.runtime_orchestrator import" is an
             # intentional search pattern to detect legacy imports in production code.
-            if "from core.runtime_orchestrator import" in content:
-                # Allow imports in new version for compatibility
-                if "core/orchestration" not in str(py_file):
-                    pytest.fail(
-                        f"{py_file} imports from deprecated core.runtime_orchestrator. "
-                        f"Use polaris.cells.orchestration.workflow_runtime instead."
-                    )
+            # Allow imports in the new compatibility version for compatibility.
+            if "from core.runtime_orchestrator import" in content and "core/orchestration" not in str(py_file):
+                pytest.fail(
+                    f"{py_file} imports from deprecated core.runtime_orchestrator. "
+                    f"Use polaris.cells.orchestration.workflow_runtime instead."
+                )
 
 
 class TestServiceModuleCompleteness:
@@ -67,14 +73,14 @@ class TestServiceModuleCompleteness:
 
     def test_pm_service_exists(self):
         """PM service module must exist"""
-        pm_service = Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "delivery" / "cli" / "pm" / "pm_service.py"
-        legacy_pm_service = Path(__file__).parent.parent.parent / "src" / "backend" / "scripts" / "pm" / "pm_service.py"
+        pm_service = BACKEND_ROOT / "polaris" / "delivery" / "cli" / "pm" / "pm_service.py"
+        legacy_pm_service = BACKEND_ROOT / "scripts" / "pm" / "pm_service.py"
         assert pm_service.exists() or legacy_pm_service.exists(), "pm_service.py must exist for cli_thin to work"
 
     def test_director_service_exists(self):
         """Director service module must exist"""
-        director_service = Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "delivery" / "cli" / "director" / "director_service.py"
-        legacy_director_service = Path(__file__).parent.parent.parent / "src" / "backend" / "scripts" / "director" / "director_service.py"
+        director_service = BACKEND_ROOT / "polaris" / "delivery" / "cli" / "director" / "director_service.py"
+        legacy_director_service = BACKEND_ROOT / "scripts" / "director" / "director_service.py"
         assert director_service.exists() or legacy_director_service.exists(), "director_service.py must exist for cli_thin to work"
 
 
@@ -83,8 +89,8 @@ class TestContractTypes:
 
     def test_orchestration_contracts_exist(self):
         """Unified orchestration contracts must exist"""
-        contracts = Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "public" / "contracts.py"
-        legacy_contracts = Path(__file__).parent.parent.parent / "src" / "backend" / "application" / "dto" / "orchestration_contracts.py"
+        contracts = BACKEND_ROOT / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "internal" / "runtime_contracts.py"
+        legacy_contracts = BACKEND_ROOT / "application" / "dto" / "orchestration_contracts.py"
         target = contracts if contracts.exists() else legacy_contracts
         assert target.exists(), "orchestration contracts must exist"
 
@@ -104,8 +110,8 @@ class TestContractTypes:
 
     def test_service_port_exists(self):
         """Orchestration service port must exist"""
-        port_file = Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "public" / "service.py"
-        legacy_port_file = Path(__file__).parent.parent.parent / "src" / "backend" / "application" / "ports" / "orchestration_service.py"
+        port_file = BACKEND_ROOT / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "public" / "service.py"
+        legacy_port_file = BACKEND_ROOT / "application" / "ports" / "orchestration_service.py"
         target = port_file if port_file.exists() else legacy_port_file
         assert target.exists(), "orchestration service port must exist"
 
@@ -127,10 +133,10 @@ class TestNoBusinessLogicInCLI:
     def test_cli_thin_is_thin(self):
         """cli_thin should only contain parsing and forwarding"""
         cli_files = [
-            Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "delivery" / "cli" / "pm" / "cli_thin.py",
-            Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "delivery" / "cli" / "director" / "cli_thin.py",
-            Path(__file__).parent.parent.parent / "src" / "backend" / "scripts" / "pm" / "cli_thin.py",
-            Path(__file__).parent.parent.parent / "src" / "backend" / "scripts" / "director" / "cli_thin.py",
+            BACKEND_ROOT / "polaris" / "delivery" / "cli" / "pm" / "cli_thin.py",
+            BACKEND_ROOT / "polaris" / "delivery" / "cli" / "director" / "cli_thin.py",
+            BACKEND_ROOT / "scripts" / "pm" / "cli_thin.py",
+            BACKEND_ROOT / "scripts" / "director" / "cli_thin.py",
         ]
 
         for cli_file in cli_files:
@@ -156,8 +162,8 @@ class TestUnifiedServiceExport:
 
     def test_unified_service_in_init(self):
         """Unified orchestration service must be exported in __init__"""
-        init_file = Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "public" / "__init__.py"
-        legacy_init_file = Path(__file__).parent.parent.parent / "src" / "backend" / "core" / "orchestration" / "__init__.py"
+        init_file = BACKEND_ROOT / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "public" / "__init__.py"
+        legacy_init_file = BACKEND_ROOT / "core" / "orchestration" / "__init__.py"
         target = init_file if init_file.exists() else legacy_init_file
         assert target.exists(), "orchestration __init__.py must exist"
 
@@ -179,7 +185,7 @@ class TestRoleAdapters:
     def setup_path(self):
         """Add backend path to Python path"""
         import sys
-        backend_root = Path(__file__).parent.parent.parent / "src" / "backend"
+        backend_root = BACKEND_ROOT
         if str(backend_root) not in sys.path:
             sys.path.insert(0, str(backend_root))
 
@@ -216,8 +222,12 @@ class TestGenericWorkflow:
 
     def test_generic_pipeline_workflow_exists(self):
         """Generic pipeline workflow must exist"""
-        workflow_file = Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "cells" / "orchestration" / "workflow_orchestration" / "__init__.py"
-        legacy_workflow_file = Path(__file__).parent.parent.parent / "src" / "backend" / "app" / "orchestration" / "workflows" / "generic_pipeline_workflow.py"
+        workflow_file = (
+            BACKEND_ROOT
+            / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "internal"
+            / "runtime_engine" / "workflows" / "generic_pipeline_workflow.py"
+        )
+        legacy_workflow_file = BACKEND_ROOT / "app" / "orchestration" / "workflows" / "generic_pipeline_workflow.py"
         target = workflow_file if workflow_file.exists() else legacy_workflow_file
         assert target.exists(), "generic pipeline workflow must exist"
 
@@ -234,8 +244,12 @@ class TestGenericWorkflow:
 
     def test_compatibility_wrappers_exist(self):
         """Compatibility wrappers must exist"""
-        workflow_file = Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "cells" / "orchestration" / "workflow_orchestration" / "__init__.py"
-        legacy_workflow_file = Path(__file__).parent.parent.parent / "src" / "backend" / "app" / "orchestration" / "workflows" / "generic_pipeline_workflow.py"
+        workflow_file = (
+            BACKEND_ROOT
+            / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "internal"
+            / "runtime_engine" / "workflows" / "__init__.py"
+        )
+        legacy_workflow_file = BACKEND_ROOT / "app" / "orchestration" / "workflows" / "generic_pipeline_workflow.py"
         target = workflow_file if workflow_file.exists() else legacy_workflow_file
         if not target.exists():
             pytest.skip("Workflow file not found")
@@ -252,7 +266,7 @@ class TestUIStateContract:
 
     def test_ui_state_contract_exists(self):
         """UI state contract must exist"""
-        contract_file = Path(__file__).parent.parent.parent / "src" / "backend" / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "internal" / "ui_state_contract.py"
-        legacy_contract_file = Path(__file__).parent.parent.parent / "src" / "backend" / "core" / "orchestration" / "ui_state_contract.py"
+        contract_file = BACKEND_ROOT / "polaris" / "cells" / "orchestration" / "workflow_runtime" / "internal" / "ui_state_contract.py"
+        legacy_contract_file = BACKEND_ROOT / "core" / "orchestration" / "ui_state_contract.py"
         target = contract_file if contract_file.exists() else legacy_contract_file
         assert target.exists(), "ui_state_contract.py must exist"
