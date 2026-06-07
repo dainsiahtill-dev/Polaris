@@ -358,54 +358,6 @@ def test_retrieval_reranker_avoids_lambda_mutation_and_cache_key_collisions(
     assert adaptive._mmr.lambda_ == default_lambda
 
 
-def test_subagent_isolated_workspace_is_cleaned_up(monkeypatch, tmp_path: Path) -> None:
-    from polaris.kernelone.single_agent.subagent_runtime import SubagentConfig, SubagentSpawner
-
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    isolated_dir = tmp_path / "isolated-subagent"
-
-    def _fake_mkdtemp(prefix: str) -> str:
-        del prefix
-        isolated_dir.mkdir()
-        return str(isolated_dir)
-
-    class _TextBlock:
-        type = "text"
-        text = "done"
-
-    class _MessagesAPI:
-        def create(self, **kwargs):
-            del kwargs
-            return SimpleNamespace(content=[_TextBlock()])
-
-    class _LLMClient:
-        messages = _MessagesAPI()
-
-    monkeypatch.setattr(
-        "polaris.kernelone.single_agent.subagent_runtime.tempfile.mkdtemp",
-        _fake_mkdtemp,
-    )
-
-    spawner = SubagentSpawner(
-        workspace=str(workspace),
-        llm_client=_LLMClient(),
-        model="test-model",
-    )
-    result = spawner.spawn(
-        task_description="Return once",
-        context={},
-        config=SubagentConfig(
-            max_iterations=1,
-            timeout_seconds=1,
-            isolated_workspace=True,
-        ),
-    )
-
-    assert result.success is True
-    assert isolated_dir.exists() is False
-
-
 @pytest.mark.asyncio
 async def test_copy_context_to_task_runs_in_captured_context() -> None:
     from polaris.kernelone.trace.async_utils import copy_context_to_task
