@@ -9,10 +9,12 @@ purpose: >
 entry_cells:
   - director.execution
   - chief_engineer.blueprint
+  - roles.runtime
   - workspace.integrity
 
 cells:
   - code_intelligence.engine
+  - roles.runtime
   - workspace.integrity
   - context.engine
   - kernelone.core
@@ -47,15 +49,20 @@ relations:
     to: code_intelligence.engine
     type: depends_on
     contract: code_intelligence.engine
+  - from: roles.runtime
+    to: code_intelligence.engine
+    type: queries
+    contract: VerifyAstDependencyQueryV1
 
 critical_contracts:
+  - VerifyAstDependencyQueryV1
+  - AstDependencyVerificationResultV1
   - repo_symbols_index
   - repo_read_slice
   - repo_read_around
   - repo_read_head
   - repo_read_tail
   - repo_rg
-  - treesitter_find_symbol
   - WorkspaceWriteGuardQueryV1
 
 state_boundaries:
@@ -65,11 +72,15 @@ state_boundaries:
 verify_targets:
   tests:
     - tests/test_hyper_opt.py
+    - polaris/cells/code_intelligence/engine/public/tests/test_contracts.py
+    - polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py
   contracts:
+    - VerifyAstDependencyQueryV1
+    - AstDependencyVerificationResultV1
     - repo_symbols_index
     - repo_read_slice
 
 migration_notes:
-  - Cell directory structure pending creation (Phase 2).
-  - Full migration from infrastructure to cells layer is Phase 3 work.
+  - Public AST verification contract is available for CE role runtime invocation.
+  - Full indexing migration from infrastructure adapters remains pending.
   - Code intelligence indexing strategy still depends on infrastructure adapter maturity.

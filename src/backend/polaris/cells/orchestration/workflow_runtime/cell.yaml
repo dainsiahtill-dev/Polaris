@@ -35,6 +35,7 @@ depends_on:
 - audit.evidence
 - events.fact_stream
 - factory.cognitive_runtime
+- orchestration.workflow_activity
 - orchestration.pm_dispatch
 - orchestration.pm_planning
 - orchestration.workflow_engine
@@ -43,7 +44,9 @@ depends_on:
 - resident.autonomy
 - roles.adapters
 - roles.profile
+- runtime.artifact_store
 - runtime.execution_broker
+- runtime.task_runtime
 - runtime.state_owner
 - workspace.integrity
 subgraphs:

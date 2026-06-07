@@ -10,10 +10,14 @@ Run independent QA or Auditor validation and emit structured acceptance verdicts
 
 ## Public Contracts
 
+- commands: `ParseTracebackFramesCommandV1`
 - commands: `RunQaAuditCommandV1`
 - queries: `GetQaVerdictQueryV1`
 - events: `QaVerdictIssuedEventV1`
+- results: `FailureSignalV1`
+- results: `ParseTracebackFramesResultV1`
 - results: `QaAuditResultV1`
+- results: `TracebackFrameV1`
 - errors: `QaAuditError`
 
 ## Architecture
@@ -35,6 +39,9 @@ internal/
   adapter for QA verdict issuance. Cross-role callers, including
   `roles.runtime`, must call this public service and must not import
   `qa.audit_verdict.internal.*`.
+- `parse_traceback_frames(ParseTracebackFramesCommandV1) ->
+  ParseTracebackFramesResultV1` emits typed `FailureSignalV1` data for the
+  `FailureSignalIndex` asset mount.
 
 ## Cross-Cell Dependencies
 

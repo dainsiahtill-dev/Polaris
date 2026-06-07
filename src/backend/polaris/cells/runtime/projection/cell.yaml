@@ -43,6 +43,7 @@ depends_on:
 - runtime.task_market
 - runtime.task_runtime
 - storage.layout
+- workspace.integrity
 subgraphs:
 - storage_archive_pipeline
 state_owners: []

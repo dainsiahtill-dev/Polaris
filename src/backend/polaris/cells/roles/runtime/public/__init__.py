@@ -121,6 +121,7 @@ __all__ = [
     "aggregate_chat_completions",
     "audit_aggregate_runtime_integrations",
     "classify_task",
+    "commit_role_state",
     "create_engine_budget",
     "create_protocol_bus",
     "create_protocol_fsm",

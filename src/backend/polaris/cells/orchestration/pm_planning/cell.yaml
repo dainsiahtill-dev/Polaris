@@ -48,6 +48,7 @@ effects_allowed:
 - fs.read:runtime/contracts/*
 - fs.write:runtime/state/pm/*
 - fs.write:runtime/events/pm.events.jsonl
+- process.spawn:pm/typecheck
 - llm.invoke:pm/*
 verification:
   tests:

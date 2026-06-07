@@ -139,6 +139,10 @@ relations:
     type: commands
     contract: RunQaAuditCommandV1
   - from: roles.runtime
+    to: qa.audit_verdict
+    type: commands
+    contract: ParseTracebackFramesCommandV1
+  - from: roles.runtime
     to: finops.budget_guard
     type: commands
     contract: ReserveBudgetCommandV1
@@ -202,9 +206,12 @@ critical_contracts:
   - ReprojectProjectionExperimentCommandV1
   - RefreshProjectionBackMappingCommandV1
   - RunQaAuditCommandV1
+  - ParseTracebackFramesCommandV1
   - EvaluatePermissionCommandV1
   - GenerateArchitectureDesignCommandV1
   - ReserveBudgetCommandV1
+  - RecordRuntimeReceiptCommandV1
+  - ExportHandoffPackCommandV1
   - StartWorkflowCommandV1
   - LaunchExecutionProcessCommandV1
   - UpdateRuntimeTaskCommandV1

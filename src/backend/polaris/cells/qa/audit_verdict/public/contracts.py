@@ -19,6 +19,83 @@ def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 @dataclass(frozen=True)
+class TracebackFrameV1:
+    path: str
+    line: int
+    function: str
+    code: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", _require_non_empty("path", self.path))
+        object.__setattr__(self, "function", _require_non_empty("function", self.function))
+        object.__setattr__(self, "code", str(self.code or "").strip())
+        line = int(self.line)
+        if line < 1:
+            raise ValueError("line must be >= 1")
+        object.__setattr__(self, "line", line)
+
+
+@dataclass(frozen=True)
+class FailureSignalV1:
+    signal_id: str
+    task_id: str
+    workspace: str
+    signal_type: str
+    summary: str
+    frames: tuple[TracebackFrameV1, ...] = field(default_factory=tuple)
+    severity: str = "error"
+    source: str = "traceback"
+    raw_excerpt: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "signal_id", _require_non_empty("signal_id", self.signal_id))
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "signal_type", _require_non_empty("signal_type", self.signal_type))
+        object.__setattr__(self, "summary", _require_non_empty("summary", self.summary))
+        object.__setattr__(self, "severity", _require_non_empty("severity", self.severity))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        frames = tuple(self.frames)
+        if not all(isinstance(frame, TracebackFrameV1) for frame in frames):
+            raise TypeError("frames must contain TracebackFrameV1 values")
+        object.__setattr__(self, "frames", frames)
+        object.__setattr__(self, "raw_excerpt", str(self.raw_excerpt or ""))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class ParseTracebackFramesCommandV1:
+    task_id: str
+    workspace: str
+    traceback_text: str
+    run_id: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "traceback_text", _require_non_empty("traceback_text", self.traceback_text))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class ParseTracebackFramesResultV1:
+    ok: bool
+    task_id: str
+    workspace: str
+    signal: FailureSignalV1
+    frame_count: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        if not isinstance(self.signal, FailureSignalV1):
+            raise TypeError("signal must be a FailureSignalV1")
+        object.__setattr__(self, "frame_count", len(self.signal.frames))
+
+
+@dataclass(frozen=True)
 class RunQaAuditCommandV1:
     task_id: str
     workspace: str
@@ -140,11 +217,15 @@ class QaAuditCompletedEventV1:
 __all__ = [
     # Task Market consumer contracts
     "ClaimQaTaskCommandV1",
+    "FailureSignalV1",
     "GetQaVerdictQueryV1",
+    "ParseTracebackFramesCommandV1",
+    "ParseTracebackFramesResultV1",
     "QaAuditCompletedEventV1",
     "QaAuditError",
     "QaAuditErrorV1",
     "QaAuditResultV1",
     "QaVerdictIssuedEventV1",
     "RunQaAuditCommandV1",
+    "TracebackFrameV1",
 ]

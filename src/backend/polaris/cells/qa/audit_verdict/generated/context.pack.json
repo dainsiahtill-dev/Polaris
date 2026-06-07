@@ -10,6 +10,7 @@
   ],
   "public_contracts": {
     "commands": [
+      "ParseTracebackFramesCommandV1",
       "RunQaAuditCommandV1"
     ],
     "queries": [
@@ -19,6 +20,9 @@
       "QaVerdictIssuedEventV1"
     ],
     "results": [
+      "FailureSignalV1",
+      "ParseTracebackFramesResultV1",
+      "TracebackFrameV1",
       "QaAuditResultV1"
     ],
     "errors": [

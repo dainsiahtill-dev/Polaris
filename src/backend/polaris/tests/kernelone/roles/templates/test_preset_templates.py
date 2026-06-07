@@ -168,7 +168,7 @@ class TestTemplateTools:
         real_read = {
             "repo_rg",
             "repo_tree",
-            "repo_glob",
+            "glob",
             "repo_read_slice",
             "repo_symbols_index",
             "file_exists",

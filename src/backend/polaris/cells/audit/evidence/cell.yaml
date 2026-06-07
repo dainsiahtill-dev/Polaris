@@ -33,7 +33,9 @@ public_contracts:
   errors:
   - EvidenceAuditErrorV1
 depends_on:
+- llm.provider_runtime
 - policy.workspace_guard
+- roles.runtime
 subgraphs:
 - storage_archive_pipeline
 state_owners:

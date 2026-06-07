@@ -20,7 +20,8 @@ GATE_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_cat
 # Helpers for unit testing the reconciliation logic directly
 # ------------------------------------------------------------------
 
-from docs.governance.ci.scripts.run_catalog_governance_gate import (
+from docs.governance.ci.scripts.run_catalog_governance_gate import (  # noqa: E402
+    GovernanceIssue,
     ManifestCatalogMismatch,
     _check_manifest_catalog_consistency,
     _count_new_mismatches,
@@ -30,6 +31,30 @@ from docs.governance.ci.scripts.run_catalog_governance_gate import (
     _validate_schema_targets,
     _write_mismatch_baseline,
 )
+
+
+class TestGovernanceIssueFingerprint:
+    """Tests for stable governance debt identity."""
+
+    def test_fingerprint_ignores_line_drift_for_same_issue(self) -> None:
+        first = GovernanceIssue(
+            rule_id="no_cross_cell_internal_import",
+            severity="blocker",
+            path="polaris/cells/roles/runtime/public/service.py",
+            line=2681,
+            message="roles.runtime imports context.engine internal module",
+        )
+        second = GovernanceIssue(
+            rule_id=first.rule_id,
+            severity=first.severity,
+            path=first.path,
+            line=2932,
+            message=first.message,
+        )
+
+        assert first.fingerprint() == second.fingerprint()
+        assert first.to_dict()["line"] == 2681
+        assert second.to_dict()["line"] == 2932
 
 
 class TestOwnedPathContained:
@@ -222,10 +247,7 @@ class TestSchemaIssuePaths:
         schema_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         schema_path.write_text(
-            "type: object\n"
-            "required:\n"
-            "  - id\n"
-            "additionalProperties: false\n",
+            "type: object\nrequired:\n  - id\nadditionalProperties: false\n",
             encoding="utf-8",
         )
         target_path.write_text("name: invalid\n", encoding="utf-8")

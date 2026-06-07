@@ -11,6 +11,8 @@ purpose: >
   infrastructure.
 
 current_modules:
+  - polaris.cells.code_intelligence.engine.public.contracts
+  - polaris.cells.code_intelligence.engine.public.service
   - polaris.infrastructure.code_intelligence.code_intelligence
   - polaris.infrastructure.code_intelligence.code_intelligence_async
   - polaris.infrastructure.code_intelligence.incremental_analyzer
@@ -21,6 +23,8 @@ tags:
   - context-compilation
 
 owned_paths:
+  - polaris/cells/code_intelligence/engine/public/**
+  - polaris/cells/code_intelligence/engine/internal/**
   - polaris/infrastructure/code_intelligence/**
   - polaris/infrastructure/accel/indexers/**
   - polaris/infrastructure/accel/verify/**
@@ -28,11 +32,15 @@ owned_paths:
 public_contracts:
   modules:
     - polaris.cells.code_intelligence.engine.public.contracts
+    - polaris.cells.code_intelligence.engine.public.service
   commands: []
-  queries: []
+  queries:
+    - VerifyAstDependencyQueryV1
   events: []
-  results: []
-  errors: []
+  results:
+    - AstDependencyVerificationResultV1
+  errors:
+    - CodeIntelligenceEngineErrorV1
 
 depends_on:
   - workspace.integrity
@@ -48,7 +56,7 @@ effects_allowed:
   - process.spawn:code_intelligence/engine/**
 
 verification:
-  tests: []
+  tests:
+    - polaris/cells/code_intelligence/engine/public/tests/test_contracts.py
   gaps:
-    - Cell directory structure created (Phase 2).
-    - Full migration from infrastructure to cells layer pending (Phase 3).
+    - Full indexing migration from infrastructure adapters remains pending.

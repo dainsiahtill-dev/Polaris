@@ -54,11 +54,12 @@ BACKEND_ROOT = DOCS_DIR.parent  # src/backend
 # Add scripts directory to path for imports
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from fitness_rule_checker import FitnessCheckResult, FitnessRuleChecker
+from fitness_rule_checker import FitnessCheckResult, FitnessRuleChecker  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Semantic search implementations analysis
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SemanticSearchSite:
@@ -200,8 +201,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
         if check_result.non_compliant_sites:
             # Check if non-compliant sites are workspace-level (acceptable)
             workspace_level_violations = [
-                site for site in check_result.non_compliant_sites
-                if self._is_workspace_level_acceptable(site)
+                site for site in check_result.non_compliant_sites if self._is_workspace_level_acceptable(site)
             ]
 
             if workspace_level_violations:
@@ -216,8 +216,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
 
             # Check for actual Cell-level violations
             cell_level_violations = [
-                site for site in check_result.non_compliant_sites
-                if not self._is_workspace_level_acceptable(site)
+                site for site in check_result.non_compliant_sites if not self._is_workspace_level_acceptable(site)
             ]
 
             if cell_level_violations:
@@ -240,8 +239,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
                 )
         else:
             result.message = (
-                f"All {check_result.total_sites_found} semantic search implementations "
-                f"respect graph boundaries"
+                f"All {check_result.total_sites_found} semantic search implementations respect graph boundaries"
             )
 
         return result
@@ -315,9 +313,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
 
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
-                class_sites = self._analyze_class_for_search(
-                    node, file_path, content, relative_path
-                )
+                class_sites = self._analyze_class_for_search(node, file_path, content, relative_path)
                 sites.extend(class_sites)
 
         return sites
@@ -346,19 +342,12 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
 
         # Analyze for graph constraints
         imports_graph_service = any(
-            pattern in class_content
-            for pattern in ["ContextCatalogService", "SearchService", "cells.yaml"]
+            pattern in class_content for pattern in ["ContextCatalogService", "SearchService", "cells.yaml"]
         )
 
-        has_graph_constraint = any(
-            pattern in class_content
-            for pattern in self.GRAPH_CONSTRAINED_PATTERNS
-        )
+        has_graph_constraint = any(pattern in class_content for pattern in self.GRAPH_CONSTRAINED_PATTERNS)
 
-        has_unconstraint = any(
-            pattern in class_content
-            for pattern in self.UNCONSTRAINED_PATTERNS
-        )
+        has_unconstraint = any(pattern in class_content for pattern in self.UNCONSTRAINED_PATTERNS)
 
         # Analyze methods
         for node in class_node.body:
@@ -366,9 +355,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
                 method_name = node.name
                 if self._is_search_method(method_name):
                     is_constrained = has_graph_constraint or imports_graph_service
-                    reasoning = self._build_reasoning(
-                        is_constrained, has_graph_constraint, has_unconstraint
-                    )
+                    reasoning = self._build_reasoning(is_constrained, has_graph_constraint, has_unconstraint)
 
                     sites.append(
                         SemanticSearchSite(
@@ -388,8 +375,15 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
     def _is_search_method(self, method_name: str) -> bool:
         """Check if a method name indicates search functionality."""
         search_patterns = [
-            "search", "retrieve", "query", "find", "lookup",
-            "get_relevant", "semantic_", "vector_", "embedding_",
+            "search",
+            "retrieve",
+            "query",
+            "find",
+            "lookup",
+            "get_relevant",
+            "semantic_",
+            "vector_",
+            "embedding_",
         ]
         return any(pattern in method_name.lower() for pattern in search_patterns)
 
@@ -409,9 +403,7 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
         else:
             return "Search implementation - graph constraint status undetermined"
 
-    def _analyze_search_sites(
-        self, sites: list[SemanticSearchSite]
-    ) -> SemanticBoundaryCheckResult:
+    def _analyze_search_sites(self, sites: list[SemanticSearchSite]) -> SemanticBoundaryCheckResult:
         """Analyze search sites and categorize by compliance."""
         result = SemanticBoundaryCheckResult(total_sites_found=len(sites))
 
@@ -519,9 +511,10 @@ def main() -> int:
 
         return 0 if result.passed else 1
 
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: Script error: {exc}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         return 2
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Coroutine, TypeVar
@@ -13,9 +15,17 @@ from polaris.cells.qa.audit_verdict.internal.qa_agent import QAAgent
 from polaris.cells.qa.audit_verdict.internal.qa_consumer import QAConsumer
 from polaris.cells.qa.audit_verdict.internal.qa_service import AuditResult, QAConfig, QAService
 from polaris.cells.qa.audit_verdict.internal.quality_service import QualityService, get_quality_service
-from polaris.cells.qa.audit_verdict.public.contracts import QaAuditResultV1, RunQaAuditCommandV1
+from polaris.cells.qa.audit_verdict.public.contracts import (
+    FailureSignalV1,
+    ParseTracebackFramesCommandV1,
+    ParseTracebackFramesResultV1,
+    QaAuditResultV1,
+    RunQaAuditCommandV1,
+    TracebackFrameV1,
+)
 
 _T = TypeVar("_T")
+_TRACEBACK_FRAME_RE = re.compile(r'^\s*File "([^"]+)", line (\d+), in ([^\n]+)\s*$')
 
 
 def _run_async(coro: Coroutine[Any, Any, _T]) -> _T:
@@ -87,15 +97,100 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
     )
 
 
+def _traceback_summary(lines: list[str]) -> str:
+    for raw_line in reversed(lines):
+        line = raw_line.strip()
+        if not line or line.startswith("File ") or line.startswith("Traceback "):
+            continue
+        if set(line) <= {"^", "~"}:
+            continue
+        return line
+    return "traceback failure"
+
+
+def _signal_type(summary: str) -> str:
+    match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?):", summary)
+    if match:
+        return match.group(1)
+    return "traceback_failure"
+
+
+def _signal_id(command: ParseTracebackFramesCommandV1, summary: str, frames: tuple[TracebackFrameV1, ...]) -> str:
+    basis = "|".join(
+        (
+            command.task_id,
+            command.workspace,
+            summary,
+            ";".join(f"{frame.path}:{frame.line}:{frame.function}" for frame in frames),
+        )
+    )
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+
+
+def _parse_traceback_frame_rows(traceback_text: str) -> tuple[TracebackFrameV1, ...]:
+    lines = traceback_text.splitlines()
+    frames: list[TracebackFrameV1] = []
+    for index, raw_line in enumerate(lines):
+        match = _TRACEBACK_FRAME_RE.match(raw_line)
+        if match is None:
+            continue
+        code = ""
+        if index + 1 < len(lines):
+            next_line = lines[index + 1].strip()
+            if next_line and not next_line.startswith("File ") and not next_line.startswith("Traceback "):
+                code = next_line
+        frames.append(
+            TracebackFrameV1(
+                path=match.group(1),
+                line=int(match.group(2)),
+                function=match.group(3).strip(),
+                code=code,
+            )
+        )
+    return tuple(frames)
+
+
+def parse_traceback_frames(command: ParseTracebackFramesCommandV1) -> ParseTracebackFramesResultV1:
+    """Parse traceback text into a typed QA failure signal."""
+    if not isinstance(command, ParseTracebackFramesCommandV1):
+        raise TypeError("command must be ParseTracebackFramesCommandV1")
+
+    lines = command.traceback_text.splitlines()
+    frames = _parse_traceback_frame_rows(command.traceback_text)
+    summary = _traceback_summary(lines)
+    signal = FailureSignalV1(
+        signal_id=_signal_id(command, summary, frames),
+        task_id=command.task_id,
+        workspace=command.workspace,
+        signal_type=_signal_type(summary),
+        summary=summary,
+        frames=frames,
+        source=str(command.metadata.get("source") or "traceback"),
+        raw_excerpt=command.traceback_text[:2000],
+        metadata=command.metadata,
+    )
+    return ParseTracebackFramesResultV1(
+        ok=True,
+        task_id=command.task_id,
+        workspace=command.workspace,
+        signal=signal,
+    )
+
+
 __all__ = [
     "AuditResult",
+    "FailureSignalV1",
+    "ParseTracebackFramesCommandV1",
+    "ParseTracebackFramesResultV1",
     "QAAgent",
     "QAConfig",
     "QAConsumer",
     "QAService",
     "QualityService",
     "ReviewGate",
+    "TracebackFrameV1",
     "get_quality_service",
     "get_review_gate",
+    "parse_traceback_frames",
     "run_qa_audit",
 ]

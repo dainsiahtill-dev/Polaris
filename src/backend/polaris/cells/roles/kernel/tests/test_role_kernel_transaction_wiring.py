@@ -13,7 +13,7 @@ from polaris.cells.roles.kernel.internal.transaction.finalization import Finaliz
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
-from polaris.cells.roles.profile.internal.schema import RoleTurnResult
+from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 
 

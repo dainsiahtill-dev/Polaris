@@ -535,6 +535,7 @@ cells:
       - orchestration.workflow_runtime
       - resident.autonomy
       - runtime.artifact_store
+      - workspace.integrity
     subgraphs:
       - storage_archive_pipeline
     state_owners: []
@@ -590,6 +591,7 @@ cells:
     depends_on:
       - policy.workspace_guard
       - llm.provider_runtime
+      - roles.runtime
     subgraphs:
       - storage_archive_pipeline
     state_owners:
@@ -1318,13 +1320,11 @@ cells:
     current_modules:
       - polaris.cells.roles.runtime.public.service
       - polaris.cells.roles.runtime.internal
-      - polaris.delivery.http.routers.aggregate_chat
       - polaris.delivery.http.routers.role_chat
       - polaris.delivery.http.routers.role_session
     owned_paths:
       - polaris/cells/roles/runtime/public/**
       - polaris/cells/roles/runtime/internal/**
-      - polaris/delivery/http/routers/aggregate_chat.py
       - polaris/delivery/http/routers/role_chat.py
       - polaris/delivery/http/routers/role_session.py
     public_contracts:
@@ -1332,6 +1332,7 @@ cells:
         - polaris.cells.roles.runtime.public.contracts
       commands:
         - ExecuteRoleCapabilityInvocationCommandV1
+        - RoleStateCommitRequest
         - ExecuteRoleTaskCommandV1
         - ExecuteRoleSessionCommandV1
         - AggregateChatCompletionsCommandV1
@@ -1344,6 +1345,7 @@ cells:
         - RoleTaskCompletedEventV1
       results:
         - RoleCapabilityInvocationResultV1
+        - RoleStateCommitReceipt
         - RoleExecutionResultV1
         - AggregateRolePlanResultV1
         - AggregateRoleLobeV1
@@ -1362,8 +1364,10 @@ cells:
       - context.catalog
       - context.engine
       - runtime.execution_broker
+      - runtime.projection
       - runtime.state_owner
       - audit.evidence
+      - code_intelligence.engine
       - policy.workspace_guard
       - policy.permission
       - orchestration.pm_planning
@@ -1401,12 +1405,18 @@ cells:
       - bus.publish:agent_messages/*
       - bus.consume:agent_messages/*
       - task_market.publish:*
+      - task_market.read
+      - runtime_projection.read
       - blueprint.generate:*
       - process.spawn:qa/pytest
+      - qa.failure_signal.parse
       - qa.verdict.issue
       - budget.reserve:context
       - mutation.guard:workspace
       - architect.validate_cell_boundary
+      - code_intelligence.read
+      - runtime_receipt.record
+      - handoff.export
     verification:
       tests:
         - tests/test_roles_kernel.py
@@ -1460,6 +1470,7 @@ cells:
       - roles.session
       - context.engine
       - llm.control_plane
+      - factory.cognitive_runtime
       - factory.pipeline
       - runtime.task_runtime
       - runtime.execution_broker
@@ -2113,6 +2124,7 @@ cells:
       - fs.read:runtime/contracts/*
       - fs.write:runtime/state/pm/*
       - fs.write:runtime/events/pm.events.jsonl
+      - process.spawn:pm/typecheck
       - llm.invoke:pm/*
     verification:
       tests:
@@ -2200,6 +2212,8 @@ cells:
       verification capabilities for Director and ChiefEngineer flows. Owns the
       code_intelligence service layer and adapters for accel/ infrastructure.
     current_modules:
+      - polaris.cells.code_intelligence.engine.public.contracts
+      - polaris.cells.code_intelligence.engine.public.service
       - polaris.infrastructure.code_intelligence.code_intelligence
       - polaris.infrastructure.code_intelligence.code_intelligence_async
       - polaris.infrastructure.code_intelligence.incremental_analyzer
@@ -2207,17 +2221,23 @@ cells:
       - polaris.infrastructure.accel.query
       - polaris.infrastructure.accel.verify
     owned_paths:
+      - polaris/cells/code_intelligence/engine/public/**
+      - polaris/cells/code_intelligence/engine/internal/**
       - polaris/infrastructure/code_intelligence/**
       - polaris/infrastructure/accel/indexers/**
       - polaris/infrastructure/accel/verify/**
     public_contracts:
       modules:
-        - polaris.cells.code_intelligence.engine.public
+        - polaris.cells.code_intelligence.engine.public.contracts
+        - polaris.cells.code_intelligence.engine.public.service
       commands: []
-      queries: []
+      queries:
+        - VerifyAstDependencyQueryV1
       events: []
-      results: []
-      errors: []
+      results:
+        - AstDependencyVerificationResultV1
+      errors:
+        - CodeIntelligenceEngineErrorV1
     depends_on:
       - workspace.integrity
       - kernelone.core
@@ -2228,8 +2248,10 @@ cells:
       - fs.read:workspace/**
       - process.spawn:code_intelligence/engine/**
     verification:
+      tests:
+        - polaris/cells/code_intelligence/engine/public/tests/test_contracts.py
       gaps:
-        - Full migration from infrastructure to cells layer (Phase 3).
+        - Full indexing migration from infrastructure adapters remains pending.
 
   - id: chief_engineer.blueprint
     title: Chief Engineer Blueprint
@@ -2514,6 +2536,7 @@ cells:
       errors: []
     depends_on:
       - runtime.task_market
+      - roles.adapters
     subgraphs: []
     state_owners: []
     effects_allowed:
@@ -2555,6 +2578,7 @@ cells:
       - policy.workspace_guard
       - audit.verdict
       - director.execution
+      - factory.cognitive_runtime
       - roles.runtime
     subgraphs: []
     state_owners:
@@ -2668,13 +2692,17 @@ cells:
         - polaris.cells.qa.audit_verdict.public.contracts
         - polaris.cells.qa.audit_verdict.public.service
       commands:
+        - ParseTracebackFramesCommandV1
         - RunQaAuditCommandV1
       queries:
         - GetQaVerdictQueryV1
       events:
         - QaVerdictIssuedEventV1
       results:
+        - FailureSignalV1
+        - ParseTracebackFramesResultV1
         - QaAuditResultV1
+        - TracebackFrameV1
       errors:
         - QaAuditErrorV1
     depends_on:
@@ -2984,12 +3012,15 @@ cells:
       - events.fact_stream
       - factory.cognitive_runtime
       - archive.run_archive
+      - orchestration.workflow_activity
       - orchestration.workflow_engine
       - orchestration.pm_planning
       - orchestration.pm_dispatch
       - resident.autonomy
       - roles.adapters
       - roles.profile
+      - runtime.artifact_store
+      - runtime.task_runtime
       - workspace.integrity
     subgraphs:
       - execution_governance_pipeline

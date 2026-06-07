@@ -1,0 +1,64 @@
+{
+  "id": "code_intelligence.engine",
+  "title": "Code Intelligence Engine",
+  "kind": "capability",
+  "purpose": "Provide code indexing, context compilation, semantic analysis, and change verification capabilities for Director and Chief Engineer flows.",
+  "summary": "Stateless owner Cell for typed code intelligence queries. CE role runtime invokes VerifyAstDependencyQueryV1 through public.service.verify_ast_dependency; implementation details stay behind this public boundary.",
+  "owned_paths": [
+    "polaris/cells/code_intelligence/engine/public/**",
+    "polaris/cells/code_intelligence/engine/internal/**",
+    "polaris/infrastructure/code_intelligence/**",
+    "polaris/infrastructure/accel/indexers/**",
+    "polaris/infrastructure/accel/verify/**"
+  ],
+  "public_contracts": {
+    "commands": [],
+    "queries": [
+      "VerifyAstDependencyQueryV1"
+    ],
+    "events": [],
+    "results": [
+      "AstDependencyVerificationResultV1"
+    ],
+    "errors": [
+      "CodeIntelligenceEngineErrorV1"
+    ]
+  },
+  "neighbors": [
+    "chief_engineer.blueprint",
+    "context.engine",
+    "kernelone.core",
+    "policy.workspace_guard",
+    "roles.runtime",
+    "workspace.integrity"
+  ],
+  "state_owners": [],
+  "effects_allowed": [
+    "fs.read:workspace/**",
+    "process.spawn:code_intelligence/engine/**"
+  ],
+  "invariants": [
+    "The Cell is stateless; it returns typed results and does not own role, task market, or blueprint state.",
+    "Cross-Cell callers must use public contracts and public service entrypoints.",
+    "All text reads must use explicit UTF-8 at the file boundary."
+  ],
+  "hotspots": [
+    "polaris/cells/code_intelligence/engine/public/contracts.py",
+    "polaris/cells/code_intelligence/engine/public/service.py",
+    "polaris/kernelone/llm/toolkit/executor/handlers/treesitter.py"
+  ],
+  "test_targets": [
+    "polaris/cells/code_intelligence/engine/public/tests/test_contracts.py",
+    "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+  ],
+  "change_guidance": {
+    "read_order": [
+      "cell.yaml",
+      "README.agent.md",
+      "generated/context.pack.json",
+      "public/contracts.py",
+      "public/service.py"
+    ],
+    "expand_to_neighbors_only_when_needed": true
+  }
+}

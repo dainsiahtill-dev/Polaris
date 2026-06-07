@@ -28,8 +28,11 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 - `ws.outbound:runtime/*`
 - `process.spawn:roles/*`
 - `task_market.publish:*`
+- `task_market.read`
+- `runtime_projection.read`
 - `blueprint.generate:*`
 - `process.spawn:qa/pytest`
+- `qa.failure_signal.parse`
 - `qa.verdict.issue`
 - `budget.reserve:context`
 - `mutation.guard:workspace`
@@ -38,10 +41,12 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 ## Public Contracts
 Defined in `public/contracts.py`:
 - `ExecuteRoleCapabilityInvocationCommandV1`
+- `RoleStateCommitRequest`
 - `ExecuteRoleTaskCommandV1`
 - `ExecuteRoleSessionCommandV1`
 - `GetRoleRuntimeStatusQueryV1`
 - `RoleCapabilityInvocationResultV1`
+- `RoleStateCommitReceipt`
 - `RoleTaskStartedEventV1`
 - `RoleTaskCompletedEventV1`
 - `RoleExecutionResultV1`
@@ -54,10 +59,20 @@ Defined in `public/contracts.py`:
   adapter call paths are migration targets and must not gain new behavior.
 - Role capability invocation validates mounted ports, role allow-lists, and
   declared command contracts before delegating to the target Cell public API.
+- Role state commits use `commit_role_state(RoleStateCommitRequest)` to bind an
+  existing `roles.kernel` commit receipt to `factory.cognitive_runtime`
+  `RecordRuntimeReceiptCommandV1` and `ExportHandoffPackCommandV1`; runtime does
+  not create a second Turn Ledger or receipt store.
 - PM dispatch delegates to `runtime.task_market`; Chief Engineer diff-spec
   generation delegates to `chief_engineer.blueprint`.
+- PM critical-path evaluation reads `runtime.task_market` through
+  `QueryTaskMarketStatusV1`; PM runtime status projection delegates to an
+  injected `runtime.projection` public service using `RuntimeProjectionQueryV1`.
 - QA pytest verification delegates to `factory.verification_guard` and requires
   the QA capability fingerprint before any verification command is built.
+- QA traceback parsing delegates to `qa.audit_verdict.public.service.parse_traceback_frames`
+  with `ParseTracebackFramesCommandV1`; runtime objects keep only typed signal refs
+  and metadata.
 - QA verdict issuance delegates to `qa.audit_verdict.public.service.run_qa_audit`
   with `RunQaAuditCommandV1`; runtime objects keep only result refs and metadata.
 - Architect context-budget allocation delegates to `finops.budget_guard`; illegal

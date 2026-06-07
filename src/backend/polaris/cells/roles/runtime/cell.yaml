@@ -23,6 +23,7 @@ public_contracts:
   - polaris.cells.roles.runtime.public.contracts
   commands:
   - ExecuteRoleCapabilityInvocationCommandV1
+  - RoleStateCommitRequest
   - ExecuteRoleTaskCommandV1
   - ExecuteRoleSessionCommandV1
   queries:
@@ -32,15 +33,18 @@ public_contracts:
   - RoleTaskCompletedEventV1
   results:
   - RoleCapabilityInvocationResultV1
+  - RoleStateCommitReceipt
   - RoleExecutionResultV1
   errors:
   - RoleRuntimeErrorV1
 depends_on:
 - architect.design
 - chief_engineer.blueprint
+- code_intelligence.engine
 - context.catalog
 - context.engine
 - director.execution
+- factory.cognitive_runtime
 - factory.verification_guard
 - finops.budget_guard
 - llm.control_plane
@@ -54,6 +58,7 @@ depends_on:
 - roles.profile
 - roles.session
 - runtime.task_market
+- runtime.projection
 - runtime.state_owner
 - archive.run_archive
 - audit.diagnosis
@@ -73,12 +78,18 @@ effects_allowed:
 - bus.publish:agent_messages/*
 - bus.consume:agent_messages/*
 - task_market.publish:*
+- task_market.read
+- runtime_projection.read
 - blueprint.generate:*
 - process.spawn:qa/pytest
+- qa.failure_signal.parse
 - qa.verdict.issue
 - budget.reserve:context
 - mutation.guard:workspace
 - architect.validate_cell_boundary
+- code_intelligence.read
+- runtime_receipt.record
+- handoff.export
 verification:
   tests:
   - tests/test_roles_kernel.py

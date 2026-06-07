@@ -43,7 +43,7 @@ class GovernanceIssue:
     line: int = 0
 
     def fingerprint(self) -> str:
-        key = f"{self.rule_id}|{self.severity}|{self.path}|{self.line}|{self.message}"
+        key = f"{self.rule_id}|{self.severity}|{self.path}|{self.message}"
         return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
@@ -217,7 +217,7 @@ def _load_manifest(manifest_path: Path) -> ManifestRecord | None:
         return None
     try:
         payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, yaml.YAMLError):
         return None
     if not isinstance(payload, dict):
         return None
@@ -267,7 +267,11 @@ def _manifest_owned_path_contained(
             if manifest_path == cat_path:
                 return True
             prefix = cat_path.replace("**", "").rstrip("/")
-            if manifest_path == prefix or manifest_path.startswith(prefix + "/") or manifest_path.startswith(prefix + "\\"):
+            if (
+                manifest_path == prefix
+                or manifest_path.startswith(prefix + "/")
+                or manifest_path.startswith(prefix + "\\")
+            ):
                 return True
         elif manifest_path == cat_path:
             return True
@@ -408,7 +412,7 @@ def _load_baseline_fingerprints(baseline_path: Path | None) -> set[str]:
     fingerprints: set[str] = set()
     try:
         text = baseline_path.read_text(encoding="utf-8")
-    except Exception:
+    except OSError:
         return set()
     for line in text.splitlines():
         line = line.strip()
@@ -419,7 +423,7 @@ def _load_baseline_fingerprints(baseline_path: Path | None) -> set[str]:
             fp = record.get("fingerprint") if isinstance(record, dict) else None
             if fp and isinstance(fp, str):
                 fingerprints.add(fp)
-        except Exception:
+        except json.JSONDecodeError:
             # Skip malformed lines individually; continue processing.
             pass
     return fingerprints
@@ -467,7 +471,7 @@ def _validate_schema_targets(
     for candidate in sorted(schema_dir.glob("*.yaml")):
         try:
             schema_payload = _read_yaml(candidate)
-        except Exception:
+        except (OSError, yaml.YAMLError):
             continue
         resource = DRAFT202012.create_resource(schema_payload)
         registry = registry.with_resource(candidate.resolve().as_uri(), resource)
@@ -491,7 +495,7 @@ def _validate_schema_targets(
         for target in targets:
             try:
                 payload = _read_yaml(target)
-            except Exception as exc:
+            except (OSError, yaml.YAMLError) as exc:
                 issues.append(
                     GovernanceIssue(
                         rule_id=rule_id,
@@ -601,7 +605,7 @@ def _check_cross_cell_internal_imports(
 
         try:
             tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
-        except Exception as exc:
+        except (OSError, SyntaxError, ValueError) as exc:
             issues.append(
                 GovernanceIssue(
                     rule_id="no_cross_cell_internal_import",
@@ -659,7 +663,7 @@ def _check_declared_cell_dependencies(
                 source_file.read_text(encoding="utf-8"),
                 filename=str(source_file),
             )
-        except Exception as exc:
+        except (OSError, SyntaxError, ValueError) as exc:
             issues.append(
                 GovernanceIssue(
                     rule_id="declared_cell_dependencies_match_imports",
@@ -779,7 +783,7 @@ def _check_undeclared_effects(
         effects = owner_effects.get(source_owner, ())
         try:
             tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
-        except Exception:
+        except (OSError, SyntaxError, ValueError):
             continue
 
         for node in ast.walk(tree):
@@ -827,17 +831,20 @@ def _check_undeclared_effects(
                 for keyword in node.keywords:
                     if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
                         mode = str(keyword.value.value or "r")
-                if any(token in mode for token in ("w", "a", "x")) and "b" not in mode:
-                    if not _effect_token_exists(effects, "fs.write:"):
-                        issues.append(
-                            GovernanceIssue(
-                                rule_id="undeclared_effects_forbidden",
-                                severity=_SEVERITY_HIGH,
-                                message=f"text write open() without declared fs.write effect ({source_owner})",
-                                path=rel_path,
-                                line=int(getattr(node, "lineno", 0) or 0),
-                            )
+                if (
+                    any(token in mode for token in ("w", "a", "x"))
+                    and "b" not in mode
+                    and not _effect_token_exists(effects, "fs.write:")
+                ):
+                    issues.append(
+                        GovernanceIssue(
+                            rule_id="undeclared_effects_forbidden",
+                            severity=_SEVERITY_HIGH,
+                            message=f"text write open() without declared fs.write effect ({source_owner})",
+                            path=rel_path,
+                            line=int(getattr(node, "lineno", 0) or 0),
                         )
+                    )
 
 
 def _count_new_issues(
@@ -852,7 +859,7 @@ def _count_new_issues(
         return len(issues)
     try:
         payload = json.loads(baseline_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return len(issues)
     baseline = payload.get("issue_fingerprints")
     if not isinstance(baseline, list):
@@ -901,8 +908,8 @@ def run_governance_gate(
             message="Missing catalog file docs/graph/catalog/cells.yaml",
             path=_repo_relative_path(repo_root, catalog_path),
         )
-        issues = (issue,)
-        new_issue_count = _count_new_issues(issues, mode=mode, baseline_path=baseline_path)
+        missing_catalog_issues = (issue,)
+        new_issue_count = _count_new_issues(missing_catalog_issues, mode=mode, baseline_path=baseline_path)
         exit_code = _resolve_exit_code(
             mode=mode,
             blocker_count=1,
@@ -917,7 +924,7 @@ def run_governance_gate(
             blocker_count=1,
             high_count=0,
             new_issue_count=new_issue_count,
-            issues=issues,
+            issues=missing_catalog_issues,
         ), {"mismatch_count": 0, "new_mismatch_count": 0, "mismatches": [], "mc_blocker_count": 0}
 
     issues: list[GovernanceIssue] = []

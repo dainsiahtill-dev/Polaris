@@ -68,12 +68,12 @@ class TestUEPStreamParity:
     ) -> None:
         """Verify stream_chat_turn produces journal entries."""
         # Import here to avoid circular imports
-        from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
+        from polaris.cells.archive.run_archive.public.service import create_archive_sink
         from polaris.infrastructure.log_pipeline.journal_sink import JournalSink
 
         # Setup sinks
         journal_sink = JournalSink(message_bus)
-        archive_sink = ArchiveSink(message_bus)
+        archive_sink = create_archive_sink(message_bus)
         await journal_sink.start()
         await archive_sink.start()
 
@@ -182,12 +182,12 @@ class TestUEPStreamParity:
         message_bus: MessageBus,
     ) -> None:
         """Verify journal and archive receive the same events."""
-        from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
+        from polaris.cells.archive.run_archive.public.service import create_archive_sink
         from polaris.infrastructure.log_pipeline.journal_sink import JournalSink
         from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 
         journal_sink = JournalSink(message_bus)
-        archive_sink = ArchiveSink(message_bus)
+        archive_sink = create_archive_sink(message_bus)
 
         await journal_sink.start()
         await archive_sink.start()
@@ -294,13 +294,13 @@ class TestUEPEntryPointParity:
         message_bus: MessageBus,
     ) -> None:
         """Verify benchmark path creates both journal and archive."""
-        from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
+        from polaris.cells.archive.run_archive.public.service import create_archive_sink
         from polaris.infrastructure.log_pipeline.journal_sink import JournalSink
         from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 
         # Setup all sinks
         journal_sink = JournalSink(message_bus)
-        archive_sink = ArchiveSink(message_bus)
+        archive_sink = create_archive_sink(message_bus)
         await journal_sink.start()
         await archive_sink.start()
 

@@ -20,13 +20,17 @@ public_contracts:
   - polaris.cells.qa.audit_verdict.public.contracts
   - polaris.cells.qa.audit_verdict.public.service
   commands:
+  - ParseTracebackFramesCommandV1
   - RunQaAuditCommandV1
   queries:
   - GetQaVerdictQueryV1
   events:
   - QaVerdictIssuedEventV1
   results:
+  - FailureSignalV1
+  - ParseTracebackFramesResultV1
   - QaAuditResultV1
+  - TracebackFrameV1
   errors:
   - QaAuditErrorV1
 depends_on:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from types import SimpleNamespace
 
 import pytest
 from polaris.cells.architect.design.public.contracts import (
@@ -11,6 +12,16 @@ from polaris.cells.architect.design.public.contracts import (
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     GenerateTaskBlueprintCommandV1,
     TaskBlueprintResultV1,
+)
+from polaris.cells.code_intelligence.engine.public.contracts import (
+    AstDependencyVerificationResultV1,
+    VerifyAstDependencyQueryV1,
+)
+from polaris.cells.factory.cognitive_runtime.public.contracts import (
+    ExportHandoffPackCommandV1,
+    HandoffPackResultV1,
+    RecordRuntimeReceiptCommandV1,
+    RuntimeReceiptResultV1,
 )
 from polaris.cells.factory.verification_guard.public.contracts import (
     VerificationReport,
@@ -59,13 +70,20 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleTurnContext,
     RoleTurnEnvelope,
 )
-from polaris.cells.roles.runtime.public.service import execute_role_capability_invocation
-from polaris.cells.runtime.task_market.public import PublishTaskWorkItemCommandV1, TaskWorkItemResultV1
+from polaris.cells.roles.runtime.public.service import commit_role_state, execute_role_capability_invocation
+from polaris.cells.runtime.projection.public.contracts import RuntimeProjectionQueryV1, RuntimeProjectionResultV1
+from polaris.cells.runtime.task_market.public import (
+    PublishTaskWorkItemCommandV1,
+    QueryTaskMarketStatusV1,
+    TaskMarketStatusResultV1,
+    TaskWorkItemResultV1,
+)
 
 
 class FakeTaskMarketService:
     def __init__(self) -> None:
         self.published: list[PublishTaskWorkItemCommandV1] = []
+        self.queried: list[QueryTaskMarketStatusV1] = []
 
     def publish_work_item(self, command: PublishTaskWorkItemCommandV1) -> TaskWorkItemResultV1:
         self.published.append(command)
@@ -79,6 +97,49 @@ class FakeTaskMarketService:
             run_id=command.run_id,
             payload=command.payload,
         )
+
+    def query_status(self, query: QueryTaskMarketStatusV1) -> TaskMarketStatusResultV1:
+        self.queried.append(query)
+        return TaskMarketStatusResultV1(
+            workspace=query.workspace,
+            total=3,
+            counts={"pending_exec": 1, "running": 1, "dead_letter": 1},
+            items=(
+                {"task_id": "task-a", "stage": "pending_exec", "status": "pending", "priority": "high"},
+                {"task_id": "task-b", "stage": "pending_qa", "status": "running", "priority": "medium"},
+                {"task_id": "task-c", "stage": "pending_exec", "status": "dead_letter", "priority": "high"},
+            ),
+        )
+
+
+class FakeRuntimeProjectionService:
+    def __init__(self) -> None:
+        self.queries: list[RuntimeProjectionQueryV1] = []
+
+    def query_runtime_projection(self, query: RuntimeProjectionQueryV1) -> RuntimeProjectionResultV1:
+        self.queries.append(query)
+        return RuntimeProjectionResultV1(
+            payload={
+                "scope": query.scope,
+                "running": False,
+                "completed_task_count": 4,
+                "last_director_status": "passed",
+            }
+        )
+
+
+class FakeCognitiveRuntimeCommitService:
+    def __init__(self) -> None:
+        self.receipts: list[RecordRuntimeReceiptCommandV1] = []
+        self.handoffs: list[ExportHandoffPackCommandV1] = []
+
+    def record_runtime_receipt(self, command: RecordRuntimeReceiptCommandV1) -> RuntimeReceiptResultV1:
+        self.receipts.append(command)
+        return RuntimeReceiptResultV1(ok=True, receipt=SimpleNamespace(receipt_id="receipt-1"))
+
+    def export_handoff_pack(self, command: ExportHandoffPackCommandV1) -> HandoffPackResultV1:
+        self.handoffs.append(command)
+        return HandoffPackResultV1(ok=True, handoff=SimpleNamespace(handoff_id="handoff-1"))
 
 
 class FakeBlueprintService:
@@ -97,6 +158,23 @@ class FakeBlueprintService:
             summary=f"Blueprint for {command.task_id}",
             recommendations=("keep public contracts typed",),
             risks=("legacy adapter drift",),
+        )
+
+
+class FakeCodeIntelligenceService:
+    def __init__(self) -> None:
+        self.verified: list[VerifyAstDependencyQueryV1] = []
+
+    def verify_ast_dependency(self, query: VerifyAstDependencyQueryV1) -> AstDependencyVerificationResultV1:
+        self.verified.append(query)
+        return AstDependencyVerificationResultV1(
+            ok=True,
+            workspace=query.workspace,
+            path=query.path,
+            language=query.language,
+            symbol=query.symbol,
+            engine="regex",
+            results=({"file": query.path, "line": 1, "name": query.symbol, "node_type": "function_definition"},),
         )
 
 
@@ -420,7 +498,8 @@ def test_builtin_chief_engineer_runtime_spec_mounts_blueprint_assets_and_code_in
     assert generate_diff.allowed_roles == ("chief_engineer",)
     verify_ast = spec.capability_ports.get("verify_ast_dependency")
     assert verify_ast.owner_cell == "code_intelligence.engine"
-    assert "public_contract_gap" in verify_ast.metadata
+    assert verify_ast.contract_name == "VerifyAstDependencyQueryV1"
+    assert verify_ast.metadata["output_contract"] == "AstDependencyVerificationResultV1"
     assert spec.capability_ports.get("record_arch_memo").owner_cell == "chief_engineer.blueprint"
 
     runtime_object = spec.instantiate(
@@ -610,6 +689,105 @@ def test_role_turn_envelope_and_commit_request_carry_refs_not_foreign_state() ->
     assert receipt.runtime_receipt_contract == "RecordRuntimeReceiptCommandV1"
 
 
+def test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_runtime() -> None:
+    invocation = RoleCapabilityInvocation(
+        invocation_id="invoke-commit-1",
+        capability_id="dispatch_task_to_market",
+        role_id="pm",
+        command_contract="PublishTaskWorkItemCommandV1",
+        payload_ref="runtime.task_market:work-item:task-1",
+        fingerprint_ref="capability-fp",
+    )
+    envelope = RoleTurnEnvelope(
+        identity=_identity("pm"),
+        profile_binding=_profile_binding("pm"),
+        turn_context=RoleTurnContext(
+            typed_input_ref="pm.task_contract:task-1",
+            context_snapshot_ref="context.engine:snapshot-1",
+            handoff_refs=("factory.cognitive_runtime:handoff:previous",),
+            task_refs=("runtime.task_market:task-1",),
+        ),
+        capability_invocations=(invocation,),
+        ledger_binding=RoleLedgerBinding(
+            turn_ledger_ref="roles.kernel:turn-ledger:run-1",
+            commit_receipt_ref="roles.kernel:commit:turn-1",
+            receipt_refs=("factory.cognitive_runtime:receipt:previous",),
+        ),
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:task-1"),
+        metadata={"turn_id": "turn-1"},
+    )
+    request = RoleStateCommitRequest(
+        request_id="commit-request-1",
+        envelope=envelope,
+        changed_asset_refs=("runtime.task_market:task-1",),
+        evidence_refs=("audit.evidence:evt-1",),
+        reason="task-market dispatch committed",
+    )
+    cognitive_runtime = FakeCognitiveRuntimeCommitService()
+
+    receipt = commit_role_state(request, cognitive_runtime_service=cognitive_runtime)
+
+    assert receipt.ok is True
+    assert receipt.commit_receipt_ref == "roles.kernel:commit:turn-1"
+    assert receipt.runtime_receipt_refs == (
+        "factory.cognitive_runtime:receipt:previous",
+        "factory.cognitive_runtime:receipt:receipt-1",
+    )
+    assert receipt.handoff_pack_refs == ("factory.cognitive_runtime:handoff:handoff-1",)
+    assert len(cognitive_runtime.receipts) == 1
+    assert len(cognitive_runtime.handoffs) == 1
+
+    receipt_command = cognitive_runtime.receipts[0]
+    assert receipt_command.workspace == "/repo"
+    assert receipt_command.receipt_type == "role_state_commit"
+    assert receipt_command.session_id == "session-1"
+    assert receipt_command.run_id == "run-1"
+    assert receipt_command.payload["request_id"] == "commit-request-1"
+    assert receipt_command.payload["role_id"] == "pm"
+    assert receipt_command.payload["changed_asset_refs"] == ("runtime.task_market:task-1",)
+    assert receipt_command.turn_envelope["identity"]["role_id"] == "pm"
+    assert receipt_command.turn_envelope["ledger_binding"]["commit_receipt_ref"] == "roles.kernel:commit:turn-1"
+    assert "roles.kernel:commit:turn-1" in receipt_command.trace_refs
+    assert "audit.evidence:evt-1" in receipt_command.trace_refs
+
+    handoff_command = cognitive_runtime.handoffs[0]
+    assert handoff_command.workspace == "/repo"
+    assert handoff_command.session_id == "session-1"
+    assert handoff_command.reason == "task-market dispatch committed"
+    assert handoff_command.turn_envelope["runtime_receipt_refs"] == (
+        "factory.cognitive_runtime:receipt:previous",
+        "factory.cognitive_runtime:receipt:receipt-1",
+    )
+
+
+def test_commit_role_state_rejects_missing_kernel_commit_receipt_without_runtime_call() -> None:
+    envelope = RoleTurnEnvelope(
+        identity=_identity("pm"),
+        profile_binding=_profile_binding("pm"),
+        turn_context=RoleTurnContext(
+            typed_input_ref="pm.task_contract:task-1",
+            context_snapshot_ref="context.engine:snapshot-1",
+        ),
+        capability_invocations=(),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:run-1"),
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:task-1"),
+    )
+    request = RoleStateCommitRequest(
+        request_id="commit-request-missing",
+        envelope=envelope,
+        changed_asset_refs=("runtime.task_market:task-1",),
+    )
+    cognitive_runtime = FakeCognitiveRuntimeCommitService()
+
+    receipt = commit_role_state(request, cognitive_runtime_service=cognitive_runtime)
+
+    assert receipt.ok is False
+    assert receipt.status == "rejected"
+    assert receipt.error_code == "missing_commit_receipt_ref"
+    assert cognitive_runtime.receipts == []
+    assert cognitive_runtime.handoffs == []
+
+
 def test_pm_dispatch_capability_invokes_task_market_publish_contract() -> None:
     spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
     runtime_object = spec.instantiate(
@@ -704,6 +882,88 @@ def test_non_pm_dispatch_capability_is_structurally_denied_without_task_market_c
     assert task_market.published == []
 
 
+def test_pm_evaluate_critical_path_reads_task_market_status_contract() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
+    runtime_object = spec.instantiate(
+        identity=_identity("pm"),
+        profile_binding=_profile_binding("pm"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:pm-run"),
+        policy_fingerprint="pm-policy",
+        capability_id="evaluate_critical_path",
+    )
+    invocation = RoleCapabilityInvocation(
+        invocation_id="invoke-critical-path-1",
+        capability_id="evaluate_critical_path",
+        role_id="pm",
+        command_contract="QueryTaskMarketStatusV1",
+        payload_ref="roles.runtime:typed-input:pm-critical-path-1",
+        fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+    )
+    task_market = FakeTaskMarketService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=invocation,
+            payload={"stage": "pending_exec", "limit": 50, "include_payload": True},
+        ),
+        task_market_service=task_market,
+    )
+
+    assert result.ok is True
+    assert result.allowed is True
+    assert result.owner_cell == "runtime.task_market"
+    assert result.command_contract == "QueryTaskMarketStatusV1"
+    assert result.status == "EVALUATED"
+    assert result.result_ref == "runtime.task_market:critical-path:invoke-critical-path-1"
+    assert result.metadata["total_tasks"] == 3
+    assert result.metadata["blocked_task_ids"] == ("task-c",)
+    assert result.metadata["open_task_ids"] == ("task-a", "task-b", "task-c")
+    assert len(task_market.queried) == 1
+    assert task_market.queried[0].workspace == "/repo"
+    assert task_market.queried[0].stage == "pending_exec"
+    assert task_market.queried[0].include_payload is True
+
+
+def test_pm_project_runtime_status_invokes_runtime_projection_contract() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
+    runtime_object = spec.instantiate(
+        identity=_identity("pm"),
+        profile_binding=_profile_binding("pm"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:pm-run"),
+        policy_fingerprint="pm-policy",
+        capability_id="project_runtime_status",
+    )
+    invocation = RoleCapabilityInvocation(
+        invocation_id="invoke-runtime-projection-1",
+        capability_id="project_runtime_status",
+        role_id="pm",
+        command_contract="RuntimeProjectionQueryV1",
+        payload_ref="roles.runtime:typed-input:pm-runtime-projection-1",
+        fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+    )
+    projection = FakeRuntimeProjectionService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=invocation,
+            payload={"scope": "runtime"},
+        ),
+        runtime_projection_service=projection,
+    )
+
+    assert result.ok is True
+    assert result.allowed is True
+    assert result.owner_cell == "runtime.projection"
+    assert result.command_contract == "RuntimeProjectionQueryV1"
+    assert result.status == "PROJECTED"
+    assert result.result_ref == "runtime.projection:runtime:invoke-runtime-projection-1"
+    assert result.metadata["projection"]["completed_task_count"] == 4
+    assert len(projection.queries) == 1
+    assert projection.queries[0].scope == "runtime"
+
+
 def test_chief_engineer_generate_diff_capability_invokes_blueprint_contract() -> None:
     spec = runtime_contracts.get_builtin_role_runtime_spec("chief_engineer")
     runtime_object = spec.instantiate(
@@ -796,6 +1056,54 @@ def test_capability_fingerprint_mismatch_is_denied_before_blueprint_call() -> No
     assert result.allowed is False
     assert result.error_code == "capability_fingerprint_mismatch"
     assert blueprint_service.generated == []
+
+
+def test_chief_engineer_verify_ast_dependency_invokes_code_intelligence_contract() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("chief_engineer")
+    runtime_object = spec.instantiate(
+        identity=_identity("chief_engineer"),
+        profile_binding=_profile_binding("chief_engineer"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:ce-run"),
+        policy_fingerprint="ce-policy",
+        capability_id="verify_ast_dependency",
+    )
+    invocation = RoleCapabilityInvocation(
+        invocation_id="invoke-code-intel-1",
+        capability_id="verify_ast_dependency",
+        role_id="chief_engineer",
+        command_contract="VerifyAstDependencyQueryV1",
+        payload_ref="roles.runtime:typed-input:ce-code-intel-1",
+        fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+    )
+    code_intelligence = FakeCodeIntelligenceService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=invocation,
+            payload={
+                "path": "src/backend/app.py",
+                "language": "python",
+                "symbol": "handle",
+                "kind": "function",
+                "max_results": 5,
+            },
+        ),
+        code_intelligence_service=code_intelligence,
+    )
+
+    assert result.ok is True
+    assert result.allowed is True
+    assert result.owner_cell == "code_intelligence.engine"
+    assert result.command_contract == "VerifyAstDependencyQueryV1"
+    assert result.status == "VERIFIED"
+    assert result.result_ref == "code_intelligence.engine:ast-dependency:invoke-code-intel-1"
+    assert result.metadata["result_count"] == 1
+    assert len(code_intelligence.verified) == 1
+    query = code_intelligence.verified[0]
+    assert query.workspace == "/repo"
+    assert query.path == "src/backend/app.py"
+    assert query.symbol == "handle"
 
 
 def test_qa_pytest_capability_invokes_verification_guard_contract() -> None:
@@ -1036,7 +1344,7 @@ ValueError: boom
     assert parse_command.run_id == "run-1"
     assert parse_command.metadata["source"] == "pytest"
     assert parse_command.metadata["role_invocation_id"] == "invoke-qa-traceback-1"
-    assert parse_command.traceback_text == traceback_text
+    assert parse_command.traceback_text == traceback_text.strip()
 
 
 def test_non_qa_parse_traceback_frames_is_denied_without_qa_audit_call() -> None:

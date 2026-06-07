@@ -491,6 +491,7 @@ class RoleStateCommitReceipt:
     ok: bool
     commit_receipt_ref: str | None = None
     runtime_receipt_refs: tuple[str, ...] = field(default_factory=tuple)
+    handoff_pack_refs: tuple[str, ...] = field(default_factory=tuple)
     turn_outcome_ref: str | None = None
     commit_contract: str = "CommitReceipt"
     runtime_receipt_contract: str = "RecordRuntimeReceiptCommandV1"
@@ -506,6 +507,11 @@ class RoleStateCommitReceipt:
             self,
             "runtime_receipt_refs",
             _normalize_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs),
+        )
+        object.__setattr__(
+            self,
+            "handoff_pack_refs",
+            _normalize_string_tuple("handoff_pack_refs", self.handoff_pack_refs),
         )
         object.__setattr__(self, "turn_outcome_ref", _normalize_optional_string(self.turn_outcome_ref))
         object.__setattr__(self, "commit_contract", _require_non_empty("commit_contract", self.commit_contract))
@@ -903,13 +909,13 @@ def _build_chief_engineer_runtime_spec() -> RoleRuntimeObjectSpec:
                 _capability(
                     capability_id="verify_ast_dependency",
                     owner_cell="code_intelligence.engine",
-                    contract_name="treesitter_find_symbol",
+                    contract_name="VerifyAstDependencyQueryV1",
                     effect="code_intelligence.read",
                     allowed_roles=("chief_engineer",),
-                    endpoint_ref="code_intelligence.engine:treesitter_find_symbol",
+                    endpoint_ref="polaris.cells.code_intelligence.engine.public.service.verify_ast_dependency",
                     metadata={
-                        "fallback_contract": "repo_symbols_index",
-                        "public_contract_gap": "code_intelligence.engine public contracts module is graph-declared but pending",
+                        "output_contract": "AstDependencyVerificationResultV1",
+                        "implementation_port": "TreeSitterSymbolHandler.find_symbol",
                     },
                 ),
                 _capability(
@@ -1066,11 +1072,11 @@ def _build_qa_runtime_spec() -> RoleRuntimeObjectSpec:
                 _capability(
                     capability_id="parse_traceback_frames",
                     owner_cell="qa.audit_verdict",
-                    contract_name="RunQaAuditCommandV1",
+                    contract_name="ParseTracebackFramesCommandV1",
                     effect="qa.failure_signal.parse",
                     allowed_roles=("qa",),
-                    endpoint_ref="polaris.cells.qa.audit_verdict.public.contracts.RunQaAuditCommandV1",
-                    metadata={"output_asset_mount": "FailureSignalIndex"},
+                    endpoint_ref="polaris.cells.qa.audit_verdict.public.service.parse_traceback_frames",
+                    metadata={"output_asset_mount": "FailureSignalIndex", "output_contract": "FailureSignalV1"},
                 ),
                 _capability(
                     capability_id="issue_audit_verdict",

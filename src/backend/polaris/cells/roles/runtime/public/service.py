@@ -159,6 +159,8 @@ from polaris.cells.roles.runtime.public.contracts import (
     IRoleRuntime,
     RoleCapabilityInvocationResultV1,
     RoleExecutionResultV1,
+    RoleStateCommitReceipt,
+    RoleStateCommitRequest,
 )
 
 # Wave 1: Persistence module extracted to public/persistence.py
@@ -334,13 +336,261 @@ def _check_workspace_guard_paths(
     return True, paths, "", ""
 
 
+def _merge_refs(*groups: str | tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        if group is None:
+            continue
+        values = (group,) if isinstance(group, str) else group
+        for value in values:
+            ref = str(value or "").strip()
+            if ref and ref not in seen:
+                refs.append(ref)
+                seen.add(ref)
+    return tuple(refs)
+
+
+def _runtime_receipt_ref(receipt_id: str) -> str:
+    return f"factory.cognitive_runtime:receipt:{receipt_id}"
+
+
+def _handoff_pack_ref(handoff_id: str) -> str:
+    return f"factory.cognitive_runtime:handoff:{handoff_id}"
+
+
+def _serialize_role_state_commit_envelope(request: RoleStateCommitRequest) -> dict[str, Any]:
+    envelope = request.envelope
+    return {
+        "identity": {
+            "role_id": envelope.identity.role_id,
+            "run_id": envelope.identity.run_id,
+            "task_id": envelope.identity.task_id,
+            "session_id": envelope.identity.session_id,
+            "workspace": envelope.identity.workspace,
+            "host_kind": envelope.identity.host_kind,
+        },
+        "profile_binding": {
+            "role_id": envelope.profile_binding.role_id,
+            "profile_ref": envelope.profile_binding.profile_ref,
+            "tool_policy_ref": envelope.profile_binding.tool_policy_ref,
+            "prompt_policy_ref": envelope.profile_binding.prompt_policy_ref,
+            "data_policy_ref": envelope.profile_binding.data_policy_ref,
+            "profile_fingerprint": envelope.profile_binding.profile_fingerprint,
+            "owner_cell": envelope.profile_binding.owner_cell,
+        },
+        "turn_context": {
+            "typed_input_ref": envelope.turn_context.typed_input_ref,
+            "context_snapshot_ref": envelope.turn_context.context_snapshot_ref,
+            "handoff_refs": envelope.turn_context.handoff_refs,
+            "task_refs": envelope.turn_context.task_refs,
+            "metadata": dict(envelope.turn_context.metadata),
+        },
+        "capability_invocations": tuple(
+            {
+                "invocation_id": invocation.invocation_id,
+                "capability_id": invocation.capability_id,
+                "role_id": invocation.role_id,
+                "command_contract": invocation.command_contract,
+                "payload_ref": invocation.payload_ref,
+                "fingerprint_ref": invocation.fingerprint_ref,
+                "metadata": dict(invocation.metadata),
+            }
+            for invocation in envelope.capability_invocations
+        ),
+        "ledger_binding": {
+            "turn_ledger_ref": envelope.ledger_binding.turn_ledger_ref,
+            "commit_contract": envelope.ledger_binding.commit_contract,
+            "runtime_receipt_contract": envelope.ledger_binding.runtime_receipt_contract,
+            "receipt_refs": envelope.ledger_binding.receipt_refs,
+            "commit_receipt_ref": envelope.ledger_binding.commit_receipt_ref,
+        },
+        "task_market_binding": {
+            "publish_contract": envelope.task_market_binding.publish_contract,
+            "claim_contract": envelope.task_market_binding.claim_contract,
+            "lease_contract": envelope.task_market_binding.lease_contract,
+            "ack_contract": envelope.task_market_binding.ack_contract,
+            "fail_contract": envelope.task_market_binding.fail_contract,
+            "requeue_contract": envelope.task_market_binding.requeue_contract,
+            "work_item_ref": envelope.task_market_binding.work_item_ref,
+            "lease_token_ref": envelope.task_market_binding.lease_token_ref,
+        },
+        "metadata": dict(envelope.metadata),
+    }
+
+
+def commit_role_state(
+    request: RoleStateCommitRequest,
+    *,
+    cognitive_runtime_service: Any | None = None,
+) -> RoleStateCommitReceipt:
+    """Commit role turn refs through kernel commit receipt and Cognitive Runtime receipts."""
+    if not isinstance(request, RoleStateCommitRequest):
+        raise TypeError("request must be a RoleStateCommitRequest")
+
+    envelope = request.envelope
+    identity = envelope.identity
+    ledger = envelope.ledger_binding
+    commit_receipt_ref = ledger.commit_receipt_ref
+    if not commit_receipt_ref:
+        return RoleStateCommitReceipt(
+            request_id=request.request_id,
+            ok=False,
+            status="rejected",
+            error_code="missing_commit_receipt_ref",
+            error_message="Role state commit requires an existing roles.kernel CommitReceipt ref",
+        )
+
+    turn_envelope = _serialize_role_state_commit_envelope(request)
+    trace_refs = _merge_refs(
+        commit_receipt_ref,
+        ledger.turn_ledger_ref,
+        ledger.receipt_refs,
+        request.changed_asset_refs,
+        request.evidence_refs,
+        envelope.turn_context.handoff_refs,
+        envelope.turn_context.task_refs,
+    )
+    payload = {
+        "request_id": request.request_id,
+        "role_id": identity.role_id,
+        "task_id": identity.task_id,
+        "session_id": identity.session_id,
+        "run_id": identity.run_id,
+        "changed_asset_refs": request.changed_asset_refs,
+        "evidence_refs": request.evidence_refs,
+        "reason": request.reason,
+        "commit_receipt_ref": commit_receipt_ref,
+        "turn_ledger_ref": ledger.turn_ledger_ref,
+    }
+
+    close_after = cognitive_runtime_service is None
+    service = cognitive_runtime_service
+    try:
+        from polaris.cells.factory.cognitive_runtime.public.contracts import (
+            ExportHandoffPackCommandV1,
+            RecordRuntimeReceiptCommandV1,
+        )
+        from polaris.cells.factory.cognitive_runtime.public.service import (
+            get_cognitive_runtime_public_service,
+        )
+
+        if service is None:
+            service = get_cognitive_runtime_public_service()
+
+        receipt_result = service.record_runtime_receipt(
+            RecordRuntimeReceiptCommandV1(
+                workspace=identity.workspace,
+                receipt_type="role_state_commit",
+                payload=payload,
+                session_id=identity.session_id,
+                run_id=identity.run_id,
+                trace_refs=trace_refs,
+                turn_envelope=turn_envelope,
+            )
+        )
+        if not bool(getattr(receipt_result, "ok", False)):
+            error_message = str(getattr(receipt_result, "error_message", "") or "").strip()
+            error_code = str(getattr(receipt_result, "error_code", "") or "").strip()
+            return RoleStateCommitReceipt(
+                request_id=request.request_id,
+                ok=False,
+                commit_receipt_ref=commit_receipt_ref,
+                runtime_receipt_refs=ledger.receipt_refs,
+                status="receipt_failed",
+                error_code=error_code or "runtime_receipt_failed",
+                error_message=error_message or "Cognitive Runtime receipt recording failed",
+            )
+        runtime_receipt = getattr(receipt_result, "receipt", None)
+        receipt_id = str(getattr(runtime_receipt, "receipt_id", "") or "").strip()
+        if not receipt_id:
+            return RoleStateCommitReceipt(
+                request_id=request.request_id,
+                ok=False,
+                commit_receipt_ref=commit_receipt_ref,
+                runtime_receipt_refs=ledger.receipt_refs,
+                status="receipt_failed",
+                error_code="runtime_receipt_missing_id",
+                error_message="Cognitive Runtime receipt response did not include receipt_id",
+            )
+
+        runtime_receipt_refs = _merge_refs(ledger.receipt_refs, _runtime_receipt_ref(receipt_id))
+        handoff_pack_refs: tuple[str, ...] = ()
+        if identity.session_id:
+            handoff_turn_envelope = dict(turn_envelope)
+            handoff_turn_envelope["runtime_receipt_refs"] = runtime_receipt_refs
+            handoff_result = service.export_handoff_pack(
+                ExportHandoffPackCommandV1(
+                    workspace=identity.workspace,
+                    session_id=identity.session_id,
+                    run_id=identity.run_id,
+                    reason=request.reason or f"role_state_commit:{request.request_id}",
+                    turn_envelope=handoff_turn_envelope,
+                    metadata={
+                        "request_id": request.request_id,
+                        "commit_receipt_ref": commit_receipt_ref,
+                    },
+                )
+            )
+            if not bool(getattr(handoff_result, "ok", False)):
+                error_message = str(getattr(handoff_result, "error_message", "") or "").strip()
+                error_code = str(getattr(handoff_result, "error_code", "") or "").strip()
+                return RoleStateCommitReceipt(
+                    request_id=request.request_id,
+                    ok=False,
+                    commit_receipt_ref=commit_receipt_ref,
+                    runtime_receipt_refs=runtime_receipt_refs,
+                    status="handoff_failed",
+                    error_code=error_code or "handoff_export_failed",
+                    error_message=error_message or "Cognitive Runtime handoff export failed",
+                )
+            handoff = getattr(handoff_result, "handoff", None)
+            handoff_id = str(getattr(handoff, "handoff_id", "") or "").strip()
+            if not handoff_id:
+                return RoleStateCommitReceipt(
+                    request_id=request.request_id,
+                    ok=False,
+                    commit_receipt_ref=commit_receipt_ref,
+                    runtime_receipt_refs=runtime_receipt_refs,
+                    status="handoff_failed",
+                    error_code="handoff_missing_id",
+                    error_message="Cognitive Runtime handoff response did not include handoff_id",
+                )
+            handoff_pack_refs = (_handoff_pack_ref(handoff_id),)
+
+        return RoleStateCommitReceipt(
+            request_id=request.request_id,
+            ok=True,
+            commit_receipt_ref=commit_receipt_ref,
+            runtime_receipt_refs=runtime_receipt_refs,
+            handoff_pack_refs=handoff_pack_refs,
+            turn_outcome_ref=str(envelope.metadata.get("turn_outcome_ref") or "").strip() or None,
+            status="committed",
+        )
+    except (RuntimeError, ValueError) as exc:
+        return RoleStateCommitReceipt(
+            request_id=request.request_id,
+            ok=False,
+            commit_receipt_ref=commit_receipt_ref,
+            runtime_receipt_refs=ledger.receipt_refs,
+            status="failed",
+            error_code="role_state_commit_failed",
+            error_message=str(exc),
+        )
+    finally:
+        if close_after and service is not None and hasattr(service, "close"):
+            service.close()
+
+
 def execute_role_capability_invocation(
     command: ExecuteRoleCapabilityInvocationCommandV1,
     *,
     task_market_service: Any | None = None,
     blueprint_service: Any | None = None,
+    code_intelligence_service: Any | None = None,
     verification_guard_service: Any | None = None,
     qa_audit_service: Any | None = None,
+    runtime_projection_service: Any | None = None,
     budget_guard_service: Any | None = None,
     workspace_guard_service: Any | None = None,
     permission_service: Any | None = None,
@@ -404,10 +654,25 @@ def execute_role_capability_invocation(
         or capability.owner_cell != "runtime.task_market"
         or capability.contract_name != "PublishTaskWorkItemCommandV1"
     )
+    is_pm_critical_path = (
+        capability.capability_id == "evaluate_critical_path"
+        and capability.owner_cell == "runtime.task_market"
+        and capability.contract_name == "QueryTaskMarketStatusV1"
+    )
+    is_pm_runtime_projection = (
+        capability.capability_id == "project_runtime_status"
+        and capability.owner_cell == "runtime.projection"
+        and capability.contract_name == "RuntimeProjectionQueryV1"
+    )
     is_blueprint_generation = (
         capability.capability_id in {"generate_diff_specification", "record_arch_memo"}
         and capability.owner_cell == "chief_engineer.blueprint"
         and capability.contract_name == "GenerateTaskBlueprintCommandV1"
+    )
+    is_ce_ast_dependency = (
+        capability.capability_id == "verify_ast_dependency"
+        and capability.owner_cell == "code_intelligence.engine"
+        and capability.contract_name == "VerifyAstDependencyQueryV1"
     )
     is_qa_pytest_verification = (
         capability.capability_id == "invoke_container_pytest"
@@ -418,6 +683,11 @@ def execute_role_capability_invocation(
         capability.capability_id == "issue_audit_verdict"
         and capability.owner_cell == "qa.audit_verdict"
         and capability.contract_name == "RunQaAuditCommandV1"
+    )
+    is_qa_traceback_parse = (
+        capability.capability_id == "parse_traceback_frames"
+        and capability.owner_cell == "qa.audit_verdict"
+        and capability.contract_name == "ParseTracebackFramesCommandV1"
     )
     is_architect_budget_reservation = (
         capability.capability_id == "allocate_context_token_budget"
@@ -835,6 +1105,343 @@ def execute_role_capability_invocation(
             result_ref=result_ref,
             task_id=runtime_object.identity.task_id or "",
             status=design_result.status,
+            metadata=metadata,
+        )
+
+    if is_pm_critical_path:
+        try:
+            from polaris.cells.runtime.task_market.public import (
+                QueryTaskMarketStatusV1,
+                get_task_market_service,
+            )
+
+            query = QueryTaskMarketStatusV1(
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                stage=_payload_string(command.payload, "stage") or None,
+                status=_payload_string(command.payload, "status") or None,
+                limit=int(command.payload.get("limit", 200)),
+                include_payload=bool(command.payload.get("include_payload", True)),
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_task_market_status_query",
+                error_message=str(exc),
+            )
+
+        service = task_market_service or get_task_market_service()
+        try:
+            status_result = service.query_status(query)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="task_market_status_query_failed",
+                error_message=str(exc),
+            )
+
+        terminal_statuses = {"resolved", "completed", "acknowledged", "cancelled", "superseded"}
+        blocked_statuses = {"failed", "dead_letter", "blocked", "cancel_requested", "needs_revalidation"}
+        open_items = tuple(
+            item for item in status_result.items if str(item.get("status") or "").lower() not in terminal_statuses
+        )
+        blocked_task_ids = tuple(
+            str(item.get("task_id") or "").strip()
+            for item in open_items
+            if str(item.get("status") or "").lower() in blocked_statuses and str(item.get("task_id") or "").strip()
+        )
+        open_task_ids = tuple(
+            str(item.get("task_id") or "").strip() for item in open_items if str(item.get("task_id") or "").strip()
+        )
+        result_ref = f"runtime.task_market:critical-path:{invocation.invocation_id}"
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=runtime_object.identity.task_id or "",
+            status="EVALUATED",
+            metadata={
+                "total_tasks": status_result.total,
+                "counts": dict(status_result.counts),
+                "open_task_ids": open_task_ids,
+                "blocked_task_ids": blocked_task_ids,
+                "open_task_count": len(open_task_ids),
+                "blocked_task_count": len(blocked_task_ids),
+            },
+        )
+
+    if is_pm_runtime_projection:
+        try:
+            from polaris.cells.runtime.projection.public.contracts import RuntimeProjectionQueryV1
+
+            projection_query = RuntimeProjectionQueryV1(scope=_payload_string(command.payload, "scope", "runtime"))
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_runtime_projection_query",
+                error_message=str(exc),
+            )
+
+        if runtime_projection_service is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="runtime_projection_service_unavailable",
+                error_message="runtime.projection query service must be injected by the host boundary",
+            )
+        try:
+            projection_result = runtime_projection_service.query_runtime_projection(projection_query)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="runtime_projection_query_failed",
+                error_message=str(exc),
+            )
+
+        result_ref = f"runtime.projection:{projection_query.scope}:{invocation.invocation_id}"
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=runtime_object.identity.task_id or "",
+            status="PROJECTED",
+            metadata={"projection": dict(projection_result.payload), "scope": projection_query.scope},
+        )
+
+    if is_ce_ast_dependency:
+        ast_metadata = _payload_mapping(command.payload, "metadata")
+        if ast_metadata is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_ast_dependency_metadata",
+                error_message="payload.metadata must be a mapping when provided",
+            )
+        ast_metadata.update(
+            {
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+            }
+        )
+        try:
+            from polaris.cells.code_intelligence.engine.public.contracts import VerifyAstDependencyQueryV1
+            from polaris.cells.code_intelligence.engine.public.service import verify_ast_dependency
+
+            ast_query = VerifyAstDependencyQueryV1(
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                path=_payload_string(command.payload, "path") or _payload_string(command.payload, "file"),
+                language=_payload_string(command.payload, "language"),
+                symbol=_payload_string(command.payload, "symbol") or _payload_string(command.payload, "name"),
+                kind=_payload_string(command.payload, "kind") or None,
+                max_results=int(command.payload.get("max_results", 10)),
+                context_radius=int(command.payload.get("context_radius", 5)),
+                fuzzy=bool(command.payload.get("fuzzy", True)),
+                metadata=ast_metadata,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_ast_dependency_query",
+                error_message=str(exc),
+            )
+
+        try:
+            if code_intelligence_service is None:
+                ast_result = verify_ast_dependency(ast_query)
+            else:
+                ast_result = code_intelligence_service.verify_ast_dependency(ast_query)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="ast_dependency_verification_failed",
+                error_message=str(exc),
+            )
+
+        result_ref = f"code_intelligence.engine:ast-dependency:{invocation.invocation_id}"
+        metadata = _capability_available_metadata(
+            capability.capability_id,
+            {
+                "workspace": ast_result.workspace,
+                "path": ast_result.path,
+                "language": ast_result.language,
+                "symbol": ast_result.symbol,
+                "engine": ast_result.engine,
+                "result_count": ast_result.result_count,
+                "results": tuple(dict(item) for item in ast_result.results),
+                "warnings": tuple(ast_result.warnings),
+            },
+        )
+        if not ast_result.ok:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=runtime_object.identity.task_id or "",
+                status="FAILED",
+                metadata=metadata,
+                error_code="ast_dependency_verification_failed",
+                error_message=ast_result.error or "AST dependency verification failed",
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=runtime_object.identity.task_id or "",
+            status="VERIFIED" if ast_result.result_count else "NO_MATCH",
+            metadata=metadata,
+        )
+
+    if is_qa_traceback_parse:
+        traceback_metadata = _payload_mapping(command.payload, "metadata")
+        if traceback_metadata is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_traceback_metadata",
+                error_message="payload.metadata must be a mapping when provided",
+            )
+        traceback_text = _payload_string(command.payload, "traceback_text")
+        if not traceback_text:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_traceback_text",
+                error_message="payload.traceback_text must be a non-empty string",
+            )
+        traceback_metadata.update(
+            {
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+            }
+        )
+        try:
+            from polaris.cells.qa.audit_verdict.public.contracts import ParseTracebackFramesCommandV1
+            from polaris.cells.qa.audit_verdict.public.service import parse_traceback_frames
+
+            parse_command = ParseTracebackFramesCommandV1(
+                task_id=_payload_string(command.payload, "task_id", runtime_object.identity.task_id or ""),
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                traceback_text=traceback_text,
+                run_id=_payload_string(command.payload, "run_id", runtime_object.identity.run_id or "") or None,
+                metadata=traceback_metadata,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_traceback_parse_command",
+                error_message=str(exc),
+            )
+
+        try:
+            if qa_audit_service is None:
+                parse_result = parse_traceback_frames(parse_command)
+            else:
+                parse_result = qa_audit_service.parse_traceback_frames(parse_command)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="traceback_parse_failed",
+                error_message=str(exc),
+            )
+
+        signal = parse_result.signal
+        result_ref = f"qa.audit_verdict:failure-signal:{signal.signal_id}"
+        metadata = _capability_available_metadata(
+            capability.capability_id,
+            {
+                "signal_id": signal.signal_id,
+                "signal_type": signal.signal_type,
+                "summary": signal.summary,
+                "severity": signal.severity,
+                "source": signal.source,
+                "frame_count": parse_result.frame_count,
+                "frames": tuple(
+                    {
+                        "path": frame.path,
+                        "line": frame.line,
+                        "function": frame.function,
+                        "code": frame.code,
+                    }
+                    for frame in signal.frames
+                ),
+            },
+        )
+        if not parse_result.ok:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=parse_result.task_id,
+                status="REJECTED",
+                metadata=metadata,
+                error_code="traceback_parse_rejected",
+                error_message=signal.summary,
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=parse_result.task_id,
+            status="PARSED",
             metadata=metadata,
         )
 
