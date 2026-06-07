@@ -19,6 +19,7 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.roles.profile.public.contracts
+  - polaris.cells.roles.profile.public.service
   commands:
   - RegisterRoleProfileCommandV1
   - LoadRoleProfilesCommandV1
@@ -51,6 +52,7 @@ verification:
   - tests/test_role_dialogue_validation_retry.py
   - tests/test_role_events.py
   - tests/test_role_kernel_write_budget.py
+  - polaris/cells/roles/profile/tests/test_public_service.py
   gaps:
   - Several consumers still rely on application-level role exports and should be redirected
     to the cell boundary.

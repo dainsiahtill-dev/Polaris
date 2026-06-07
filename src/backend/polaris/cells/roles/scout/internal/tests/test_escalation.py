@@ -52,7 +52,7 @@ def test_scout_profile_resolvable_via_core_roles_yaml() -> None:
     """
     from pathlib import Path
 
-    from polaris.cells.roles.profile.internal.registry import RoleProfileRegistry
+    from polaris.cells.roles.profile.public.service import RoleProfileRegistry
 
     config_path = Path(__file__).resolve().parents[3] / "profile" / "config" / "roles" / "core_roles.yaml"
     assert config_path.exists(), f"core_roles.yaml not found at {config_path}"
@@ -71,7 +71,7 @@ def test_scout_profile_resolvable_via_core_roles_yaml() -> None:
 
 def test_scout_profile_registered_after_load_core_roles() -> None:
     """The global ``load_core_roles()`` entry point also resolves scout."""
-    from polaris.cells.roles.profile.internal.registry import load_core_roles, registry
+    from polaris.cells.roles.profile.public.service import load_core_roles, registry
 
     load_core_roles()
     assert registry.has_role("scout")

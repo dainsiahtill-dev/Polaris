@@ -52,6 +52,8 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
 from polaris.cells.roles.runtime.public import contracts as runtime_contracts
 from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleCapabilityInvocationCommandV1,
+    ExecuteRoleTaskMarketLifecycleCommandV1,
+    InstantiateRoleRuntimeObjectCommandV1,
     RoleAssetMount,
     RoleAssetMountTable,
     RoleAssetRef,
@@ -61,26 +63,33 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleCapabilityInvocationResultV1,
     RoleCapabilityPorts,
     RoleIdentity,
-    RoleRuntimeObjectResultV1,
-    InstantiateRoleRuntimeObjectCommandV1,
     RoleLedgerBinding,
     RoleProfileBinding,
     RoleRuntimeObject,
+    RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt,
     RoleStateCommitRequest,
     RoleTaskMarketBinding,
+    RoleTaskMarketLifecycleResultV1,
     RoleTurnContext,
     RoleTurnEnvelope,
 )
 from polaris.cells.roles.runtime.public.service import (
     commit_role_state,
     execute_role_capability_invocation,
+    execute_role_task_market_lifecycle,
     instantiate_role_runtime_object,
 )
 from polaris.cells.runtime.projection.public.contracts import RuntimeProjectionQueryV1, RuntimeProjectionResultV1
 from polaris.cells.runtime.task_market.public import (
+    AcknowledgeTaskStageCommandV1,
+    ClaimTaskWorkItemCommandV1,
+    FailTaskStageCommandV1,
     PublishTaskWorkItemCommandV1,
     QueryTaskMarketStatusV1,
+    RenewTaskLeaseCommandV1,
+    RequeueTaskCommandV1,
+    TaskLeaseRenewResultV1,
     TaskMarketStatusResultV1,
     TaskWorkItemResultV1,
 )
@@ -90,6 +99,11 @@ class FakeTaskMarketService:
     def __init__(self) -> None:
         self.published: list[PublishTaskWorkItemCommandV1] = []
         self.queried: list[QueryTaskMarketStatusV1] = []
+        self.claimed: list[ClaimTaskWorkItemCommandV1] = []
+        self.renewed: list[RenewTaskLeaseCommandV1] = []
+        self.acked: list[AcknowledgeTaskStageCommandV1] = []
+        self.failed: list[FailTaskStageCommandV1] = []
+        self.requeued: list[RequeueTaskCommandV1] = []
 
     def publish_work_item(self, command: PublishTaskWorkItemCommandV1) -> TaskWorkItemResultV1:
         self.published.append(command)
@@ -115,6 +129,63 @@ class FakeTaskMarketService:
                 {"task_id": "task-b", "stage": "pending_qa", "status": "running", "priority": "medium"},
                 {"task_id": "task-c", "stage": "pending_exec", "status": "dead_letter", "priority": "high"},
             ),
+        )
+
+    def claim_work_item(self, command: ClaimTaskWorkItemCommandV1) -> TaskWorkItemResultV1:
+        self.claimed.append(command)
+        return TaskWorkItemResultV1(
+            ok=True,
+            task_id=command.task_id or "task-claimed",
+            stage=command.stage,
+            status="leased",
+            version=2,
+            trace_id=command.trace_id or "",
+            lease_token="lease-1",
+            claimed_by=command.worker_id,
+        )
+
+    def renew_task_lease(self, command: RenewTaskLeaseCommandV1) -> TaskLeaseRenewResultV1:
+        self.renewed.append(command)
+        return TaskLeaseRenewResultV1(
+            ok=True,
+            task_id=command.task_id,
+            lease_token=command.lease_token,
+            lease_expires_at="2026-06-07T00:15:00Z",
+            version=3,
+        )
+
+    def acknowledge_task_stage(self, command: AcknowledgeTaskStageCommandV1) -> TaskWorkItemResultV1:
+        self.acked.append(command)
+        return TaskWorkItemResultV1(
+            ok=True,
+            task_id=command.task_id,
+            stage=command.next_stage or "terminal",
+            status=command.terminal_status or "pending",
+            version=4,
+            lease_token=command.lease_token,
+        )
+
+    def fail_task_stage(self, command: FailTaskStageCommandV1) -> TaskWorkItemResultV1:
+        self.failed.append(command)
+        return TaskWorkItemResultV1(
+            ok=True,
+            task_id=command.task_id,
+            stage=command.requeue_stage or "dead_letter",
+            status="failed",
+            version=5,
+            lease_token=command.lease_token,
+            reason=command.error_message,
+        )
+
+    def requeue_task(self, command: RequeueTaskCommandV1) -> TaskWorkItemResultV1:
+        self.requeued.append(command)
+        return TaskWorkItemResultV1(
+            ok=True,
+            task_id=command.task_id,
+            stage=command.target_stage,
+            status="pending",
+            version=6,
+            reason=command.reason,
         )
 
 
@@ -751,6 +822,121 @@ def test_role_turn_envelope_and_commit_request_carry_refs_not_foreign_state() ->
     assert receipt.runtime_receipt_contract == "RecordRuntimeReceiptCommandV1"
 
 
+def test_role_task_market_lifecycle_uses_binding_contracts_and_public_service() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("chief_engineer")
+    runtime_object = spec.instantiate(
+        identity=RoleIdentity(
+            role_id="chief_engineer",
+            run_id="run-1",
+            task_id="task-1",
+            session_id="session-1",
+            workspace="/repo",
+            host_kind="task_market_worker",
+        ),
+        profile_binding=_profile_binding("chief_engineer"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:ce-run"),
+        policy_fingerprint="ce-policy",
+    )
+    task_market = FakeTaskMarketService()
+
+    claim = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="claim",
+            payload={"stage": "pending_design", "worker_id": "ce-worker-1", "task_id": "task-1"},
+        ),
+        task_market_service=task_market,
+    )
+    renew = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="lease",
+            payload={"task_id": "task-1", "lease_token": "lease-1", "visibility_timeout_seconds": 120},
+        ),
+        task_market_service=task_market,
+    )
+    ack = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="ack",
+            payload={"task_id": "task-1", "lease_token": "lease-1", "next_stage": "pending_exec"},
+        ),
+        task_market_service=task_market,
+    )
+    fail = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="fail",
+            payload={
+                "task_id": "task-1",
+                "lease_token": "lease-1",
+                "error_code": "blueprint_failed",
+                "error_message": "blueprint validation failed",
+                "requeue_stage": "pending_design",
+            },
+        ),
+        task_market_service=task_market,
+    )
+    requeue = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="requeue",
+            payload={"task_id": "task-1", "target_stage": "pending_design", "reason": "retry blueprint"},
+        ),
+        task_market_service=task_market,
+    )
+
+    assert isinstance(claim, RoleTaskMarketLifecycleResultV1)
+    assert claim.ok is True
+    assert claim.command_contract == runtime_object.task_market_binding.claim_contract
+    assert claim.result_ref == "runtime.task_market:task:task-1"
+    assert claim.lease_token_ref == "runtime.task_market:lease:lease-1"
+    assert task_market.claimed[0].worker_role == "chief_engineer"
+    assert task_market.claimed[0].workspace == "/repo"
+    assert renew.command_contract == runtime_object.task_market_binding.lease_contract
+    assert task_market.renewed[0].visibility_timeout_seconds == 120
+    assert ack.command_contract == runtime_object.task_market_binding.ack_contract
+    assert task_market.acked[0].next_stage == "pending_exec"
+    assert fail.command_contract == runtime_object.task_market_binding.fail_contract
+    assert task_market.failed[0].requeue_stage == "pending_design"
+    assert requeue.command_contract == runtime_object.task_market_binding.requeue_contract
+    assert task_market.requeued[0].target_stage == "pending_design"
+
+
+def test_role_task_market_lifecycle_rejects_unknown_operation_without_service_call() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("qa")
+    runtime_object = spec.instantiate(
+        identity=RoleIdentity(
+            role_id="qa",
+            run_id="run-1",
+            task_id="task-qa-1",
+            session_id="session-qa-1",
+            workspace="/repo",
+            host_kind="task_market_worker",
+        ),
+        profile_binding=_profile_binding("qa"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:qa-run"),
+        policy_fingerprint="qa-policy",
+    )
+    task_market = FakeTaskMarketService()
+
+    result = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="delete",
+            payload={"task_id": "task-qa-1"},
+        ),
+        task_market_service=task_market,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "unsupported_task_market_operation"
+    assert task_market.claimed == []
+    assert task_market.acked == []
+    assert task_market.failed == []
+    assert task_market.requeued == []
+
+
 def test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_runtime() -> None:
     invocation = RoleCapabilityInvocation(
         invocation_id="invoke-commit-1",
@@ -1256,6 +1442,63 @@ def test_non_qa_pytest_capability_is_denied_without_verification_guard_call() ->
     assert result.allowed is False
     assert result.error_code == "capability_not_mounted"
     assert "invoke_container_pytest" in (result.error_message or "")
+    assert verification_guard.verified == []
+
+
+def test_non_qa_pytest_capability_is_denied_even_if_misconfigured_as_mounted() -> None:
+    runtime_object = RoleRuntimeObject(
+        identity=_identity("pm"),
+        profile_binding=_profile_binding("pm"),
+        asset_mounts=RoleAssetMountTable(),
+        capability_ports=RoleCapabilityPorts(
+            capabilities=(
+                RoleCapabilityDescriptor(
+                    capability_id="invoke_container_pytest",
+                    owner_cell="factory.verification_guard",
+                    contract_name="VerifyCompletionCommandV1",
+                    effect="process.spawn:qa/pytest",
+                    allowed_roles=("pm",),
+                ),
+            )
+        ),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:pm-run"),
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:pending_pm"),
+        capability_fingerprint=RoleCapabilityFingerprint(
+            role_id="pm",
+            capability_id="invoke_container_pytest",
+            effect="process.spawn:qa/pytest",
+            tool="pytest",
+            policy_fingerprint="pm-policy",
+            profile_fingerprint="profile-fp",
+        ),
+    )
+    verification_guard = FakeVerificationGuardService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=RoleCapabilityInvocation(
+                invocation_id="invoke-pytest-misconfigured-denied-1",
+                capability_id="invoke_container_pytest",
+                role_id="pm",
+                command_contract="VerifyCompletionCommandV1",
+                payload_ref="roles.runtime:typed-input:pm-pytest-misconfigured-1",
+                fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+            ),
+            payload={
+                "claim_id": "pm-pytest-misconfigured-1",
+                "claimed_outcome": "pytest passes",
+                "verification_commands": ("python -m pytest tests -q",),
+            },
+        ),
+        verification_guard_service=verification_guard,
+    )
+
+    assert result.ok is False
+    assert result.allowed is False
+    assert result.error_code == "qa_capability_role_denied"
+    assert result.metadata["capability_available"] is True
+    assert result.metadata["required_role"] == "qa"
     assert verification_guard.verified == []
 
 

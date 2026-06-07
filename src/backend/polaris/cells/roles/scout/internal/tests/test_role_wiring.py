@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from polaris.cells.roles.profile.internal.registry import RoleProfileRegistry
+from polaris.cells.roles.profile.public.service import RoleProfileRegistry
 
 # Absolute path to the SSOT config consumed at runtime by load_core_roles().
 # parents[3] = cells/roles  →  / "profile" / "config" / "roles" / "core_roles.yaml"

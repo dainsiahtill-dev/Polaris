@@ -155,9 +155,10 @@ from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleCapabilityInvocationCommandV1,
     ExecuteRoleSessionCommandV1,
     ExecuteRoleTaskCommandV1,
+    ExecuteRoleTaskMarketLifecycleCommandV1,
     GetRoleRuntimeStatusQueryV1,
-    IRoleRuntime,
     InstantiateRoleRuntimeObjectCommandV1,
+    IRoleRuntime,
     RoleCapabilityInvocationResultV1,
     RoleExecutionResultV1,
     RoleIdentity,
@@ -166,6 +167,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt,
     RoleStateCommitRequest,
+    RoleTaskMarketLifecycleResultV1,
     get_builtin_role_runtime_spec,
 )
 
@@ -380,7 +382,7 @@ def instantiate_role_runtime_object(
 
     try:
         spec = get_builtin_role_runtime_spec(command.role_id)
-    except KeyError as exc:
+    except KeyError:
         return RoleRuntimeObjectResultV1(
             ok=False,
             role_id=command.role_id,
@@ -393,9 +395,7 @@ def instantiate_role_runtime_object(
         from polaris.cells.roles.profile.public.service import get_profile as get_role_profile
 
         query = GetRoleProfileQueryV1(role_id=spec.role_id)
-        profile_result = (
-            profile_service.get_profile(query) if profile_service is not None else get_role_profile(query)
-        )
+        profile_result = profile_service.get_profile(query) if profile_service is not None else get_role_profile(query)
         if not isinstance(profile_result, RoleProfileResultV1):
             raise TypeError("profile service returned non-RoleProfileResultV1")
     except Exception as exc:  # noqa: BLE001 - public facade returns structured failure
@@ -471,6 +471,192 @@ def instantiate_role_runtime_object(
             "default_capability_id": spec.default_capability_id,
             "capability_id": runtime_object.capability_fingerprint.capability_id,
         },
+    )
+
+
+_TASK_MARKET_LIFECYCLE_CONTRACT_ATTRS: dict[str, str] = {
+    "claim": "claim_contract",
+    "lease": "lease_contract",
+    "renew": "lease_contract",
+    "renew_lease": "lease_contract",
+    "ack": "ack_contract",
+    "acknowledge": "ack_contract",
+    "fail": "fail_contract",
+    "requeue": "requeue_contract",
+}
+
+
+def _task_market_lifecycle_result_ref(task_id: str) -> str:
+    return f"runtime.task_market:task:{task_id}" if task_id else ""
+
+
+def _task_market_lifecycle_lease_ref(lease_token: str) -> str:
+    return f"runtime.task_market:lease:{lease_token}" if lease_token else ""
+
+
+def _task_market_lifecycle_failure(
+    command: ExecuteRoleTaskMarketLifecycleCommandV1,
+    *,
+    operation: str,
+    command_contract: str = "",
+    error_code: str,
+    error_message: str,
+) -> RoleTaskMarketLifecycleResultV1:
+    return RoleTaskMarketLifecycleResultV1(
+        ok=False,
+        role_id=command.runtime_object.identity.role_id,
+        operation=operation or command.operation,
+        command_contract=command_contract or "unknown",
+        error_code=error_code,
+        error_message=error_message,
+        metadata={"owner_cell": "runtime.task_market"},
+    )
+
+
+def _task_market_lifecycle_metadata(command: ExecuteRoleTaskMarketLifecycleCommandV1) -> dict[str, Any]:
+    payload_metadata = _payload_mapping(command.payload, "metadata")
+    if payload_metadata is None:
+        payload_metadata = {}
+    runtime_object = command.runtime_object
+    identity = runtime_object.identity
+    payload_metadata.update(dict(command.metadata))
+    payload_metadata.update(
+        {
+            "role_id": identity.role_id,
+            "run_id": identity.run_id or "",
+            "task_id": identity.task_id or "",
+            "session_id": identity.session_id or "",
+            "host_kind": identity.host_kind,
+            "role_runtime_profile_ref": runtime_object.profile_binding.profile_ref,
+        }
+    )
+    return payload_metadata
+
+
+def execute_role_task_market_lifecycle(
+    command: ExecuteRoleTaskMarketLifecycleCommandV1,
+    *,
+    task_market_service: Any | None = None,
+) -> RoleTaskMarketLifecycleResultV1:
+    """Execute claim/lease/ack/fail/requeue through the task-market public boundary."""
+    if not isinstance(command, ExecuteRoleTaskMarketLifecycleCommandV1):
+        raise TypeError("command must be an ExecuteRoleTaskMarketLifecycleCommandV1")
+
+    operation = command.operation
+    contract_attr = _TASK_MARKET_LIFECYCLE_CONTRACT_ATTRS.get(operation)
+    if contract_attr is None:
+        return _task_market_lifecycle_failure(
+            command,
+            operation=operation,
+            error_code="unsupported_task_market_operation",
+            error_message=f"unsupported task-market lifecycle operation {operation!r}",
+        )
+    if operation in {"renew", "renew_lease"}:
+        operation = "lease"
+    if operation == "acknowledge":
+        operation = "ack"
+
+    binding = command.runtime_object.task_market_binding
+    command_contract = str(getattr(binding, contract_attr))
+    try:
+        from polaris.cells.runtime.task_market.public.contracts import (
+            AcknowledgeTaskStageCommandV1,
+            ClaimTaskWorkItemCommandV1,
+            FailTaskStageCommandV1,
+            RenewTaskLeaseCommandV1,
+            RequeueTaskCommandV1,
+        )
+        from polaris.cells.runtime.task_market.public.service import get_task_market_service
+
+        service = task_market_service or get_task_market_service()
+        identity = command.runtime_object.identity
+        workspace = _payload_string(command.payload, "workspace", identity.workspace)
+        metadata = _task_market_lifecycle_metadata(command)
+
+        if operation == "claim":
+            task_command = ClaimTaskWorkItemCommandV1(
+                workspace=workspace,
+                stage=_payload_string(command.payload, "stage"),
+                worker_id=_payload_string(
+                    command.payload,
+                    "worker_id",
+                    identity.run_id or identity.session_id or identity.role_id,
+                ),
+                worker_role=_payload_string(command.payload, "worker_role", identity.role_id),
+                visibility_timeout_seconds=int(command.payload.get("visibility_timeout_seconds", 900)),
+                task_id=_payload_string(command.payload, "task_id") or None,
+                trace_id=_payload_string(command.payload, "trace_id") or None,
+            )
+            result = service.claim_work_item(task_command)
+        elif operation == "lease":
+            task_command = RenewTaskLeaseCommandV1(
+                workspace=workspace,
+                task_id=_payload_string(command.payload, "task_id"),
+                lease_token=_payload_string(command.payload, "lease_token"),
+                visibility_timeout_seconds=int(command.payload.get("visibility_timeout_seconds", 900)),
+            )
+            result = service.renew_task_lease(task_command)
+        elif operation == "ack":
+            task_command = AcknowledgeTaskStageCommandV1(
+                workspace=workspace,
+                task_id=_payload_string(command.payload, "task_id"),
+                lease_token=_payload_string(command.payload, "lease_token"),
+                next_stage=_payload_string(command.payload, "next_stage") or None,
+                terminal_status=_payload_string(command.payload, "terminal_status") or None,
+                summary=_payload_string(command.payload, "summary"),
+                metadata=metadata,
+            )
+            result = service.acknowledge_task_stage(task_command)
+        elif operation == "fail":
+            task_command = FailTaskStageCommandV1(
+                workspace=workspace,
+                task_id=_payload_string(command.payload, "task_id"),
+                lease_token=_payload_string(command.payload, "lease_token"),
+                error_code=_payload_string(command.payload, "error_code"),
+                error_message=_payload_string(command.payload, "error_message"),
+                requeue_stage=_payload_string(command.payload, "requeue_stage") or None,
+                to_dead_letter=bool(command.payload.get("to_dead_letter", False)),
+                metadata=metadata,
+            )
+            result = service.fail_task_stage(task_command)
+        else:
+            task_command = RequeueTaskCommandV1(
+                workspace=workspace,
+                task_id=_payload_string(command.payload, "task_id"),
+                target_stage=_payload_string(command.payload, "target_stage"),
+                reason=_payload_string(command.payload, "reason"),
+                metadata=metadata,
+            )
+            result = service.requeue_task(task_command)
+    except Exception as exc:  # noqa: BLE001 - public facade returns structured failure
+        return _task_market_lifecycle_failure(
+            command,
+            operation=operation,
+            command_contract=command_contract,
+            error_code="task_market_lifecycle_failed",
+            error_message=str(exc),
+        )
+
+    task_id = str(getattr(result, "task_id", "") or "").strip()
+    lease_token = str(getattr(result, "lease_token", "") or "").strip()
+    status = str(getattr(result, "status", "") or "").strip() or ("lease_renewed" if operation == "lease" else "")
+    return RoleTaskMarketLifecycleResultV1(
+        ok=bool(getattr(result, "ok", False)),
+        role_id=command.runtime_object.identity.role_id,
+        operation=operation,
+        command_contract=command_contract,
+        task_id=task_id,
+        status=status,
+        result_ref=_task_market_lifecycle_result_ref(task_id),
+        lease_token_ref=_task_market_lifecycle_lease_ref(lease_token),
+        metadata={
+            "owner_cell": "runtime.task_market",
+            "version": getattr(result, "version", 0),
+            "stage": getattr(result, "stage", ""),
+            "reason": getattr(result, "reason", ""),
+        },
+        error_code=None if bool(getattr(result, "ok", False)) else "task_market_lifecycle_not_ok",
+        error_message=None if bool(getattr(result, "ok", False)) else str(getattr(result, "reason", "") or "not ok"),
     )
 
 
@@ -819,6 +1005,23 @@ def execute_role_capability_invocation(
         and capability.owner_cell == "architect.design"
         and capability.contract_name == "GenerateArchitectureDesignCommandV1"
     )
+
+    if is_qa_pytest_verification and role_id != "qa":
+        return _capability_invocation_failure(
+            command,
+            allowed=False,
+            owner_cell=capability.owner_cell,
+            error_code="qa_capability_role_denied",
+            error_message="invoke_container_pytest requires the qa role runtime object",
+            metadata=_capability_available_metadata(
+                capability.capability_id,
+                {
+                    "required_role": "qa",
+                    "actual_role": role_id,
+                    "required_effect": "process.spawn:qa/pytest",
+                },
+            ),
+        )
 
     if is_architect_budget_reservation:
         budget_metadata = _payload_mapping(command.payload, "metadata")
@@ -6442,10 +6645,12 @@ __all__ = [
     "ExecuteRoleCapabilityInvocationCommandV1",
     "ExecuteRoleSessionCommandV1",
     "ExecuteRoleTaskCommandV1",
+    "ExecuteRoleTaskMarketLifecycleCommandV1",
     "FailureClass",
     "GetRoleRuntimeStatusQueryV1",
     "HybridEngine",
     "IRoleRuntime",
+    "InstantiateRoleRuntimeObjectCommandV1",
     "KernelOneMessageBusPort",
     "MessageType",
     "PathSecurityError",
@@ -6470,8 +6675,10 @@ __all__ = [
     "RoleProfile",
     "RoleProfileRegistry",
     "RolePromptPolicy",
+    "RoleRuntimeObjectResultV1",
     "RoleRuntimeService",
     "RoleSkillManager",
+    "RoleTaskMarketLifecycleResultV1",
     "RoleToolGateway",
     "RoleToolPolicy",
     "RoleTurnRequest",
@@ -6517,11 +6724,13 @@ __all__ = [
     "execute_role_capability_invocation",
     "execute_role_session_command",
     "execute_role_task_command",
+    "execute_role_task_market_lifecycle",
     "get_engine",
     "get_engine_registry",
     "get_hybrid_engine",
     "get_seq_emitter",
     "get_task_classifier",
+    "instantiate_role_runtime_object",
     "load_core_roles",
     "profile_from_dict",
     "profile_to_dict",

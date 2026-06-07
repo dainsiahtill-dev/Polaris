@@ -624,6 +624,58 @@ class RoleRuntimeObjectResultV1:
 
 
 @dataclass(frozen=True)
+class ExecuteRoleTaskMarketLifecycleCommandV1:
+    """Execute one task-market lifecycle operation through a role binding."""
+
+    runtime_object: RoleRuntimeObject
+    operation: str
+    payload: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.runtime_object, RoleRuntimeObject):
+            raise TypeError("runtime_object must be a RoleRuntimeObject")
+        operation = _require_non_empty("operation", self.operation).lower().replace("-", "_")
+        object.__setattr__(self, "operation", operation)
+        object.__setattr__(self, "payload", _to_dict_copy(self.payload))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleTaskMarketLifecycleResultV1:
+    """Structured result for a role-bound task-market lifecycle operation."""
+
+    ok: bool
+    role_id: str
+    operation: str
+    command_contract: str
+    owner_cell: str = "runtime.task_market"
+    task_id: str = ""
+    status: str = ""
+    result_ref: str | None = None
+    lease_token_ref: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        object.__setattr__(self, "operation", _require_non_empty("operation", self.operation).lower())
+        object.__setattr__(self, "command_contract", _require_non_empty("command_contract", self.command_contract))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(self, "task_id", str(self.task_id or "").strip())
+        object.__setattr__(self, "status", str(self.status or "").strip())
+        object.__setattr__(self, "result_ref", _normalize_optional_string(self.result_ref))
+        object.__setattr__(self, "lease_token_ref", _normalize_optional_string(self.lease_token_ref))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
+        object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        if not self.ok and not (self.error_code or self.error_message):
+            raise ValueError("failed task-market lifecycle result must include error_code or error_message")
+
+
+@dataclass(frozen=True)
 class ExecuteRoleCapabilityInvocationCommandV1:
     """Execute one mounted role capability through its public contract port."""
 
@@ -1889,6 +1941,7 @@ __all__ = [
     "ExecuteRoleCapabilityInvocationCommandV1",
     "ExecuteRoleSessionCommandV1",
     "ExecuteRoleTaskCommandV1",
+    "ExecuteRoleTaskMarketLifecycleCommandV1",
     "GetRoleRuntimeStatusQueryV1",
     "IRoleRuntime",
     "InstantiateRoleRuntimeObjectCommandV1",
@@ -1915,6 +1968,7 @@ __all__ = [
     "RoleStateCommitRequest",
     "RoleTaskCompletedEventV1",
     "RoleTaskMarketBinding",
+    "RoleTaskMarketLifecycleResultV1",
     "RoleTaskStartedEventV1",
     "RoleTurnContext",
     "RoleTurnEnvelope",

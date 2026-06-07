@@ -306,6 +306,8 @@ def clear_storage_roots_cache() -> None:
         _storage_roots_cache.clear()
     with _ramdisk_check_lock:
         _ramdisk_check_cache.clear()
+    with _writable_base_cache_lock:
+        _writable_base_cache.clear()
 
 
 @dataclass(frozen=True)
@@ -486,6 +488,7 @@ def _is_within_path(parent: str, child: str) -> bool:
 
 _writable_base_cache: dict[str, tuple[bool, float]] = {}
 _writable_base_cache_ttl = 300.0
+_writable_base_cache_lock = threading.Lock()
 
 
 def _is_runtime_base_writable(base: str) -> bool:
@@ -493,24 +496,31 @@ def _is_runtime_base_writable(base: str) -> bool:
     candidate = os.path.abspath(base)
 
     now = time.monotonic()
-    if candidate in _writable_base_cache:
-        result, timestamp = _writable_base_cache[candidate]
-        if now - timestamp < _writable_base_cache_ttl:
-            return result
+    with _writable_base_cache_lock:
+        cached = _writable_base_cache.get(candidate)
+        if cached is not None:
+            result, timestamp = cached
+            if now - timestamp < _writable_base_cache_ttl:
+                return result
 
     try:
         os.makedirs(candidate, exist_ok=True)
-        probe_dir = os.path.join(candidate, get_workspace_metadata_dir_name() + "-probe")
+        probe_dir = os.path.join(
+            candidate,
+            f"{get_workspace_metadata_dir_name()}-probe-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}",
+        )
         os.makedirs(probe_dir, exist_ok=True)
         probe_file = os.path.join(probe_dir, ".write")
         with open(probe_file, "w", encoding="utf-8") as handle:
             handle.write("ok")
         os.remove(probe_file)
         os.rmdir(probe_dir)
-        _writable_base_cache[candidate] = (True, now)
+        with _writable_base_cache_lock:
+            _writable_base_cache[candidate] = (True, now)
         return True
     except (OSError, ValueError):
-        _writable_base_cache[candidate] = (False, now)
+        with _writable_base_cache_lock:
+            _writable_base_cache[candidate] = (False, now)
         return False
 
 

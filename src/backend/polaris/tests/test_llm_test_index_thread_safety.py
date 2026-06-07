@@ -370,14 +370,10 @@ from unittest.mock import MagicMock, patch
 
 from polaris.cells.llm.evaluation.public.service import save_interview_report
 from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
-from polaris.kernelone.storage.layout import resolve_storage_roots
 
 workspace = Path({temp_workspace!r})
 runtime_root = Path(os.environ["KERNELONE_RUNTIME_ROOT"])
 runtime_root.mkdir(parents=True, exist_ok=True)
-print("runtime_root", runtime_root)
-print("workspace", workspace)
-print("storage_roots", resolve_storage_roots(str(workspace)).runtime_root)
 settings = MagicMock()
 settings.workspace = str(workspace)
 settings.workspace_path = str(workspace)

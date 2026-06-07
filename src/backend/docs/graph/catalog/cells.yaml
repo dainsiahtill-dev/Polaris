@@ -1337,6 +1337,8 @@ cells:
       modules:
         - polaris.cells.roles.runtime.public.contracts
       commands:
+        - InstantiateRoleRuntimeObjectCommandV1
+        - ExecuteRoleTaskMarketLifecycleCommandV1
         - ExecuteRoleCapabilityInvocationCommandV1
         - RoleStateCommitRequest
         - ExecuteRoleTaskCommandV1
@@ -1350,6 +1352,8 @@ cells:
         - RoleTaskStartedEventV1
         - RoleTaskCompletedEventV1
       results:
+        - RoleRuntimeObjectResultV1
+        - RoleTaskMarketLifecycleResultV1
         - RoleCapabilityInvocationResultV1
         - RoleStateCommitReceipt
         - RoleExecutionResultV1
@@ -1698,7 +1702,8 @@ cells:
       Own role profile schema, registry, and canonical role configuration
       materialization.
     current_modules:
-      - polaris.cells.roles.profile.internal
+      - polaris.cells.roles.profile.public.service
+      - polaris.cells.roles.profile.public.contracts
       - polaris.cells.roles.profile.internal.registry
       - polaris.cells.roles.profile.internal.schema
       - polaris.cells.roles.profile.internal.builtin_profiles
@@ -1707,14 +1712,20 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.roles.profile.public.contracts
+        - polaris.cells.roles.profile.public.service
       commands:
-        - LoadRoleProfileCommandV1
+        - RegisterRoleProfileCommandV1
+        - LoadRoleProfilesCommandV1
+        - SaveRoleProfilesCommandV1
       queries:
-        - QueryRoleProfileRegistryV1
+        - GetRoleProfileQueryV1
+        - ListRoleProfilesQueryV1
       events:
-        - RoleProfileLoadedEventV1
+        - RoleProfileRegisteredEventV1
+        - RoleProfilesLoadedEventV1
       results:
         - RoleProfileResultV1
+        - RoleProfilesResultV1
       errors:
         - RoleProfileErrorV1
     depends_on:
@@ -1737,6 +1748,7 @@ cells:
       tests:
         - tests/test_roles_kernel.py
         - tests/test_role_dialogue_validation_retry.py
+        - polaris/cells/roles/profile/tests/test_public_service.py
       gaps:
         - Some role configuration sources are still mirrored from legacy role registries.
 
@@ -3526,6 +3538,8 @@ cells:
     depends_on:
       - kernelone.tool_execution
       - domain.verification
+      - roles.profile
+      - roles.runtime
     subgraphs: []
     state_owners: []
     effects_allowed:

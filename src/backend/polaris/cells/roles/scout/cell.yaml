@@ -34,6 +34,8 @@ public_contracts:
 depends_on:
 - kernelone.tool_execution
 - domain.verification
+- roles.profile
+- roles.runtime
 subgraphs: []
 state_owners: []
 effects_allowed:

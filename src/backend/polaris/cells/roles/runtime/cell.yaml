@@ -22,6 +22,8 @@ public_contracts:
   modules:
   - polaris.cells.roles.runtime.public.contracts
   commands:
+  - InstantiateRoleRuntimeObjectCommandV1
+  - ExecuteRoleTaskMarketLifecycleCommandV1
   - ExecuteRoleCapabilityInvocationCommandV1
   - RoleStateCommitRequest
   - ExecuteRoleTaskCommandV1
@@ -32,6 +34,8 @@ public_contracts:
   - RoleTaskStartedEventV1
   - RoleTaskCompletedEventV1
   results:
+  - RoleRuntimeObjectResultV1
+  - RoleTaskMarketLifecycleResultV1
   - RoleCapabilityInvocationResultV1
   - RoleStateCommitReceipt
   - RoleExecutionResultV1

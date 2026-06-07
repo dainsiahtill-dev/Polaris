@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,31 @@ def test_storage_roots_taxonomy(tmp_path: Path) -> None:
     # Check against actual current metadata dir (Polaris uses .polaris)
     assert Path(roots.project_persistent_root).as_posix().endswith(f"/{current_meta}")
     assert Path(roots.runtime_project_root).as_posix().endswith("/runtime")
+
+
+def test_runtime_base_writable_probe_is_concurrency_safe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(runtime_root))
+    clear_storage_roots_cache()
+
+    workspaces = []
+    for index in range(32):
+        workspace = tmp_path / f"workspace-{index}"
+        workspace.mkdir()
+        workspaces.append(workspace)
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = [executor.submit(resolve_storage_roots, str(workspace)) for workspace in workspaces]
+        roots = [future.result() for future in as_completed(futures)]
+
+    assert len(roots) == len(workspaces)
+    assert {root.runtime_mode for root in roots} == {"explicit_runtime_root"}
+    assert all(Path(root.runtime_base) == runtime_root for root in roots)
 
 
 def test_storage_roots_polaris_compat(tmp_path: Path) -> None:

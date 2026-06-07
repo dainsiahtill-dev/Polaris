@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-from polaris.cells.roles.profile.internal.builtin_profiles import BUILTIN_PROFILES
+from pathlib import Path
+
+from polaris.cells.roles.profile.public.service import RoleProfileRegistry
+
+_CORE_ROLES_YAML: Path = Path(__file__).resolve().parents[3] / "profile" / "config" / "roles" / "core_roles.yaml"
 
 
 def _whitelist(role: str) -> list[str]:
-    """Return the tool whitelist for a builtin profile dict by role_id."""
-    for profile in BUILTIN_PROFILES:
-        if profile.get("role_id") == role:
-            return list(profile.get("tool_policy", {}).get("whitelist", []))
-    raise KeyError(f"No builtin profile found for role: {role!r}")
+    """Return the tool whitelist through the public role-profile boundary."""
+    assert _CORE_ROLES_YAML.exists(), f"SSOT config missing: {_CORE_ROLES_YAML}"
+    registry = RoleProfileRegistry()
+    registry.load_from_yaml(_CORE_ROLES_YAML)
+    profile = registry.get_profile(role)
+    if profile is None:
+        raise KeyError(f"No profile found for role: {role!r}")
+    return list(profile.tool_policy.whitelist)
 
 
 def test_director_whitelist_contains_scout_probe() -> None:

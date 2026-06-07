@@ -156,6 +156,21 @@ def _index_write_lock(path: str) -> Generator[None, None, None]:
 
 
 @contextmanager
+def _index_write_locks(paths: list[str]) -> Generator[None, None, None]:
+    """Acquire write locks for all index paths in deterministic order."""
+    sorted_paths = sorted(set(paths))
+    locks = [_get_path_lock(p) for p in sorted_paths]
+
+    for lock in locks:
+        lock.acquire()
+    try:
+        yield
+    finally:
+        for lock in reversed(locks):
+            lock.release()
+
+
+@contextmanager
 def _index_read_lock(paths: list[str]) -> Generator[None, None, None]:
     """Context manager for index read access with path-level locking.
 
@@ -254,6 +269,14 @@ def _load_index_file(path: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _load_index_from_paths_unlocked(paths: list[str]) -> dict[str, Any]:
+    for path in paths:
+        payload = _load_index_file(path)
+        if payload is not None:
+            return payload
+    return _new_index_payload()
 
 
 def _write_index_payload(paths: list[str], payload: dict[str, Any]) -> None:
@@ -383,10 +406,9 @@ def reset_llm_test_index(workspace: Any = None) -> None:
     payload["reset_at"] = utc_now()
     paths = _resolve_index_paths(workspace)
 
-    # Use write lock on the primary path; workspace-local indexes take precedence
-    # over global defaults when a workspace is available.
-    primary_path = paths[0] if paths else _get_default_index_path()
-    with _index_write_lock(primary_path):
+    # Lock every mirror path in sorted order so reset cannot race with readers
+    # or with mirrored writes to the global fallback index.
+    with _index_write_locks(paths or [_get_default_index_path()]):
         _write_index_payload(paths, payload)
 
 
@@ -416,11 +438,11 @@ def reconcile_llm_test_index(
         return _new_index_payload()
 
     paths = _resolve_index_paths(workspace_path)
-    primary_path = paths[0] if paths else _global_index_path(workspace_path)
-
-    # C1 fix: Use write lock for the entire read-modify-write operation
-    with _index_write_lock(primary_path):
-        index = load_llm_test_index(workspace_path)
+    # Use deterministic multi-path locking for the entire read-modify-write
+    # operation. This avoids lock-order inversion between workspace and global
+    # index mirrors under concurrent interview-save/status requests.
+    with _index_write_locks(paths or [_global_index_path(workspace_path)]):
+        index = _load_index_from_paths_unlocked(paths)
 
         # Backward compatibility: old callers pass config payload as 2nd arg.
         if isinstance(reports_dir, dict):
@@ -502,11 +524,10 @@ def update_index_with_report(
         return
 
     paths = _resolve_index_paths(workspace_path)
-    primary_path = paths[0] if paths else _workspace_index_path(workspace_path)
-
-    # C1 fix: Use write lock for the entire read-modify-write operation
-    with _index_write_lock(primary_path):
-        index = load_llm_test_index(workspace_path)
+    # Use deterministic multi-path locking for the entire read-modify-write
+    # operation and for both workspace/global mirror writes.
+    with _index_write_locks(paths or [_workspace_index_path(workspace_path)]):
+        index = _load_index_from_paths_unlocked(paths)
 
         if "roles" not in index:
             index["roles"] = {}

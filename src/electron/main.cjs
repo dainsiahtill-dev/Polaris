@@ -627,11 +627,13 @@ function selectedSecretStorageBackend() {
 }
 
 function secretStorageStatus() {
-  const strongEncryptionAvailable = safeStorage.isEncryptionAvailable();
+  const initialBackend = selectedSecretStorageBackend();
+  const initialAvailable = safeStorage.isEncryptionAvailable();
+  const strongEncryptionAvailable = initialAvailable && initialBackend !== "basic_text";
   let fallbackEnabled = false;
   let fallbackError = "";
 
-  if (!strongEncryptionAvailable && process.platform === "linux" && typeof safeStorage.setUsePlainTextEncryption === "function") {
+  if (!initialAvailable && process.platform === "linux" && typeof safeStorage.setUsePlainTextEncryption === "function") {
     try {
       safeStorage.setUsePlainTextEncryption(true);
       fallbackEnabled = true;
@@ -644,7 +646,7 @@ function secretStorageStatus() {
   const selectedBackend = selectedSecretStorageBackend();
   const storageMode = strongEncryptionAvailable
     ? "os_keyring"
-    : available && fallbackEnabled
+    : available && (fallbackEnabled || selectedBackend === "basic_text")
       ? "basic_text_fallback"
       : selectedBackend || "unavailable";
 

@@ -24,6 +24,10 @@ profile loading/serialization boundary.
 - `RoleProfileRegisteredEventV1`
 - `RoleProfilesLoadedEventV1`
 
+## Public Service Facades
+
+- `get_profile(GetRoleProfileQueryV1) -> RoleProfileResultV1`
+
 ## Depends On
 
 - `policy.workspace_guard`

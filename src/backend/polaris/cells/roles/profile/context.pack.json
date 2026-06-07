@@ -5,8 +5,9 @@
     "cell.yaml",
     "README.agent.md",
     "public/contracts.py",
+    "public/service.py",
     "internal/registry.py",
     "internal/schema.py"
   ],
-  "notes": "Minimal context pack for canonical role profile registry and schema."
+  "notes": "Minimal context pack for canonical role profile registry and schema. Runtime object instantiation consumes get_profile(GetRoleProfileQueryV1) through the public service facade and binds refs instead of copying profile-owned state."
 }

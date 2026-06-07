@@ -40,11 +40,15 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 
 ## Public Contracts
 Defined in `public/contracts.py`:
+- `InstantiateRoleRuntimeObjectCommandV1`
+- `ExecuteRoleTaskMarketLifecycleCommandV1`
 - `ExecuteRoleCapabilityInvocationCommandV1`
 - `RoleStateCommitRequest`
 - `ExecuteRoleTaskCommandV1`
 - `ExecuteRoleSessionCommandV1`
 - `GetRoleRuntimeStatusQueryV1`
+- `RoleRuntimeObjectResultV1`
+- `RoleTaskMarketLifecycleResultV1`
 - `RoleCapabilityInvocationResultV1`
 - `RoleStateCommitReceipt`
 - `RoleTaskStartedEventV1`
@@ -59,6 +63,13 @@ Defined in `public/contracts.py`:
   adapter call paths are migration targets and must not gain new behavior.
 - Role capability invocation validates mounted ports, role allow-lists, and
   declared command contracts before delegating to the target Cell public API.
+- Role object instantiation uses `instantiate_role_runtime_object(InstantiateRoleRuntimeObjectCommandV1)`
+  to bind `roles.profile` via `GetRoleProfileQueryV1`; runtime stores only
+  profile/tool/prompt/data policy refs and a profile fingerprint.
+- Role task-market lifecycle operations use
+  `execute_role_task_market_lifecycle(ExecuteRoleTaskMarketLifecycleCommandV1)`
+  to translate role-bound claim/lease/ack/fail/requeue requests into
+  `runtime.task_market` public contracts.
 - Role state commits use `commit_role_state(RoleStateCommitRequest)` to bind an
   existing `roles.kernel` commit receipt to `factory.cognitive_runtime`
   `RecordRuntimeReceiptCommandV1` and `ExportHandoffPackCommandV1`; runtime does
@@ -69,7 +80,8 @@ Defined in `public/contracts.py`:
   `QueryTaskMarketStatusV1`; PM runtime status projection delegates to an
   injected `runtime.projection` public service using `RuntimeProjectionQueryV1`.
 - QA pytest verification delegates to `factory.verification_guard` and requires
-  the QA capability fingerprint before any verification command is built.
+  both the `qa` role runtime object and QA capability fingerprint before any
+  verification command is built, even if a capability port is misconfigured.
 - QA traceback parsing delegates to `qa.audit_verdict.public.service.parse_traceback_frames`
   with `ParseTracebackFramesCommandV1`; runtime objects keep only typed signal refs
   and metadata.
