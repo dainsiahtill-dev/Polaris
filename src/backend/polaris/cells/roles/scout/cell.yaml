@@ -6,13 +6,15 @@ stateful: false
 owner: roles
 purpose: >
   Auxiliary, synchronous, read-only code/symbol reconnaissance role.
-  Called inline by PM/Director; no TaskMarket, no writes, no persistence.
-
+  Called inline by PM/Director within the caller's own Turn — side-effect-free,
+  no TaskMarket, no persistence. Entry point: ScoutProbeService.probe().
 current_modules:
-- polaris.cells.roles.scout.public.contracts
 - polaris.cells.roles.scout.public.service
+- polaris.cells.roles.scout.public.contracts
 tags:
 - read_only
+- auxiliary
+- no_task_market
 - side_effect_free
 owned_paths:
 - polaris/cells/roles/scout/public/**
@@ -20,15 +22,35 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.roles.scout.public.contracts
+  commands: []
+  queries: []
+  events: []
   results:
+  - ScoutProbeTargetV1
   - ScoutReportV1
   - ScoutFinding
-  queries:
-  - ScoutProbeTargetV1
+  errors:
+  - ReadOnlyViolationError
 depends_on:
 - kernelone.tool_execution
 - domain.verification
-constraints:
-- read_only
-- no_task_market
-- side_effect_free
+subgraphs: []
+state_owners: []
+effects_allowed:
+- fs.read:workspace/**
+verification:
+  tests:
+  - polaris/cells/roles/scout/public/tests/test_contracts.py
+  - polaris/cells/roles/scout/public/tests/test_service.py
+  - polaris/cells/roles/scout/internal/tests/test_target.py
+  - polaris/cells/roles/scout/internal/tests/test_planner.py
+  - polaris/cells/roles/scout/internal/tests/test_retrieval.py
+  - polaris/cells/roles/scout/internal/tests/test_ranker.py
+  - polaris/cells/roles/scout/internal/tests/test_distiller.py
+  - polaris/cells/roles/scout/internal/tests/test_evidence.py
+  - polaris/cells/roles/scout/internal/tests/test_cache.py
+  - polaris/cells/roles/scout/internal/tests/test_ports.py
+  - polaris/cells/roles/scout/internal/tests/test_read_tool_adapter.py
+  gaps:
+  - LLM-backed distiller wiring pending; the deterministic distiller is the default.
+  - In this environment repo_rg (no rg binary) and repo_symbols_index (tree-sitter) fail soft; repo_tree drives reconnaissance.
