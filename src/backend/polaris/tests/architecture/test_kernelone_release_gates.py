@@ -89,6 +89,15 @@ DEPRECATION_SHIM_PATHS: frozenset[str] = frozenset(
         # Expert 3 (Wave 1): KernelOne alignment port abstracts cells alignment service
         # ACGA 2.0 Section 6.3: KernelOne defines interface contracts, Cells provide implementations
         "polaris/kernelone/ports/alignment.py",
+        # Scout: the scout_probe executor handler must live in KernelOne (it is
+        # discovered by ToolHandlerRegistry.load_all() which walks this handlers/
+        # dir), but reconnaissance has a single implementation in the roles.scout
+        # cell. The handler delegates to the cell's PUBLIC contract via a
+        # runtime-lazy, in-function import (never at module load) — so it creates
+        # NO load-time KernelOne -> Cells dependency or import cycle. The fence's
+        # AST walk cannot distinguish lazy from load-time imports, hence this
+        # explicit, reviewed exemption.
+        "polaris/kernelone/llm/toolkit/executor/handlers/scout.py",
     }
 )
 
