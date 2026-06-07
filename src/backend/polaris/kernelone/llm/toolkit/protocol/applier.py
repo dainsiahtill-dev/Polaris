@@ -417,11 +417,11 @@ class StrictOperationApplier:
         operation: str,
     ) -> tuple[str, dict[str, Any] | None]:
         """Return deterministic Director policy evidence for a pending protocol write."""
-        from polaris.domain.verification.director_policy_gate import validate_director_write_policy
+        from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
 
         normalized_rel = str(rel or "").replace("\\", "/").strip("/")
         package_write = normalized_rel == "package.json" or normalized_rel.endswith("/package.json")
-        verdict = validate_director_write_policy(
+        verdict = validate_tool_write_policy(
             changed_files=[normalized_rel] if normalized_rel else [],
             allowed_scope=[],
             agents_md=StrictOperationApplier._read_workspace_agents_policy_text(workspace, normalized_rel),

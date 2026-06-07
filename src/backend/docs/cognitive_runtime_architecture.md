@@ -18,8 +18,7 @@
 > `polaris/application/cognitive_runtime/`、
 > `polaris/infrastructure/cognitive_runtime/`、
 > `polaris/cells/factory/cognitive_runtime/`、
-> `polaris/delivery/http/routers/cognitive_runtime.py`、
-> `polaris/bootstrap/cognitive_runtime/`。
+> `polaris/delivery/http/routers/cognitive_runtime.py`。
 > 当前已实现 `resolve_context`、`lease_edit_scope`、`validate_change_set`、
 > `record_runtime_receipt`、`export_handoff_pack`、
 > `map_diff_to_cells`、`request_projection_compile`、
@@ -691,7 +690,7 @@
 来源：
 
 - `polaris/kernelone/context/engine/engine.py`
-- `polaris/kernelone/context/manager.py`
+- `polaris/kernelone/context/context_os/memory/manager.py`
 
 必须复用的原因：
 

@@ -68,9 +68,9 @@ qualification. The cell also owns deterministic role benchmarks
 
 ## Verification
 
-- `tests/test_llm_agentic_benchmark.py`
-- `tests/test_llm_tool_calling_matrix.py`
-- `tests/test_llm_test_index_reconcile.py`
-- `tests/test_llm_qualification_validators.py`
-- `tests/test_llm_interview_cognitive_runtime.py`
-- `tests/test_llm_connectivity_suite_ollama.py`
+- `polaris/tests/test_llm_agentic_benchmark.py`
+- `polaris/tests/test_llm_tool_calling_matrix.py`
+- `polaris/tests/test_llm_test_index_reconcile.py`
+- `polaris/tests/test_llm_qualification_validators.py`
+- `polaris/tests/test_llm_interview_cognitive_runtime.py`
+- `polaris/tests/test_llm_connectivity_suite_ollama.py`

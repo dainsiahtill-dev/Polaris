@@ -1,9 +1,4 @@
-"""Structured Director write policy gate.
-
-This module keeps deterministic write-policy checks outside LLM/tool handlers.
-It converts AGENTS.md constraints and package.json before/after content into
-structured evidence that tool writes and diff writes can share.
-"""
+"""Generic AGENTS.md and package-manifest write policy for tool writes."""
 
 from __future__ import annotations
 
@@ -13,7 +8,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from polaris.domain.verification.write_gate import WriteGate
+from polaris.kernelone.llm.toolkit.write_scope import WriteGate
 
 _FORBIDDEN_LINE_RE = re.compile(
     r"(?:禁止|不得|不要|严禁|do\s+not|never|forbidden|disallow|deny).{0,80}",
@@ -49,7 +44,7 @@ class ForbiddenFilePatternRule:
 
 
 @dataclass(frozen=True)
-class DirectorPolicyObject:
+class AgentWritePolicyObject:
     """Structured policy object derived from project guidance."""
 
     forbidden_paths: tuple[ForbiddenPathRule, ...] = field(default_factory=tuple)
@@ -98,14 +93,14 @@ class PackageManifestDiff:
 
 
 @dataclass(frozen=True)
-class DirectorWritePolicyVerdict:
-    """Unified write-policy verdict for Director tool/direct/diff writes."""
+class ToolWritePolicyVerdict:
+    """Unified write-policy verdict for tool/direct/diff writes."""
 
     allowed: bool
     operation: str
     changed_files: tuple[str, ...]
     reasons: tuple[str, ...] = field(default_factory=tuple)
-    policy: DirectorPolicyObject = field(default_factory=DirectorPolicyObject)
+    policy: AgentWritePolicyObject = field(default_factory=AgentWritePolicyObject)
     package_diff: PackageManifestDiff | None = None
     write_gate_reason: str = ""
     extra_files: tuple[str, ...] = field(default_factory=tuple)
@@ -123,7 +118,7 @@ class DirectorWritePolicyVerdict:
         }
 
 
-def parse_agents_write_policy(agents_md: str | None) -> DirectorPolicyObject:
+def parse_agents_write_policy(agents_md: str | None) -> AgentWritePolicyObject:
     """Parse forbidden file/path rules from AGENTS.md text."""
     rules: list[ForbiddenPathRule] = []
     pattern_rules: list[ForbiddenFilePatternRule] = []
@@ -145,7 +140,7 @@ def parse_agents_write_policy(agents_md: str | None) -> DirectorPolicyObject:
                 continue
             seen_patterns.add(pattern)
             pattern_rules.append(ForbiddenFilePatternRule(pattern=pattern, source_line=line))
-    return DirectorPolicyObject(
+    return AgentWritePolicyObject(
         forbidden_paths=tuple(rules),
         forbidden_file_patterns=tuple(pattern_rules),
     )
@@ -174,7 +169,7 @@ def diff_package_manifest(before_text: str | None, after_text: str | None) -> Pa
     return PackageManifestDiff(sections=sections)
 
 
-def validate_director_write_policy(
+def validate_tool_write_policy(
     *,
     changed_files: list[str],
     allowed_scope: list[str],
@@ -183,8 +178,8 @@ def validate_director_write_policy(
     package_before: str | None = None,
     package_after: str | None = None,
     require_change: bool = True,
-) -> DirectorWritePolicyVerdict:
-    """Validate Director writes through one deterministic policy gate."""
+) -> ToolWritePolicyVerdict:
+    """Validate tool writes through a deterministic policy gate."""
     normalized_changed = tuple(_normalize_policy_path(path) for path in changed_files if _normalize_policy_path(path))
     policy = parse_agents_write_policy(agents_md)
     reasons: list[str] = []
@@ -215,7 +210,7 @@ def validate_director_write_policy(
             if package_diff.parse_error:
                 reasons.append(f"package.json structured diff failed: {package_diff.parse_error}")
 
-    return DirectorWritePolicyVerdict(
+    return ToolWritePolicyVerdict(
         allowed=not reasons,
         operation=operation,
         changed_files=normalized_changed,
@@ -292,3 +287,16 @@ def _derived_forbidden_file_patterns(line: str) -> tuple[str, ...]:
 def _is_package_manifest_path(path: str) -> bool:
     normalized = _normalize_policy_path(path).lower()
     return normalized == "package.json" or normalized.endswith("/package.json")
+
+
+__all__ = [
+    "AgentWritePolicyObject",
+    "ForbiddenFilePatternRule",
+    "ForbiddenPathRule",
+    "PackageManifestDiff",
+    "SectionDiff",
+    "ToolWritePolicyVerdict",
+    "diff_package_manifest",
+    "parse_agents_write_policy",
+    "validate_tool_write_policy",
+]

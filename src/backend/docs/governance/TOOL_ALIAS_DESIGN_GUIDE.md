@@ -186,10 +186,10 @@ python docs/governance/ci/scripts/run_tool_calling_canonical_gate.py \
 
 | 文件 | 说明 |
 |------|------|
-| `polaris/kernelone/tools/contracts.py` | Canonical 工具定义 SSOT |
-| `polaris/kernelone/llm/toolkit/tool_normalization.py` | 工具名/参数归一化 |
+| `polaris/kernelone/tool_execution/contracts.py` | Canonical 工具定义 SSOT |
+| `polaris/kernelone/llm/toolkit/tool_normalization/`（目录） | 工具名/参数归一化 |
 | `polaris/kernelone/llm/toolkit/executor/handlers/repo.py` | Canonical handlers |
-| `polaris/cells/roles/kernel/internal/llm_caller.py` | LLM 工具注入 |
+| `polaris/cells/roles/kernel/internal/llm_caller/`（目录） | LLM 工具注入 |
 | `docs/governance/ci/scripts/run_tool_calling_canonical_gate.py` | 治理门禁 |
 | `docs/governance/CANONICAL_TOOL_SPEC.md` | Canonical 工具规范 |
 

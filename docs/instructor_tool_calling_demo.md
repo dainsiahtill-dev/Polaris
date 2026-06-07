@@ -9,7 +9,7 @@
 ### 1. PM 角色 - 带工具调用的任务规划
 
 ```python
-from app.roles.schemas import TaskListOutput, ToolCall
+from polaris.cells.roles.adapters.internal.schemas import TaskListOutput, ToolCall
 
 # PM 在分析项目时需要先使用工具收集信息
 output = TaskListOutput(
@@ -39,7 +39,7 @@ output = TaskListOutput(
 ### 2. Architect 角色 - 带工具调用的架构设计
 
 ```python
-from app.roles.schemas import ArchitectOutput, ToolCall
+from polaris.cells.roles.adapters.internal.schemas import ArchitectOutput, ToolCall
 
 output = ArchitectOutput(
     system_overview="",
@@ -68,7 +68,7 @@ output = ArchitectOutput(
 ### 3. Chief Engineer 角色 - 带工具调用的蓝图设计
 
 ```python
-from app.roles.schemas import BlueprintOutput, ToolCall
+from polaris.cells.roles.adapters.internal.schemas import BlueprintOutput, ToolCall
 
 output = BlueprintOutput(
     analysis=None,  # 需要先分析代码
@@ -94,7 +94,7 @@ output = BlueprintOutput(
 ### 4. QA 角色 - 带工具调用的代码审查
 
 ```python
-from app.roles.schemas import QAReportOutput, ToolCall
+from polaris.cells.roles.adapters.internal.schemas import QAReportOutput, ToolCall
 
 output = QAReportOutput(
     verdict="",  # 空 verdict 表示需要更多信息
@@ -120,7 +120,7 @@ output = QAReportOutput(
 ### 5. Director 角色 - 完整的工具调用和补丁
 
 ```python
-from app.roles.schemas import DirectorOutput, ToolCall, PatchOperation
+from polaris.cells.roles.adapters.internal.schemas import DirectorOutput, ToolCall, PatchOperation
 
 # Director 可以使用工具调用或补丁
 output = DirectorOutput(

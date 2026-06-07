@@ -11,7 +11,6 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from polaris.domain.verification.director_policy_gate import validate_director_write_policy
 from polaris.kernelone.events.file_event_broadcaster import (
     replace_in_file_with_broadcast,
     write_file_with_broadcast,
@@ -19,6 +18,7 @@ from polaris.kernelone.events.file_event_broadcaster import (
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_patch_like_write_content,
 )
+from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
 
 from .helpers import _MIN_FILES_PATTERN, _MIN_LINES_PATTERN
 from .security import (
@@ -123,7 +123,7 @@ class DirectorToolExecutor:
         """Validate a pending write and return KernelOne-compatible policy evidence."""
         normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
         package_write = _is_package_manifest_path(normalized_rel)
-        verdict = validate_director_write_policy(
+        verdict = validate_tool_write_policy(
             changed_files=[normalized_rel] if normalized_rel else [],
             allowed_scope=_director_write_allowed_scope(tool_kwargs),
             agents_md=_read_workspace_agents_policy_text(workspace, normalized_rel),

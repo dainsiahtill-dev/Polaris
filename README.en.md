@@ -299,7 +299,7 @@ Browse:
 
 ```bash
 npm test
-python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+python -m pytest -q src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
 ```
 
 ### 25-30 min: verify quality and E2E path
@@ -330,7 +330,7 @@ pytest src/backend/tests -q
 Architecture / release:
 
 ```bash
-python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+python -m pytest -q src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
 python src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
 python src/backend/docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
 ```

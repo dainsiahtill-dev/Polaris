@@ -133,6 +133,24 @@ def test_next_hypothesis_empty_candidates() -> None:
     assert abc._next_hypothesis([], []) == ""
 
 
+# ── _localization_trusted (escape from a mis-localized seed) ─────────────────────────────
+
+
+def test_localization_trusted_in_topk() -> None:
+    cands = ["a.py", "b.py", "c.py", "d.py", "e.py", "f.py"]
+    assert abc._localization_trusted("c.py", cands) is True
+
+
+def test_localization_not_trusted_outside_topk() -> None:
+    cands = ["a.py", "b.py", "c.py", "d.py", "e.py", "wrong.py"]
+    assert abc._localization_trusted("wrong.py", cands) is False  # rank 6 > top-5
+
+
+def test_localization_trusted_when_no_candidates() -> None:
+    # no ranker signal -> trust the current target (nothing better to escape toward)
+    assert abc._localization_trusted("anything.py", []) is True
+
+
 # ── _candidate_files graceful degradation ───────────────────────────────────────────────
 
 

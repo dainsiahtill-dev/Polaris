@@ -369,7 +369,7 @@ class TestNormalizeStreamToolCallPayload:
         metadata = {
             "native_tool_call": {
                 "type": "function",
-                "function": {"name": "search", "arguments": '{"query": "test"}'},
+                "function": {"name": "search", "arguments": {"query": "test"}},
             }
         }
         payload, provider = normalize_stream_tool_call_payload(
@@ -380,6 +380,7 @@ class TestNormalizeStreamToolCallPayload:
         )
         assert provider == "openai"
         assert payload["type"] == "function"
+        assert payload["function"]["arguments"] == {"query": "test"}
 
     def test_anthropic_format(self) -> None:
         """Test normalizes Anthropic format."""
@@ -410,6 +411,7 @@ class TestNormalizeStreamToolCallPayload:
         assert provider == "openai"
         assert payload["type"] == "function"
         assert payload["function"]["name"] == "search"
+        assert payload["function"]["arguments"] == {"query": "test"}
 
     def test_empty_tool_name(self) -> None:
         """Test returns None for empty tool name."""
@@ -431,7 +433,7 @@ class TestNormalizeStreamToolCallPayload:
             metadata={},
         )
         assert provider == "openai"
-        assert payload["function"]["arguments"] == "{}"
+        assert payload["function"]["arguments"] == {}
 
 
 class TestMergeStreamThinking:

@@ -11,6 +11,7 @@ cells:
   - orchestration.pm_planning
   - orchestration.pm_dispatch
   - runtime.task_market
+  - roles.runtime
   - chief_engineer.blueprint
   - llm.control_plane
   - policy.workspace_guard
@@ -29,6 +30,10 @@ relations:
     type: emits
     contract: PmTaskContractGeneratedEventV1
   - from: orchestration.pm_dispatch
+    to: runtime.task_market
+    type: commands
+    contract: PublishTaskWorkItemCommandV1
+  - from: roles.runtime
     to: runtime.task_market
     type: commands
     contract: PublishTaskWorkItemCommandV1
@@ -56,6 +61,7 @@ critical_contracts:
   - GeneratePmTaskContractCommandV1
   - PmTaskContractGeneratedEventV1
   - DispatchPmTasksCommandV1
+  - ExecuteRoleCapabilityInvocationCommandV1
   - PublishTaskWorkItemCommandV1
   - ClaimTaskWorkItemCommandV1
   - WorkspaceWriteGuardQueryV1

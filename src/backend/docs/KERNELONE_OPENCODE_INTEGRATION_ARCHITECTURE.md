@@ -179,7 +179,7 @@ class ToolErrorKind(str, Enum):
 ### 3.4 文件结构
 
 ```
-polaris/kernelone/tool/
+polaris/kernelone/tool_state/
 ├── __init__.py              # 模块导出
 ├── state_machine.py         # ToolState FSM + 转换验证
 ├── tracker.py               # ToolCallTracker
@@ -192,10 +192,10 @@ polaris/kernelone/tool/
 ### 3.5 使用示例
 
 ```python
-from polaris.kernelone.tool.state_machine import (
+from polaris.kernelone.tool_state.state_machine import (
     ToolState, ToolStateStatus, ToolErrorKind
 )
-from polaris.kernelone.tool.tracker import ToolCallTracker
+from polaris.kernelone.tool_state.tracker import ToolCallTracker
 
 tracker = ToolCallTracker()
 
@@ -378,12 +378,12 @@ Polaris 已有的 `apply_fuzzy_search_replace` 策略：
 ```bash
 # 运行所有新模块测试
 pytest polaris/kernelone/events/typed/tests/ \
-       polaris/kernelone/tool/tests/ \
+       polaris/kernelone/tool_state/tests/ \
        polaris/kernelone/messages/tests/ \
        polaris/kernelone/editing/replacers/tests/ -v
 
 # 运行特定模块测试
-pytest polaris/kernelone/tool/tests/test_state_machine.py -v
+pytest polaris/kernelone/tool_state/tests/test_state_machine.py -v
 pytest polaris/kernelone/editing/replacers/tests/ -v
 ```
 
@@ -419,7 +419,7 @@ def complete_tool(result):
     tool_status["result"] = result
 
 # After (ToolState FSM)
-from polaris.kernelone.tool.tracker import ToolCallTracker
+from polaris.kernelone.tool_state.tracker import ToolCallTracker
 
 tracker = ToolCallTracker()
 state = await tracker.create("read_file", tool_call_id="call_123")

@@ -11,8 +11,10 @@ entry point under `polaris/delivery/cli/director/**`.
 
 ## Migration Status
 
-✅ **MIGRATION COMPLETED** (2026-04-09)
+⚠️ **SKELETON ONLY — MIGRATION NOT COMPLETED** (status 2026-06-07)
 
-Implementation migrated from `polaris/cells/director/execution/internal/director_cli.py`.
-Public contracts and directory structure are established; migration tracked
-in the parent `director.execution` Cell task.
+`director_cli.py` has NOT been migrated here. `polaris/delivery/cli/director/`
+does not contain a `director_cli.py`; the file still exists in both
+`polaris/cells/director/execution/internal/director_cli.py` and
+`polaris/cells/director/tasking/internal/director_cli.py`. The current Director
+CLI entry point is `polaris/delivery/cli/director/cli_thin.py`.

@@ -23,25 +23,25 @@
 
 ## 当前代码入口
 
-- `src/backend/app/resident/service.py`
-- `src/backend/app/resident/decision_trace.py`
-- `src/backend/app/resident/meta_cognition.py`
-- `src/backend/app/resident/goal_governor.py`
-- `src/backend/app/resident/pm_bridge.py`
-- `src/backend/app/resident/counterfactual_lab.py`
-- `src/backend/app/resident/skill_foundry.py`
-- `src/backend/app/resident/self_improvement_lab.py`
-- `src/backend/api/v2/resident.py`
+- `src/backend/polaris/cells/resident/autonomy/public/service.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/decision_trace.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/meta_cognition.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/goal_governor.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/pm_bridge.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/counterfactual_lab.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/skill_foundry.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/self_improvement_lab.py`
+- `src/backend/polaris/delivery/http/v2/resident.py`
 - `src/frontend/src/app/components/resident/ResidentWorkspace.tsx`
 
 ## 最小验证命令
 
 ```bash
 python -m pytest -q \
-  src/backend/tests/test_resident_service.py \
-  src/backend/tests/test_resident_api.py \
-  src/backend/tests/test_runtime_projection_resident.py \
-  src/backend/tests/test_resident_pm_bridge.py
+  src/backend/polaris/tests/test_resident_service.py \
+  src/backend/polaris/tests/test_resident_api.py \
+  src/backend/polaris/tests/test_runtime_projection_resident.py \
+  src/backend/polaris/tests/test_resident_pm_bridge.py
 
 npm run typecheck
 npm run test -- src/frontend/src/app/components/resident/ResidentWorkspace.test.tsx

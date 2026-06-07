@@ -1877,17 +1877,26 @@ async def test_execute_stream_yields_completion_after_mutation_contract_retry_re
         nonlocal call_ordinal
         call_ordinal += 1
         # 直接返回包含 write_file 的决策，避免 mutation bypass 阻断 LLM_ONCE
+        arguments = {"file": "tasks.md", "content": "hi"}
+        call_id = f"call_{call_ordinal}"
+        if shadow_engine is not None:
+            await shadow_engine.speculate_tool_call(
+                tool_name="write_file",
+                arguments=arguments,
+                call_id=call_id,
+                turn_id=ledger.turn_id,
+            )
         yield {
             "type": "_internal_materialize",
             "response": RawLLMResponse(
                 content="",
                 native_tool_calls=[
                     {
-                        "id": f"call_{call_ordinal}",
+                        "id": call_id,
                         "type": "function",
                         "function": {
                             "name": "write_file",
-                            "arguments": '{"file": "tasks.md", "content": "hi"}',
+                            "arguments": arguments,
                         },
                     }
                 ],
@@ -1965,6 +1974,14 @@ async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_
             }
             return
         # Retry: write_file succeeds
+        arguments = {"file": "output.md", "content": "done"}
+        if shadow_engine is not None:
+            await shadow_engine.speculate_tool_call(
+                tool_name="write_file",
+                arguments=arguments,
+                call_id="call_retry",
+                turn_id=ledger.turn_id,
+            )
         yield {
             "type": "_internal_materialize",
             "response": RawLLMResponse(
@@ -1973,7 +1990,7 @@ async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_
                     {
                         "id": "call_retry",
                         "type": "function",
-                        "function": {"name": "write_file", "arguments": '{"file": "output.md", "content": "done"}'},
+                        "function": {"name": "write_file", "arguments": arguments},
                     }
                 ],
             ),

@@ -23,8 +23,8 @@ npm run auto:fix:real-flow
 # 任务合同 dry-run（不执行，仅检查任务结构）
 npm run test:e2e:task -- --dry-run --task-file infrastructure/e2e/tasks/complex-project-fullstack.task.json
 
-# 混合栈编排预检（不执行真实动作）
-npm run test:e2e:hybrid -- --dry-run "打开主界面并进入PM工作区"
+# 混合栈编排预检（不执行真实动作；无 npm 脚本封装，直接调用 .mjs）
+node --env-file-if-exists=.env infrastructure/scripts/run-hybrid-panel-task.mjs --dry-run "打开主界面并进入PM工作区"
 
 # OpenAI Computer Use 适配器自检
 npm run computer:openai -- --dry-run --prompt "打开设置面板并验证某字段可输入"
@@ -89,8 +89,8 @@ npm run test:e2e
    `set KERNELONE_E2E_USE_REAL_SETTINGS=1 && npm run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts`
 5. 任务合同 dry-run（仅结构检查，不执行）：
    `npm run test:e2e:task -- --dry-run --task-file infrastructure/e2e/tasks/complex-project-fullstack.task.json`
-6. 混合栈 dry-run：
-   `npm run test:e2e:hybrid -- --dry-run "<一句话任务>"`
+6. 混合栈 dry-run（无 npm 脚本封装，直接调用 .mjs）：
+   `node --env-file-if-exists=.env infrastructure/scripts/run-hybrid-panel-task.mjs --dry-run "<一句话任务>"`
 7. OpenAI Computer Use 适配器 dry-run：
    `npm run computer:openai -- --dry-run --prompt "打开设置面板并验证某字段可输入"`
 8. Stagehand 语义兜底 dry-run：

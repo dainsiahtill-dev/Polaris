@@ -1016,25 +1016,60 @@ class ContextOSProjectionV2(BaseModel):
     # Phase 1.5: Structured findings for cognitive continuity across turns
     structured_findings: dict[str, Any] | None = None
 
-    def to_prompt_dict(self, filter_control_plane: bool = True) -> list[dict[str, Any]]:
-        """Generate LLM messages, optionally filtering control-plane messages.
+    def compress(self, target_tokens: int, llm: Any = None) -> ContextOSProjectionV2:
+        """Return a compressed projection view without mutating the snapshot log."""
+        from polaris.kernelone.context._token_estimator import estimate_tokens as _estimate_tokens
+
+        if not self.active_window:
+            return self.model_copy()
+
+        if target_tokens <= 0:
+            target_tokens = 1
+
+        indexed_events = list(enumerate(self.active_window))
+        pinned_indices = {
+            index
+            for index, event in indexed_events
+            if any(key == "is_root" and value is True for key, value in event.metadata)
+        }
+        selected_indices: set[int] = set(pinned_indices)
+        accumulated = sum(_estimate_tokens(self.active_window[index].content) for index in selected_indices)
+
+        for index, event in reversed(indexed_events):
+            if index in selected_indices:
+                continue
+            event_tokens = _estimate_tokens(event.content)
+            if not selected_indices or accumulated + event_tokens <= target_tokens:
+                selected_indices.add(index)
+                accumulated += event_tokens
+            if accumulated >= target_tokens and selected_indices:
+                break
+
+        compressed_window = tuple(self.active_window[index] for index in sorted(selected_indices))
+        return self.model_copy(update={"active_window": compressed_window})
+
+    def to_prompt_dict(self, filter_control_plane: bool = True) -> dict[str, Any]:
+        """Return lightweight prompt-facing context without the full snapshot.
 
         Args:
             filter_control_plane: If True, exclude messages with metadata.plane == "control"
         """
-        messages: list[dict[str, Any]] = []
+        active_window: list[dict[str, Any]] = []
         for item in self.active_window:
             if filter_control_plane:
                 metadata_dict = dict(item.metadata) if item.metadata else {}
                 if metadata_dict.get("plane") == "control":
                     continue
-            messages.append(
-                {
-                    "role": item.role,
-                    "content": item.content,
-                }
-            )
-        return messages
+            active_window.append(item.to_dict())
+        return {
+            "head_anchor": self.head_anchor,
+            "tail_anchor": self.tail_anchor,
+            "active_window": active_window,
+            "artifact_stubs": [item.to_stub() for item in self.artifact_stubs],
+            "episode_cards": [item.to_dict() for item in self.episode_cards],
+            "run_card": self.run_card.to_dict() if self.run_card is not None else None,
+            "context_slice_plan": self.context_slice_plan.to_dict() if self.context_slice_plan is not None else None,
+        }
 
     def to_dict(self) -> dict[str, Any]:
         return {

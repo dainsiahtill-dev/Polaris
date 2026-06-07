@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import tomllib
-from polaris.domain.verification.director_policy_gate import validate_director_write_policy
+from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,12 @@ def _read_workspace_agents_policy_text(workspace: str, rel_path: str) -> str:
         except (OSError, UnicodeError):
             continue
     return "\n".join(texts)
+
+
+def _workspace_fs(workspace: str):
+    from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+    return KernelFileSystem(str(Path(workspace).resolve()), get_default_adapter())
 
 
 def _next_nonempty_line_index(lines: list[str], start_index: int) -> int | None:
@@ -290,7 +296,7 @@ class FileApplyService:
         """Return a deterministic policy error for a pending file apply write."""
         normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
         package_write = _is_package_manifest_path(normalized_rel)
-        verdict = validate_director_write_policy(
+        verdict = validate_tool_write_policy(
             changed_files=[normalized_rel] if normalized_rel else [],
             allowed_scope=list(allowed_scope_paths or []),
             agents_md=_read_workspace_agents_policy_text(self.workspace, normalized_rel),
@@ -325,6 +331,7 @@ class FileApplyService:
         # Import here to avoid circular dependencies
         from polaris.kernelone.events.file_event_broadcaster import write_file_with_broadcast
 
+        fs = _workspace_fs(self.workspace)
         for file_info in files:
             file_path = str(file_info.get("path") or "").strip()
             content = str(file_info.get("content") or "")
@@ -338,8 +345,7 @@ class FileApplyService:
                 old_content = ""
                 if os.path.isfile(full_path):
                     try:
-                        with open(full_path, encoding="utf-8") as handle:
-                            old_content = handle.read()
+                        old_content = fs.workspace_read_text(file_path, encoding="utf-8")
                     except OSError:
                         old_content = ""
                 policy_error = self._validate_director_policy_for_write(
@@ -412,6 +418,7 @@ class FileApplyService:
     def _snapshot_files(self, paths: list[str]) -> dict[str, str | None]:
         """Snapshot existing file contents before applying a risky operation."""
         snapshots: dict[str, str | None] = {}
+        fs = _workspace_fs(self.workspace)
         for raw_path in paths:
             path = str(raw_path or "").strip()
             if not path or path in snapshots:
@@ -423,14 +430,14 @@ class FileApplyService:
                 snapshots[path] = None
                 continue
             try:
-                with open(full_path, encoding="utf-8") as handle:
-                    snapshots[path] = handle.read()
+                snapshots[path] = fs.workspace_read_text(path, encoding="utf-8")
             except OSError:
                 snapshots[path] = None
         return snapshots
 
     def _restore_snapshots(self, snapshots: dict[str, str | None]) -> None:
         """Restore files after a post-apply validation failure."""
+        fs = _workspace_fs(self.workspace)
         for path, content in snapshots.items():
             full_path = self._resolve_workspace_path(path)
             if full_path is None:
@@ -438,11 +445,9 @@ class FileApplyService:
             try:
                 if content is None:
                     if os.path.exists(full_path):
-                        os.remove(full_path)
+                        fs.workspace_remove(path, missing_ok=True)
                     continue
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                with open(full_path, "w", encoding="utf-8", newline="") as handle:
-                    handle.write(content)
+                fs.workspace_write_text(path, content, encoding="utf-8")
             except OSError as exc:
                 logger.warning("Failed to restore invalid structured file '%s': %s", path, exc)
 
@@ -508,6 +513,7 @@ class FileApplyService:
         # Import here to avoid circular dependencies
         from polaris.kernelone.events.file_event_broadcaster import broadcast_file_written
 
+        fs = _workspace_fs(self.workspace)
         for raw_path in paths:
             path = str(raw_path or "").strip()
             if not path or path in seen:
@@ -516,8 +522,7 @@ class FileApplyService:
             full_path = os.path.join(self.workspace, path)
             if os.path.isfile(full_path):
                 try:
-                    with open(full_path, encoding="utf-8") as handle:
-                        content = handle.read()
+                    content = fs.workspace_read_text(path, encoding="utf-8")
                 except OSError as e:
                     logger.debug(f"Failed to read file {full_path}: {e}")
                     content = ""

@@ -6,14 +6,19 @@
 
 ## Purpose
 
-**FACADE CELL (✅ MIGRATION COMPLETED).** Acts as the stable public contract and
-backward-compatibility surface for Director task execution. Implementation has been
-split into sub-Cells:
+**FACADE CELL (⚠️ MIGRATION IN PROGRESS — NOT COMPLETED).** Acts as the stable public
+contract and backward-compatibility surface for Director task execution. The full
+implementation still lives in `execution/internal/`; the split into sub-Cells is only
+partially done:
 
-- `director.planning` — Director main loop, rules, context gathering
-- `director.tasking` — Task lifecycle, worker pool, executor
+- `director.planning` — Director main loop, rules, context gathering (COPIED, not migrated;
+  `director_agent.py` / `context_gatherer.py` / `director_logic_rules.py` still remain in
+  `execution/internal/`)
+- `director.tasking` — Task lifecycle, worker pool, executor (implementation present)
 - `director.runtime` — Patch/file application, existence gate, repair, tool chain
-- `director.delivery` — CLI and terminal console transport
+  (SKELETON ONLY — `runtime/internal/` contains only `__init__.py`)
+- `director.delivery` — CLI and terminal console transport (SKELETON ONLY —
+  `delivery/cli/director/` has no `director_cli.py`)
 
 ## Public Contracts
 
@@ -29,12 +34,13 @@ split into sub-Cells:
 |-------|-------------|--------|------|
 | Phase 0 | `polaris/kernelone/tools/` canonical consolidation | ✅ Complete | 2026-04-05 |
 | Phase 1 | 4 sub-Cell skeletons (planning, tasking, runtime, delivery) | ✅ Complete | 2026-04-05 |
-| Phase 2 | Migrate `director.planning` implementation | ✅ Complete | 2026-04-05 |
-| Phase 3 | Migrate `director.tasking` implementation | ✅ Complete | 2026-04-05 |
-| Phase 4 | Migrate `director.runtime` implementation | ✅ Complete | 2026-04-09 |
-| Phase 5 | Migrate `director.delivery` implementation | ✅ Complete | 2026-04-09 |
+| Phase 2 | Migrate `director.planning` implementation | ⚠️ Copied, not migrated (source still in `execution/internal/`) | 2026-04-05 |
+| Phase 3 | Migrate `director.tasking` implementation | ✅ Implementation present | 2026-04-05 |
+| Phase 4 | Migrate `director.runtime` implementation | ❌ Not done (`runtime/internal/` is empty skeleton) | — |
+| Phase 5 | Migrate `director.delivery` implementation | ❌ Not done (`delivery/cli/director/` has no `director_cli.py`) | — |
 
-> **Migration Completed**: All phases are complete as of 2026-04-09 per FULL_CONVERGENCE_AUDIT_20260405.
+> **Migration NOT complete (2026-06-07 audit)**: Phases 4/5 are not done and Phase 2 was a
+> copy rather than a migration; the full implementation still resides in `execution/internal/`.
 
 ## Verification
 

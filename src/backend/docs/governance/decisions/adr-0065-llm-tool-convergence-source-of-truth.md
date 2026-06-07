@@ -1,9 +1,15 @@
 # ADR-0065: LLM工具调用系统收敛 - 单一权威源头
 
 **决策类型**: 架构决策
-**状态**: 已接受
+**状态**: 已接受（收敛未完成 / 部分完成，2026-06-07 审计）
 **创建时间**: 2026-03-28
 **基于**: `docs/audit/llm_tool_calling/MASTER_AUDIT_REPORT_20260328.md`
+
+> ⚠️ 收敛状态与路径勘误 (2026-06-07 审计，CODE-IS-TRUTH)：本 ADR 的目标收敛尚未完成。实际现状：
+> - `ToolSpecRegistry` 实际位于 `polaris/kernelone/tool_execution/tool_spec_registry.py`（非 `kernelone/tools/`）；
+> - 第二份 `ProviderManager` 仍存在于 `polaris/infrastructure/llm/providers/provider_registry.py`，§2.3 的 Provider 单一化未达成；
+> - `RolePolicyEngine` / `polaris/kernelone/policy/role_engine.py` 不存在，§2.4 角色策略统一未达成；
+> - `core_roles.yaml` 仍存在两处（`polaris/cells/roles/profile/config/roles/core_roles.yaml` 与 `polaris/cells/roles/profile/internal/config/core_roles.yaml`），未删除。
 
 ---
 
@@ -29,7 +35,7 @@ Polaris的LLM工具调用系统存在严重的架构碎片化问题：
 
 ### 2.1 建立单一Tool Spec权威源头
 
-**位置**: `polaris/kernelone/tools/tool_spec_registry.py`
+**位置**: `polaris/kernelone/tool_execution/tool_spec_registry.py`
 
 ```python
 class ToolSpecRegistry:
@@ -149,7 +155,7 @@ class ToolSpecRegistry:
 
 - `docs/audit/llm_tool_calling/MASTER_AUDIT_REPORT_20260328.md`
 - `docs/blueprints/llm_tool_calling/LLM_TOOL_CALLING_CONVERGENCE_BLUEPRINT_20260328.md`
-- `polaris/kernelone/tools/tool_spec_registry.py` (实现)
+- `polaris/kernelone/tool_execution/tool_spec_registry.py` (实现)
 
 ---
 

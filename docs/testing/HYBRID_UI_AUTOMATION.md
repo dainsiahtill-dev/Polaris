@@ -11,8 +11,8 @@ This document defines the runtime stack:
 ## Entry Commands
 
 ```bash
-# main hybrid runner
-npm run test:e2e:hybrid -- "打开设置面板并验证某字段可输入"
+# main hybrid runner (无 npm 脚本封装，直接调用 .mjs)
+node --env-file-if-exists=.env infrastructure/scripts/run-hybrid-panel-task.mjs "打开设置面板并验证某字段可输入"
 
 # semantic fallback direct run (Stagehand adapter)
 npm run test:e2e:semantic -- --prompt "打开主界面并进入PM工作区"
@@ -21,10 +21,10 @@ npm run test:e2e:semantic -- --prompt "打开主界面并进入PM工作区"
 npm run vision:omniparser -- --evidence-json .polaris/logs/<run>.evidence.json
 
 # task file mode
-npm run test:e2e:hybrid -- --task-file infrastructure/e2e/tasks/anthropic-model-input.task.json
+node --env-file-if-exists=.env infrastructure/scripts/run-hybrid-panel-task.mjs --task-file infrastructure/e2e/tasks/anthropic-model-input.task.json
 
-# keep retrying until pass
-npm run auto:fix:hybrid -- "打开设置面板并验证某字段可输入"
+# keep retrying until pass（runner 默认 until-pass，可显式加 --until-pass）
+node --env-file-if-exists=.env infrastructure/scripts/run-hybrid-panel-task.mjs --until-pass "打开设置面板并验证某字段可输入"
 
 # OpenAI Computer Use adapter dry-run
 npm run computer:openai -- --dry-run --prompt "打开设置面板并验证某字段可输入"

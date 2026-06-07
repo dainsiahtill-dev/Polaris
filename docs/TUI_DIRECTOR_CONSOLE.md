@@ -27,22 +27,24 @@ self.call_from_thread(self._dispatch_stream_event, event, assistant_index)  # Do
 
 ```
 polaris/delivery/cli/director/
-├── console_app.py       # DirectorConsoleApp - Main TUI application controller
-├── console_widgets.py   # Reusable Textual widgets
-├── console_models.py    # Data models (ConsoleMessage, ConsoleSession, etc.)
+├── console_models.py    # Data models (ConsoleMessage, ConsoleSession, ArtifactPanelState, etc.)
 ├── console_render.py    # Rendering utilities (diff highlighting, markup)
-└── console_host.py      # DirectorConsoleHost - Backend integration
+├── console_host.py      # DirectorConsoleHost - Backend integration
+├── console_director_agent.py  # Director agent wiring for the console
+└── console_protocol.py  # Console host protocol definitions
 ```
 
 ---
 
 ## 2. Widget Reference
 
+> ⚠️ 未实现 (2026-06-07 审计)：本节描述的 Textual 控件（`ComposerBar`、`ConversationView`、`MessageBubble`、`ArtifactPanel`、`SessionListView`、`ConfirmExitScreen` 等）与所属文件 `console_widgets.py`/`console_app.py` 当前在仓库中均不存在。现存的 console 实现仅包含数据模型 (`console_models.py`)、渲染函数 (`console_render.py`) 与后端集成 (`console_host.py`)。以下内容仅为设计参考，待控件层实现后请校准实际文件与行号。
+
 ### 2.1 ComposerBar
 
 **Purpose**: Bottom input bar with multi-line TextArea and send/stop controls.
 
-**Location**: `polaris/delivery/cli/director/console_widgets.py:386`
+**Location**: 未实现（计划置于控件层文件，例如 `polaris/delivery/cli/director/`；当前无对应源文件）
 
 **Features**:
 - Multi-line input with auto-resizing TextArea (min: 3 lines, max: 12 lines)
@@ -84,7 +86,7 @@ class ComposerBar:
 
 **Purpose**: Scrollable message stream with message bubbles.
 
-**Location**: `polaris/delivery/cli/director/console_widgets.py:285`
+**Location**: 未实现（计划置于控件层文件，例如 `polaris/delivery/cli/director/`；当前无对应源文件）
 
 **Features**:
 - Auto-scroll to bottom on new messages (can be locked via scroll)
@@ -114,7 +116,7 @@ class ConversationView:
 
 **Purpose**: Individual message display with role-based styling.
 
-**Location**: `polaris/delivery/cli/director/console_widgets.py:126`
+**Location**: 未实现（计划置于控件层文件，例如 `polaris/delivery/cli/director/`；当前无对应源文件）
 
 **CSS Classes**:
 - `.user` - User messages (primary background)
@@ -156,7 +158,7 @@ class MessageBubble:
 
 **Purpose**: Right-side panel for displaying artifacts (markdown, code, diff).
 
-**Location**: `polaris/delivery/cli/director/console_widgets.py:528`
+**Location**: 未实现（计划置于控件层文件，例如 `polaris/delivery/cli/director/`；当前无对应源文件）
 
 **Features**:
 - Three tabs: Markdown, Code, Diff
@@ -192,7 +194,7 @@ class ArtifactPanel:
 
 **Purpose**: Left sidebar displaying available sessions.
 
-**Location**: `polaris/delivery/cli/director/console_widgets.py:63`
+**Location**: 未实现（计划置于控件层文件，例如 `polaris/delivery/cli/director/`；当前无对应源文件）
 
 **Features**:
 - Simple data API via `set_sessions()`
@@ -222,7 +224,7 @@ class SessionListView:
 
 **Purpose**: Modal confirmation dialog for accidental quit (Ctrl+Q).
 
-**Location**: `polaris/delivery/cli/director/console_widgets.py:642`
+**Location**: 未实现（计划置于控件层文件，例如 `polaris/delivery/cli/director/`；当前无对应源文件）
 
 **Bindings**:
 - `Escape` / `n` - Cancel
@@ -457,12 +459,14 @@ ConversationView.set_messages()
 
 ---
 
-## 6. Diff Viewer (Implemented)
+## 6. Diff Viewer (设计参考 / 未实现)
+
+> ⚠️ 未实现 (2026-06-07 审计)：本节的 `DiffViewer`、`FileChangeList` 等 Textual 控件在仓库中不存在；现存 diff 能力位于渲染层 `console_render.py`（`_render_diff_markup_lines` 等）。以下代码示例仅为设计参考。
 
 ### 6.1 Delivered Scope
 
-**Status**: Implemented  
-**Priority**: P2 (completed)
+**Status**: 未实现（控件层缺失，仅渲染函数已落地）  
+**Priority**: P2
 
 #### Specifications
 
@@ -643,9 +647,11 @@ def _show_file_diff(self, original: str, modified: str, filepath: str) -> None:
 
 ### 7.1 Walkthrough Tests
 
-**File**: `tests/test_director_console_textual_walkthrough.py`
+> ⚠️ 未实现 (2026-06-07 审计)：`test_director_console_textual_walkthrough.py` 在仓库中不存在（全仓无该文件）。以下用例为待补测试计划，控件层实现后方可落地。
 
-**Test Coverage**:
+**File**: 未实现（计划文件名：`test_director_console_textual_walkthrough.py`）
+
+**Test Coverage** (计划)：
 1. `test_textual_walkthrough_renders_boot_and_incremental_stream` - Boot screenshot + streaming capture
 2. `test_textual_walkthrough_supports_task_and_session_commands` - /task and /session commands
 3. `test_composer_bar_toggles_streaming_state` - Send/Stop button states during streaming
@@ -717,21 +723,23 @@ await pilot.pause(0.6)  # Full stream duration
 
 ## 9. Implementation Checklist
 
-### Current Status (2026-03-24)
+### Current Status (2026-06-07 审计校准)
 
-- [x] ComposerBar with multi-line input
-- [x] ConversationView with MessageBubble children
-- [x] ArtifactPanel with Markdown/Code/Diff tabs
-- [x] SessionListView with selection events
-- [x] Thread-safe streaming via `call_later`
-- [x] Role-based bubble styling
-- [x] Diff syntax highlighting in render layer
-- [x] Walkthrough tests (8 passing)
-- [x] Enhanced DiffViewer widget with Rich styling
-- [x] File change list sidebar
-- [x] Inline diff preview in MessageBubble
-- [x] Keyboard navigation for diff hunks
-- [x] Search within diff content
+> 控件层（Textual widgets / App / walkthrough 测试）当前未在仓库中实现；下方仅渲染层与数据模型为已落地项。
+
+- [ ] ComposerBar with multi-line input（控件未实现）
+- [ ] ConversationView with MessageBubble children（控件未实现）
+- [ ] ArtifactPanel with Markdown/Code/Diff tabs（控件未实现）
+- [ ] SessionListView with selection events（控件未实现）
+- [ ] Thread-safe streaming via `call_later`（控件未实现）
+- [ ] Role-based bubble styling（控件未实现）
+- [x] Diff syntax highlighting in render layer（`console_render.py`）
+- [ ] Walkthrough tests（测试文件不存在）
+- [ ] Enhanced DiffViewer widget with Rich styling（控件未实现）
+- [ ] File change list sidebar（控件未实现）
+- [ ] Inline diff preview in MessageBubble（控件未实现）
+- [ ] Keyboard navigation for diff hunks（控件未实现）
+- [ ] Search within diff content（控件未实现）
 
 ### Backlog
 
@@ -743,5 +751,5 @@ await pilot.pause(0.6)  # Full stream duration
 
 - **Textual Docs**: https://textual.textualize.io/
 - **Rich Console**: https://rich.readthedocs.io/
-- **Product Memo**: `docs/KERNELONE_CLI_PRODUCT_MEMO_2026-03-23.md`
-- **Cell Specification**: `polaris/cells/director/delivery/cell.yaml`
+- **Product Memo**: `src/backend/docs/POLARIS_CLI_PRODUCT_MEMO_2026-03-23.md`
+- **Cell Specification**: `src/backend/polaris/cells/director/delivery/cell.yaml`

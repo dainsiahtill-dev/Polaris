@@ -1,5 +1,10 @@
 # StateFirstContextOS.project() Pipeline Architecture
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分结论已被后续实现取代，仅作历史参考。
+> 实际代码（`runtime/engine.py` 的 `project()`）已**无条件**走 pipeline，不存在 `enable_pipeline`
+> 特性开关，也没有"向后兼容回退到旧实现"的路径——pipeline 是唯一路径。下文 "Feature Flag"
+> 与 "Backward Compatibility" 两节描述的设计已不再生效。
+
 ## Overview
 
 The `StateFirstContextOS.project()` method is refactored from a monolithic procedure into a 7-stage pipeline architecture. Each stage is a self-contained processor class with a single responsibility.

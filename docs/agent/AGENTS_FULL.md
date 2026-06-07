@@ -1,3 +1,5 @@
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 `src/backend/polaris` 迁移或后续实现取代，仅作历史参考。文中出现的顶层 `backend/`、`tools/` 等目录结构为旧根布局，真实根为 `src/`，新主实现位于 `src/backend/polaris/*`。
+
 # Polaris CLI Agent 角色规范：首席架构师 & 工程师（Blueprint-First / Evidence-First）v3
 
 > 适用对象：**命令行（CLI）执行的 Polaris Agent**（无 UI）。  

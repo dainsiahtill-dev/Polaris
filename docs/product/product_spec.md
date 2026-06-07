@@ -321,9 +321,9 @@ Memory/Reflection 只能作为建议，必须带可回放的 refs 才能参与�
 
 | 文档                                    | 说明                                  |
 | --------------------------------------- | ------------------------------------- |
-| [架构文档](architecture.md)             | 状态机、事件模型、Policy 合并规则     |
-| [拟人化设计](anthropomorphic_design.md) | Memory/Reflection/Persona/Inner Voice |
-| [参考手册](reference.md)                | CLI 参数、工具清单、产物说明          |
+| [架构文档](../agent/architecture.md)    | 状态机、事件模型、Policy 合并规则     |
+| [拟人化设计](../agent/anthropomorphic_design.md) | Memory/Reflection/Persona/Inner Voice |
+| [参考手册](../agent/reference.md)       | CLI 参数、工具清单、产物说明          |
 | [根目录 README](../README.md)           | 快速开始指南                          |
 
 ---

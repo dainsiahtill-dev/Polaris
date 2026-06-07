@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { type Page, type TestInfo } from "@playwright/test";
 
 type JsonRecord = Record<string, unknown>;
@@ -1033,6 +1035,60 @@ export const CANDIDATE_RUNTIME_PROBE_IDS: Record<string, string[]> = {
   prometheus_metrics_runtime_probe: [
     "task_market_prometheus_business_metrics",
   ],
+  e2e_runtime_isolation_probe: [
+    "e2e_fixture_isolated_home_runtime_workspace",
+  ],
+  e2e_attachment_runtime_probe: [
+    "e2e_automatic_evidence_attachments",
+  ],
+  history_archive_readonly_runtime_probe: [
+    "history_factory_overview_defect_loop_projection",
+    "immutable_archive_manifest_jsonl_index",
+  ],
+  resident_self_learning_runtime_probe: [
+    "resident_self_learning_tick",
+  ],
+  resident_goal_pm_bridge_runtime_probe: [
+    "resident_governed_goal_pm_bridge",
+  ],
+  llm_interview_save_runtime_probe: [
+    "llm_interview_readiness_history",
+    "llm_evaluation_index_dual_mirror_lock",
+  ],
+  role_session_audit_export_runtime_probe: [
+    "kernel_audit_hash_chain_role_session_export",
+  ],
+  websocket_stale_token_runtime_probe: [
+    "websocket_stale_token_recovery",
+  ],
+  electron_preload_supervisor_runtime_probe: [
+    "electron_backend_supervisor_chain",
+    "electron_preload_ipc_contract",
+  ],
+  electron_secret_safe_storage_runtime_probe: [
+    "electron_secret_safe_storage",
+  ],
+  electron_pty_runtime_probe: [
+    "electron_pty_bridge",
+  ],
+  graph_subgraph_reconciliation_runtime_probe: [
+    "subgraph_truth_vs_draft_reconciliation",
+  ],
+  cell_manifest_catalog_runtime_probe: [
+    "cell_manifest_catalog_reconciliation",
+  ],
+  structural_bug_governance_runtime_probe: [
+    "structural_bug_governance_chain",
+  ],
+  semantic_boundary_governance_runtime_probe: [
+    "semantic_boundary_governance_gate",
+  ],
+  event_fact_stream_runtime_probe: [
+    "event_fact_stream_singleton_writer",
+  ],
+  kernelone_traceability_runtime_probe: [
+    "kernelone_traceability_matrix",
+  ],
 };
 
 function resolveRepoRoot(startDir: string): string {
@@ -1050,6 +1106,7 @@ function resolveRepoRoot(startDir: string): string {
 }
 
 const repoRoot = resolveRepoRoot(__dirname);
+const execFileAsync = promisify(execFile);
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -1074,8 +1131,130 @@ function asNumber(value: unknown): number | null {
   return null;
 }
 
+export type RoleSessionKernelAuditMatch = {
+  record: JsonRecord;
+  rawEvent: JsonRecord;
+  canonicalWrapped: boolean;
+};
+
+export function findRoleSessionKernelAuditEvent(
+  records: JsonRecord[],
+  sessionId: string,
+): RoleSessionKernelAuditMatch | null {
+  if (!sessionId) {
+    return null;
+  }
+  const taskId = `role-session-${sessionId}`;
+  for (const record of records.slice().reverse()) {
+    const wrappedRaw = asRecord(record.raw);
+    const rawEvent = Object.keys(wrappedRaw).length > 0 ? wrappedRaw : record;
+    const task = asRecord(rawEvent.task);
+    const data = asRecord(rawEvent.data);
+    const refs = asRecord(record.refs);
+    const matched =
+      asString(task.task_id) === taskId ||
+      asString(task.run_id) === taskId ||
+      asString(data.session_id) === sessionId ||
+      asString(refs.task_id) === taskId ||
+      asString(refs.run_id) === taskId;
+    if (
+      matched &&
+      asString(rawEvent.event_id) &&
+      asString(rawEvent.prev_hash) &&
+      asString(rawEvent.signature)
+    ) {
+      return {
+        record,
+        rawEvent,
+        canonicalWrapped: rawEvent !== record,
+      };
+    }
+  }
+  return null;
+}
+
+function isPathInsideOrSame(candidatePath: string, rootPath: string): boolean {
+  if (!candidatePath || !rootPath) {
+    return false;
+  }
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function countStatus(probes: EvidenceProbe[], status: EvidenceStatus): number {
   return probes.filter((probe) => probe.status === status).length;
+}
+
+async function collectE2eAttachmentRuntimeProbe(testInfo: TestInfo, matrixFilename: string): Promise<EvidenceProbe> {
+  const manifestPath = testInfo.outputPath("e2e-auto-attachment-manifest.json");
+  const matrixPath = testInfo.outputPath(matrixFilename);
+  const manifest = await readJsonIfExists<JsonRecord>(manifestPath);
+  const entries = asRecords(asRecord(manifest).entries);
+  const names = entries.map((entry) => asString(entry.name)).filter(Boolean);
+  const hasProcessLogs = names.includes("web-backend-stdout") || names.includes("electron-main-stdout");
+  const hasRendererLogs = names.includes("web-renderer-console") || names.includes("renderer-console");
+  const outputDirExists = await pathExists(path.dirname(matrixPath));
+  const pass = Boolean(
+    asString(asRecord(manifest).schema) === "polaris.e2e.auto_attachment_manifest.v1" &&
+      entries.length >= 2 &&
+      hasProcessLogs &&
+      hasRendererLogs &&
+      outputDirExists,
+  );
+
+  return makeProbe({
+    id: "e2e_attachment_runtime_probe",
+    title: "E2E automatic evidence attachment runtime probe",
+    category: "e2e",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "runtime_artifact",
+        ref: manifestPath,
+        value: {
+          exists: Boolean(manifest),
+          schema: asString(asRecord(manifest).schema),
+          attachment_count: entries.length,
+          attachment_names: names,
+          has_process_logs: hasProcessLogs,
+          has_renderer_logs: hasRendererLogs,
+        },
+      },
+      {
+        type: "runtime_artifact",
+        ref: matrixPath,
+        value: {
+          planned_attachment_name: "expanded-tech-evidence-matrix",
+          output_dir_exists: outputDirExists,
+        },
+      },
+    ],
+    findings: pass
+      ? []
+      : ["E2E automatic attachment manifest is missing process/renderer evidence entries for this run"],
+  });
+}
+
+function upsertProbe(probes: EvidenceProbe[], probe: EvidenceProbe): EvidenceProbe[] {
+  return [...probes.filter((item) => item.id !== probe.id), probe];
+}
+
+function refreshCandidateCoverageAndSummary(report: ExpandedTechEvidenceReport): void {
+  report.candidate_runtime_coverage = buildExpandedCandidateRuntimeCoverage({
+    candidates: EXPANDED_TECH_CANDIDATES,
+    probes: report.probes,
+    runtimeProbeCandidateIds: CANDIDATE_RUNTIME_PROBE_IDS,
+    sourceProbeCandidateIds: CANDIDATE_SOURCE_PROBE_IDS,
+  });
+  report.summary = {
+    pass: countStatus(report.probes, "PASS"),
+    fail: countStatus(report.probes, "FAIL"),
+    warn: countStatus(report.probes, "WARN"),
+    skip: countStatus(report.probes, "SKIP"),
+    required_fail: report.probes.filter((probe) => probe.required && probe.status === "FAIL").length,
+    candidate_count: EXPANDED_TECH_CANDIDATES.length,
+  };
 }
 
 function makeProbe(input: EvidenceProbe): EvidenceProbe {
@@ -1199,6 +1378,61 @@ async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
   }
 }
 
+function truncateForEvidence(value: unknown, maxChars = 4000): string {
+  const text = String(value || "");
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, maxChars)}...<truncated ${text.length - maxChars} chars>`;
+}
+
+function commandOutputToString(value: string | Buffer | undefined): string {
+  if (Buffer.isBuffer(value)) {
+    return value.toString("utf-8");
+  }
+  return String(value || "");
+}
+
+async function runUtf8CommandProbe(
+  command: string,
+  args: string[],
+  options: { cwd: string; timeoutMs?: number },
+): Promise<{ exit_code: number | string; stdout: string; stderr: string; signal: string }> {
+  try {
+    const result = await execFileAsync(command, args, {
+      cwd: options.cwd,
+      timeout: options.timeoutMs || 30_000,
+      env: {
+        ...process.env,
+        LC_ALL: "C.UTF-8",
+        LANG: "C.UTF-8",
+        PYTHONPATH: ".",
+      },
+      encoding: "utf-8",
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    return {
+      exit_code: 0,
+      stdout: truncateForEvidence(result.stdout),
+      stderr: truncateForEvidence(result.stderr),
+      signal: "",
+    };
+  } catch (error) {
+    const commandError = error as {
+      code?: number | string;
+      signal?: string;
+      stdout?: string | Buffer;
+      stderr?: string | Buffer;
+    };
+    return {
+      exit_code: commandError.code ?? 1,
+      stdout: truncateForEvidence(commandOutputToString(commandError.stdout)),
+      stderr: truncateForEvidence(commandOutputToString(commandError.stderr)),
+      signal: String(commandError.signal || ""),
+    };
+  }
+}
+
 async function writeUtf8File(filePath: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, content.endsWith("\n") ? content : `${content}\n`, "utf-8");
@@ -1279,8 +1513,136 @@ async function readJsonlFiles(filePaths: string[], maxLinesPerFile = 2000): Prom
   return records;
 }
 
+type JsonlFileEntry = {
+  filePath: string;
+  record: JsonRecord;
+};
+
+async function listRuntimeAuditJsonlPaths(runtimeRootPath: string): Promise<string[]> {
+  const auditDir = path.join(runtimeRootPath, "audit");
+  try {
+    const names = await fs.readdir(auditDir, { encoding: "utf-8" });
+    return names
+      .filter((name) => name.endsWith(".jsonl"))
+      .sort()
+      .map((name) => path.join(auditDir, name));
+  } catch {
+    return [];
+  }
+}
+
+async function readJsonlFileEntries(filePaths: string[], maxLinesPerFile = 2000): Promise<JsonlFileEntry[]> {
+  const entries: JsonlFileEntry[] = [];
+  for (const filePath of filePaths) {
+    const raw = await readTextIfExists(filePath);
+    if (!raw) {
+      continue;
+    }
+    const lines = raw.split(/\r?\n/).filter((line) => line.trim()).slice(-maxLinesPerFile);
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as unknown;
+        const record = asRecord(parsed);
+        if (Object.keys(record).length > 0) {
+          entries.push({ filePath, record });
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  return entries;
+}
+
+function findRoleSessionKernelAuditEntry(
+  entries: JsonlFileEntry[],
+  sessionId: string,
+): (RoleSessionKernelAuditMatch & { sourcePath: string }) | null {
+  for (const entry of entries.slice().reverse()) {
+    const match = findRoleSessionKernelAuditEvent([entry.record], sessionId);
+    if (match) {
+      return {
+        ...match,
+        sourcePath: entry.filePath,
+      };
+    }
+  }
+  return null;
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function yamlListItems(text: string, key: string): string[] {
+  const values: string[] = [];
+  const lines = text.split(/\r?\n/);
+  let inBlock = false;
+  let keyIndent = 0;
+  const keyPrefix = `${key}:`;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const indent = line.length - line.trimStart().length;
+    if (!inBlock && trimmed.startsWith(keyPrefix)) {
+      inBlock = true;
+      keyIndent = indent;
+      const sameLine = trimmed.slice(keyPrefix.length).trim();
+      if (sameLine === "[]") {
+        inBlock = false;
+      }
+      continue;
+    }
+    if (!inBlock) {
+      continue;
+    }
+    if (trimmed === "") {
+      continue;
+    }
+    if (indent <= keyIndent && !trimmed.startsWith("- ")) {
+      inBlock = false;
+      continue;
+    }
+    if (trimmed.startsWith("- ")) {
+      const value = trimmed.slice(2).split("#")[0].trim().replace(/^['"]|['"]$/g, "");
+      if (value) {
+        values.push(value);
+      }
+    }
+  }
+  return values;
+}
+
+function yamlScalar(text: string, key: string): string {
+  const pattern = new RegExp(`^\\s*${key}:\\s*([^#\\n]+)`, "m");
+  const match = pattern.exec(text);
+  return match?.[1]?.trim().replace(/^['"]|['"]$/g, "") || "";
+}
+
+function catalogCellIds(catalogText: string): string[] {
+  const ids: string[] = [];
+  const pattern = /^ {2}- id:\s*([^#\n]+)/gm;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(catalogText))) {
+    const id = match[1].trim().replace(/^['"]|['"]$/g, "");
+    if (id) {
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
+function duplicateValues(values: string[]): JsonRecord[] {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([value, count]) => ({ value, count }));
+}
+
+function isFixtureCellManifestPath(relativePath: string): boolean {
+  return ["fixtures/", "sandbox/", "workspaces/"].some((pattern) => relativePath.includes(pattern));
 }
 
 function coreTechIdsFromReceipt(receipt: unknown): Set<string> {
@@ -1619,6 +1981,823 @@ export async function requestText(
   ) as Promise<string>;
 }
 
+type RuntimeWebSocketExercise = {
+  opened: boolean;
+  closed: boolean;
+  closeCode: number | null;
+  closeReason: string;
+  statusReceived: boolean;
+  statusType: string;
+  messageTypes: string[];
+  error: string;
+};
+
+async function exerciseRuntimeWebSocket(
+  wsUrl: string,
+  sendStatusRequest: boolean,
+): Promise<RuntimeWebSocketExercise> {
+  return await new Promise<RuntimeWebSocketExercise>((resolve) => {
+    const result: RuntimeWebSocketExercise = {
+      opened: false,
+      closed: false,
+      closeCode: null,
+      closeReason: "",
+      statusReceived: false,
+      statusType: "",
+      messageTypes: [],
+      error: "",
+    };
+    let settled = false;
+    const socket = new WebSocket(wsUrl);
+    const timeout = setTimeout(() => {
+      result.error = result.error || "timeout";
+      finish();
+    }, 8_000);
+
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      try {
+        socket.close();
+      } catch {
+        // Ignore close races; the observed result above is the evidence.
+      }
+      resolve(result);
+    };
+
+    socket.addEventListener("open", () => {
+      result.opened = true;
+      if (sendStatusRequest) {
+        socket.send(JSON.stringify({ type: "GET_STATUS", roles: ["pm", "director", "qa"] }));
+      }
+    });
+    socket.addEventListener("message", async (event) => {
+      try {
+        const raw =
+          typeof event.data === "string"
+            ? event.data
+            : event.data instanceof ArrayBuffer
+              ? Buffer.from(event.data).toString("utf-8")
+              : typeof (event.data as { text?: () => Promise<string> }).text === "function"
+                ? await (event.data as { text: () => Promise<string> }).text()
+                : String(event.data || "");
+        const payload = JSON.parse(raw) as { type?: string };
+        const type = String(payload.type || "");
+        if (type) {
+          result.messageTypes.push(type);
+        }
+        if (sendStatusRequest && type === "status") {
+          result.statusReceived = true;
+          result.statusType = type;
+          finish();
+        }
+      } catch {
+        result.error = result.error || "invalid_json_message";
+      }
+    });
+    socket.addEventListener("error", () => {
+      result.error = result.error || "websocket_error";
+    });
+    socket.addEventListener("close", (event) => {
+      result.closed = true;
+      result.closeCode = event.code;
+      result.closeReason = event.reason || "";
+      finish();
+    });
+  });
+}
+
+function runtimeWebSocketUrl(backend: BackendConnection, token: string, workspace: string): string {
+  const params = new URLSearchParams();
+  params.set("token", token);
+  if (workspace) {
+    params.set("workspace", workspace);
+  }
+  return `${backend.baseUrl.replace(/^http/i, "ws")}/v2/ws/runtime?${params.toString()}`;
+}
+
+async function collectWebSocketStaleTokenRuntimeProbe(page: Page, workspace: string): Promise<EvidenceProbe> {
+  try {
+    const backend = await getBackendInfoFromPage(page);
+    const staleToken = `stale-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const staleResult = await exerciseRuntimeWebSocket(
+      runtimeWebSocketUrl(backend, staleToken, workspace),
+      false,
+    );
+    const freshResult = await exerciseRuntimeWebSocket(
+      runtimeWebSocketUrl(backend, backend.token, workspace),
+      true,
+    );
+    const staleRejected = staleResult.closeCode === 1008 && !staleResult.statusReceived;
+    const freshRecovered = freshResult.opened && freshResult.statusReceived && freshResult.statusType === "status";
+    const pass = Boolean(backend.token && staleRejected && freshRecovered);
+
+    return makeProbe({
+      id: "websocket_stale_token_runtime_probe",
+      title: "WebSocket stale-token rejection and fresh-token recovery runtime probe",
+      category: "runtime",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "/v2/ws/runtime?token=<stale>",
+          value: {
+            opened: staleResult.opened,
+            closed: staleResult.closed,
+            close_code: staleResult.closeCode,
+            status_received: staleResult.statusReceived,
+            error: staleResult.error,
+          },
+        },
+        {
+          type: "probe",
+          ref: "/v2/ws/runtime?token=<fresh>",
+          value: {
+            backend_source: backend.source,
+            token_present: Boolean(backend.token),
+            opened: freshResult.opened,
+            closed: freshResult.closed,
+            status_received: freshResult.statusReceived,
+            status_type: freshResult.statusType,
+            message_types: freshResult.messageTypes,
+            error: freshResult.error,
+          },
+        },
+      ],
+      findings: pass
+        ? []
+        : ["runtime WebSocket did not reject stale token and recover with the current backend token"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "websocket_stale_token_runtime_probe",
+      title: "WebSocket stale-token rejection and fresh-token recovery runtime probe",
+      category: "runtime",
+      status: "WARN",
+      required: false,
+      evidence: [
+        { type: "probe", ref: "/v2/ws/runtime?token=<stale>" },
+        { type: "probe", ref: "/v2/ws/runtime?token=<fresh>" },
+      ],
+      findings: [String(error)],
+    });
+  }
+}
+
+async function collectGraphGovernanceRuntimeProbes(): Promise<EvidenceProbe[]> {
+  const catalogPath = path.join(repoRoot, "src", "backend", "docs", "graph", "catalog", "cells.yaml");
+  const subgraphDir = path.join(repoRoot, "src", "backend", "docs", "graph", "subgraphs");
+  const cellsRoot = path.join(repoRoot, "src", "backend", "polaris", "cells");
+  const catalogText = (await readTextIfExists(catalogPath)) || "";
+  const subgraphNames = Array.from(new Set(yamlListItems(catalogText, "subgraphs"))).sort();
+  let subgraphYamlFiles: string[] = [];
+  try {
+    subgraphYamlFiles = (await fs.readdir(subgraphDir, { encoding: "utf-8" }))
+      .filter((name) => name.endsWith(".yaml"))
+      .map((name) => name.replace(/\.yaml$/, ""))
+      .sort();
+  } catch {
+    subgraphYamlFiles = [];
+  }
+  const subgraphFileSet = new Set(subgraphYamlFiles);
+  const catalogRefsMissingYaml = subgraphNames.filter((name) => !subgraphFileSet.has(name));
+  const draftSubgraphs = subgraphYamlFiles.filter((name) => !subgraphNames.includes(name));
+  const subgraphPass = Boolean(catalogText && subgraphNames.length > 0 && subgraphYamlFiles.length > 0 && catalogRefsMissingYaml.length === 0);
+
+  const manifestPaths = await listFilesByBasename(cellsRoot, new Set(["cell.yaml"]), 5000);
+  const manifestRows: JsonRecord[] = [];
+  const manifestIds: string[] = [];
+  for (const manifestPath of manifestPaths.sort()) {
+    const relativeManifestPath = path.relative(repoRoot, manifestPath).replace(/\\/g, "/");
+    if (isFixtureCellManifestPath(relativeManifestPath)) {
+      continue;
+    }
+    const text = await readTextIfExists(manifestPath);
+    const id = text ? yamlScalar(text, "id") : "";
+    if (id) {
+      manifestIds.push(id);
+    }
+    manifestRows.push({
+      id,
+      path: relativeManifestPath,
+    });
+  }
+  const catalogIds = catalogCellIds(catalogText).sort();
+  const catalogIdSet = new Set(catalogIds);
+  const manifestIdSet = new Set(manifestIds);
+  const duplicateManifestIds = duplicateValues(manifestIds);
+  const manifestOnly = Array.from(manifestIdSet).filter((id) => !catalogIdSet.has(id)).sort();
+  const catalogOnly = catalogIds.filter((id) => !manifestIdSet.has(id)).sort();
+  const manifestPass = Boolean(
+    catalogIds.length > 0 &&
+      manifestIds.length > 0 &&
+      manifestOnly.length === 0 &&
+      catalogOnly.length === 0 &&
+      duplicateManifestIds.length === 0,
+  );
+
+  const backendRoot = path.join(repoRoot, "src", "backend");
+  const polarisBackendRoot = path.join(backendRoot, "polaris");
+  const verifyPackPath = path.join(backendRoot, "polaris", "cells", "roles", "kernel", "generated", "verify.pack.json");
+  const verifyPack = await readJsonIfExists<JsonRecord>(verifyPackPath);
+  const governanceArtifacts = asRecord(asRecord(verifyPack).governance_artifacts);
+  const referencedAssets = [
+    ...stringArray(governanceArtifacts.adrs),
+    ...stringArray(governanceArtifacts.verification_cards),
+    ...stringArray(governanceArtifacts.schemas),
+    asString(governanceArtifacts.debt_register),
+    ...asRecords(asRecord(asRecord(verifyPack).verify_targets).tests).map((entry) => asString(entry.path)),
+  ].filter(Boolean);
+  const requiredStructuralAssets = [
+    "docs/governance/debt.register.yaml",
+    "docs/governance/schemas/debt-register.schema.yaml",
+    "docs/governance/schemas/verify-pack.schema.yaml",
+    "docs/governance/schemas/verification-card.schema.yaml",
+    "docs/governance/decisions/adr-0043-structural-bug-governance-loop.md",
+    "docs/governance/ci/fitness-rules.yaml",
+    "docs/governance/ci/pipeline.template.yaml",
+    "polaris/cells/roles/kernel/generated/verify.pack.json",
+    "polaris/tests/architecture/test_structural_bug_governance_assets.py",
+  ];
+  const structuralAssetSet = new Set([...referencedAssets, ...requiredStructuralAssets]);
+  const structuralAssetRows = await Promise.all(
+    Array.from(structuralAssetSet)
+      .sort()
+      .map(async (relPath) => {
+        const backendPath = path.join(backendRoot, relPath);
+        const polarisPath = path.join(polarisBackendRoot, relPath);
+        return { path: relPath, exists: (await pathExists(backendPath)) || (await pathExists(polarisPath)) };
+      }),
+  );
+  const missingStructuralAssets = structuralAssetRows
+    .filter((row) => !row.exists)
+    .map((row) => row.path);
+  const debtRegisterText =
+    (await readTextIfExists(path.join(backendRoot, "docs", "governance", "debt.register.yaml"))) || "";
+  const structuralPass = Boolean(
+    asNumber(asRecord(verifyPack).version) === 1 &&
+      asString(asRecord(verifyPack).cell_id) === "roles.kernel" &&
+      referencedAssets.length > 0 &&
+      missingStructuralAssets.length === 0 &&
+      debtRegisterText.includes("DEBT-20260325-roles-kernel-turn-stage-contract") &&
+      debtRegisterText.includes("DEBT-20260325-kernelone-llm-reexport-parity"),
+  );
+  const semanticBoundaryGate = await runUtf8CommandProbe(
+    "python",
+    ["docs/governance/ci/scripts/check_semantic_boundary.py"],
+    { cwd: backendRoot, timeoutMs: 30_000 },
+  );
+  const semanticTotalMatch = /Total semantic search sites found:\s*(\d+)/.exec(semanticBoundaryGate.stdout);
+  const semanticCompliantMatch = /Compliant sites \((\d+)\)/.exec(semanticBoundaryGate.stdout);
+  const semanticPass = Boolean(
+    semanticBoundaryGate.exit_code === 0 &&
+      semanticBoundaryGate.stdout.includes("Status: PASSED") &&
+      Number(semanticTotalMatch?.[1] || 0) > 0,
+  );
+
+  return [
+    makeProbe({
+      id: "graph_subgraph_reconciliation_runtime_probe",
+      title: "Graph subgraph truth/draft reconciliation runtime probe",
+      category: "governance",
+      status: subgraphPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "runtime_artifact",
+          ref: path.relative(repoRoot, catalogPath),
+          value: {
+            catalog_subgraph_refs: subgraphNames,
+            catalog_refs_missing_yaml: catalogRefsMissingYaml,
+          },
+        },
+        {
+          type: "runtime_artifact",
+          ref: path.relative(repoRoot, subgraphDir),
+          value: {
+            subgraph_yaml_files: subgraphYamlFiles,
+            draft_subgraphs: draftSubgraphs,
+          },
+        },
+      ],
+      findings: subgraphPass ? [] : ["catalog references missing subgraph YAML files"],
+    }),
+    makeProbe({
+      id: "cell_manifest_catalog_runtime_probe",
+      title: "Cell manifest/catalog reconciliation runtime probe",
+      category: "governance",
+      status: manifestPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "runtime_artifact",
+          ref: path.relative(repoRoot, catalogPath),
+          value: {
+            catalog_cell_count: catalogIds.length,
+            manifest_cell_count: manifestIds.length,
+            catalog_only: catalogOnly,
+            manifest_only: manifestOnly,
+            duplicate_manifest_ids: duplicateManifestIds,
+          },
+        },
+        {
+          type: "runtime_artifact",
+          ref: path.relative(repoRoot, cellsRoot),
+          value: {
+            manifest_paths: manifestRows,
+          },
+        },
+      ],
+      findings: manifestPass
+        ? []
+        : ["cell manifest/catalog reconciliation has catalog-only, manifest-only, or duplicate manifest ids"],
+    }),
+    makeProbe({
+      id: "structural_bug_governance_runtime_probe",
+      title: "Structural bug governance chain runtime probe",
+      category: "governance",
+      status: structuralPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "runtime_artifact",
+          ref: path.relative(repoRoot, verifyPackPath),
+          value: {
+            version: asNumber(asRecord(verifyPack).version),
+            cell_id: asString(asRecord(verifyPack).cell_id),
+            referenced_asset_count: referencedAssets.length,
+          },
+        },
+        {
+          type: "runtime_artifact",
+          ref: "src/backend/docs/governance + src/backend/polaris/cells/roles/kernel/generated",
+          value: {
+            asset_count: structuralAssetRows.length,
+            missing_assets: missingStructuralAssets,
+            expected_debt_ids_present:
+              debtRegisterText.includes("DEBT-20260325-roles-kernel-turn-stage-contract") &&
+              debtRegisterText.includes("DEBT-20260325-kernelone-llm-reexport-parity"),
+          },
+        },
+      ],
+      findings: structuralPass ? [] : ["structural bug governance chain has missing assets or missing debt links"],
+    }),
+    makeProbe({
+      id: "semantic_boundary_governance_runtime_probe",
+      title: "Semantic boundary governance runtime probe",
+      category: "governance",
+      status: semanticPass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "python docs/governance/ci/scripts/check_semantic_boundary.py",
+          value: {
+            exit_code: semanticBoundaryGate.exit_code,
+            signal: semanticBoundaryGate.signal,
+            status_line: semanticBoundaryGate.stdout.includes("Status: PASSED") ? "PASSED" : "NOT_PASSED",
+            total_sites: Number(semanticTotalMatch?.[1] || 0),
+            compliant_sites: Number(semanticCompliantMatch?.[1] || 0),
+            stdout: semanticBoundaryGate.stdout,
+            stderr: semanticBoundaryGate.stderr,
+          },
+        },
+      ],
+      findings: semanticPass ? [] : ["semantic boundary governance script did not pass"],
+    }),
+  ];
+}
+
+async function collectEventFactStreamRuntimeProbe(page: Page): Promise<EvidenceProbe> {
+  try {
+    const marker = `e2e-fact-stream-${Date.now()}`;
+    const payload = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/runtime/fact-stream/probe", {
+        method: "POST",
+        body: { marker },
+      }),
+    );
+    const queriedEvents = asRecords(payload.queried_events);
+    const firstEvent = queriedEvents[0] || {};
+    const firstPayload = asRecord(firstEvent.payload);
+    const pass = Boolean(
+      payload.ok === true &&
+        asString(payload.event_id) &&
+        asString(payload.storage_path) === "runtime/events/e2e.fact_stream_probe.jsonl" &&
+        payload.artifact_exists === true &&
+        (asNumber(payload.queried_total) || 0) >= 1 &&
+        asString(firstPayload.marker) === marker,
+    );
+
+    return makeProbe({
+      id: "event_fact_stream_runtime_probe",
+      title: "Event fact stream singleton writer runtime probe",
+      category: "events",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "/v2/runtime/fact-stream/probe",
+          value: {
+            stream: asString(payload.stream),
+            event_type: asString(payload.event_type),
+            event_id: asString(payload.event_id),
+            storage_path: asString(payload.storage_path),
+            artifact_exists: payload.artifact_exists === true,
+            queried_total: asNumber(payload.queried_total),
+            first_event_type: asString(firstEvent.event_type),
+            first_marker: asString(firstPayload.marker),
+          },
+        },
+        {
+          type: "runtime_artifact",
+          ref: asString(payload.absolute_path),
+          value: {
+            exists: payload.artifact_exists === true,
+            logical_path: asString(payload.storage_path),
+          },
+        },
+      ],
+      findings: pass ? [] : ["fact stream probe did not append/query a marker through the public writer path"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "event_fact_stream_runtime_probe",
+      title: "Event fact stream singleton writer runtime probe",
+      category: "events",
+      status: "WARN",
+      required: false,
+      evidence: [{ type: "api", ref: "/v2/runtime/fact-stream/probe" }],
+      findings: [String(error)],
+    });
+  }
+}
+
+async function collectKerneloneTraceabilityRuntimeProbe(page: Page): Promise<EvidenceProbe> {
+  try {
+    const marker = `e2e-traceability-${Date.now()}`;
+    const payload = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/runtime/traceability/probe", {
+        method: "POST",
+        body: { marker },
+      }),
+    );
+    const nodeKinds = Array.isArray(payload.node_kinds) ? payload.node_kinds.map((kind) => asString(kind)) : [];
+    const linkKinds = Array.isArray(payload.link_kinds) ? payload.link_kinds.map((kind) => asString(kind)) : [];
+    const matrix = asRecord(payload.matrix);
+    const matrixNodes = asRecords(matrix.nodes);
+    const matrixLinks = asRecords(matrix.links);
+    const expectedNodeKinds = ["doc", "task", "qa_verdict"];
+    const pass = Boolean(
+      payload.ok === true &&
+        asString(payload.run_id).startsWith(marker) &&
+        asString(matrix.matrix_id) &&
+        (asNumber(payload.node_count) || 0) >= 3 &&
+        (asNumber(payload.link_count) || 0) >= 2 &&
+        payload.artifact_exists === true &&
+        matrixNodes.length >= 3 &&
+        matrixLinks.length >= 2 &&
+        expectedNodeKinds.every((kind) => nodeKinds.includes(kind)) &&
+        linkKinds.includes("derives_from") &&
+        linkKinds.includes("verifies"),
+    );
+
+    return makeProbe({
+      id: "kernelone_traceability_runtime_probe",
+      title: "KernelOne traceability matrix runtime probe",
+      category: "governance",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "/v2/runtime/traceability/probe",
+          value: {
+            run_id: asString(payload.run_id),
+            matrix_id: asString(matrix.matrix_id),
+            node_count: asNumber(payload.node_count),
+            link_count: asNumber(payload.link_count),
+            node_kinds: nodeKinds,
+            link_kinds: linkKinds,
+            artifact_exists: payload.artifact_exists === true,
+            storage_path: asString(payload.storage_path),
+          },
+        },
+        {
+          type: "runtime_artifact",
+          ref: asString(payload.absolute_path),
+          value: {
+            exists: payload.artifact_exists === true,
+            logical_path: asString(payload.storage_path),
+            matrix_nodes: matrixNodes.length,
+            matrix_links: matrixLinks.length,
+          },
+        },
+      ],
+      findings: pass ? [] : ["traceability probe did not persist a non-empty doc->task->qa matrix"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "kernelone_traceability_runtime_probe",
+      title: "KernelOne traceability matrix runtime probe",
+      category: "governance",
+      status: "WARN",
+      required: false,
+      evidence: [{ type: "api", ref: "/v2/runtime/traceability/probe" }],
+      findings: [String(error)],
+    });
+  }
+}
+
+async function collectElectronRuntimeProbes(page: Page, workspace: string): Promise<EvidenceProbe[]> {
+  const probes: EvidenceProbe[] = [];
+  let backend: BackendConnection | null = null;
+  try {
+    backend = await getBackendInfoFromPage(page);
+  } catch {
+    backend = null;
+  }
+
+  try {
+    const payload = await page.evaluate(async () => {
+      type PolarisApi = {
+        getBackendInfo?: () => Promise<{ baseUrl?: string; token?: string }>;
+        getBackendStatus?: () => Promise<Record<string, unknown>>;
+        secrets?: {
+          available?: () => Promise<Record<string, unknown>>;
+        };
+        pty?: Record<string, unknown>;
+      };
+      const api = (window as Window & { polaris?: PolarisApi }).polaris;
+      const keys = api ? Object.keys(api).sort() : [];
+      const backendInfo = api?.getBackendInfo ? await api.getBackendInfo() : {};
+      const backendStatus = api?.getBackendStatus ? await api.getBackendStatus() : {};
+      const secretAvailability = api?.secrets?.available ? await api.secrets.available() : {};
+      return {
+        keys,
+        backend_info: backendInfo,
+        backend_status: backendStatus,
+        secret_availability: secretAvailability,
+        has_secrets_api: Boolean(api?.secrets),
+        has_pty_api: Boolean(api?.pty),
+      };
+    });
+    const payloadRecord = asRecord(payload);
+    const backendStatus = asRecord(payloadRecord.backend_status);
+    const statusInfo = asRecord(backendStatus.info);
+    const backendInfo = asRecord(payloadRecord.backend_info);
+    const keys = stringArray(payloadRecord.keys);
+    const pass = Boolean(
+      backend?.source === "electron_preload" &&
+        asString(backendInfo.baseUrl) &&
+        asString(backendInfo.token) &&
+        backendStatus.ready === true &&
+        asString(statusInfo.baseUrl) === asString(backendInfo.baseUrl) &&
+        keys.includes("getBackendInfo") &&
+        keys.includes("getBackendStatus"),
+    );
+    probes.push(
+      makeProbe({
+        id: "electron_preload_supervisor_runtime_probe",
+        title: "Electron preload IPC and backend supervisor runtime probe",
+        category: "entrypoint",
+        status: pass ? "PASS" : "WARN",
+        required: false,
+        evidence: [
+          {
+            type: "probe",
+            ref: "window.polaris.getBackendInfo/getBackendStatus",
+            value: {
+              backend_source: backend?.source || "",
+              preload_keys: keys,
+              backend_state: asString(backendStatus.state),
+              backend_ready: backendStatus.ready === true,
+              backend_pid_present: Boolean(asNumber(backendStatus.pid)),
+              base_url_matches: asString(statusInfo.baseUrl) === asString(backendInfo.baseUrl),
+              token_present: Boolean(asString(backendInfo.token)),
+            },
+          },
+        ],
+        findings: pass ? [] : ["Electron preload backend IPC or supervisor status was not available in this entrypoint"],
+      }),
+    );
+  } catch (error) {
+    probes.push(
+      makeProbe({
+        id: "electron_preload_supervisor_runtime_probe",
+        title: "Electron preload IPC and backend supervisor runtime probe",
+        category: "entrypoint",
+        status: "WARN",
+        required: false,
+        evidence: [{ type: "probe", ref: "window.polaris.getBackendInfo/getBackendStatus" }],
+        findings: [String(error)],
+      }),
+    );
+  }
+
+  try {
+    const marker = `e2e-secret-${Date.now()}`;
+    const secretValue = `${marker}-value`;
+    const result = await page.evaluate(
+      async ({ key, value }) => {
+        const api = (window as Window & {
+          polaris?: {
+            secrets?: {
+              available?: () => Promise<Record<string, unknown>>;
+              set?: (key: string, value: string) => Promise<Record<string, unknown>>;
+              get?: (key: string) => Promise<Record<string, unknown>>;
+              remove?: (key: string) => Promise<Record<string, unknown>>;
+            };
+          };
+        }).polaris;
+        const available = api?.secrets?.available ? await api.secrets.available() : {};
+        if (!api?.secrets?.set || !api.secrets.get || !api.secrets.remove) {
+          return { available, set_result: {}, get_result: {}, remove_result: {}, get_after_remove: {} };
+        }
+        const setResult = await api.secrets.set(key, value);
+        const getResult = await api.secrets.get(key);
+        const removeResult = await api.secrets.remove(key);
+        const getAfterRemove = await api.secrets.get(key);
+        return {
+          available,
+          set_result: setResult,
+          get_result: getResult,
+          remove_result: removeResult,
+          get_after_remove: getAfterRemove,
+        };
+      },
+      { key: marker, value: secretValue },
+    );
+    const available = asRecord(asRecord(result).available);
+    const setResult = asRecord(asRecord(result).set_result);
+    const getResult = asRecord(asRecord(result).get_result);
+    const removeResult = asRecord(asRecord(result).remove_result);
+    const getAfterRemove = asRecord(asRecord(result).get_after_remove);
+    const pass = Boolean(
+      available.ok === true &&
+        available.available === true &&
+        setResult.ok === true &&
+        getResult.ok === true &&
+        asString(getResult.value) === secretValue &&
+        removeResult.ok === true &&
+        getAfterRemove.ok === false,
+    );
+    probes.push(
+      makeProbe({
+        id: "electron_secret_safe_storage_runtime_probe",
+        title: "Electron safeStorage secret bridge runtime probe",
+        category: "security",
+        status: pass ? "PASS" : "WARN",
+        required: false,
+        evidence: [
+          {
+            type: "probe",
+            ref: "window.polaris.secrets",
+            value: {
+              available_ok: available.ok === true,
+              encryption_available: available.available === true,
+              set_ok: setResult.ok === true,
+              readback_ok: getResult.ok === true && asString(getResult.value) === secretValue,
+              remove_ok: removeResult.ok === true,
+              removed_read_fails: getAfterRemove.ok === false,
+            },
+          },
+        ],
+        findings: pass ? [] : ["Electron safeStorage was unavailable or secret set/get/remove roundtrip failed"],
+      }),
+    );
+  } catch (error) {
+    probes.push(
+      makeProbe({
+        id: "electron_secret_safe_storage_runtime_probe",
+        title: "Electron safeStorage secret bridge runtime probe",
+        category: "security",
+        status: "WARN",
+        required: false,
+        evidence: [{ type: "probe", ref: "window.polaris.secrets" }],
+        findings: [String(error)],
+      }),
+    );
+  }
+
+  try {
+    const marker = `E2E_PTY_${Date.now()}`;
+    const result = await page.evaluate(
+      async ({ markerValue, cwd }) => {
+        type PtyPayload = { id?: string; data?: string; exitCode?: number | null; signal?: string | null };
+        const api = (window as Window & {
+          polaris?: {
+            pty?: {
+              start?: (options: Record<string, unknown>) => Promise<Record<string, unknown>>;
+              resize?: (id: string, cols: number, rows: number) => Promise<Record<string, unknown>>;
+              close?: (id: string) => Promise<Record<string, unknown>>;
+              onData?: (handler: (payload: PtyPayload) => void) => () => void;
+              onExit?: (handler: (payload: PtyPayload) => void) => () => void;
+            };
+          };
+        }).polaris;
+        if (!api?.pty?.start || !api.pty.resize || !api.pty.close || !api.pty.onData) {
+          return { api_present: false };
+        }
+        const output: string[] = [];
+        let exitPayload: PtyPayload | null = null;
+        const unsubscribeData = api.pty.onData((payload) => {
+          if (payload?.data) {
+            output.push(String(payload.data));
+          }
+        });
+        const unsubscribeExit = api.pty.onExit?.((payload) => {
+          exitPayload = payload;
+        });
+        const started = await api.pty.start({
+          command: "node",
+          args: ["-e", `console.log(${JSON.stringify(markerValue)}); setTimeout(() => {}, 5000)`],
+          cwd,
+          cols: 80,
+          rows: 24,
+        });
+        const sessionId = String(started.id || "");
+        const resizeResult = sessionId ? await api.pty.resize(sessionId, 100, 30) : {};
+        const deadline = Date.now() + 8_000;
+        while (Date.now() < deadline && !output.join("").includes(markerValue) && !exitPayload) {
+          await new Promise((resolve) => window.setTimeout(resolve, 100));
+        }
+        const closeResult = sessionId ? await api.pty.close(sessionId) : {};
+        unsubscribeData();
+        unsubscribeExit?.();
+        return {
+          api_present: true,
+          started,
+          session_id: sessionId,
+          resize_result: resizeResult,
+          close_result: closeResult,
+          output: output.join(""),
+          exit_payload: exitPayload,
+        };
+      },
+      { markerValue: marker, cwd: workspace || "." },
+    );
+    const started = asRecord(asRecord(result).started);
+    const resizeResult = asRecord(asRecord(result).resize_result);
+    const closeResult = asRecord(asRecord(result).close_result);
+    const output = asString(asRecord(result).output);
+    const pass = Boolean(
+      asRecord(result).api_present === true &&
+        started.ok === true &&
+        asString(asRecord(result).session_id) &&
+        resizeResult.ok === true &&
+        closeResult.ok === true &&
+        output.includes(marker),
+    );
+    probes.push(
+      makeProbe({
+        id: "electron_pty_runtime_probe",
+        title: "Electron PTY bridge runtime probe",
+        category: "tooling",
+        status: pass ? "PASS" : "WARN",
+        required: false,
+        evidence: [
+          {
+            type: "probe",
+            ref: "window.polaris.pty",
+            value: {
+              api_present: asRecord(result).api_present === true,
+              start_ok: started.ok === true,
+              session_id: asString(asRecord(result).session_id),
+              resize_ok: resizeResult.ok === true,
+              resize_error: asString(resizeResult.error),
+              close_ok: closeResult.ok === true,
+              close_error: asString(closeResult.error),
+              output_marker_seen: output.includes(marker),
+              output_preview: output.slice(0, 120),
+            },
+          },
+        ],
+        findings: pass ? [] : ["Electron PTY start/output/resize/close roundtrip failed"],
+      }),
+    );
+  } catch (error) {
+    probes.push(
+      makeProbe({
+        id: "electron_pty_runtime_probe",
+        title: "Electron PTY bridge runtime probe",
+        category: "tooling",
+        status: "WARN",
+        required: false,
+        evidence: [{ type: "probe", ref: "window.polaris.pty" }],
+        findings: [String(error)],
+      }),
+    );
+  }
+
+  return probes;
+}
+
 async function collectReadonlyControlPlaneRuntimeProbes(page: Page, workspace: string): Promise<EvidenceProbe[]> {
   const probes: EvidenceProbe[] = [];
   const encodedWorkspace = encodeURIComponent(workspace || ".");
@@ -1795,6 +2974,697 @@ async function collectReadonlyControlPlaneRuntimeProbes(page: Page, workspace: s
   }
 
   return probes;
+}
+
+function collectE2eRuntimeIsolationProbe(workspace: string, runtimeRoot: string): EvidenceProbe {
+  const workspacePath = workspace ? path.resolve(workspace) : "";
+  const runtimeRootPath = runtimeRoot ? path.resolve(runtimeRoot) : "";
+  const repoPath = path.resolve(repoRoot);
+  const workspaceOutsideRepo = Boolean(workspacePath) && !isPathInsideOrSame(workspacePath, repoPath);
+  const runtimeRootOutsideRepo = Boolean(runtimeRootPath) && !isPathInsideOrSame(runtimeRootPath, repoPath);
+  const runtimeRootDistinct = Boolean(workspacePath && runtimeRootPath) && workspacePath !== runtimeRootPath;
+  const pass = workspaceOutsideRepo && runtimeRootOutsideRepo && runtimeRootDistinct;
+
+  return makeProbe({
+    id: "e2e_runtime_isolation_probe",
+    title: "E2E runtime/workspace isolation probe",
+    category: "e2e",
+    status: pass ? "PASS" : "WARN",
+    required: false,
+    evidence: [
+      {
+        type: "probe",
+        ref: "workspace_runtime_isolation",
+        value: {
+          workspace: workspacePath,
+          runtime_root: runtimeRootPath,
+          repo_root: repoPath,
+          workspace_outside_repo: workspaceOutsideRepo,
+          runtime_root_outside_repo: runtimeRootOutsideRepo,
+          runtime_root_distinct: runtimeRootDistinct,
+        },
+      },
+    ],
+    findings: pass ? [] : ["workspace/runtime_root are not isolated from the Polaris repository"],
+  });
+}
+
+async function collectHistoryArchiveReadonlyRuntimeProbe(page: Page): Promise<EvidenceProbe> {
+  try {
+    const [runsResponse, taskSnapshotsResponse, factorySnapshotsResponse, overviewResponse] = await Promise.all([
+      requestJson<JsonRecord>(page, "/v2/history/runs?limit=5&source=all"),
+      requestJson<JsonRecord>(page, "/v2/history/tasks/snapshots?limit=5"),
+      requestJson<JsonRecord>(page, "/v2/history/factory/snapshots?limit=5"),
+      requestJson<JsonRecord>(page, "/history/factory/overview?limit=5"),
+    ]);
+    const runs = Array.isArray(asRecord(runsResponse).runs) ? asRecord(runsResponse).runs : null;
+    const taskSnapshots = Array.isArray(asRecord(taskSnapshotsResponse).snapshots)
+      ? asRecord(taskSnapshotsResponse).snapshots
+      : null;
+    const factoryRuns = Array.isArray(asRecord(factorySnapshotsResponse).factory_runs)
+      ? asRecord(factorySnapshotsResponse).factory_runs
+      : null;
+    const overview = asRecord(overviewResponse);
+    const overviewSummary = asRecord(overview.summary);
+    const overviewRounds = Array.isArray(overview.rounds) ? overview.rounds : null;
+    const pass = Boolean(runs && taskSnapshots && factoryRuns && Object.keys(overviewSummary).length > 0 && overviewRounds);
+
+    return makeProbe({
+      id: "history_archive_readonly_runtime_probe",
+      title: "History/archive read-only runtime probe",
+      category: "archive",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "/v2/history/runs",
+          value: { run_count: runs?.length ?? 0, total: asNumber(asRecord(runsResponse).total) },
+        },
+        {
+          type: "api",
+          ref: "/v2/history/tasks/snapshots",
+          value: { snapshot_count: taskSnapshots?.length ?? 0, total: asNumber(asRecord(taskSnapshotsResponse).total) },
+        },
+        {
+          type: "api",
+          ref: "/v2/history/factory/snapshots",
+          value: { factory_run_count: factoryRuns?.length ?? 0, total: asNumber(asRecord(factorySnapshotsResponse).total) },
+        },
+        {
+          type: "api",
+          ref: "/history/factory/overview",
+          value: {
+            summary_keys: Object.keys(overviewSummary),
+            round_count: overviewRounds?.length ?? 0,
+          },
+        },
+      ],
+      findings: pass ? [] : ["history/archive responses did not expose the required indexed runtime projections"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "history_archive_readonly_runtime_probe",
+      title: "History/archive read-only runtime probe",
+      category: "archive",
+      status: "WARN",
+      required: false,
+      evidence: [
+        { type: "api", ref: "/v2/history/runs" },
+        { type: "api", ref: "/v2/history/tasks/snapshots" },
+        { type: "api", ref: "/v2/history/factory/snapshots" },
+        { type: "api", ref: "/history/factory/overview" },
+      ],
+      findings: [String(error)],
+    });
+  }
+}
+
+async function collectResidentSelfLearningRuntimeProbe(page: Page, workspace: string): Promise<EvidenceProbe> {
+  const workspacePath = workspace ? path.resolve(workspace) : "";
+  const repoPath = path.resolve(repoRoot);
+  const workspaceOutsideRepo = Boolean(workspacePath) && !isPathInsideOrSame(workspacePath, repoPath);
+  const encodedWorkspace = encodeURIComponent(workspacePath);
+
+  if (!workspaceOutsideRepo) {
+    return makeProbe({
+      id: "resident_self_learning_runtime_probe",
+      title: "Resident self-learning runtime tick probe",
+      category: "resident",
+      status: "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "resident_tick_workspace_guard",
+          value: {
+            workspace: workspacePath,
+            repo_root: repoPath,
+            workspace_outside_repo: workspaceOutsideRepo,
+          },
+        },
+      ],
+      findings: ["resident tick probe skipped because workspace is not isolated from the Polaris repository"],
+    });
+  }
+
+  try {
+    const before = asRecord(
+      await requestJson<JsonRecord>(page, `/v2/resident/status?details=true&workspace=${encodedWorkspace}`),
+    );
+    const beforeRuntime = asRecord(before.runtime);
+    const beforeTickCount = asNumber(beforeRuntime.tick_count);
+    const tick = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/resident/tick?force=true", {
+        method: "POST",
+        body: { workspace: workspacePath },
+      }),
+    );
+    const after = asRecord(
+      await requestJson<JsonRecord>(page, `/v2/resident/status?details=true&workspace=${encodedWorkspace}`),
+    );
+    const decisions = asRecord(
+      await requestJson<JsonRecord>(page, `/v2/resident/decisions?workspace=${encodedWorkspace}&limit=5`),
+    );
+    const afterRuntime = asRecord(after.runtime);
+    const afterTickCount = asNumber(afterRuntime.tick_count);
+    const counts = asRecord(after.counts);
+    const agenda = asRecord(after.agenda);
+    const decisionItems = Array.isArray(decisions.items) ? decisions.items : null;
+    const riskRegister = Array.isArray(agenda.risk_register) ? agenda.risk_register : null;
+    const pass = Boolean(
+      beforeTickCount !== null &&
+        afterTickCount !== null &&
+        afterTickCount > beforeTickCount &&
+        decisionItems &&
+        riskRegister,
+    );
+
+    return makeProbe({
+      id: "resident_self_learning_runtime_probe",
+      title: "Resident self-learning runtime tick probe",
+      category: "resident",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "/v2/resident/status",
+          value: {
+            before_tick_count: beforeTickCount,
+            after_tick_count: afterTickCount,
+            counts: {
+              decisions: asNumber(counts.decisions),
+              goals: asNumber(counts.goals),
+              skills: asNumber(counts.skills),
+              experiments: asNumber(counts.experiments),
+              improvements: asNumber(counts.improvements),
+            },
+            risk_register_count: riskRegister?.length ?? 0,
+          },
+        },
+        {
+          type: "api",
+          ref: "/v2/resident/tick",
+          value: {
+            forced: true,
+            tick_runtime_tick_count: asNumber(asRecord(tick.runtime).tick_count),
+            last_summary: asRecord(asRecord(tick.runtime).last_summary),
+          },
+        },
+        {
+          type: "api",
+          ref: "/v2/resident/decisions",
+          value: { decision_count: decisionItems?.length ?? 0, total: asNumber(decisions.count) },
+        },
+      ],
+      findings: pass ? [] : ["resident tick did not advance tick_count or expose decisions/agenda projections"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "resident_self_learning_runtime_probe",
+      title: "Resident self-learning runtime tick probe",
+      category: "resident",
+      status: "WARN",
+      required: false,
+      evidence: [
+        { type: "api", ref: "/v2/resident/status" },
+        { type: "api", ref: "/v2/resident/tick" },
+        { type: "api", ref: "/v2/resident/decisions" },
+      ],
+      findings: [String(error)],
+    });
+  }
+}
+
+async function collectResidentGoalPmBridgeRuntimeProbe(page: Page, workspace: string): Promise<EvidenceProbe> {
+  const workspacePath = workspace ? path.resolve(workspace) : "";
+  const repoPath = path.resolve(repoRoot);
+  const workspaceOutsideRepo = Boolean(workspacePath) && !isPathInsideOrSame(workspacePath, repoPath);
+  const encodedWorkspace = encodeURIComponent(workspacePath);
+
+  if (!workspaceOutsideRepo) {
+    return makeProbe({
+      id: "resident_goal_pm_bridge_runtime_probe",
+      title: "Resident governed goal PM bridge runtime probe",
+      category: "resident",
+      status: "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "resident_goal_workspace_guard",
+          value: {
+            workspace: workspacePath,
+            repo_root: repoPath,
+            workspace_outside_repo: workspaceOutsideRepo,
+          },
+        },
+      ],
+      findings: ["resident goal PM bridge probe skipped because workspace is not isolated from the Polaris repository"],
+    });
+  }
+
+  try {
+    const uniqueTitle = `E2E runtime PM bridge proof ${Date.now()}`;
+    const goal = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/resident/goals", {
+        method: "POST",
+        body: {
+          workspace: workspacePath,
+          goal_type: "maintenance",
+          title: uniqueTitle,
+          motivation: "Runtime proof for governed Resident goal PM bridge.",
+          source: "e2e_runtime_probe",
+          expected_value: 0.7,
+          risk_score: 0.1,
+          scope: ["src/backend/polaris/tests/electron"],
+          budget: { max_tasks: 2, max_parallel_tasks: 1 },
+          evidence_refs: ["test-results/electron/web-entry-expanded-tech-evidence-matrix.json"],
+          derived_from: ["expanded-tech-evidence-matrix"],
+        },
+      }),
+    );
+    const goalId = asString(goal.goal_id);
+    if (!goalId) {
+      throw new Error("resident goal creation did not return goal_id");
+    }
+
+    const approved = asRecord(
+      await requestJson<JsonRecord>(page, `/v2/resident/goals/${encodeURIComponent(goalId)}/approve`, {
+        method: "POST",
+        body: { workspace: workspacePath, note: "E2E runtime proof approval" },
+      }),
+    );
+    const staged = asRecord(
+      await requestJson<JsonRecord>(page, `/v2/resident/goals/${encodeURIComponent(goalId)}/stage`, {
+        method: "POST",
+        body: { workspace: workspacePath, promote_to_pm_runtime: true },
+      }),
+    );
+    const execution = asRecord(
+      await requestJson<JsonRecord>(
+        page,
+        `/v2/resident/goals/${encodeURIComponent(goalId)}/execution?workspace=${encodedWorkspace}`,
+      ),
+    );
+    const artifacts = asRecord(staged.artifacts);
+    const pmRun = asRecord(staged.pm_run);
+    const pmRunMetadata = asRecord(pmRun.metadata);
+    const pass = Boolean(
+      asString(approved.status) === "approved" &&
+        asString(staged.goal_id) === goalId &&
+        asString(artifacts.pm_contract_path) &&
+        asString(artifacts.pm_plan_path) &&
+        asString(artifacts.backup_manifest_path) &&
+        asString(pmRunMetadata.resident_goal_id) === goalId &&
+        asString(execution.goal_id) === goalId &&
+        asString(execution.stage) &&
+        asNumber(execution.percent) !== null,
+    );
+
+    return makeProbe({
+      id: "resident_goal_pm_bridge_runtime_probe",
+      title: "Resident governed goal PM bridge runtime probe",
+      category: "resident",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "/v2/resident/goals",
+          value: {
+            goal_id: goalId,
+            created_status: asString(goal.status),
+            title: uniqueTitle,
+          },
+        },
+        {
+          type: "api",
+          ref: "/v2/resident/goals/{id}/approve",
+          value: { goal_id: goalId, status: asString(approved.status) },
+        },
+        {
+          type: "api",
+          ref: "/v2/resident/goals/{id}/stage",
+          value: {
+            goal_id: asString(staged.goal_id),
+            promoted_to_pm_runtime: Boolean(staged.promoted_to_pm_runtime),
+            resident_contract_path: asString(artifacts.resident_contract_path),
+            resident_plan_path: asString(artifacts.resident_plan_path),
+            pm_contract_path: asString(artifacts.pm_contract_path),
+            pm_plan_path: asString(artifacts.pm_plan_path),
+            backup_manifest_path: asString(artifacts.backup_manifest_path),
+            pm_run_metadata: pmRunMetadata,
+          },
+        },
+        {
+          type: "api",
+          ref: "/v2/resident/goals/{id}/execution",
+          value: {
+            goal_id: asString(execution.goal_id),
+            stage: asString(execution.stage),
+            percent: asNumber(execution.percent),
+            total_tasks: asNumber(execution.total_tasks),
+          },
+        },
+      ],
+      findings: pass ? [] : ["resident goal PM bridge did not expose staged PM artifacts and execution projection"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "resident_goal_pm_bridge_runtime_probe",
+      title: "Resident governed goal PM bridge runtime probe",
+      category: "resident",
+      status: "WARN",
+      required: false,
+      evidence: [
+        { type: "api", ref: "/v2/resident/goals" },
+        { type: "api", ref: "/v2/resident/goals/{id}/approve" },
+        { type: "api", ref: "/v2/resident/goals/{id}/stage" },
+        { type: "api", ref: "/v2/resident/goals/{id}/execution" },
+      ],
+      findings: [String(error)],
+    });
+  }
+}
+
+async function collectLlmInterviewSaveRuntimeProbe(page: Page, workspace: string): Promise<EvidenceProbe> {
+  const workspacePath = workspace ? path.resolve(workspace) : "";
+  const repoPath = path.resolve(repoRoot);
+  const workspaceOutsideRepo = Boolean(workspacePath) && !isPathInsideOrSame(workspacePath, repoPath);
+
+  if (!workspaceOutsideRepo) {
+    return makeProbe({
+      id: "llm_interview_save_runtime_probe",
+      title: "LLM interview save/readiness index runtime probe",
+      category: "llm_control",
+      status: "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "llm_interview_save_workspace_guard",
+          value: {
+            workspace: workspacePath,
+            repo_root: repoPath,
+            workspace_outside_repo: workspaceOutsideRepo,
+          },
+        },
+      ],
+      findings: ["LLM interview save probe skipped because workspace is not isolated from the Polaris repository"],
+    });
+  }
+
+  try {
+    const sessionId = `e2e-interview-${Date.now()}`;
+    const providerId = "e2e-provider";
+    const model = "e2e-model";
+    const saved = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/llm/interview/save", {
+        method: "POST",
+        body: {
+          role: "pm",
+          provider_id: providerId,
+          model,
+          session_id: sessionId,
+          report: {
+            id: sessionId,
+            overallStatus: "PASS",
+            target: {
+              role: "pm",
+              provider_id: providerId,
+              model,
+            },
+            final: {
+              ready: true,
+              grade: "PASS",
+              next_action: "proceed",
+            },
+            summary: {
+              ready: true,
+              grade: "PASS",
+              source: "e2e_interview_save_runtime_probe",
+            },
+            suites: {
+              interview: { ok: true },
+            },
+            evaluation: {
+              passed: true,
+            },
+          },
+        },
+      }),
+    );
+    const reportPath = asString(saved.report_path);
+    const report = reportPath ? await readJsonIfExists<JsonRecord>(reportPath) : null;
+    const layout = asRecord(await requestJson<JsonRecord>(page, "/runtime/storage-layout"));
+    const layoutPaths = asRecord(layout.paths);
+    const workspaceIndexPath = path.join(workspacePath, ".polaris", "llm_test_index.json");
+    const globalIndexPath = asString(layoutPaths.global_llm_test_index || layoutPaths.llm_test_index);
+    const indexPaths = Array.from(new Set([workspaceIndexPath, globalIndexPath].filter(Boolean)));
+    const indexes = await Promise.all(
+      indexPaths.map(async (indexPath) => ({
+        path: indexPath,
+        payload: await readJsonIfExists<JsonRecord>(indexPath),
+      })),
+    );
+    const indexedRoles = indexes.map(({ path: indexPath, payload }) => {
+      const pm = asRecord(asRecord(payload).roles ? asRecord(asRecord(payload).roles).pm : {});
+      return {
+        path: indexPath,
+        exists: Boolean(payload),
+        pm_last_run_id: asString(pm.last_run_id),
+        pm_provider_id: asString(pm.provider_id),
+        pm_model: asString(pm.model),
+        pm_ready: Boolean(pm.ready),
+      };
+    });
+    const mirrored = indexedRoles.length >= 2 && indexedRoles.every((row) => row.pm_last_run_id === sessionId);
+    const pass = Boolean(
+      saved.saved === true &&
+        saved.readiness_updated === true &&
+        report &&
+        asString(asRecord(report).test_run_id) === sessionId &&
+        mirrored,
+    );
+
+    return makeProbe({
+      id: "llm_interview_save_runtime_probe",
+      title: "LLM interview save/readiness index runtime probe",
+      category: "llm_control",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "/v2/llm/interview/save",
+          value: {
+            saved: Boolean(saved.saved),
+            report_path: reportPath,
+            readiness_updated: Boolean(saved.readiness_updated),
+            session_id: sessionId,
+          },
+        },
+        {
+          type: "runtime_artifact",
+          ref: reportPath,
+          value: {
+            exists: Boolean(report),
+            test_run_id: asString(asRecord(report).test_run_id),
+            role: asString(asRecord(report).role),
+            provider_id: asString(asRecord(report).provider_id),
+            model: asString(asRecord(report).model),
+          },
+        },
+        {
+          type: "runtime_artifact",
+          ref: "llm_test_index_dual_mirror",
+          value: { indexed_roles: indexedRoles },
+        },
+      ],
+      findings: pass ? [] : ["LLM interview save did not update both readiness index mirrors for the saved run"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "llm_interview_save_runtime_probe",
+      title: "LLM interview save/readiness index runtime probe",
+      category: "llm_control",
+      status: "WARN",
+      required: false,
+      evidence: [
+        { type: "api", ref: "/v2/llm/interview/save" },
+        { type: "runtime_artifact", ref: "llm_test_index_dual_mirror" },
+      ],
+      findings: [String(error)],
+    });
+  }
+}
+
+async function collectRoleSessionAuditExportRuntimeProbe(
+  page: Page,
+  workspace: string,
+  runtimeRoot: string,
+): Promise<EvidenceProbe> {
+  const workspacePath = workspace ? path.resolve(workspace) : "";
+  const runtimeRootPath = runtimeRoot ? path.resolve(runtimeRoot) : "";
+  const repoPath = path.resolve(repoRoot);
+  const workspaceOutsideRepo = Boolean(workspacePath) && !isPathInsideOrSame(workspacePath, repoPath);
+
+  if (!workspaceOutsideRepo || !runtimeRootPath) {
+    return makeProbe({
+      id: "role_session_audit_export_runtime_probe",
+      title: "Role-session audit export and Kernel audit chain runtime probe",
+      category: "audit",
+      status: "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "probe",
+          ref: "role_session_audit_workspace_guard",
+          value: {
+            workspace: workspacePath,
+            runtime_root: runtimeRootPath,
+            repo_root: repoPath,
+            workspace_outside_repo: workspaceOutsideRepo,
+          },
+        },
+      ],
+      findings: ["role-session audit export probe skipped because workspace/runtime_root is not isolated"],
+    });
+  }
+
+  try {
+    const marker = `e2e-role-session-audit-${Date.now()}`;
+    const created = asRecord(
+      await requestJson<JsonRecord>(page, "/v2/roles/sessions", {
+        method: "POST",
+        body: {
+          role: "pm",
+          host_kind: "electron_workbench",
+          workspace: workspacePath,
+          session_type: "workbench",
+          attachment_mode: "isolated",
+          title: marker,
+          context_config: { source: "expanded_tech_evidence_matrix" },
+          capability_profile: { audit: 1 },
+        },
+      }),
+    );
+    const session = asRecord(created.session);
+    const sessionId = asString(session.id);
+    if (!sessionId) {
+      throw new Error("role session creation did not return session.id");
+    }
+
+    const appended = asRecord(
+      await requestJson<JsonRecord>(page, `/v2/roles/sessions/${encodeURIComponent(sessionId)}/audit/events`, {
+        method: "POST",
+        body: {
+          event_type: "message_sent",
+          details: {
+            marker,
+            message_id: `${marker}-message`,
+            source: "expanded_tech_evidence_matrix",
+          },
+        },
+      }),
+    );
+    const auditLog = asRecord(
+      await requestJson<JsonRecord>(page, `/v2/roles/sessions/${encodeURIComponent(sessionId)}/audit?limit=20`),
+    );
+    const exported = asRecord(
+      await requestJson<JsonRecord>(page, `/v2/roles/sessions/${encodeURIComponent(sessionId)}/audit/export`, {
+        method: "POST",
+      }),
+    );
+    const exportPath = asString(exported.export_path);
+    const exportPayload = exportPath ? await readJsonIfExists<JsonRecord>(exportPath) : null;
+    const exportedEvents = Array.isArray(asRecord(exportPayload).events) ? asRecord(exportPayload).events : [];
+    const auditJsonlPaths = await listRuntimeAuditJsonlPaths(runtimeRootPath);
+    const auditJsonlEntries = await readJsonlFileEntries(auditJsonlPaths, 500);
+    const kernelEvent = findRoleSessionKernelAuditEntry(auditJsonlEntries, sessionId);
+    const rawKernelEvent = asRecord(kernelEvent?.rawEvent);
+    const pass = Boolean(
+      asString(appended.event ? asRecord(appended.event).type : "") === "message_sent" &&
+        Array.isArray(auditLog.audit_events) &&
+        asNumber(auditLog.total) !== null &&
+        exported.event_count === exportedEvents.length &&
+        exportedEvents.some((event) => asString(asRecord(event).type) === "message_sent") &&
+        asString(rawKernelEvent.event_id) &&
+        asString(rawKernelEvent.prev_hash) &&
+        asString(rawKernelEvent.signature),
+    );
+
+    return makeProbe({
+      id: "role_session_audit_export_runtime_probe",
+      title: "Role-session audit export and Kernel audit chain runtime probe",
+      category: "audit",
+      status: pass ? "PASS" : "WARN",
+      required: false,
+      evidence: [
+        {
+          type: "api",
+          ref: "/v2/roles/sessions",
+          value: { session_id: sessionId, title: asString(session.title), workspace: asString(session.workspace) },
+        },
+        {
+          type: "api",
+          ref: "/v2/roles/sessions/{id}/audit/events",
+          value: { event: appended.event },
+        },
+        {
+          type: "api",
+          ref: "/v2/roles/sessions/{id}/audit",
+          value: { total: asNumber(auditLog.total), event_count: Array.isArray(auditLog.audit_events) ? auditLog.audit_events.length : 0 },
+        },
+        {
+          type: "api",
+          ref: "/v2/roles/sessions/{id}/audit/export",
+          value: { export_path: exportPath, event_count: asNumber(exported.event_count) },
+        },
+        {
+          type: "runtime_artifact",
+          ref: exportPath,
+          value: {
+            exists: Boolean(exportPayload),
+            session_id: asString(asRecord(exportPayload).session_id),
+            event_count: asNumber(asRecord(exportPayload).event_count),
+          },
+        },
+        {
+          type: "event_jsonl",
+          ref: kernelEvent?.sourcePath || path.join(runtimeRootPath, "audit"),
+          value: {
+            matched: Boolean(kernelEvent),
+            event_id: asString(rawKernelEvent.event_id),
+            prev_hash: asString(rawKernelEvent.prev_hash),
+            signature_present: Boolean(asString(rawKernelEvent.signature)),
+            event_type: asString(rawKernelEvent.event_type),
+            canonical_wrapped: Boolean(kernelEvent?.canonicalWrapped),
+            scanned_files: auditJsonlPaths,
+          },
+        },
+      ],
+      findings: pass
+        ? []
+        : ["role-session audit append/export did not produce both exported audit log and Kernel hash-chain evidence"],
+    });
+  } catch (error) {
+    return makeProbe({
+      id: "role_session_audit_export_runtime_probe",
+      title: "Role-session audit export and Kernel audit chain runtime probe",
+      category: "audit",
+      status: "WARN",
+      required: false,
+      evidence: [
+        { type: "api", ref: "/v2/roles/sessions" },
+        { type: "api", ref: "/v2/roles/sessions/{id}/audit/events" },
+        { type: "api", ref: "/v2/roles/sessions/{id}/audit/export" },
+      ],
+      findings: [String(error)],
+    });
+  }
 }
 
 async function collectAggregateRuntimePlanProbe(
@@ -2502,6 +4372,17 @@ export async function collectExpandedTechEvidenceMatrix(
   }
 
   probes.push(...(await collectReadonlyControlPlaneRuntimeProbes(page, workspace || ".")));
+  probes.push(collectE2eRuntimeIsolationProbe(workspace, runtimeRoot));
+  probes.push(await collectHistoryArchiveReadonlyRuntimeProbe(page));
+  probes.push(await collectResidentSelfLearningRuntimeProbe(page, workspace));
+  probes.push(await collectResidentGoalPmBridgeRuntimeProbe(page, workspace));
+  probes.push(await collectLlmInterviewSaveRuntimeProbe(page, workspace));
+  probes.push(await collectRoleSessionAuditExportRuntimeProbe(page, workspace, runtimeRoot));
+  probes.push(await collectWebSocketStaleTokenRuntimeProbe(page, workspace));
+  probes.push(...(await collectElectronRuntimeProbes(page, workspace || ".")));
+  probes.push(...(await collectGraphGovernanceRuntimeProbes()));
+  probes.push(await collectEventFactStreamRuntimeProbe(page));
+  probes.push(await collectKerneloneTraceabilityRuntimeProbe(page));
 
   probes.push(
     await candidateSourceProbe(
@@ -2654,8 +4535,19 @@ export async function writeExpandedTechEvidenceMatrix(
   report: ExpandedTechEvidenceReport,
   filename = "expanded-tech-evidence-matrix.json",
 ): Promise<string> {
+  const attachmentProbe = await collectE2eAttachmentRuntimeProbe(testInfo, filename);
+  report.probes = upsertProbe(report.probes, attachmentProbe);
+  refreshCandidateCoverageAndSummary(report);
+
   const outputPath = testInfo.outputPath(filename);
   await writeUtf8File(outputPath, JSON.stringify(report, null, 2));
+  const manifestPath = testInfo.outputPath("e2e-auto-attachment-manifest.json");
+  if (await pathExists(manifestPath)) {
+    await testInfo.attach("e2e-auto-attachment-manifest", {
+      path: manifestPath,
+      contentType: "application/json",
+    });
+  }
   await testInfo.attach("expanded-tech-evidence-matrix", {
     path: outputPath,
     contentType: "application/json",

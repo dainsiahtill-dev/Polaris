@@ -45,9 +45,6 @@
 | [Workspace 持久化机制](workspace_persistence.md) | workspace 的真相源、持久化路径、环境变量同步与前端防回退策略 | 工程师 / 平台开发 |
 | [Context Engine v2 计划](context_engine_v2_plan.md) | 升级路线与落地阶段 | 工程师 |
 | [Sniper Mode v2.0 计划](sniper_mode_v2_plan.md) | 上下文工程优化与成本感知路线图 | 工程师 |
-| [3-Hops 失败定位实现](failure_3hops_implementation.md) | Phase→Evidence→Tool Output 工程落地与测试 | 工程师 |
-| [门下省 QA 验收规范 v1](qa_chancellery_v1.md) | QA 裁决规则、LLM 验收链路选择、`qa_contract`、插件接口与后置流程 | 工程师 / PM |
-| [Chief Engineer Blueprint Spec](chief_engineer_blueprint.md) | Chief Engineer how to maintain project blueprint, generate method-level construction plans, and collaborate with Director | Engineer / PM / Director |
 
 ---
 
@@ -112,7 +109,7 @@ AI/Agent 场景建议通过单次 CLI 指令启动，而不是先手工写 docs/
 示例：
 
 ```bash
-python src/backend/scripts/loop-pm.py \
+python src/backend/polaris/delivery/cli/loop-pm.py \
   --workspace /path/to/repo \
   --start-from architect \
   --directive-file /path/to/requirement.md \

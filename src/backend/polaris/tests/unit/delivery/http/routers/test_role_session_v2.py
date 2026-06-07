@@ -786,6 +786,92 @@ async def test_get_audit_with_event_type_filter(client: AsyncClient) -> None:
     mock_audit_service.get_events.assert_called_once_with("sess_abc", "message_sent", 2, 1)
 
 
+@pytest.mark.asyncio
+async def test_append_audit_event_uses_stored_session_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """POST /v2/roles/sessions/{id}/audit/events should append a session audit event."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Active/Workspace"
+    mock_session = _make_mock_session("sess_abc", "pm")
+    mock_session.workspace = "C:/Temp/Product"
+    mock_event = {
+        "id": "evt_1",
+        "type": "message_sent",
+        "details": {"message_id": "msg_1"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    with (
+        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
+        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
+    ):
+        mock_service = MagicMock()
+        mock_service_cls.return_value.__enter__.return_value = mock_service
+        mock_service.get_session.return_value = mock_session
+
+        mock_audit_service = MagicMock()
+        mock_audit_cls.return_value = mock_audit_service
+        mock_audit_service.append_audit_event.return_value = mock_event
+
+        response = await client.post(
+            "/v2/roles/sessions/sess_abc/audit/events",
+            json={"event_type": "message_sent", "details": {"message_id": "msg_1"}},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["event"]["type"] == "message_sent"
+    mock_service_cls.assert_called_once_with(workspace="C:/Active/Workspace")
+    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"))
+    mock_audit_service.append_audit_event.assert_called_once_with(
+        session_id="sess_abc",
+        event_type="message_sent",
+        details={"message_id": "msg_1"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_export_audit_log_uses_stored_session_workspace(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """POST /v2/roles/sessions/{id}/audit/export should export audit without starting workflow."""
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Active/Workspace"
+    mock_session = _make_mock_session("sess_abc", "pm")
+    mock_session.workspace = "C:/Temp/Product"
+
+    with (
+        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
+        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
+    ):
+        mock_service = MagicMock()
+        mock_service_cls.return_value.__enter__.return_value = mock_service
+        mock_service.get_session.return_value = mock_session
+
+        mock_audit_service = MagicMock()
+        mock_audit_cls.return_value = mock_audit_service
+        mock_audit_service.get_event_count.return_value = 3
+        mock_audit_service.export_audit_log.return_value = Path("C:/Temp/Product/.polaris/exports/role_sessions/sess_abc.audit.json")
+
+        response = await client.post("/v2/roles/sessions/sess_abc/audit/export")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["session_id"] == "sess_abc"
+    assert data["event_count"] == 3
+    assert data["export_path"].endswith("sess_abc.audit.json")
+    mock_service_cls.assert_called_once_with(workspace="C:/Active/Workspace")
+    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"))
+    export_target = mock_audit_service.export_audit_log.call_args.args[1]
+    assert isinstance(export_target, Path)
+    assert export_target.name == "sess_abc.audit.json"
+
+
 # ---------------------------------------------------------------------------
 # Export To Workflow
 # ---------------------------------------------------------------------------

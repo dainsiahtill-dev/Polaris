@@ -37,7 +37,7 @@
 ## Testing Checklist
 
 ### Backend Integration
-- [ ] Provider registry loads successfully from `/api/llm/providers`
+- [ ] Provider registry loads successfully from `/v2/llm/providers`
 - [ ] Provider info retrieved for each type
 - [ ] Configuration validation works
 - [ ] Health checks and model listing endpoints respond
@@ -78,12 +78,12 @@ import { LLMSettingsTab } from './LLMSettingsTab';
 ```
 
 ### 2. Backend API Endpoints Required
-- `GET /api/llm/providers` - List all providers
-- `GET /api/llm/providers/{type}/info` - Get provider info
-- `GET /api/llm/providers/{type}/config` - Get default config
-- `POST /api/llm/providers/{type}/validate` - Validate config
-- `POST /api/llm/providers/{provider_id}/health` - Health check
-- `POST /api/llm/providers/{provider_id}/models` - List models
+- `GET /v2/llm/providers` - List all providers
+- `GET /v2/llm/providers/{type}/info` - Get provider info
+- `GET /v2/llm/providers/{type}/config` - Get default config
+- `POST /v2/llm/providers/{type}/validate` - Validate config
+- `POST /v2/llm/providers/{provider_id}/health` - Health check
+- `POST /v2/llm/providers/{provider_id}/models` - List models
 
 ### 3. State Management
 The enhanced component expects these parent handlers:

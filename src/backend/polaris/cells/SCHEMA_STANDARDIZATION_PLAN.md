@@ -1,5 +1,8 @@
 # Cell Schema Standardization Report
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 src/backend/polaris 迁移或后续实现取代，仅作历史参考。
+> 具体而言：Cell 总数已从 52 增长至 62（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`）；文中的统计与旧根引用应以当前 graph catalog 为准。
+
 **Generated:** 2026-04-06
 **Total Cells Analyzed:** 52
 

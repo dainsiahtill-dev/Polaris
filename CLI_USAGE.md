@@ -2,36 +2,22 @@
 
 ## 快速开始
 
-### 方式 1: 直接运行（无需安装）
-
-```bash
-# 在项目根目录
-python polaris.py --help
-
-# 或使用快捷脚本（Windows）
-hp.bat --help
-
-# 或使用快捷脚本（PowerShell）
-.\hp.ps1 --help
-
-# 或使用快捷脚本（Linux/macOS）
-./hp.sh --help
-```
-
-### 方式 2: 安装为命令（推荐）
+### 安装控制台脚本（推荐）
 
 ```bash
 # 在项目根目录
 pip install -e .
 
-# 安装后可直接使用
+# 安装后可用三个控制台脚本（见 pyproject.toml [project.scripts]）：
+#   polaris  = polaris.delivery.server:main   （后端启动器）
+#   pm       = polaris.delivery.cli.pm.cli:main
+#   director = polaris.delivery.cli.director.cli_thin:main
 polaris --help
-# 或简写
-hp --help
-hpm --help
+pm --help
+director --help
 ```
 
-### 方式 3: 开发环境一键初始化（推荐）
+### 开发环境一键初始化
 
 ```bash
 # 在项目根目录（自动安装 Node + Python 依赖）
@@ -40,70 +26,37 @@ npm run setup:dev
 
 ## 可用命令
 
-### 项目初始化与状态
+> 说明：`polaris` 控制台脚本是单一后端启动器，仅接受 `--host/--port/--workspace` 等标志，
+> **没有 `init/status/pm/director/backend` 等子命令**。PM 与 Director 是各自独立的控制台脚本 `pm` / `director`。
+
+### 启动后端（polaris）
 
 ```bash
-# 初始化项目
-polaris init
-polaris init --project-name "My Project" --description "A test project"
+# 默认启动
+polaris
 
-# 查看项目状态
-polaris status
+# 指定端口 / 主机 / 工作区
+polaris --port 49977
+polaris --host 0.0.0.0 --port 49977
+polaris --workspace /path/to/proj
+
+# 等价地，也可直接运行入口脚本
+python src/backend/server.py --host 127.0.0.1 --port 49977
 ```
 
-### PM 项目管理
+### PM 项目管理（pm）
 
 ```bash
-# PM 状态
-polaris pm status
-
-# 文档管理
-polaris pm document list
-polaris pm document list --type requirements
-polaris pm document show docs/product/requirements.md
-polaris pm document list --pattern "*.md" --limit 20
-
-# 任务管理
-polaris pm task list
-polaris pm task list --status pending
-polaris pm task history
-polaris pm task history --director                    # 查看派发给 Director 的任务
-polaris pm task history --director --iteration 5      # 查看第5次迭代的任务
-
-# 需求管理
-polaris pm requirement list
-polaris pm requirement list --status pending
-
-# 启动 PM API 服务器
-polaris pm api-server
-polaris pm api-server --port 49980 --host 0.0.0.0
+# 运行 PM 编排（可选择联动 Director）
+pm --workspace . --iterations 1
+pm --workspace . --run-director --director-iterations 1
 ```
 
-### Director 任务执行
+### Director 任务执行（director）
 
 ```bash
-# Director 初始化
-polaris director init
-
-# 查看 Director 状态
-polaris director status
-polaris director health
-
 # 运行 Director 执行任务
-polaris director run --iterations 1
-polaris director execute --task-path tasks.json --iterations 5 --timeout 300
-
-# 启动 Director API 服务器
-polaris director api-server --port 50001
-```
-
-### FastAPI 后端
-
-```bash
-# 启动后端服务
-polaris backend
-polaris backend --port 49977
-polaris backend --host 0.0.0.0 --port 49977 --reload
+director --workspace . --iterations 1
 ```
 
 ### 开发模式
@@ -124,9 +77,8 @@ cp .env.example .env
 常用环境变量：
 
 ```env
-KERNELONE_WORKSPACE=C:\Users\dains\Documents\GitLab\polaris
+KERNELONE_WORKSPACE=/path/to/polaris
 KERNELONE_BACKEND_PORT=49977
-KERNELONE_PM_API_PORT=49980
 KERNELONE_PM_PROVIDER=minimax-1771264739
 KERNELONE_PM_MODEL=MiniMax-M2.5
 ```
@@ -136,46 +88,21 @@ KERNELONE_PM_MODEL=MiniMax-M2.5
 ### 完整工作流程
 
 ```bash
-# 1. 初始化项目
-polaris init --project-name "MyApp"
+# 1. 启动后端（终端1）
+polaris --port 49977
 
-# 2. 查看状态
-polaris status
+# 2. 运行 PM 编排（终端2）
+pm --workspace . --iterations 1
 
-# 3. 创建文档
-echo "# Requirements\n\n- Feature A\n- Feature B" > docs/requirements.md
-
-# 4. 查看文档列表
-polaris pm document list
-
-# 5. 启动 PM API 服务器（终端1）
-polaris pm api-server --port 49980
-
-# 6. 运行 Director 执行任务（终端2）
-polaris director --workspace . --iterations 1
-
-# 7. 查看任务历史
-polaris pm task history --director
-```
-
-### 启动 FastAPI 后端
-
-```bash
-# 基础启动
-polaris backend
-
-# 指定端口
-polaris backend --port 8080
-
-# 开发模式（热重载）
-polaris backend --reload
+# 3. 运行 Director 执行任务
+director --workspace . --iterations 1
 ```
 
 ## 故障排除
 
-### ModuleNotFoundError: No module named 'pm'
+### ModuleNotFoundError: No module named 'polaris'
 
-确保在项目根目录运行命令，或者使用 `hp.bat` / `hp.sh` 脚本。
+确保已执行 `pip install -e .`，使控制台脚本与 `polaris` 包正确安装到当前环境。
 
 ### 端口被占用
 
@@ -188,25 +115,9 @@ netstat -ano | findstr :49977
 lsof -i :49977
 ```
 
-### 权限问题
-
-```bash
-# Windows - 使用 PowerShell 执行策略
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# 然后运行
-.\hp.ps1 status
-```
-
 ## API 端点
 
-启动 `polaris backend` 后，访问：
+启动 `polaris` 后端后，访问：
 
 - `GET http://localhost:49977/docs` - Swagger UI
 - `GET http://localhost:49977/redoc` - ReDoc 文档
-
-PM API 端点（启动 `polaris pm api-server` 后）：
-
-- `GET http://localhost:49980/documents` - 列出文档
-- `GET http://localhost:49980/tasks` - 列出任务
-- `GET http://localhost:49980/tasks/director` - Director 任务历史

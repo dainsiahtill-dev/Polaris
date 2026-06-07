@@ -1,4 +1,4 @@
-import { type Page, test as base } from "@playwright/test";
+import { type Page, type TestInfo, test as base } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -30,6 +30,14 @@ type WebFixtures = {
   webTestEnv: WebTestEnvironment;
   webBackendInfo: WebBackendInfo;
   webPage: Page;
+};
+
+type AutoAttachmentManifestEntry = {
+  name: string;
+  filename: string;
+  content_type: string;
+  fixture: string;
+  phase: "setup" | "finalizer";
 };
 
 function resolveRepoRoot(startDir: string): string {
@@ -94,6 +102,38 @@ function cleanupPath(target: string): void {
   } catch {
     // Ignore cleanup failures.
   }
+}
+
+function recordAutoAttachmentManifest(testInfo: TestInfo, entries: AutoAttachmentManifestEntry[]): void {
+  const manifestPath = testInfo.outputPath("e2e-auto-attachment-manifest.json");
+  let existingEntries: AutoAttachmentManifestEntry[] = [];
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(manifestPath, { encoding: "utf-8" })) as {
+        entries?: AutoAttachmentManifestEntry[];
+      };
+      existingEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    } catch {
+      existingEntries = [];
+    }
+  }
+  const merged = new Map<string, AutoAttachmentManifestEntry>();
+  for (const entry of [...existingEntries, ...entries]) {
+    merged.set(`${entry.fixture}:${entry.name}:${entry.filename}`, entry);
+  }
+  fs.writeFileSync(
+    manifestPath,
+    `${JSON.stringify(
+      {
+        schema: "polaris.e2e.auto_attachment_manifest.v1",
+        generated_at: new Date().toISOString(),
+        entries: Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name)),
+      },
+      null,
+      2,
+    )}\n`,
+    { encoding: "utf-8" },
+  );
 }
 
 async function isPortAvailable(port: number): Promise<boolean> {
@@ -244,6 +284,22 @@ export const test = base.extend<WebFixtures>({
   },
 
   webBackendInfo: async ({ webTestEnv }, use, testInfo) => {
+    recordAutoAttachmentManifest(testInfo, [
+      {
+        name: "web-backend-stdout",
+        filename: "web-backend-stdout.log",
+        content_type: "text/plain",
+        fixture: "webBackendInfo",
+        phase: "finalizer",
+      },
+      {
+        name: "web-backend-stderr",
+        filename: "web-backend-stderr.log",
+        content_type: "text/plain",
+        fixture: "webBackendInfo",
+        phase: "finalizer",
+      },
+    ]);
     const backendPort = await selectPort(Number.parseInt(process.env.KERNELONE_BACKEND_PORT || "49977", 10));
     const token = String(process.env.KERNELONE_BACKEND_TOKEN || "").trim() || crypto.randomBytes(16).toString("hex");
     const baseUrl = `http://127.0.0.1:${backendPort}`;
@@ -308,6 +364,22 @@ export const test = base.extend<WebFixtures>({
   },
 
   webPage: async ({ page, webBackendInfo }, use, testInfo) => {
+    recordAutoAttachmentManifest(testInfo, [
+      {
+        name: "web-renderer-console",
+        filename: "web-renderer-console.jsonl",
+        content_type: "application/jsonlines",
+        fixture: "webPage",
+        phase: "finalizer",
+      },
+      {
+        name: "web-renderer-pageerror",
+        filename: "web-renderer-pageerror.jsonl",
+        content_type: "application/jsonlines",
+        fixture: "webPage",
+        phase: "finalizer",
+      },
+    ]);
     const consoleLines: string[] = [];
     const pageErrors: string[] = [];
     page.on("console", (message) => consoleLines.push(JSON.stringify({ type: message.type(), text: message.text() })));

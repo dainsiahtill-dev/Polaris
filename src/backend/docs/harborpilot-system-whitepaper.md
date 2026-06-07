@@ -348,7 +348,7 @@ tool_choice = none
 
 ## 第八部分：ContextOS —— 海马体
 
-**文件**: `polaris/kernelone/context/context_os/runtime.py`
+**文件**: `polaris/kernelone/context/context_os/runtime/`
 
 这层非常像海马体 + 长期记忆系统。核心作用：**保存真相，不让系统靠聊天历史瞎猜**。
 
@@ -667,7 +667,7 @@ class TurnOutcomeEnvelope:
 
 | 组件 | 一句话描述 | 文件位置 |
 |------|-----------|----------|
-| StateFirstContextOS | 海马体/记忆系统门面 | `polaris/kernelone/context/context_os/runtime.py` |
+| StateFirstContextOS | 海马体/记忆系统门面 | `polaris/kernelone/context/context_os/runtime/` |
 | TruthLogService | 追加写入真相日志 | `polaris/kernelone/context/truth_log_service.py` |
 | ImmutableSnapshot | 稳定存档 | `polaris/kernelone/context/context_os/snapshot.py` |
 | WorkingStateManager | 当前工作状态 | `polaris/kernelone/context/working_state_manager.py` |

@@ -156,7 +156,7 @@ PM ────────────────> ChiefEngineer
 ### 5.1 基础用法
 
 ```python
-from core.polaris_loop.constitution import (
+from polaris.cells.roles.kernel.internal.constitution_rules import (
     Role, get_role_boundary, is_action_allowed
 )
 
@@ -174,7 +174,7 @@ print(boundary.prohibitions)
 ### 5.2 运行时检查
 
 ```python
-from core.polaris_loop.constitution_integration import ConstitutionGuard
+from polaris.cells.roles.kernel.internal.constitution_adaptor import ConstitutionGuard
 
 guard = ConstitutionGuard(strict_mode=True)
 
@@ -193,10 +193,10 @@ violations = guard.guard_communication(
 ### 5.3 装饰器模式
 
 ```python
-from core.polaris_loop.constitution_integration import (
+from polaris.cells.roles.kernel.internal.constitution_adaptor import (
     constitutional_role, require_role_permission
 )
-from core.polaris_loop.constitution import Role
+from polaris.cells.roles.kernel.internal.constitution_rules import Role
 
 @constitutional_role(Role.PM, strict=True)
 class PMNode:
@@ -213,7 +213,7 @@ def implement_feature():
 ### 5.4 集成到现有节点
 
 ```python
-from pm.nodes.constitution_bindings import enable_constitutional_bindings
+from polaris.delivery.cli.pm.nodes.constitution_bindings import enable_constitutional_bindings
 
 # 在 coordinator 启动时启用
 report = enable_constitutional_bindings(strict=True)
@@ -223,7 +223,7 @@ print(report)
 ## 6. 架构验证
 
 ```python
-from core.polaris_loop.constitution import validate_architecture, Role
+from polaris.cells.roles.kernel.internal.constitution_rules import validate_architecture, Role
 
 # 验证角色架构
 roles = [Role.PM, Role.CHIEF_ENGINEER, Role.DIRECTOR, Role.QA]
@@ -239,10 +239,10 @@ else:
 
 | 文件 | 描述 |
 |------|------|
-| `core/polaris_loop/constitution.py` | 宪法定义（不可变） |
-| `core/polaris_loop/constitution_integration.py` | 集成层 |
-| `pm/nodes/constitution_bindings.py` | 节点绑定适配器 |
-| `tests/test_constitution.py` | 测试套件 |
+| `src/backend/polaris/cells/roles/kernel/internal/constitution_rules.py` | 宪法定义（不可变） |
+| `src/backend/polaris/cells/roles/kernel/internal/constitution_adaptor.py` | 集成层 |
+| `src/backend/polaris/delivery/cli/pm/nodes/constitution_bindings.py` | 节点绑定适配器 |
+| `src/backend/polaris/tests/test_constitution.py` | 测试套件 |
 
 ## 8. 修订流程
 

@@ -1,5 +1,8 @@
 # polaris/kernelone/llm 模块可靠性工程审计报告
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 src/backend/polaris 迁移或后续实现取代，仅作历史参考。
+> 具体而言：原 Critical C1（CircuitBreaker 缺少 HALF_OPEN 状态）已解决——`engine/resilience.py` 现已实现 `CircuitState.HALF_OPEN`、`half_open_max_calls` 及完整 OPEN→HALF_OPEN→CLOSED 转换。此外 `toolkit/executor`、`tool_normalization` 现均为目录而非单文件。
+
 **审计范围**: `polaris/kernelone/llm` 模块错误处理机制
 **审计日期**: 2026-03-26
 **审计维度**: 错误分类完整性、异常捕获模式、错误传播、重试策略、熔断器实现、容错边界

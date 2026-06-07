@@ -1,5 +1,7 @@
 # AGI Resident 实施路线图
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 src/backend/polaris 迁移或后续实现取代，仅作历史参考。resident 内核现位于 `src/backend/polaris/cells/resident/autonomy/`，控制面位于 `src/backend/polaris/delivery/http/v2/resident.py`，测试位于 `src/backend/polaris/tests/`。
+
 > 状态: IN_PROGRESS - Phase 1.3
 > 最后更新: 2024-03-08
 > 当前任务: Phase 1.3 技能提案确认流 (实现中)

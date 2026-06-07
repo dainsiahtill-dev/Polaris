@@ -10,13 +10,12 @@ React-based dashboard for the Polaris agent system.
     - `DialoguePanel/` - Real-time chat interface
     - `ContextSidebar/` - Document context and memory
 - `src/types/` - Shared TypeScript definitions
-- `src/utils/` - Utility functions (including performance monitoring)
+- `src/utils/` - Utility functions
 - `src/test/` - Testing setup and utilities
 
 ## Key Features
 
 - **Component Architecture**: Modularized and performance-optimized React components.
-- **Performance Monitoring**: Built-in render timing and lifecycle tracking via `utils/performance.tsx`.
 - **Type Safety**: Strict TypeScript definitions for core data structures.
 - **Testing**: Fully configured Vitest environment.
 
@@ -53,4 +52,4 @@ npm run test:coverage
 
 ## Performance Optimization
 
-Key components like `ProjectProgressPanel` are optimized using `React.memo` to prevent unnecessary re-renders. Use the `useRenderTime` hook in `src/utils/performance.tsx` to debug performance issues.
+Key components like `ProjectProgressPanel` are optimized using `React.memo` to prevent unnecessary re-renders.

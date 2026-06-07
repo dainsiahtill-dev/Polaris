@@ -17,8 +17,9 @@ from typing import Any
 import pytest
 import yaml
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-CELLS_ROOT = BACKEND_ROOT / "polaris" / "cells"
+POLARIS_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = POLARIS_ROOT.parent
+CELLS_ROOT = POLARIS_ROOT / "cells"
 CATALOG_PATH = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
 
 # Canonical required fields in cell.yaml

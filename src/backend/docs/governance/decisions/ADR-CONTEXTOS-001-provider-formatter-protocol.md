@@ -5,6 +5,8 @@
 **决策者**: Python 架构与代码治理实验室
 **影响范围**: `polaris/cells/roles/kernel/internal/`, `polaris/kernelone/context/`
 
+> ⚠️ 路径勘误 (2026-06-07 审计，CODE-IS-TRUTH)：本 ADR 起草时规划的若干路径与实际落地不符。实际实现位置为：`ProviderFormatter` Protocol 落在 `polaris/kernelone/llm/shared_contracts.py`，角色侧实现落在 `polaris/cells/roles/kernel/internal/llm_caller/provider_formatter.py`；`ContextEvent` 落在 `polaris/kernelone/events/context_events.py`（不在 `kernelone/context/contracts.py`）；`polaris/kernelone/context/formatters/` 目录不存在；`llm_caller` 与 `context_gateway` 均为目录而非单文件。下文代码注释中的路径为历史规划值。
+
 ---
 
 ## 背景
@@ -256,13 +258,14 @@ LLM 请求体 (JSON 序列化由 Provider SDK 完成)
 
 ## 修改的文件
 
+> 注：下表为起草时的规划清单，实际落地路径见本文档顶部「路径勘误」横幅。
+
 | 文件 | 修改内容 |
 |------|---------|
-| `polaris/kernelone/context/contracts.py` | 添加 `ProviderFormatter` Protocol 和 `ContextEvent` dataclass |
-| `polaris/kernelone/context/formatters/__init__.py` | 新建格式化器模块 |
-| `polaris/kernelone/context/formatters/native_formatter.py` | 新建原生格式化器 |
-| `polaris/kernelone/context/formatters/annotated_formatter.py` | 新建注释格式化器 |
-| `polaris/cells/roles/kernel/internal/llm_caller.py` | 集成 ProviderFormatter，替换 `_messages_to_input()` |
+| `polaris/kernelone/llm/shared_contracts.py` | 定义 `ProviderFormatter` Protocol |
+| `polaris/kernelone/events/context_events.py` | 定义 `ContextEvent` dataclass |
+| `polaris/cells/roles/kernel/internal/llm_caller/provider_formatter.py` | 角色侧 ProviderFormatter 实现 |
+| `polaris/cells/roles/kernel/internal/llm_caller/` | 集成 ProviderFormatter（目录，含 `caller.py` 等） |
 
 ## 后果
 

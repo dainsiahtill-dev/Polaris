@@ -97,8 +97,8 @@ class TestTurnOutcomeSchema:
         assert outcome.outcome_status == OutcomeStatus.PANIC
         assert outcome.resolution_code == ResolutionCode.FAIL_CLOSED
 
-    def test_turn_outcome_dict_compatibility(self) -> None:
-        """FrozenMappingModel dict 兼容接口。"""
+    def test_turn_outcome_typed_access_and_dict_projection(self) -> None:
+        """TurnOutcome uses typed access plus explicit dict projection."""
         decision = TurnDecision(
             turn_id=TurnId("t1"),
             kind=TurnDecisionKind.FINAL_ANSWER,
@@ -113,11 +113,10 @@ class TestTurnOutcomeSchema:
             outcome_status=OutcomeStatus.COMPLETED,
             resolution_code=ResolutionCode.COMPLETED,
         )
-        # dict-like compatibility
         assert outcome["turn_id"] == TurnId("t1")
         assert outcome.get("outcome_status") == OutcomeStatus.COMPLETED
-        assert "resolution_code" in outcome
         d = outcome.to_dict()
+        assert "resolution_code" in d
         assert d["turn_id"] == "t1"
         assert d["outcome_status"] == "completed"
 

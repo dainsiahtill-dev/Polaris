@@ -51,7 +51,7 @@ contracts.py (工具定义)
 
 #### 任务 1.1: 解决 rg 别名冲突
 
-**文件**: `polaris/kernelone/tools/contracts.py`
+**文件**: `polaris/kernelone/tool_execution/contracts.py`
 
 **问题**：`rg` 同时是 `repo_rg` 和 `ripgrep` 的别名，导致规范化结果不确定。
 
@@ -121,7 +121,7 @@ assert canonicalize_tool_name("repo_rg") == "repo_rg"  # 独立 canonical
 
 #### 任务 1.3: 更新测试断言
 
-**文件**: `polaris/kernelone/tools/tests/test_contracts_validation_integration.py`
+**文件**: `polaris/kernelone/tool_execution/tests/test_contracts_validation_integration.py`
 
 **修改内容**:
 
@@ -136,11 +136,11 @@ assert canonicalize_tool_name("rg") == "ripgrep"       # rg 归属 ripgrep
 assert canonicalize_tool_name("repo_rg") == "repo_rg"  # repo_rg 是独立 canonical
 ```
 
-#### 任务 1.4: 添加 repo_rg 到 tool_normalization.py
+#### 任务 1.4: 添加 repo_rg 到 tool_normalization
 
-> **专家验证结论**：repo_rg 不在 tool_normalization.py 处理列表中，参数别名在 toolkit 层不归一化。
+> **专家验证结论**：repo_rg 不在 tool_normalization 处理列表中，参数别名在 toolkit 层不归一化。
 
-**文件**: `polaris/kernelone/llm/toolkit/tool_normalization.py`
+**文件**: `polaris/kernelone/llm/toolkit/tool_normalization/`（目录）
 
 **修改位置**: `normalize_tool_arguments()` 函数 (约第 540-620 行)
 
@@ -184,11 +184,11 @@ if tool_name == "repo_rg":
 
 ### Phase 2: 策略层修复 (P1)
 
-> **专家验证结论**：PolicyLayer.evaluate() 在工具执行后调用（turn_engine.py:1005-1045），冷却机制失效。
+> **专家验证结论**：PolicyLayer.evaluate() 在工具执行后调用（turn_engine 目录，约 1005-1045 行），冷却机制失效。
 
 #### 任务 2.1: 修复 PolicyLayer 调用时机
 
-**文件**: `polaris/cells/roles/kernel/internal/turn_engine.py`
+**文件**: `polaris/cells/roles/kernel/internal/turn_engine/`（目录）
 
 **修改位置**: 
 - `run()` 方法：第 1000-1045 行
@@ -280,7 +280,7 @@ def _normalize_tool_name(self, tool_name: str) -> str:
     description: >
       Tool aliases must not map to multiple canonical names.
     evidence:
-      - polaris/kernelone/tools/contracts.py
+      - polaris/kernelone/tool_execution/contracts.py
     current_status: enforced_non_regressive
     desired_automation:
       - run docs/governance/ci/scripts/run_tool_catalog_consistency_gate.py --check-aliases
@@ -304,10 +304,10 @@ def _normalize_tool_name(self, tool_name: str) -> str:
 
 ```bash
 # 运行工具规范化测试
-pytest polaris/kernelone/tools/tests/test_contracts_validation_integration.py -v
+pytest polaris/kernelone/tool_execution/tests/test_contracts_validation_integration.py -v
 
 # 运行 benchmark 测试
-pytest polaris/cells/llm/evaluation/tests/test_llm_tool_calling_matrix.py -v
+pytest polaris/tests/test_llm_tool_calling_matrix.py -v
 ```
 
 ### 集成测试验证

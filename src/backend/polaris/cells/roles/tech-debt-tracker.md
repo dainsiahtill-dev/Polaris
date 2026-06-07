@@ -1,5 +1,8 @@
 # Roles Cell Technical Debt Tracker
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 src/backend/polaris 迁移或后续实现取代，仅作历史参考。
+> 具体而言：文中引用的 `role_agent_service` 等旧根模块已删除；相关债务条目应以当前 polaris 实现为准。
+
 **Document Version**: 2.0.0
 **Created**: 2026-03-26
 **Last Updated**: 2026-04-09

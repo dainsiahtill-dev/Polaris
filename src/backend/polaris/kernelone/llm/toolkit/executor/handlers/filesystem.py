@@ -30,7 +30,10 @@ from polaris.kernelone.tool_execution.code_validator import (
 from polaris.kernelone.tool_execution.suggestions.precise_matcher import fuzzy_replace
 
 if TYPE_CHECKING:
+    from polaris.kernelone.fs import KernelFileSystem
     from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
+
+    _KernelFileSystem = KernelFileSystem
 
 logger = logging.getLogger(__name__)
 
@@ -157,11 +160,11 @@ def _validate_director_policy_for_write(
     tool_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate a pending workspace write and return structured policy evidence."""
-    from polaris.domain.verification.director_policy_gate import validate_director_write_policy
+    from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
 
     normalized_rel = str(rel or "").replace("\\", "/").strip("/")
     package_write = normalized_rel == "package.json" or normalized_rel.endswith("/package.json")
-    verdict = validate_director_write_policy(
+    verdict = validate_tool_write_policy(
         changed_files=[normalized_rel] if normalized_rel else [],
         allowed_scope=_director_write_allowed_scope(tool_kwargs),
         agents_md=_read_workspace_agents_policy_text(self, normalized_rel),

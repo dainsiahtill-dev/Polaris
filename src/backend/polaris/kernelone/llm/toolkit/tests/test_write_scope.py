@@ -1,8 +1,8 @@
-"""Tests for polaris.domain.verification.write_gate."""
+"""Tests for canonical KernelOne write scope validation."""
 
 from __future__ import annotations
 
-from polaris.domain.verification.write_gate import (
+from polaris.kernelone.llm.toolkit.write_scope import (
     WriteGate,
     WriteGateResult,
     _normalize_paths,

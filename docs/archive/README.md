@@ -5,9 +5,9 @@
 ## 当前权威来源
 
 - **事务内核与 ContextOS 四层架构**：
-  `docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md`
+  `src/backend/docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md`
 - **认知生命体与工程架构对齐**：
-  `docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md`
+  `src/backend/docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md`
 - **ContextOS 运作架构详解**：
   `docs/blueprints/CONTEXTOS_ARCHITECTURE_BLUEPRINT_20260417.md`
 

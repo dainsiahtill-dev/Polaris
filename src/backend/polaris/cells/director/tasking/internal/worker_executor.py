@@ -33,6 +33,7 @@ from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
 )
 from polaris.domain.entities import Task, TaskResult
 from polaris.domain.services import get_token_service
+from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,12 @@ _TASK_TOKEN_STOPWORDS = {
     "test",
     "tests",
 }
+
+
+def _workspace_fs(workspace: str) -> Any:
+    from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+    return KernelFileSystem(str(workspace), get_default_adapter())
 
 
 def _parse_positive_timeout_seconds(raw: Any) -> int | None:
@@ -1347,16 +1354,19 @@ class WorkerExecutor:
 
     def _workspace_file_signature(self, relative_path: str) -> dict[str, int | str] | None:
         """Return a stable file signature for a workspace-relative file."""
-        full_path = self._resolve_workspace_file_path(relative_path)
-        if full_path is None or not os.path.isfile(full_path):
+        fs = _workspace_fs(self.workspace)
+        try:
+            full_path = fs.resolve_workspace_path(relative_path)
+        except (OSError, PathSecurityError, ValueError):
+            return None
+        if not os.path.isfile(full_path):
             return None
         try:
             stat = os.stat(full_path)
-            with open(full_path, encoding="utf-8", errors="surrogateescape") as handle:
-                content = handle.read()
+            content = fs.workspace_read_text(relative_path, encoding="utf-8")
         except OSError:
             return None
-        digest = hashlib.sha256(content.encode("utf-8", errors="surrogateescape")).hexdigest()
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return {
             "size": int(stat.st_size),
             "mtime_ns": int(stat.st_mtime_ns),
@@ -1388,10 +1398,12 @@ class WorkerExecutor:
             "signatures": signatures,
             "timestamp_epoch": time.time(),
         }
-        os.makedirs(os.path.dirname(marker_path), exist_ok=True)
-        with open(marker_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
+        fs = _workspace_fs(self.workspace)
+        fs.workspace_write_text(
+            marker_path,
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     def _code_generation_round_marker_satisfied(
         self,
@@ -1405,8 +1417,8 @@ class WorkerExecutor:
             return False
         marker_path = self._code_generation_round_marker_path(task, round_index)
         try:
-            with open(marker_path, encoding="utf-8") as handle:
-                payload = json.load(handle)
+            fs = _workspace_fs(self.workspace)
+            payload = json.loads(fs.workspace_read_text(marker_path, encoding="utf-8"))
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return False
         if not isinstance(payload, dict) or int(payload.get("schema_version") or 0) != 1:

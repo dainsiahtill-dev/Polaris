@@ -5,6 +5,8 @@
 **决策者**: Python 架构与代码治理实验室
 **影响范围**: `polaris/kernelone/context/`, `polaris/cells/roles/kernel/internal/`
 
+> ⚠️ 路径勘误 (2026-06-07 审计，CODE-IS-TRUTH)：本 ADR 起草时规划的若干路径与实际落地不符。实际实现位置为：`ContextEvent` 落在 `polaris/kernelone/events/context_events.py`（不在 `kernelone/context/contracts.py`）；`polaris/kernelone/context/formatters/` 目录不存在，角色侧格式化实现落在 `polaris/cells/roles/kernel/internal/llm_caller/provider_formatter.py`；`context_gateway` 为目录（含 `gateway.py`、`compression_engine.py` 等）而非单文件 `context_gateway.py`。下文代码注释中的路径为历史规划值。
+
 ---
 
 ## 背景
@@ -272,12 +274,14 @@ COMPRESSION_RULES = {
 
 ## 修改的文件
 
+> 注：下表为起草时的规划清单，实际落地路径见本文档顶部「路径勘误」横幅。
+
 | 文件 | 修改内容 |
 |------|---------|
-| `polaris/kernelone/context/contracts.py` | 添加 `ContextEvent.with_content()` 方法 |
+| `polaris/kernelone/events/context_events.py` | `ContextEvent` 事件类型定义 |
 | `polaris/cells/roles/kernel/internal/tool_loop_controller.py` | `_history` 类型改为 `list[ContextEvent]` |
-| `polaris/cells/roles/kernel/internal/context_gateway.py` | 添加延迟序列化 `build_context()` |
-| `polaris/kernelone/context/formatters/native_formatter.py` | 实现边界序列化 |
+| `polaris/cells/roles/kernel/internal/context_gateway/gateway.py` | 添加延迟序列化 `build_context()`（context_gateway 为目录） |
+| `polaris/cells/roles/kernel/internal/llm_caller/provider_formatter.py` | 实现边界序列化 |
 
 ## 后果
 

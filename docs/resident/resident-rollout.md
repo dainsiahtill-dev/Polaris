@@ -71,8 +71,8 @@ curl -X POST http://127.0.0.1:49977/v2/resident/start ^
 
 AGI 已接入：
 
-- `src/backend/app/orchestration/workflows/pm_workflow.py`
-- `src/backend/app/orchestration/workflows/director_workflow.py`
+- `src/backend/polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py`
+- `src/backend/polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py`
 
 因此正常跑主链路就会自动写入结构化决策事件。
 
@@ -211,10 +211,10 @@ curl "http://127.0.0.1:49977/v2/resident/status?workspace=X:/Git/polaris&details
 
 ```bash
 python -m pytest -q \
-  src/backend/tests/test_resident_service.py \
-  src/backend/tests/test_resident_api.py \
-  src/backend/tests/test_runtime_projection_resident.py \
-  src/backend/tests/test_resident_pm_bridge.py
+  src/backend/polaris/tests/test_resident_service.py \
+  src/backend/polaris/tests/test_resident_api.py \
+  src/backend/polaris/tests/test_runtime_projection_resident.py \
+  src/backend/polaris/tests/test_resident_pm_bridge.py
 
 npm run typecheck
 npm run test -- src/frontend/src/app/components/resident/ResidentWorkspace.test.tsx

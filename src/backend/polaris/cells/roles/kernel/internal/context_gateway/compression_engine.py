@@ -101,30 +101,32 @@ class CompressionEngine:
                     len(messages),
                     new_tokens,
                 )
-                # emergency_fallback preserves tool messages with truncation - return it even if still over limit
-                # This ensures the latest tool receipt is always available for the next turn
-                if new_tokens > max_tokens and len(messages) > 1:
-                    # Still over limit but preserved important messages (tool, system, user)
-                    # Return these instead of minimal summary to maintain continuity
-                    logger.debug(
-                        "[DEBUG][CompressionEngine] emergency_fallback over limit but preserving messages: %d",
-                        len(messages),
-                    )
-                    return messages, new_tokens
                 if new_tokens > max_tokens:
-                    # Only return minimal summary if emergency_fallback failed catastrophically
                     if self.compression_strategy == "summarize":
                         content = (
                             "[State-First Context OS] Earlier dialogue summarized. Continuing from recent context."
                         )
-                    else:
-                        content = "[Context truncated due to token limit]"
+                        minimal_msg = {
+                            "role": "system",
+                            "content": content,
+                            "name": "continuity_summary",
+                        }
+                        logger.debug("[DEBUG][CompressionEngine] compression failed, returning continuity summary")
+                        return [minimal_msg], self._token_estimator.estimate([minimal_msg])
+                    if len(messages) > 1:
+                        # emergency_fallback preserves tool messages with truncation - return it even if still over
+                        # limit for non-summarize strategies.
+                        logger.debug(
+                            "[DEBUG][CompressionEngine] emergency_fallback over limit but preserving messages: %d",
+                            len(messages),
+                        )
+                        return messages, new_tokens
                     minimal_msg = {
                         "role": "system",
-                        "content": content,
+                        "content": "[Context truncated due to token limit]",
                         "name": "continuity_summary",
                     }
-                    logger.debug("[DEBUG][CompressionEngine] compression failed, returning minimal continuity summary")
+                    logger.debug("[DEBUG][CompressionEngine] compression failed, returning minimal truncation summary")
                     return [minimal_msg], self._token_estimator.estimate([minimal_msg])
             logger.debug(
                 "[DEBUG][CompressionEngine] apply_compression end: messages=%d final_tokens=%d",

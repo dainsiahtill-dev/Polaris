@@ -1327,6 +1327,7 @@ cells:
       modules:
         - polaris.cells.roles.runtime.public.contracts
       commands:
+        - ExecuteRoleCapabilityInvocationCommandV1
         - ExecuteRoleTaskCommandV1
         - ExecuteRoleSessionCommandV1
         - AggregateChatCompletionsCommandV1
@@ -1338,6 +1339,7 @@ cells:
         - RoleTaskStartedEventV1
         - RoleTaskCompletedEventV1
       results:
+        - RoleCapabilityInvocationResultV1
         - RoleExecutionResultV1
         - AggregateRolePlanResultV1
         - AggregateRoleLobeV1
@@ -1369,6 +1371,8 @@ cells:
       - roles.kernel
       - roles.profile
       - roles.session
+      - runtime.task_market
+      - factory.verification_guard
       - factory.cognitive_runtime
       - architect.design
       - finops.budget_guard
@@ -1391,6 +1395,9 @@ cells:
       - process.spawn:roles/*
       - bus.publish:agent_messages/*
       - bus.consume:agent_messages/*
+      - task_market.publish:*
+      - blueprint.generate:*
+      - process.spawn:qa/pytest
     verification:
       tests:
         - tests/test_roles_kernel.py
@@ -2196,7 +2203,7 @@ cells:
       - polaris/infrastructure/accel/verify/**
     public_contracts:
       modules:
-        - polaris.cells.code_intelligence.engine.public.contracts
+        - polaris.cells.code_intelligence.engine.public
       commands: []
       queries: []
       events: []
@@ -2213,7 +2220,6 @@ cells:
       - process.spawn:code_intelligence/engine/**
     verification:
       gaps:
-        - Cell directory structure pending creation (Phase 2).
         - Full migration from infrastructure to cells layer (Phase 3).
 
   - id: chief_engineer.blueprint
@@ -3351,6 +3357,7 @@ cells:
       whitelist validation, timeout enforcement, and detailed verification reports.
     current_modules:
       - polaris.cells.factory.verification_guard.public.contracts
+      - polaris.cells.factory.verification_guard.public.service
       - polaris.cells.factory.verification_guard.internal.verification_engine
       - polaris.cells.factory.verification_guard.internal.safe_executor
     tags:
@@ -3362,6 +3369,7 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.factory.verification_guard.public.contracts
+        - polaris.cells.factory.verification_guard.public.service
       commands:
         - VerifyCompletionCommandV1
       queries: []

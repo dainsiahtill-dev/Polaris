@@ -11,7 +11,7 @@
 项目存在 3 套相互独立的 Benchmark 系统:
 - **Agentic Benchmark** (`polaris/cells/llm/evaluation/internal/`)
 - **Strategy Benchmark** (`polaris/kernelone/context/strategy_benchmark.py`)
-- **Context Benchmark** (`polaris/infrastructure/accel/eval/runner.py`)
+- **Context Benchmark** (指标实现 `polaris/infrastructure/accel/eval/metrics.py`；适配器 `polaris/kernelone/benchmark/adapters/context_adapter.py`。注：起草时引用的 `infrastructure/accel/eval/runner.py` 实际不存在——2026-06-07 审计勘误，CODE-IS-TRUTH)
 
 这种碎片化导致:
 1. `BenchmarkCase` 在两处独立定义

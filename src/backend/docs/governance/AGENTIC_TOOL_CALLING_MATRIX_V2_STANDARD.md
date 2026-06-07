@@ -43,7 +43,7 @@ Forbidden:
 3. Treating different-function tools as aliases
 
 Truth source:
-`polaris/kernelone/tools/contracts.py`
+`polaris/kernelone/tool_execution/contracts.py`
 
 ## 4. Seven Core Dimensions
 

@@ -56,7 +56,7 @@ parsing, quality checks, retry policy, and runtime-level event emission.
 - `public/contracts.py`
 - `public/service.py`
 - `internal/kernel.py`
-- `internal/turn_engine.py`
+- `internal/turn_engine/`
 - `internal/prompt_builder.py`
 - `internal/output_parser.py`
 - `internal/quality_checker.py`

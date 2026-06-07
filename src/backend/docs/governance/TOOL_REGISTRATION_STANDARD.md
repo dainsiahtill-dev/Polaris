@@ -2,7 +2,7 @@
 
 ## 1. 单一事实来源 (SSOT)
 
-所有工具规范定义在 `polaris/kernelone/tools/contracts.py` 的 `_TOOL_SPECS` 字典中。
+所有工具规范定义在 `polaris/kernelone/tool_execution/contracts.py` 的 `_TOOL_SPECS` 字典中。
 
 **格式要求：**
 ```python

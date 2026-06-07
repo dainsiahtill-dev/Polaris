@@ -19,7 +19,7 @@ import re
 import time
 from typing import Any, NoReturn
 
-from polaris.domain.verification.director_policy_gate import parse_agents_write_policy
+from polaris.kernelone.llm.toolkit.write_policy import parse_agents_write_policy
 
 logger = logging.getLogger(__name__)
 

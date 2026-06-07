@@ -28,7 +28,7 @@ Role Framework 提供统一的方式为 Polaris 中的角色（PM、Director、Q
 继承 `RoleBase` 并实现必要方法：
 
 ```python
-from core.role_framework import RoleBase, RoleCapability, RoleInfo, RoleState
+from polaris.kernelone.single_agent.role_framework import RoleBase, RoleCapability, RoleInfo, RoleState
 
 class MyRole(RoleBase):
     def __init__(self, workspace: str):
@@ -67,7 +67,7 @@ class MyRole(RoleBase):
 
 ```python
 def main():
-    from core.role_framework import RoleCLI
+    from polaris.kernelone.single_agent.role_framework import RoleCLI
 
     cli = RoleCLI(
         MyRole,
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 ### 3. 添加 FastAPI 接口
 
 ```python
-from core.role_framework import RoleFastAPI
+from polaris.kernelone.single_agent.role_framework import RoleFastAPI
 
 api = RoleFastAPI(
     MyRole,
@@ -121,7 +121,7 @@ def cmd_myrole(args: argparse.Namespace) -> int:
     """MyRole 命令处理"""
     if args.remainder and args.remainder[0] == "api-server":
         # 处理 api-server 子命令
-        from core.role_framework import RoleFastAPI
+        from polaris.kernelone.single_agent.role_framework import RoleFastAPI
         from myrole.myrole_role import MyRole
         api = RoleFastAPI(MyRole, port=50002)
         api.run()
@@ -224,7 +224,7 @@ role.add_state_listener(on_state_change)
 
 ### ImportError: No module named 'role_framework'
 
-确保 PYTHONPATH 包含 `src/backend/core`。
+确保 PYTHONPATH 包含 `src/backend`（框架包路径为 `polaris.kernelone.single_agent.role_framework`）。
 
 ### 状态不持久化
 

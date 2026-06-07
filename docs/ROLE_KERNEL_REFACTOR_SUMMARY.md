@@ -1,5 +1,8 @@
 # Polaris 角色统一内核重构总结
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 src/backend/polaris 迁移或后续实现取代，仅作历史参考。
+> 具体而言：`src/backend/app/roles/` 整体已删除；角色对话 `role_dialogue.py` 已迁移至 `src/backend/polaris/cells/llm/dialogue/internal/role_dialogue.py`。文中引用的旧根路径不再有效。
+
 ## 重构完成清单
 
 ### Phase 1: 建立角色统一内核基础架构 ✅

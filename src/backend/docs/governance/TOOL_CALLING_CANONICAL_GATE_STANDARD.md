@@ -65,7 +65,7 @@ python docs/governance/ci/scripts/run_tool_calling_canonical_gate.py --workspace
 2. Pipeline Stage:
    `tool_calling_canonical_gate`
 3. Regression Test:
-   `tests/architecture/test_tool_calling_canonical_gate.py`
+   `polaris/tests/architecture/test_tool_calling_canonical_gate.py`
 
 ## 7. Expected Output
 

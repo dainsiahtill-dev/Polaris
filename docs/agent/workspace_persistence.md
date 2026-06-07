@@ -30,20 +30,18 @@
 
 ### Backend
 
-- `src/backend/app/routers/system.py`
+- `src/backend/polaris/delivery/http/routers/system.py`
   - `/settings` 更新后立即同步进程环境
   - 再刷新 PM / Director 相关运行态
   - 最后保存持久化 settings
 
-- `src/backend/app/settings_utils.py`
+- `src/backend/polaris/cells/storage/layout/internal/settings_utils.py`
   - `sync_process_settings_environment()`
   - `save_persisted_settings()`
   - `load_persisted_settings()`
 
-- `src/backend/api/main.py`
+- `src/backend/polaris/bootstrap/backend_bootstrap.py`
   - 应用启动时先用当前 `Settings` 同步进程环境，避免 `create_app(Settings(...))` 与 env 脱节
-
-- `src/backend/core/startup/backend_bootstrap.py`
   - bootstrap 会把合并后的 `ConfigSnapshot` 真正物化为 `Settings`
   - `workspace` 不再在启动阶段丢失
   - 进程环境变量也会优先使用 snapshot 中解析出的 `workspace`
@@ -124,7 +122,7 @@
 Backend：
 
 ```bash
-python -m pytest -q src/backend/tests/test_workspace_settings_sync.py
+python -m pytest -q src/backend/polaris/tests/test_workspace_settings_sync.py
 ```
 
 Frontend：
@@ -143,5 +141,5 @@ node --test src/electron/config-paths.test.cjs
 Backend 启动 workspace 注入：
 
 ```bash
-python -m pytest -q src/backend/tests/test_backend_bootstrap_workspace.py
+python -m pytest -q src/backend/polaris/tests/test_backend_bootstrap_workspace.py
 ```

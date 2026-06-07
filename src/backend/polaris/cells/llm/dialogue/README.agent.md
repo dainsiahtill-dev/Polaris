@@ -60,7 +60,7 @@ Own role/docs dialogue prompt orchestration and response parsing/validation.
 
 ## Verification
 
-- `tests/test_role_dialogue_validation_retry.py`
-- `tests/test_docs_suggest.py`
-- `tests/test_docs_dialogue_cognitive_runtime.py`
-- `tests/test_interactive_interview_streaming_fallback.py`
+- `polaris/tests/test_role_dialogue_validation_retry.py`
+- `polaris/tests/test_docs_suggest.py`
+- `polaris/tests/test_docs_dialogue_cognitive_runtime.py`
+- `polaris/tests/test_interactive_interview_streaming_fallback.py`

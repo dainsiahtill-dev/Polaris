@@ -159,7 +159,25 @@ def normalize_stream_tool_call_payload(
     candidate_type = str(candidate.get("type") or "").strip().lower()
 
     if candidate_type == "function" and isinstance(candidate.get("function"), dict):
-        return candidate, "openai"
+        candidate_function = dict(candidate["function"])
+        candidate_tool_name = str(candidate_function.get("name") or tool_name or "").strip()
+        candidate_args = candidate_function.get("arguments")
+        if not isinstance(candidate_args, dict):
+            candidate_args = safe_args
+        candidate_call_id = str(candidate.get("id") or call_id or "").strip()
+        if not candidate_tool_name:
+            return None, "auto"
+        return (
+            {
+                "id": candidate_call_id,
+                "type": "function",
+                "function": {
+                    "name": candidate_tool_name,
+                    "arguments": dict(candidate_args),
+                },
+            },
+            "openai",
+        )
     if candidate_type == "tool_use":
         return candidate, "anthropic"
 
@@ -180,7 +198,7 @@ def normalize_stream_tool_call_payload(
             "type": "function",
             "function": {
                 "name": candidate_tool_name,
-                "arguments": json.dumps(candidate_args, ensure_ascii=False),
+                "arguments": dict(candidate_args),
             },
         },
         "openai",

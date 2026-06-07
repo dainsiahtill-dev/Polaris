@@ -50,10 +50,10 @@ from polaris.domain.verification import (
     ProgressTracker,
     SoftCheck,
     SoftCheckResult,
-    WriteGate,
     create_evidence_collector,
 )
 from polaris.infrastructure.persistence import EvidenceStore, LogStore, StateStore
+from polaris.kernelone.llm.toolkit.write_scope import WriteGate
 from polaris.kernelone.storage import StorageLayout
 
 if TYPE_CHECKING:

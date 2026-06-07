@@ -198,7 +198,7 @@ Polaris 的 LLM 工具调用系统经历了 2026-03-28 审计和 04-01 TOP6 修�
 | **执行** | `polaris/kernelone/llm/toolkit/executor/core.py` | AgentAccelToolExecutor |
 | **执行** | `polaris/kernelone/llm/toolkit/executor/runtime.py` | KernelToolCallingRuntime |
 | **上下文** | `polaris/kernelone/context/compaction.py` | 三层压缩 |
-| **上下文** | `polaris/cells/roles/kernel/internal/context_gateway.py` | 上下文网关 |
+| **上下文** | `polaris/cells/roles/kernel/internal/context_gateway/` | 上下文网关 |
 | **安全** | `polaris/kernelone/tool_execution/code_validator.py` | 幻觉防御 |
 | **安全** | `polaris/kernelone/tool_execution/failure_budget.py` | 失败预算 |
 | **安全** | `polaris/kernelone/audit/runtime.py` | HMAC 审计链 |

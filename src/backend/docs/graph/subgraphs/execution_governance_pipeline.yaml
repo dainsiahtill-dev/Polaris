@@ -14,6 +14,7 @@ cells:
   - director.execution
   - factory.pipeline
   - factory.cognitive_runtime
+  - factory.verification_guard
   - qa.audit_verdict
   - policy.permission
   - policy.workspace_guard
@@ -121,6 +122,18 @@ relations:
     to: runtime.execution_broker
     type: commands
     contract: LaunchExecutionProcessCommandV1
+  - from: roles.runtime
+    to: runtime.task_market
+    type: commands
+    contract: PublishTaskWorkItemCommandV1
+  - from: roles.runtime
+    to: chief_engineer.blueprint
+    type: commands
+    contract: GenerateTaskBlueprintCommandV1
+  - from: roles.runtime
+    to: factory.verification_guard
+    type: commands
+    contract: VerifyCompletionCommandV1
   - from: qa.audit_verdict
     to: runtime.task_runtime
     type: commands
@@ -157,6 +170,9 @@ critical_contracts:
   - GeneratePmTaskContractCommandV1
   - PmTaskContractResultV1
   - DispatchPmTasksCommandV1
+  - ExecuteRoleCapabilityInvocationCommandV1
+  - GenerateTaskBlueprintCommandV1
+  - VerifyCompletionCommandV1
   - PublishTaskWorkItemCommandV1
   - ClaimTaskWorkItemCommandV1
   - AcknowledgeTaskStageCommandV1

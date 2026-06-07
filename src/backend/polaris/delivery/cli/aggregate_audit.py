@@ -16,6 +16,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     AuditAggregateRuntimeIntegrationsQueryV1,
 )
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_runtime_path
 
 _DEFAULT_OBJECTIVE = "Audit Polaris aggregate LLM runtime integrations."
@@ -114,8 +115,8 @@ async def build_aggregate_runtime_audit_package(
 
 def write_audit_package(payload: dict[str, Any], output_path: Path) -> Path:
     """Persist an aggregate audit package as UTF-8 JSON."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    fs = KernelFileSystem(str(output_path.parent.resolve()), get_default_adapter())
+    fs.write_json(output_path.name, payload, ensure_ascii=False, indent=2)
     return output_path
 
 

@@ -185,11 +185,11 @@ assert 'repo_tree' in whitelist
 
 | 组件 | 文件 | 状态 |
 |------|------|------|
-| Canonical 工具定义 | `polaris/kernelone/tools/contracts.py` | ✅ |
+| Canonical 工具定义 | `polaris/kernelone/tool_execution/contracts.py` | ✅ |
 | 执行器 handlers | `polaris/kernelone/llm/toolkit/executor/handlers/repo.py` | ✅ |
-| 参数归一化 | `polaris/kernelone/llm/toolkit/tool_normalization.py` | ✅ |
+| 参数归一化 | `polaris/kernelone/llm/toolkit/tool_normalization/`（目录） | ✅ |
 | 白名单配置 | `polaris/cells/roles/profile/internal/builtin_profiles.py` | ✅ |
-| LLM 工具注入 | `polaris/cells/roles/kernel/internal/llm_caller.py` | ✅ |
+| LLM 工具注入 | `polaris/cells/roles/kernel/internal/llm_caller/`（目录） | ✅ |
 | 治理门禁 | `docs/governance/ci/scripts/run_tool_calling_canonical_gate.py` | ✅ |
 
 ---

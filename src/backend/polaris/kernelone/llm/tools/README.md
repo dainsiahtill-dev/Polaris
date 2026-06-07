@@ -1,5 +1,9 @@
 # polaris/kernelone/llm/tools
 
+> ⚠️ 已弃用 (DEPRECATED, 2026-06-07 审计)：本包 `__init__.py` 已自标 DEPRECATED。请迁移至
+> `polaris.kernelone.llm.contracts`（`ToolCall` 等契约）与 `polaris.kernelone.llm.toolkit`
+> （`AgentAccelToolExecutor` / `KernelToolCallingRuntime` 等执行器）。本 README 仅作历史参考。
+
 KernelOne 工具调用内核运行时：
 
 - 统一工具调用契约（`ToolCall` / `ToolExecutionResult`）

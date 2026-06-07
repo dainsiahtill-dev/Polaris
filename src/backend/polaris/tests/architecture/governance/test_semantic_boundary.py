@@ -296,6 +296,32 @@ class TestComplianceLogic:
         file_str = str(site.file_path).replace("\\", "/")
         assert "knowledge_pipeline/" in file_str
 
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "polaris/kernelone/akashic/semantic_cache.py",
+            "polaris/kernelone/akashic/working_memory.py",
+            "polaris/kernelone/akashic/memory_manager.py",
+            "polaris/kernelone/akashic/hybrid_memory.py",
+            "polaris/kernelone/memory/memory_store.py",
+        ],
+    )
+    def test_workspace_level_acceptable_for_kernelone_memory_layers(
+        self,
+        checker: SemanticBoundaryChecker,
+        relative_path: str,
+    ) -> None:
+        """KernelOne memory layers are workspace-level stores, not Cell retrieval entrypoints."""
+        site = SemanticSearchSite(
+            file_path=BACKEND_ROOT / relative_path,
+            class_name="WorkspaceMemory",
+            method_name="search",
+            is_graph_constrained=False,
+            reasoning="Workspace-level memory search",
+        )
+
+        assert checker._is_workspace_level_acceptable(site) is True
+
     def test_workspace_level_not_acceptable_for_cell_level_search(self, checker: SemanticBoundaryChecker) -> None:
         """Cell-level search without graph constraint must NOT be acceptable."""
         site = SemanticSearchSite(

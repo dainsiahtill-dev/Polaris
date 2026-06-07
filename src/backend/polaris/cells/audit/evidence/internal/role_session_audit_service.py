@@ -66,6 +66,7 @@ class RoleSessionAuditService:
             role=SYSTEM_ROLE,
             workspace=str(self.workspace),
             task_id=f"role-session-{session_id}",
+            run_id=f"role-session-{session_id}",
             action={"name": event_name, "result": "success"},
             data={"session_id": session_id, "details": payload["details"]},
             context={"origin": "role_session"},

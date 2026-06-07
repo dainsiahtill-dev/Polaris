@@ -293,7 +293,7 @@ python -m scripts.director.cli_thin --workspace . --iterations 1
 - **功能**: 实时状态推送、事件流、心跳保活
 
 ### 8.6) 多编辑模式
-- **实现**: `prompts/generic.json` + `precision_editor.py`
+- **实现**: `prompts/generic.json`（`precision_edit` 为工具操作名，非独立 `precision_editor.py` 文件）
 - **功能**: tool_first、precision_edit、repo_apply_diff、treesitter_* 等
 
 ---

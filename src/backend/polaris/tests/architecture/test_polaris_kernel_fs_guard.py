@@ -12,7 +12,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[3]
 KERNELONE_ROOT = BACKEND_ROOT / "polaris"
 BASELINE_PATH = Path(__file__).resolve().parent / "allowlists" / "kfs_direct_write_baseline.txt"
 LLM_FILE_IO_SURFACES = (
-    BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "executor.py",
+    BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "executor" / "handlers" / "filesystem.py",
     BACKEND_ROOT / "polaris" / "kernelone" / "llm" / "toolkit" / "protocol_kernel.py",
 )
 KFS_DIRECT_IO_HARD_ALLOWLIST = {

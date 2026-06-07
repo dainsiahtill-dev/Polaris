@@ -24,33 +24,34 @@
 
 ---
 
-## 1. 绝对禁止规则
+## 1. 测试文件位置规则
 
-### 1.1 测试文件禁止规则 ⚠️
+> ⚠️ 修订 (2026-06-07 审计，代码即真相)：原"铁律 — 严禁在 `polaris/`、`app/`、`core/` 下创建任何测试文件"已**撤销**。仓库实际通行 `cells/.../tests/` 同址（co-located）约定，`polaris/cells/**/tests/test_*.py` 当前共 **339** 个，是项目事实规范。本节据此改写为"承认同址约定"，不再禁止源码包内放测试。
 
-> **铁律**: 严禁在 `src/backend/polaris/`、`src/backend/app/`、`src/backend/core/` 等源代码目录下创建任何测试文件。
+### 1.1 测试文件放置约定
 
-**禁止模式** (src/backend/ 下的源代码目录):
+**约定模式** (Cell 内同址 tests/ 子目录 — 项目通行规范):
 ```
-❌ src/backend/polaris/delivery/cli/visualization/test_*.py
-❌ src/backend/polaris/delivery/cli/visualization/*_test.py
-❌ src/backend/polaris/cells/**/test_*.py
-❌ src/backend/app/**/test_*.py
-❌ src/backend/core/**/test_*.py
+✅ src/backend/polaris/cells/**/tests/test_*.py          # 同址（co-located），339 个现存
+✅ src/backend/polaris/<layer>/**/tests/test_*.py        # 各分层同址 tests/ 子目录
 ```
 
-**正确模式** (测试必须放在 tests/ 目录):
+**CLI 可视化模块约定** (本文档主题，集中放在 tests/ 镜像目录):
 ```
 ✅ tests/delivery/cli/visualization/test_message_item.py
 ✅ tests/delivery/cli/visualization/test_diff_parser.py
 ✅ tests/delivery/cli/visualization/test_collapsible.py
 ```
 
+说明：CLI 可视化相关测试推荐集中在上面的 `tests/delivery/cli/visualization/` 镜像目录；而在更广义的 Cell 开发中，`cells/.../tests/` 同址放置是已被广泛采用并接受的规范。两种方式均合法，按所在模块的既有约定就近选择。
+
 ### 1.2 目录结构规范
+
+CLI 可视化模块推荐布局（源码与镜像测试目录分离）：
 
 ```
 polaris/
-├── src/backend/                              ← ❌ 源代码目录（禁止放测试）
+├── src/backend/
 │   └── polaris/
 │       └── delivery/
 │           └── cli/
@@ -60,7 +61,7 @@ polaris/
 │                   ├── collapsible.py       ← ✅ 代码文件
 │                   └── diff_parser.py      ← ✅ 代码文件
 │
-└── tests/                                    ← ✅ 测试目录
+└── tests/                                    ← ✅ 集中测试目录（可视化模块约定）
     └── delivery/
         └── cli/
             └── visualization/
@@ -68,6 +69,15 @@ polaris/
                 ├── test_message_item.py     ← ✅ 测试文件
                 ├── test_collapsible.py      ← ✅ 测试文件
                 └── test_diff_parser.py      ← ✅ 测试文件
+```
+
+而在 Cell 开发中，同址布局同样合法（项目通行）：
+
+```
+polaris/cells/<cell>/<lobe>/internal/
+├── some_service.py                          ← ✅ 代码文件
+└── tests/
+    └── test_some_service.py                 ← ✅ 同址测试（co-located）
 ```
                 └── test_diff_parser.py
 ```
@@ -77,6 +87,8 @@ polaris/
 ## 2. CI/CD 门禁脚本
 
 ### 2.1 测试文件位置检查
+
+> ⚠️ 适用范围 (2026-06-07 审计修订)：下面的门禁脚本仅用于约束 **CLI 可视化模块** 的测试集中放置，**不得**用于扫描整个 `src/backend/` 源树。Cell 的 `cells/.../tests/` 同址测试（339 个现存）是合法规范，必须从该门禁的扫描范围中排除，否则会误判通行约定为违规。
 
 创建 `docs/governance/ci/check_no_test_in_src.py`:
 

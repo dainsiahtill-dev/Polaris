@@ -1,13 +1,13 @@
-"""Tests for structured Director write policy gate."""
+"""Tests for canonical KernelOne tool write policy."""
 
 from __future__ import annotations
 
 import json
 
-from polaris.domain.verification.director_policy_gate import (
+from polaris.kernelone.llm.toolkit.write_policy import (
     diff_package_manifest,
     parse_agents_write_policy,
-    validate_director_write_policy,
+    validate_tool_write_policy,
 )
 
 
@@ -76,8 +76,8 @@ def test_diff_package_manifest_reports_scripts_and_dependencies() -> None:
     assert diff.sections["devDependencies"].removed == {"vite": "6.0.0"}
 
 
-def test_validate_director_write_policy_blocks_scope_and_agents_forbidden_paths() -> None:
-    verdict = validate_director_write_policy(
+def test_validate_tool_write_policy_blocks_scope_and_agents_forbidden_paths() -> None:
+    verdict = validate_tool_write_policy(
         changed_files=["src/generated/schema.ts", "src/other.ts"],
         allowed_scope=["src/allowed.ts"],
         agents_md="禁止修改 src/generated/schema.ts",
@@ -90,8 +90,8 @@ def test_validate_director_write_policy_blocks_scope_and_agents_forbidden_paths(
     assert "src/other.ts" in verdict.extra_files
 
 
-def test_validate_director_write_policy_blocks_derived_forbidden_artifacts() -> None:
-    verdict = validate_director_write_policy(
+def test_validate_tool_write_policy_blocks_derived_forbidden_artifacts() -> None:
+    verdict = validate_tool_write_policy(
         changed_files=["Cargo.toml", "src/splitmix64.rs", "src/tool.py", "src/allowed.ts"],
         allowed_scope=["Cargo.toml", "src/splitmix64.rs", "src/tool.py", "src/allowed.ts"],
         agents_md="Do not introduce Rust, Cargo, Go, Python, Webpack, Jest, Vite, Vitest, or any new dependency.",
@@ -105,8 +105,8 @@ def test_validate_director_write_policy_blocks_derived_forbidden_artifacts() -> 
     assert not any("src/allowed.ts" in reason for reason in verdict.reasons)
 
 
-def test_validate_director_write_policy_requires_package_before_after() -> None:
-    verdict = validate_director_write_policy(
+def test_validate_tool_write_policy_requires_package_before_after() -> None:
+    verdict = validate_tool_write_policy(
         changed_files=["package.json"],
         allowed_scope=["package.json"],
         agents_md="",
@@ -117,8 +117,8 @@ def test_validate_director_write_policy_requires_package_before_after() -> None:
     assert any("package.json writes require before/after content" in reason for reason in verdict.reasons)
 
 
-def test_validate_director_write_policy_requires_nested_package_before_after() -> None:
-    verdict = validate_director_write_policy(
+def test_validate_tool_write_policy_requires_nested_package_before_after() -> None:
+    verdict = validate_tool_write_policy(
         changed_files=["packages/web/package.json"],
         allowed_scope=["packages/web/package.json"],
         agents_md="",
@@ -129,11 +129,11 @@ def test_validate_director_write_policy_requires_nested_package_before_after() -
     assert any("package.json writes require before/after content" in reason for reason in verdict.reasons)
 
 
-def test_validate_director_write_policy_allows_scoped_package_diff_with_evidence() -> None:
+def test_validate_tool_write_policy_allows_scoped_package_diff_with_evidence() -> None:
     before = json.dumps({"scripts": {"test": "vitest run"}}, ensure_ascii=False)
     after = json.dumps({"scripts": {"test": "vitest run --coverage"}}, ensure_ascii=False)
 
-    verdict = validate_director_write_policy(
+    verdict = validate_tool_write_policy(
         changed_files=["package.json"],
         allowed_scope=["package.json"],
         agents_md="",

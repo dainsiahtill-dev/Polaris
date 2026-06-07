@@ -1,5 +1,8 @@
 # AI Agent 使用指南 - Polaris 压测诊断
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 src/backend/polaris 迁移或后续实现取代，仅作历史参考。
+> 具体而言，旧根 `app/` 已不存在：`role_dialogue.py` 现位于 `polaris/cells/llm/dialogue/internal/`，`factory_run_service.py` 现位于 `polaris/cells/factory/pipeline/internal/`。
+
 本文档帮助 Claude/Gemini 等 AI Agent 使用压测框架生成的诊断数据来定位和修复 Polaris 问题。
 
 **重要提示**：

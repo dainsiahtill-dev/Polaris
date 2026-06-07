@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from polaris.cells.events.fact_stream.public.service import (
+    AppendFactEventCommandV1,
+    QueryFactEventsV1,
+    append_fact_event,
+    query_fact_events,
+)
 from polaris.cells.runtime.projection.public.service import build_director_runtime_status
 from polaris.cells.runtime.state_owner.public.service import (
     clear_runtime_scope,
@@ -31,6 +39,8 @@ from polaris.kernelone.storage import (
     resolve_workspace_persistent_path,
 )
 from polaris.kernelone.storage.io_paths import build_cache_root
+from polaris.kernelone.storage.layout import resolve_runtime_path
+from polaris.kernelone.traceability.public.service import create_traceability_service
 from pydantic import BaseModel
 
 from ._shared import active_workspace_value, get_state, require_auth
@@ -106,6 +116,21 @@ _STORAGE_CLASSIFICATION: dict[str, dict[str, Any]] = {
 
 class RuntimeClearPayload(BaseModel):
     scope: Literal["pm", "director", "dialogue", "all"] = "all"
+
+
+class RuntimeFactStreamProbePayload(BaseModel):
+    marker: str = "e2e-fact-stream-probe"
+
+
+class RuntimeTraceabilityProbePayload(BaseModel):
+    marker: str = "e2e-traceability-probe"
+
+
+def _safe_probe_slug(value: str, fallback: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_-]+", "-", str(value or "").strip()).strip("-_")
+    if not token:
+        return fallback
+    return token[:96].strip("-_") or fallback
 
 
 def _runtime_storage_layout_core(request: Request) -> dict[str, Any]:
@@ -227,6 +252,136 @@ async def runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[
 async def v2_runtime_clear(request: Request, payload: RuntimeClearPayload) -> dict[str, Any]:
     """Clear runtime scope (pm, director, dialogue, or all)."""
     return _runtime_clear_core(request, payload)
+
+
+@router.post(
+    "/v2/runtime/fact-stream/probe",
+    dependencies=[Depends(require_auth)],
+)
+async def v2_runtime_fact_stream_probe(
+    request: Request,
+    payload: RuntimeFactStreamProbePayload,
+) -> dict[str, Any]:
+    """E2E-only probe for the events.fact_stream public writer path."""
+    if os.environ.get("KERNELONE_E2E") != "1":
+        raise HTTPException(status_code=404, detail="not found")
+
+    state = get_state(request)
+    workspace = active_workspace_value(state.settings)
+    stream = "e2e.fact_stream_probe"
+    event_type = "probe.appended"
+    marker = str(payload.marker or "").strip() or "e2e-fact-stream-probe"
+
+    appended = append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=workspace,
+            stream=stream,
+            event_type=event_type,
+            payload={"marker": marker, "source": "runtime_fact_stream_probe"},
+            source="delivery.runtime.e2e_probe",
+            task_id=marker,
+            run_id=marker,
+            correlation_id=marker,
+        )
+    )
+    queried = query_fact_events(
+        QueryFactEventsV1(
+            workspace=workspace,
+            stream=stream,
+            event_type=event_type,
+            task_id=marker,
+            limit=10,
+            offset=0,
+        )
+    )
+    absolute_path = resolve_runtime_path(
+        workspace,
+        appended.storage_path,
+        ramdisk_root=getattr(state.settings, "ramdisk_root", "") or None,
+    )
+
+    return {
+        "ok": True,
+        "workspace": workspace,
+        "stream": stream,
+        "event_type": event_type,
+        "event_id": appended.event_id,
+        "storage_path": appended.storage_path,
+        "absolute_path": absolute_path,
+        "artifact_exists": os.path.isfile(absolute_path),
+        "appended_at": appended.appended_at,
+        "queried_total": queried.total,
+        "queried_events": list(queried.events),
+        "next_offset": queried.next_offset,
+    }
+
+
+@router.post(
+    "/v2/runtime/traceability/probe",
+    dependencies=[Depends(require_auth)],
+)
+async def v2_runtime_traceability_probe(
+    request: Request,
+    payload: RuntimeTraceabilityProbePayload,
+) -> dict[str, Any]:
+    """E2E-only probe for non-empty KernelOne traceability matrices."""
+    if os.environ.get("KERNELONE_E2E") != "1":
+        raise HTTPException(status_code=404, detail="not found")
+
+    state = get_state(request)
+    workspace = active_workspace_value(state.settings)
+    raw_marker = str(payload.marker or "").strip()
+    marker = _safe_probe_slug(raw_marker, "e2e-traceability-probe")
+    run_id = f"{marker}-run"
+    service = create_traceability_service(workspace)
+
+    doc = service.register_node(
+        node_kind="doc",
+        role="pm",
+        external_id=f"{marker}-doc",
+        content=f"{marker}: PM source document",
+        metadata={"probe": "runtime_traceability", "raw_marker": raw_marker},
+    )
+    task = service.register_node(
+        node_kind="task",
+        role="pm",
+        external_id=f"{marker}-task",
+        content=f"{marker}: executable task",
+        metadata={"probe": "runtime_traceability", "raw_marker": raw_marker},
+    )
+    verdict = service.register_node(
+        node_kind="qa_verdict",
+        role="qa",
+        external_id=f"{marker}-qa",
+        content=f"{marker}: QA verdict",
+        metadata={"probe": "runtime_traceability", "raw_marker": raw_marker},
+    )
+    service.link(doc, task, "derives_from")
+    service.link(task, verdict, "verifies")
+
+    matrix = service.build_matrix(run_id, 1)
+    storage_path = f"runtime/traceability/{run_id}.1.matrix.json"
+    absolute_path = resolve_runtime_path(
+        workspace,
+        storage_path,
+        ramdisk_root=getattr(state.settings, "ramdisk_root", "") or None,
+    )
+    service.persist(matrix, absolute_path)
+    matrix_payload = matrix.to_dict()
+
+    return {
+        "ok": True,
+        "workspace": workspace,
+        "run_id": run_id,
+        "storage_path": storage_path,
+        "absolute_path": absolute_path,
+        "artifact_exists": os.path.isfile(absolute_path),
+        "node_count": len(matrix.nodes),
+        "link_count": len(matrix.links),
+        "node_kinds": sorted({str(node.get("kind") or "") for node in matrix_payload.get("nodes", [])}),
+        "link_kinds": sorted({str(link.get("kind") or "") for link in matrix_payload.get("links", [])}),
+        "matrix": matrix_payload,
+    }
 
 
 def _runtime_migration_status_core(request: Request) -> dict[str, Any]:

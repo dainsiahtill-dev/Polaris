@@ -223,7 +223,7 @@ Polaris 很强调一个问题：
 这种思路已经体现在当前仓库里：
 
 - 架构与发布门禁：
-  - [tests/architecture/test_kernelone_release_gates.py](/C:/Users/dains/Documents/GitLab/polaris/tests/architecture/test_kernelone_release_gates.py)
+  - [src/backend/polaris/tests/architecture/test_kernelone_release_gates.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/tests/architecture/test_kernelone_release_gates.py)
   - [quality-gates.yml](/C:/Users/dains/Documents/GitLab/polaris/.github/workflows/quality-gates.yml)
 - 治理资产：
   - [src/backend/docs/governance](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/governance)
@@ -397,7 +397,7 @@ polaris --host 127.0.0.1 --port 49977
 
 ```bash
 npm test
-python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+python -m pytest -q src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
 ```
 
 ### 25-30 分钟：验证 E2E 与发布门禁
@@ -421,7 +421,7 @@ pytest src/backend/tests -q
 ### 架构/发布关键门禁
 
 ```bash
-python -m pytest -q tests/architecture/test_kernelone_release_gates.py
+python -m pytest -q src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
 python src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
 python src/backend/docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
 ```

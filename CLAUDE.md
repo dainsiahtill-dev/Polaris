@@ -10,27 +10,27 @@
 
 ## 1) 真实入口路径
 - 桌面入口: `src/electron/main.cjs`
-- 后端入口: `src/backend/server.py` -> `src/backend/app/main.py` (FastAPI)
+- 后端入口: `src/backend/server.py` -> `src/backend/polaris/delivery/http/app_factory.py` (FastAPI)
 - 前端入口: `src/frontend/src/main.tsx`（Vite 配置: `src/frontend/vite.config.ts`）
-- PM CLI: `src/backend/scripts/pm/cli.py`
-- Director CLI (推荐): `src/backend/scripts/director/cli_thin.py`
-- Architect CLI: `src/backend/core/polaris_loop/role_agent/architect_cli.py`
-- Chief Engineer CLI: `src/backend/core/polaris_loop/role_agent/chief_engineer_cli.py`
+- PM CLI: `src/backend/polaris/delivery/cli/pm/cli.py`（控制台脚本 `pm`）
+- Director CLI (推荐): `src/backend/polaris/delivery/cli/director/cli_thin.py`（控制台脚本 `director`）
+- Architect CLI: `src/backend/polaris/cells/architect/design/internal/architect_cli.py`
+- Chief Engineer CLI: `src/backend/polaris/cells/chief_engineer/blueprint/internal/chief_engineer_cli.py`
 
 ## 2) 维护优先级路径
 - 后端新架构目标根: `src/backend/polaris`
 - 后端新功能目标分层: `src/backend/polaris/bootstrap`, `src/backend/polaris/delivery`, `src/backend/polaris/application`, `src/backend/polaris/domain`, `src/backend/polaris/kernelone`, `src/backend/polaris/infrastructure`, `src/backend/polaris/cells`
 - 后端图谱与治理真相: `src/backend/docs/graph`, `src/backend/docs/governance`, `src/backend/docs/templates`
-- 后端 API 与服务: `src/backend/app`
-- Loop 核心（优先修改）: `src/backend/core/polaris_loop`
-- Director Runtime/Accel: `src/backend/core/director_runtime`
-- PM/Director 编排层: `src/backend/scripts/pm`, `src/backend/scripts/director`
+- 后端 API 与服务: `src/backend/polaris/delivery`
+- Loop / 角色内核（优先修改）: `src/backend/polaris/cells/roles`, `src/backend/polaris/kernelone`
+- Director Runtime/Accel: `src/backend/polaris/cells/director`
+- PM/Director 编排层: `src/backend/polaris/delivery/cli/pm`, `src/backend/polaris/delivery/cli/director`
 - 前端主 UI: `src/frontend/src/app`
-- 测试: `tests/electron`, `src/backend/tests`
+- 测试: `tests/electron`, `src/backend/polaris/tests`
 
 说明:
 - `src/backend/polaris` 是后端 ACGA 2.0 迁移承载根；新的主实现优先进入这里
-- `src/backend/app`、`src/backend/core`、`src/backend/api`、`src/backend/scripts` 仍是现有运行事实，但在后端迁移任务里应默认视为旧根目录
+- 旧根 `src/backend/{app,core,api,scripts}` 已在 ACGA 2.0 迁移中删除并迁入 `src/backend/polaris/{bootstrap,delivery,application,domain,kernelone,infrastructure,cells}`
 
 ## 3) 常用命令
 ```bash
@@ -44,17 +44,17 @@ npm run dev:electron
 # 后端单独运行
 python src/backend/server.py --host 127.0.0.1 --port 49977
 
-# PM CLI (项目管理)
-python src/backend/scripts/pm/cli.py --workspace <repo> --run-director --director-iterations 1
+# PM CLI (项目管理) - 控制台脚本 pm = polaris.delivery.cli.pm.cli:main
+pm --workspace <repo> --run-director --director-iterations 1
 
-# Director CLI (推荐)
-python -m scripts.director.cli_thin --workspace <repo> --iterations 1
+# Director CLI (推荐) - 控制台脚本 director = polaris.delivery.cli.director.cli_thin:main
+director --workspace <repo> --iterations 1
 
 # Architect CLI (架构设计 - 交互式)
-python -m core.polaris_loop.role_agent.architect_cli --mode interactive --workspace <repo>
+python -m polaris.cells.architect.design.internal.architect_cli --mode interactive --workspace <repo>
 
 # Chief Engineer CLI (技术分析 - 交互式)
-python -m core.polaris_loop.role_agent.chief_engineer_cli --mode interactive --workspace <repo>
+python -m polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli --mode interactive --workspace <repo>
 
 # 统一角色对话 API (所有 5 个角色)
 # POST /v2/role/{pm|architect|chief_engineer|director|qa}/chat
@@ -86,7 +86,7 @@ python scripts/run_factory_e2e_smoke.py --workspace .
 ## 5) 强约束
 - 所有文本文件读写必须显式使用 UTF-8。
 - TypeScript 保持 `strict`，公共接口禁止 `any`。
-- 变更 Loop 核心时，优先修改 `src/backend/core/polaris_loop`。
+- 变更 Loop / 角色内核时，优先修改 `src/backend/polaris/cells/roles` 与 `src/backend/polaris/kernelone`。
 - 不提交运行时产物: `.polaris/runtime/**`, `playwright-report/**`, `test-results/**`。
 - 验证失败不得标记任务完成（fail-closed）。
 
@@ -101,38 +101,39 @@ python scripts/run_factory_e2e_smoke.py --workspace .
 以下模块已实现，禁止重复创建：
 
 ### 7.1) LLM 工具系统
-**唯一实现**: `src/backend/core/llm_toolkit/`
+**唯一实现**: `src/backend/polaris/kernelone/llm/toolkit/`
 
 ```python
 # ✅ 正确用法
-from core.llm_toolkit import (
+from polaris.kernelone.llm.toolkit import (
     AgentAccelToolExecutor,      # 统一工具执行器
-    ROLE_TOOL_INTEGRATIONS,      # 角色工具注册表
     parse_tool_calls,            # 工具调用解析
 )
 
-# 获取角色工具集成
+# 获取角色工具集成（注册表 ROLE_TOOL_INTEGRATIONS 现位于 tool_runtime cell）
+from polaris.cells.llm.tool_runtime.internal.role_integrations import ROLE_TOOL_INTEGRATIONS
+
 integration = ROLE_TOOL_INTEGRATIONS["pm"](workspace=".")
 prompt = integration.get_system_prompt()
 ```
 
 **禁止行为**:
-- ✗ 在 `app/llm/usecases/` 下新建 `*ToolIntegration` 类
+- ✗ 在 `polaris/cells/llm/` 下新建 `*ToolIntegration` 类
 - ✗ 自定义 `TOOL_CALL:...ARGS:...` 格式
 - ✗ 直接调用底层 `tools.py`
 
 **相关文件**:
-- `llm_toolkit/definitions.py` - 工具定义（单一事实来源）
-- `llm_toolkit/executor.py` - 工具执行
-- `llm_toolkit/integrations.py` - 5个角色的工具集成
-- `llm_toolkit/parsers.py` - 工具调用解析
+- `polaris/kernelone/llm/toolkit/definitions.py` - 工具定义（单一事实来源）
+- `polaris/kernelone/llm/toolkit/executor/` - 工具执行（目录）
+- `polaris/cells/llm/tool_runtime/internal/role_integrations.py` - 5个角色的工具集成
+- `polaris/kernelone/llm/toolkit/parsers/` - 工具调用解析（目录）
 
 ### 7.2) 角色对话系统
-**唯一实现**: `src/backend/app/llm/usecases/role_dialogue.py`
+**唯一实现**: `src/backend/polaris/cells/llm/dialogue/internal/role_dialogue.py`
 
 ```python
 # ✅ 正确用法
-from app.llm.usecases.role_dialogue import generate_role_response
+from polaris.cells.llm.dialogue.internal.role_dialogue import generate_role_response
 
 result = await generate_role_response(
     workspace=workspace,
@@ -151,8 +152,8 @@ result = await generate_role_response(
 - `scout` - 探子 (只读代码探索，sub-agent，即将由 PM/Director 调用)
 
 **禁止行为**:
-- ✗ 在 `app/llm/usecases/` 下新建独立角色对话文件（已统一到 `role_dialogue.py`）
-- ✗ 在 `role_agent/` 下内嵌角色提示词
+- ✗ 在 `polaris/cells/llm/dialogue/` 下新建独立角色对话文件（已统一到 `role_dialogue.py`）
+- ✗ 在角色 CLI/internal 模块下内嵌角色提示词
 - ✗ 创建新的 `generate_xxx_response()` 函数
 
 ### 7.3) Provider 系统
@@ -160,11 +161,11 @@ result = await generate_role_response(
 - ✗ 绕过 `ProviderManager` 创建 Provider 实例
 
 ### 7.4) 任务管理系统
-**唯一实现**: `src/backend/app/services/task_board.py`
+**唯一实现**: `src/backend/polaris/cells/runtime/task_runtime/internal/task_board.py`
 
 ```python
 # ✅ 正确用法
-from app.services.task_board import TaskBoard
+from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard
 
 board = TaskBoard(workspace=".")
 board.create(subject="实现登录功能", priority="high")
@@ -174,16 +175,16 @@ board.create(subject="实现登录功能", priority="high")
 
 | 模块 | 替代方案 | 状态 |
 |------|----------|------|
-| `pm_dialogue.py` | `role_dialogue.generate_role_response(role="pm", ...)` | 已删除 |
-| `pm_tools.py` | `llm_toolkit.executor.AgentAccelToolExecutor` | 已删除 |
-| `api/routers/pm.py` | `api/v2/pm.py` | 已删除 |
-| `workflow_nodes_compat.py` | `app/roles/workflow_adapter.py` | 已删除 |
+| `pm_dialogue.py` | `polaris.cells.llm.dialogue.internal.role_dialogue.generate_role_response(role="pm", ...)` | 已删除 |
+| `pm_tools.py` | `polaris.kernelone.llm.toolkit.AgentAccelToolExecutor` | 已删除 |
+| `api/routers/pm.py` | `polaris/delivery/http/routers/pm_chat.py` + `pm_management.py`（`/v2/pm`） | 已删除 |
+| `workflow_nodes_compat.py` | `polaris/cells/roles/adapters/internal/workflow_adapter.py` | 已删除 |
 
 ### 7.6) 新增能力检查清单
 
 在实现新功能前，检查：
 
-1. **工具能力?** → 先看 `llm_toolkit/` 是否已存在
+1. **工具能力?** → 先看 `polaris/kernelone/llm/toolkit/` 是否已存在
 2. **角色对话?** → 先看 `role_dialogue.ROLE_PROMPT_TEMPLATES` 是否已有
 3. **Provider?** → 先看 `providers/provider_registry.py` 是否已支持
 4. **任务管理?** → 先看 `task_board.py` 是否满足需求

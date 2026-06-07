@@ -9,7 +9,7 @@ Polaris 的目标叙事现在明确为：
 
 当前实现方式不是把整个系统重写成一个单体 `agi_orchestrator`，而是在现有 `PM -> Director -> QA` 主链路上增加一个长期驻留、可治理、可恢复的 AGI 内核。
 
-实现层仍保留 `src/backend/app/resident/` 这个包名，原因是：
+实现层位于 `src/backend/polaris/cells/resident/autonomy/` 这个 Cell，保留 `resident` 命名，原因是：
 
 - 代码里已经有存储、API、测试、runtime 投影依赖它
 - 立即全量 rename 只会制造高 churn，不能增加能力闭环
@@ -51,40 +51,40 @@ AGI 内核必须满足六件事：
 
 ### 4.1 后端内核
 
-- `src/backend/app/resident/models.py`
+- `src/backend/polaris/domain/models/resident.py`
   - AGI 内核统一数据模型
-- `src/backend/app/resident/storage.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/resident_storage.py`
   - AGI 状态持久化与 UTF-8 文件读写
-- `src/backend/app/resident/decision_trace.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/decision_trace.py`
   - append-only 决策轨迹
-- `src/backend/app/resident/meta_cognition.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/meta_cognition.py`
   - 策略评分卡与 insight 生成
-- `src/backend/app/resident/capability_graph.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/capability_graph.py`
   - 基于决策和技能的能力图推导
-- `src/backend/app/resident/goal_governor.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/goal_governor.py`
   - 目标提议、批准、拒绝、物化
-- `src/backend/app/resident/pm_bridge.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/pm_bridge.py`
   - 已批准目标到 PM 合同/运行态的桥接器
-- `src/backend/app/resident/counterfactual_lab.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/counterfactual_lab.py`
   - 失败轨迹的反事实实验生成
-- `src/backend/app/resident/skill_foundry.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/skill_foundry.py`
   - 重复成功决策的技能抽取
-- `src/backend/app/resident/self_improvement_lab.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/self_improvement_lab.py`
   - 受控自改提案
-- `src/backend/app/resident/service.py`
+- `src/backend/polaris/cells/resident/autonomy/public/service.py`
   - AGI 内核服务门面、生命周期与恢复
 
 ### 4.2 API 与投影
 
-- `src/backend/api/v2/resident.py`
+- `src/backend/polaris/delivery/http/v2/resident.py`
   - `/v2/resident/*` 控制面
-- `src/backend/app/services/runtime_projection.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/execution_projection.py`
   - AGI 状态进入 `/state/snapshot`
-- `src/backend/app/services/runtime_ws_status.py`
+- `src/backend/polaris/delivery/ws/endpoints/websocket_core.py`（状态快照经 `src/backend/polaris/cells/runtime/projection/internal/status_snapshot_builder.py` 构建）
   - AGI 状态进入 websocket `status` payload
-- `src/backend/app/orchestration/workflows/pm_workflow.py`
+- `src/backend/polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py`
   - PM 决策自动写入 AGI trace
-- `src/backend/app/orchestration/workflows/director_workflow.py`
+- `src/backend/polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py`
   - Director 决策自动写入 AGI trace
 
 ### 4.3 前端工作台
@@ -161,7 +161,7 @@ AGI 内核必须满足六件事：
 
 ### 8.2 PM Bridge
 
-`src/backend/app/resident/pm_bridge.py` 已实现两级桥接：
+`src/backend/polaris/cells/resident/autonomy/internal/pm_bridge.py` 已实现两级桥接：
 
 1. `stage`
    - 写入 AGI 专用暂存合同
@@ -228,10 +228,10 @@ AGI 内核必须满足六件事：
 
 后端：
 
-- `src/backend/tests/test_resident_service.py`
-- `src/backend/tests/test_resident_api.py`
-- `src/backend/tests/test_runtime_projection_resident.py`
-- `src/backend/tests/test_resident_pm_bridge.py`
+- `src/backend/polaris/tests/test_resident_service.py`
+- `src/backend/polaris/tests/test_resident_api.py`
+- `src/backend/polaris/tests/test_runtime_projection_resident.py`
+- `src/backend/polaris/tests/test_resident_pm_bridge.py`
 
 前端：
 
@@ -241,10 +241,10 @@ AGI 内核必须满足六件事：
 
 ```bash
 python -m pytest -q \
-  src/backend/tests/test_resident_service.py \
-  src/backend/tests/test_resident_api.py \
-  src/backend/tests/test_runtime_projection_resident.py \
-  src/backend/tests/test_resident_pm_bridge.py
+  src/backend/polaris/tests/test_resident_service.py \
+  src/backend/polaris/tests/test_resident_api.py \
+  src/backend/polaris/tests/test_runtime_projection_resident.py \
+  src/backend/polaris/tests/test_resident_pm_bridge.py
 
 npm run typecheck
 npm run test -- src/frontend/src/app/components/resident/ResidentWorkspace.test.tsx

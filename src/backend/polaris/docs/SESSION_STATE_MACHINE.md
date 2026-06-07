@@ -1,5 +1,8 @@
 # Session 状态机文档
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 src/backend/polaris 迁移或后续实现取代，仅作历史参考。
+> 具体而言：当前实现（`src/backend/polaris/cells/roles/session/public/contracts.py` 的 `SessionState`）仅有 **4** 个状态：`ACTIVE / PAUSED / COMPLETED / ARCHIVED`；文中描述的 7 态枚举及 `SessionStateTransitionEvent` 类均未实现。
+
 > 本文档定义了 Session 编排体系中的状态机模型，作为统一编排契约的基础。
 
 ## 1. 状态枚举定义

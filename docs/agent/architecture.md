@@ -2,8 +2,6 @@
 
 本文档面向工程师与核心开发者，详细说明 Polaris 的内部工作流、状态机、事件模型与并发约束。
 
-完整的 PM->Director 端到端生命周期说明见：`docs/agent/pm-director-flow.md`。
-
 > ACGA 3 方向补充：若任务涉及“无人值守软件工厂控制面”“LLM 只管 proposal、不直接维护 truth”“同一个治理内核支持内嵌与守护进程两种模式”，请同步参考 `../../ACGA3_FACTORY_POSITIONING.md`、`../architecture/ACGA_3_AUTONOMOUS_FACTORY_SPEC.md` 与 `../../src/backend/docs/ACGA_3.0_RFC.md`。这些文档描述的是目标补充，不替代本文当前实现说明。
 
 ---
@@ -449,7 +447,7 @@ Model Context Protocol server exposing governance tools:
 
 LanceDB-backed code indexing and search:
 
-- **Location**: `src/backend/core/director_runtime/storage/code_search.py`
+- **Location**: `src/backend/polaris/infrastructure/db/repositories/lancedb_code_search.py`
 - `index_workspace()` — chunk and index all code files
 - `search_code()` — text search over indexed chunks
 - `refresh_index()` — incremental re-index for changed files
@@ -467,7 +465,7 @@ Automated spec generation from task requirements:
 
 Deterministic construction-blueprint service between PM and Director:
 
-- **Location**: `src/backend/core/polaris_loop/chief_engineer.py`
+- **Location**: `src/backend/polaris/delivery/cli/pm/chief_engineer.py`（CLI）与 `src/backend/polaris/delivery/http/v2/chief_engineer.py`（HTTP）
 - Maintains project blueprint data structures (`ProjectBlueprint`, `TaskBlueprint`, `BlueprintFile`)
 - Produces Director-ready construction plans at module/file/method granularity
 - Emits scope union (`scope_for_apply`) to reduce missing-file / unresolved-import loops

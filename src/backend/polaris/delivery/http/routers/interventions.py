@@ -12,6 +12,7 @@ from polaris.delivery.http.routers._shared import (
     get_state,
     require_auth,
 )
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 router = APIRouter()
 
@@ -33,11 +34,16 @@ def _interventions_path(request: Request) -> Path:
     return Path(workspace).resolve() / "INTERVENTIONS.json"
 
 
+def _path_fs(path: Path) -> KernelFileSystem:
+    return KernelFileSystem(str(path.parent.resolve()), get_default_adapter())
+
+
 def _load_interventions(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    fs = _path_fs(path)
+    if not fs.exists(path.name):
         return {"version": 1, "interventions": []}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = fs.read_json(path.name)
     except json.JSONDecodeError as exc:
         raise StructuredHTTPException(status_code=500, detail=f"invalid INTERVENTIONS.json: {exc}") from exc
     if not isinstance(payload, dict):
@@ -49,8 +55,7 @@ def _load_interventions(path: Path) -> dict[str, Any]:
 
 
 def _store_interventions(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _path_fs(path).write_json(path.name, payload, ensure_ascii=False, indent=2)
 
 
 @router.get("/interventions/list", dependencies=[Depends(require_auth)])

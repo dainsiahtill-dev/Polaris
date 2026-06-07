@@ -22,6 +22,8 @@ accepted without fresh, verifiable evidence.
 │  ├── VerificationReport     - Detailed verification result   │
 │  ├── VerifyCompletionCommandV1 - Entry point command         │
 │  └── VerifyCompletionResultV1  - Canonical result            │
+│  Public Service (service.py)                                  │
+│  └── verify_completion()    - Public RPC adapter             │
 ├─────────────────────────────────────────────────────────────┤
 │  Internal Components                                         │
 │  ├── verification_engine.py - Core verification logic        │
@@ -86,7 +88,7 @@ else:
 
 ## Integration Points
 
-- **Current**: Standalone Cell with public contracts
+- **Current**: Standalone Cell with public contracts and public service adapter
 - **Future**: `TurnTransactionController` will call this Cell before `commit()`
 - **Events**: Emits `VerificationCompletedEventV1` for audit trails
 

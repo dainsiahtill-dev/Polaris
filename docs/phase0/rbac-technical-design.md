@@ -20,13 +20,13 @@ Polaris 现有的权限控制体系由以下核心组件构成，这些组件形
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                              API 请求入口                                        │
-│                    require_permission (api/dependencies.py)                    │
+│           require_permission (polaris/delivery/http/dependencies.py)           │
 └────────────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                           RoleToolGateway                                       │
-│                  (app/roles/gateways/tool_gateway.py)                          │
+│             (polaris/cells/roles/kernel/internal/tool_gateway.py)              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
 │  │  黑名单检查   │→│  白名单检查   │→│  代码写权限   │→│  命令执行权  │    │
 │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘    │
@@ -38,7 +38,7 @@ Polaris 现有的权限控制体系由以下核心组件构成，这些组件形
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                          SecurityService                                        │
-│                  (domain/services/security_service.py)                          │
+│                 (polaris/domain/services/security_service.py)                  │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                       │
 │  │   路径沙箱    │  │  危险命令检测  │  │  文件操作验证 │                       │
 │  └──────────────┘  └──────────────┘  └──────────────┘                       │
@@ -372,7 +372,7 @@ class PermissionEnforcer:
 
 第三项任务是实现 PDP。创建 PermissionDecisionPoint 类，作为所有权限请求的统一入口，整合现有的 RoleToolGateway 检查逻辑。
 
-第四项任务是实现 API 层 PEP。扩展 api/dependencies.py 中的 require_permission，支持基于策略的动态权限检查，并添加策略管理 API 端点。
+第四项任务是实现 API 层 PEP。扩展 polaris/delivery/http/dependencies.py 中的 require_permission，支持基于策略的动态权限检查，并添加策略管理 API 端点。
 
 第五项任务是迁移现有配置。将 builtin_profiles.py 中的角色定义迁移为 RBAC 格式的策略配置，确保功能等价。
 

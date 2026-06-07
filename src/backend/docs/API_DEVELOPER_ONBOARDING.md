@@ -495,11 +495,11 @@ async def clear_cache() -> dict[str, str]:
 ### 7.3 Role hierarchy
 
 ```python
-# polaris/delivery/http/middleware/rbac.py
-class UserRole(Enum):
-    VIEWER = 1      # Read-only access
-    DEVELOPER = 2   # Read + write + execute
-    ADMIN = 3       # Full access including destructive operations
+# polaris/delivery/http/auth/roles.py
+class UserRole(str, Enum):
+    VIEWER = "viewer"        # Read-only access (level 1)
+    DEVELOPER = "developer"  # Read + write + execute (level 2)
+    ADMIN = "admin"          # Full access including destructive operations (level 3)
 ```
 
 When checking permissions, prefer `require_role([UserRole.ADMIN, UserRole.DEVELOPER])` over single-role checks when both should have access.

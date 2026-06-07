@@ -1,5 +1,8 @@
 # Final Verification Summary Report
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本文档部分路径/结论已被 src/backend/polaris 迁移或后续实现取代，仅作历史参考。
+> 具体而言，`kernelone/tools/` 现仅含已弃用的 `__init__.py`；validators/contracts 已迁至 `kernelone/tool_execution/`，`llm_caller` 现为目录（`cells/roles/kernel/internal/llm_caller/`）而非单文件。
+
 ## JSON Tool Call Parsing System - Engineering-10 Final Sign-Off
 
 **Date**: 2026-03-28

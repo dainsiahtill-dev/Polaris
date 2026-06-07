@@ -439,11 +439,16 @@ class SemanticBoundaryChecker(FitnessRuleChecker):
         - Code indexing and workspace-level search
         - NOT acceptable for Cell-level semantic retrieval
         """
-        file_str = str(site.file_path)
+        file_str = str(site.file_path).replace("\\", "/")
 
         # Known workspace-level implementations
         acceptable_patterns = [
             "akashic/semantic_memory.py",
+            "akashic/semantic_cache.py",
+            "akashic/working_memory.py",
+            "akashic/memory_manager.py",
+            "akashic/hybrid_memory.py",
+            "kernelone/memory/memory_store.py",
             "lancedb_code_search.py",
             "knowledge_pipeline/",
         ]

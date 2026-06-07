@@ -234,7 +234,7 @@ def _parse_content_and_thinking_tool_calls(
 
 - Bug 触发：CLI `polaris/delivery/cli/toad` 工具调用循环
 - 相关文件：
-  - `polaris/cells/roles/kernel/internal/turn_engine.py`
+  - `polaris/cells/roles/kernel/internal/turn_engine/`
   - `polaris/kernelone/llm/engine/executor.py`
 - 相关测试：
   - `polaris/cells/roles/kernel/tests/test_turn_engine_policy_convergence.py`

@@ -21,8 +21,8 @@ import { AIDialoguePanel } from '@/app/components/ai-dialogue';
 function PMPage() {
   return (
     <AIDialoguePanel
-      role="pm"
-      roleName="PM"
+      dialogueRole="pm"
+      roleDisplayName="PM"
       welcomeMessage="PM已就绪"
       context={{ workspace, taskCount }}
     />
@@ -33,8 +33,8 @@ function PMPage() {
 function ArchitectPage() {
   return (
     <AIDialoguePanel
-      role="architect"
-      roleName="Architect"
+      dialogueRole="architect"
+      roleDisplayName="Architect"
       roleTheme={{
         primary: 'purple',
         secondary: 'purple-400',
@@ -187,7 +187,7 @@ GET /v2/role/chat/roles
 
 旧代码:
 ```tsx
-import { PMAIDialoguePanel } from './PMAIDialoguePanel';
+import { PMAIDialoguePanel } from '@/app/components/pm/PMAIDialoguePanel';
 
 <PMAIDialoguePanel pmRunning={pmRunning} workspace={workspace} taskCount={taskCount} />
 ```
@@ -195,7 +195,7 @@ import { PMAIDialoguePanel } from './PMAIDialoguePanel';
 新代码（自动迁移，无需改动）:
 ```tsx
 // PMAIDialoguePanel 现在内部使用 AIDialoguePanel
-import { PMAIDialoguePanel } from './PMAIDialoguePanel';
+import { PMAIDialoguePanel } from '@/app/components/pm/PMAIDialoguePanel';
 
 <PMAIDialoguePanel pmRunning={pmRunning} workspace={workspace} taskCount={taskCount} />
 ```

@@ -327,10 +327,10 @@ data: <json-payload>
 
 ### 8.1 New RBAC Skeleton
 
-File: `polaris/delivery/http/middleware/rbac.py`
+Files: `polaris/delivery/http/auth/roles.py`, `polaris/delivery/http/middleware/rbac.py`
 
-- `UserRole` enum: `VIEWER` (1), `DEVELOPER` (2), `ADMIN` (3)
-- `RBACMiddleware`: ASGI middleware that initializes `request.state.user_role = VIEWER`
+- `UserRole` string enum (in `auth/roles.py`): `VIEWER` (`"viewer"`), `DEVELOPER` (`"developer"`), `ADMIN` (`"admin"`); numeric privilege ordering is exposed via the `UserRole.level` property (1/2/3)
+- `RBACMiddleware` (in `middleware/rbac.py`): ASGI middleware that initializes `request.state.user_role = VIEWER`
 - `extract_role_from_request`: Reads `auth_context.metadata["roles"]`; ignores client headers like `X-User-Role`
 - `require_role(allowed)`: Dependency factory returning a checker that raises `403` if role not in allowed set
 

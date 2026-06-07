@@ -11,8 +11,10 @@ Owns DirectorAgent, execution rules, and logic utilities.
 
 ## Migration Status
 
-✅ **MIGRATION COMPLETED** (2026-04-09)
+⚠️ **COPIED, NOT MIGRATED** (status 2026-06-07)
 
-Implementation migrated from `polaris/cells/director/execution/internal/`.
-Public contracts and directory structure are established; migration tracked
-in the parent `director.execution` Cell task.
+The implementation was COPIED from `polaris/cells/director/execution/internal/`, not
+moved: `director_agent.py`, `context_gatherer.py`, and `director_logic_rules.py` still
+remain in `polaris/cells/director/execution/internal/`, so the two locations are
+duplicated. Public contracts and directory structure are established, but the migration
+out of `execution/internal/` is not complete.

@@ -14,10 +14,10 @@ Polaris 审计系统由四个核心组件构成，形成完整的证据收集、
 
 | 组件 | 路径 | 职责 |
 |------|------|------|
-| **IndependentAuditService** | `application/audit_service.py` | 独立 QA 审计服务，使用独立 LLM 角色（门下省）确保公正性 |
-| **EvidenceCollector** | `domain/verification/evidence_collector.py` | 证据收集器，实时收集文件变更、工具输出、验证结果、LLM交互、策略违规 |
-| **LogStore** | `infrastructure/persistence/log_store.py` | JSONL 格式日志存储，存储在 workspace 外部避免污染 |
-| **EvidenceStore** | `infrastructure/persistence/evidence_store.py` | 证据文件持久化，支持多版本和角色特定导出 |
+| **IndependentAuditService** | `polaris/cells/audit/verdict/internal/independent_audit_service.py` | 独立 QA 审计服务，使用独立 LLM 角色（门下省）确保公正性 |
+| **EvidenceCollector** | `polaris/domain/verification/evidence_collector.py` | 证据收集器，实时收集文件变更、工具输出、验证结果、LLM交互、策略违规 |
+| **LogStore** | `polaris/infrastructure/audit/stores/log_store.py` | JSONL 格式日志存储，存储在 workspace 外部避免污染 |
+| **EvidenceStore** | `polaris/infrastructure/audit/stores/evidence_store.py` | 证据文件持久化，支持多版本和角色特定导出 |
 
 ### 1.2 数据流
 

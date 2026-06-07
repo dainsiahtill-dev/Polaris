@@ -126,7 +126,7 @@ Cache write: always on Tier 4 after any slice read.
 | `kernelone.context.working_set_assembler` | `polaris/kernelone/context/working_set.py` | Assembles working set from repo map, symbols, slices |
 | `kernelone.context.budget_gate` | `polaris/kernelone/context/budget_gate.py` | Context budget monitoring and compaction trigger |
 | `kernelone.context.cache_manager` | `polaris/kernelone/context/cache.py` | 5-tier cache management |
-| `kernelone.tools.canonical_read` | `polaris/kernelone/tools/contracts.py` | Canonical read tool contracts and runtime-executor-facing tool surface |
+| `kernelone.tools.canonical_read` | `polaris/kernelone/tool_execution/contracts.py` | Canonical read tool contracts and runtime-executor-facing tool surface |
 
 ### Cell Boundaries
 

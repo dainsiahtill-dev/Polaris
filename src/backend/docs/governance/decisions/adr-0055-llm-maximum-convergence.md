@@ -1,9 +1,11 @@
 # ADR-0055: LLM 模块最大化收敛
 
 **日期**: 2026-03-26
-**状态**: Accepted
+**状态**: Accepted（收敛未完成 / 部分完成，2026-06-07 审计）
 **决策者**: 架构委员会
 **相关 VC**: `vc-20260326-llm-maximum-convergence`
+
+> ⚠️ 收敛状态勘误 (2026-06-07 审计，CODE-IS-TRUTH)：本 ADR 的目标收敛尚未完成。实际现状：第二份 `ProviderManager` 仍存在于 `polaris/infrastructure/llm/providers/provider_registry.py`（且被多处导入），并未仅保留 kernelone 版本。下文「验收条件」第 1 条尚未达成。
 
 ## 问题陈述
 

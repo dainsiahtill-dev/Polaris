@@ -18,6 +18,7 @@ purpose: >
   
 current_modules:
   - polaris.cells.factory.verification_guard.public.contracts
+  - polaris.cells.factory.verification_guard.public.service
   - polaris.cells.factory.verification_guard.internal.verification_engine
   - polaris.cells.factory.verification_guard.internal.safe_executor
 tags:
@@ -29,6 +30,7 @@ owned_paths:
 public_contracts:
   modules:
     - polaris.cells.factory.verification_guard.public.contracts
+    - polaris.cells.factory.verification_guard.public.service
   commands:
     - VerifyCompletionCommandV1
   queries: []

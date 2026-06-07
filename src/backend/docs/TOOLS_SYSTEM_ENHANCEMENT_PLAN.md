@@ -24,7 +24,7 @@
 ### 2.1 当前设计
 
 ```python
-# polaris/kernelone/tools/contracts.py
+# polaris/kernelone/tool_execution/contracts.py
 "repo_rg": {
     "arguments": [
         {"name": "pattern", "type": "string", "required": True},

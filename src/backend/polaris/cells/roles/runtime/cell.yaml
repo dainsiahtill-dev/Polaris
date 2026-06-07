@@ -10,9 +10,11 @@ purpose: 'Composite runtime boundary for shared role kernel and role-session lif
   '
 current_modules:
 - polaris.cells.roles.runtime.public.contracts
+- polaris.cells.roles.runtime.public.service
 tags:
 - composite
 owned_paths:
+- polaris/cells/roles/runtime/public/**
 - polaris/cells/roles/runtime/internal/**
 - polaris/delivery/http/routers/role_chat.py
 - polaris/delivery/http/routers/role_session.py
@@ -20,6 +22,7 @@ public_contracts:
   modules:
   - polaris.cells.roles.runtime.public.contracts
   commands:
+  - ExecuteRoleCapabilityInvocationCommandV1
   - ExecuteRoleTaskCommandV1
   - ExecuteRoleSessionCommandV1
   queries:
@@ -28,6 +31,7 @@ public_contracts:
   - RoleTaskStartedEventV1
   - RoleTaskCompletedEventV1
   results:
+  - RoleCapabilityInvocationResultV1
   - RoleExecutionResultV1
   errors:
   - RoleRuntimeErrorV1
@@ -35,6 +39,7 @@ depends_on:
 - architect.design
 - chief_engineer.blueprint
 - director.execution
+- factory.verification_guard
 - finops.budget_guard
 - llm.control_plane
 - orchestration.pm_planning
@@ -44,6 +49,7 @@ depends_on:
 - roles.kernel
 - roles.profile
 - roles.session
+- runtime.task_market
 - runtime.state_owner
 - archive.run_archive
 - audit.diagnosis
@@ -62,6 +68,9 @@ effects_allowed:
 - process.spawn:roles/*
 - bus.publish:agent_messages/*
 - bus.consume:agent_messages/*
+- task_market.publish:*
+- blueprint.generate:*
+- process.spawn:qa/pytest
 verification:
   tests:
   - tests/test_roles_kernel.py

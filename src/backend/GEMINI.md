@@ -121,8 +121,21 @@
 - `docs/graph/catalog/cells.yaml` — `migration_status: phase1_public_phase2_composite_phase3_business_cells_declared`
 - cells.yaml 声明的 Cell：**62 个**（统计命令：`grep "^  - id:" docs/graph/catalog/cells.yaml | wc -l`，2026-05-07）
 - `polaris/cells/*/generated/descriptor.pack.json` 当前覆盖：**63 / 62**
-- `docs/graph/subgraphs/` 当前仅有：
+- `docs/graph/subgraphs/` 当前有 **15** 个 subgraph yaml（统计命令：`ls docs/graph/subgraphs/*.yaml | wc -l`）：
+  - `archive_pipeline.yaml`
+  - `audit_pipeline.yaml`
+  - `code_intelligence_pipeline.yaml`
+  - `context_assembly_pipeline.yaml`
+  - `context_plane.yaml`
+  - `director_pipeline.yaml`
+  - `director_workflow_pipeline.yaml`
+  - `event_pipeline.yaml`
   - `execution_governance_pipeline.yaml`
+  - `finops_pipeline.yaml`
+  - `knowledge_pipeline.yaml`
+  - `llm_pipeline.yaml`
+  - `pm_pipeline.yaml`
+  - `roles_execution_pipeline.yaml`
   - `storage_archive_pipeline.yaml`
 
 ### 6.2 polaris/ 结构现状（`*.py` 快照，2026-05-07）

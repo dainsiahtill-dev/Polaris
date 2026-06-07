@@ -392,6 +392,22 @@ def _next_hypothesis(candidates: list[str], tried: list[str]) -> str:
     return ""
 
 
+REPOMAP_TRUST_TOPK = 5
+MAX_LOCALIZE_ATTEMPTS = 3  # within a round, retry the next ranked candidate if an edit fails to apply
+
+
+def _localization_trusted(target: str, candidates: list[str]) -> bool:
+    """Does the RepoIntelligence ranker corroborate ``target`` (top-K)?
+
+    Used to decide whether a stuck edit reflects a MIS-localized seed (escape to a
+    better-ranked candidate) or a hard fix on the right file (keep iterating). With no
+    candidate signal we trust the current target (nothing better to escape toward).
+    """
+    if not candidates:
+        return True
+    return target in candidates[:REPOMAP_TRUST_TOPK]
+
+
 def _candidate_files(problem: str, failing_tests: list[str], repo_files: set[str], ws: Path) -> list[str]:
     """Ranked non-test source files for the empty-traceback-frame case (embedding-free).
 
@@ -495,9 +511,10 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
     tokens = {"local_in_est": 0, "local_out_est": 0, "cloud_in": 0, "cloud_out": 0}
     resolved = False
     confirmed_facts: list[str] = []
-    # V12 across-round hypothesis cascade state (empty-traceback-frame localization only).
+    # V12 unified localization cascade state (trust-based escape from a mis-localized seed).
     tried_targets: list[str] = []
-    last_hypothesis_target = ""
+    last_target = ""
+    last_loc_source = ""
     cand_cache: list[str] | None = None
 
     for rnd in range(1, max_rounds + 1):
@@ -572,35 +589,46 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
         if rnd == max_rounds:
             break
 
-        # ── V12 localization cascade with across-round hypothesis advance ──
-        # If last round's RepoIntelligence hypothesis made no FAIL_TO_PASS progress, revert
-        # that (wrong) edit so patched_files won't pin us to it and the cascade can advance
-        # to the next candidate. Gated to the empty-frame path only (cloud cost unchanged).
-        if last_hypothesis_target and len(f2p_pass) == 0:
-            run_git(["checkout", base_commit, "--", last_hypothesis_target], cwd=ws)
-            patch = current_patch(ws)
-        last_hypothesis_target = ""
+        # ── V12 unified localization cascade with trust-based escape ──
+        # The convergence loop SEEDS from a prior patch, so patched_files() usually pins the
+        # target to the seed's file — which silently traps the loop on a MIS-localized seed
+        # (the dominant unresolved mode). When the last edited file made no FAIL_TO_PASS
+        # progress, decide by its source: a failed `repomap` hypothesis advances to the next
+        # candidate; a `patch` (seed) target escapes only when the RepoIntelligence ranker
+        # does NOT corroborate it (top-K) — i.e. it is likely mis-localized; a `traceback`
+        # target is authoritative and keeps iterating. Abandoned files are reverted so they
+        # stop pinning the cascade.
+        if last_target and len(f2p_pass) == 0:
+            abandon = False
+            if last_loc_source == "repomap":
+                abandon = True
+            elif last_loc_source == "patch":
+                if cand_cache is None:
+                    cand_cache = _candidate_files(problem, f2p_fail, repo_files, ws)
+                abandon = not _localization_trusted(last_target, cand_cache)
+            if abandon:
+                if last_target not in tried_targets:
+                    tried_targets.append(last_target)
+                run_git(["checkout", base_commit, "--", last_target], cwd=ws)
+                patch = current_patch(ws)
+        last_target = ""
 
-        impl = implicated_files(tb, repo_files)
+        impl = [f for f in implicated_files(tb, repo_files) if f not in tried_targets]
+        pf = [f for f in patched_files(patch, repo_files) if f not in tried_targets]
         loc_source = ""
-        target = impl[0] if impl else ""
-        if target:
-            loc_source = "traceback"
-        if not target:
-            pf = patched_files(patch, repo_files)
-            target = pf[0] if pf else ""
-            if target:
-                loc_source = "patch"
-        if not target:
-            # Empty-frame (assertion-failure) main path: RepoIntelligence-ranked candidates
-            # (#10/#9), advanced across rounds so a wrong pick is retried with the next one.
+        target = ""
+        if impl:
+            target, loc_source = impl[0], "traceback"
+        elif pf:
+            target, loc_source = pf[0], "patch"
+        else:
+            # RepoIntelligence-ranked candidates (#10/#9) — fires when there is no traceback
+            # frame and no (untried) patched file, incl. after escaping a mis-localized seed.
             if cand_cache is None:
                 cand_cache = _candidate_files(problem, f2p_fail, repo_files, ws)
-            target = _next_hypothesis(cand_cache, tried_targets)
-            if target:
-                tried_targets.append(target)
-                last_hypothesis_target = target
-                loc_source = "repomap"
+            cand = _next_hypothesis(cand_cache, tried_targets)
+            if cand:
+                target, loc_source = cand, "repomap"
         if not target:
             target = ce_localize(problem, tb, repo_files, ws)
             if target:
@@ -637,51 +665,72 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
         }
         messages = projector.project(projection_dict, receipts)
 
-        # ── V11 swap-paradigm refine (test-driven): Kimi reads the REAL traceback -> repair
-        #    blueprint; local gemma transcribes it into SEARCH/REPLACE. ──
-        content = ""
-        if target and (ws / target).is_file():
-            content = (ws / target).read_text(encoding="utf-8", errors="replace")
-        # strong-model (Kimi) repair blueprint derived from the in-container traceback + ContextOS projection
-        spec, bp_in, bp_out = _repair_blueprint(target, content, problem, tb, render_messages(messages))
-        tokens["cloud_in"] += bp_in
-        tokens["cloud_out"] += bp_out
-        transcribe_prompt = (
-            "Apply the FIX SPEC below to the file. Output ONLY Aider SEARCH/REPLACE block(s), no prose.\n"
-            "Format each block EXACTLY as:\n"
-            f"<<<< SEARCH:{target}\n<lines copied VERBATIM from CONTENT>\n====\n<fixed lines>\n>>>> REPLACE\n\n"
-            "Rules: SEARCH copied character-for-character (exact indentation); REPLACE must differ; keep\n"
-            "every block CLOSED with `>>>> REPLACE`; do not touch tests.\n\n"
-            f"FIX SPEC (senior engineer, derived from the REAL test failure):\n{spec or '(spec unavailable; infer from the traceback)'}\n\n"
-            f"REAL PYTEST TRACEBACK (in-container, round {rnd}):\n{tb[:4000]}\n\n"
-            f"CONTENT of {target}:\n```\n{content[:MAX_CONTENT_CHARS]}\n```\n"
-        )
-        # local gemma transcribes (config-driven director binding); authoritative local usage
-        draft, usage = _complete_for_role(
-            "director", transcribe_prompt, max_tokens=_context_budget_max_tokens(transcribe_prompt)
-        )
-        tokens["local_in_est"] += usage.get("input_tokens", 0)
-        tokens["local_out_est"] += usage.get("output_tokens", 0)
-        applied, detail, path = _apply_blocks(str(ws), target, draft)
-        truth.append(
-            {
-                "type": "refine",
-                "role": "director",
-                "round": rnd,
-                "target": target,
-                "loc_source": loc_source,
-                "applied": applied,
-                "apply_path": path,
-                "summary": f"round {rnd} refine: target={target} loc={loc_source} applied={applied} via {path}",
-            }
-        )
-        print(
-            f"[arch-b] {iid} round {rnd} refine: target={target} loc={loc_source} "
-            f"applied={applied} via {path} ({detail[:80]})",
-            flush=True,
-        )
+        # ── V11 swap-paradigm refine (test-driven): the strong model reads the REAL traceback
+        #    -> repair blueprint; local gemma transcribes it into SEARCH/REPLACE. Within a
+        #    round, if the edit fails to apply (e.g. a no-op or malformed block), advance to the
+        #    next ranked candidate and retry — a failed transcription must not abandon the whole
+        #    instance (no harness re-run between attempts). ──
+        applied = False
+        detail = ""
+        path = "none"
+        for attempt in range(1, MAX_LOCALIZE_ATTEMPTS + 1):
+            if not target:
+                break
+            content = ""
+            if (ws / target).is_file():
+                content = (ws / target).read_text(encoding="utf-8", errors="replace")
+            # strong-model repair blueprint derived from the in-container traceback + ContextOS projection
+            spec, bp_in, bp_out = _repair_blueprint(target, content, problem, tb, render_messages(messages))
+            tokens["cloud_in"] += bp_in
+            tokens["cloud_out"] += bp_out
+            transcribe_prompt = (
+                "Apply the FIX SPEC below to the file. Output ONLY Aider SEARCH/REPLACE block(s), no prose.\n"
+                "Format each block EXACTLY as:\n"
+                f"<<<< SEARCH:{target}\n<lines copied VERBATIM from CONTENT>\n====\n<fixed lines>\n>>>> REPLACE\n\n"
+                "Rules: SEARCH copied character-for-character (exact indentation); REPLACE must differ; keep\n"
+                "every block CLOSED with `>>>> REPLACE`; do not touch tests.\n\n"
+                f"FIX SPEC (senior engineer, derived from the REAL test failure):\n{spec or '(spec unavailable; infer from the traceback)'}\n\n"
+                f"REAL PYTEST TRACEBACK (in-container, round {rnd}):\n{tb[:4000]}\n\n"
+                f"CONTENT of {target}:\n```\n{content[:MAX_CONTENT_CHARS]}\n```\n"
+            )
+            # local gemma transcribes (config-driven director binding); authoritative local usage
+            draft, usage = _complete_for_role(
+                "director", transcribe_prompt, max_tokens=_context_budget_max_tokens(transcribe_prompt)
+            )
+            tokens["local_in_est"] += usage.get("input_tokens", 0)
+            tokens["local_out_est"] += usage.get("output_tokens", 0)
+            applied, detail, path = _apply_blocks(str(ws), target, draft)
+            truth.append(
+                {
+                    "type": "refine",
+                    "role": "director",
+                    "round": rnd,
+                    "target": target,
+                    "loc_source": loc_source,
+                    "applied": applied,
+                    "apply_path": path,
+                    "summary": f"round {rnd} refine: target={target} loc={loc_source} applied={applied} via {path}",
+                }
+            )
+            print(
+                f"[arch-b] {iid} round {rnd} refine: target={target} loc={loc_source} "
+                f"applied={applied} via {path} attempt={attempt} ({detail[:80]})",
+                flush=True,
+            )
+            if applied:
+                last_target = target
+                last_loc_source = loc_source
+                break
+            # edit failed to apply -> mark this target tried, advance to the next ranked
+            # candidate and retry within the round (no wasted harness eval).
+            if target not in tried_targets:
+                tried_targets.append(target)
+            if cand_cache is None:
+                cand_cache = _candidate_files(problem, f2p_fail, repo_files, ws)
+            nxt = _next_hypothesis(cand_cache, tried_targets)
+            target, loc_source = (nxt, "repomap") if nxt else ("", "")
         if not applied:
-            break  # cannot make progress; stop
+            break  # no candidate could be edited this round; stop
 
     final_patch = current_patch(ws)
     return {

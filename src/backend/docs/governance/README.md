@@ -103,7 +103,7 @@
 2. 外部插件准入守卫 CLI：
    - `python -m polaris.bootstrap.governance.architecture_guard_cli check_external_plugin --plugin-root <path> --mode hard-fail`
 3. 覆盖测试：
-   - `tests/test_external_cell_architecture_guard_cli.py`
+   - `polaris/tests/test_external_cell_architecture_guard_cli.py`
 
 注意：当前 CLI 只实现 `check_external_plugin` 子命令，不代表历史模板里的所有命令都已可执行。
 

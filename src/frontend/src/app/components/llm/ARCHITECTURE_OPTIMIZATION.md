@@ -1,5 +1,7 @@
 # LLM Settings Architecture Optimization
 
+> ⚠️ 历史快照 / 设计提案 (2026-06-07 审计)：本文档描述的 4 阶段优化方案从未落地。文中引用的 7 个数据管理类（`OptimizedDataManager`、`BatchDataManager`、`LazyDataManager`、`ReactiveDataManager`、`ConflictAwareDataManager`、`OptimisticDataManager`、`DebuggableDataManager`）以及 `EnhancedLLMSettingsTab` 组件在当前代码库中均不存在。实际唯一存在的数据管理实现是 `state/UnifiedLlmDataManagerV2.ts` 中的 `UnifiedLlmDataManagerV2`。本文档仅作历史设计参考，请勿据此编码。
+
 This document describes the comprehensive architecture optimizations implemented for the LLM Settings module.
 
 ## Overview

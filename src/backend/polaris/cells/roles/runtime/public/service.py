@@ -151,10 +151,12 @@ from polaris.cells.roles.runtime.public.contracts import (
     AggregateTakeoverDirectiveV1,
     AuditAggregateRuntimeIntegrationsQueryV1,
     BuildAggregateRolePlanQueryV1,
+    ExecuteRoleCapabilityInvocationCommandV1,
     ExecuteRoleSessionCommandV1,
     ExecuteRoleTaskCommandV1,
     GetRoleRuntimeStatusQueryV1,
     IRoleRuntime,
+    RoleCapabilityInvocationResultV1,
     RoleExecutionResultV1,
 )
 
@@ -220,6 +222,512 @@ _AGGREGATE_FAILURE_EVIDENCE_KEYS: dict[str, tuple[str, ...]] = {
     "empty_repo_map": ("repo_intelligence_result", "workspace", "language_filter"),
     "graph_boundary_violation": ("cell_id", "target_paths", "graph_edge"),
 }
+
+
+def _capability_invocation_failure(
+    command: ExecuteRoleCapabilityInvocationCommandV1,
+    *,
+    error_code: str,
+    error_message: str,
+    allowed: bool = False,
+    owner_cell: str = "",
+    evidence_refs: tuple[str, ...] = (),
+    metadata: Mapping[str, Any] | None = None,
+) -> RoleCapabilityInvocationResultV1:
+    invocation = command.invocation
+    return RoleCapabilityInvocationResultV1(
+        ok=False,
+        invocation_id=invocation.invocation_id,
+        role_id=command.runtime_object.identity.role_id,
+        capability_id=invocation.capability_id,
+        command_contract=invocation.command_contract,
+        allowed=allowed,
+        owner_cell=owner_cell,
+        payload_ref=invocation.payload_ref,
+        evidence_refs=evidence_refs,
+        metadata=metadata or {},
+        error_code=error_code,
+        error_message=error_message,
+    )
+
+
+def _payload_string(payload: Mapping[str, Any], key: str, default: str = "") -> str:
+    return str(payload.get(key) or default).strip()
+
+
+def _payload_mapping(payload: Mapping[str, Any], key: str) -> dict[str, Any] | None:
+    value = payload.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        return None
+    return dict(value)
+
+
+def _payload_string_tuple(payload: Mapping[str, Any], key: str) -> tuple[str, ...] | None:
+    value = payload.get(key)
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        token = value.strip()
+        return (token,) if token else ()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        rows: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            token = str(item or "").strip()
+            if token and token not in seen:
+                rows.append(token)
+                seen.add(token)
+        return tuple(rows)
+    return None
+
+
+def execute_role_capability_invocation(
+    command: ExecuteRoleCapabilityInvocationCommandV1,
+    *,
+    task_market_service: Any | None = None,
+    blueprint_service: Any | None = None,
+    verification_guard_service: Any | None = None,
+) -> RoleCapabilityInvocationResultV1:
+    """Execute a mounted role capability through its declared public contract."""
+    if not isinstance(command, ExecuteRoleCapabilityInvocationCommandV1):
+        raise TypeError("command must be an ExecuteRoleCapabilityInvocationCommandV1")
+
+    runtime_object = command.runtime_object
+    invocation = command.invocation
+    role_id = runtime_object.identity.role_id
+    if invocation.role_id != role_id:
+        return _capability_invocation_failure(
+            command,
+            error_code="role_mismatch",
+            error_message=f"invocation role {invocation.role_id!r} does not match runtime role {role_id!r}",
+        )
+
+    try:
+        capability = runtime_object.capability_ports.get(invocation.capability_id)
+    except KeyError:
+        return _capability_invocation_failure(
+            command,
+            error_code="capability_not_mounted",
+            error_message=f"capability {invocation.capability_id!r} is not mounted on role {role_id!r}",
+        )
+
+    if capability.allowed_roles and role_id not in capability.allowed_roles:
+        return _capability_invocation_failure(
+            command,
+            error_code="capability_role_denied",
+            error_message=f"role {role_id!r} is not allowed for capability {capability.capability_id!r}",
+            owner_cell=capability.owner_cell,
+        )
+
+    if invocation.command_contract != capability.contract_name:
+        return _capability_invocation_failure(
+            command,
+            error_code="capability_contract_mismatch",
+            error_message=(
+                f"invocation contract {invocation.command_contract!r} does not match "
+                f"mounted contract {capability.contract_name!r}"
+            ),
+            owner_cell=capability.owner_cell,
+        )
+
+    if (
+        runtime_object.capability_fingerprint.capability_id != capability.capability_id
+        or invocation.fingerprint_ref != runtime_object.capability_fingerprint.fingerprint
+    ):
+        return _capability_invocation_failure(
+            command,
+            error_code="capability_fingerprint_mismatch",
+            error_message=f"capability fingerprint does not unlock {capability.capability_id!r}",
+            owner_cell=capability.owner_cell,
+        )
+
+    is_not_task_market_dispatch = (
+        capability.capability_id != "dispatch_task_to_market"
+        or capability.owner_cell != "runtime.task_market"
+        or capability.contract_name != "PublishTaskWorkItemCommandV1"
+    )
+    is_blueprint_generation = (
+        capability.capability_id in {"generate_diff_specification", "record_arch_memo"}
+        and capability.owner_cell == "chief_engineer.blueprint"
+        and capability.contract_name == "GenerateTaskBlueprintCommandV1"
+    )
+    is_qa_pytest_verification = (
+        capability.capability_id == "invoke_container_pytest"
+        and capability.owner_cell == "factory.verification_guard"
+        and capability.contract_name == "VerifyCompletionCommandV1"
+    )
+    if is_qa_pytest_verification:
+        verification_commands = _payload_string_tuple(command.payload, "verification_commands")
+        if verification_commands is None or not verification_commands:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_verification_commands",
+                error_message="payload.verification_commands must be a non-empty sequence of strings",
+            )
+        evidence_paths = _payload_string_tuple(command.payload, "evidence_paths")
+        if evidence_paths is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_verification_evidence_paths",
+                error_message="payload.evidence_paths must be a sequence of strings when provided",
+            )
+        allowed_commands = _payload_string_tuple(command.payload, "allowed_commands")
+        if allowed_commands is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_verification_allowed_commands",
+                error_message="payload.allowed_commands must be a sequence of strings when provided",
+            )
+        claim_metadata = _payload_mapping(command.payload, "metadata")
+        if claim_metadata is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_verification_metadata",
+                error_message="payload.metadata must be a mapping when provided",
+            )
+        claim_metadata.update(
+            {
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+            }
+        )
+        try:
+            from polaris.cells.factory.verification_guard.public.contracts import (
+                VerificationClaim,
+                VerificationStatus,
+                VerifyCompletionCommandV1,
+            )
+            from polaris.cells.factory.verification_guard.public.service import (
+                verify_completion,
+            )
+
+            verification_command = VerifyCompletionCommandV1(
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                claim=VerificationClaim(
+                    claim_id=_payload_string(command.payload, "claim_id", invocation.invocation_id),
+                    claimed_outcome=_payload_string(command.payload, "claimed_outcome", "pytest verification"),
+                    verification_commands=verification_commands,
+                    evidence_paths=evidence_paths,
+                    timeout_seconds=int(command.payload.get("timeout_seconds", 120)),
+                    metadata=claim_metadata,
+                ),
+                strict_mode=bool(command.payload.get("strict_mode", True)),
+                allowed_commands=allowed_commands or None,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_verification_command",
+                error_message=str(exc),
+            )
+
+        try:
+            if verification_guard_service is None:
+                verification_result = verify_completion(verification_command)
+            else:
+                verification_result = verification_guard_service.verify_completion(verification_command)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="verification_guard_failed",
+                error_message=str(exc),
+            )
+
+        report = verification_result.report
+        status = report.status.name if report is not None else "ERROR"
+        result_ref = f"factory.verification_guard:report:{verification_command.claim.claim_id}"
+        metadata = {
+            "verification_ok": verification_result.ok,
+            "verification_status": status,
+            "execution_summary": report.execution_summary if report is not None else "",
+            "command_count": len(report.command_results) if report is not None else 0,
+        }
+        if report is not None:
+            metadata["evidence_collected"] = tuple(report.evidence_collected)
+            metadata["evidence_missing"] = tuple(report.evidence_missing)
+            metadata["mismatch_details"] = tuple(report.mismatch_details)
+        if not verification_result.ok or report is None or report.status != VerificationStatus.PASS:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=runtime_object.identity.task_id or "",
+                status=status,
+                metadata=metadata,
+                error_code="verification_failed",
+                error_message=verification_result.error_message
+                or (report.execution_summary if report is not None else "verification failed"),
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=runtime_object.identity.task_id or "",
+            status=status,
+            metadata=metadata,
+        )
+
+    if is_blueprint_generation:
+        blueprint_context = _payload_mapping(command.payload, "context")
+        if blueprint_context is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_blueprint_context",
+                error_message="payload.context must be a mapping when provided",
+            )
+        blueprint_constraints = _payload_mapping(command.payload, "constraints")
+        if blueprint_constraints is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_blueprint_constraints",
+                error_message="payload.constraints must be a mapping when provided",
+            )
+        blueprint_context.update(
+            {
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+            }
+        )
+        try:
+            from polaris.cells.chief_engineer.blueprint.public.contracts import GenerateTaskBlueprintCommandV1
+            from polaris.cells.chief_engineer.blueprint.public.service import generate_task_blueprint
+
+            blueprint_command = GenerateTaskBlueprintCommandV1(
+                task_id=_payload_string(command.payload, "task_id", runtime_object.identity.task_id or ""),
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                objective=_payload_string(command.payload, "objective"),
+                run_id=_payload_string(command.payload, "run_id", runtime_object.identity.run_id or "") or None,
+                constraints=blueprint_constraints,
+                context=blueprint_context,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_blueprint_command",
+                error_message=str(exc),
+            )
+
+        try:
+            if blueprint_service is None:
+                blueprint_result = generate_task_blueprint(blueprint_command)
+            else:
+                blueprint_result = blueprint_service.generate_task_blueprint(blueprint_command)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="blueprint_generation_failed",
+                error_message=str(exc),
+            )
+
+        blueprint_ref_id = blueprint_result.blueprint_id or blueprint_result.task_id
+        blueprint_ref = f"chief_engineer.blueprint:blueprint:{blueprint_ref_id}"
+        metadata = {
+            "blueprint_id": blueprint_result.blueprint_id or "",
+            "blueprint_path": blueprint_result.blueprint_path or "",
+            "summary": blueprint_result.summary,
+            "recommendations": tuple(blueprint_result.recommendations),
+            "risks": tuple(blueprint_result.risks),
+        }
+        if not blueprint_result.ok:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=blueprint_ref,
+                result_ref=blueprint_ref,
+                task_id=blueprint_result.task_id,
+                status=blueprint_result.status,
+                metadata=metadata,
+                error_code="blueprint_generation_rejected",
+                error_message=blueprint_result.summary or "blueprint generation was rejected",
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=blueprint_ref,
+            result_ref=blueprint_ref,
+            task_id=blueprint_result.task_id,
+            status=blueprint_result.status,
+            metadata=metadata,
+        )
+
+    if is_not_task_market_dispatch:
+        return _capability_invocation_failure(
+            command,
+            error_code="unsupported_capability_contract",
+            error_message=(f"capability {capability.capability_id!r} has no latest-only public invocation adapter"),
+            owner_cell=capability.owner_cell,
+        )
+
+    task_payload = _payload_mapping(command.payload, "payload")
+    if task_payload is None or not task_payload:
+        return _capability_invocation_failure(
+            command,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            error_code="invalid_task_market_payload",
+            error_message="payload.payload must be a non-empty mapping",
+        )
+    task_metadata = _payload_mapping(command.payload, "metadata")
+    if task_metadata is None:
+        return _capability_invocation_failure(
+            command,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            error_code="invalid_task_market_metadata",
+            error_message="payload.metadata must be a mapping when provided",
+        )
+
+    task_metadata.update(
+        {
+            "role_invocation_id": invocation.invocation_id,
+            "role_payload_ref": invocation.payload_ref,
+            "role_fingerprint_ref": invocation.fingerprint_ref,
+            "role_capability_id": capability.capability_id,
+        }
+    )
+
+    try:
+        from polaris.cells.runtime.task_market.public import (
+            PublishTaskWorkItemCommandV1,
+            get_task_market_service,
+        )
+
+        publish_command = PublishTaskWorkItemCommandV1(
+            workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+            trace_id=_payload_string(
+                command.payload,
+                "trace_id",
+                runtime_object.identity.run_id or invocation.invocation_id,
+            ),
+            run_id=_payload_string(
+                command.payload,
+                "run_id",
+                runtime_object.identity.run_id or invocation.invocation_id,
+            ),
+            task_id=_payload_string(command.payload, "task_id", runtime_object.identity.task_id or ""),
+            stage=_payload_string(command.payload, "stage", str(capability.metadata.get("target_stage") or "")),
+            source_role=role_id,
+            payload=task_payload,
+            priority=_payload_string(command.payload, "priority", "medium"),
+            max_attempts=int(command.payload.get("max_attempts", 3)),
+            metadata=task_metadata,
+            plan_id=_payload_string(command.payload, "plan_id"),
+            plan_revision_id=_payload_string(command.payload, "plan_revision_id"),
+            root_task_id=_payload_string(command.payload, "root_task_id"),
+            parent_task_id=_payload_string(command.payload, "parent_task_id"),
+            is_leaf=bool(command.payload.get("is_leaf", True)),
+            depends_on=tuple(command.payload.get("depends_on", ())),
+            requirement_digest=_payload_string(command.payload, "requirement_digest"),
+            constraint_digest=_payload_string(command.payload, "constraint_digest"),
+            summary_ref=_payload_string(command.payload, "summary_ref"),
+            superseded_by_revision=_payload_string(command.payload, "superseded_by_revision"),
+            change_policy=_payload_string(command.payload, "change_policy", "strict"),
+            compensation_group_id=_payload_string(command.payload, "compensation_group_id"),
+        )
+    except (TypeError, ValueError) as exc:
+        return _capability_invocation_failure(
+            command,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            error_code="invalid_task_market_command",
+            error_message=str(exc),
+        )
+
+    service = task_market_service or get_task_market_service()
+    try:
+        task_result = service.publish_work_item(publish_command)
+    except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+        return _capability_invocation_failure(
+            command,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            error_code="task_market_publish_failed",
+            error_message=str(exc),
+        )
+
+    task_ref = f"runtime.task_market:work-item:{task_result.task_id}"
+    if not task_result.ok:
+        return RoleCapabilityInvocationResultV1(
+            ok=False,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=task_ref,
+            result_ref=task_ref,
+            task_id=task_result.task_id,
+            status=task_result.status,
+            metadata={"task_market_version": task_result.version, "task_market_reason": task_result.reason},
+            error_code="task_market_publish_rejected",
+            error_message=task_result.reason or "task market publish was rejected",
+        )
+
+    return RoleCapabilityInvocationResultV1(
+        ok=True,
+        invocation_id=invocation.invocation_id,
+        role_id=role_id,
+        capability_id=capability.capability_id,
+        command_contract=capability.contract_name,
+        allowed=True,
+        owner_cell=capability.owner_cell,
+        payload_ref=task_ref,
+        result_ref=task_ref,
+        task_id=task_result.task_id,
+        status=task_result.status,
+        metadata={"task_market_version": task_result.version},
+    )
+
+
 _AGGREGATE_LOBE_SPECS: tuple[dict[str, Any], ...] = (
     {
         "lobe_id": "constraint_boundary_generator",
@@ -1757,10 +2265,18 @@ def _distill_aggregate_lobe_result(
         from polaris.cells.cognitive.knowledge_distiller.public.contracts import DistillSessionCommandV1
         from polaris.cells.cognitive.knowledge_distiller.public.service import KnowledgeDistillerService
 
+        distill_session_id = (
+            result.session_id
+            or command.session_id
+            or result.task_id
+            or result.run_id
+            or command.run_id
+            or f"aggregate:{selected_lobe.lobe_id}:{chain_turn_index}"
+        )
         distillation = KnowledgeDistillerService(workspace=command.workspace).distill_session(
             DistillSessionCommandV1(
                 workspace=command.workspace,
-                session_id=result.session_id or command.session_id or result.task_id,
+                session_id=distill_session_id,
                 run_id=result.run_id or command.run_id,
                 structured_findings=structured_findings,
                 task_progress=selected_lobe.phase,
@@ -4616,6 +5132,7 @@ __all__ = [
     "EngineResult",
     "EngineStatus",
     "EngineStrategy",
+    "ExecuteRoleCapabilityInvocationCommandV1",
     "ExecuteRoleSessionCommandV1",
     "ExecuteRoleTaskCommandV1",
     "FailureClass",
@@ -4633,6 +5150,7 @@ __all__ = [
     "ReActEngine",
     "RetryHint",
     "RoleAgent",
+    "RoleCapabilityInvocationResultV1",
     "RoleContextGateway",
     "RoleContextPolicy",
     "RoleDataPolicy",
@@ -4689,6 +5207,7 @@ __all__ = [
     "create_skill_loader",
     "create_worker_pool",
     "emit_seq_event",
+    "execute_role_capability_invocation",
     "execute_role_session_command",
     "execute_role_task_command",
     "get_engine",

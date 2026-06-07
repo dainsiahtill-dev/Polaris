@@ -347,10 +347,12 @@ All errors follow the unified `StructuredHTTPException` format (ADR-003):
 
 ```json
 {
-  "code": "ERROR_CODE",
-  "message": "Human-readable description",
-  "details": {
-    "key": "additional context"
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable description",
+    "details": {
+      "key": "additional context"
+    }
   }
 }
 ```
@@ -453,9 +455,11 @@ Most endpoints return an `ok` envelope:
 ### Error Envelope
 ```json
 {
-  "code": "ERROR_CODE",
-  "message": "Description",
-  "details": {}
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Description",
+    "details": {}
+  }
 }
 ```
 

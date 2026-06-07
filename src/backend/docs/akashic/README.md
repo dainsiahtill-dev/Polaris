@@ -89,8 +89,9 @@ await manager.shutdown()
 | 文档 | 内容 |
 |------|------|
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 详细架构设计与数据流 |
-| [IMPLEMENTATION.md](./IMPLEMENTATION.md) | 8 周分阶段实施计划 |
+| [INTEGRATION_PLAN.md](./INTEGRATION_PLAN.md) | 8 周分阶段实施计划 |
 | [API_REFERENCE.md](./API_REFERENCE.md) | 完整 API 参考 |
+| [MEMORY_ENGINE_STATEFLOW.md](./MEMORY_ENGINE_STATEFLOW.md) | 记忆引擎状态流图 |
 | [COGNITIVE_BOTTLENECK_DIAGNOSIS.md](./COGNITIVE_BOTTLENECK_DIAGNOSIS.md) | 问题诊断报告 |
 
 ## 代码结构
@@ -101,11 +102,16 @@ polaris/kernelone/akashic/
 ├── protocols.py             # Protocol 定义（端口抽象）
 ├── working_memory.py        # WorkingMemoryWindow 实现
 ├── semantic_cache.py        # SemanticCacheInterceptor 实现
+├── semantic_memory.py       # 语义记忆实现
+├── episodic_memory.py       # 情景记忆实现
+├── hybrid_memory.py         # 混合记忆实现
 ├── memory_manager.py        # MemoryManager + TierCoordinator
 ├── compression_daemon.py    # CompressionDaemon 实现
-├── integration.py            # DI 工厂函数
-└── docs/                    # 本文档目录
-    └── INTEGRATION_PLAN.md  # 详细整合计划
+├── integration.py           # DI 工厂函数
+├── knowledge_pipeline/      # 知识管线子模块
+└── tests/                   # 单元测试
+
+# 设计文档位于 src/backend/docs/akashic/（与本 README 同目录），例如 INTEGRATION_PLAN.md
 ```
 
 ## 设计原则

@@ -15,8 +15,8 @@
 
 | 组件 | 文件位置 | 功能描述 |
 |------|----------|----------|
-| **MemoryStore** | `src/backend/core/polaris_loop/anthropomorphic/memory_store.py` | 记忆持久化与检索 |
-| **ContextEngine** | `src/backend/core/polaris_loop/context_engine/engine.py` | 多源上下文收集与压缩 |
+| **MemoryStore** | `src/backend/polaris/kernelone/memory/memory_store.py` | 记忆持久化与检索 |
+| **ContextEngine** | `src/backend/polaris/kernelone/context/engine/engine.py` | 多源上下文收集与压缩 |
 
 #### 记忆结构 (MemoryItem)
 
@@ -583,7 +583,7 @@ def main():
     relevance_labels = json.load(open("data/relevance_labels.json"))
     
     # 初始化 MemoryStore
-    from anthropomorphic.memory_store import MemoryStore
+    from polaris.kernelone.memory.memory_store import MemoryStore
     store = MemoryStore("test_memory.jsonl")
     
     # 执行评测
@@ -852,9 +852,9 @@ COMP-01 ~ COMP-06: 组合复杂类
 
 ### C. 参考实现
 
-- **MemoryStore**: `src/backend/core/polaris_loop/anthropomorphic/memory_store.py`
-- **ContextEngine**: `src/backend/core/polaris_loop/context_engine/engine.py`
-- **MemoryItem Schema**: `src/backend/core/polaris_loop/anthropomorphic/schema.py`
+- **MemoryStore**: `src/backend/polaris/kernelone/memory/memory_store.py`
+- **ContextEngine**: `src/backend/polaris/kernelone/context/engine/engine.py`
+- **MemoryItem Schema**: `src/backend/polaris/kernelone/memory/schema.py`
 
 ---
 

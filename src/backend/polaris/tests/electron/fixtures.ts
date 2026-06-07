@@ -1,4 +1,4 @@
-import { _electron as electron, type ElectronApplication, type Page, test as base } from "@playwright/test";
+import { _electron as electron, type ElectronApplication, type Page, type TestInfo, test as base } from "@playwright/test";
 import fs from "fs";
 import http from "http";
 import os from "os";
@@ -22,6 +22,14 @@ type Fixtures = {
   testEnv: TestEnvironment;
   electronApp: ElectronApplication;
   window: Page;
+};
+
+type AutoAttachmentManifestEntry = {
+  name: string;
+  filename: string;
+  content_type: string;
+  fixture: string;
+  phase: "setup" | "finalizer";
 };
 
 function resolveRepoRoot(startDir: string): string {
@@ -62,6 +70,38 @@ function assertOutsideRepo(candidatePath: string, label: string): string {
     throw new Error(`[fixtures] ${label} must not be inside the Polaris meta-project repository.`);
   }
   return resolved;
+}
+
+function recordAutoAttachmentManifest(testInfo: TestInfo, entries: AutoAttachmentManifestEntry[]): void {
+  const manifestPath = testInfo.outputPath("e2e-auto-attachment-manifest.json");
+  let existingEntries: AutoAttachmentManifestEntry[] = [];
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(manifestPath, { encoding: "utf-8" })) as {
+        entries?: AutoAttachmentManifestEntry[];
+      };
+      existingEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    } catch {
+      existingEntries = [];
+    }
+  }
+  const merged = new Map<string, AutoAttachmentManifestEntry>();
+  for (const entry of [...existingEntries, ...entries]) {
+    merged.set(`${entry.fixture}:${entry.name}:${entry.filename}`, entry);
+  }
+  fs.writeFileSync(
+    manifestPath,
+    `${JSON.stringify(
+      {
+        schema: "polaris.e2e.auto_attachment_manifest.v1",
+        generated_at: new Date().toISOString(),
+        entries: Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name)),
+      },
+      null,
+      2,
+    )}\n`,
+    { encoding: "utf-8" },
+  );
 }
 
 function createIsolatedE2EHome(): string {
@@ -371,6 +411,22 @@ export const test = base.extend<Fixtures>({
     }
   },
   electronApp: async ({ mainProcessLogs, testEnv }, use, testInfo) => {
+    recordAutoAttachmentManifest(testInfo, [
+      {
+        name: "electron-main-stdout",
+        filename: "electron-main-stdout.log",
+        content_type: "text/plain",
+        fixture: "electronApp",
+        phase: "finalizer",
+      },
+      {
+        name: "electron-main-stderr",
+        filename: "electron-main-stderr.log",
+        content_type: "text/plain",
+        fixture: "electronApp",
+        phase: "finalizer",
+      },
+    ]);
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       KERNELONE_E2E: "1",
@@ -467,6 +523,29 @@ export const test = base.extend<Fixtures>({
     }
   },
   window: async ({ electronApp }, use, testInfo) => {
+    recordAutoAttachmentManifest(testInfo, [
+      {
+        name: "renderer-console",
+        filename: "renderer-console.jsonl",
+        content_type: "application/jsonlines",
+        fixture: "window",
+        phase: "finalizer",
+      },
+      {
+        name: "renderer-pageerror",
+        filename: "renderer-pageerror.jsonl",
+        content_type: "application/jsonlines",
+        fixture: "window",
+        phase: "finalizer",
+      },
+      {
+        name: "renderer-requestfailed",
+        filename: "renderer-requestfailed.jsonl",
+        content_type: "application/jsonlines",
+        fixture: "window",
+        phase: "finalizer",
+      },
+    ]);
     const page = await electronApp.firstWindow();
     const capturedDialogTexts = new Set<string>();
     const rendererConsole: string[] = [];

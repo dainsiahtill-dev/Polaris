@@ -30,10 +30,10 @@ from polaris.domain.cognitive_runtime import (
     TurnEnvelope,
 )
 from polaris.domain.verification.impact_analyzer import ImpactAnalyzer
-from polaris.domain.verification.write_gate import WriteGate
 from polaris.infrastructure.cognitive_runtime import CognitiveRuntimeSqliteStore
 from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
 from polaris.kernelone.context.context_os.runtime.engine import StateFirstContextOS
+from polaris.kernelone.llm.toolkit.write_scope import WriteGate
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
 logger = logging.getLogger(__name__)

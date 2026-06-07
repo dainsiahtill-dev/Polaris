@@ -1,8 +1,10 @@
 # ADR-0067: Benchmark Context Adapter 与孤 metrics.py 集成
 
 **日期**: 2026-03-28
-**状态**: 已接受
+**状态**: 已接受（路径勘误见下，2026-06-07 审计）
 **决策者**: 10人 Python 架构与代码治理实验室
+
+> ⚠️ 路径勘误 (2026-06-07 审计，CODE-IS-TRUTH)：metrics 集成已落地（`polaris/kernelone/benchmark/adapters/context_adapter.py` 已导入并调用 `metrics.recall_at_k` 等）。但下文两处文件引用与现状不符：`infrastructure/accel/eval/runner.py` 实际不存在（`eval/` 目录仅含 `metrics.py` 与 `__init__.py`）；规划新增的 `benchmark/adapters/context_fixture_mapper.py` 亦未落地（`adapters/` 目录现有 `agentic_adapter.py`、`context_adapter.py`、`strategy_adapter.py`）。
 
 ---
 
@@ -54,8 +56,7 @@ infrastructure/accel/eval/          benchmark/adapters/
 │   ├── recall_at_k()              │   ├── DI 注入 metrics
 │   ├── reciprocal_rank()          │   ├── 调用 compile_context()
 │   └── symbol_hit_rate()          │   └── 返回 ObservedBenchmarkRun
-└── runner.py (保留，无调用方)        └── context_fixture_mapper.py
-                                          └── 格式转换
+(无 runner.py，见顶部勘误)          (无 context_fixture_mapper.py，见顶部勘误)
 ```
 
 ---
@@ -66,14 +67,14 @@ infrastructure/accel/eval/          benchmark/adapters/
 |------|------|------|
 | `infrastructure/accel/eval/__init__.py` | 更新 | 添加显式 `__all__` 导出 metrics |
 | `benchmark/adapters/context_adapter.py` | 重写 | 实现真实 `_evaluate_context_metrics()` |
-| `benchmark/adapters/context_fixture_mapper.py` | 新增 | 格式映射 |
+| ~~`benchmark/adapters/context_fixture_mapper.py`~~ | 规划新增（未落地，见顶部勘误） | 格式映射 |
 | `benchmark/tests/test_context_adapter.py` | 新增 | 覆盖测试 |
 
 ---
 
 ## 向后兼容
 
-- `infrastructure/accel/eval/runner.py` **保留**，无调用方但不失为一种 reference implementation
+- ~~`infrastructure/accel/eval/runner.py` **保留**~~ 该文件实际不存在（见顶部勘误）；`eval/` 目录仅含 `metrics.py`
 - `metrics.py` 原有接口**不变**，仅新增调用方
 
 ---

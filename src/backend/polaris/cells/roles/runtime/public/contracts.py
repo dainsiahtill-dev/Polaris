@@ -165,6 +165,7 @@ class RoleAssetRef:
     contract_name: str
     ref: str
     asset_kind: str = "asset"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "asset_id", _require_non_empty("asset_id", self.asset_id))
@@ -172,6 +173,7 @@ class RoleAssetRef:
         object.__setattr__(self, "contract_name", _require_non_empty("contract_name", self.contract_name))
         object.__setattr__(self, "ref", _require_non_empty("ref", self.ref))
         object.__setattr__(self, "asset_kind", _require_non_empty("asset_kind", self.asset_kind))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
 @dataclass(frozen=True)
@@ -554,6 +556,474 @@ class RoleRuntimeObject:
         if self.identity.role_id != self.capability_fingerprint.role_id:
             raise ValueError("identity.role_id must match capability_fingerprint.role_id")
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class ExecuteRoleCapabilityInvocationCommandV1:
+    """Execute one mounted role capability through its public contract port."""
+
+    runtime_object: RoleRuntimeObject
+    invocation: RoleCapabilityInvocation
+    payload: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.runtime_object, RoleRuntimeObject):
+            raise TypeError("runtime_object must be a RoleRuntimeObject")
+        if not isinstance(self.invocation, RoleCapabilityInvocation):
+            raise TypeError("invocation must be a RoleCapabilityInvocation")
+        object.__setattr__(self, "payload", _to_dict_copy(self.payload))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleCapabilityInvocationResultV1:
+    """Structured result for a role capability RPC/API port invocation."""
+
+    ok: bool
+    invocation_id: str
+    role_id: str
+    capability_id: str
+    command_contract: str
+    allowed: bool
+    payload_ref: str = ""
+    owner_cell: str = ""
+    result_ref: str | None = None
+    task_id: str = ""
+    status: str = ""
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "invocation_id", _require_non_empty("invocation_id", self.invocation_id))
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
+        object.__setattr__(self, "command_contract", _require_non_empty("command_contract", self.command_contract))
+        object.__setattr__(self, "allowed", bool(self.allowed))
+        object.__setattr__(self, "payload_ref", str(self.payload_ref or "").strip())
+        object.__setattr__(self, "owner_cell", str(self.owner_cell or "").strip())
+        object.__setattr__(self, "result_ref", _normalize_optional_string(self.result_ref))
+        object.__setattr__(self, "task_id", str(self.task_id or "").strip())
+        object.__setattr__(self, "status", str(self.status or "").strip())
+        object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
+        object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        if self.ok and not self.allowed:
+            raise ValueError("successful capability invocation result must be allowed")
+        if not self.ok and not (self.error_code or self.error_message):
+            raise ValueError("failed capability invocation result must include error_code or error_message")
+
+
+@dataclass(frozen=True)
+class RoleRuntimeObjectSpec:
+    """Reusable runtime-object composition spec for one business role.
+
+    The spec is owned by `roles.runtime` as composition metadata only. It
+    mounts refs to assets and public contracts owned by their authoritative
+    Cells; it does not copy or mutate foreign Cell state.
+    """
+
+    role_id: str
+    asset_mounts: RoleAssetMountTable
+    capability_ports: RoleCapabilityPorts
+    default_capability_id: str
+    task_market_binding: RoleTaskMarketBinding = field(default_factory=RoleTaskMarketBinding)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        role_id = _require_non_empty("role_id", self.role_id)
+        object.__setattr__(self, "role_id", role_id)
+        if not isinstance(self.asset_mounts, RoleAssetMountTable):
+            raise TypeError("asset_mounts must be a RoleAssetMountTable")
+        if not isinstance(self.capability_ports, RoleCapabilityPorts):
+            raise TypeError("capability_ports must be a RoleCapabilityPorts")
+        default_capability_id = _require_non_empty("default_capability_id", self.default_capability_id)
+        self.capability_ports.get(default_capability_id)
+        object.__setattr__(self, "default_capability_id", default_capability_id)
+        if not isinstance(self.task_market_binding, RoleTaskMarketBinding):
+            raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def instantiate(
+        self,
+        *,
+        identity: RoleIdentity,
+        profile_binding: RoleProfileBinding,
+        ledger_binding: RoleLedgerBinding,
+        policy_fingerprint: str,
+        capability_id: str | None = None,
+        tool: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> RoleRuntimeObject:
+        """Instantiate a `RoleRuntimeObject` from this spec and runtime bindings."""
+        if not isinstance(identity, RoleIdentity):
+            raise TypeError("identity must be a RoleIdentity")
+        if not isinstance(profile_binding, RoleProfileBinding):
+            raise TypeError("profile_binding must be a RoleProfileBinding")
+        if not isinstance(ledger_binding, RoleLedgerBinding):
+            raise TypeError("ledger_binding must be a RoleLedgerBinding")
+        if identity.role_id != self.role_id:
+            raise ValueError("identity.role_id must match spec.role_id")
+        if profile_binding.role_id != self.role_id:
+            raise ValueError("profile_binding.role_id must match spec.role_id")
+
+        resolved_capability_id = _normalize_optional_string(capability_id) or self.default_capability_id
+        capability = self.capability_ports.get(resolved_capability_id)
+        if capability.allowed_roles and self.role_id not in capability.allowed_roles:
+            raise ValueError(f"capability {resolved_capability_id!r} is not allowed for role {self.role_id!r}")
+        resolved_tool = str(
+            tool or capability.endpoint_ref or f"{capability.owner_cell}:{capability.contract_name}"
+        ).strip()
+
+        runtime_metadata = _to_dict_copy(self.metadata)
+        runtime_metadata.update(_to_dict_copy(metadata))
+
+        return RoleRuntimeObject(
+            identity=identity,
+            profile_binding=profile_binding,
+            asset_mounts=self.asset_mounts,
+            capability_ports=self.capability_ports,
+            ledger_binding=ledger_binding,
+            task_market_binding=self.task_market_binding,
+            capability_fingerprint=RoleCapabilityFingerprint(
+                role_id=self.role_id,
+                capability_id=resolved_capability_id,
+                effect=capability.effect,
+                tool=resolved_tool,
+                policy_fingerprint=_require_non_empty("policy_fingerprint", policy_fingerprint),
+                profile_fingerprint=profile_binding.profile_fingerprint,
+            ),
+            metadata=runtime_metadata,
+        )
+
+
+def _asset_ref(
+    *,
+    asset_id: str,
+    owner_cell: str,
+    contract_name: str,
+    ref: str,
+    asset_kind: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> RoleAssetRef:
+    return RoleAssetRef(
+        asset_id=asset_id,
+        owner_cell=owner_cell,
+        contract_name=contract_name,
+        ref=ref,
+        asset_kind=asset_kind,
+        metadata=metadata or {},
+    )
+
+
+def _mount(
+    mount_name: str,
+    asset_ref: RoleAssetRef,
+    *,
+    access_mode: str = "read",
+    metadata: Mapping[str, Any] | None = None,
+) -> RoleAssetMount:
+    return RoleAssetMount(
+        mount_name=mount_name,
+        asset_ref=asset_ref,
+        access_mode=access_mode,
+        metadata=metadata or {},
+    )
+
+
+def _capability(
+    *,
+    capability_id: str,
+    owner_cell: str,
+    contract_name: str,
+    effect: str,
+    allowed_roles: tuple[str, ...],
+    endpoint_ref: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> RoleCapabilityDescriptor:
+    return RoleCapabilityDescriptor(
+        capability_id=capability_id,
+        owner_cell=owner_cell,
+        contract_name=contract_name,
+        effect=effect,
+        allowed_roles=allowed_roles,
+        endpoint_ref=endpoint_ref,
+        metadata=metadata or {},
+    )
+
+
+def _build_pm_runtime_spec() -> RoleRuntimeObjectSpec:
+    return RoleRuntimeObjectSpec(
+        role_id="pm",
+        asset_mounts=RoleAssetMountTable(
+            mounts=(
+                _mount(
+                    "ProjectFunctionIndex",
+                    _asset_ref(
+                        asset_id="project-function-index",
+                        owner_cell="context.catalog",
+                        contract_name="SearchCellsQueryV1",
+                        ref="context.catalog:project-function-index",
+                        asset_kind="project_function_index",
+                        metadata={
+                            "derived_from": (
+                                "context.catalog",
+                                "runtime.task_runtime",
+                                "runtime.task_market",
+                                "runtime.projection",
+                            )
+                        },
+                    ),
+                ),
+                _mount(
+                    "TaskGraph",
+                    _asset_ref(
+                        asset_id="task-graph",
+                        owner_cell="runtime.task_market",
+                        contract_name="QueryTaskMarketStatusV1",
+                        ref="runtime.task_market:task-graph",
+                        asset_kind="task_graph",
+                        metadata={"task_runtime_owner_cell": "runtime.task_runtime"},
+                    ),
+                ),
+                _mount(
+                    "RuntimeProjectionState",
+                    _asset_ref(
+                        asset_id="runtime-projection-state",
+                        owner_cell="runtime.projection",
+                        contract_name="RuntimeProjectionQueryV1",
+                        ref="runtime.projection:runtime-status",
+                        asset_kind="runtime_projection_state",
+                    ),
+                ),
+                _mount(
+                    "OpenLoopRegistry",
+                    _asset_ref(
+                        asset_id="open-loop-registry",
+                        owner_cell="runtime.task_market",
+                        contract_name="QueryTaskMarketStatusV1",
+                        ref="runtime.task_market:open-loops",
+                        asset_kind="open_loop_registry",
+                        metadata={"evidence_owner_cell": "audit.evidence"},
+                    ),
+                ),
+            )
+        ),
+        capability_ports=RoleCapabilityPorts(
+            capabilities=(
+                _capability(
+                    capability_id="dispatch_task_to_market",
+                    owner_cell="runtime.task_market",
+                    contract_name="PublishTaskWorkItemCommandV1",
+                    effect="task_market.publish",
+                    allowed_roles=("pm",),
+                    endpoint_ref="polaris.cells.runtime.task_market.public.service.TaskMarketService.publish_work_item",
+                    metadata={"target_stage": "pending_design"},
+                ),
+                _capability(
+                    capability_id="evaluate_critical_path",
+                    owner_cell="runtime.task_market",
+                    contract_name="QueryTaskMarketStatusV1",
+                    effect="task_market.read",
+                    allowed_roles=("pm",),
+                    endpoint_ref="polaris.cells.runtime.task_market.public.service.TaskMarketService.query_status",
+                    metadata={"requires_asset_mounts": ("TaskGraph", "RuntimeProjectionState")},
+                ),
+                _capability(
+                    capability_id="project_runtime_status",
+                    owner_cell="runtime.projection",
+                    contract_name="RuntimeProjectionQueryV1",
+                    effect="runtime_projection.read",
+                    allowed_roles=("pm",),
+                    endpoint_ref="polaris.cells.runtime.projection.public.contracts.RuntimeProjectionQueryV1",
+                    metadata={"requires_asset_mounts": ("TaskGraph", "RuntimeProjectionState")},
+                ),
+            )
+        ),
+        default_capability_id="dispatch_task_to_market",
+        task_market_binding=RoleTaskMarketBinding(),
+        metadata={"owner_cell": "roles.runtime", "business_role": "pm"},
+    )
+
+
+def _build_chief_engineer_runtime_spec() -> RoleRuntimeObjectSpec:
+    return RoleRuntimeObjectSpec(
+        role_id="chief_engineer",
+        asset_mounts=RoleAssetMountTable(
+            mounts=(
+                _mount(
+                    "BlueprintDatabase",
+                    _asset_ref(
+                        asset_id="blueprint-database",
+                        owner_cell="chief_engineer.blueprint",
+                        contract_name="GetBlueprintStatusQueryV1",
+                        ref="chief_engineer.blueprint:runtime/blueprints",
+                        asset_kind="blueprint_database",
+                    ),
+                ),
+                _mount(
+                    "ArchConstraintMemo",
+                    _asset_ref(
+                        asset_id="arch-constraint-memo",
+                        owner_cell="chief_engineer.blueprint",
+                        contract_name="GetBlueprintStatusQueryV1",
+                        ref="chief_engineer.blueprint:arch-constraint-memo",
+                        asset_kind="arch_constraint_memo",
+                        metadata={"governance_source_ref": "docs/graph/**"},
+                    ),
+                ),
+                _mount(
+                    "DiffMapArchive",
+                    _asset_ref(
+                        asset_id="diff-map-archive",
+                        owner_cell="chief_engineer.blueprint",
+                        contract_name="GetBlueprintStatusQueryV1",
+                        ref="chief_engineer.blueprint:diff-map-archive",
+                        asset_kind="diff_map_archive",
+                        metadata={"requires_blueprint_ref": True},
+                    ),
+                ),
+            )
+        ),
+        capability_ports=RoleCapabilityPorts(
+            capabilities=(
+                _capability(
+                    capability_id="generate_diff_specification",
+                    owner_cell="chief_engineer.blueprint",
+                    contract_name="GenerateTaskBlueprintCommandV1",
+                    effect="blueprint.generate",
+                    allowed_roles=("chief_engineer",),
+                    endpoint_ref="polaris.cells.chief_engineer.blueprint.public.service.generate_task_blueprint",
+                    metadata={"output_contract": "TaskBlueprintResultV1"},
+                ),
+                _capability(
+                    capability_id="verify_ast_dependency",
+                    owner_cell="code_intelligence.engine",
+                    contract_name="treesitter_find_symbol",
+                    effect="code_intelligence.read",
+                    allowed_roles=("chief_engineer",),
+                    endpoint_ref="code_intelligence.engine:treesitter_find_symbol",
+                    metadata={
+                        "fallback_contract": "repo_symbols_index",
+                        "public_contract_gap": "code_intelligence.engine public contracts module is graph-declared but pending",
+                    },
+                ),
+                _capability(
+                    capability_id="record_arch_memo",
+                    owner_cell="chief_engineer.blueprint",
+                    contract_name="GenerateTaskBlueprintCommandV1",
+                    effect="blueprint.memo.record",
+                    allowed_roles=("chief_engineer",),
+                    endpoint_ref="polaris.cells.chief_engineer.blueprint.public.service.generate_task_blueprint",
+                    metadata={"asset_mount": "ArchConstraintMemo"},
+                ),
+            )
+        ),
+        default_capability_id="generate_diff_specification",
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:pending_design"),
+        metadata={"owner_cell": "roles.runtime", "business_role": "chief_engineer"},
+    )
+
+
+def _build_qa_runtime_spec() -> RoleRuntimeObjectSpec:
+    return RoleRuntimeObjectSpec(
+        role_id="qa",
+        asset_mounts=RoleAssetMountTable(
+            mounts=(
+                _mount(
+                    "TruthLog",
+                    _asset_ref(
+                        asset_id="truth-log",
+                        owner_cell="audit.evidence",
+                        contract_name="QueryEvidenceEventsV1",
+                        ref="audit.evidence:runtime/evidence",
+                        asset_kind="truth_log",
+                        metadata={"runtime_receipt_owner_cell": "factory.cognitive_runtime"},
+                    ),
+                ),
+                _mount(
+                    "RegressionTestRegistry",
+                    _asset_ref(
+                        asset_id="regression-test-registry",
+                        owner_cell="qa.audit_verdict",
+                        contract_name="RunQaAuditCommandV1",
+                        ref="qa.audit_verdict:regression-test-registry",
+                        asset_kind="regression_test_registry",
+                        metadata={"verification_owner_cell": "factory.verification_guard"},
+                    ),
+                ),
+                _mount(
+                    "FailureSignalIndex",
+                    _asset_ref(
+                        asset_id="failure-signal-index",
+                        owner_cell="qa.audit_verdict",
+                        contract_name="RunQaAuditCommandV1",
+                        ref="qa.audit_verdict:failure-signal-index",
+                        asset_kind="failure_signal_index",
+                        metadata={"evidence_owner_cell": "audit.evidence"},
+                    ),
+                ),
+            )
+        ),
+        capability_ports=RoleCapabilityPorts(
+            capabilities=(
+                _capability(
+                    capability_id="invoke_container_pytest",
+                    owner_cell="factory.verification_guard",
+                    contract_name="VerifyCompletionCommandV1",
+                    effect="process.spawn:qa/pytest",
+                    allowed_roles=("qa",),
+                    endpoint_ref="polaris.cells.factory.verification_guard.public.service.verify_completion",
+                    metadata={"output_contract": "VerifyCompletionResultV1"},
+                ),
+                _capability(
+                    capability_id="parse_traceback_frames",
+                    owner_cell="qa.audit_verdict",
+                    contract_name="RunQaAuditCommandV1",
+                    effect="qa.failure_signal.parse",
+                    allowed_roles=("qa",),
+                    endpoint_ref="polaris.cells.qa.audit_verdict.public.contracts.RunQaAuditCommandV1",
+                    metadata={"output_asset_mount": "FailureSignalIndex"},
+                ),
+                _capability(
+                    capability_id="issue_audit_verdict",
+                    owner_cell="qa.audit_verdict",
+                    contract_name="RunQaAuditCommandV1",
+                    effect="qa.verdict.issue",
+                    allowed_roles=("qa",),
+                    endpoint_ref="polaris.cells.qa.audit_verdict.public.contracts.RunQaAuditCommandV1",
+                    metadata={"output_contract": "QaAuditResultV1"},
+                ),
+            )
+        ),
+        default_capability_id="invoke_container_pytest",
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:pending_qa"),
+        metadata={"owner_cell": "roles.runtime", "business_role": "qa"},
+    )
+
+
+def get_builtin_role_runtime_spec(role_id: str) -> RoleRuntimeObjectSpec:
+    """Return the built-in role runtime composition spec for a known role."""
+    normalized = _require_non_empty("role_id", role_id).lower().replace("-", "_")
+    aliases = {
+        "project_manager": "pm",
+        "ce": "chief_engineer",
+        "chiefengineer": "chief_engineer",
+        "quality_assurance": "qa",
+        "auditor": "qa",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized == "pm":
+        return _build_pm_runtime_spec()
+    if normalized == "chief_engineer":
+        return _build_chief_engineer_runtime_spec()
+    if normalized == "qa":
+        return _build_qa_runtime_spec()
+    raise KeyError(normalized)
 
 
 @dataclass(frozen=True)
@@ -1264,6 +1734,7 @@ __all__ = [
     "AggregateTakeoverDirectiveV1",
     "AuditAggregateRuntimeIntegrationsQueryV1",
     "BuildAggregateRolePlanQueryV1",
+    "ExecuteRoleCapabilityInvocationCommandV1",
     "ExecuteRoleSessionCommandV1",
     "ExecuteRoleTaskCommandV1",
     "GetRoleRuntimeStatusQueryV1",
@@ -1277,6 +1748,7 @@ __all__ = [
     "RoleCapabilityDescriptor",
     "RoleCapabilityFingerprint",
     "RoleCapabilityInvocation",
+    "RoleCapabilityInvocationResultV1",
     "RoleCapabilityPorts",
     "RoleExecutionResultV1",
     "RoleIdentity",
@@ -1284,6 +1756,7 @@ __all__ = [
     "RoleProfileBinding",
     "RoleRuntimeError",
     "RoleRuntimeObject",
+    "RoleRuntimeObjectSpec",
     "RoleStateCommitReceipt",
     "RoleStateCommitRequest",
     "RoleTaskCompletedEventV1",
@@ -1295,6 +1768,7 @@ __all__ = [
     "StandardStreamEvent",
     "StreamTurnOptions",
     "create_protocol_fsm",
+    "get_builtin_role_runtime_spec",
 ]
 
 

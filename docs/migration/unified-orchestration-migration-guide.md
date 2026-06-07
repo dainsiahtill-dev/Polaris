@@ -30,8 +30,8 @@
 
 **旧代码**:
 ```python
-from core.runtime_orchestrator import RuntimeOrchestrator
-from application.dto.process_launch import RunMode
+from polaris.cells.orchestration.workflow_runtime.public import RuntimeOrchestrator
+from polaris.cells.orchestration.workflow_runtime.public.process_launch import RunMode
 
 orchestrator = RuntimeOrchestrator()
 result = await orchestrator.spawn_pm(
@@ -42,8 +42,8 @@ result = await orchestrator.spawn_pm(
 
 **新代码**:
 ```python
-from core.orchestration import get_orchestration_service
-from application.dto.orchestration_contracts import (
+from polaris.cells.orchestration.workflow_runtime.public import get_orchestration_service
+from polaris.cells.orchestration.workflow_runtime.public import (
     OrchestrationRunRequest,
     OrchestrationMode,
     RoleEntrySpec,
@@ -79,7 +79,7 @@ qa_status = qa_service.get_status()
 
 **新代码**:
 ```python
-from core.orchestration import get_orchestration_service
+from polaris.cells.orchestration.workflow_runtime.public import get_orchestration_service
 
 service = await get_orchestration_service()
 snapshot = await service.query_run(run_id)
@@ -102,8 +102,8 @@ director_service.cancel()
 
 **新代码**:
 ```python
-from core.orchestration import get_orchestration_service
-from application.dto.orchestration_contracts import (
+from polaris.cells.orchestration.workflow_runtime.public import get_orchestration_service
+from polaris.cells.orchestration.workflow_runtime.public import (
     SignalRequest,
     OrchestrationSignal,
 )
@@ -142,7 +142,7 @@ await service.signal_run(
 
 ### 问题: 导入错误
 
-**症状**: `ModuleNotFoundError: No module named 'application'`
+**症状**: `ModuleNotFoundError: No module named 'polaris'`
 
 **解决**: 确保后端根目录在 Python 路径中
 ```python
@@ -158,7 +158,7 @@ sys.path.insert(0, str(backend_root))
 
 **解决**: 使用 `CompatibilityMapper` 确保映射正确
 ```python
-from application.dto.orchestration_contracts import CompatibilityMapper
+from polaris.cells.orchestration.workflow_runtime.public import CompatibilityMapper
 
 unified_status = CompatibilityMapper.legacy_status_to_unified(legacy_status)
 ```
@@ -170,14 +170,14 @@ unified_status = CompatibilityMapper.legacy_status_to_unified(legacy_status)
 **解决**: 检查导入顺序，优先导入契约类型
 ```python
 # 先导入契约类型（无副作用）
-from application.dto.orchestration_contracts import ...
+from polaris.cells.orchestration.workflow_runtime.public import ...  # 契约类型
 
 # 再导入服务实现
-from core.orchestration import ...
+from polaris.cells.orchestration.workflow_runtime.public import get_orchestration_service
 ```
 
 ## 支持
 
 如有问题，请参考：
 - [架构决策记录](../architecture/ADR-001-unified-orchestration-kernel.md)
-- [架构守护测试](../../tests/refactor/test_architecture_guard.py)
+- [架构守护测试](../../src/backend/polaris/tests/refactor/test_architecture_guard.py)

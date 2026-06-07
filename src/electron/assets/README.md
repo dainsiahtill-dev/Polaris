@@ -4,7 +4,7 @@
 
 ```
 electron/assets/
-├── Polaris-icon.png    # 原始图标 (1024x1024)
+├── polaris-icon.png    # 原始图标 (1024x1024)
 ├── icons/
 │   ├── icon-16.png         # 16x16
 │   ├── icon-32.png         # 32x32
@@ -47,4 +47,4 @@ icon: path.join(__dirname, 'assets', 'icons', 'icon.png')
 - 图标文件会自动在开发环境和打包环境中使用
 - Windows 系统主要使用 `.ico` 文件
 - macOS 和 Linux 系统使用 `.png` 文件
-- 如需更换图标，替换 `Polaris-icon.png` 后重新运行生成脚本
+- 如需更换图标，替换 `polaris-icon.png` 后重新运行生成脚本

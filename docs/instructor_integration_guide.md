@@ -26,7 +26,7 @@ python src/backend/server.py
 ### 代码级配置
 
 ```python
-from app.roles import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 
 # 显式启用
 kernel = RoleExecutionKernel(
@@ -56,7 +56,7 @@ kernel = RoleExecutionKernel(
 ### PM 任务输出
 
 ```python
-from app.roles.schemas import TaskListOutput
+from polaris.cells.roles.adapters.internal.schemas import TaskListOutput
 
 # 使用模型验证数据
 output = TaskListOutput(

@@ -28,11 +28,11 @@
 ├─────────────────────────────────────────────────────────────┤
 │  KernelOne 平台层: toolkit/* + engine/*                    │
 │  ├── definitions.py: 工具定义注册表                          │
-│  ├── executor.py: 工具执行器                                │
-│  ├── parsers.py: 协议解析器                                │
+│  ├── executor/: 工具执行器                                  │
+│  ├── parsers/: 协议解析器                                  │
 │  ├── protocol_kernel.py: 统一协议内核                       │
 │  ├── streaming_patch_buffer.py: 流式 PATCH 缓冲             │
-│  └── tool_normalization.py: 参数归一化                       │
+│  └── tool_normalization/: 参数归一化                         │
 ├─────────────────────────────────────────────────────────────┤
 │  Provider 适配层: provider_adapters/*                       │
 │  ├── base.py: 公共辅助函数 (serialize_transcript_for_prompt) │

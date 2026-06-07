@@ -10,7 +10,7 @@
 
 | 文档 | 描述 | 读者 |
 |------|------|------|
-| [研究计划书](CONTEXTOS_TURNENGINE_RESEARCH_INITIATIVE_20260412.md) | 完整的研究计划，含组织架构、路线图、预算 | 管理层、潜在专家 |
+| [研究计划书](../CONTEXTOS_TURNENGINE_RESEARCH_INITIATIVE_20260412.md) | 完整的研究计划，含组织架构、路线图、预算 | 管理层、潜在专家 |
 | [ContextOS审计清单](AUDIT_CHECKLIST_CONTEXTOS.md) | 详细的审计检查项和测试方法 | 审计专家 |
 | [专家面试模板](EXPERT_INTERVIEW_TEMPLATE.md) | 面试问题和评分标准 | 面试官 |
 | [启动会议程](KICKOFF_MEETING_AGENDA.md) | 启动会详细安排 | 组织者 |
@@ -170,7 +170,7 @@ origin/exp/ml-intent-detection    # 意图检测实验
 4. 安排启动会议
 
 ### 对于专家候选人
-1. 阅读 [研究计划书](CONTEXTOS_TURNENGINE_RESEARCH_INITIATIVE_20260412.md)
+1. 阅读 [研究计划书](../CONTEXTOS_TURNENGINE_RESEARCH_INITIATIVE_20260412.md)
 2. 准备技术面试 ([面试模板](EXPERT_INTERVIEW_TEMPLATE.md))
 3. 熟悉 [审计清单](AUDIT_CHECKLIST_CONTEXTOS.md)
 
@@ -184,7 +184,7 @@ origin/exp/ml-intent-detection    # 意图检测实验
 ## 相关文档
 
 ### 架构文档
-- `docs/governance/decisions/adr-0068-dead-loop-prevention.md`
+- `docs/governance/decisions/adr-0074-dead-loop-prevention.md`
 - `docs/blueprints/CONTEXT_PRUNING_RECOVERY_BLUEPRINT_20260412.md`
 
 ### 代码位置

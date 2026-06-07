@@ -879,23 +879,39 @@ class TestPhase6EventSourcingSafeguard:
     def test_context_os_snapshot_is_frozen(self) -> None:
         """ContextOSSnapshot must be frozen/immutable."""
         from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
+        from pydantic import ValidationError
 
         snapshot = ContextOSSnapshot(
             transcript_log=(),
         )
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             snapshot.transcript_log = ()  # type: ignore[index]
 
-    def test_transcript_log_is_tuple_immutable(self) -> None:
-        """transcript_log field must be a tuple (immutable)."""
-        from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
+    def test_transcript_log_requires_typed_events(self) -> None:
+        """transcript_log field must use typed TranscriptEventV2 entries."""
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
+        )
+        from pydantic import ValidationError
 
+        with pytest.raises(ValidationError):
+            ContextOSSnapshot(
+                transcript_log=(("user", "hello"), ("assistant", "hi")),
+            )
         snapshot = ContextOSSnapshot(
-            transcript_log=(("user", "hello"), ("assistant", "hi")),
+            transcript_log=(
+                TranscriptEvent(
+                    event_id="e1",
+                    sequence=1,
+                    role="user",
+                    kind="message",
+                    content="hello",
+                    route="user",
+                ),
+            ),
         )
         assert isinstance(snapshot.transcript_log, tuple)
-        with pytest.raises(AttributeError):
-            snapshot.transcript_log = ()  # type: ignore[index]
 
     def test_context_os_projection_compress_does_not_modify_snapshot(self) -> None:
         """compress() must NOT modify snapshot.transcript_log."""
@@ -914,7 +930,7 @@ class TestPhase6EventSourcingSafeguard:
                 kind="message",
                 content="hello",
                 route="user",
-                _metadata={},
+                metadata={},
             ),
             TranscriptEvent(
                 event_id="e2",
@@ -923,7 +939,7 @@ class TestPhase6EventSourcingSafeguard:
                 kind="message",
                 content="hi there",
                 route="assistant",
-                _metadata={},
+                metadata={},
             ),
             TranscriptEvent(
                 event_id="e3",
@@ -932,7 +948,7 @@ class TestPhase6EventSourcingSafeguard:
                 kind="tool_result",
                 content="tool result",
                 route="tool",
-                _metadata={},
+                metadata={},
             ),
         )
         snapshot = ContextOSSnapshot(
@@ -973,7 +989,7 @@ class TestPhase6EventSourcingSafeguard:
                 kind="message",
                 content="hello",
                 route="user",
-                _metadata={"is_root": True},  # Pinned event
+                metadata={"is_root": True},  # Pinned event
             ),
             TranscriptEvent(
                 event_id="e2",
@@ -982,7 +998,7 @@ class TestPhase6EventSourcingSafeguard:
                 kind="message",
                 content="hi there",
                 route="assistant",
-                _metadata={},
+                metadata={},
             ),
         )
         snapshot = ContextOSSnapshot(
@@ -1027,7 +1043,7 @@ class TestPhase6EventSourcingSafeguard:
                     kind="message",
                     content="hello world " * 50,  # Enough tokens to force compression
                     route="user",
-                    _metadata={},
+                    metadata={},
                 ),
             ),
         )

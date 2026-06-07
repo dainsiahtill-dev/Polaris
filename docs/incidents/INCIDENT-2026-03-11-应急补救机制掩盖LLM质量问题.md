@@ -1,5 +1,7 @@
 # INCIDENT-2026-03-11: 应急补救机制掩盖LLM质量问题
 
+> ⚠️ 历史快照 (2026-06-07 审计)：本事故记录中「文件证据」等章节引用的 `src/backend/app/...` 旧根路径已在 ACGA 2.0 迁移中删除并迁入 `src/backend/polaris/*`，仅作历史参考。
+
 ## 事件摘要
 
 **时间**: 2026-03-11
@@ -128,4 +130,4 @@ if self._should_trigger_emergency_write(raw_error, content):
 
 - [ADR-025](../adr/ADR-025-移除应急补救机制-诚实暴露错误.md)
 - [相关 PR](#) (待创建)
-- [压测框架文档](../testing/agent-stress-testing.md)
+- [压测框架文档](../../src/backend/polaris/tests/agent_stress/README.md)

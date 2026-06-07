@@ -67,7 +67,7 @@ consequences: "console/runtime/http 统一消费同一份干净流；代价是�
 
 本 ADR 由以下改动落地：
 
-- `polaris/cells/roles/kernel/internal/turn_engine.py`
+- `polaris/cells/roles/kernel/internal/turn_engine/`
   - 新增 stream thinking 合并与可见 turn 投影辅助方法
   - `run_stream()` 不再直接 yield provider 原始 `chunk` / `reasoning_chunk`
   - 改为在一轮结束后统一发布净化后的 `thinking_chunk` / `content_chunk`

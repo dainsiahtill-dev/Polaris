@@ -75,6 +75,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _SESSION_CONTINUITY_ENGINE = SessionContinuityEngine()
+ROLE_SESSION_AUDIT_EVENT_TYPES = frozenset(RoleSessionAuditService.EVENT_TYPES)
 
 
 # ==================== Request/Response Models ====================
@@ -125,6 +126,13 @@ class ExportRequest(BaseModel):
 
     include_messages: bool = True
     format: str = "json"  # json / markdown
+
+
+class AppendAuditEventRequest(BaseModel):
+    """Append a role-session audit event."""
+
+    event_type: str
+    details: dict[str, Any] | None = None
 
 
 class ExportToWorkflowRequest(BaseModel):
@@ -183,6 +191,11 @@ def _non_negative_int(value: Any, fallback: int = 0) -> int:
         if token.isdigit():
             return int(token)
     return fallback
+
+
+def _safe_export_token(value: str) -> str:
+    token = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(value or "").strip())
+    return token.strip("._") or "session"
 
 
 def _serialize_artifact(artifact: Any) -> dict[str, Any]:
@@ -1076,6 +1089,92 @@ async def get_audit(
             "total": _audit_total(audit_service, session_id, event_type, events, offset),
         }
 
+    except (RuntimeError, ValueError) as e:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
+
+
+@router.post("/v2/roles/sessions/{session_id}/audit/events", dependencies=[Depends(require_auth)])
+async def append_audit_event(
+    request: Request,
+    session_id: str,
+    payload: AppendAuditEventRequest,
+) -> dict[str, Any]:
+    """Append a role-session audit event without invoking a workflow."""
+    event_type = str(payload.event_type or "").strip()
+    if event_type not in ROLE_SESSION_AUDIT_EVENT_TYPES:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_AUDIT_EVENT_TYPE",
+            message=f"Unsupported role-session audit event type: {event_type}",
+        )
+
+    try:
+        with _role_session_service(request) as service:
+            session = service.get_session(session_id)
+            if not session:
+                raise StructuredHTTPException(
+                    status_code=404,
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
+                )
+
+        audit_service = RoleSessionAuditService(_workspace_path_for_session(session, request))
+        event = audit_service.append_audit_event(
+            session_id=session_id,
+            event_type=event_type,
+            details=payload.details or {},
+        )
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "event": event,
+        }
+    except (RuntimeError, ValueError) as e:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="REQUEST_ERROR",
+            message=str(e),
+        ) from e
+
+
+@router.post("/v2/roles/sessions/{session_id}/audit/export", dependencies=[Depends(require_auth)])
+async def export_audit_log(
+    request: Request,
+    session_id: str,
+) -> dict[str, Any]:
+    """Export a role-session audit log without starting a workflow."""
+    try:
+        with _role_session_service(request) as service:
+            session = service.get_session(session_id)
+            if not session:
+                raise StructuredHTTPException(
+                    status_code=404,
+                    code="SESSION_NOT_FOUND",
+                    message=f"Session not found: {session_id}",
+                )
+
+        session_workspace = _session_workspace(session, request)
+        audit_service = RoleSessionAuditService(Path(session_workspace))
+
+        from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
+
+        workspace_root = Path(session_workspace).resolve()
+        export_dir = workspace_root / get_workspace_metadata_dir_name() / "exports" / "role_sessions"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_target = export_dir / f"{_safe_export_token(session_id)}.audit.json"
+        export_path = audit_service.export_audit_log(session_id, export_target)
+        event_count = audit_service.get_event_count(session_id, None)
+
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "export_path": str(export_path),
+            "event_count": event_count,
+        }
     except (RuntimeError, ValueError) as e:
         raise StructuredHTTPException(
             status_code=400,

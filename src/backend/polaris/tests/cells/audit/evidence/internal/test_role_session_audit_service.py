@@ -109,6 +109,7 @@ def test_append_audit_event_emits_runtime_event(service: RoleSessionAuditService
     assert service._runtime.emit_event.call_count == 1  # type: ignore[attr-defined]
     kwargs = service._runtime.emit_event.call_args[1]  # type: ignore[attr-defined]
     assert kwargs["task_id"] == "role-session-sess-1"
+    assert kwargs["run_id"] == "role-session-sess-1"
     assert kwargs["action"]["name"] == "error_occurred"
 
 

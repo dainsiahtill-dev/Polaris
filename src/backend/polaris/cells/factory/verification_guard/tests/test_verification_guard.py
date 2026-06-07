@@ -26,6 +26,11 @@ from polaris.cells.factory.verification_guard.public.contracts import (
     VerificationReport,
     VerificationStatus,
     VerifyCompletionCommandV1,
+    VerifyCompletionResultV1,
+)
+from polaris.cells.factory.verification_guard.public.service import (
+    VerificationGuardService,
+    verify_completion,
 )
 
 if TYPE_CHECKING:
@@ -166,6 +171,37 @@ class TestVerifyCompletionCommand:
                 workspace="/tmp",
                 claim="not a claim",  # type: ignore[arg-type]
             )
+
+
+class TestVerificationGuardPublicService:
+    """Tests for the public VerificationGuard service boundary."""
+
+    def test_public_service_verifies_completion_command(self, sample_claim: VerificationClaim) -> None:
+        command = VerifyCompletionCommandV1(
+            workspace="/tmp",
+            claim=sample_claim,
+        )
+
+        result = verify_completion(command)
+
+        assert isinstance(result, VerifyCompletionResultV1)
+        assert result.ok is True
+        assert result.report is not None
+        assert result.report.status == VerificationStatus.PASS
+
+    def test_service_object_implements_public_contract(self, sample_claim: VerificationClaim) -> None:
+        service = VerificationGuardService()
+
+        result = service.verify_completion(
+            VerifyCompletionCommandV1(
+                workspace="/tmp",
+                claim=sample_claim,
+            )
+        )
+
+        assert result.ok is True
+        assert result.report is not None
+        assert result.report.claim_id == sample_claim.claim_id
 
 
 # =============================================================================

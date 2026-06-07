@@ -32,9 +32,9 @@
 
 这部分的核心入口在：
 
-- `src/backend/app/resident/service.py`
-- `src/backend/app/resident/storage.py`
-- `src/backend/app/resident/models.py`
+- `src/backend/polaris/cells/resident/autonomy/public/service.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/resident_storage.py`
+- `src/backend/polaris/domain/models/resident.py`
 
 ### 2. 让经验从“文本印象”升级为“结构化资产”
 
@@ -57,9 +57,9 @@ Polaris 当前 `AGI` 的重点不是空泛总结，而是把经验拆成可管�
 
 核心实现位于：
 
-- `src/backend/app/resident/decision_trace.py`
-- `src/backend/app/resident/meta_cognition.py`
-- `src/backend/app/resident/skill_foundry.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/decision_trace.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/meta_cognition.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/skill_foundry.py`
 
 ### 3. 让 PM / Director 不再是孤立执行器
 
@@ -75,9 +75,9 @@ Polaris 当前 `AGI` 的重点不是空泛总结，而是把经验拆成可管�
 
 关键入口：
 
-- `src/backend/app/resident/goal_governor.py`
-- `src/backend/app/resident/pm_bridge.py`
-- `src/backend/app/resident/service.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/goal_governor.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/pm_bridge.py`
+- `src/backend/polaris/cells/resident/autonomy/public/service.py`
 
 ### 4. 让系统开始具备“反思策略”的能力
 
@@ -94,9 +94,9 @@ Polaris 当前 `AGI` 的重点不是空泛总结，而是把经验拆成可管�
 
 核心实现位于：
 
-- `src/backend/app/resident/meta_cognition.py`
-- `src/backend/app/resident/counterfactual_lab.py`
-- `src/backend/app/resident/capability_graph.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/meta_cognition.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/counterfactual_lab.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/capability_graph.py`
 
 ### 5. 让系统开始具备受控自我改进的基础
 
@@ -114,7 +114,7 @@ Polaris 当前 `AGI` 的重点不是空泛总结，而是把经验拆成可管�
 
 核心实现位于：
 
-- `src/backend/app/resident/self_improvement_lab.py`
+- `src/backend/polaris/cells/resident/autonomy/internal/self_improvement_lab.py`
 
 ## 当前阶段的边界
 

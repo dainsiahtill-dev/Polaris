@@ -7,12 +7,13 @@ from typing import Any
 
 import yaml
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+POLARIS_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = POLARIS_ROOT.parent
 
 DEBT_REGISTER_PATH = BACKEND_ROOT / "docs" / "governance" / "debt.register.yaml"
 DEBT_REGISTER_SCHEMA_PATH = BACKEND_ROOT / "docs" / "governance" / "schemas" / "debt-register.schema.yaml"
 VERIFY_PACK_SCHEMA_PATH = BACKEND_ROOT / "docs" / "governance" / "schemas" / "verify-pack.schema.yaml"
-VERIFY_PACK_PATH = BACKEND_ROOT / "polaris" / "cells" / "roles" / "kernel" / "generated" / "verify.pack.json"
+VERIFY_PACK_PATH = POLARIS_ROOT / "cells" / "roles" / "kernel" / "generated" / "verify.pack.json"
 VERIFY_CARD_SCHEMA_PATH = BACKEND_ROOT / "docs" / "governance" / "schemas" / "verification-card.schema.yaml"
 VERIFY_CARD_PATH = (
     BACKEND_ROOT / "docs" / "governance" / "templates" / "verification-cards" / "vc-20260325-turn-engine-tool-loop.yaml"
@@ -50,8 +51,12 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _assert_repo_relative_file(path_text: str) -> None:
-    candidate = BACKEND_ROOT / Path(path_text)
-    assert candidate.exists(), f"missing linked asset: {path_text}"
+    relative_path = Path(path_text)
+    candidates = (
+        BACKEND_ROOT / relative_path,
+        POLARIS_ROOT / relative_path,
+    )
+    assert any(candidate.exists() for candidate in candidates), f"missing linked asset: {path_text}"
 
 
 def test_structural_bug_governance_files_exist() -> None:
