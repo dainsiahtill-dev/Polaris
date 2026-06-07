@@ -1,7 +1,7 @@
 from importlib import import_module
 from pathlib import Path
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 KERNELONE_ROOT = BACKEND_ROOT / "polaris"
 
 
