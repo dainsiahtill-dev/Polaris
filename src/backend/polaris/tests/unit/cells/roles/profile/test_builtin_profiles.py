@@ -354,13 +354,18 @@ class TestVersion:
 class TestProfileSpecificPolicies:
     """Validate role-specific policy expectations."""
 
-    def test_pm_has_project_management_tools(self) -> None:
+    def test_pm_has_readonly_reconnaissance_tools(self) -> None:
+        # PM 是"仅分析不执行"的角色(allow_code_write / allow_command_execution
+        # 均为 False)。其白名单在 SSOT(core_roles.yaml) 中是只读/侦察类工具,
+        # 而非任务写入工具——后者是已被收敛掉的历史 builtin 残留。
         pm = next(p for p in BUILTIN_PROFILES if p["role_id"] == "pm")
         whitelist = set(pm["tool_policy"]["whitelist"])
-        assert "task_create" in whitelist
-        assert "task_update" in whitelist
-        assert "todo_read" in whitelist
-        assert "todo_write" in whitelist
+        assert "scout_probe" in whitelist
+        assert "repo_tree" in whitelist
+        assert "read_file" in whitelist
+        # 分析型角色不得携带写入/编辑类工具
+        assert "precision_edit" not in whitelist
+        assert "write_file" not in whitelist
 
     def test_director_has_edit_tools(self) -> None:
         director = next(p for p in BUILTIN_PROFILES if p["role_id"] == "director")
