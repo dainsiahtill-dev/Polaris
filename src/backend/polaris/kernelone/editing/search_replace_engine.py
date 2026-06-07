@@ -396,6 +396,42 @@ def _precise_matcher_apply(
     return None
 
 
+def _replacer_chain_apply(
+    search_text: str,
+    replace_text: str,
+    original_text: str,
+) -> str | None:
+    """Apply the OpenCode-style replacer chain as a precise fuzzy tier (ADR-0062).
+
+    Iterates the canonical replacer chain (``editing.replacers.get_replacer_chain``).
+    Each replacer yields candidate substrings of ``original_text`` that match
+    ``search_text`` under its own strategy (exact, line-trimmed, block-anchor with
+    Levenshtein similarity, whitespace/indentation/escape normalization, …). The
+    first candidate that occurs **exactly once** in ``original_text`` is replaced.
+
+    The uniqueness guard is deliberate: a fuzzy match must never silently edit an
+    ambiguous location. A candidate appearing more than once is skipped, so this
+    tier only commits an edit when the target region is unambiguous.
+
+    Returns the edited text, or ``None`` when no replacer yields a unique match.
+    """
+    from polaris.kernelone.editing.replacers import get_replacer_chain
+
+    for replacer in get_replacer_chain():
+        # Replacers are duck-typed (each exposes a static ``find``); resolve it
+        # defensively so a malformed chain entry cannot break the tier.
+        find = getattr(replacer, "find", None)
+        if find is None:
+            continue
+        try:
+            for candidate in find(original_text, search_text):
+                if candidate and original_text.count(candidate) == 1:
+                    return original_text.replace(candidate, replace_text, 1)
+        except Exception:  # noqa: BLE001 - one buggy strategy must not break the chain
+            continue
+    return None
+
+
 def apply_fuzzy_search_replace(
     *,
     content: str,
@@ -404,7 +440,7 @@ def apply_fuzzy_search_replace(
 ) -> str | None:
     """Apply fuzzy replacement when exact match is unavailable.
 
-    按优先级尝试 10 种匹配策略:
+    按优先级尝试 11 种匹配策略:
     1. 精确匹配 (unique window)
     2. 空白规范化匹配
     3. 前导空白偏移匹配
@@ -414,7 +450,8 @@ def apply_fuzzy_search_replace(
     7. DMP (diff-match-patch) 匹配
     8. DMP 行级匹配
     9. 组合预处理匹配
-    10. 序列匹配 (SequenceMatcher)
+    10. OpenCode replacer 链 (block-anchor 等精确模糊策略, ADR-0062)
+    11. 序列匹配 (SequenceMatcher, 最宽松回退)
     """
     if not content or not search:
         return None
@@ -473,6 +510,14 @@ def apply_fuzzy_search_replace(
             )
             if result is not None:
                 return result
+
+    # ADR-0062: canonical OpenCode replacer chain as the precise tier before the
+    # loose SequenceMatcher fallback. It resolves block-anchor-style edits (exact
+    # boundary anchors + fuzzy middle) that the strategies above miss, with a
+    # uniqueness guard so it never edits an ambiguous region.
+    replacer_res = _replacer_chain_apply(search, replace, content)
+    if replacer_res is not None:
+        return replacer_res
 
     return _sequence_match_apply(search, replace, content)
 
