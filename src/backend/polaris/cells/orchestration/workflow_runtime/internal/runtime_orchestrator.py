@@ -35,7 +35,7 @@ from typing import Any
 from polaris.cells.orchestration.workflow_runtime.public.process_launch import ProcessLaunchRequest, RunMode
 
 from .event_stream import EventLevel, EventStream, EventType, OrchestrationEvent
-from .process_launcher import ProcessLauncher
+from .process_launcher import LauncherError, ProcessLauncher
 
 _logger = logging.getLogger(__name__)
 
@@ -389,7 +389,12 @@ class RuntimeOrchestrator:
                 # Retry if policy allows
                 await self._maybe_restart(handle)
 
-        except (RuntimeError, ValueError) as e:
+        except (LauncherError, RuntimeError, ValueError) as e:
+            # LauncherError is ProcessLauncher.launch()'s documented failure mode
+            # and subclasses Exception (not RuntimeError/ValueError), so it must be
+            # named explicitly here — otherwise a launch failure escapes submit()
+            # and crashes the caller instead of flowing into the FAILED state and
+            # restart policy below.
             handle.state = ServiceState.FAILED
             handle.last_error = str(e)
             handle.end_time = datetime.now()
@@ -400,6 +405,9 @@ class RuntimeOrchestrator:
                 service_id=handle.id,
                 error=str(e),
             )
+
+            # Retry if policy allows (mirrors the broker-returned-failure branch).
+            await self._maybe_restart(handle)
 
     async def _monitor_service(self, handle: ServiceHandle) -> None:
         """Monitor a service and update state.

@@ -82,6 +82,27 @@ class TestRuntimeOrchestrator:
             assert status["name"] == "pm"
 
     @pytest.mark.asyncio
+    async def test_submit_handles_launcher_error(self, orchestrator: RuntimeOrchestrator) -> None:
+        """A LauncherError raised by launch() must mark the service FAILED, not crash submit()."""
+        from polaris.cells.orchestration.workflow_runtime.internal.process_launcher import LauncherError
+
+        with patch.object(
+            orchestrator._launcher,
+            "launch",
+            new_callable=AsyncMock,
+            side_effect=LauncherError("broker exploded", stage="launch"),
+        ):
+            definition = ServiceDefinition(
+                name="pm",
+                command=["echo", "hi"],
+                working_dir=Path("."),
+            )
+            # Must not propagate: the orchestrator owns failure handling.
+            handle = await orchestrator.submit(definition)
+            assert handle.state == ServiceState.FAILED
+            assert "broker exploded" in (handle.last_error or "")
+
+    @pytest.mark.asyncio
     async def test_terminate_not_running(self, orchestrator: RuntimeOrchestrator) -> None:
         definition = ServiceDefinition(
             name="pm",
