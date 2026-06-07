@@ -1349,6 +1349,7 @@ cells:
         - InstantiateRoleRuntimeObjectCommandV1
         - ExecuteRoleTaskMarketLifecycleCommandV1
         - ExecuteRoleCapabilityInvocationCommandV1
+        - AssembleRoleRuntimeChainCommandV1
         - RoleStateCommitRequest
         - ExecuteRoleTaskCommandV1
         - ExecuteRoleSessionCommandV1
@@ -1364,6 +1365,7 @@ cells:
         - RoleRuntimeObjectResultV1
         - RoleTaskMarketLifecycleResultV1
         - RoleCapabilityInvocationResultV1
+        - RoleRuntimeChainAssemblyResultV1
         - RoleStateCommitReceipt
         - RoleExecutionResultV1
         - AggregateRolePlanResultV1
@@ -1421,6 +1423,7 @@ cells:
       - fs.write:runtime/cognitive_runtime/*
       - ws.outbound:runtime/*
       - process.spawn:roles/*
+      - process.spawn:director/*
       - bus.publish:agent_messages/*
       - bus.consume:agent_messages/*
       - task_market.publish:*
@@ -1435,6 +1438,7 @@ cells:
       - mutation.guard:workspace
       - architect.validate_cell_boundary
       - code_intelligence.read
+      - change_set.validate
       - runtime_receipt.record
       - handoff.export
     verification:

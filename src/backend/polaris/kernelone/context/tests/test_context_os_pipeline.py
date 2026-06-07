@@ -258,6 +258,37 @@ class TestBudgetPlanner:
         assert result.budget_plan.model_context_window == 128000
         assert result.budget_plan.validation_error == ""
 
+    def test_process_clamps_over_budget_projection_instead_of_raising(
+        self,
+        policy: StateFirstContextOSPolicy,
+        sample_working_state: WorkingState,
+    ) -> None:
+        oversized_event = TranscriptEvent(
+            event_id="evt_oversized",
+            sequence=0,
+            role="user",
+            kind="user_turn",
+            route="semantic",
+            content="large context payload " * 12000,
+            source_turns=("t0",),
+            artifact_id=None,
+            created_at="2026-04-11T00:00:00Z",
+            metadata={},
+        )
+        canon_out = CanonicalizerOutput(
+            transcript=(oversized_event,),
+            artifacts=(),
+            resolved_followup=None,
+        )
+        patcher_out = StatePatcherOutput(working_state=sample_working_state)
+        planner = BudgetPlanner(policy=policy, resolved_context_window=16384)
+
+        result = planner.process(patcher_out, canon_out)
+
+        assert isinstance(result.budget_plan, BudgetPlan)
+        assert result.budget_plan.validation_error.startswith("BudgetPlan invariant violated")
+        assert result.budget_plan.expected_next_input_tokens == result.budget_plan.model_context_window
+
 
 # ---------------------------------------------------------------------------
 # Stage 5: WindowCollector Tests
@@ -432,7 +463,7 @@ class TestPipelineRunner:
     def test_runner_empty_input(self, policy: StateFirstContextOSPolicy) -> None:
         runner = PipelineRunner(policy=policy)
         inp = PipelineInput(messages=[])
-        projection = runner.project(inp)
+        projection, _report = runner.project(inp)
         assert projection is not None
         assert projection.snapshot is not None
         assert projection.head_anchor == ""
@@ -444,7 +475,7 @@ class TestPipelineRunner:
                 {"role": "user", "content": "Hello, world!", "sequence": "0"},
             ]
         )
-        projection = runner.project(inp)
+        projection, _report = runner.project(inp)
         assert projection is not None
         assert len(projection.snapshot.transcript_log) == 1
         assert projection.snapshot.transcript_log[0].content == "Hello, world!"

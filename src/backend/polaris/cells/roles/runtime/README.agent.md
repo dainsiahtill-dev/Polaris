@@ -29,6 +29,7 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 - `fs.write:runtime/cognitive_runtime/*`
 - `ws.outbound:runtime/*`
 - `process.spawn:roles/*`
+- `process.spawn:director/*`
 - `bus.publish:agent_messages/*`
 - `bus.consume:agent_messages/*`
 - `task_market.publish:*`
@@ -43,6 +44,7 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 - `mutation.guard:workspace`
 - `architect.validate_cell_boundary`
 - `code_intelligence.read`
+- `change_set.validate`
 - `runtime_receipt.record`
 - `handoff.export`
 
@@ -51,6 +53,7 @@ Defined in `public/contracts.py`:
 - `InstantiateRoleRuntimeObjectCommandV1`
 - `ExecuteRoleTaskMarketLifecycleCommandV1`
 - `ExecuteRoleCapabilityInvocationCommandV1`
+- `AssembleRoleRuntimeChainCommandV1`
 - `RoleStateCommitRequest`
 - `ExecuteRoleTaskCommandV1`
 - `ExecuteRoleSessionCommandV1`
@@ -58,6 +61,7 @@ Defined in `public/contracts.py`:
 - `RoleRuntimeObjectResultV1`
 - `RoleTaskMarketLifecycleResultV1`
 - `RoleCapabilityInvocationResultV1`
+- `RoleRuntimeChainAssemblyResultV1`
 - `RoleStateCommitReceipt`
 - `RoleTaskStartedEventV1`
 - `RoleTaskCompletedEventV1`
@@ -85,10 +89,17 @@ Defined in `public/contracts.py`:
   `execute_role_task_market_lifecycle(ExecuteRoleTaskMarketLifecycleCommandV1)`
   to translate role-bound claim/lease/ack/fail/requeue requests into
   `runtime.task_market` public contracts.
+- Phase 5 chain assembly uses
+  `assemble_role_runtime_chain(AssembleRoleRuntimeChainCommandV1)` to assemble
+  PM, Chief Engineer, Director, QA, audit evidence, Turn Ledger, receipt,
+  handoff, Task Market, and Runtime Projection refs into a typed
+  `RoleRuntimeChainEnvelope`; it is pure refs-only assembly and does not write a
+  second Task Market, ledger, handoff pack, receipt store, or projection.
 - Role state commits use `commit_role_state(RoleStateCommitRequest)` to bind an
   existing `roles.kernel` commit receipt to `factory.cognitive_runtime`
-  `RecordRuntimeReceiptCommandV1` and `ExportHandoffPackCommandV1`; runtime does
-  not create a second Turn Ledger or receipt store.
+  `ValidateChangeSetCommandV1`, `RecordRuntimeReceiptCommandV1`, and
+  `ExportHandoffPackCommandV1`; runtime does not create a second Turn Ledger,
+  change-set validator, handoff system, or receipt store.
 - PM dispatch delegates to `runtime.task_market`; Chief Engineer diff-spec and
   architecture memo generation delegate to `chief_engineer.blueprint` with
   mounted `BlueprintDatabase`, `ArchConstraintMemo`, and `DiffMapArchive` refs
@@ -98,6 +109,11 @@ Defined in `public/contracts.py`:
   stages, projection refs, and mounted asset refs from that public result; PM
   runtime status projection delegates to an injected `runtime.projection` public
   service using `RuntimeProjectionQueryV1`.
+- Director task execution mounts `ExecutionTask`, `DirectorExecutionState`, and
+  `DirectorEvidenceTrail` refs, then delegates to
+  `director.execution.public.service.execute_director_task` with
+  `ExecuteDirectorTaskCommandV1`; runtime objects keep only result/evidence refs
+  and capability metadata.
 - QA pytest verification delegates to `factory.verification_guard` and requires
   both the `qa` role runtime object and QA capability fingerprint before any
   verification command is built, even if a capability port is misconfigured.

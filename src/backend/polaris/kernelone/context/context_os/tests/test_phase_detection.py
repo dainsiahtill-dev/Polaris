@@ -344,3 +344,15 @@ class TestPhaseAwareBudgetPlanner:
         )
         # Should have validation error due to small window
         assert plan.validation_error != "" or plan.model_context_window >= 4096
+
+    def test_plan_budget_validation_error_clamps_projection(self) -> None:
+        planner = PhaseAwareBudgetPlanner(resolved_context_window=16384)
+        plan = planner.plan_budget(
+            phase=TaskPhase.IMPLEMENTATION,
+            transcript_tokens=30000,
+            artifact_tokens=1000,
+            p95_tool_result_tokens=3000,
+        )
+
+        assert plan.validation_error.startswith("BudgetPlan invariant violated")
+        assert plan.expected_next_input_tokens == plan.model_context_window

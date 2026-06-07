@@ -23,9 +23,10 @@ public_contracts:
   - polaris.cells.roles.runtime.public.contracts
   commands:
   - InstantiateRoleRuntimeObjectCommandV1
-  - ExecuteRoleTaskMarketLifecycleCommandV1
-  - ExecuteRoleCapabilityInvocationCommandV1
-  - RoleStateCommitRequest
+- ExecuteRoleTaskMarketLifecycleCommandV1
+- ExecuteRoleCapabilityInvocationCommandV1
+- AssembleRoleRuntimeChainCommandV1
+- RoleStateCommitRequest
   - ExecuteRoleTaskCommandV1
   - ExecuteRoleSessionCommandV1
   queries:
@@ -35,9 +36,10 @@ public_contracts:
   - RoleTaskCompletedEventV1
   results:
   - RoleRuntimeObjectResultV1
-  - RoleTaskMarketLifecycleResultV1
-  - RoleCapabilityInvocationResultV1
-  - RoleStateCommitReceipt
+- RoleTaskMarketLifecycleResultV1
+- RoleCapabilityInvocationResultV1
+- RoleRuntimeChainAssemblyResultV1
+- RoleStateCommitReceipt
   - RoleExecutionResultV1
   errors:
   - RoleRuntimeErrorV1
@@ -79,6 +81,7 @@ effects_allowed:
 - fs.write:runtime/events/*
 - ws.outbound:runtime/*
 - process.spawn:roles/*
+- process.spawn:director/*
 - bus.publish:agent_messages/*
 - bus.consume:agent_messages/*
 - task_market.publish:*
@@ -93,6 +96,7 @@ effects_allowed:
 - mutation.guard:workspace
 - architect.validate_cell_boundary
 - code_intelligence.read
+- change_set.validate
 - runtime_receipt.record
 - handoff.export
 verification:

@@ -13,6 +13,7 @@ purpose: 'FACADE CELL (migration in progress). Acts as the stable public contrac
   '
 current_modules:
 - polaris.cells.director.execution.public.contracts
+- polaris.cells.director.execution.public.service
 tags:
 - composite
 - facade
@@ -23,6 +24,7 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.director.execution.public.contracts
+  - polaris.cells.director.execution.public.service
   commands:
   - ExecuteDirectorTaskCommandV1
   - RetryDirectorTaskCommandV1
@@ -70,6 +72,7 @@ verification:
   tests:
   - tests/test_director_logic.py
   - tests/test_director_service_convergence.py
+  - polaris/cells/director/execution/tests/test_execution_contracts.py
   - polaris/cells/director/execution/tests/test_cognitive_runtime_shadow.py
   gaps:
   - 'Phase 0: kernelone/tools canonical consolidation — COMPLETE.'

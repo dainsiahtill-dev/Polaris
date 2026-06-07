@@ -67,7 +67,7 @@ def sample_request():
         role="pm",
         suites=["connectivity"],
         context={},
-        options={},
+        options={"update_index": False},
     )
 
 
@@ -185,6 +185,7 @@ class TestTimeoutProtection:
             provider_id="test",
             model="test",
             suites=["connectivity"],
+            options={"update_index": False},
         )
 
         report = await runner.run(request)
@@ -217,7 +218,7 @@ class TestTimeoutProtection:
             provider_id="test",
             model="test",
             suites=["connectivity"],
-            options={"suite_timeout_sec": 0.05},  # 50ms timeout
+            options={"suite_timeout_sec": 0.05, "update_index": False},  # 50ms timeout
         )
 
         report = await runner.run(request)
@@ -254,6 +255,7 @@ class TestTimeoutProtection:
             provider_id="test",
             model="test",
             suites=["connectivity"],
+            options={"update_index": False},
         )
 
         # Should complete without timeout

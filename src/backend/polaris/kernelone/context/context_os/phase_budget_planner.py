@@ -281,6 +281,7 @@ class PhaseAwareBudgetPlanner:
                 f"({expected_next_input_tokens}) exceeds model_context_window "
                 f"({window}) by {overrun} tokens"
             )
+            expected_next_input_tokens = window
 
         plan = PhaseAwareBudgetPlan(
             phase=phase,

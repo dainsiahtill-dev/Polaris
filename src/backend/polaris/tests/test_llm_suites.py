@@ -15,6 +15,9 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from polaris.kernelone.llm.providers.base_provider import BaseProvider
+from polaris.kernelone.llm.shared_contracts import Usage
+from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult
 
 # Direct import from internal module path using __import__ to bypass package __init__
 # This avoids circular import issues with evaluation cell
@@ -25,10 +28,6 @@ run_response_suite = _suites_spec.run_response_suite
 run_thinking_suite = _suites_spec.run_thinking_suite
 run_qualification_suite = _suites_spec.run_qualification_suite
 run_interview_suite = _suites_spec.run_interview_suite
-
-from polaris.kernelone.llm.providers.base_provider import BaseProvider
-from polaris.kernelone.llm.shared_contracts import Usage
-from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult
 
 # =============================================================================
 # Fixtures

@@ -15,6 +15,22 @@ from polaris.cells.director.execution.public.contracts import (
     GetDirectorTaskStatusQueryV1,
     RetryDirectorTaskCommandV1,
 )
+from polaris.domain.entities import Task, TaskEvidence, TaskResult
+
+
+class FakeDirectorExecutionService:
+    def __init__(self, *, success: bool = True) -> None:
+        self.success = success
+        self.executed_tasks: list[Task] = []
+
+    async def _execute_task_work(self, task: Task) -> TaskResult:
+        self.executed_tasks.append(task)
+        return TaskResult(
+            success=self.success,
+            output="applied patch" if self.success else "",
+            error=None if self.success else "patch failed",
+            evidence=(TaskEvidence(type="file", path="src/app.py"),),
+        )
 
 
 class TestExecuteDirectorTaskCommandV1:
@@ -100,6 +116,39 @@ class TestExecuteDirectorTaskCommandV1:
             metadata={"priority": "high", "tags": ["urgent"]},
         )
         assert cmd.metadata == {"priority": "high", "tags": ["urgent"]}
+
+
+class TestExecuteDirectorTaskPublicService:
+    def test_execute_director_task_maps_public_command_to_typed_result(self) -> None:
+        from polaris.cells.director.execution.public.service import execute_director_task
+
+        service = FakeDirectorExecutionService()
+        result = execute_director_task(
+            ExecuteDirectorTaskCommandV1(
+                task_id="task-123",
+                workspace="/repo",
+                instruction="Apply approved diff",
+                run_id="run-1",
+                metadata={"command": "python -m pytest"},
+            ),
+            director_service=service,
+        )
+
+        assert result == DirectorExecutionResultV1(
+            ok=True,
+            task_id="task-123",
+            workspace="/repo",
+            status="completed",
+            run_id="run-1",
+            evidence_paths=("src/app.py",),
+            output_summary="applied patch",
+        )
+        assert len(service.executed_tasks) == 1
+        task = service.executed_tasks[0]
+        assert task.id == "task-123"
+        assert task.subject == "Apply approved diff"
+        assert task.command == "python -m pytest"
+        assert task.metadata["role_capability_id"] == "execute_director_task"
 
 
 class TestRetryDirectorTaskCommandV1:

@@ -857,6 +857,7 @@ class BudgetPlanner:
                 f"({expected_next_input_tokens}) exceeds model_context_window "
                 f"({window}) by {overrun} tokens"
             )
+            expected_next_input_tokens = window
 
         budget_plan = BudgetPlan(
             model_context_window=window,

@@ -574,6 +574,159 @@ class RoleStateCommitReceipt:
 
 
 @dataclass(frozen=True)
+class RoleRuntimeChainStepRef:
+    """One refs-only step in a multi-role runtime execution chain."""
+
+    role_id: str
+    stage: str
+    capability_id: str
+    owner_cell: str
+    command_contract: str
+    result_ref: str
+    task_ref: str | None = None
+    work_item_ref: str | None = None
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    receipt_refs: tuple[str, ...] = field(default_factory=tuple)
+    handoff_refs: tuple[str, ...] = field(default_factory=tuple)
+    status: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "role_id", _require_non_empty("role_id", self.role_id))
+        object.__setattr__(self, "stage", _require_non_empty("stage", self.stage))
+        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(self, "command_contract", _require_non_empty("command_contract", self.command_contract))
+        object.__setattr__(self, "result_ref", _require_non_empty("result_ref", self.result_ref))
+        object.__setattr__(self, "task_ref", _normalize_optional_string(self.task_ref))
+        object.__setattr__(self, "work_item_ref", _normalize_optional_string(self.work_item_ref))
+        object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
+        object.__setattr__(self, "receipt_refs", _normalize_string_tuple("receipt_refs", self.receipt_refs))
+        object.__setattr__(self, "handoff_refs", _normalize_string_tuple("handoff_refs", self.handoff_refs))
+        object.__setattr__(self, "status", str(self.status or "").strip())
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleRuntimeChainEnvelope:
+    """Typed refs-only envelope for an audited multi-role execution chain."""
+
+    chain_id: str
+    workspace: str
+    run_id: str
+    task_id: str
+    steps: tuple[RoleRuntimeChainStepRef, ...]
+    turn_ledger_ref: str
+    task_market_refs: tuple[str, ...] = field(default_factory=tuple)
+    audit_evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    runtime_projection_refs: tuple[str, ...] = field(default_factory=tuple)
+    handoff_refs: tuple[str, ...] = field(default_factory=tuple)
+    runtime_receipt_refs: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "chain_id", _require_non_empty("chain_id", self.chain_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        steps = tuple(self.steps)
+        if not steps:
+            raise ValueError("steps must include at least one RoleRuntimeChainStepRef")
+        if any(not isinstance(step, RoleRuntimeChainStepRef) for step in steps):
+            raise TypeError("steps entries must be RoleRuntimeChainStepRef instances")
+        object.__setattr__(self, "steps", steps)
+        object.__setattr__(self, "turn_ledger_ref", _require_non_empty("turn_ledger_ref", self.turn_ledger_ref))
+        object.__setattr__(
+            self,
+            "task_market_refs",
+            _normalize_string_tuple("task_market_refs", self.task_market_refs),
+        )
+        object.__setattr__(
+            self,
+            "audit_evidence_refs",
+            _normalize_string_tuple("audit_evidence_refs", self.audit_evidence_refs),
+        )
+        object.__setattr__(
+            self,
+            "runtime_projection_refs",
+            _normalize_string_tuple("runtime_projection_refs", self.runtime_projection_refs),
+        )
+        object.__setattr__(self, "handoff_refs", _normalize_string_tuple("handoff_refs", self.handoff_refs))
+        object.__setattr__(
+            self,
+            "runtime_receipt_refs",
+            _normalize_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs),
+        )
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class AssembleRoleRuntimeChainCommandV1:
+    """Assemble a refs-only runtime chain envelope from completed role steps."""
+
+    chain_id: str
+    workspace: str
+    run_id: str
+    task_id: str
+    steps: tuple[RoleRuntimeChainStepRef, ...]
+    turn_ledger_ref: str
+    runtime_projection_refs: tuple[str, ...] = field(default_factory=tuple)
+    audit_evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    required_roles: tuple[str, ...] = ("pm", "chief_engineer", "director", "qa")
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "chain_id", _require_non_empty("chain_id", self.chain_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        steps = tuple(self.steps)
+        if not steps:
+            raise ValueError("steps must include at least one RoleRuntimeChainStepRef")
+        if any(not isinstance(step, RoleRuntimeChainStepRef) for step in steps):
+            raise TypeError("steps entries must be RoleRuntimeChainStepRef instances")
+        object.__setattr__(self, "steps", steps)
+        object.__setattr__(self, "turn_ledger_ref", _require_non_empty("turn_ledger_ref", self.turn_ledger_ref))
+        object.__setattr__(
+            self,
+            "runtime_projection_refs",
+            _normalize_string_tuple("runtime_projection_refs", self.runtime_projection_refs),
+        )
+        object.__setattr__(
+            self,
+            "audit_evidence_refs",
+            _normalize_string_tuple("audit_evidence_refs", self.audit_evidence_refs),
+        )
+        object.__setattr__(self, "required_roles", _normalize_string_tuple("required_roles", self.required_roles))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleRuntimeChainAssemblyResultV1:
+    """Result of assembling a refs-only multi-role runtime chain envelope."""
+
+    ok: bool
+    chain_ref: str
+    chain: RoleRuntimeChainEnvelope | None = None
+    missing_roles: tuple[str, ...] = field(default_factory=tuple)
+    error_code: str | None = None
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "chain_ref", _require_non_empty("chain_ref", self.chain_ref))
+        if self.chain is not None and not isinstance(self.chain, RoleRuntimeChainEnvelope):
+            raise TypeError("chain must be a RoleRuntimeChainEnvelope when provided")
+        object.__setattr__(self, "missing_roles", _normalize_string_tuple("missing_roles", self.missing_roles))
+        object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
+        object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        if self.ok and self.chain is None:
+            raise ValueError("successful chain assembly must include chain")
+        if not self.ok and not (self.error_code or self.error_message):
+            raise ValueError("failed chain assembly must include error_code or error_message")
+
+
+@dataclass(frozen=True)
 class RoleRuntimeObject:
     """Instantiated role object composed from refs, ports, and bindings only."""
 
@@ -1264,6 +1417,69 @@ def _build_qa_runtime_spec() -> RoleRuntimeObjectSpec:
     )
 
 
+def _build_director_runtime_spec() -> RoleRuntimeObjectSpec:
+    return RoleRuntimeObjectSpec(
+        role_id="director",
+        asset_mounts=RoleAssetMountTable(
+            mounts=(
+                _mount(
+                    "ExecutionTask",
+                    _asset_ref(
+                        asset_id="director-execution-task",
+                        owner_cell="runtime.task_market",
+                        contract_name="ClaimTaskWorkItemCommandV1",
+                        ref="runtime.task_market:director/execution-task",
+                        asset_kind="task_market_work_item",
+                        metadata={"status_contract": "QueryTaskMarketStatusV1"},
+                    ),
+                ),
+                _mount(
+                    "DirectorExecutionState",
+                    _asset_ref(
+                        asset_id="director-execution-state",
+                        owner_cell="director.execution",
+                        contract_name="GetDirectorTaskStatusQueryV1",
+                        ref="director.execution:runtime/state",
+                        asset_kind="director_execution_state",
+                    ),
+                ),
+                _mount(
+                    "DirectorEvidenceTrail",
+                    _asset_ref(
+                        asset_id="director-evidence-trail",
+                        owner_cell="audit.evidence",
+                        contract_name="AppendEvidenceEventCommandV1",
+                        ref="audit.evidence:director-execution",
+                        asset_kind="director_evidence_trail",
+                        metadata={"query_contract": "QueryEvidenceEventsV1"},
+                    ),
+                    access_mode="write",
+                ),
+            )
+        ),
+        capability_ports=RoleCapabilityPorts(
+            capabilities=(
+                _capability(
+                    capability_id="execute_director_task",
+                    owner_cell="director.execution",
+                    contract_name="ExecuteDirectorTaskCommandV1",
+                    effect="process.spawn:director/*",
+                    allowed_roles=("director",),
+                    endpoint_ref="polaris.cells.director.execution.public.service.execute_director_task",
+                    metadata={
+                        "requires_asset_mounts": ("ExecutionTask", "DirectorExecutionState"),
+                        "evidence_asset_mount": "DirectorEvidenceTrail",
+                        "output_contract": "DirectorExecutionResultV1",
+                    },
+                ),
+            )
+        ),
+        default_capability_id="execute_director_task",
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:pending_exec"),
+        metadata={"owner_cell": "roles.runtime", "business_role": "director"},
+    )
+
+
 def get_builtin_role_runtime_spec(role_id: str) -> RoleRuntimeObjectSpec:
     """Return the built-in role runtime composition spec for a known role."""
     normalized = _require_non_empty("role_id", role_id).lower().replace("-", "_")
@@ -1275,6 +1491,8 @@ def get_builtin_role_runtime_spec(role_id: str) -> RoleRuntimeObjectSpec:
         "design_architect": "architect",
         "quality_assurance": "qa",
         "auditor": "qa",
+        "director_execution": "director",
+        "executor": "director",
     }
     normalized = aliases.get(normalized, normalized)
     if normalized == "pm":
@@ -1285,6 +1503,8 @@ def get_builtin_role_runtime_spec(role_id: str) -> RoleRuntimeObjectSpec:
         return _build_architect_runtime_spec()
     if normalized == "qa":
         return _build_qa_runtime_spec()
+    if normalized == "director":
+        return _build_director_runtime_spec()
     raise KeyError(normalized)
 
 
@@ -1994,6 +2214,7 @@ __all__ = [
     "AggregateRuntimeEntrypointCheckV1",
     "AggregateRuntimeIntegrationV1",
     "AggregateTakeoverDirectiveV1",
+    "AssembleRoleRuntimeChainCommandV1",
     "AuditAggregateRuntimeIntegrationsQueryV1",
     "BuildAggregateRolePlanQueryV1",
     "ExecuteRoleCapabilityInvocationCommandV1",
@@ -2019,6 +2240,9 @@ __all__ = [
     "RoleLedgerBinding",
     "RoleProfileBinding",
     "RoleRuntimeError",
+    "RoleRuntimeChainAssemblyResultV1",
+    "RoleRuntimeChainEnvelope",
+    "RoleRuntimeChainStepRef",
     "RoleRuntimeObject",
     "RoleRuntimeObjectResultV1",
     "RoleRuntimeObjectSpec",

@@ -150,6 +150,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     AggregateRuntimeEntrypointCheckV1,
     AggregateRuntimeIntegrationV1,
     AggregateTakeoverDirectiveV1,
+    AssembleRoleRuntimeChainCommandV1,
     AuditAggregateRuntimeIntegrationsQueryV1,
     BuildAggregateRolePlanQueryV1,
     ExecuteRoleCapabilityInvocationCommandV1,
@@ -164,6 +165,8 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleIdentity,
     RoleLedgerBinding,
     RoleProfileBinding,
+    RoleRuntimeChainAssemblyResultV1,
+    RoleRuntimeChainEnvelope,
     RoleRuntimeObject,
     RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt,
@@ -959,6 +962,65 @@ def commit_role_state(
             service.close()
 
 
+def _role_runtime_chain_ref(chain_id: str) -> str:
+    return f"roles.runtime:chain:{chain_id}"
+
+
+def assemble_role_runtime_chain(
+    command: AssembleRoleRuntimeChainCommandV1,
+) -> RoleRuntimeChainAssemblyResultV1:
+    """Assemble a refs-only Phase 5 role runtime chain envelope."""
+
+    if not isinstance(command, AssembleRoleRuntimeChainCommandV1):
+        raise TypeError("command must be an AssembleRoleRuntimeChainCommandV1")
+
+    chain_ref = _role_runtime_chain_ref(command.chain_id)
+    present_roles = {step.role_id for step in command.steps}
+    missing_roles = tuple(role for role in command.required_roles if role not in present_roles)
+    if missing_roles:
+        return RoleRuntimeChainAssemblyResultV1(
+            ok=False,
+            chain_ref=chain_ref,
+            missing_roles=missing_roles,
+            error_code="missing_required_chain_roles",
+            error_message="role runtime chain is missing required role step(s): " + ", ".join(missing_roles),
+        )
+
+    task_market_refs = _merge_refs(
+        tuple(step.task_ref or "" for step in command.steps),
+        tuple(step.work_item_ref or "" for step in command.steps),
+    )
+    audit_evidence_refs = _merge_refs(
+        command.audit_evidence_refs,
+        *(step.evidence_refs for step in command.steps),
+    )
+    handoff_refs = _merge_refs(*(step.handoff_refs for step in command.steps))
+    runtime_receipt_refs = _merge_refs(*(step.receipt_refs for step in command.steps))
+    chain = RoleRuntimeChainEnvelope(
+        chain_id=command.chain_id,
+        workspace=command.workspace,
+        run_id=command.run_id,
+        task_id=command.task_id,
+        steps=command.steps,
+        turn_ledger_ref=command.turn_ledger_ref,
+        task_market_refs=task_market_refs,
+        audit_evidence_refs=audit_evidence_refs,
+        runtime_projection_refs=command.runtime_projection_refs,
+        handoff_refs=handoff_refs,
+        runtime_receipt_refs=runtime_receipt_refs,
+        metadata={
+            **dict(command.metadata),
+            "chain_ref": chain_ref,
+            "required_roles": command.required_roles,
+        },
+    )
+    return RoleRuntimeChainAssemblyResultV1(
+        ok=True,
+        chain_ref=chain_ref,
+        chain=chain,
+    )
+
+
 def execute_role_capability_invocation(
     command: ExecuteRoleCapabilityInvocationCommandV1,
     *,
@@ -973,6 +1035,7 @@ def execute_role_capability_invocation(
     permission_service: Any | None = None,
     architect_design_service: Any | None = None,
     llm_control_plane_service: Any | None = None,
+    director_execution_service: Any | None = None,
 ) -> RoleCapabilityInvocationResultV1:
     """Execute a mounted role capability through its declared public contract."""
     if not isinstance(command, ExecuteRoleCapabilityInvocationCommandV1):
@@ -1086,6 +1149,11 @@ def execute_role_capability_invocation(
         capability.capability_id == "validate_cell_boundary_change"
         and capability.owner_cell == "architect.design"
         and capability.contract_name == "GenerateArchitectureDesignCommandV1"
+    )
+    is_director_task_execution = (
+        capability.capability_id == "execute_director_task"
+        and capability.owner_cell == "director.execution"
+        and capability.contract_name == "ExecuteDirectorTaskCommandV1"
     )
 
     if is_qa_pytest_verification and role_id != "qa":
@@ -2437,6 +2505,117 @@ def execute_role_capability_invocation(
             result_ref=blueprint_ref,
             task_id=blueprint_result.task_id,
             status=blueprint_result.status,
+            metadata=metadata,
+        )
+
+    if is_director_task_execution:
+        director_metadata = _payload_mapping(command.payload, "metadata")
+        if director_metadata is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_director_execution_metadata",
+                error_message="payload.metadata must be a mapping when provided",
+            )
+        director_asset_refs = {
+            "execution_task": _asset_mount_ref(runtime_object, "ExecutionTask"),
+            "director_execution_state": _asset_mount_ref(runtime_object, "DirectorExecutionState"),
+            "director_evidence_trail": _asset_mount_ref(runtime_object, "DirectorEvidenceTrail"),
+        }
+        director_metadata.update(
+            {
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+                "asset_refs": director_asset_refs,
+            }
+        )
+        instruction = (
+            _payload_string(command.payload, "instruction")
+            or _payload_string(command.payload, "objective")
+            or _payload_string(command.payload, "summary")
+        )
+        try:
+            from polaris.cells.director.execution.public.contracts import ExecuteDirectorTaskCommandV1
+            from polaris.cells.director.execution.public.service import execute_director_task
+
+            director_command = ExecuteDirectorTaskCommandV1(
+                task_id=_payload_string(command.payload, "task_id", runtime_object.identity.task_id or ""),
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                instruction=instruction,
+                run_id=_payload_string(command.payload, "run_id", runtime_object.identity.run_id or "") or None,
+                attempt=int(command.payload.get("attempt", 1)),
+                metadata=director_metadata,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_director_execution_command",
+                error_message=str(exc),
+            )
+
+        try:
+            if director_execution_service is None:
+                director_result = execute_director_task(director_command)
+            elif callable(director_execution_service):
+                director_result = director_execution_service(director_command)
+            else:
+                director_result = director_execution_service.execute_director_task(director_command)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="director_execution_failed",
+                error_message=str(exc),
+            )
+
+        result_ref = f"director.execution:task:{director_result.task_id}"
+        evidence_refs = tuple(director_result.evidence_paths)
+        metadata = _capability_available_metadata(
+            capability.capability_id,
+            {
+                "director_status": director_result.status,
+                "output_summary": director_result.output_summary,
+                "evidence_paths": evidence_refs,
+                "asset_refs": director_asset_refs,
+            },
+        )
+        if not director_result.ok:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=director_result.task_id,
+                status=director_result.status,
+                evidence_refs=evidence_refs,
+                metadata=metadata,
+                error_code=director_result.error_code or "director_execution_rejected",
+                error_message=director_result.error_message or "director execution rejected the task",
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=director_result.task_id,
+            status=director_result.status,
+            evidence_refs=evidence_refs,
             metadata=metadata,
         )
 
@@ -7104,6 +7283,7 @@ __all__ = [
     "WorkerState",
     "WorkerTask",
     "aggregate_chat_completions",
+    "assemble_role_runtime_chain",
     "audit_aggregate_runtime_integrations",
     "classify_task",
     "create_async_worker_pool",

@@ -27,6 +27,10 @@ partially done:
 - events: DirectorTaskStartedEventV1, DirectorTaskCompletedEventV1
 - results: DirectorExecutionResultV1
 - errors: DirectorExecutionErrorV1
+- services: `execute_director_task(ExecuteDirectorTaskCommandV1) -> DirectorExecutionResultV1`
+  is the stable public facade used by `roles.runtime`; it delegates to the
+  current DirectorService implementation and does not move state ownership into
+  `roles.runtime`.
 
 ## Migration Status
 

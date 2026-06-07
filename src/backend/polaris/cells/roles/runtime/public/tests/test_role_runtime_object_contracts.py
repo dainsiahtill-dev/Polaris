@@ -17,6 +17,10 @@ from polaris.cells.code_intelligence.engine.public.contracts import (
     AstDependencyVerificationResultV1,
     VerifyAstDependencyQueryV1,
 )
+from polaris.cells.director.execution.public.contracts import (
+    DirectorExecutionResultV1,
+    ExecuteDirectorTaskCommandV1,
+)
 from polaris.cells.factory.cognitive_runtime.public.contracts import (
     ExportHandoffPackCommandV1,
     HandoffPackResultV1,
@@ -65,6 +69,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleCapabilityInvocationCommandV1,
     ExecuteRoleTaskMarketLifecycleCommandV1,
     InstantiateRoleRuntimeObjectCommandV1,
+    AssembleRoleRuntimeChainCommandV1,
     RoleAssetMount,
     RoleAssetMountTable,
     RoleAssetRef,
@@ -76,6 +81,8 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleIdentity,
     RoleLedgerBinding,
     RoleProfileBinding,
+    RoleRuntimeChainAssemblyResultV1,
+    RoleRuntimeChainStepRef,
     RoleRuntimeObject,
     RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt,
@@ -86,6 +93,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleTurnEnvelope,
 )
 from polaris.cells.roles.runtime.public.service import (
+    assemble_role_runtime_chain,
     commit_role_state,
     execute_role_capability_invocation,
     execute_role_task_market_lifecycle,
@@ -311,6 +319,26 @@ class FakeCodeIntelligenceService:
             symbol=query.symbol,
             engine="regex",
             results=({"file": query.path, "line": 1, "name": query.symbol, "node_type": "function_definition"},),
+        )
+
+
+class FakeDirectorExecutionService:
+    def __init__(self, *, ok: bool = True) -> None:
+        self.ok = ok
+        self.executed: list[ExecuteDirectorTaskCommandV1] = []
+
+    def execute_director_task(self, command: ExecuteDirectorTaskCommandV1) -> DirectorExecutionResultV1:
+        self.executed.append(command)
+        return DirectorExecutionResultV1(
+            ok=self.ok,
+            task_id=command.task_id,
+            workspace=command.workspace,
+            status="completed" if self.ok else "failed",
+            run_id=command.run_id,
+            evidence_paths=("runtime/evidence/director-task-1.jsonl",),
+            output_summary="director applied approved diff" if self.ok else "",
+            error_code=None if self.ok else "director_task_failed",
+            error_message=None if self.ok else "patch failed",
         )
 
 
@@ -820,6 +848,38 @@ def test_builtin_architect_runtime_spec_mounts_graph_budget_and_boundary_capabil
     assert runtime_object.asset_mounts.get("ConstraintTopology").asset_ref.ref == "docs.graph:cells"
 
 
+def test_builtin_director_runtime_spec_mounts_execution_assets_and_execute_capability() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("director")
+
+    assert isinstance(spec, runtime_contracts.RoleRuntimeObjectSpec)
+    assert spec.role_id == "director"
+    assert spec.asset_mounts.get("ExecutionTask").asset_ref.owner_cell == "runtime.task_market"
+    assert spec.asset_mounts.get("ExecutionTask").asset_ref.contract_name == "ClaimTaskWorkItemCommandV1"
+    assert spec.asset_mounts.get("DirectorExecutionState").asset_ref.owner_cell == "director.execution"
+    assert spec.asset_mounts.get("DirectorExecutionState").asset_ref.contract_name == "GetDirectorTaskStatusQueryV1"
+    assert spec.asset_mounts.get("DirectorEvidenceTrail").asset_ref.owner_cell == "audit.evidence"
+    assert spec.asset_mounts.get("DirectorEvidenceTrail").asset_ref.contract_name == "AppendEvidenceEventCommandV1"
+    assert spec.asset_mounts.get("DirectorEvidenceTrail").access_mode == "write"
+
+    execute_capability = spec.capability_ports.get("execute_director_task")
+    assert execute_capability.owner_cell == "director.execution"
+    assert execute_capability.contract_name == "ExecuteDirectorTaskCommandV1"
+    assert execute_capability.effect == "process.spawn:director/*"
+    assert execute_capability.allowed_roles == ("director",)
+    assert execute_capability.metadata["output_contract"] == "DirectorExecutionResultV1"
+
+    runtime_object = spec.instantiate(
+        identity=_identity("director"),
+        profile_binding=_profile_binding("director"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:director-run"),
+        policy_fingerprint="director-policy",
+    )
+
+    assert runtime_object.identity.role_id == "director"
+    assert runtime_object.capability_fingerprint.capability_id == "execute_director_task"
+    assert runtime_object.task_market_binding.work_item_ref == "runtime.task_market:pending_exec"
+
+
 def test_asset_mount_table_rejects_duplicate_mount_names() -> None:
     asset_ref = RoleAssetRef(
         asset_id="task-graph",
@@ -1248,6 +1308,129 @@ def test_commit_role_state_rejects_missing_kernel_commit_receipt_without_runtime
     assert cognitive_runtime.handoffs == []
 
 
+def test_role_runtime_chain_assembly_keeps_phase5_refs_typed_and_ordered() -> None:
+    steps = (
+        RoleRuntimeChainStepRef(
+            role_id="pm",
+            stage="task_market_dispatch",
+            capability_id="dispatch_task_to_market",
+            owner_cell="runtime.task_market",
+            command_contract="PublishTaskWorkItemCommandV1",
+            result_ref="runtime.task_market:work-item:task-1",
+            task_ref="runtime.task_market:task:task-1",
+            status="pending_design",
+        ),
+        RoleRuntimeChainStepRef(
+            role_id="chief_engineer",
+            stage="blueprint",
+            capability_id="generate_diff_specification",
+            owner_cell="chief_engineer.blueprint",
+            command_contract="GenerateTaskBlueprintCommandV1",
+            result_ref="chief_engineer.blueprint:blueprint:bp-1",
+            task_ref="runtime.task_market:task:task-1",
+            handoff_refs=("factory.cognitive_runtime:handoff:ce-to-director",),
+            status="generated",
+        ),
+        RoleRuntimeChainStepRef(
+            role_id="director",
+            stage="execution",
+            capability_id="execute_director_task",
+            owner_cell="director.execution",
+            command_contract="ExecuteDirectorTaskCommandV1",
+            result_ref="director.execution:task:task-1",
+            task_ref="runtime.task_market:task:task-1",
+            evidence_refs=("audit.evidence:director:task-1",),
+            status="completed",
+        ),
+        RoleRuntimeChainStepRef(
+            role_id="qa",
+            stage="audit",
+            capability_id="issue_audit_verdict",
+            owner_cell="qa.audit_verdict",
+            command_contract="RunQaAuditCommandV1",
+            result_ref="qa.audit_verdict:verdict:task-1",
+            task_ref="runtime.task_market:task:task-1",
+            evidence_refs=("audit.evidence:qa:task-1",),
+            receipt_refs=("factory.cognitive_runtime:receipt:qa-1",),
+            status="PASS",
+        ),
+    )
+
+    result = assemble_role_runtime_chain(
+        AssembleRoleRuntimeChainCommandV1(
+            chain_id="phase5-chain-1",
+            workspace="/repo",
+            run_id="run-1",
+            task_id="task-1",
+            steps=steps,
+            turn_ledger_ref="roles.kernel:turn-ledger:run-1",
+            runtime_projection_refs=("runtime.projection:runtime:run-1",),
+            audit_evidence_refs=("audit.evidence:truth-log:task-1",),
+            metadata={"phase": "phase5"},
+        )
+    )
+
+    assert isinstance(result, RoleRuntimeChainAssemblyResultV1)
+    assert result.ok is True
+    assert result.chain is not None
+    assert result.chain_ref == "roles.runtime:chain:phase5-chain-1"
+    assert tuple(step.role_id for step in result.chain.steps) == ("pm", "chief_engineer", "director", "qa")
+    assert result.chain.task_market_refs == ("runtime.task_market:task:task-1",)
+    assert result.chain.audit_evidence_refs == (
+        "audit.evidence:truth-log:task-1",
+        "audit.evidence:director:task-1",
+        "audit.evidence:qa:task-1",
+    )
+    assert result.chain.turn_ledger_ref == "roles.kernel:turn-ledger:run-1"
+    assert result.chain.runtime_projection_refs == ("runtime.projection:runtime:run-1",)
+    assert result.chain.handoff_refs == ("factory.cognitive_runtime:handoff:ce-to-director",)
+    assert result.chain.runtime_receipt_refs == ("factory.cognitive_runtime:receipt:qa-1",)
+    assert result.chain.metadata["phase"] == "phase5"
+
+
+def test_role_runtime_chain_assembly_rejects_missing_required_role() -> None:
+    result = assemble_role_runtime_chain(
+        AssembleRoleRuntimeChainCommandV1(
+            chain_id="phase5-chain-missing-qa",
+            workspace="/repo",
+            run_id="run-1",
+            task_id="task-1",
+            steps=(
+                RoleRuntimeChainStepRef(
+                    role_id="pm",
+                    stage="task_market_dispatch",
+                    capability_id="dispatch_task_to_market",
+                    owner_cell="runtime.task_market",
+                    command_contract="PublishTaskWorkItemCommandV1",
+                    result_ref="runtime.task_market:work-item:task-1",
+                ),
+                RoleRuntimeChainStepRef(
+                    role_id="chief_engineer",
+                    stage="blueprint",
+                    capability_id="generate_diff_specification",
+                    owner_cell="chief_engineer.blueprint",
+                    command_contract="GenerateTaskBlueprintCommandV1",
+                    result_ref="chief_engineer.blueprint:blueprint:bp-1",
+                ),
+                RoleRuntimeChainStepRef(
+                    role_id="director",
+                    stage="execution",
+                    capability_id="execute_director_task",
+                    owner_cell="director.execution",
+                    command_contract="ExecuteDirectorTaskCommandV1",
+                    result_ref="director.execution:task:task-1",
+                ),
+            ),
+            turn_ledger_ref="roles.kernel:turn-ledger:run-1",
+        )
+    )
+
+    assert result.ok is False
+    assert result.chain is None
+    assert result.missing_roles == ("qa",)
+    assert result.error_code == "missing_required_chain_roles"
+
+
 def test_pm_dispatch_capability_invokes_task_market_publish_contract() -> None:
     spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
     runtime_object = spec.instantiate(
@@ -1433,6 +1616,69 @@ def test_pm_project_runtime_status_invokes_runtime_projection_contract() -> None
     assert result.metadata["projection"]["completed_task_count"] == 4
     assert len(projection.queries) == 1
     assert projection.queries[0].scope == "runtime"
+
+
+def test_director_execute_capability_invokes_director_execution_public_contract() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("director")
+    runtime_object = spec.instantiate(
+        identity=_identity("director"),
+        profile_binding=_profile_binding("director"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:director-run"),
+        policy_fingerprint="director-policy",
+    )
+    invocation = RoleCapabilityInvocation(
+        invocation_id="invoke-director-exec-1",
+        capability_id="execute_director_task",
+        role_id="director",
+        command_contract="ExecuteDirectorTaskCommandV1",
+        payload_ref="roles.runtime:typed-input:director-task-1",
+        fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+    )
+    director_execution = FakeDirectorExecutionService()
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=invocation,
+            payload={
+                "task_id": "director-task-1",
+                "run_id": "run-1",
+                "instruction": "Apply approved CE diff specification",
+                "attempt": 2,
+                "metadata": {"command": "python -m pytest -q"},
+            },
+        ),
+        director_execution_service=director_execution,
+    )
+
+    assert result.ok is True
+    assert result.allowed is True
+    assert result.owner_cell == "director.execution"
+    assert result.command_contract == "ExecuteDirectorTaskCommandV1"
+    assert result.task_id == "director-task-1"
+    assert result.status == "completed"
+    assert result.result_ref == "director.execution:task:director-task-1"
+    assert result.evidence_refs == ("runtime/evidence/director-task-1.jsonl",)
+    assert result.metadata["director_status"] == "completed"
+    assert result.metadata["asset_refs"] == {
+        "execution_task": "runtime.task_market:director/execution-task",
+        "director_execution_state": "director.execution:runtime/state",
+        "director_evidence_trail": "audit.evidence:director-execution",
+    }
+    assert len(director_execution.executed) == 1
+
+    director_command = director_execution.executed[0]
+    assert isinstance(director_command, ExecuteDirectorTaskCommandV1)
+    assert director_command.workspace == "/repo"
+    assert director_command.task_id == "director-task-1"
+    assert director_command.run_id == "run-1"
+    assert director_command.instruction == "Apply approved CE diff specification"
+    assert director_command.attempt == 2
+    assert director_command.metadata["command"] == "python -m pytest -q"
+    assert director_command.metadata["role_invocation_id"] == "invoke-director-exec-1"
+    assert director_command.metadata["role_fingerprint_ref"] == runtime_object.capability_fingerprint.fingerprint
+    assert director_command.metadata["role_capability_id"] == "execute_director_task"
+    assert director_command.metadata["asset_refs"]["director_execution_state"] == "director.execution:runtime/state"
 
 
 def test_chief_engineer_generate_diff_capability_invokes_blueprint_contract() -> None:

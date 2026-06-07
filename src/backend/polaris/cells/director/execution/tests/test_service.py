@@ -30,7 +30,12 @@ class TestDirectorService:
         assert service.security is mock_security
 
     @pytest.mark.asyncio
-    async def test_execute_task_work_without_command_uses_worker_executor(self, tmp_path: Path) -> None:
+    async def test_execute_task_work_without_command_uses_worker_executor(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
         config = DirectorConfig(workspace=str(tmp_path))
         service = DirectorService(config=config)
         task = Task(

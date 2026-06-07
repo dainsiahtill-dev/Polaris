@@ -3,7 +3,7 @@
   "title": "Director Execution",
   "kind": "workflow",
   "purpose": "Execute Director task workflows from claim to verification based on approved blueprints with strict policy and audit controls.",
-  "summary": "Business capability boundary for director.execution.",
+  "summary": "Business capability boundary for director.execution; public service exposes execute_director_task for roles.runtime delegation.",
   "owned_paths": [
     "polaris/application/services/director_service.py",
     "polaris/application/services/director_logic.py",
@@ -30,6 +30,9 @@
     ],
     "errors": [
       "DirectorExecutionErrorV1"
+    ],
+    "services": [
+      "execute_director_task(ExecuteDirectorTaskCommandV1) -> DirectorExecutionResultV1"
     ]
   },
   "neighbors": [
@@ -69,14 +72,16 @@
   ],
   "test_targets": [
     "tests/test_director_logic.py",
-    "tests/test_director_service_convergence.py"
+    "tests/test_director_service_convergence.py",
+    "polaris/cells/director/execution/tests/test_execution_contracts.py"
   ],
   "change_guidance": {
     "read_order": [
       "cell.yaml",
       "README.agent.md",
       "generated/context.pack.json",
-      "public/contracts.py"
+      "public/contracts.py",
+      "public/service.py"
     ],
     "expand_to_neighbors_only_when_needed": true
   }
