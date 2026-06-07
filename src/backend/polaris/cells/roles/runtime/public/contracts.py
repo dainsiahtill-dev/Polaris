@@ -22,6 +22,23 @@ from polaris.kernelone.roles.shared_contracts import (
     register_protocol_fsm_factory,
 )
 
+_FORBIDDEN_ROLE_OBJECT_OWNER_CELLS = frozenset(
+    {
+        "roles.runtime",
+        "roles.adapters",
+        "roles.kernel",
+        "roles.profile",
+        "roles.session",
+        "kernelone.roles",
+        "polaris.kernelone.roles",
+    }
+)
+
+
+def _is_forbidden_role_object_owner_cell(owner_cell: str) -> bool:
+    token = str(owner_cell or "").strip()
+    return token in _FORBIDDEN_ROLE_OBJECT_OWNER_CELLS or token.startswith("polaris.kernelone.roles.")
+
 
 def _require_non_empty(name: str, value: str) -> str:
     normalized = str(value).strip()
@@ -210,6 +227,12 @@ class RoleAssetMountTable:
         for mount in normalized:
             if not isinstance(mount, RoleAssetMount):
                 raise TypeError("mounts entries must be RoleAssetMount instances")
+            owner_cell = mount.asset_ref.owner_cell
+            if _is_forbidden_role_object_owner_cell(owner_cell):
+                raise ValueError(
+                    f"asset mount {mount.mount_name!r} must be owned by a business or platform state Cell; "
+                    f"got {owner_cell!r}"
+                )
             key = mount.mount_name
             if key in seen:
                 raise ValueError(f"duplicate asset mount: {key}")
@@ -258,6 +281,11 @@ class RoleCapabilityPorts:
         for capability in normalized:
             if not isinstance(capability, RoleCapabilityDescriptor):
                 raise TypeError("capabilities entries must be RoleCapabilityDescriptor instances")
+            owner_cell = capability.owner_cell
+            if _is_forbidden_role_object_owner_cell(owner_cell):
+                raise ValueError(
+                    f"capability {capability.capability_id!r} must be owned by a target public Cell; got {owner_cell!r}"
+                )
             key = capability.capability_id
             if key in seen:
                 raise ValueError(f"duplicate capability: {key}")
@@ -1197,6 +1225,20 @@ def _build_qa_runtime_spec() -> RoleRuntimeObjectSpec:
                     allowed_roles=("qa",),
                     endpoint_ref="polaris.cells.qa.audit_verdict.public.contracts.RunQaAuditCommandV1",
                     metadata={"output_contract": "QaAuditResultV1"},
+                ),
+                _capability(
+                    capability_id="issue_visual_audit_verdict",
+                    owner_cell="qa.audit_verdict",
+                    contract_name="RunVisualQaAuditCommandV1",
+                    effect="llm.invoke:vision",
+                    allowed_roles=("qa",),
+                    endpoint_ref="polaris.cells.qa.audit_verdict.public.service.run_visual_qa_audit",
+                    metadata={
+                        "input_asset_mount": "TruthLog",
+                        "model_capability_query": "CheckLlmModelCapabilityQueryV1",
+                        "required_model_capability": "image_input",
+                        "output_contract": "VisualQaAuditResultV1",
+                    },
                 ),
             )
         ),

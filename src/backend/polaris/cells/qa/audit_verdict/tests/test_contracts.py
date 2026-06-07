@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from polaris.cells.audit.evidence.public.contracts import (
+    AppendEvidenceEventCommandV1,
+    EvidenceAppendedEventV1,
+)
 from polaris.cells.qa.audit_verdict.public.contracts import (
     FailureSignalV1,
     GetQaVerdictQueryV1,
@@ -14,9 +18,12 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     QaAuditResultV1,
     QaVerdictIssuedEventV1,
     RunQaAuditCommandV1,
+    RunVisualQaAuditCommandV1,
     TracebackFrameV1,
+    VisualAuditFindingV1,
+    VisualQaAuditResultV1,
 )
-from polaris.cells.qa.audit_verdict.public.service import parse_traceback_frames, run_qa_audit
+from polaris.cells.qa.audit_verdict.public.service import parse_traceback_frames, run_qa_audit, run_visual_qa_audit
 
 
 class TestRunQaAuditCommandV1:
@@ -161,6 +168,55 @@ class TestQaAuditResultV1:
         assert r.findings == ("a", "b")
 
 
+class TestVisualQaAuditContracts:
+    def test_visual_audit_command_requires_image_refs_and_model_capability_ref(self) -> None:
+        cmd = RunVisualQaAuditCommandV1(
+            task_id="qa-visual-1",
+            workspace="/repo",
+            image_refs=("audit.evidence:image:screenshot-1",),
+            model_capability_ref="llm.control_plane:model-capability:qa:image_input:abc",
+            criteria={"viewport": "desktop"},
+            evidence_paths=("runtime/evidence/screenshot-1.png",),
+        )
+
+        assert cmd.image_refs == ("audit.evidence:image:screenshot-1",)
+        assert cmd.model_capability_ref == "llm.control_plane:model-capability:qa:image_input:abc"
+        assert cmd.criteria["viewport"] == "desktop"
+        assert cmd.evidence_paths == ("runtime/evidence/screenshot-1.png",)
+
+        with pytest.raises(ValueError, match="image_refs must include at least one image ref"):
+            RunVisualQaAuditCommandV1(
+                task_id="qa-visual-1",
+                workspace="/repo",
+                image_refs=(),
+                model_capability_ref="llm.control_plane:model-capability:qa:image_input:abc",
+            )
+
+    def test_visual_audit_result_carries_typed_findings(self) -> None:
+        finding = VisualAuditFindingV1(
+            finding_id="visual-finding-1",
+            image_ref="audit.evidence:image:screenshot-1",
+            category="layout_overlap",
+            summary="Button text overlaps icon",
+            severity="error",
+            confidence=0.91,
+        )
+        result = VisualQaAuditResultV1(
+            ok=False,
+            task_id="qa-visual-1",
+            workspace="/repo",
+            verdict="FAIL",
+            image_refs=("audit.evidence:image:screenshot-1",),
+            model_capability_ref="llm.control_plane:model-capability:qa:image_input:abc",
+            findings=(finding,),
+            score=0.0,
+        )
+
+        assert result.findings == (finding,)
+        assert result.image_refs == ("audit.evidence:image:screenshot-1",)
+        assert result.model_capability_ref.endswith(":abc")
+
+
 class TestTracebackFailureSignalContracts:
     def test_traceback_frame_requires_positive_line(self) -> None:
         frame = TracebackFrameV1(path="app.py", line=12, function="handle", code="return explode()")
@@ -269,6 +325,72 @@ def test_run_qa_audit_public_service_reports_missing_director_evidence(tmp_path:
     assert result.verdict == "FAIL"
     assert result.score == 0.0
     assert any("Director changed_files evidence is required" in finding for finding in result.findings)
+
+
+def test_run_visual_qa_audit_public_service_records_image_evidence_refs(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    result = run_visual_qa_audit(
+        RunVisualQaAuditCommandV1(
+            task_id="qa-visual-1",
+            workspace=str(workspace),
+            image_refs=("audit.evidence:image:screenshot-1",),
+            model_capability_ref="llm.control_plane:model-capability:qa:image_input:abc",
+            criteria={"assertions": ("no visual overlap",)},
+            evidence_paths=("runtime/evidence/screenshot-1.png",),
+        )
+    )
+
+    assert isinstance(result, VisualQaAuditResultV1)
+    assert result.ok is True
+    assert result.verdict == "VISUAL_AUDIT_RECORDED"
+    assert result.image_refs == ("audit.evidence:image:screenshot-1",)
+    assert result.evidence_refs == (
+        "runtime/evidence/screenshot-1.png",
+        "runtime/evidence/qa.visual_audit.jsonl",
+    )
+
+
+class _FakeEvidenceAppendService:
+    def __init__(self) -> None:
+        self.commands: list[AppendEvidenceEventCommandV1] = []
+
+    def append_evidence_event(self, command: AppendEvidenceEventCommandV1) -> EvidenceAppendedEventV1:
+        self.commands.append(command)
+        return EvidenceAppendedEventV1(kind=command.kind, receipt_path="runtime/evidence/qa.visual_audit.jsonl")
+
+
+def test_run_visual_qa_audit_public_service_appends_truthlog_evidence(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    evidence_service = _FakeEvidenceAppendService()
+
+    result = run_visual_qa_audit(
+        RunVisualQaAuditCommandV1(
+            task_id="qa-visual-2",
+            workspace=str(workspace),
+            run_id="run-visual-1",
+            image_refs=("audit.evidence:image:screenshot-2",),
+            model_capability_ref="llm.control_plane:model-capability:qa:image_input:def",
+            criteria={"assertions": ("no clipped text",)},
+            evidence_paths=("runtime/evidence/screenshot-2.png",),
+        ),
+        evidence_service=evidence_service,
+    )
+
+    assert result.evidence_refs == (
+        "runtime/evidence/screenshot-2.png",
+        "runtime/evidence/qa.visual_audit.jsonl",
+    )
+    assert len(evidence_service.commands) == 1
+    command = evidence_service.commands[0]
+    assert command.kind == "qa.visual_audit"
+    assert command.workspace == str(workspace)
+    assert command.payload["task_id"] == "qa-visual-2"
+    assert command.payload["run_id"] == "run-visual-1"
+    assert command.payload["image_refs"] == ("audit.evidence:image:screenshot-2",)
+    assert command.payload["model_capability_ref"] == "llm.control_plane:model-capability:qa:image_input:def"
 
 
 def test_parse_traceback_frames_public_service_returns_typed_failure_signal() -> None:

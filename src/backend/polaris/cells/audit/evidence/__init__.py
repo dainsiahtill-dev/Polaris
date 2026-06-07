@@ -10,6 +10,7 @@ from polaris.cells.audit.evidence.public import (
     EvidenceVerificationResultV1,
     QueryEvidenceEventsV1,
     VerifyEvidenceChainV1,
+    append_evidence_event,
     create_evidence_bundle_service,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "EvidenceVerificationResultV1",
     "QueryEvidenceEventsV1",
     "VerifyEvidenceChainV1",
+    "append_evidence_event",
     "create_evidence_bundle_service",
 ]

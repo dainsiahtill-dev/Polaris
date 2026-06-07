@@ -21,7 +21,10 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     ParseTracebackFramesResultV1,
     QaAuditResultV1,
     RunQaAuditCommandV1,
+    RunVisualQaAuditCommandV1,
     TracebackFrameV1,
+    VisualAuditFindingV1,
+    VisualQaAuditResultV1,
 )
 
 _T = TypeVar("_T")
@@ -94,6 +97,92 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
         score=1.0 if audit.verdict == "PASS" else 0.0,
         findings=findings,
         suggestions=(),
+    )
+
+
+def _visual_evidence_failure(command: RunVisualQaAuditCommandV1, exc: Exception) -> VisualQaAuditResultV1:
+    finding = VisualAuditFindingV1(
+        finding_id=f"visual-evidence-{command.task_id}",
+        image_ref=command.image_refs[0],
+        category="audit_evidence_append_failed",
+        summary=f"visual audit evidence append failed: {type(exc).__name__}: {exc}",
+        severity="error",
+        confidence=1.0,
+        metadata={"source_cell": "qa.audit_verdict", "owner_cell": "audit.evidence"},
+    )
+    return VisualQaAuditResultV1(
+        ok=False,
+        task_id=command.task_id,
+        workspace=command.workspace,
+        verdict="VISUAL_AUDIT_EVIDENCE_FAILED",
+        image_refs=command.image_refs,
+        model_capability_ref=command.model_capability_ref,
+        findings=(finding,),
+        score=0.0,
+        evidence_refs=command.evidence_paths,
+        metadata={
+            "requires_image_input_model": True,
+            "evidence_append_owner": "audit.evidence",
+        },
+    )
+
+
+def run_visual_qa_audit(
+    command: RunVisualQaAuditCommandV1,
+    *,
+    evidence_service: Any | None = None,
+) -> VisualQaAuditResultV1:
+    """Record a typed QA visual audit request after LLM image-capability preflight."""
+    if not isinstance(command, RunVisualQaAuditCommandV1):
+        raise TypeError("command must be RunVisualQaAuditCommandV1")
+
+    criteria = dict(command.criteria)
+    try:
+        from polaris.cells.audit.evidence.public.contracts import AppendEvidenceEventCommandV1
+        from polaris.cells.audit.evidence.public.service import append_evidence_event
+
+        evidence_command = AppendEvidenceEventCommandV1(
+            kind="qa.visual_audit",
+            workspace=command.workspace,
+            payload={
+                "task_id": command.task_id,
+                "run_id": command.run_id or "",
+                "image_refs": command.image_refs,
+                "model_capability_ref": command.model_capability_ref,
+                "criteria": criteria,
+                "evidence_paths": command.evidence_paths,
+                "verdict": "VISUAL_AUDIT_RECORDED",
+            },
+            metadata={
+                "source_cell": "qa.audit_verdict",
+                "capability": "issue_visual_audit_verdict",
+                "requires_image_input_model": True,
+            },
+        )
+        if evidence_service is None:
+            evidence_event = append_evidence_event(evidence_command)
+        else:
+            evidence_event = evidence_service.append_evidence_event(evidence_command)
+    except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+        return _visual_evidence_failure(command, exc)
+
+    evidence_refs = (*command.evidence_paths, evidence_event.receipt_path)
+    return VisualQaAuditResultV1(
+        ok=True,
+        task_id=command.task_id,
+        workspace=command.workspace,
+        verdict="VISUAL_AUDIT_RECORDED",
+        image_refs=command.image_refs,
+        model_capability_ref=command.model_capability_ref,
+        score=1.0,
+        evidence_refs=evidence_refs,
+        metadata={
+            "criteria_keys": tuple(sorted(str(key) for key in criteria)),
+            "image_count": len(command.image_refs),
+            "requires_image_input_model": True,
+            "evidence_append_ref": evidence_event.receipt_path,
+            "evidence_append_owner": "audit.evidence",
+        },
     )
 
 
@@ -188,9 +277,13 @@ __all__ = [
     "QAService",
     "QualityService",
     "ReviewGate",
+    "RunVisualQaAuditCommandV1",
     "TracebackFrameV1",
+    "VisualAuditFindingV1",
+    "VisualQaAuditResultV1",
     "get_quality_service",
     "get_review_gate",
     "parse_traceback_frames",
     "run_qa_audit",
+    "run_visual_qa_audit",
 ]

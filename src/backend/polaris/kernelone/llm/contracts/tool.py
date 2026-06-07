@@ -212,8 +212,6 @@ class ToolExecutionResult:
         Intentional separation from:
         - polaris.cells.roles.kernel.internal.output_parser.ToolCallResult
             (Parse phase: has tool, args fields)
-        - polaris.kernelone.benchmark.llm.tool_accuracy.ToolCallResult
-            (Benchmark phase: has case_id, execution_time_ms, error)
 
     Attributes:
         tool_call_id: ID of the tool call that produced this result.

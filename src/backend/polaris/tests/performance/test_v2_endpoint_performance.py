@@ -212,7 +212,7 @@ class TestV2PMChatPerformance:
         """POST /v2/pm/chat should respond in < 5 s with mocked LLM."""
         app = _build_app_with_router(pm_chat_router.router)
         with patch(
-            "polaris.delivery.http.routers.pm_chat.generate_role_response",
+            "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
             new_callable=AsyncMock,
         ) as mock_generate:
             mock_generate.return_value = {

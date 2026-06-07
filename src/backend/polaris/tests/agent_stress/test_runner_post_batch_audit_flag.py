@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -68,7 +69,7 @@ async def test_project_serial_skips_batch_audit_when_disabled(
     monkeypatch.setattr(runner, "_save_intermediate_results", _save_intermediate_results)
     monkeypatch.setattr(runner, "_run_batch_audit_and_pause", _run_batch_audit_and_pause)
 
-    await runner._run_project_serial(_FakeEngine(tmp_path), [PROJECT_POOL[0]])
+    await runner._run_project_serial(cast(Any, _FakeEngine(tmp_path)), [PROJECT_POOL[0]])
 
     assert audit_calls == 0
 
@@ -101,7 +102,7 @@ async def test_project_serial_runs_batch_audit_when_enabled(
     monkeypatch.setattr(runner, "_save_intermediate_results", _save_intermediate_results)
     monkeypatch.setattr(runner, "_run_batch_audit_and_pause", _run_batch_audit_and_pause)
 
-    await runner._run_project_serial(_FakeEngine(tmp_path), [PROJECT_POOL[0]])
+    await runner._run_project_serial(cast(Any, _FakeEngine(tmp_path)), [PROJECT_POOL[0]])
 
     assert audit_calls == 1
 
@@ -111,6 +112,7 @@ async def test_runner_forwards_fresh_workspace_to_backend_bootstrap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from . import runner as runner_module
     from .runner import DEFAULT_STRESS_RAMDISK, AgentStressRunner
 
     workspace = tmp_path / "stress-workspace"
@@ -118,9 +120,9 @@ async def test_runner_forwards_fresh_workspace_to_backend_bootstrap(
         workspace=workspace,
         rounds=1,
     )
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
-    async def _fake_ensure_backend_session(**kwargs):
+    async def _fake_ensure_backend_session(**kwargs: Any) -> ManagedBackendSession:
         captured.update(kwargs)
         return ManagedBackendSession(
             context=BackendContext(
@@ -133,7 +135,7 @@ async def test_runner_forwards_fresh_workspace_to_backend_bootstrap(
             ramdisk_root=str(kwargs["ramdisk_root"]),
         )
 
-    monkeypatch.setattr("polaris.tests.agent_stress.runner.ensure_backend_session", _fake_ensure_backend_session)
+    monkeypatch.setattr(runner_module, "ensure_backend_session", _fake_ensure_backend_session)
 
     await runner._ensure_backend_session()
 

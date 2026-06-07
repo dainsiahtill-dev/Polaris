@@ -107,6 +107,45 @@ def test_generic_backend_uses_role_runtime_command(monkeypatch, tmp_path) -> Non
     assert "legacy_fallback_used" not in command.metadata
 
 
+def test_generic_backend_passes_auto_accept_cognitive_approval(monkeypatch, tmp_path) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command):
+            captured["command"] = command
+            return SimpleNamespace(
+                ok=True,
+                output='{"tasks":[]}',
+                usage={},
+                metadata={"provider_type": "role_runtime", "model": "test-model"},
+            )
+
+    monkeypatch.setattr(pm_backend, "_create_role_runtime_service", lambda: FakeRoleRuntimeService())
+
+    state = SimpleNamespace(
+        workspace_full=str(tmp_path),
+        timeout=0,
+        events_full="",
+    )
+
+    output = pm_backend._invoke_generic_role_runtime(
+        state,
+        "prompt with `pytest` acceptance criteria",
+        usage_ctx=None,
+        args=SimpleNamespace(agents_approval_mode="auto_accept"),
+    )
+
+    assert output == '{"tasks":[]}'
+    command = captured["command"]
+    approval = command.metadata["cognitive_runtime_approval"]
+    assert command.context["cognitive_runtime_approval_mode"] == "auto_accept"
+    assert command.metadata["cognitive_runtime_approval_mode"] == "auto_accept"
+    assert approval["mode"] == "auto_accept"
+    assert approval["source"] == "pm_agents_approval_mode"
+    assert approval["scope"] == "pm_planning_preflight"
+    assert approval["approved_by"] == "pm_cli"
+
+
 def test_explicit_ollama_backend_uses_role_runtime_provider_policy(monkeypatch, tmp_path) -> None:
     captured: dict[str, Any] = {}
 

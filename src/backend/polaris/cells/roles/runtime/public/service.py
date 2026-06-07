@@ -896,6 +896,7 @@ def execute_role_capability_invocation(
     workspace_guard_service: Any | None = None,
     permission_service: Any | None = None,
     architect_design_service: Any | None = None,
+    llm_control_plane_service: Any | None = None,
 ) -> RoleCapabilityInvocationResultV1:
     """Execute a mounted role capability through its declared public contract."""
     if not isinstance(command, ExecuteRoleCapabilityInvocationCommandV1):
@@ -985,6 +986,11 @@ def execute_role_capability_invocation(
         and capability.owner_cell == "qa.audit_verdict"
         and capability.contract_name == "RunQaAuditCommandV1"
     )
+    is_qa_visual_audit_verdict = (
+        capability.capability_id == "issue_visual_audit_verdict"
+        and capability.owner_cell == "qa.audit_verdict"
+        and capability.contract_name == "RunVisualQaAuditCommandV1"
+    )
     is_qa_traceback_parse = (
         capability.capability_id == "parse_traceback_frames"
         and capability.owner_cell == "qa.audit_verdict"
@@ -1019,6 +1025,23 @@ def execute_role_capability_invocation(
                     "required_role": "qa",
                     "actual_role": role_id,
                     "required_effect": "process.spawn:qa/pytest",
+                },
+            ),
+        )
+
+    if is_qa_visual_audit_verdict and role_id != "qa":
+        return _capability_invocation_failure(
+            command,
+            allowed=False,
+            owner_cell=capability.owner_cell,
+            error_code="qa_visual_capability_role_denied",
+            error_message="issue_visual_audit_verdict requires the qa role runtime object",
+            metadata=_capability_available_metadata(
+                capability.capability_id,
+                {
+                    "required_role": "qa",
+                    "actual_role": role_id,
+                    "required_effect": "llm.invoke:vision",
                 },
             ),
         )
@@ -1077,12 +1100,15 @@ def execute_role_capability_invocation(
             )
 
         result_ref = f"finops.budget_guard:budget:{reserve_command.scope_id}"
-        metadata = {
-            "budget_allowed": budget_result.allowed,
-            "remaining_tokens": budget_result.remaining_tokens,
-            "estimated_cost_usd": budget_result.estimated_cost_usd,
-            "reason": budget_result.reason,
-        }
+        metadata = _capability_available_metadata(
+            capability.capability_id,
+            {
+                "budget_allowed": budget_result.allowed,
+                "remaining_tokens": budget_result.remaining_tokens,
+                "estimated_cost_usd": budget_result.estimated_cost_usd,
+                "reason": budget_result.reason,
+            },
+        )
         if not budget_result.allowed:
             return RoleCapabilityInvocationResultV1(
                 ok=False,
@@ -1090,7 +1116,7 @@ def execute_role_capability_invocation(
                 role_id=role_id,
                 capability_id=capability.capability_id,
                 command_contract=capability.contract_name,
-                allowed=True,
+                allowed=False,
                 owner_cell=capability.owner_cell,
                 payload_ref=result_ref,
                 result_ref=result_ref,
@@ -1866,6 +1892,187 @@ def execute_role_capability_invocation(
             task_id=audit_result.task_id,
             status=audit_result.verdict,
             evidence_refs=evidence_paths,
+            metadata=metadata,
+        )
+
+    if is_qa_visual_audit_verdict:
+        image_refs = _payload_string_tuple(command.payload, "image_refs")
+        if image_refs is None or not image_refs:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_visual_audit_image_refs",
+                error_message="payload.image_refs must be a non-empty sequence of image evidence refs",
+            )
+        visual_criteria = _payload_mapping(command.payload, "criteria")
+        if visual_criteria is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_visual_audit_criteria",
+                error_message="payload.criteria must be a mapping when provided",
+            )
+        evidence_paths = _payload_string_tuple(command.payload, "evidence_paths")
+        if evidence_paths is None:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_visual_audit_evidence_paths",
+                error_message="payload.evidence_paths must be a sequence of strings when provided",
+            )
+        try:
+            from polaris.cells.llm.control_plane.public.contracts import CheckLlmModelCapabilityQueryV1
+            from polaris.cells.llm.control_plane.public.service import check_llm_model_capability
+
+            model_query = CheckLlmModelCapabilityQueryV1(
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                role=_payload_string(command.payload, "llm_role", "qa"),
+                capability=_payload_string(command.payload, "required_model_capability", "image_input"),
+                model=_payload_string(command.payload, "model") or None,
+                metadata={
+                    "role_invocation_id": invocation.invocation_id,
+                    "role_payload_ref": invocation.payload_ref,
+                    "role_fingerprint_ref": invocation.fingerprint_ref,
+                    "role_capability_id": capability.capability_id,
+                },
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_visual_model_capability_query",
+                error_message=str(exc),
+            )
+
+        try:
+            if llm_control_plane_service is None:
+                model_capability = check_llm_model_capability(model_query)
+            else:
+                model_capability = llm_control_plane_service.check_model_capability(model_query)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell="llm.control_plane",
+                error_code="visual_model_capability_check_failed",
+                error_message=str(exc),
+            )
+
+        model_metadata = {
+            "model_capability_supported": bool(getattr(model_capability, "supported", False)),
+            "required_capability": model_query.capability,
+            "model_capability_ref": getattr(model_capability, "capability_ref", ""),
+            "model_provider_id": getattr(model_capability, "provider_id", ""),
+            "model": getattr(model_capability, "model", ""),
+            "model_reason": getattr(model_capability, "reason", ""),
+        }
+        if not bool(getattr(model_capability, "ok", False)) or not bool(getattr(model_capability, "supported", False)):
+            return _capability_invocation_failure(
+                command,
+                allowed=False,
+                owner_cell="llm.control_plane",
+                error_code="visual_model_capability_missing",
+                error_message=getattr(model_capability, "reason", "")
+                or "configured model does not support image_input",
+                metadata=_capability_available_metadata(capability.capability_id, model_metadata),
+            )
+
+        visual_criteria.update(
+            {
+                "role_invocation_id": invocation.invocation_id,
+                "role_payload_ref": invocation.payload_ref,
+                "role_fingerprint_ref": invocation.fingerprint_ref,
+                "role_capability_id": capability.capability_id,
+                "model_provider_id": getattr(model_capability, "provider_id", ""),
+                "model": getattr(model_capability, "model", ""),
+            }
+        )
+        try:
+            from polaris.cells.qa.audit_verdict.public.contracts import RunVisualQaAuditCommandV1
+            from polaris.cells.qa.audit_verdict.public.service import run_visual_qa_audit
+
+            visual_command = RunVisualQaAuditCommandV1(
+                task_id=_payload_string(command.payload, "task_id", runtime_object.identity.task_id or ""),
+                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
+                run_id=_payload_string(command.payload, "run_id", runtime_object.identity.run_id or "") or None,
+                image_refs=image_refs,
+                model_capability_ref=str(getattr(model_capability, "capability_ref", "")),
+                criteria=visual_criteria,
+                evidence_paths=evidence_paths,
+            )
+        except (TypeError, ValueError) as exc:
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="invalid_visual_qa_audit_command",
+                error_message=str(exc),
+            )
+
+        try:
+            if qa_audit_service is None:
+                visual_result = run_visual_qa_audit(visual_command)
+            else:
+                visual_result = qa_audit_service.run_visual_qa_audit(visual_command)
+        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
+            return _capability_invocation_failure(
+                command,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                error_code="visual_qa_audit_failed",
+                error_message=str(exc),
+            )
+
+        result_ref = f"qa.audit_verdict:visual-verdict:{visual_result.task_id}"
+        evidence_refs = tuple(getattr(visual_result, "evidence_refs", ()) or ())
+        metadata = _capability_available_metadata(
+            capability.capability_id,
+            {
+                **model_metadata,
+                "verdict": visual_result.verdict,
+                "score": visual_result.score,
+                "image_refs": tuple(visual_result.image_refs),
+                "finding_count": len(visual_result.findings),
+                "findings": tuple(finding.summary for finding in visual_result.findings),
+                "evidence_refs": evidence_refs,
+            },
+        )
+        if not visual_result.ok:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=True,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=visual_result.task_id,
+                status=visual_result.verdict,
+                evidence_refs=evidence_refs,
+                metadata=metadata,
+                error_code="visual_qa_audit_rejected",
+                error_message="; ".join(finding.summary for finding in visual_result.findings)
+                or "visual QA audit rejected the task",
+            )
+        return RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id=invocation.invocation_id,
+            role_id=role_id,
+            capability_id=capability.capability_id,
+            command_contract=capability.contract_name,
+            allowed=True,
+            owner_cell=capability.owner_cell,
+            payload_ref=result_ref,
+            result_ref=result_ref,
+            task_id=visual_result.task_id,
+            status=visual_result.verdict,
+            evidence_refs=evidence_refs,
             metadata=metadata,
         )
 
@@ -4560,6 +4767,47 @@ def _copy_cognitive_guidance(cognitive_context: Mapping[str, Any]) -> dict[str, 
     }
 
 
+def _resolve_cognitive_runtime_blocker_approval(
+    *,
+    context: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, str] | None:
+    approval_raw = metadata.get("cognitive_runtime_approval")
+    if not isinstance(approval_raw, Mapping):
+        approval_raw = context.get("cognitive_runtime_approval")
+    if not isinstance(approval_raw, Mapping):
+        return None
+
+    mode = (
+        str(
+            approval_raw.get("mode")
+            or metadata.get("cognitive_runtime_approval_mode")
+            or context.get("cognitive_runtime_approval_mode")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    if mode != "auto_accept":
+        return None
+
+    scope = str(
+        approval_raw.get("scope")
+        or metadata.get("cognitive_runtime_approval_scope")
+        or context.get("cognitive_runtime_approval_scope")
+        or ""
+    ).strip()
+    if not scope:
+        return None
+
+    return {
+        "mode": mode,
+        "source": str(approval_raw.get("source") or "unknown").strip() or "unknown",
+        "scope": scope,
+        "approved_by": str(approval_raw.get("approved_by") or "unknown").strip() or "unknown",
+    }
+
+
 def _copy_string_tuple(raw_value: Any, *, limit: int) -> tuple[str, ...]:
     if not isinstance(raw_value, (list, tuple, set, frozenset)):
         return ()
@@ -5367,11 +5615,22 @@ class RoleRuntimeService(IRoleRuntime):
                 else "cognitive_runtime_mainline_unavailable"
             )
 
+        approved_blocker: dict[str, str] | None = None
+        block_reason = ""
         if bool(cognitive_context.get("blocked")):
             reason = str(cognitive_context.get("block_reason") or "blocked").strip()
-            raise RuntimeError(f"cognitive_runtime_blocked:{reason}")
+            approved_blocker = _resolve_cognitive_runtime_blocker_approval(
+                context=context_override,
+                metadata=metadata,
+            )
+            if approved_blocker is None:
+                raise RuntimeError(f"cognitive_runtime_blocked:{reason}")
+            block_reason = reason
 
         guidance = _copy_cognitive_guidance(cognitive_context)
+        if approved_blocker is not None:
+            guidance["approved_blocker"] = True
+            guidance["block_reason"] = block_reason
         context_override["cognitive_guidance"] = guidance
         blocked_tools = tuple(guidance.get("blocked_tools") or ())
         if blocked_tools:
@@ -5393,6 +5652,18 @@ class RoleRuntimeService(IRoleRuntime):
             "tool_policy_applied": bool(blocked_tools),
             "strategy_override_applied": bool(strategy_override),
         }
+        if approved_blocker is not None:
+            metadata["cognitive_runtime_preflight"].update(
+                {
+                    "approved_blocker": True,
+                    "original_blocked": True,
+                    "block_reason": block_reason,
+                    "approval_mode": approved_blocker["mode"],
+                    "approval_source": approved_blocker["source"],
+                    "approval_scope": approved_blocker["scope"],
+                    "approved_by": approved_blocker["approved_by"],
+                }
+            )
         request.context_override = context_override
         request.metadata = metadata
         return request

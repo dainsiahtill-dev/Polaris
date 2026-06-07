@@ -73,6 +73,26 @@ class GetLlmRuntimeStatusQueryV1:
 
 
 @dataclass(frozen=True)
+class CheckLlmModelCapabilityQueryV1:
+    """Query whether the configured role model declares a required capability."""
+
+    workspace: str
+    role: str
+    capability: str
+    model: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "role", _require_non_empty("role", self.role))
+        capability = _require_non_empty("capability", self.capability).lower().replace("-", "_")
+        object.__setattr__(self, "capability", capability)
+        if self.model is not None:
+            object.__setattr__(self, "model", _require_non_empty("model", self.model))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
 class LlmConfigChangedEventV1:
     event_id: str
     workspace: str
@@ -144,6 +164,36 @@ class LlmInvocationResultV1:
             raise ValueError("token counters must be >= 0")
 
 
+@dataclass(frozen=True)
+class LlmModelCapabilityResultV1:
+    """Structured model capability decision from llm.control_plane."""
+
+    ok: bool
+    workspace: str
+    role: str
+    provider_id: str
+    model: str
+    capability: str
+    supported: bool
+    capability_ref: str = ""
+    reason: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "role", _require_non_empty("role", self.role))
+        object.__setattr__(self, "provider_id", _require_non_empty("provider_id", self.provider_id))
+        object.__setattr__(self, "model", _require_non_empty("model", self.model))
+        object.__setattr__(self, "capability", _require_non_empty("capability", self.capability).lower())
+        object.__setattr__(self, "supported", bool(self.supported))
+        object.__setattr__(self, "capability_ref", str(self.capability_ref or "").strip())
+        object.__setattr__(self, "reason", str(self.reason or "").strip())
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        if self.supported and not self.capability_ref:
+            raise ValueError("supported model capability result must include capability_ref")
+
+
 class LlmControlPlaneError(RuntimeError):
     """Raised when `llm.control_plane` contract processing fails."""
 
@@ -199,6 +249,7 @@ class ILLMControlPlane(Protocol):
 
 
 __all__ = [
+    "CheckLlmModelCapabilityQueryV1",
     "GetLlmConfigQueryV1",
     "GetLlmRuntimeStatusQueryV1",
     "ILLMControlPlane",
@@ -210,5 +261,6 @@ __all__ = [
     "LlmControlPlaneError",
     "LlmInvocationCompletedEventV1",
     "LlmInvocationResultV1",
+    "LlmModelCapabilityResultV1",
     "SaveLlmConfigCommandV1",
 ]

@@ -732,6 +732,47 @@ def test_cell_pm_invoke_port_propagates_timeout_to_role_runtime(
     assert command.context["timeout_seconds"] == 300
 
 
+def test_cell_pm_invoke_port_passes_auto_accept_cognitive_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeRoleRuntimeService:
+        async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+            captured["command"] = command
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role="pm",
+                workspace=".",
+                session_id=command.session_id,
+                output='{"tasks": []}',
+            )
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.runtime.public.service.RoleRuntimeService",
+        FakeRoleRuntimeService,
+    )
+
+    output = CellPmInvokePort().invoke(
+        NoopPmStatePort(),
+        "prompt with `npm test` acceptance criteria",
+        "generic",
+        SimpleNamespace(agents_approval_mode="auto_accept"),
+        None,
+    )
+
+    assert output == '{"tasks": []}'
+    command = captured["command"]
+    approval = command.metadata["cognitive_runtime_approval"]
+    assert command.context["cognitive_runtime_approval_mode"] == "auto_accept"
+    assert command.metadata["cognitive_runtime_approval_mode"] == "auto_accept"
+    assert approval["mode"] == "auto_accept"
+    assert approval["source"] == "pm_agents_approval_mode"
+    assert approval["scope"] == "pm_planning_preflight"
+    assert approval["approved_by"] == "pm_cli"
+
+
 def test_cell_pm_invoke_port_raises_on_ollama_error(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeRoleRuntimeService:
         async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:

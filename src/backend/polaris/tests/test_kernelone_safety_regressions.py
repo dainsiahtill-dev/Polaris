@@ -10,11 +10,11 @@ from polaris.kernelone.events.file_event_broadcaster import (
     replace_in_file_with_broadcast,
 )
 from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
+from polaris.kernelone.llm.toolkit.streaming_patch_buffer import PatchBlock, StreamingPatchBuffer
 from polaris.kernelone.memory.integration import (
     get_memory_store,
     init_anthropomorphic_modules,
 )
-from polaris.kernelone.prompts.catalog import PatchBlock, apply_patch_blocks
 from polaris.kernelone.runtime.shared_types import FILE_BLOCK_RE
 from polaris.kernelone.storage.layout import StorageLayout
 from polaris.kernelone.workflow.contracts import WorkflowContract
@@ -43,19 +43,20 @@ def test_policy_allow_implementation_requires_approval(tmp_path: Path) -> None:
 
 
 def test_apply_patch_blocks_rejects_workspace_escape(tmp_path: Path) -> None:
+    # Migrated from the removed prompts.catalog.apply_patch_blocks to its live
+    # successor StreamingPatchBuffer -> StrictOperationApplier. Guards the same
+    # safety invariant: a patch whose target escapes the workspace must be
+    # rejected and must not create a file outside the workspace.
     target = tmp_path / "inside.py"
     target.write_text("print('inside')\n", encoding="utf-8")
 
-    result = apply_patch_blocks(
-        [PatchBlock(file="../outside.py", search="", replace="print('x')\n")],
-        str(tmp_path),
-        strict=False,
+    buffer = StreamingPatchBuffer(workspace=str(tmp_path))
+    result = buffer.execute_patch_block(
+        PatchBlock(path="../outside.py", edit_type="create", search="", replace="print('x')\n")
     )
-    assert result.ok is False
-    assert result.changed_files == []
-    assert result.applied_count == 0
-    assert result.skipped_count == 1
-    assert any("Invalid patch target" in item for item in result.errors)
+
+    assert result.success is False
+    assert not (tmp_path.parent / "outside.py").exists()
 
 
 @pytest.mark.asyncio

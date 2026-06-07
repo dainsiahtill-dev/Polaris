@@ -3,7 +3,7 @@
   "title": "QA Audit Verdict",
   "kind": "workflow",
   "purpose": "Run independent QA or Auditor validation and emit structured acceptance verdicts for Director outputs.",
-  "summary": "QA audit verdict owner Cell. Public callers use RunQaAuditCommandV1 through public.service.run_qa_audit; state and audit implementation stay inside this Cell.",
+  "summary": "QA audit verdict owner Cell. Public callers use RunQaAuditCommandV1 through public.service.run_qa_audit; visual audit callers use RunVisualQaAuditCommandV1 only after llm.control_plane returns an image_input model capability ref. Visual audit TruthLog receipts are appended through audit.evidence AppendEvidenceEventCommandV1; QA keeps only verdict semantics and does not directly own runtime/evidence state.",
   "owned_paths": [
     "polaris/cells/qa/audit_verdict/public/**",
     "polaris/cells/qa/audit_verdict/internal/**"
@@ -11,7 +11,8 @@
   "public_contracts": {
     "commands": [
       "ParseTracebackFramesCommandV1",
-      "RunQaAuditCommandV1"
+      "RunQaAuditCommandV1",
+      "RunVisualQaAuditCommandV1"
     ],
     "queries": [
       "GetQaVerdictQueryV1"
@@ -23,7 +24,9 @@
       "FailureSignalV1",
       "ParseTracebackFramesResultV1",
       "TracebackFrameV1",
-      "QaAuditResultV1"
+      "QaAuditResultV1",
+      "VisualAuditFindingV1",
+      "VisualQaAuditResultV1"
     ],
     "errors": [
       "QaAuditErrorV1"

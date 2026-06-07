@@ -10,6 +10,7 @@ purpose: 'Append-only evidence event ownership, integrity verification, and evid
   '
 current_modules:
 - polaris.cells.audit.evidence.public.contracts
+- polaris.cells.audit.evidence.public.service
 tags: []
 owned_paths:
 - polaris/cells/audit/evidence/**
@@ -20,6 +21,7 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.audit.evidence.public.contracts
+  - polaris.cells.audit.evidence.public.service
   commands:
   - AppendEvidenceEventCommandV1
   queries:
@@ -46,6 +48,7 @@ effects_allowed:
 - process.exec:git
 verification:
   tests:
+  - polaris/cells/audit/evidence/tests/test_evidence_contract.py
   - tests/test_log_pipeline_storage_layout.py
   gaps:
   - Runtime event writers are not fully funneled through this boundary yet.

@@ -1,6 +1,7 @@
 """Public boundary for `llm.control_plane` cell."""
 
 from polaris.cells.llm.control_plane.public.contracts import (
+    CheckLlmModelCapabilityQueryV1,
     GetLlmConfigQueryV1,
     GetLlmRuntimeStatusQueryV1,
     ILLMControlPlane,
@@ -10,6 +11,7 @@ from polaris.cells.llm.control_plane.public.contracts import (
     LlmControlPlaneError,
     LlmInvocationCompletedEventV1,
     LlmInvocationResultV1,
+    LlmModelCapabilityResultV1,
     LLMRequest,
     LLMResponse,
     SaveLlmConfigCommandV1,
@@ -21,6 +23,7 @@ from polaris.cells.llm.control_plane.public.service import (
     LlmControlPlaneService,
     LLMMessage,
     TUILLMClient,
+    check_llm_model_capability,
     get_llm_config,
     get_llm_runtime_status,
     get_role_system_prompt,
@@ -33,6 +36,7 @@ from polaris.cells.llm.control_plane.public.service import (
 )
 
 __all__ = [
+    "CheckLlmModelCapabilityQueryV1",
     "GetLlmConfigQueryV1",
     "GetLlmRuntimeStatusQueryV1",
     "HRAgent",
@@ -49,8 +53,10 @@ __all__ = [
     "LlmControlPlaneService",
     "LlmInvocationCompletedEventV1",
     "LlmInvocationResultV1",
+    "LlmModelCapabilityResultV1",
     "SaveLlmConfigCommandV1",
     "TUILLMClient",
+    "check_llm_model_capability",
     "get_llm_config",
     "get_llm_runtime_status",
     "get_role_system_prompt",

@@ -88,6 +88,7 @@ effects_allowed:
 - process.spawn:qa/pytest
 - qa.failure_signal.parse
 - qa.verdict.issue
+- llm.invoke:vision
 - budget.reserve:context
 - mutation.guard:workspace
 - architect.validate_cell_boundary

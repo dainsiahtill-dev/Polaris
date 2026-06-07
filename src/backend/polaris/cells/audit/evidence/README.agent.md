@@ -10,7 +10,7 @@ Own append-only runtime evidence events, integrity verification, and evidence qu
 
 ## Public Inputs
 
-- `AppendEvidenceEventCommandV1`
+- `AppendEvidenceEventCommandV1` through `append_evidence_event(...)`
 - `QueryEvidenceEventsV1`
 - `VerifyEvidenceChainV1`
 
@@ -26,12 +26,19 @@ Own append-only runtime evidence events, integrity verification, and evidence qu
 
 ## State Ownership
 
-- `runtime/events/*`
+- `runtime/evidence/*`
 
 ## Effects Allowed
 
 - `fs.read:runtime/*`
-- `fs.write:runtime/events/*`
+- `fs.write:runtime/evidence/*`
+
+## Public Service
+
+- `append_evidence_event(AppendEvidenceEventCommandV1) -> EvidenceAppendedEventV1`
+  appends one UTF-8 JSONL event through KernelOne FS under
+  `runtime/evidence/<kind>.jsonl`. Cross-cell callers must use this public
+  service and must not write evidence logs directly.
 
 ## Invariants
 
@@ -44,9 +51,10 @@ Own append-only runtime evidence events, integrity verification, and evidence qu
 1. `cell.yaml`
 2. `generated/context.pack.json`
 3. `public/contracts.py`
-4. owned implementation files only if needed
+4. `public/service.py`
+5. owned implementation files only if needed
 
 ## Verification
 
+- `polaris/cells/audit/evidence/tests/test_evidence_contract.py`
 - `tests/test_log_pipeline_storage_layout.py`
-

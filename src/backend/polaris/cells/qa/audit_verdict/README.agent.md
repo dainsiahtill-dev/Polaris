@@ -12,12 +12,15 @@ Run independent QA or Auditor validation and emit structured acceptance verdicts
 
 - commands: `ParseTracebackFramesCommandV1`
 - commands: `RunQaAuditCommandV1`
+- commands: `RunVisualQaAuditCommandV1`
 - queries: `GetQaVerdictQueryV1`
 - events: `QaVerdictIssuedEventV1`
 - results: `FailureSignalV1`
 - results: `ParseTracebackFramesResultV1`
 - results: `QaAuditResultV1`
 - results: `TracebackFrameV1`
+- results: `VisualAuditFindingV1`
+- results: `VisualQaAuditResultV1`
 - errors: `QaAuditError`
 
 ## Architecture
@@ -42,6 +45,13 @@ internal/
 - `parse_traceback_frames(ParseTracebackFramesCommandV1) ->
   ParseTracebackFramesResultV1` emits typed `FailureSignalV1` data for the
   `FailureSignalIndex` asset mount.
+- `run_visual_qa_audit(RunVisualQaAuditCommandV1) -> VisualQaAuditResultV1`
+  records typed image evidence refs after the caller has obtained an
+  `llm.control_plane` image-input model capability ref. This Cell does not
+  accept natural-language image descriptions as visual source of truth. The
+  visual audit TruthLog receipt is appended through
+  `audit.evidence.public.service.append_evidence_event`; QA does not directly
+  write `runtime/evidence/*`.
 
 ## Cross-Cell Dependencies
 

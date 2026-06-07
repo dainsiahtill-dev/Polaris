@@ -28,12 +28,14 @@ public_contracts:
   queries:
   - GetLlmConfigQueryV1
   - GetLlmRuntimeStatusQueryV1
+  - CheckLlmModelCapabilityQueryV1
   events:
   - LlmConfigChangedEventV1
   - LlmInvocationCompletedEventV1
   results:
   - LlmConfigResultV1
   - LlmInvocationResultV1
+  - LlmModelCapabilityResultV1
   errors:
   - LlmControlPlaneErrorV1
 depends_on:
@@ -57,6 +59,7 @@ effects_allowed:
 verification:
   tests:
   - tests/test_llm_phase0_regression.py
+  - polaris/cells/llm/control_plane/tests/test_model_capability_contracts.py
   - polaris/kernelone/llm/toolkit/tests/test_integration.py
   - polaris/kernelone/llm/toolkit/tests/test_parsers.py
   gaps:

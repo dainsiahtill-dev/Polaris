@@ -1,7 +1,7 @@
 {
   "cell_id": "llm.control_plane",
   "version": "1.0",
-  "summary": "Unified LLM multi-provider control plane",
+  "summary": "Unified LLM multi-provider control plane. Public model capability checks use CheckLlmModelCapabilityQueryV1 and require explicit provider config declarations such as image_input; callers must not infer vision support from natural language prompts.",
   "depends_on": [],
   "owned_paths": [
     "polaris/application/llm/evaluation",

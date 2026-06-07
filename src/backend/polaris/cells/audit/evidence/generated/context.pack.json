@@ -3,11 +3,9 @@
   "title": "Evidence Audit",
   "kind": "capability",
   "purpose": "Own append-only runtime evidence events, integrity verification, and evidence query/export.",
-  "summary": "Owns runtime evidence event storage and verification so audit trails remain append-only and queryable.",
+  "summary": "Owns runtime evidence event storage and verification so audit trails remain append-only and queryable. Cross-cell callers append evidence through public.service.append_evidence_event(AppendEvidenceEventCommandV1), which writes UTF-8 JSONL under runtime/evidence/<kind>.jsonl via KernelOne FS.",
   "owned_paths": [
-    "polaris/application/audit/**",
-    "polaris/application/services/evidence_service.py",
-    "polaris/application/services/audit_service.py",
+    "polaris/cells/audit/evidence/**",
     "polaris/kernelone/audit/**",
     "polaris/infrastructure/audit/**",
     "polaris/delivery/http/audit_router.py",
@@ -33,14 +31,17 @@
     ]
   },
   "neighbors": [
-    "policy.workspace_guard"
+    "llm.provider_runtime",
+    "policy.workspace_guard",
+    "roles.runtime"
   ],
   "state_owners": [
-    "runtime/events/*"
+    "runtime/evidence/*"
   ],
   "effects_allowed": [
     "fs.read:runtime/*",
-    "fs.write:runtime/events/*"
+    "fs.write:runtime/evidence/*",
+    "process.exec:git"
   ],
   "invariants": [
     "evidence storage is append-only",
@@ -48,10 +49,13 @@
     "all text writes use explicit UTF-8"
   ],
   "hotspots": [
-    "polaris/application/services/evidence_service.py",
-    "polaris/infrastructure/audit/stores/evidence_store.py"
+    "polaris/cells/audit/evidence/public/contracts.py",
+    "polaris/cells/audit/evidence/public/service.py",
+    "polaris/cells/audit/evidence/task_service.py",
+    "polaris/cells/audit/evidence/bundle_service.py"
   ],
   "test_targets": [
+    "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
     "tests/test_log_pipeline_storage_layout.py"
   ],
   "change_guidance": {
@@ -59,9 +63,9 @@
       "cell.yaml",
       "README.agent.md",
       "generated/context.pack.json",
-      "public/contracts.py"
+      "public/contracts.py",
+      "public/service.py"
     ],
     "expand_to_neighbors_only_when_needed": true
   }
 }
-

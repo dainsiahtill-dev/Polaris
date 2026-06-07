@@ -331,6 +331,72 @@ class TestRoleRuntimeServiceStrategy:
             )
 
     @pytest.mark.asyncio
+    async def test_prepare_session_request_allows_approved_cognitive_mainline_blocker(
+        self,
+        monkeypatch,
+    ) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+        from polaris.kernelone.cognitive import middleware as cognitive_middleware
+
+        class BlockingCognitiveMiddleware:
+            def __init__(self, *, workspace: str | None = None, enabled: bool | None = None) -> None:
+                return None
+
+            async def process(self, *, message: str, role_id: str, session_id: str | None = None):
+                return {
+                    "enabled": True,
+                    "intent_type": "execute_command",
+                    "confidence": 0.82,
+                    "uncertainty_score": 0.71,
+                    "execution_path": "full_pipe",
+                    "blocked": True,
+                    "block_reason": "Blockers: ('Critical severity - requires explicit approval',)",
+                    "blocked_tools": ("delete_file", "run_command"),
+                    "cognitive_analysis": {
+                        "clarity_level": "medium",
+                        "verification_needed": True,
+                        "actions_taken": ["inspect_acceptance_commands"],
+                    },
+                }
+
+        monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", BlockingCognitiveMiddleware)
+
+        request = await RoleRuntimeService()._prepare_session_request(
+            ExecuteRoleSessionCommandV1(
+                role="pm",
+                session_id="sess-approved-blocker",
+                workspace="/repo",
+                user_message="plan tasks with `npm test` acceptance commands",
+                context={
+                    "cognitive_runtime_approval_mode": "auto_accept",
+                },
+                metadata={
+                    "cognitive_runtime_mode": "mainline",
+                    "cognitive_runtime_approval": {
+                        "mode": "auto_accept",
+                        "source": "pm_agents_approval_mode",
+                        "scope": "pm_planning_preflight",
+                        "approved_by": "pm_cli",
+                    },
+                    "cognitive_runtime_approval_mode": "auto_accept",
+                },
+                stream=False,
+            )
+        )
+
+        assert request.context_override is not None
+        assert request.context_override["cognitive_guidance"]["intent_type"] == "execute_command"
+        assert request.metadata["cognitive_tool_policy"]["blocked_tools"] == ("delete_file", "run_command")
+        preflight = request.metadata["cognitive_runtime_preflight"]
+        assert preflight["applied"] is True
+        assert preflight["approved_blocker"] is True
+        assert preflight["original_blocked"] is True
+        assert preflight["approval_mode"] == "auto_accept"
+        assert preflight["approval_scope"] == "pm_planning_preflight"
+        assert "Critical severity" in preflight["block_reason"]
+
+    @pytest.mark.asyncio
     async def test_create_transaction_controller_applies_cognitive_mainline_preflight(
         self,
         monkeypatch,

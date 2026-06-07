@@ -1,12 +1,19 @@
 """Public boundary for `qa.audit_verdict` cell."""
 
 from polaris.cells.qa.audit_verdict.public.contracts import (
+    FailureSignalV1,
     GetQaVerdictQueryV1,
+    ParseTracebackFramesCommandV1,
+    ParseTracebackFramesResultV1,
     QaAuditError,
     QaAuditErrorV1,
     QaAuditResultV1,
     QaVerdictIssuedEventV1,
     RunQaAuditCommandV1,
+    RunVisualQaAuditCommandV1,
+    TracebackFrameV1,
+    VisualAuditFindingV1,
+    VisualQaAuditResultV1,
 )
 from polaris.cells.qa.audit_verdict.public.service import (
     AuditResult,
@@ -17,11 +24,17 @@ from polaris.cells.qa.audit_verdict.public.service import (
     ReviewGate,
     get_quality_service,
     get_review_gate,
+    parse_traceback_frames,
+    run_qa_audit,
+    run_visual_qa_audit,
 )
 
 __all__ = [
     "AuditResult",
+    "FailureSignalV1",
     "GetQaVerdictQueryV1",
+    "ParseTracebackFramesCommandV1",
+    "ParseTracebackFramesResultV1",
     "QAConfig",
     "QAConsumer",
     "QAService",
@@ -32,6 +45,13 @@ __all__ = [
     "QualityService",
     "ReviewGate",
     "RunQaAuditCommandV1",
+    "RunVisualQaAuditCommandV1",
+    "TracebackFrameV1",
+    "VisualAuditFindingV1",
+    "VisualQaAuditResultV1",
     "get_quality_service",
     "get_review_gate",
+    "parse_traceback_frames",
+    "run_qa_audit",
+    "run_visual_qa_audit",
 ]

@@ -64,8 +64,6 @@ class ToolCallResult:
 
     P2-018 Intent Separation:
         This class is for the PARSE phase only. Intentional separation from:
-        - polaris.kernelone.benchmark.llm.tool_accuracy.ToolCallResult
-            (Benchmark phase: has case_id, execution_time_ms, error)
         - polaris.kernelone.llm.contracts.tool.ToolExecutionResult
             (Execution phase: has tool_call_id, success, result, blocked)
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -18,12 +20,14 @@ from polaris.cells.llm.control_plane.internal.tui_llm_client import (
 )
 from polaris.cells.llm.control_plane.internal.vision_service import get_vision_service
 from polaris.cells.llm.control_plane.public.contracts import (
+    CheckLlmModelCapabilityQueryV1,
     GetLlmConfigQueryV1,
     GetLlmRuntimeStatusQueryV1,
     ILLMControlPlane,
     InvokeLlmRoleCommandV1,
     LlmConfigResultV1,
     LlmInvocationResultV1,
+    LlmModelCapabilityResultV1,
     LLMRequest,
     LLMResponse,
     SaveLlmConfigCommandV1,
@@ -31,7 +35,7 @@ from polaris.cells.llm.control_plane.public.contracts import (
 from polaris.kernelone.telemetry.metrics import MetricsRecorder, Timer
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Mapping
+    from collections.abc import AsyncGenerator
 
 
 def _looks_like_error_message(content: str) -> bool:
@@ -60,6 +64,42 @@ def _normalize_provider_kind(provider_type: str, payload: Mapping[str, Any]) -> 
     if provider_type in {"ollama", "codex_cli", "codex_sdk"}:
         return "codex" if provider_type.startswith("codex") else provider_type
     return "generic"
+
+
+def _capability_tokens_from_config(payload: Mapping[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for key in ("capabilities", "modalities", "input_modalities"):
+        raw = payload.get(key)
+        values: Iterable[Any]
+        if isinstance(raw, str):
+            values = (raw,)
+        elif isinstance(raw, (list, tuple, set, frozenset)):
+            values = raw
+        else:
+            values = ()
+        for value in values:
+            token = str(value or "").strip().lower().replace("-", "_")
+            if token:
+                tokens.add(token)
+    for key in ("supports_image_input", "image_input"):
+        if bool(payload.get(key)):
+            tokens.add("image_input")
+    if "vision" in tokens or "multimodal" in tokens:
+        tokens.add("image_input")
+    return tokens
+
+
+def _model_capability_ref(
+    *,
+    workspace: str,
+    role: str,
+    provider_id: str,
+    model: str,
+    capability: str,
+) -> str:
+    basis = "\n".join((workspace, role, provider_id, model, capability))
+    digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+    return f"llm.control_plane:model-capability:{role}:{capability}:{digest}"
 
 
 class LlmControlPlaneService(ILLMControlPlane):
@@ -182,6 +222,69 @@ class LlmControlPlaneService(ILLMControlPlane):
                 payload["model"] = role_cfg.model
                 payload["provider_type"] = role_cfg.provider_type
         return payload
+
+    def check_model_capability(self, query: CheckLlmModelCapabilityQueryV1) -> LlmModelCapabilityResultV1:
+        """Return whether the configured role model explicitly declares a capability."""
+        if not isinstance(query, CheckLlmModelCapabilityQueryV1):
+            raise TypeError("query must be a CheckLlmModelCapabilityQueryV1")
+
+        config = self.get_config(GetLlmConfigQueryV1(workspace=query.workspace, role=query.role))
+        if not config.ready:
+            return LlmModelCapabilityResultV1(
+                ok=False,
+                workspace=query.workspace,
+                role=query.role,
+                provider_id=config.provider_id,
+                model=config.model,
+                capability=query.capability,
+                supported=False,
+                reason="llm role is not configured",
+            )
+        provider_cfg = config.metadata.get("provider_cfg")
+        if not isinstance(provider_cfg, Mapping):
+            provider_cfg = {}
+        configured_model = str(query.model or config.model).strip()
+        if query.model is not None and configured_model != config.model:
+            return LlmModelCapabilityResultV1(
+                ok=True,
+                workspace=query.workspace,
+                role=query.role,
+                provider_id=config.provider_id,
+                model=config.model,
+                capability=query.capability,
+                supported=False,
+                reason="configured model does not match requested model",
+            )
+
+        capability_tokens = _capability_tokens_from_config(provider_cfg)
+        supported = query.capability in capability_tokens
+        capability_ref = (
+            _model_capability_ref(
+                workspace=query.workspace,
+                role=query.role,
+                provider_id=config.provider_id,
+                model=config.model,
+                capability=query.capability,
+            )
+            if supported
+            else ""
+        )
+        return LlmModelCapabilityResultV1(
+            ok=True,
+            workspace=query.workspace,
+            role=query.role,
+            provider_id=config.provider_id,
+            model=config.model,
+            capability=query.capability,
+            supported=supported,
+            capability_ref=capability_ref,
+            reason="" if supported else f"model does not declare {query.capability} support",
+            metadata={
+                "capabilities": tuple(sorted(capability_tokens)),
+                "provider_type": config.metadata.get("provider_type", ""),
+                "provider_kind": config.metadata.get("provider_kind", ""),
+            },
+        )
 
     async def invoke_role(self, command: InvokeLlmRoleCommandV1) -> LlmInvocationResultV1:
         with Timer("llm_invoke_timer") as timer:
@@ -320,6 +423,10 @@ def get_llm_runtime_status(query: GetLlmRuntimeStatusQueryV1) -> Mapping[str, An
     return _DEFAULT_LLM_CONTROL_PLANE.get_runtime_status(query)
 
 
+def check_llm_model_capability(query: CheckLlmModelCapabilityQueryV1) -> LlmModelCapabilityResultV1:
+    return _DEFAULT_LLM_CONTROL_PLANE.check_model_capability(query)
+
+
 async def invoke_llm_role(command: InvokeLlmRoleCommandV1) -> LlmInvocationResultV1:
     return await _DEFAULT_LLM_CONTROL_PLANE.invoke_role(command)
 
@@ -347,6 +454,7 @@ def load_llm_config_port(
 
 
 __all__ = [
+    "CheckLlmModelCapabilityQueryV1",
     "HRAgent",
     "ILLMControlPlane",
     "LLMConfig",
@@ -355,7 +463,9 @@ __all__ = [
     "LLMRequest",
     "LLMResponse",
     "LlmControlPlaneService",
+    "LlmModelCapabilityResultV1",
     "TUILLMClient",
+    "check_llm_model_capability",
     "get_llm_config",
     "get_llm_runtime_status",
     "get_role_system_prompt",

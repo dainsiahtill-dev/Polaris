@@ -18,6 +18,17 @@ def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
 
 
+def _to_string_tuple(values: tuple[str, ...] | list[str] | set[str] | None) -> tuple[str, ...]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values or ():
+        token = str(value or "").strip()
+        if token and token not in seen:
+            rows.append(token)
+            seen.add(token)
+    return tuple(rows)
+
+
 @dataclass(frozen=True)
 class TracebackFrameV1:
     path: str
@@ -108,6 +119,102 @@ class RunQaAuditCommandV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "criteria", _to_dict_copy(self.criteria))
         object.__setattr__(self, "evidence_paths", tuple(str(v) for v in self.evidence_paths if str(v).strip()))
+
+
+@dataclass(frozen=True)
+class VisualAuditFindingV1:
+    """One typed QA finding derived from image evidence."""
+
+    finding_id: str
+    image_ref: str
+    category: str
+    summary: str
+    severity: str = "info"
+    confidence: float = 0.0
+    evidence_ref: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "finding_id", _require_non_empty("finding_id", self.finding_id))
+        object.__setattr__(self, "image_ref", _require_non_empty("image_ref", self.image_ref))
+        object.__setattr__(self, "category", _require_non_empty("category", self.category))
+        object.__setattr__(self, "summary", _require_non_empty("summary", self.summary))
+        object.__setattr__(self, "severity", _require_non_empty("severity", self.severity))
+        confidence = float(self.confidence)
+        if confidence < 0.0 or confidence > 1.0:
+            raise ValueError("confidence must be between 0 and 1")
+        object.__setattr__(self, "confidence", confidence)
+        if self.evidence_ref is not None:
+            object.__setattr__(self, "evidence_ref", _require_non_empty("evidence_ref", self.evidence_ref))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RunVisualQaAuditCommandV1:
+    """Run a QA visual audit over image evidence refs using a verified vision model."""
+
+    task_id: str
+    workspace: str
+    image_refs: tuple[str, ...]
+    model_capability_ref: str
+    run_id: str | None = None
+    criteria: Mapping[str, Any] = field(default_factory=dict)
+    evidence_paths: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        image_refs = _to_string_tuple(list(self.image_refs))
+        if not image_refs:
+            raise ValueError("image_refs must include at least one image ref")
+        object.__setattr__(self, "image_refs", image_refs)
+        object.__setattr__(
+            self,
+            "model_capability_ref",
+            _require_non_empty("model_capability_ref", self.model_capability_ref),
+        )
+        object.__setattr__(self, "criteria", _to_dict_copy(self.criteria))
+        object.__setattr__(self, "evidence_paths", _to_string_tuple(list(self.evidence_paths)))
+
+
+@dataclass(frozen=True)
+class VisualQaAuditResultV1:
+    """Structured result for a QA visual audit."""
+
+    ok: bool
+    task_id: str
+    workspace: str
+    verdict: str
+    image_refs: tuple[str, ...]
+    model_capability_ref: str
+    findings: tuple[VisualAuditFindingV1, ...] = field(default_factory=tuple)
+    score: float = 0.0
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "verdict", _require_non_empty("verdict", self.verdict))
+        image_refs = _to_string_tuple(list(self.image_refs))
+        if not image_refs:
+            raise ValueError("visual audit result must include image_refs")
+        object.__setattr__(self, "image_refs", image_refs)
+        object.__setattr__(
+            self,
+            "model_capability_ref",
+            _require_non_empty("model_capability_ref", self.model_capability_ref),
+        )
+        findings = tuple(self.findings)
+        if not all(isinstance(finding, VisualAuditFindingV1) for finding in findings):
+            raise TypeError("findings must contain VisualAuditFindingV1 values")
+        object.__setattr__(self, "findings", findings)
+        score = float(self.score)
+        if score < 0.0:
+            raise ValueError("score must be >= 0")
+        object.__setattr__(self, "score", score)
+        object.__setattr__(self, "evidence_refs", _to_string_tuple(list(self.evidence_refs)))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
 @dataclass(frozen=True)
@@ -227,5 +334,8 @@ __all__ = [
     "QaAuditResultV1",
     "QaVerdictIssuedEventV1",
     "RunQaAuditCommandV1",
+    "RunVisualQaAuditCommandV1",
     "TracebackFrameV1",
+    "VisualAuditFindingV1",
+    "VisualQaAuditResultV1",
 ]

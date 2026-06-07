@@ -11,3 +11,7 @@ Provide a unified, multi-provider LLM control plane. It abstracts away the compl
 ## Public Contracts
 - Multi-provider unified routing and execution.
 - Token and performance tracking for AI requests.
+- `CheckLlmModelCapabilityQueryV1` / `LlmModelCapabilityResultV1` is the
+  public preflight for role capabilities that require explicit model features
+  such as `image_input`. Callers must not infer image support from prompt text
+  or model names inside their own Cell.

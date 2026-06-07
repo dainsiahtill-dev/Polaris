@@ -564,6 +564,8 @@ cells:
       Own runtime evidence events, audit chain verification, and evidence query
       surfaces with append-only guarantees.
     current_modules:
+      - polaris.cells.audit.evidence.public.contracts
+      - polaris.cells.audit.evidence.public.service
       - polaris.cells.audit.evidence.task_service
       - polaris.kernelone.audit
       - polaris.infrastructure.audit
@@ -576,6 +578,7 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.audit.evidence.public.contracts
+        - polaris.cells.audit.evidence.public.service
       commands:
         - AppendEvidenceEventCommandV1
       queries:
@@ -602,6 +605,7 @@ cells:
       - process.exec:git
     verification:
       tests:
+        - polaris/cells/audit/evidence/tests/test_evidence_contract.py
         - tests/test_log_pipeline_storage_layout.py
       gaps:
         - Runtime event stream ownership is moving to events.fact_stream.
@@ -1001,12 +1005,14 @@ cells:
       queries:
         - GetLlmConfigQueryV1
         - GetLlmRuntimeStatusQueryV1
+        - CheckLlmModelCapabilityQueryV1
       events:
         - LlmConfigChangedEventV1
         - LlmInvocationCompletedEventV1
       results:
         - LlmConfigResultV1
         - LlmInvocationResultV1
+        - LlmModelCapabilityResultV1
       errors:
         - LlmControlPlaneErrorV1
     depends_on:
@@ -1033,6 +1039,7 @@ cells:
     verification:
       tests:
         - tests/test_llm_phase0_regression.py
+        - polaris/cells/llm/control_plane/tests/test_model_capability_contracts.py
         - tests/test_llm_provider_actions.py
         - tests/test_llm_provider_request_context.py
       gaps:
@@ -1421,6 +1428,7 @@ cells:
       - process.spawn:qa/pytest
       - qa.failure_signal.parse
       - qa.verdict.issue
+      - llm.invoke:vision
       - budget.reserve:context
       - mutation.guard:workspace
       - architect.validate_cell_boundary
@@ -2712,6 +2720,7 @@ cells:
       commands:
         - ParseTracebackFramesCommandV1
         - RunQaAuditCommandV1
+        - RunVisualQaAuditCommandV1
       queries:
         - GetQaVerdictQueryV1
       events:
@@ -2721,6 +2730,8 @@ cells:
         - ParseTracebackFramesResultV1
         - QaAuditResultV1
         - TracebackFrameV1
+        - VisualAuditFindingV1
+        - VisualQaAuditResultV1
       errors:
         - QaAuditErrorV1
     depends_on:

@@ -22,6 +22,7 @@ public_contracts:
   commands:
   - ParseTracebackFramesCommandV1
   - RunQaAuditCommandV1
+  - RunVisualQaAuditCommandV1
   queries:
   - GetQaVerdictQueryV1
   events:
@@ -31,6 +32,8 @@ public_contracts:
   - ParseTracebackFramesResultV1
   - QaAuditResultV1
   - TracebackFrameV1
+  - VisualAuditFindingV1
+  - VisualQaAuditResultV1
   errors:
   - QaAuditErrorV1
 depends_on:

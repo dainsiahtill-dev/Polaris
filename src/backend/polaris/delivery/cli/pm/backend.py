@@ -296,6 +296,18 @@ def _provider_policy_for_backend(backend_kind: str) -> dict[str, tuple[str, ...]
     return {}
 
 
+def _pm_cognitive_approval_from_args(args: argparse.Namespace | None) -> dict[str, str] | None:
+    approval_mode = str(getattr(args, "agents_approval_mode", "") or "").strip().lower() if args is not None else ""
+    if approval_mode != "auto_accept":
+        return None
+    return {
+        "mode": "auto_accept",
+        "source": "pm_agents_approval_mode",
+        "scope": "pm_planning_preflight",
+        "approved_by": "pm_cli",
+    }
+
+
 def _usage_int(payload: dict[str, Any], *keys: str, default: int = 0) -> int:
     for key in keys:
         value = payload.get(key)
@@ -314,6 +326,7 @@ def _invoke_generic_role_runtime(
     usage_ctx: UsageContext | None,
     *,
     backend_kind: str = "generic",
+    args: argparse.Namespace | None = None,
 ) -> str:
     """Invoke the PM backend through roles.runtime.
 
@@ -355,6 +368,12 @@ def _invoke_generic_role_runtime(
         context["llm_provider_policy"] = dict(provider_policy)
         metadata.update(provider_policy)
         metadata["llm_provider_policy"] = dict(provider_policy)
+    cognitive_approval = _pm_cognitive_approval_from_args(args)
+    if cognitive_approval is not None:
+        context["cognitive_runtime_approval_mode"] = cognitive_approval["mode"]
+        context["cognitive_runtime_approval"] = dict(cognitive_approval)
+        metadata["cognitive_runtime_approval_mode"] = cognitive_approval["mode"]
+        metadata["cognitive_runtime_approval"] = dict(cognitive_approval)
     command = ExecuteRoleSessionCommandV1(
         role="pm",
         session_id=f"pm-cli-{run_id or uuid4().hex}",
@@ -497,6 +516,7 @@ def invoke_pm_backend(
             prompt=prompt,
             usage_ctx=usage_ctx,
             backend_kind=resolved_backend,
+            args=args,
         )
         if state.ollama_full:
             write_text_atomic(state.ollama_full, output or "")

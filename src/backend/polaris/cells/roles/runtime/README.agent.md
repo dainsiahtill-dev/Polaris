@@ -8,25 +8,29 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 
 ## Boundaries
 - Owns role-kernel internals under `polaris/cells/roles/runtime/internal/**`.
-- Owns role session lifecycle services:
-  - `polaris/cells/roles/session/internal/role_session_service.py`
-  - `polaris/cells/roles/session/internal/artifact_service.py`
-  - `polaris/cells/audit/evidence/internal/role_session_audit_service.py`
+- Composes role session lifecycle through `roles.session` public contracts; it
+  must not claim or write `roles.session/internal/**` state.
+- Composes audit evidence through `audit.evidence` public contracts; it must not
+  claim or write `audit.evidence/internal/**` state.
 - Owns delivery endpoints for role session and role status:
   - `polaris/delivery/http/routers/role_chat.py`
   - `polaris/delivery/http/routers/role_session.py`
 
 ## State Ownership
 - `runtime/roles/*`
-- `runtime/role_sessions/*`
 
 ## Allowed Effects
 - `fs.read:runtime/**`
+- `fs.write:runtime/roles/*`
 - `fs.write:runtime/tasks/*`
 - `fs.write:runtime/state/*`
 - `fs.write:runtime/events/*`
+- `fs.write:runtime/strategy_runs/*`
+- `fs.write:runtime/cognitive_runtime/*`
 - `ws.outbound:runtime/*`
 - `process.spawn:roles/*`
+- `bus.publish:agent_messages/*`
+- `bus.consume:agent_messages/*`
 - `task_market.publish:*`
 - `task_market.read`
 - `runtime_projection.read`
@@ -34,9 +38,13 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 - `process.spawn:qa/pytest`
 - `qa.failure_signal.parse`
 - `qa.verdict.issue`
+- `llm.invoke:vision`
 - `budget.reserve:context`
 - `mutation.guard:workspace`
 - `architect.validate_cell_boundary`
+- `code_intelligence.read`
+- `runtime_receipt.record`
+- `handoff.export`
 
 ## Public Contracts
 Defined in `public/contracts.py`:
@@ -66,6 +74,10 @@ Defined in `public/contracts.py`:
 - Role object instantiation uses `instantiate_role_runtime_object(InstantiateRoleRuntimeObjectCommandV1)`
   to bind `roles.profile` via `GetRoleProfileQueryV1`; runtime stores only
   profile/tool/prompt/data policy refs and a profile fingerprint.
+- Role asset mount tables and capability ports reject `roles.runtime`, role
+  adapter/kernel/profile/session cells, and `kernelone.roles` paths as owners.
+  Business assets and capabilities must be owned by their real business or
+  platform state Cell and mounted only by public contract/ref.
 - Role task-market lifecycle operations use
   `execute_role_task_market_lifecycle(ExecuteRoleTaskMarketLifecycleCommandV1)`
   to translate role-bound claim/lease/ack/fail/requeue requests into
@@ -87,6 +99,11 @@ Defined in `public/contracts.py`:
   and metadata.
 - QA verdict issuance delegates to `qa.audit_verdict.public.service.run_qa_audit`
   with `RunQaAuditCommandV1`; runtime objects keep only result refs and metadata.
+- QA visual audit delegates model feature checks to `llm.control_plane`
+  `CheckLlmModelCapabilityQueryV1` and only calls
+  `qa.audit_verdict.public.service.run_visual_qa_audit` with
+  `RunVisualQaAuditCommandV1` after an explicit `image_input` capability ref is
+  returned. Text-only models receive `allowed=false` before QA is invoked.
 - Architect context-budget allocation delegates to `finops.budget_guard`; illegal
   mutation interception delegates to `policy.workspace_guard`.
 - Architect Cell boundary validation delegates lightweight authorization to

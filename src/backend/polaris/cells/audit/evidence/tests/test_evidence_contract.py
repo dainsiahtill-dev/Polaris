@@ -14,6 +14,9 @@ Tests cover:
 from __future__ import annotations
 
 import dataclasses
+import json
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,6 +29,7 @@ from polaris.cells.audit.evidence.public.contracts import (
     QueryEvidenceEventsV1,
     VerifyEvidenceChainV1,
 )
+from polaris.cells.audit.evidence.public.service import append_evidence_event
 from polaris.cells.audit.evidence.task_service import (
     EvidenceService,
     build_error_evidence,
@@ -42,9 +46,10 @@ class TestAppendEvidenceEventCommandV1:
     """Command carries kind and payload."""
 
     def test_basic_construction(self) -> None:
-        cmd = AppendEvidenceEventCommandV1(kind="task_completed", payload={"task_id": "t-1"})
+        cmd = AppendEvidenceEventCommandV1(kind="task_completed", payload={"task_id": "t-1"}, workspace="/repo")
         assert cmd.kind == "task_completed"
         assert cmd.payload == {"task_id": "t-1"}
+        assert cmd.workspace == "/repo"
 
     def test_empty_payload_accepted(self) -> None:
         cmd = AppendEvidenceEventCommandV1(kind="error", payload={})
@@ -146,6 +151,53 @@ class TestEvidenceAuditError:
         with pytest.raises(EvidenceAuditError) as exc_info:
             raise err
         assert exc_info.value.args[0] == "chain broken"
+
+
+class _FakeKernelFs:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def append_jsonl(self, logical_path: str, payload: dict[str, Any]) -> SimpleNamespace:
+        self.calls.append((logical_path, payload))
+        target = self.root / logical_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with open(target, "a", encoding="utf-8") as handle:
+            handle.write(line)
+        return SimpleNamespace(
+            logical_path=logical_path,
+            absolute_path=str(target),
+            bytes_written=len(line.encode("utf-8")),
+        )
+
+
+def test_append_evidence_event_public_service_writes_append_only_jsonl_utf8(tmp_path: Path) -> None:
+    kernel_fs = _FakeKernelFs(tmp_path)
+
+    event = append_evidence_event(
+        AppendEvidenceEventCommandV1(
+            kind="qa.visual_audit",
+            payload={
+                "task_id": "qa-visual-1",
+                "summary": "视觉审计记录",
+            },
+            workspace=str(tmp_path / "workspace"),
+        ),
+        kernel_fs=kernel_fs,
+    )
+
+    assert event.kind == "qa.visual_audit"
+    assert event.receipt_path == "runtime/evidence/qa.visual_audit.jsonl"
+    assert kernel_fs.calls[0][0] == "runtime/evidence/qa.visual_audit.jsonl"
+
+    stored = (tmp_path / event.receipt_path).read_text(encoding="utf-8").strip()
+    record = json.loads(stored)
+    assert record["kind"] == "qa.visual_audit"
+    assert record["payload"]["task_id"] == "qa-visual-1"
+    assert record["payload"]["summary"] == "视觉审计记录"
+    assert record["workspace"] == str(tmp_path / "workspace")
+    assert record["event_id"]
 
 
 # ---------------------------------------------------------------------------

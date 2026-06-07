@@ -61,7 +61,6 @@ BASELINE_PRODUCTION_FILES: frozenset[str] = frozenset(
         "polaris/kernelone/runtime/defaults.py",
         "polaris/kernelone/storage/policy.py",
         # Benchmark adapters (scheduled for extraction)
-        "polaris/kernelone/benchmark/holographic_runner.py",
         "polaris/kernelone/benchmark/unified_judge.py",
     }
 )

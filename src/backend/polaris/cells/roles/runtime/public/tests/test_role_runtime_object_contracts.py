@@ -33,6 +33,10 @@ from polaris.cells.finops.budget_guard.public.contracts import (
     BudgetDecisionResultV1,
     ReserveBudgetCommandV1,
 )
+from polaris.cells.llm.control_plane.public.contracts import (
+    CheckLlmModelCapabilityQueryV1,
+    LlmModelCapabilityResultV1,
+)
 from polaris.cells.policy.permission.public.contracts import (
     EvaluatePermissionCommandV1,
     PermissionDecisionResultV1,
@@ -47,7 +51,9 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     ParseTracebackFramesResultV1,
     QaAuditResultV1,
     RunQaAuditCommandV1,
+    RunVisualQaAuditCommandV1,
     TracebackFrameV1,
+    VisualQaAuditResultV1,
 )
 from polaris.cells.roles.runtime.public import contracts as runtime_contracts
 from polaris.cells.roles.runtime.public.contracts import (
@@ -293,19 +299,41 @@ class FakeVerificationGuardService:
         )
 
 
+class FakeLlmControlPlaneService:
+    def __init__(self, *, supported: bool) -> None:
+        self.supported = supported
+        self.queried: list[CheckLlmModelCapabilityQueryV1] = []
+
+    def check_model_capability(self, query: CheckLlmModelCapabilityQueryV1) -> LlmModelCapabilityResultV1:
+        self.queried.append(query)
+        return LlmModelCapabilityResultV1(
+            ok=True,
+            workspace=query.workspace,
+            role=query.role,
+            provider_id="vision-provider" if self.supported else "text-provider",
+            model="vision-model" if self.supported else "text-model",
+            capability=query.capability,
+            supported=self.supported,
+            capability_ref="llm.control_plane:model-capability:qa:image_input:abc" if self.supported else "",
+            reason="" if self.supported else "model does not declare image_input support",
+        )
+
+
 class FakeBudgetGuardService:
-    def __init__(self) -> None:
+    def __init__(self, *, allowed: bool = True, reason: str = "reserved") -> None:
+        self.allowed = allowed
+        self.reason = reason
         self.reserved: list[ReserveBudgetCommandV1] = []
 
     def reserve_budget(self, command: ReserveBudgetCommandV1) -> BudgetDecisionResultV1:
         self.reserved.append(command)
         return BudgetDecisionResultV1(
-            allowed=True,
+            allowed=self.allowed,
             scope_id=command.scope_id,
             role=command.role,
-            remaining_tokens=command.token_budget,
+            remaining_tokens=command.token_budget if self.allowed else 0,
             estimated_cost_usd=0.0,
-            reason="reserved",
+            reason=self.reason,
         )
 
 
@@ -363,6 +391,7 @@ class FakeQaAuditVerdictService:
     def __init__(self, *, ok: bool = True) -> None:
         self.ok = ok
         self.audit_commands: list[RunQaAuditCommandV1] = []
+        self.visual_audit_commands: list[RunVisualQaAuditCommandV1] = []
         self.traceback_commands: list[ParseTracebackFramesCommandV1] = []
 
     def run_qa_audit(self, command: RunQaAuditCommandV1) -> QaAuditResultV1:
@@ -375,6 +404,19 @@ class FakeQaAuditVerdictService:
             score=1.0 if self.ok else 0.0,
             findings=() if self.ok else ("syntax error",),
             suggestions=("rerun failing test",) if not self.ok else (),
+        )
+
+    def run_visual_qa_audit(self, command: RunVisualQaAuditCommandV1) -> VisualQaAuditResultV1:
+        self.visual_audit_commands.append(command)
+        return VisualQaAuditResultV1(
+            ok=self.ok,
+            task_id=command.task_id,
+            workspace=command.workspace,
+            verdict="VISUAL_AUDIT_RECORDED" if self.ok else "FAIL",
+            image_refs=command.image_refs,
+            model_capability_ref=command.model_capability_ref,
+            score=1.0 if self.ok else 0.0,
+            evidence_refs=command.evidence_paths,
         )
 
     def parse_traceback_frames(self, command: ParseTracebackFramesCommandV1) -> ParseTracebackFramesResultV1:
@@ -666,6 +708,11 @@ def test_builtin_qa_runtime_spec_mounts_truth_assets_and_pytest_capability() -> 
     assert traceback_capability.contract_name == "ParseTracebackFramesCommandV1"
     assert traceback_capability.effect == "qa.failure_signal.parse"
     assert spec.capability_ports.get("issue_audit_verdict").contract_name == "RunQaAuditCommandV1"
+    visual_capability = spec.capability_ports.get("issue_visual_audit_verdict")
+    assert visual_capability.owner_cell == "qa.audit_verdict"
+    assert visual_capability.contract_name == "RunVisualQaAuditCommandV1"
+    assert visual_capability.effect == "llm.invoke:vision"
+    assert visual_capability.metadata["required_model_capability"] == "image_input"
 
     runtime_object = spec.instantiate(
         identity=_identity("qa"),
@@ -731,6 +778,34 @@ def test_asset_mount_table_rejects_duplicate_mount_names() -> None:
         )
 
 
+def test_asset_mount_table_rejects_role_runtime_or_kernelone_role_asset_owners() -> None:
+    forbidden_owner_cells = (
+        "roles.runtime",
+        "roles.adapters",
+        "roles.kernel",
+        "roles.profile",
+        "roles.session",
+        "kernelone.roles",
+        "polaris.kernelone.roles",
+    )
+
+    for owner_cell in forbidden_owner_cells:
+        with pytest.raises(ValueError, match="must be owned by a business or platform state Cell"):
+            RoleAssetMountTable(
+                mounts=(
+                    RoleAssetMount(
+                        mount_name=f"invalid-{owner_cell}",
+                        asset_ref=RoleAssetRef(
+                            asset_id="invalid-business-asset",
+                            owner_cell=owner_cell,
+                            contract_name="InvalidBusinessAssetV1",
+                            ref=f"{owner_cell}:invalid-business-asset",
+                        ),
+                    ),
+                )
+            )
+
+
 def test_capability_ports_reject_duplicate_capability_ids() -> None:
     capability = RoleCapabilityDescriptor(
         capability_id="dispatch_task_to_market",
@@ -742,6 +817,32 @@ def test_capability_ports_reject_duplicate_capability_ids() -> None:
 
     with pytest.raises(ValueError, match="duplicate capability"):
         RoleCapabilityPorts(capabilities=(capability, capability))
+
+
+def test_capability_ports_reject_role_runtime_or_kernelone_role_capability_owners() -> None:
+    forbidden_owner_cells = (
+        "roles.runtime",
+        "roles.adapters",
+        "roles.kernel",
+        "roles.profile",
+        "roles.session",
+        "kernelone.roles",
+        "polaris.kernelone.roles",
+    )
+
+    for owner_cell in forbidden_owner_cells:
+        with pytest.raises(ValueError, match="must be owned by a target public Cell"):
+            RoleCapabilityPorts(
+                capabilities=(
+                    RoleCapabilityDescriptor(
+                        capability_id=f"invalid-{owner_cell}",
+                        owner_cell=owner_cell,
+                        contract_name="InvalidRoleCapabilityCommandV1",
+                        effect="role.capability.invalid",
+                        allowed_roles=("pm",),
+                    ),
+                )
+            )
 
 
 def test_capability_fingerprint_is_deterministic_and_policy_sensitive() -> None:
@@ -1560,6 +1661,103 @@ def test_qa_issue_audit_verdict_invokes_qa_audit_contract() -> None:
     assert audit_command.criteria["changed_files"] == ("src/backend/example.py",)
 
 
+def test_qa_visual_audit_rejects_without_image_capable_model_before_qa_call() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("qa")
+    runtime_object = spec.instantiate(
+        identity=_identity("qa"),
+        profile_binding=_profile_binding("qa"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:qa-run"),
+        policy_fingerprint="qa-policy",
+        capability_id="issue_visual_audit_verdict",
+    )
+    qa_audit = FakeQaAuditVerdictService()
+    llm_control_plane = FakeLlmControlPlaneService(supported=False)
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=RoleCapabilityInvocation(
+                invocation_id="invoke-qa-visual-denied-1",
+                capability_id="issue_visual_audit_verdict",
+                role_id="qa",
+                command_contract="RunVisualQaAuditCommandV1",
+                payload_ref="roles.runtime:typed-input:qa-visual-denied-1",
+                fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+            ),
+            payload={
+                "task_id": "qa-visual-1",
+                "image_refs": ("audit.evidence:image:screenshot-1",),
+                "criteria": {"assertions": ("no visual overlap",)},
+            },
+        ),
+        qa_audit_service=qa_audit,
+        llm_control_plane_service=llm_control_plane,
+    )
+
+    assert result.ok is False
+    assert result.allowed is False
+    assert result.error_code == "visual_model_capability_missing"
+    assert result.metadata["model_capability_supported"] is False
+    assert result.metadata["required_capability"] == "image_input"
+    assert len(llm_control_plane.queried) == 1
+    assert llm_control_plane.queried[0].capability == "image_input"
+    assert qa_audit.visual_audit_commands == []
+
+
+def test_qa_visual_audit_invokes_qa_contract_after_image_capability_preflight() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("qa")
+    runtime_object = spec.instantiate(
+        identity=_identity("qa"),
+        profile_binding=_profile_binding("qa"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:qa-run"),
+        policy_fingerprint="qa-policy",
+        capability_id="issue_visual_audit_verdict",
+    )
+    qa_audit = FakeQaAuditVerdictService()
+    llm_control_plane = FakeLlmControlPlaneService(supported=True)
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=RoleCapabilityInvocation(
+                invocation_id="invoke-qa-visual-1",
+                capability_id="issue_visual_audit_verdict",
+                role_id="qa",
+                command_contract="RunVisualQaAuditCommandV1",
+                payload_ref="roles.runtime:typed-input:qa-visual-1",
+                fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+            ),
+            payload={
+                "task_id": "qa-visual-1",
+                "run_id": "run-1",
+                "image_refs": ("audit.evidence:image:screenshot-1",),
+                "criteria": {"assertions": ("no visual overlap",)},
+                "evidence_paths": ("runtime/evidence/screenshot-1.png",),
+            },
+        ),
+        qa_audit_service=qa_audit,
+        llm_control_plane_service=llm_control_plane,
+    )
+
+    assert result.ok is True
+    assert result.allowed is True
+    assert result.owner_cell == "qa.audit_verdict"
+    assert result.command_contract == "RunVisualQaAuditCommandV1"
+    assert result.status == "VISUAL_AUDIT_RECORDED"
+    assert result.result_ref == "qa.audit_verdict:visual-verdict:qa-visual-1"
+    assert len(llm_control_plane.queried) == 1
+    assert len(qa_audit.visual_audit_commands) == 1
+
+    visual_command = qa_audit.visual_audit_commands[0]
+    assert visual_command.workspace == "/repo"
+    assert visual_command.task_id == "qa-visual-1"
+    assert visual_command.image_refs == ("audit.evidence:image:screenshot-1",)
+    assert visual_command.model_capability_ref == "llm.control_plane:model-capability:qa:image_input:abc"
+    assert visual_command.criteria["role_invocation_id"] == "invoke-qa-visual-1"
+    assert visual_command.criteria["role_capability_id"] == "issue_visual_audit_verdict"
+    assert visual_command.evidence_paths == ("runtime/evidence/screenshot-1.png",)
+
+
 def test_non_qa_issue_audit_verdict_is_denied_without_qa_audit_call() -> None:
     spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
     runtime_object = spec.instantiate(
@@ -1730,6 +1928,47 @@ def test_architect_budget_capability_invokes_finops_budget_contract() -> None:
     assert reserve_command.role == "architect"
     assert reserve_command.token_budget == 4096
     assert reserve_command.metadata["role_invocation_id"] == "invoke-budget-1"
+
+
+def test_architect_budget_denial_has_allowed_false_and_capability_available_metadata() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("architect")
+    runtime_object = spec.instantiate(
+        identity=_identity("architect"),
+        profile_binding=_profile_binding("architect"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:architect-run"),
+        policy_fingerprint="architect-policy",
+        capability_id="allocate_context_token_budget",
+    )
+    budget_guard = FakeBudgetGuardService(allowed=False, reason="context budget exhausted")
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=RoleCapabilityInvocation(
+                invocation_id="invoke-budget-denied-1",
+                capability_id="allocate_context_token_budget",
+                role_id="architect",
+                command_contract="ReserveBudgetCommandV1",
+                payload_ref="roles.runtime:typed-input:architect-budget-denied-1",
+                fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+            ),
+            payload={
+                "scope_id": "architect-context-task-denied-1",
+                "token_budget": 4096,
+                "metadata": {"context_profile_ref": "context.engine:profile:task-denied-1"},
+            },
+        ),
+        budget_guard_service=budget_guard,
+    )
+
+    assert result.ok is False
+    assert result.allowed is False
+    assert result.owner_cell == "finops.budget_guard"
+    assert result.error_code == "budget_denied"
+    assert result.metadata["capability_available"] is True
+    assert result.metadata["budget_allowed"] is False
+    assert result.metadata["reason"] == "context budget exhausted"
+    assert len(budget_guard.reserved) == 1
 
 
 def test_architect_intercept_illegal_mutation_uses_workspace_guard_refusal() -> None:

@@ -14,6 +14,7 @@ ELECTRON_FIXTURES = "src/backend/polaris/tests/electron/fixtures.ts"
 ACCEPTANCE_RUNNER = "infrastructure/scripts/run-electron-acceptance-e2e.mjs"
 REAL_FLOW_RUNNER = "infrastructure/scripts/run-electron-real-flow-e2e.mjs"
 DUAL_ENTRY_FULL_CHAIN_RUNNER = "infrastructure/scripts/run-dual-entry-full-chain-e2e.mjs"
+PRODUCTION_STABILITY_RUNNER = "infrastructure/scripts/run-production-stability-validation.mjs"
 BACKEND_PYTEST_SHARD_RUNNER = "infrastructure/scripts/run-backend-pytest-shard.py"
 CORE_TECH_IDS = [
     "acga_graph_cell_governance",
@@ -836,6 +837,60 @@ def test_package_json_exposes_dual_entry_full_chain_runner() -> None:
         "node --env-file-if-exists=.env infrastructure/scripts/run-dual-entry-full-chain-e2e.mjs"
     )
     assert scripts["pretest:e2e:dual-full-chain"] == "npm run e2e:prepare"
+
+
+def test_package_json_exposes_production_stability_runner() -> None:
+    package_json = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
+    scripts = package_json["scripts"]
+
+    assert scripts["test:e2e:production-stability"] == (
+        "node --env-file-if-exists=.env infrastructure/scripts/run-production-stability-validation.mjs"
+    )
+    assert scripts["pretest:e2e:production-stability"] == "npm run e2e:prepare"
+
+
+def test_production_stability_runner_dry_run_declares_all_required_gates(tmp_path: Path) -> None:
+    audit_path = tmp_path / "production-stability-audit.json"
+
+    result = _run_node(
+        [
+            PRODUCTION_STABILITY_RUNNER,
+            "--dry-run",
+            "--output",
+            str(audit_path),
+        ]
+    )
+
+    payload = json.loads(result.stdout)
+    gates = {gate["id"]: gate for gate in payload["gates"]}
+
+    assert payload["status"] == "DRY_RUN"
+    assert payload["schema"] == "polaris.e2e.production_stability_validation.v1"
+    assert payload["output"] == str(audit_path.resolve())
+    assert set(gates) == {
+        "full_chain",
+        "fault_injection_rollback",
+        "performance_stress",
+        "governance",
+    }
+    assert gates["full_chain"]["required"] is True
+    assert gates["full_chain"]["commands"] == [
+        [
+            "npm",
+            "run",
+            "test:e2e:dual-full-chain",
+            "--",
+            "--require-all-candidate-runtime",
+        ]
+    ]
+    assert "full-chain-audit.spec.ts" in json.dumps(gates["full_chain"]["evidence"], ensure_ascii=True)
+    assert "test_transaction_rollback_and_guards.py" in json.dumps(
+        gates["fault_injection_rollback"]["evidence"], ensure_ascii=True
+    )
+    assert "test_v2_endpoint_performance.py" in json.dumps(gates["performance_stress"]["evidence"], ensure_ascii=True)
+    assert "run_catalog_governance_gate.py --workspace src/backend --mode hard-fail" in json.dumps(
+        gates["governance"]["evidence"], ensure_ascii=True
+    )
 
 
 def test_dual_entry_full_chain_runner_summarizes_existing_desktop_and_web_matrices(tmp_path: Path) -> None:

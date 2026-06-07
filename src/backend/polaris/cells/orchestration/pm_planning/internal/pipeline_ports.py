@@ -713,6 +713,18 @@ class CellPmInvokePort:
                 "requested_backend": resolved_backend,
                 "timeout_seconds": runtime_timeout,
             }
+            approval_mode = str(getattr(args, "agents_approval_mode", "") or "").strip().lower()
+            if approval_mode == "auto_accept":
+                cognitive_approval = {
+                    "mode": "auto_accept",
+                    "source": "pm_agents_approval_mode",
+                    "scope": "pm_planning_preflight",
+                    "approved_by": "pm_cli",
+                }
+                role_context["cognitive_runtime_approval_mode"] = "auto_accept"
+                role_context["cognitive_runtime_approval"] = dict(cognitive_approval)
+                role_metadata["cognitive_runtime_approval_mode"] = "auto_accept"
+                role_metadata["cognitive_runtime_approval"] = dict(cognitive_approval)
             if provider_policy:
                 role_context.update(provider_policy)
                 role_context["llm_provider_policy"] = dict(provider_policy)
