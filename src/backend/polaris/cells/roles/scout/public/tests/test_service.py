@@ -1,5 +1,7 @@
 """Tests for ScoutProbeService (UTF-8)."""
 
+import asyncio
+
 import pytest
 from polaris.cells.roles.scout.internal.ports import FakeDistiller, FakeReadTool, canonical_args_key
 from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
@@ -78,6 +80,12 @@ def test_scout_probe_dispatches_through_real_executor(tmp_path) -> None:  # type
     ``AgentAccelToolExecutor.execute('scout_probe', ...)`` -> ToolHandlerRegistry
     handler -> ``build_default_scout_service`` -> real read tools. The executor
     wraps a successful handler payload under ``result``.
+
+    Critically, this asserts the *Cell* answered — not a duplicate scanner. The
+    handler delegates to ``build_default_scout_service`` (single source of truth),
+    so the dispatched ``content_hash`` must equal the one the Cell produces
+    directly, and ``coverage`` must carry the Cell's keys (``raw_findings`` /
+    ``tools_used``) and NOT the deleted scanner's ``files_scanned`` shape.
     """
     from polaris.kernelone.llm.toolkit import AgentAccelToolExecutor
 
@@ -96,6 +104,18 @@ def test_scout_probe_dispatches_through_real_executor(tmp_path) -> None:  # type
     # repo_tree reliably surfaces pay.py in this env; assert the real finding.
     findings = payload["findings"]
     assert any(str(f.get("path", "")).endswith("pay.py") for f in findings)
+
+    # PROOF the Cell (not a scanner) answered: the dispatched result is byte-for-byte
+    # the Cell's report. content_hash is the Cell's deterministic 16-char digest, and
+    # coverage carries Cell keys — never the deleted scanner's `files_scanned` shape.
+    cell_report = asyncio.run(
+        build_default_scout_service(str(tmp_path)).probe(ScoutProbeTargetV1(query="payment_gateway"))
+    )
+    assert payload["content_hash"] == cell_report.content_hash
+    assert len(payload["content_hash"]) == 16  # Cell digest; the old scanner used 64-char sha256.
+    assert "raw_findings" in payload["coverage"]
+    assert "tools_used" in payload["coverage"]
+    assert "files_scanned" not in payload["coverage"]
 
 
 def test_scout_probe_rejects_empty_query(tmp_path) -> None:  # type: ignore[no-untyped-def]
