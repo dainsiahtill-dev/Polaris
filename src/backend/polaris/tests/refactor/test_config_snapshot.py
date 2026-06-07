@@ -4,14 +4,8 @@ This module tests the core configuration management functionality
 introduced in Phase 1 of the "Thin CLI + Core OO" refactoring.
 """
 
-import sys
-from pathlib import Path
-
-# Add src/backend to path
-sys.path.insert(0, str(Path(__file__).parents[2] / "src" / "backend"))
-
 import pytest
-from domain.models.config_snapshot import (
+from polaris.domain.models.config_snapshot import (
     ConfigSnapshot,
     SourceType,
 )
