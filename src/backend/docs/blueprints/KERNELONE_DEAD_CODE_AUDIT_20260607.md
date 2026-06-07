@@ -89,3 +89,48 @@ Workflow `kernelone-deadcode-adjudication`（64 agent：每子系统 1 审计员
   `apply_fuzzy_search_replace`；ADR 要求做成 pre-processor（改编辑热路径行为）→ 需回归语料后再落。
 - **ESCALATE**（产品决策，勿自动删）：`multi_agent`（neural_syndicate 愿景，今日审计已为其留 ADR 口）、
   `messages`（OpenCode Part 类型，是某 ENFORCED CI 门禁声明的收敛锚点，删除会触发门禁）。
+
+## 8. 续批裁决（2026-06-07，已执行）
+
+承接 `全量推进`，对剩余三桶逐一落地。关键修正：**之前的子系统级"死"判定漏掉了"父包
+`__init__.py` 的 eager re-export"这一类边**——导入任一子模块会执行父包 `__init__`，
+其 eager import 的全部模块因此在导入期即为活。补上该语义后，多处"死"被推翻为活。
+
+### 8.1 benchmark 死簇（精确划定后删除，commit `bb738a08` + `8482c115`）
+live edge 确认：`cells/llm/evaluation/public/service.py` 真实导入
+`benchmark.unified_judge/unified_models/unified_runner`，`infrastructure/accel/eval`
+导入 `benchmark.adapters.context_adapter`——**benchmark 整体非死**。补上父包 `__init__`
+eager re-export 语义后，死子集从朴素 59 → 19，再排除被活测试 `test_unified_judge` 行使
+的 `validators/` → 安全删除 17 个模块：`_archived`、`chaos/`（自带测试）、`llm/`（自带测试）、
+`contextos_cases.py`、`holographic_runner.py`（自述 back-compat shim，仅其测试引用）、
+`reporting/formatters.py`（未被 `reporting/__init__` 导入），计 7573 行。codegraph 对抗复核
+零外部 caller。治理同步：从 reverse-dep-fence baseline 移除 `holographic_runner.py`，
+从 `kfs_direct_write_baseline.txt` 移除 2 条，修正 2 处指向已删 `benchmark.llm.tool_accuracy`
+的 Intent-Separation docstring。门禁绿（release-gate 5 passed、reverse-dep+kfs 7/1skip、
+collect-only 0 error、安全回归 10/10）。
+> 注：本批因仓库存在并发提交者（git user `openhands`），改动被其 `bb738a08`(删除)+
+> `8482c115`(我的 4 处 docstring/治理编辑) 两次提交合并落地，树态一致、门禁在提交前已绿。
+
+### 8.2 editing → 接入（ADR-0062，commit `72acb405`）
+把此前仅被测试/门禁声明、生产不可达的 `editing.replacers.get_replacer_chain` 接入活路径
+`apply_fuzzy_search_replace`，置于最宽松的 `_sequence_match_apply` 之前作为**精确层**。
+新增覆盖：首尾行锚定 + 中段差异很大的 block-anchor 编辑（10 种既有策略与 SequenceMatcher
+均返回 None）现可命中，且带**唯一性护栏**（候选在内容中出现>1 次则跳过，绝不静默改歧义位）。
+TDD 红→绿；editing 全套 80 passed、applier 路径（protocol kernel + 安全回归）50 passed、
+ruff+mypy 干净。replacer 链由此从死代码转为生产可达，满足收敛门禁的 canonical-import 意图。
+
+### 8.3 multi_agent → 已是活（仅删死叶 knowledge_share，commit `47c3bfda`）
+修正后 multi_agent **11 活 / 1 死**：`bus_port` 被活的 `cells/roles/runtime/internal/
+{kernel_one_bus_port,bus_port}.py` 导入。原 ESCALATE 判定过保守。仅 `knowledge_share`
+（KnowledgeSharingBus）为死叶——multi_agent 是无 `__init__` 的命名空间包，唯一引用是其自带测试。
+删除模块 + 测试（355+289 行）。multi_agent 套件 26 passed。
+
+### 8.4 messages → 仍待产品定夺（未动）
+`messages` + `messages.part_types`（460 行 OpenCode Part 类型）**零生产导入者**（grep 命中皆为
+`kernelone_messages_dropped_total` 指标串，非 import），是真正"建好未接线"。但它是
+`opencode_convergence_gate._RULES` 中显式声明的收敛锚点（`deep_prefix=messages.part_types`，
+canonical=`from polaris.kernelone.messages import Part, ...`），且属 staged-rollout 治理范围。
+门禁规则当前**空转**（无人深导入即不触发），删除规则后亦不报错。两条"彻底"路径都重：
+(A) 大型 WIRE——把 handoff/消息体系迁到 Part 类型（ADR 级，数周）；(B) 删除 + 退役门禁规则 +
+更新 staged-rollout（治理反转）。鉴于并发提交者正活跃于 OpenCode/role-runtime 区域，
+不宜单方面删除已声明的收敛目标 → 留待人类定夺（见对话）。其余三桶已全部彻底接入或彻底删除。
