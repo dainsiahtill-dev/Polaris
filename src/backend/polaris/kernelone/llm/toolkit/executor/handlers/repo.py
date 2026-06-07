@@ -781,28 +781,118 @@ def _detect_language(file_path: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# tree-sitter binding adapters
+#
+# Two incompatible tree-sitter Python bindings exist in the wild and may be
+# installed by ``tree_sitter_language_pack`` depending on platform/wheels:
+#
+#   * py-tree-sitter (pure-binding): ``Tree.root_node`` is a property, nodes
+#     expose ``type`` / ``children`` / ``start_point`` / ``start_byte`` as
+#     *properties*, and ``Parser.parse`` requires ``bytes``.
+#   * Rust-backed binding (``builtins.Parser`` / ``builtins.Node``): the same
+#     concepts are *methods* — ``root_node()`` / ``kind()`` /
+#     ``start_position()`` / ``start_byte()`` — there is no ``.children``
+#     attribute (iterate via ``child_count()`` + ``child(i)``), and
+#     ``Parser.parse`` requires ``str``.
+#
+# The helpers below normalise across both so symbol extraction works
+# regardless of which binding is present, instead of raising a ``TypeError``.
+# ---------------------------------------------------------------------------
+
+
+def _ts_call_or_value(obj: Any, name: str) -> Any:
+    """Return ``obj.<name>`` whether it is a property or a zero-arg method."""
+    value = getattr(obj, name)
+    if callable(value):
+        return value()
+    return value
+
+
+def _ts_node_kind(node: Any) -> str:
+    """Return the grammar node type across both bindings (``type``/``kind``)."""
+    if hasattr(node, "type"):
+        return str(_ts_call_or_value(node, "type"))
+    if hasattr(node, "kind"):
+        return str(_ts_call_or_value(node, "kind"))
+    return ""
+
+
+def _ts_node_children(node: Any) -> list[Any]:
+    """Return child nodes across both bindings."""
+    if hasattr(node, "children"):
+        children = _ts_call_or_value(node, "children")
+        if children is not None:
+            return list(children)
+    if hasattr(node, "child_count") and hasattr(node, "child"):
+        count = int(_ts_call_or_value(node, "child_count"))
+        return [node.child(i) for i in range(count)]
+    return []
+
+
+def _ts_node_start_rowcol(node: Any) -> tuple[int, int]:
+    """Return (row, col) of a node start across both bindings."""
+    point: Any = None
+    if hasattr(node, "start_point"):
+        point = _ts_call_or_value(node, "start_point")
+    elif hasattr(node, "start_position"):
+        point = _ts_call_or_value(node, "start_position")
+    if point is None:
+        return (0, 0)
+    # py-tree-sitter exposes a 2-tuple; the Rust binding exposes a Point object.
+    if hasattr(point, "row") and hasattr(point, "column"):
+        return (int(point.row), int(point.column))
+    try:
+        row, col = point[0], point[1]
+        return (int(row), int(col))
+    except (TypeError, IndexError, KeyError):
+        return (0, 0)
+
+
+def _ts_parse(parser: Any, source_bytes: bytes) -> Any:
+    """Parse source, tolerating bindings that want ``str`` vs ``bytes``."""
+    # Rust-backed binding wants str; py-tree-sitter wants bytes. Try both.
+    try:
+        return parser.parse(source_bytes)
+    except TypeError:
+        return parser.parse(source_bytes.decode("utf-8", errors="replace"))
+
+
 def _find_all_symbols_ts(content: str, language: str, max_results: int = 500) -> list[dict[str, Any]]:
     """Find all top-level symbols in source code using tree-sitter.
 
     This is a standalone version that doesn't require executor instance.
+
+    Fails *soft* (returns ``[]``) when the tree-sitter grammar/binding is
+    unavailable or rejects the input, so the calling handler never raises.
     """
     try:
         from tree_sitter_language_pack import get_parser
     except ImportError:
+        logger.debug("tree_sitter_language_pack not installed; symbols index unavailable")
         return []
 
     from typing import cast
 
-    parser = get_parser(cast("str", language))  # type: ignore[arg-type]
+    try:
+        parser = get_parser(cast("str", language))  # type: ignore[arg-type]
+    except (LookupError, RuntimeError, ValueError) as e:
+        logger.debug("tree-sitter grammar unavailable for language '%s': %s", language, e)
+        return []
     if parser is None:
         return []
 
+    source_bytes = content.encode("utf-8", errors="replace")
     try:
-        tree = parser.parse(content.encode("utf-8", errors="replace"))
-    except (RuntimeError, ValueError):
+        tree = _ts_parse(parser, source_bytes)
+    except (RuntimeError, ValueError, TypeError) as e:
+        logger.debug("tree-sitter parse failed for language '%s': %s", language, e)
         return []
 
-    root = tree.root_node
+    try:
+        root = _ts_call_or_value(tree, "root_node")
+    except (AttributeError, RuntimeError, ValueError):
+        return []
 
     # Define symbol node types per language
     symbol_types = {
@@ -829,33 +919,40 @@ def _find_all_symbols_ts(content: str, language: str, max_results: int = 500) ->
         language, ("function_declaration", "function_definition", "class_declaration", "class_definition")
     )
 
-    def extract_name(node) -> str:
+    def _slice_name(node: Any) -> str:
+        # Byte offsets index into the UTF-8 bytes (correct for non-ASCII).
+        start = int(_ts_call_or_value(node, "start_byte"))
+        end = int(_ts_call_or_value(node, "end_byte"))
+        return source_bytes[start:end].decode("utf-8", errors="replace")
+
+    def extract_name(node: Any) -> str:
         """Extract identifier name from a node."""
         for field in ("name", "property", "identifier"):
             child = node.child_by_field_name(field)
-            if child and child.type == "identifier":
-                return content[child.start_byte : child.end_byte]
-        for child in node.children:
-            if child.type == "identifier":
-                return content[child.start_byte : child.end_byte]
+            if child is not None and _ts_node_kind(child) == "identifier":
+                return _slice_name(child)
+        for child in _ts_node_children(node):
+            if _ts_node_kind(child) == "identifier":
+                return _slice_name(child)
         return ""
 
-    def search_node(node, results: list[dict[str, Any]]) -> None:
+    def search_node(node: Any, results: list[dict[str, Any]]) -> None:
         if len(results) >= max_results:
             return
-        node_type = node.type
+        node_type = _ts_node_kind(node)
         if node_type in target_types:
             name = extract_name(node)
             if name:
+                row, col = _ts_node_start_rowcol(node)
                 results.append(
                     {
                         "name": name,
                         "kind": node_type,
-                        "line": node.start_point[0] + 1,
-                        "col": node.start_point[1],
+                        "line": row + 1,
+                        "col": col,
                     }
                 )
-        for child in node.children:
+        for child in _ts_node_children(node):
             search_node(child, results)
 
     results: list[dict[str, Any]] = []
