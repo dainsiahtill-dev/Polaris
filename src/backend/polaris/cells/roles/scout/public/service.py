@@ -11,7 +11,7 @@ from polaris.cells.roles.scout.internal.planner import build_read_plan
 from polaris.cells.roles.scout.internal.ports import DistillerPort, ReadToolPort
 from polaris.cells.roles.scout.internal.ranker import rank
 from polaris.cells.roles.scout.internal.retrieval import retrieve
-from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1, ScoutReportV1
+from polaris.cells.roles.scout.public.contracts import ScoutFinding, ScoutProbeTargetV1, ScoutReportV1
 
 
 class ScoutProbeService:
@@ -22,10 +22,12 @@ class ScoutProbeService:
         read_tool: ReadToolPort,
         distiller: DistillerPort | None = None,
         cache: TTLCache[ScoutReportV1] | None = None,
+        workspace: str = ".",
     ) -> None:
         self._read_tool = read_tool
         self._distiller: DistillerPort = distiller or DeterministicDistiller()
         self._cache: TTLCache[ScoutReportV1] = cache or TTLCache(ttl_seconds=60.0)
+        self._workspace = str(workspace or ".")
 
     async def probe(self, target: ScoutProbeTargetV1) -> ScoutReportV1:
         key = target.cache_key()
@@ -49,6 +51,14 @@ class ScoutProbeService:
             tools_used=coverage.get("tools_used", []),
         )
         confidence = max((f.confidence for f in findings), default=0.0)
+
+        escalated = False
+        if target.allow_escalation and _is_weak_result(findings, confidence):
+            escalated_summary = await self._escalate(target)
+            if escalated_summary:
+                summary = escalated_summary
+                escalated = True
+
         duration_ms = int((time.monotonic() - start) * 1000)
         report = ScoutReportV1(
             findings=tuple(findings),
@@ -63,9 +73,24 @@ class ScoutProbeService:
                 "context_saved": _estimate_context_saved(coverage),
             },
             cache_hit=False,
+            escalated=escalated,
         )
         self._cache.set(key, report)
         return report
+
+    async def _escalate(self, target: ScoutProbeTargetV1) -> str:
+        """Bridge to a governed read-only scout role-session. Returns its output."""
+        from polaris.cells.roles.scout.internal.escalation import escalate_probe
+
+        return await escalate_probe(target, workspace=self._workspace)
+
+
+_WEAK_CONFIDENCE_THRESHOLD = 0.3
+
+
+def _is_weak_result(findings: list[ScoutFinding], confidence: float) -> bool:
+    """A deterministic result is weak when it has no findings or low confidence."""
+    return not findings or confidence < _WEAK_CONFIDENCE_THRESHOLD
 
 
 def _with_cache_hit(report: ScoutReportV1) -> ScoutReportV1:
@@ -83,4 +108,4 @@ def build_default_scout_service(workspace: str) -> ScoutProbeService:
     """Production factory: registry-backed read tools + deterministic distiller."""
     from polaris.cells.roles.scout.internal.read_tool_adapter import RegistryReadTool
 
-    return ScoutProbeService(read_tool=RegistryReadTool(workspace=workspace))
+    return ScoutProbeService(read_tool=RegistryReadTool(workspace=workspace), workspace=workspace)
