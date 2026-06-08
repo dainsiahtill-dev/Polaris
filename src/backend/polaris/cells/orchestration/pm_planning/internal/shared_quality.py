@@ -254,11 +254,64 @@ def _node_static_fallback_allowed() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _node_auto_install_allowed() -> bool:
+    raw = str(os.environ.get("KERNELONE_INTEGRATION_QA_AUTO_INSTALL_NODE_DEPS", "1") or "").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
 def _is_node_package_command(command_args: list[str]) -> bool:
     if not command_args:
         return False
     executable = str(command_args[0] or "").strip().lower()
     return executable in {"npm", "pnpm", "yarn"}
+
+
+def _node_dependency_install_args(command_args: list[str]) -> list[str]:
+    executable = str(command_args[0] if command_args else "npm").strip().lower()
+    if executable == "pnpm":
+        return ["pnpm", "install", "--ignore-scripts"]
+    if executable == "yarn":
+        return ["yarn", "install", "--ignore-scripts"]
+    return ["npm", "install", "--ignore-scripts"]
+
+
+def _node_install_timeout_seconds() -> int:
+    raw = os.environ.get("KERNELONE_INTEGRATION_QA_INSTALL_TIMEOUT_SECONDS", "300")
+    try:
+        return max(int(raw), 30)
+    except (TypeError, ValueError):
+        return 300
+
+
+def _prepare_node_dependencies_for_verify(
+    workspace_full: str,
+    command_args: list[str],
+) -> tuple[bool, str, list[str]]:
+    install_args = _node_dependency_install_args(command_args)
+    command_text = " ".join(shlex.quote(token) for token in install_args)
+    try:
+        cmd_svc = CommandExecutionService(workspace_full)
+        request = CommandRequest(
+            executable=install_args[0],
+            args=install_args[1:],
+            cwd=workspace_full,
+            timeout_seconds=_node_install_timeout_seconds(),
+        )
+        result = cmd_svc.run(request)
+    except (RuntimeError, ValueError) as exc:
+        summary = f"Integration dependency installation runtime error: {exc}"
+        return False, summary, [summary]
+
+    stdout_tail = _tail_non_empty_lines(result.get("stdout", ""), limit=6)
+    stderr_tail = _tail_non_empty_lines(result.get("stderr", ""), limit=6)
+    if int(result.get("returncode", -1)) == 0:
+        return True, f"Integration dependency installation passed: {command_text}", []
+
+    errors: list[str] = [f"Command failed ({result.get('returncode', -1)}): {command_text}"]
+    errors.extend(f"[stdout] {line}" for line in stdout_tail)
+    errors.extend(f"[stderr] {line}" for line in stderr_tail)
+    summary = f"Integration dependency installation failed: {command_text}"
+    return False, summary, errors[:20]
 
 
 def _has_node_test_files(workspace_full: str) -> bool:
@@ -511,6 +564,19 @@ def _run_typescript_typecheck(workspace_full: str) -> tuple[bool, str, list[str]
         logger.info("[integration-qa] TypeScript project detected but no tsc resolvable; skipping typecheck gate")
         return None
 
+    package_payload = _read_package_json(workspace_full)
+    if _node_dependencies_missing(workspace_full, package_payload) and _node_auto_install_allowed():
+        install_ok, install_summary, install_errors = _prepare_node_dependencies_for_verify(
+            workspace_full,
+            ["npm"],
+        )
+        if not install_ok:
+            return False, install_summary, install_errors
+        if _node_dependencies_missing(workspace_full, package_payload):
+            summary = "Integration dependency installation finished but node_modules is still missing before typecheck"
+            return False, summary, [summary]
+        logger.info("[integration-qa] %s", install_summary)
+
     timeout_raw = os.environ.get("KERNELONE_INTEGRATION_QA_TYPECHECK_TIMEOUT_SECONDS", "180")
     try:
         timeout_seconds = max(int(timeout_raw), 30)
@@ -535,7 +601,7 @@ def _run_typescript_typecheck(workspace_full: str) -> tuple[bool, str, list[str]
         return None
 
     output = f"{completed.stdout or ''}\n{completed.stderr or ''}"
-    declared_deps = _declared_dependency_names(_read_package_json(workspace_full))
+    declared_deps = _declared_dependency_names(package_payload)
     real_errors: list[str] = []
     for raw_line in output.splitlines():
         line = raw_line.strip()
@@ -580,11 +646,29 @@ def run_integration_verify_runner(workspace_full: str) -> tuple[bool, str, list[
         return False, summary, [summary]
 
     package_payload = _read_package_json(workspace_full)
-    if _is_node_package_command(command_args) and _node_missing_dependencies_should_block(
+    missing_dependencies_block = _is_node_package_command(command_args) and _node_missing_dependencies_should_block(
         workspace_full,
         package_payload,
         command_args,
-    ):
+    )
+    if missing_dependencies_block and _node_auto_install_allowed():
+        install_ok, install_summary, install_errors = _prepare_node_dependencies_for_verify(
+            workspace_full,
+            command_args,
+        )
+        if not install_ok:
+            return False, install_summary, install_errors
+        package_payload = _read_package_json(workspace_full)
+        if not _node_missing_dependencies_should_block(
+            workspace_full,
+            package_payload,
+            command_args,
+        ):
+            logger.info("[integration-qa] %s", install_summary)
+            missing_dependencies_block = False
+        else:
+            logger.info("[integration-qa] dependency install finished but node_modules is still missing")
+    if missing_dependencies_block:
         if not _node_static_fallback_allowed():
             summary = (
                 "Integration verification blocked: Node dependencies are declared but not installed "

@@ -209,6 +209,30 @@ def _normalize_string_tuple(name: str, values: Any) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+def _normalize_unique_string_tuple(name: str, values: Any) -> tuple[str, ...]:
+    if values is None:
+        return ()
+    if isinstance(values, str | bytes):
+        raise ValueError(f"{name} must be an iterable of strings, not a string")
+
+    try:
+        iterator = iter(values)
+    except TypeError as exc:
+        raise ValueError(f"{name} must be an iterable of strings") from exc
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(iterator):
+        token = str(item or "").strip()
+        if not token:
+            raise ValueError(f"{name} entries must be non-empty strings (index={index})")
+        if token in seen:
+            raise ValueError(f"{name} must not contain duplicate refs")
+        normalized.append(token)
+        seen.add(token)
+    return tuple(normalized)
+
+
 def _require_ref_superset(message: str, container_refs: tuple[str, ...], required_refs: tuple[str, ...]) -> None:
     if not required_refs:
         return
@@ -349,6 +373,27 @@ class RoleAssetMountTable:
                     f"asset mount {mount.mount_name!r} asset ref namespace must match owner_cell {owner_cell!r}; "
                     f"got {asset_ref!r}"
                 )
+            if (
+                (mount.mount_name == "DiffMapArchive" or mount.asset_ref.asset_kind == "diff_map_archive")
+                and bool(mount.asset_ref.metadata.get("requires_blueprint_ref"))
+                and not {"blueprint_id", "path", "ref"}.issubset(mount.asset_ref.metadata)
+            ):
+                raise ValueError("DiffMapArchive asset mount must include blueprint_id, path, and ref metadata")
+            if mount.mount_name == "OpenLoopRegistry" or mount.asset_ref.asset_kind == "open_loop_registry":
+                evidence_ref = str(mount.asset_ref.metadata.get("evidence_ref") or "").strip()
+                if mount.asset_ref.metadata.get("evidence_owner_cell") != "audit.evidence" or not _has_ref_namespace(
+                    evidence_ref,
+                    "audit.evidence",
+                ):
+                    raise ValueError("OpenLoopRegistry asset mount must include audit.evidence evidence_ref metadata")
+            if mount.mount_name == "TruthLog" or mount.asset_ref.asset_kind == "truth_log":
+                runtime_receipt_ref = str(mount.asset_ref.metadata.get("runtime_receipt_ref") or "").strip()
+                if mount.asset_ref.metadata.get("runtime_receipt_owner_cell") != "factory.cognitive_runtime" or not (
+                    _has_ref_namespace(runtime_receipt_ref, "factory.cognitive_runtime")
+                ):
+                    raise ValueError(
+                        "TruthLog asset mount must include factory.cognitive_runtime runtime_receipt_ref metadata"
+                    )
             key = mount.mount_name
             if key in seen:
                 raise ValueError(f"duplicate asset mount: {key}")
@@ -683,7 +728,11 @@ class RoleTurnEnvelope:
         if any(not isinstance(item, RoleCapabilityInvocation) for item in invocations):
             raise TypeError("capability_invocations entries must be RoleCapabilityInvocation instances")
         allowed_payload_refs = (self.turn_context.typed_input_ref, *self.turn_context.task_refs)
+        seen_invocation_ids: set[str] = set()
         for invocation in invocations:
+            if invocation.invocation_id in seen_invocation_ids:
+                raise ValueError(f"duplicate capability invocation: {invocation.invocation_id}")
+            seen_invocation_ids.add(invocation.invocation_id)
             if invocation.role_id != self.identity.role_id:
                 raise ValueError("capability_invocations role_id must match identity.role_id")
             if invocation.payload_ref not in allowed_payload_refs:
@@ -724,6 +773,8 @@ class RoleStateCommitRequest:
         changed_files = _normalize_string_tuple("changed_files", self.changed_files)
         allowed_scope_paths = _normalize_string_tuple("allowed_scope_paths", self.allowed_scope_paths)
         evidence_refs = _normalize_string_tuple("evidence_refs", self.evidence_refs)
+        if not (changed_asset_refs or changed_files or evidence_refs):
+            raise ValueError("role state commit must include changed_asset_refs, changed_files, or evidence_refs")
         if any(ref not in self.envelope.turn_context.task_refs for ref in changed_asset_refs):
             raise ValueError("changed_asset_refs must be listed in turn_context task refs")
         _require_refs_namespace("evidence_refs", evidence_refs, "audit.evidence")
@@ -761,8 +812,11 @@ class RoleStateCommitReceipt:
         object.__setattr__(self, "ok", bool(self.ok))
         commit_receipt_ref = _normalize_optional_string(self.commit_receipt_ref)
         change_set_validation_ref = _normalize_optional_string(self.change_set_validation_ref)
-        runtime_receipt_refs = _normalize_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs)
-        handoff_pack_refs = _normalize_string_tuple("handoff_pack_refs", self.handoff_pack_refs)
+        runtime_receipt_refs = _normalize_unique_string_tuple(
+            "runtime_receipt_refs",
+            self.runtime_receipt_refs,
+        )
+        handoff_pack_refs = _normalize_unique_string_tuple("handoff_pack_refs", self.handoff_pack_refs)
         turn_outcome_ref = _normalize_optional_string(self.turn_outcome_ref)
 
         if commit_receipt_ref and not _has_ref_namespace(commit_receipt_ref, "roles.kernel"):
@@ -1225,6 +1279,18 @@ class RoleTaskMarketLifecycleResultV1:
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
         object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
         object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        if self.owner_cell != "runtime.task_market":
+            raise ValueError("task-market lifecycle result owner_cell must be runtime.task_market")
+        if self.result_ref and not self.result_ref.startswith("runtime.task_market:"):
+            raise ValueError("task-market lifecycle result_ref must point to runtime.task_market")
+        if self.lease_token_ref and not self.lease_token_ref.startswith("runtime.task_market:"):
+            raise ValueError("task-market lifecycle lease_token_ref must point to runtime.task_market")
+        if self.ok and not self.result_ref:
+            raise ValueError("successful task-market lifecycle result must include a runtime.task_market result_ref")
+        if self.ok and self.operation in {"claim", "lease"} and not self.lease_token_ref:
+            raise ValueError(
+                "successful claim/lease task-market lifecycle result must include a runtime.task_market lease_token_ref"
+            )
         if not self.ok and not (self.error_code or self.error_message):
             raise ValueError("failed task-market lifecycle result must include error_code or error_message")
 
@@ -1279,7 +1345,7 @@ class RoleCapabilityInvocationResultV1:
         result_ref = _normalize_optional_string(self.result_ref)
         task_id = str(self.task_id or "").strip()
         status = str(self.status or "").strip()
-        evidence_refs = _normalize_string_tuple("evidence_refs", self.evidence_refs)
+        evidence_refs = _normalize_unique_string_tuple("evidence_refs", self.evidence_refs)
         metadata = _to_dict_copy(self.metadata)
         error_code = _normalize_optional_string(self.error_code)
         error_message = _normalize_optional_string(self.error_message)
@@ -1300,6 +1366,7 @@ class RoleCapabilityInvocationResultV1:
             )
         ):
             raise ValueError("payload_ref must point to roles.runtime or runtime.task_market")
+        _require_refs_namespace("evidence_refs", evidence_refs, "audit.evidence")
         if not ok and allowed:
             raise ValueError("failed capability invocation result must set allowed=False")
 
@@ -1320,6 +1387,10 @@ class RoleCapabilityInvocationResultV1:
         object.__setattr__(self, "error_message", error_message)
         if self.ok and not self.allowed:
             raise ValueError("successful capability invocation result must be allowed")
+        if self.ok and not self.owner_cell:
+            raise ValueError("successful capability invocation result must include owner_cell")
+        if self.ok and not self.result_ref:
+            raise ValueError("successful capability invocation result must include result_ref")
         if not self.ok and not (self.error_code or self.error_message):
             raise ValueError("failed capability invocation result must include error_code or error_message")
 
@@ -1605,7 +1676,10 @@ def _build_pm_runtime_spec() -> RoleRuntimeObjectSpec:
                         contract_name="QueryTaskMarketStatusV1",
                         ref="runtime.task_market:open-loops",
                         asset_kind="open_loop_registry",
-                        metadata={"evidence_owner_cell": "audit.evidence"},
+                        metadata={
+                            "evidence_owner_cell": "audit.evidence",
+                            "evidence_ref": "audit.evidence:open-loop-registry",
+                        },
                     ),
                 ),
             )
@@ -1681,7 +1755,12 @@ def _build_chief_engineer_runtime_spec() -> RoleRuntimeObjectSpec:
                         contract_name="GetBlueprintStatusQueryV1",
                         ref="chief_engineer.blueprint:diff-map-archive",
                         asset_kind="diff_map_archive",
-                        metadata={"requires_blueprint_ref": True},
+                        metadata={
+                            "requires_blueprint_ref": True,
+                            "blueprint_id": "chief-engineer-runtime-blueprint",
+                            "path": "runtime/blueprints/diff-map-archive",
+                            "ref": "chief_engineer.blueprint:diff-map-archive:chief-engineer-runtime-blueprint",
+                        },
                     ),
                 ),
             )
@@ -1823,7 +1902,10 @@ def _build_qa_runtime_spec() -> RoleRuntimeObjectSpec:
                         contract_name="QueryEvidenceEventsV1",
                         ref="audit.evidence:runtime/evidence",
                         asset_kind="truth_log",
-                        metadata={"runtime_receipt_owner_cell": "factory.cognitive_runtime"},
+                        metadata={
+                            "runtime_receipt_owner_cell": "factory.cognitive_runtime",
+                            "runtime_receipt_ref": "factory.cognitive_runtime:receipt:truth-log",
+                        },
                     ),
                 ),
                 _mount(

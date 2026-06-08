@@ -15,6 +15,7 @@ Tool Batch Runtime - 工具批次执行器
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,6 +38,27 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+_READONLY_MODES = {
+    ToolExecutionMode.READONLY_PARALLEL,
+    ToolExecutionMode.READONLY_SERIAL,
+}
+
+
+def _eval_injected_read_delay_ms() -> int:
+    """评测专用：对只读工具注入的人工执行延迟（毫秒）.
+
+    仅用于评测"贵工具档"的端到端 saved_ms——把只读工具的执行墙钟人为放大到
+    远超 LLM 抖动噪声，从而能在端到端 ON/OFF 对比中清晰分辨 speculation 隐藏的
+    那段延迟。生产默认 0（无注入）。env: ``SPECULATION_EVAL_READ_DELAY_MS``。
+    """
+    raw = os.environ.get("SPECULATION_EVAL_READ_DELAY_MS")
+    if not raw:
+        return 0
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 0
 
 
 class ToolExecutionStatus(Enum):
@@ -540,8 +562,18 @@ class ToolBatchRuntime:
             else:
                 timeout = effective_context.timeout_ms / 1000
 
-            # 执行工具
-            result = await asyncio.wait_for(self.executor(tool_name, arguments), timeout=timeout)
+            # 执行工具（评测可对只读工具注入人工延迟，模拟贵工具档；延迟在
+            # wait_for 内，受同一超时与取消约束，shadow 与 authoritative 路径
+            # 共用本方法，故两边一致受影响——这正是端到端 saved_ms 的测量基础）。
+            delay_ms = _eval_injected_read_delay_ms()
+            is_readonly = tool.get("execution_mode") in _READONLY_MODES
+
+            async def _invoke() -> Any:
+                if delay_ms > 0 and is_readonly:
+                    await asyncio.sleep(delay_ms / 1000.0)
+                return await self.executor(tool_name, arguments)
+
+            result = await asyncio.wait_for(_invoke(), timeout=timeout)
 
             # Phase 2: 执行后再检查取消，防止取消后仍返回 stale 结果
             check_cancel(effective_context.cancel_token)

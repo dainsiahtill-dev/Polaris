@@ -324,6 +324,7 @@ class TestRetryOrchestratorBatchCountRollback:
         assert write_calls[0]["file"] == "package.json"
         assert "no test specified" not in write_calls[0]["content"]
         assert "package manifest check passed" in write_calls[0]["content"]
+        assert '" --' in write_calls[0]["content"]
 
     @pytest.mark.asyncio
     async def test_bootstrap_followup_uses_deterministic_write_when_model_returns_no_tool_batch(

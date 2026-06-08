@@ -102,14 +102,16 @@ Defined in `public/contracts.py`:
   hex capability fingerprint value. `RoleCapabilityDecision` evidence refs must
   point to `audit.evidence`. `RoleCapabilityInvocationResultV1` rejects role
   runtime/kernel/profile/session owner cells, requires target result refs to
-  point to the declared owner Cell, and only permits non-result payload refs from
-  runtime typed input or task-market refs. Failed capability invocation results
-  must always report `allowed=false`; after fingerprint unlock and before any
-  target Cell public call, `execute_role_capability_invocation` requires the
-  invocation payload ref to match the runtime object's current `RoleTurnContext`
-  typed input ref or task refs. The mounted capability port must also match the
-  current `RoleCapabilityFingerprint` capability id, effect, and endpoint/tool
-  before any target Cell public API is invoked. Capability discoverability is
+  point to the declared owner Cell, requires successful results to include both
+  target `owner_cell` and `result_ref`, only permits non-result payload refs from
+  runtime typed input or task-market refs, and requires unique evidence refs
+  owned by `audit.evidence`. Failed capability invocation results must always
+  report `allowed=false`; after fingerprint unlock and before any target Cell
+  public call, `execute_role_capability_invocation` requires the invocation
+  payload ref to match the runtime object's current `RoleTurnContext` typed input
+  ref or task refs. The mounted capability port must also match the current
+  `RoleCapabilityFingerprint` capability id, effect, and endpoint/tool before
+  any target Cell public API is invoked. Capability discoverability is
   represented only by `metadata.capability_available`. The KernelOne release gate enforces this
   with an AST check against public runtime code, so static
   `RoleCapabilityInvocationResultV1(ok=False, allowed=True)` constructors are
@@ -143,10 +145,10 @@ Defined in `public/contracts.py`:
   time.
 - `RoleTurnEnvelope` rejects identity/profile role mismatches, capability
   invocations whose `role_id` does not match the envelope identity, invocation
-  payload refs outside the current typed input or task refs, and task-market
-  active `runtime.task_market:task:*` work refs that are not listed in the
-  current turn context task refs, so inconsistent typed envelopes cannot enter
-  ledger/commit boundaries.
+  payload refs outside the current typed input or task refs, duplicate
+  invocation ids, and task-market active `runtime.task_market:task:*` work refs
+  that are not listed in the current turn context task refs, so inconsistent
+  typed envelopes cannot enter ledger/commit boundaries.
   `RoleTurnContext` rejects typed input refs outside `roles.runtime` or
   `runtime.task_market`, context snapshot refs outside `context.engine` or
   `roles.session`, handoff refs outside `factory.cognitive_runtime`, and task
@@ -178,7 +180,7 @@ Defined in `public/contracts.py`:
   KernelOne stays limited to shared types and low-level role templates.
 - Role task-market lifecycle operations use
   `execute_role_task_market_lifecycle(ExecuteRoleTaskMarketLifecycleCommandV1)`
-  to translate role-bound claim/lease/ack/fail/requeue requests into
+  to translate role-bound publish/claim/lease/ack/fail/requeue requests into
   `runtime.task_market` public contracts. `RoleTaskMarketBinding` rejects active
   work item and lease token refs outside `runtime.task_market`, and rejects old
   active work refs such as `runtime.task_market:task-1`; lease/ack/fail and
@@ -191,7 +193,14 @@ Defined in `public/contracts.py`:
   `RoleCapabilityFingerprint`. Lease, ack, and fail also require
   `payload.lease_token` to match the runtime object's active
   `RoleTaskMarketBinding.lease_token_ref`; unbound or mismatched leases are
-  rejected in `roles.runtime`.
+  rejected in `roles.runtime`. Successful `RoleTaskMarketLifecycleResultV1`
+  values must include a `runtime.task_market` `result_ref`; malformed upstream
+  `ok=true` task-market responses without a task id/ref return the structured
+  `task_market_lifecycle_missing_result_ref` failure instead of becoming an
+  unauditable success. Successful claim/lease lifecycle results must also
+  expose a `runtime.task_market` `lease_token_ref`; malformed upstream
+  claim/lease successes without a lease token return
+  `task_market_lifecycle_missing_lease_ref`.
 - Phase 5 chain assembly uses
   `assemble_role_runtime_chain(AssembleRoleRuntimeChainCommandV1)` to assemble
   PM, Chief Engineer, Director, QA, audit evidence, Turn Ledger, receipt,
@@ -235,14 +244,23 @@ Defined in `public/contracts.py`:
   `RoleTurnContext.task_refs`, rejects evidence refs outside `audit.evidence`,
   and requires changed files to be relative paths under explicit
   `allowed_scope_paths` before Cognitive Runtime validation or receipt recording
-  can run.
+  can run. It also rejects empty commits that omit changed asset refs, changed
+  files, and audit evidence refs, so runtime receipts and handoff packs are not
+  created for unanchored no-op state commits. Successful commit receipts reject
+  duplicate Cognitive Runtime receipt and handoff refs instead of silently
+  collapsing audit anchors.
 - PM dispatch delegates to `runtime.task_market`; Chief Engineer diff-spec and
   architecture memo generation delegate to `chief_engineer.blueprint` with
   mounted `BlueprintDatabase`, `ArchConstraintMemo`, and `DiffMapArchive` refs
-  in the command context/result metadata.
+  in the command context/result metadata. `DiffMapArchive` mounts that declare
+  `requires_blueprint_ref` must include `blueprint_id`, `path`, and `ref`
+  metadata so diff/spec assets remain line-anchorable to a real blueprint asset
+  owned by `chief_engineer.blueprint`.
 - PM critical-path evaluation reads `runtime.task_market` through
   `QueryTaskMarketStatusV1` and derives task DAG dependency edges, failed
   stages, projection refs, and mounted asset refs from that public result; PM
+  `OpenLoopRegistry` mounts must include an `audit.evidence` `evidence_ref` so
+  open-loop task state is anchored to both Task Market and Audit Evidence. PM
   runtime status projection delegates to an injected `runtime.projection` public
   service using `RuntimeProjectionQueryV1`.
 - Director task execution mounts `ExecutionTask`, `DirectorExecutionState`, and
@@ -258,6 +276,9 @@ Defined in `public/contracts.py`:
   and metadata.
 - QA verdict issuance delegates to `qa.audit_verdict.public.service.run_qa_audit`
   with `RunQaAuditCommandV1`; runtime objects keep only result refs and metadata.
+- QA `TruthLog` mounts must include both the `audit.evidence` owner ref and a
+  `factory.cognitive_runtime` `runtime_receipt_ref`; runtime objects never treat
+  transcript or natural-language handoff text as the receipt truth.
 - QA visual audit delegates model feature checks to `llm.control_plane`
   `CheckLlmModelCapabilityQueryV1` and only calls
   `qa.audit_verdict.public.service.run_visual_qa_audit` with
@@ -267,6 +288,9 @@ Defined in `public/contracts.py`:
   The model capability query is bound to the current runtime `role_id`; payload
   `llm_role` values are retained only as audit metadata and cannot switch the
   preflight role. Text-only models receive `allowed=false` before QA is invoked.
+  Successful visual audit results must include an `audit.evidence` evidence ref;
+  runtime maps owner-service `runtime/evidence/**` receipt paths to
+  `audit.evidence:path:*` refs and rejects unaudited success results.
 - Architect context-budget allocation delegates to `finops.budget_guard`; illegal
   mutation interception delegates to `policy.workspace_guard`.
 - Architect Cell boundary validation delegates lightweight authorization to

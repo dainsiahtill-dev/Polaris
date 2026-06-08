@@ -8,9 +8,17 @@ from typing import Any
 
 
 def _normalize_value(value: Any) -> Any:
-    """递归归一化单个值：字符串去空白、统一换行、列表递归处理."""
+    """递归归一化单个值：仅统一换行符，列表/字典递归处理.
+
+    抗碰撞优先（ADR-0077 wrong-adoption 是最严重缺陷）：spec_key 的归一化
+    只能折叠**语义等价**的差异，绝不能把语义不同的值折叠成同一指纹，否则会
+    错误领养陈旧 shadow 结果。因此这里只做跨平台等价的换行符规范化
+    （`\r\n` / `\r` → `\n`），**不**对字符串值做 `strip()`：首尾空白对路径、
+    内容、查询串等可能是语义相关的，折叠它们会制造 false-same 碰撞。多余的
+    空白差异最坏只导致一次安全的 REPLAY（不命中），永远不会导致错误领养。
+    """
     if isinstance(value, str):
-        return value.strip().replace("\r\n", "\n").replace("\r", "\n")
+        return value.replace("\r\n", "\n").replace("\r", "\n")
     if isinstance(value, list):
         return [_normalize_value(item) for item in value]
     if isinstance(value, dict):
@@ -22,9 +30,10 @@ def normalize_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """对工具参数做 canonical 归一化.
 
     规则：
-    1. dict 按键排序（递归）
-    2. str 去首尾空白，统一换行符为 \n
-    这使得字段顺序变化、等价空白/换行差异不会改变 spec_key.
+    1. dict 按键排序（递归）——字段顺序语义无关，折叠安全。
+    2. str 仅统一换行符为 `\n`——跨平台等价，折叠安全。
+    刻意**不**对字符串值做首尾去空白：那是 false-same 碰撞方向，会导致
+    wrong-adoption。详见 `_normalize_value` docstring。
     """
     if not isinstance(args, dict):
         return {}

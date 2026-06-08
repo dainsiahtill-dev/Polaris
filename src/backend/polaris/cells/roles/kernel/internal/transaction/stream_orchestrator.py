@@ -671,6 +671,11 @@ async def drain_speculative_tasks(
     if shadow_engine is not None and hasattr(shadow_engine, "_task_group") and shadow_engine._task_group is not None:
         shadow_engine._task_group.close()
 
+    # NOTE: per-turn 推测执行汇总不在此发射。drain 发生在流式解码结束、authoritative
+    # 工具批裁决（adopt/join/replay）之前；此处发射会漏掉全部裁决指标。汇总改由
+    # ``ToolBatchExecutor.execute_tool_batch`` 在裁决完成后发射（emit_turn_summary
+    # 对每个 metrics 实例幂等，故不会重复）。
+
 
 # ---------------------------------------------------------------------------
 # StreamOrchestrator

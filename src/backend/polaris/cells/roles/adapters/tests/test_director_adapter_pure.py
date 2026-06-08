@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import subprocess
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _apply_deterministic_missing_declared_target_repair,
     _apply_deterministic_patch_residue_cleanup,
     _apply_deterministic_scaffold_marker_cleanup,
     _apply_deterministic_typescript_reexport_repair,
@@ -938,10 +940,19 @@ class TestDirectorFailureClosure:
         )
 
         package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        test_run = subprocess.run(
+            ["npm", "run", "test", "--", "--watch=false"],
+            cwd=tmp_path,
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
         assert result["success"] is True
         assert stage_labels == ["first_call"]
         assert "Error: no test specified" not in package_text
         assert "package manifest check passed" in package_text
+        assert test_run.returncode == 0
+        assert "package manifest check passed" in test_run.stdout
         assert "package.json" in result["changed_files"]
 
     @pytest.mark.asyncio
@@ -1280,6 +1291,365 @@ export function summary() {
         assert "deterministic_runtime_dependency_repair" in source_tools
         assert "package.json" in result["changed_files"]
         assert "src/services/auditlog.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_tenant_middleware_escaped_newline_and_node_types(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "tenant-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Tenant Context Middleware",
+            description="Create request-scoped tenant context middleware for an Express service.",
+            metadata={
+                "target_files": ["src/middleware/auth.ts"],
+                "scope_paths": ["src/middleware/auth.ts", "package.json"],
+                "steps": ["Create tenant middleware"],
+                "acceptance": ["TypeScript exports remain reachable and Node builtin typings are declared"],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _gemma_escaped_newline_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_labels.append(str(kwargs.get("stage_label") or ""))
+            target = tmp_path / "src" / "middleware" / "auth.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "import { Request, Response, NextFunction } from 'express';\n"
+                "import { AsyncLocalStorage } from 'async_hooks';\n\n"
+                "export interface TenantContext {\n"
+                "  tenantId: string;\n"
+                "}\n\n"
+                "// Context for storing tenant information across the request lifecycle\\n"
+                "export const tenantContext = new AsyncLocalStorage<TenantContext>();\n\n"
+                "export function tenantMiddleware(req: Request, res: Response, next: NextFunction): void {\n"
+                "  const tenantId = String(req.headers['x-tenant-id'] || 'default');\n"
+                "  tenantContext.run({ tenantId }, () => next());\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote tenant middleware.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/middleware/auth.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _gemma_escaped_newline_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-tenant-middleware-escaped-newline-repair"},
+        )
+
+        package_payload = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+        repaired = (tmp_path / "src" / "middleware" / "auth.ts").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["src/middleware/auth.ts", "package.json"],
+        )
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+
+        assert result["success"] is True
+        assert stage_labels == ["first_call"]
+        assert "lifecycle\\nexport const tenantContext" not in repaired
+        assert "\nexport const tenantContext" in repaired
+        assert package_payload["devDependencies"]["@types/node"] == "^22.10.0"
+        assert quality_errors == []
+        assert "deterministic_typescript_escaped_newline_repair" in source_tools
+        assert "deterministic_runtime_dependency_repair" in source_tools
+        assert "src/middleware/auth.ts" in result["changed_files"]
+        assert "package.json" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_framework_coupled_audit_service_contract(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "audit-workspace",
+  "version": "1.0.0",
+  "dependencies": {}
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Immutable Audit Log Middleware",
+            description="Create audit middleware and service for immutable task change logs.",
+            metadata={
+                "target_files": [
+                    "src/middleware/audit.middleware.ts",
+                    "src/services/audit.service.ts",
+                ],
+                "scope_paths": ["src"],
+                "steps": ["Create audit middleware and service"],
+                "acceptance": ["No unresolved relative imports or undeclared runtime imports remain"],
+            },
+        )
+
+        async def _nest_audit_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            service_path = tmp_path / "src" / "services" / "audit.service.ts"
+            middleware_path = tmp_path / "src" / "middleware" / "audit.middleware.ts"
+            service_path.parent.mkdir(parents=True, exist_ok=True)
+            middleware_path.parent.mkdir(parents=True, exist_ok=True)
+            service_path.write_text(
+                "import { Injectable } from '@nestjs/common';\n"
+                "import { InjectRepository } from '@nestjs/typeorm';\n"
+                "import { Repository } from 'typeorm';\n"
+                "import { AuditLog } from './audit.entity';\n\n"
+                "@Injectable()\n"
+                "export class AuditService {\n"
+                "  constructor(\n"
+                "    @InjectRepository(AuditLog)\n"
+                "    private auditRepository: Repository<AuditLog>,\n"
+                "  ) {}\n\n"
+                "  async createLog(action: string, entityType: string, entityId: string, diff: any): Promise<AuditLog> {\n"
+                "    const log = this.auditRepository.create({ action, entityType, entityId, diff });\n"
+                "    return await this.auditRepository.save(log);\n"
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            middleware_path.write_text(
+                "export class AuditMiddleware {\n  id: string = '';\n}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote framework-coupled audit service.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/services/audit.service.ts"},
+                    },
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/middleware/audit.middleware.ts"},
+                    },
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _nest_audit_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-audit-service-contract-repair"},
+        )
+
+        service_text = (tmp_path / "src" / "services" / "audit.service.ts").read_text(encoding="utf-8")
+        middleware_text = (tmp_path / "src" / "middleware" / "audit.middleware.ts").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=[
+                "package.json",
+                "src/services/audit.service.ts",
+                "src/middleware/audit.middleware.ts",
+            ],
+        )
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+
+        assert result["success"] is True
+        assert quality_errors == []
+        assert "@nestjs" not in service_text
+        assert "audit.entity" not in service_text
+        assert "AuditLogEntry" in service_text
+        assert "AuditService" in middleware_text
+        assert "deterministic_audit_service_contract_repair" in source_tools
+        assert "src/services/audit.service.ts" in result["changed_files"]
+        assert "src/middleware/audit.middleware.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_framework_coupled_task_service_contract(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "task-service-workspace",
+  "version": "1.0.0",
+  "dependencies": {}
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="基础任务CRUD与Dry-run接口开发",
+            description="Create task CRUD service and dry-run task controller.",
+            metadata={
+                "target_files": [
+                    "src/server/task.controller.ts",
+                    "src/services/task.service.ts",
+                ],
+                "scope_paths": ["src"],
+                "steps": ["Create task service and controller"],
+                "acceptance": ["No undeclared runtime imports remain"],
+            },
+        )
+
+        async def _nest_task_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            service_path = tmp_path / "src" / "services" / "task.service.ts"
+            controller_path = tmp_path / "src" / "server" / "task.controller.ts"
+            service_path.parent.mkdir(parents=True, exist_ok=True)
+            controller_path.parent.mkdir(parents=True, exist_ok=True)
+            service_path.write_text(
+                "import { Injectable, NotFoundException } from '@nestjs/common';\n\n"
+                "export interface Task {\n"
+                "  id?: string;\n"
+                "  name: string = '';\n"
+                "  status: unknown = null;\n"
+                "}\n\n"
+                "export class TaskService {\n"
+                "  private tasks: Map<string, Task> = new Map();\n"
+                "  async getTask(id: string): Promise<Task> {\n"
+                "    const task = this.tasks.get(id);\n"
+                "    if (!task) throw new NotFoundException(`Task with ID ${id} not found`);\n"
+                "    return task;\n"
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            controller_path.write_text(
+                "export class TaskController {\n  id: string = '';\n}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote framework-coupled task service.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/services/task.service.ts"},
+                    },
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/server/task.controller.ts"},
+                    },
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _nest_task_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-task-service-contract-repair"},
+        )
+
+        service_text = (tmp_path / "src" / "services" / "task.service.ts").read_text(encoding="utf-8")
+        controller_text = (tmp_path / "src" / "server" / "task.controller.ts").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=[
+                "package.json",
+                "src/services/task.service.ts",
+                "src/server/task.controller.ts",
+            ],
+        )
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+
+        assert result["success"] is True
+        assert quality_errors == []
+        assert "@nestjs" not in service_text
+        assert "NotFoundException" not in service_text
+        assert "name: string =" not in service_text
+        assert "TaskRecord" in service_text
+        assert "TaskService" in controller_text
+        assert "deterministic_task_service_contract_repair" in source_tools
+        assert "src/services/task.service.ts" in result["changed_files"]
+        assert "src/server/task.controller.ts" in result["changed_files"]
+
+    def test_missing_declared_target_repair_synthesizes_taskgraph_contract_targets(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = {
+            "metadata": {
+                "target_files": [
+                    "src/services/taskgraph.ts",
+                    "tests/unit/taskgraph.test.ts",
+                ],
+            }
+        }
+
+        results = _apply_deterministic_missing_declared_target_repair(
+            adapter,
+            task=task,
+            task_id="taskgraph-target-repair",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: declared target file missing 'src/services/taskgraph.ts'",
+                "Artifact quality scan failed: declared target file missing 'tests/unit/taskgraph.test.ts'",
+            ],
+        )
+
+        graph_text = (tmp_path / "src" / "services" / "taskgraph.ts").read_text(encoding="utf-8")
+        test_text = (tmp_path / "tests" / "unit" / "taskgraph.test.ts").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["src/services/taskgraph.ts", "tests/unit/taskgraph.test.ts"],
+        )
+
+        assert len(results) == 2
+        assert quality_errors == []
+        assert "class TaskGraph" in graph_text
+        assert "Circular dependency detected" in graph_text
+        assert "new TaskGraph" in test_text
 
     @pytest.mark.asyncio
     async def test_execute_normalizes_declared_task_model_before_qa_typecheck(
@@ -1963,6 +2333,7 @@ export function summary() {
         assert quality_errors == []
         assert "No tests specified" not in package_text
         assert '"test": "node -e' in package_text
+        assert '\\" --"' in package_text
         assert "[project]" in pyproject_text
         assert "polaris-generated-workspace" in pyproject_text
         assert '"moduleResolution": "NodeNext"' in tsconfig_text

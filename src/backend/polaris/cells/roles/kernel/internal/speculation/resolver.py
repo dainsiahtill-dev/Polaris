@@ -12,6 +12,7 @@ from polaris.cells.roles.kernel.internal.speculation.metrics import (
     SpeculationMetrics,
 )
 from polaris.cells.roles.kernel.internal.speculation.models import (
+    ShadowTaskRecord,
     ShadowTaskState,
 )
 from polaris.cells.roles.kernel.internal.speculation.registry import (
@@ -39,6 +40,18 @@ class SpeculationResolver:
     ) -> None:
         self._registry = registry
         self._metrics = metrics
+
+    @staticmethod
+    def _saved_ms(task: ShadowTaskRecord) -> int:
+        """从 shadow 任务的实际执行耗时估算被隐藏的时延（saved_ms）.
+
+        adopt 命中意味着 authoritative 阶段无需重跑该工具，省下的就是 shadow
+        本身的执行墙钟时间。缺少计时信息时安全返回 0（不夸大收益）。
+        """
+        if task.started_at is None or task.finished_at is None:
+            return 0
+        delta_ms = int((task.finished_at - task.started_at) * 1000)
+        return delta_ms if delta_ms > 0 else 0
 
     async def resolve_or_execute(
         self,
@@ -90,8 +103,11 @@ class SpeculationResolver:
                 }
             if prepare_task.state == ShadowTaskState.COMPLETED:
                 try:
+                    saved_ms = self._saved_ms(prepare_task)
                     result = await self._registry.adopt(prepare_task.task_id, call_id)
-                    self._metrics.record_adopt(turn_id, call_id, prepare_inv.tool_name, prepare_spec_key)
+                    self._metrics.record_adopt(
+                        turn_id, call_id, prepare_inv.tool_name, prepare_spec_key, saved_ms=saved_ms
+                    )
                     return {"action": "adopt", "result": result, "error": None}
                 except Exception as exc:
                     self._metrics.record_replay(turn_id, call_id, tool_name, reason=f"prepare_adopt_failed:{exc}")
@@ -135,8 +151,9 @@ class SpeculationResolver:
 
         if task.state == ShadowTaskState.COMPLETED:
             try:
+                saved_ms = self._saved_ms(task)
                 result = await self._registry.adopt(task.task_id, call_id)
-                self._metrics.record_adopt(turn_id, call_id, tool_name, spec_key)
+                self._metrics.record_adopt(turn_id, call_id, tool_name, spec_key, saved_ms=saved_ms)
                 return {"action": "adopt", "result": result, "error": None}
             except Exception as exc:
                 self._metrics.record_replay(turn_id, call_id, tool_name, reason=f"adopt_failed:{exc}")

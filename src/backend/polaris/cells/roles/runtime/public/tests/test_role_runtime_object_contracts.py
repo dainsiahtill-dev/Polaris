@@ -109,6 +109,7 @@ from polaris.cells.runtime.task_market.public import (
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
+    MoveTaskToDeadLetterCommandV1,
     PublishTaskWorkItemCommandV1,
     QueryTaskMarketStatusV1,
     RenewTaskLeaseCommandV1,
@@ -128,6 +129,7 @@ class FakeTaskMarketService:
         self.acked: list[AcknowledgeTaskStageCommandV1] = []
         self.failed: list[FailTaskStageCommandV1] = []
         self.requeued: list[RequeueTaskCommandV1] = []
+        self.dead_lettered: list[MoveTaskToDeadLetterCommandV1] = []
 
     def publish_work_item(self, command: PublishTaskWorkItemCommandV1) -> TaskWorkItemResultV1:
         self.published.append(command)
@@ -224,6 +226,17 @@ class FakeTaskMarketService:
             stage=command.target_stage,
             status="pending",
             version=6,
+            reason=command.reason,
+        )
+
+    def move_task_to_dead_letter(self, command: MoveTaskToDeadLetterCommandV1) -> TaskWorkItemResultV1:
+        self.dead_lettered.append(command)
+        return TaskWorkItemResultV1(
+            ok=True,
+            task_id=command.task_id,
+            stage="dead_letter",
+            status="dead_letter",
+            version=7,
             reason=command.reason,
         )
 
@@ -660,6 +673,11 @@ def _pm_mount_table() -> RoleAssetMountTable:
                     owner_cell="runtime.task_market",
                     contract_name="QueryTaskMarketStatusV1",
                     ref="runtime.task_market:open-loops",
+                    asset_kind="open_loop_registry",
+                    metadata={
+                        "evidence_owner_cell": "audit.evidence",
+                        "evidence_ref": "audit.evidence:open-loop-registry",
+                    },
                 ),
                 access_mode="read",
             ),
@@ -1043,6 +1061,10 @@ def test_builtin_qa_runtime_spec_mounts_truth_assets_and_pytest_capability() -> 
     assert isinstance(spec, runtime_contracts.RoleRuntimeObjectSpec)
     assert spec.role_id == "qa"
     assert spec.asset_mounts.get("TruthLog").asset_ref.owner_cell == "audit.evidence"
+    assert (
+        spec.asset_mounts.get("TruthLog").asset_ref.metadata["runtime_receipt_ref"]
+        == "factory.cognitive_runtime:receipt:truth-log"
+    )
     assert spec.asset_mounts.get("RegressionTestRegistry").asset_ref.owner_cell == "qa.audit_verdict"
     assert spec.asset_mounts.get("FailureSignalIndex").asset_ref.owner_cell == "qa.audit_verdict"
 
@@ -1304,6 +1326,72 @@ def test_asset_mount_table_rejects_asset_ref_namespace_that_does_not_match_owner
                         owner_cell="chief_engineer.blueprint",
                         contract_name="GetBlueprintStatusQueryV1",
                         ref="runtime.task_market:task-graph",
+                    ),
+                ),
+            )
+        )
+
+
+def test_asset_mount_table_rejects_unanchored_diff_map_archive() -> None:
+    with pytest.raises(
+        ValueError,
+        match="DiffMapArchive asset mount must include blueprint_id, path, and ref metadata",
+    ):
+        RoleAssetMountTable(
+            mounts=(
+                RoleAssetMount(
+                    mount_name="DiffMapArchive",
+                    asset_ref=RoleAssetRef(
+                        asset_id="diff-map-archive",
+                        owner_cell="chief_engineer.blueprint",
+                        contract_name="GetBlueprintStatusQueryV1",
+                        ref="chief_engineer.blueprint:diff-map-archive",
+                        asset_kind="diff_map_archive",
+                        metadata={"requires_blueprint_ref": True},
+                    ),
+                ),
+            )
+        )
+
+
+def test_asset_mount_table_rejects_open_loop_registry_without_evidence_ref() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"OpenLoopRegistry asset mount must include audit\.evidence evidence_ref metadata",
+    ):
+        RoleAssetMountTable(
+            mounts=(
+                RoleAssetMount(
+                    mount_name="OpenLoopRegistry",
+                    asset_ref=RoleAssetRef(
+                        asset_id="open-loop-registry",
+                        owner_cell="runtime.task_market",
+                        contract_name="QueryTaskMarketStatusV1",
+                        ref="runtime.task_market:open-loops",
+                        asset_kind="open_loop_registry",
+                        metadata={"evidence_owner_cell": "audit.evidence"},
+                    ),
+                ),
+            )
+        )
+
+
+def test_asset_mount_table_rejects_truth_log_without_runtime_receipt_ref() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"TruthLog asset mount must include factory\.cognitive_runtime runtime_receipt_ref metadata",
+    ):
+        RoleAssetMountTable(
+            mounts=(
+                RoleAssetMount(
+                    mount_name="TruthLog",
+                    asset_ref=RoleAssetRef(
+                        asset_id="truth-log",
+                        owner_cell="audit.evidence",
+                        contract_name="QueryEvidenceEventsV1",
+                        ref="audit.evidence:runtime/evidence",
+                        asset_kind="truth_log",
+                        metadata={"runtime_receipt_owner_cell": "factory.cognitive_runtime"},
                     ),
                 ),
             )
@@ -1572,6 +1660,31 @@ def test_role_turn_envelope_rejects_invocation_payload_outside_turn_context(payl
         )
 
 
+def test_role_turn_envelope_rejects_duplicate_capability_invocation_ids() -> None:
+    invocation = RoleCapabilityInvocation(
+        invocation_id="invoke-duplicate",
+        capability_id="dispatch_task_to_market",
+        role_id="pm",
+        command_contract="PublishTaskWorkItemCommandV1",
+        payload_ref="runtime.task_market:task:task-1",
+        fingerprint_ref="a" * 64,
+    )
+
+    with pytest.raises(ValueError, match="duplicate capability invocation: invoke-duplicate"):
+        RoleTurnEnvelope(
+            identity=_identity("pm"),
+            profile_binding=_profile_binding("pm"),
+            turn_context=RoleTurnContext(
+                typed_input_ref="roles.runtime:typed-input:task-1",
+                context_snapshot_ref="context.engine:snapshot-1",
+                task_refs=("runtime.task_market:task:task-1",),
+            ),
+            capability_invocations=(invocation, invocation),
+            ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:run-1"),
+            task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:task:task-1"),
+        )
+
+
 def test_role_turn_envelope_rejects_active_task_market_binding_without_turn_task_ref() -> None:
     with pytest.raises(
         ValueError,
@@ -1632,6 +1745,22 @@ def test_role_state_commit_request_rejects_changed_asset_ref_outside_turn_contex
             allowed_scope_paths=("runtime/tasks",),
             evidence_refs=("audit.evidence:evt-1",),
             reason="reject outside-turn asset",
+        )
+
+
+def test_role_state_commit_request_rejects_empty_commit_without_audit_anchor() -> None:
+    with pytest.raises(
+        ValueError,
+        match="role state commit must include changed_asset_refs, changed_files, or evidence_refs",
+    ):
+        RoleStateCommitRequest(
+            request_id="commit-request-empty",
+            envelope=_commit_envelope(),
+            changed_asset_refs=(),
+            changed_files=(),
+            allowed_scope_paths=(),
+            evidence_refs=(),
+            reason="empty commit must not produce a runtime receipt",
         )
 
 
@@ -1859,6 +1988,72 @@ def test_role_capability_invocation_result_rejects_unowned_result_refs(
         RoleCapabilityInvocationResultV1(**result_payload)
 
 
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {"owner_cell": "", "result_ref": None},
+            "successful capability invocation result must include owner_cell",
+        ),
+        (
+            {"owner_cell": "qa.audit_verdict", "result_ref": None},
+            "successful capability invocation result must include result_ref",
+        ),
+    ),
+)
+def test_successful_role_capability_invocation_result_requires_target_result_anchor(
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
+    result_payload: dict[str, object] = {
+        "ok": True,
+        "invocation_id": "invoke-success-without-result-anchor",
+        "role_id": "qa",
+        "capability_id": "issue_audit_verdict",
+        "command_contract": "RunQaAuditCommandV1",
+        "allowed": True,
+        "payload_ref": "roles.runtime:typed-input:qa-task-1",
+        "owner_cell": "qa.audit_verdict",
+        "result_ref": "qa.audit_verdict:verdict:qa-task-1",
+    }
+    result_payload.update(payload)
+
+    with pytest.raises(ValueError, match=expected_error):
+        RoleCapabilityInvocationResultV1(**result_payload)
+
+
+@pytest.mark.parametrize(
+    "evidence_refs, expected_error",
+    (
+        (
+            ("roles.kernel:evidence:qa-1",),
+            r"evidence_refs must point to audit\.evidence",
+        ),
+        (
+            ("audit.evidence:qa-1", "audit.evidence:qa-1"),
+            "evidence_refs must not contain duplicate refs",
+        ),
+    ),
+)
+def test_role_capability_invocation_result_rejects_invalid_evidence_refs(
+    evidence_refs: tuple[str, ...],
+    expected_error: str,
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        RoleCapabilityInvocationResultV1(
+            ok=True,
+            invocation_id="invoke-invalid-evidence-ref",
+            role_id="qa",
+            capability_id="issue_audit_verdict",
+            command_contract="RunQaAuditCommandV1",
+            allowed=True,
+            payload_ref="qa.audit_verdict:verdict:task-1",
+            owner_cell="qa.audit_verdict",
+            result_ref="qa.audit_verdict:verdict:task-1",
+            evidence_refs=evidence_refs,
+        )
+
+
 def test_successful_role_state_commit_receipt_requires_runtime_receipt_ref() -> None:
     with pytest.raises(ValueError, match="successful commit receipt must include runtime_receipt_refs"):
         RoleStateCommitReceipt(
@@ -1927,6 +2122,45 @@ def test_role_state_commit_receipt_rejects_refs_outside_source_of_truth(
 ) -> None:
     with pytest.raises(ValueError, match=expected_error):
         RoleStateCommitReceipt(**payload)
+
+
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {
+                "runtime_receipt_refs": (
+                    "factory.cognitive_runtime:receipt-1",
+                    "factory.cognitive_runtime:receipt-1",
+                ),
+            },
+            "runtime_receipt_refs must not contain duplicate refs",
+        ),
+        (
+            {
+                "handoff_pack_refs": (
+                    "factory.cognitive_runtime:handoff:handoff-1",
+                    "factory.cognitive_runtime:handoff:handoff-1",
+                ),
+            },
+            "handoff_pack_refs must not contain duplicate refs",
+        ),
+    ),
+)
+def test_role_state_commit_receipt_rejects_duplicate_cognitive_runtime_refs(
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
+    receipt_payload: dict[str, object] = {
+        "request_id": "duplicate-cognitive-runtime-ref",
+        "ok": True,
+        "commit_receipt_ref": "roles.kernel:commit:turn-1",
+        "runtime_receipt_refs": ("factory.cognitive_runtime:receipt-1",),
+    }
+    receipt_payload.update(payload)
+
+    with pytest.raises(ValueError, match=expected_error):
+        RoleStateCommitReceipt(**receipt_payload)
 
 
 @pytest.mark.parametrize(
@@ -2109,6 +2343,224 @@ def test_role_task_market_lifecycle_uses_binding_contracts_and_public_service() 
     assert task_market.failed[0].requeue_stage == "pending_design"
     assert requeue.command_contract == active_task_market_binding.requeue_contract
     assert task_market.requeued[0].target_stage == "pending_design"
+
+
+def test_role_task_market_lifecycle_supports_publish_public_contract() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("pm")
+    runtime_object = spec.instantiate(
+        identity=RoleIdentity(
+            role_id="pm",
+            run_id="run-1",
+            task_id="pm-task-1",
+            session_id="session-1",
+            workspace="/repo",
+            host_kind="task_market_worker",
+        ),
+        profile_binding=_profile_binding("pm"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:pm-run"),
+        policy_fingerprint="pm-policy",
+        capability_id="dispatch_task_to_market",
+    )
+    task_market = FakeTaskMarketService()
+
+    result = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="publish",
+            payload={
+                "trace_id": "trace-1",
+                "run_id": "run-1",
+                "task_id": "pm-task-1",
+                "stage": "pending_design",
+                "priority": "high",
+                "payload": {"objective": "publish typed work item through lifecycle"},
+                "metadata": {"plan_id": "plan-1"},
+                "depends_on": ("dep-1",),
+            },
+        ),
+        task_market_service=task_market,
+    )
+
+    assert result.ok is True
+    assert result.command_contract == runtime_object.task_market_binding.publish_contract
+    assert result.result_ref == "runtime.task_market:task:pm-task-1"
+    assert result.task_id == "pm-task-1"
+    assert len(task_market.published) == 1
+
+    publish_command = task_market.published[0]
+    assert isinstance(publish_command, PublishTaskWorkItemCommandV1)
+    assert publish_command.workspace == "/repo"
+    assert publish_command.source_role == "pm"
+    assert publish_command.priority == "high"
+    assert publish_command.payload == {"objective": "publish typed work item through lifecycle"}
+    assert publish_command.metadata["role_id"] == "pm"
+    assert publish_command.metadata["plan_id"] == "plan-1"
+    assert publish_command.depends_on == ("dep-1",)
+
+
+def test_role_task_market_lifecycle_supports_dead_letter_public_contract() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("chief_engineer")
+    runtime_object = spec.instantiate(
+        identity=RoleIdentity(
+            role_id="chief_engineer",
+            run_id="run-1",
+            task_id="task-1",
+            session_id="session-1",
+            workspace="/repo",
+            host_kind="task_market_worker",
+        ),
+        profile_binding=_profile_binding("chief_engineer"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:ce-run"),
+        policy_fingerprint="ce-policy",
+        capability_id="move_task_to_dead_letter",
+        task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:task:task-1"),
+    )
+    task_market = FakeTaskMarketService()
+
+    result = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="dead_letter",
+            payload={
+                "task_id": "task-1",
+                "reason": "unrecoverable blueprint failure",
+                "error_code": "blueprint_unrecoverable",
+                "metadata": {"failure_signal_ref": "audit.evidence:failure:task-1"},
+            },
+        ),
+        task_market_service=task_market,
+    )
+
+    assert result.ok is True
+    assert result.operation == "dead_letter"
+    assert result.command_contract == "MoveTaskToDeadLetterCommandV1"
+    assert result.result_ref == "runtime.task_market:task:task-1"
+    assert result.status == "dead_letter"
+    assert task_market.dead_lettered[0].workspace == "/repo"
+    assert task_market.dead_lettered[0].task_id == "task-1"
+    assert task_market.dead_lettered[0].reason == "unrecoverable blueprint failure"
+    assert task_market.dead_lettered[0].error_code == "blueprint_unrecoverable"
+    assert task_market.dead_lettered[0].metadata["role_id"] == "chief_engineer"
+    assert task_market.dead_lettered[0].metadata["failure_signal_ref"] == "audit.evidence:failure:task-1"
+
+
+def test_successful_role_task_market_lifecycle_result_requires_task_market_result_ref() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"successful task-market lifecycle result must include a runtime\.task_market result_ref",
+    ):
+        RoleTaskMarketLifecycleResultV1(
+            ok=True,
+            role_id="chief_engineer",
+            operation="claim",
+            command_contract="ClaimTaskWorkItemCommandV1",
+            task_id="",
+            result_ref="",
+        )
+
+
+def test_successful_claim_or_lease_lifecycle_result_requires_task_market_lease_ref() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"successful claim/lease task-market lifecycle result must include a runtime\.task_market lease_token_ref",
+    ):
+        RoleTaskMarketLifecycleResultV1(
+            ok=True,
+            role_id="chief_engineer",
+            operation="lease",
+            command_contract="RenewTaskLeaseCommandV1",
+            task_id="task-1",
+            result_ref="runtime.task_market:task:task-1",
+            lease_token_ref="",
+        )
+
+
+def test_role_task_market_lifecycle_returns_structured_failure_for_missing_result_ref() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("chief_engineer")
+    runtime_object = spec.instantiate(
+        identity=RoleIdentity(
+            role_id="chief_engineer",
+            run_id="run-1",
+            task_id="task-1",
+            session_id="session-1",
+            workspace="/repo",
+            host_kind="task_market_worker",
+        ),
+        profile_binding=_profile_binding("chief_engineer"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:ce-run"),
+        policy_fingerprint="ce-policy",
+        capability_id="claim_task_market_work_item",
+    )
+
+    class MalformedTaskMarketService:
+        def __init__(self) -> None:
+            self.claimed: list[ClaimTaskWorkItemCommandV1] = []
+
+        def claim_work_item(self, command: ClaimTaskWorkItemCommandV1) -> object:
+            self.claimed.append(command)
+            return SimpleNamespace(ok=True, task_id="", status="leased", version=1, lease_token="lease-1")
+
+    task_market = MalformedTaskMarketService()
+
+    result = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="claim",
+            payload={"stage": "pending_design", "worker_id": "ce-worker-1"},
+        ),
+        task_market_service=task_market,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "task_market_lifecycle_missing_result_ref"
+    assert result.metadata["owner_cell"] == "runtime.task_market"
+    assert task_market.claimed[0].stage == "pending_design"
+
+
+def test_role_task_market_lifecycle_returns_structured_failure_for_missing_lease_ref() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("chief_engineer")
+    runtime_object = spec.instantiate(
+        identity=RoleIdentity(
+            role_id="chief_engineer",
+            run_id="run-1",
+            task_id="task-1",
+            session_id="session-1",
+            workspace="/repo",
+            host_kind="task_market_worker",
+        ),
+        profile_binding=_profile_binding("chief_engineer"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:ce-run"),
+        policy_fingerprint="ce-policy",
+        capability_id="renew_task_market_lease",
+        task_market_binding=RoleTaskMarketBinding(
+            work_item_ref="runtime.task_market:task:task-1",
+            lease_token_ref="runtime.task_market:lease:lease-1",
+        ),
+    )
+
+    class MalformedTaskMarketService:
+        def __init__(self) -> None:
+            self.renewed: list[RenewTaskLeaseCommandV1] = []
+
+        def renew_task_lease(self, command: RenewTaskLeaseCommandV1) -> object:
+            self.renewed.append(command)
+            return SimpleNamespace(ok=True, task_id=command.task_id, lease_token="", status="leased", version=1)
+
+    task_market = MalformedTaskMarketService()
+
+    result = execute_role_task_market_lifecycle(
+        ExecuteRoleTaskMarketLifecycleCommandV1(
+            runtime_object=runtime_object,
+            operation="lease",
+            payload={"task_id": "task-1", "lease_token": "lease-1"},
+        ),
+        task_market_service=task_market,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "task_market_lifecycle_missing_lease_ref"
+    assert result.metadata["owner_cell"] == "runtime.task_market"
+    assert task_market.renewed[0].task_id == "task-1"
 
 
 def test_role_task_market_lifecycle_rejects_task_outside_current_turn_context() -> None:
@@ -3577,8 +4029,10 @@ def test_director_execute_capability_invokes_director_execution_public_contract(
     assert result.task_id == "director-task-1"
     assert result.status == "completed"
     assert result.result_ref == "director.execution:task:director-task-1"
-    assert result.evidence_refs == ("runtime/evidence/director-task-1.jsonl",)
+    assert result.evidence_refs == ()
     assert result.metadata["director_status"] == "completed"
+    assert result.metadata["evidence_paths"] == ("runtime/evidence/director-task-1.jsonl",)
+    assert result.metadata["audit_evidence_refs"] == ()
     assert result.metadata["asset_refs"] == {
         "execution_task": "runtime.task_market:director/execution-task",
         "director_execution_state": "director.execution:runtime/state",
@@ -4024,9 +4478,11 @@ def test_qa_issue_audit_verdict_invokes_qa_audit_contract() -> None:
     assert result.command_contract == "RunQaAuditCommandV1"
     assert result.status == "PASS"
     assert result.result_ref == "qa.audit_verdict:verdict:qa-task-1"
+    assert result.evidence_refs == ()
     assert result.metadata["verdict"] == "PASS"
     assert result.metadata["score"] == 1.0
     assert result.metadata["evidence_paths"] == ("pytest-report.xml", "runtime/evidence/qa.jsonl")
+    assert result.metadata["audit_evidence_refs"] == ()
     assert len(qa_audit.audit_commands) == 1
 
     audit_command = qa_audit.audit_commands[0]
@@ -4152,6 +4608,7 @@ def test_qa_visual_audit_model_preflight_uses_current_qa_role() -> None:
                 "task_id": "qa-visual-1",
                 "image_refs": ("audit.evidence:image:screenshot-1",),
                 "criteria": {"assertions": ("no visual overlap",)},
+                "evidence_paths": ("runtime/evidence/qa-visual-role-bound.jsonl",),
                 "llm_role": "architect",
             },
         ),
@@ -4208,6 +4665,9 @@ def test_qa_visual_audit_invokes_qa_contract_after_image_capability_preflight() 
     assert result.command_contract == "RunVisualQaAuditCommandV1"
     assert result.status == "VISUAL_AUDIT_RECORDED"
     assert result.result_ref == "qa.audit_verdict:visual-verdict:qa-visual-1"
+    assert result.evidence_refs == ("audit.evidence:path:runtime/evidence/screenshot-1.png",)
+    assert result.metadata["evidence_refs"] == ("runtime/evidence/screenshot-1.png",)
+    assert result.metadata["audit_evidence_refs"] == ("audit.evidence:path:runtime/evidence/screenshot-1.png",)
     assert len(llm_control_plane.queried) == 1
     assert len(qa_audit.visual_audit_commands) == 1
 
@@ -4219,6 +4679,47 @@ def test_qa_visual_audit_invokes_qa_contract_after_image_capability_preflight() 
     assert visual_command.criteria["role_invocation_id"] == "invoke-qa-visual-1"
     assert visual_command.criteria["role_capability_id"] == "issue_visual_audit_verdict"
     assert visual_command.evidence_paths == ("runtime/evidence/screenshot-1.png",)
+
+
+def test_qa_visual_audit_requires_audit_evidence_ref_after_owner_success() -> None:
+    spec = runtime_contracts.get_builtin_role_runtime_spec("qa")
+    runtime_object = spec.instantiate(
+        identity=_identity("qa"),
+        profile_binding=_profile_binding("qa"),
+        ledger_binding=RoleLedgerBinding(turn_ledger_ref="roles.kernel:turn-ledger:qa-run"),
+        policy_fingerprint="qa-policy",
+        capability_id="issue_visual_audit_verdict",
+    )
+    qa_audit = FakeQaAuditVerdictService()
+    llm_control_plane = FakeLlmControlPlaneService(supported=True)
+
+    result = execute_role_capability_invocation(
+        ExecuteRoleCapabilityInvocationCommandV1(
+            runtime_object=runtime_object,
+            invocation=RoleCapabilityInvocation(
+                invocation_id="invoke-qa-visual-without-evidence-1",
+                capability_id="issue_visual_audit_verdict",
+                role_id="qa",
+                command_contract="RunVisualQaAuditCommandV1",
+                payload_ref=runtime_object.turn_context.typed_input_ref,
+                fingerprint_ref=runtime_object.capability_fingerprint.fingerprint,
+            ),
+            payload={
+                "task_id": "qa-visual-1",
+                "image_refs": ("audit.evidence:image:screenshot-1",),
+                "criteria": {"assertions": ("no visual overlap",)},
+            },
+        ),
+        qa_audit_service=qa_audit,
+        llm_control_plane_service=llm_control_plane,
+    )
+
+    assert result.ok is False
+    assert result.allowed is False
+    assert result.error_code == "visual_qa_audit_missing_evidence_ref"
+    assert result.metadata["owner_cell"] == "qa.audit_verdict"
+    assert result.metadata["evidence_owner_cell"] == "audit.evidence"
+    assert qa_audit.visual_audit_commands[0].task_id == "qa-visual-1"
 
 
 def test_non_qa_issue_audit_verdict_is_denied_without_qa_audit_call() -> None:

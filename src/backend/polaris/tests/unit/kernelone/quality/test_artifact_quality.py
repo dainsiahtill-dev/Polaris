@@ -243,7 +243,7 @@ def test_scan_detects_unresolved_runtime_typescript_imports(tmp_path: Path) -> N
     assert any("unresolved relative import '../context'" in error for error in errors)
 
 
-def test_scan_allows_node_async_hooks_builtin_import(tmp_path: Path) -> None:
+def test_scan_requires_node_types_for_typescript_builtin_import(tmp_path: Path) -> None:
     package_json = tmp_path / "package.json"
     package_json.write_text(
         '{"name":"tenant-workspace","scripts":{"test":"node scripts/test.mjs"},"dependencies":{"express":"^4.18.2"}}\n',
@@ -264,7 +264,57 @@ def test_scan_allows_node_async_hooks_builtin_import(tmp_path: Path) -> None:
         relative_paths=["src/middleware/tenant.middleware.ts"],
     )
 
+    assert any("requires '@types/node'" in error for error in errors)
+
+
+def test_scan_allows_node_builtin_import_when_node_types_declared(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        '{"name":"tenant-workspace","scripts":{"test":"node scripts/test.mjs"},'
+        '"dependencies":{"express":"^4.18.2"},"devDependencies":{"@types/node":"^22.10.0"}}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "middleware" / "tenant.middleware.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "import { Request, Response, NextFunction } from 'express';\n"
+        "import { AsyncLocalStorage } from 'async_hooks';\n"
+        "export const tenantContext = new AsyncLocalStorage<Map<string, string>>();\n"
+        "export function tenantMiddleware(req: Request, res: Response, next: NextFunction): void { next(); }\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["src/middleware/tenant.middleware.ts"],
+    )
+
     assert errors == []
+
+
+def test_scan_detects_escaped_newline_that_comments_out_typescript_export(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        '{"name":"tenant-workspace","scripts":{"test":"node scripts/test.mjs"},'
+        '"dependencies":{"express":"^4.18.2"},"devDependencies":{"@types/node":"^22.10.0"}}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "middleware" / "tenant.middleware.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "import { AsyncLocalStorage } from 'async_hooks';\n"
+        "// Context for tenant request lifecycle\\nexport const tenantContext = "
+        "new AsyncLocalStorage<{ tenantId: string }>();\n"
+        "export function tenantMiddleware(): void { tenantContext.getStore(); }\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["src/middleware/tenant.middleware.ts"],
+    )
+
+    assert any("escaped newline in line comment" in error for error in errors)
 
 
 def test_scan_resolves_dotted_typescript_relative_import_stems(tmp_path: Path) -> None:

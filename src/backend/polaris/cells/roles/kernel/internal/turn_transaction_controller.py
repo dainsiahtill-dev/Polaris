@@ -360,6 +360,7 @@ class TurnTransactionController:
             salvage_governor=salvage_governor,
             task_group=task_group,
             chain_speculator=chain_speculator,
+            metrics=metrics,
         )
 
     def _resolve_shadow_workspace(self, context: list[dict]) -> str:

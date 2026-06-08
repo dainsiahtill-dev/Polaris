@@ -27,6 +27,7 @@ from polaris.cells.llm.evaluation.public.service import (
     pull_baseline_library,
     run_agentic_benchmark_suite,
     run_context_benchmark_suite,
+    run_speculation_matrix_suite,
     run_strategy_benchmark_suite,
     run_tool_calling_matrix_suite,
 )
@@ -265,6 +266,7 @@ def _suite_runners() -> dict[str, Any]:
     return {
         "agentic_benchmark": run_agentic_benchmark_suite,
         "tool_calling_matrix": run_tool_calling_matrix_suite,
+        "speculation_matrix": run_speculation_matrix_suite,
     }
 
 
@@ -1473,6 +1475,15 @@ def _persist_audit_package(
     output_path: str,
     payload: Mapping[str, Any],
 ) -> dict[str, str]:
+    return _persist_runtime_json(workspace=workspace, output_path=output_path, payload=payload)
+
+
+def _persist_runtime_json(
+    *,
+    workspace: str,
+    output_path: str,
+    payload: Mapping[str, Any],
+) -> dict[str, str]:
     fs = KernelFileSystem(str(Path(workspace).resolve()), LocalFileSystemAdapter())
     # Convert runtime-relative path to absolute path for workspace_write_text
     # output_path is like "runtime/llm_evaluations/<run_id>/AGENTIC_EVAL_AUDIT.json"
@@ -1883,7 +1894,7 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     if case_ids:
         options["benchmark_case_ids"] = case_ids
         options["matrix_case_ids"] = case_ids
-    if suite == "tool_calling_matrix":
+    if suite in ("tool_calling_matrix", "speculation_matrix"):
         options["matrix_transport"] = matrix_transport
         options["observable"] = observable
         # Add level prefixes for range filtering (e.g., l1-l3 -> ["l1_", "l2_", "l3_"])
@@ -1902,8 +1913,8 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     mode = str(getattr(args, "mode", "agentic") or "agentic").strip().lower() or "agentic"
 
     try:
-        if suite == "tool_calling_matrix":
-            # tool_calling_matrix uses its own runner (ignores mode)
+        if suite in ("tool_calling_matrix", "speculation_matrix"):
+            # matrix-style suites use their own runner (ignores mode)
             suite_runner = _suite_runners()[suite]
             run_result = asyncio.run(
                 suite_runner(
@@ -1931,6 +1942,14 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     finally:
         if _disable_speculative:
             os.environ.pop("ENABLE_SPECULATIVE_EXECUTION", None)
+
+    # speculation_matrix 是差分评测，结果结构与 agentic 审计格式不同，单独呈现。
+    if suite == "speculation_matrix":
+        return _report_speculation_matrix(
+            _as_dict(run_result),
+            workspace=workspace,
+            output_format=output_format,
+        )
 
     package = build_agentic_eval_audit_package(
         workspace=workspace,
@@ -1994,6 +2013,97 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
         _print_human(package)
 
     return 0 if str(package.get("status") or "").strip().upper() == "PASS" else 1
+
+
+def _report_speculation_matrix(
+    run_result: dict[str, Any],
+    *,
+    workspace: str,
+    output_format: str,
+) -> int:
+    """呈现 speculation_matrix 差分评测结果并落盘.
+
+    退出码 0 当且仅当 ``ok``（无 wrong_adoption 且无 ON 致命错误）。
+    """
+    ok = bool(run_result.get("ok"))
+    details = _as_dict(run_result.get("details"))
+    summary = _as_dict(details.get("summary"))
+    cases_raw = details.get("cases")
+    cases: list[Any] = cases_raw if isinstance(cases_raw, list) else []
+    run_id = str(details.get("run_id") or "").strip()
+
+    # 落盘报告。
+    artifact_path = ""
+    if run_id:
+        try:
+            persisted = _persist_runtime_json(
+                workspace=workspace,
+                output_path=f"runtime/llm_evaluations/{run_id}/SPECULATION_MATRIX_REPORT.json",
+                payload=run_result,
+            )
+            artifact_path = persisted["absolute_path"]
+        except (RuntimeError, ValueError, OSError):
+            artifact_path = ""
+
+    if output_format == "json":
+        print(
+            json.dumps(
+                {"status": "PASS" if ok else "FAIL", **run_result, "artifact_path": artifact_path},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0 if ok else 1
+
+    # human
+    print(f"\n=== speculation_matrix {'PASS' if ok else 'FAIL'} (run_id={run_id}) ===")
+    if run_result.get("error"):
+        print(f"error: {run_result['error']}")
+    print(
+        "cases={total_cases} passed={passed_cases} failed={failed_cases} "
+        "active={speculation_active_cases} regressed={regressed} early_stopped={early_stopped}".format(
+            total_cases=summary.get("total_cases", 0),
+            passed_cases=summary.get("passed_cases", 0),
+            failed_cases=summary.get("failed_cases", 0),
+            speculation_active_cases=summary.get("speculation_active_cases", 0),
+            regressed=summary.get("speculation_regressed_cases", 0),
+            early_stopped=summary.get("early_stopped", False),
+        )
+    )
+    print(
+        "adopted={adopted_total} joined={joined_total} replayed={replayed_total} "
+        "hit_rate={hit_rate} saved_ms_total={saved_ms_total} wrong_adoption={wrong_adoption_total}".format(
+            adopted_total=summary.get("adopted_total", 0),
+            joined_total=summary.get("joined_total", 0),
+            replayed_total=summary.get("replayed_total", 0),
+            hit_rate=summary.get("hit_rate", 0.0),
+            saved_ms_total=summary.get("saved_ms_total", 0),
+            wrong_adoption_total=summary.get("wrong_adoption_total", 0),
+        )
+    )
+    for case in cases:
+        if not isinstance(case, Mapping):
+            continue
+        flag = "PASS" if case.get("passed") else "FAIL"
+        print(
+            "  [{flag}] {cid}: adopted={a} joined={j} replayed={r} hit={hr} "
+            "saved_ms={sm} wrong={w} dt_on={don}ms dt_off={doff}ms{err}".format(
+                flag=flag,
+                cid=case.get("case_id"),
+                a=case.get("adopted"),
+                j=case.get("joined"),
+                r=case.get("replayed"),
+                hr=case.get("hit_rate"),
+                sm=case.get("saved_ms_total"),
+                w=case.get("wrong_adoption"),
+                don=case.get("duration_ms_on"),
+                doff=case.get("duration_ms_off"),
+                err=f" on_error={case.get('on_error')}" if case.get("on_error") else "",
+            )
+        )
+    if artifact_path:
+        print(f"report: {artifact_path}")
+    return 0 if ok else 1
 
 
 __all__ = [

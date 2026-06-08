@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -11,6 +12,7 @@ for candidate in (BACKEND_ROOT,):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 
+from polaris.cells.orchestration.pm_planning.internal import shared_quality as shared_quality_module  # noqa: E402
 from polaris.cells.orchestration.pm_planning.internal.shared_quality import (  # noqa: E402
     detect_integration_verify_command,
     run_integration_verify_runner,
@@ -22,6 +24,7 @@ def _clear_integration_qa_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KERNELONE_INTEGRATION_QA_COMMAND", raising=False)
     monkeypatch.delenv("KERNELONE_INTEGRATION_QA_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK", raising=False)
+    monkeypatch.delenv("KERNELONE_INTEGRATION_QA_AUTO_INSTALL_NODE_DEPS", raising=False)
 
 
 def test_detect_integration_verify_command_prefers_compileall_for_python_without_tests(
@@ -37,7 +40,7 @@ def test_detect_integration_verify_command_prefers_compileall_for_python_without
 
     command = detect_integration_verify_command(str(tmp_path))
 
-    assert command == "python -m compileall -q app"
+    assert command == f"{sys.executable} -m compileall -q app"
 
 
 def test_detect_integration_verify_command_uses_pytest_when_python_tests_exist(
@@ -56,7 +59,7 @@ def test_detect_integration_verify_command_uses_pytest_when_python_tests_exist(
 
     command = detect_integration_verify_command(str(tmp_path))
 
-    assert command == "python -m pytest -q"
+    assert command == f"{sys.executable} -m pytest -q"
 
 
 def test_detect_integration_verify_command_uses_node_verify_final_when_test_script_missing(
@@ -92,7 +95,9 @@ def test_run_integration_verify_runner_passes_node_verify_final_without_test_scr
 
 def test_run_integration_verify_runner_blocks_node_static_fallback_by_default(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("KERNELONE_INTEGRATION_QA_AUTO_INSTALL_NODE_DEPS", "0")
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
     (tmp_path / "package.json").write_text(
@@ -109,6 +114,136 @@ def test_run_integration_verify_runner_blocks_node_static_fallback_by_default(
     assert ok is False
     assert "Node dependencies are declared but not installed" in summary
     assert any("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK=1" in error for error in errors)
+
+
+def test_run_integration_verify_runner_installs_missing_node_dependencies_before_real_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, list[str]]] = []
+
+    class FakeCommandExecutionService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def run(self, request: Any) -> dict[str, object]:
+            executable = str(request.executable)
+            args = [str(item) for item in request.args]
+            calls.append((executable, args))
+            if executable == "npm" and args == ["install", "--ignore-scripts"]:
+                (tmp_path / "node_modules").mkdir()
+                return {"returncode": 0, "stdout": "installed\n", "stderr": ""}
+            return {"returncode": 0, "stdout": "tests passed\n", "stderr": ""}
+
+    monkeypatch.setattr(shared_quality_module, "_run_typescript_typecheck", lambda workspace: None)
+    monkeypatch.setattr(shared_quality_module, "CommandExecutionService", FakeCommandExecutionService)
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"vitest run"},"devDependencies":{"vitest":"^2.1.0"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir(parents=True)
+    (tmp_path / "tests" / "sample.test.js").write_text(
+        "test('ready', () => expect(true).toBe(true));\n",
+        encoding="utf-8",
+    )
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is True
+    assert summary == "Integration verification passed: npm run test -- --watch=false"
+    assert errors == []
+    assert calls == [
+        ("npm", ["install", "--ignore-scripts"]),
+        ("npm", ["run", "test", "--", "--watch=false"]),
+    ]
+
+
+def test_run_integration_verify_runner_installs_node_dependencies_before_typescript_typecheck(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, list[str]]] = []
+
+    class FakeCompletedProcess:
+        stdout = ""
+        stderr = ""
+        returncode = 0
+
+    class FakeCommandExecutionService:
+        def __init__(self, workspace: str) -> None:
+            self.workspace = workspace
+
+        def run(self, request: Any) -> dict[str, object]:
+            executable = str(request.executable)
+            args = [str(item) for item in request.args]
+            if executable == "npm" and args == ["install", "--ignore-scripts"]:
+                (tmp_path / "node_modules").mkdir()
+                calls.append(("install", [executable, *args]))
+                return {"returncode": 0, "stdout": "installed\n", "stderr": ""}
+            calls.append(("verify", [executable, *args]))
+            return {"returncode": 0, "stdout": "tests passed\n", "stderr": ""}
+
+    def _fake_subprocess_run(*args: Any, **kwargs: Any) -> FakeCompletedProcess:
+        del kwargs
+        command = [str(item) for item in args[0]]
+        calls.append(("tsc", command))
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr(shared_quality_module, "_resolve_repo_tsc", lambda: "/repo/node_modules/.bin/tsc")
+    monkeypatch.setattr(shared_quality_module, "CommandExecutionService", FakeCommandExecutionService)
+    monkeypatch.setattr(shared_quality_module.subprocess, "run", _fake_subprocess_run)
+
+    (tmp_path / "package.json").write_text(
+        """
+{
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "vitest": "^2.1.0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext","target":"ES2022","strict":true},'
+        '"include":["src/**/*.ts","tests/**/*.ts"]}\n',
+        encoding="utf-8",
+    )
+    source_dir = tmp_path / "src" / "middleware"
+    source_dir.mkdir(parents=True)
+    source_dir.joinpath("auth.ts").write_text(
+        "import { AsyncLocalStorage } from 'async_hooks';\n"
+        "export const tenantContext = new AsyncLocalStorage<{ tenantId: string }>();\n",
+        encoding="utf-8",
+    )
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    tests_dir.joinpath("auth.test.ts").write_text(
+        "import { describe, expect, it } from 'vitest';\n"
+        "describe('auth', () => { it('loads', () => expect(true).toBe(true)); });\n",
+        encoding="utf-8",
+    )
+
+    ok, summary, errors = run_integration_verify_runner(str(tmp_path))
+
+    assert ok is True
+    assert summary == "Integration verification passed: npm run test -- --watch=false"
+    assert errors == []
+    assert calls == [
+        ("install", ["npm", "install", "--ignore-scripts"]),
+        (
+            "tsc",
+            ["/repo/node_modules/.bin/tsc", "--noEmit", "--skipLibCheck", "--pretty", "false", "-p", "tsconfig.json"],
+        ),
+        ("verify", ["npm", "run", "test", "--", "--watch=false"]),
+    ]
 
 
 def test_run_integration_verify_runner_runs_self_contained_node_script_with_declared_dependencies(
@@ -281,6 +416,7 @@ def test_run_integration_verify_runner_allows_explicit_node_static_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("KERNELONE_INTEGRATION_QA_ALLOW_STATIC_NODE_FALLBACK", "1")
+    monkeypatch.setenv("KERNELONE_INTEGRATION_QA_AUTO_INSTALL_NODE_DEPS", "0")
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
     (tmp_path / "package.json").write_text(
@@ -316,5 +452,5 @@ def test_run_integration_verify_runner_fails_when_pytest_assertion_fails(
     ok, summary, errors = run_integration_verify_runner(str(tmp_path))
 
     assert ok is False
-    assert summary == "Integration verification failed: python -m pytest -q"
+    assert summary == f"Integration verification failed: {sys.executable} -m pytest -q"
     assert any("assert False" in error or "AssertionError" in error or "FAILED" in error for error in errors)

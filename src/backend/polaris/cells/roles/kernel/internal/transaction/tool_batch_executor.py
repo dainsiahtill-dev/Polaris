@@ -17,6 +17,7 @@ from typing import Any, NoReturn, cast
 
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
+from polaris.cells.roles.kernel.internal.speculative_flags import is_adoption_audit_enabled
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_invocation_tool_name,
@@ -403,6 +404,96 @@ class ToolBatchExecutor:
         except (AttributeError, RuntimeError, TypeError):
             pass
         return None
+
+    @staticmethod
+    def _canonical_result_payload(payload: Any) -> str:
+        """把工具结果投影成可稳定比较的 canonical 串.
+
+        剥离已知的易变字段（耗时、时间戳、receipt id 等），只比较语义内容，
+        避免审计把"同内容不同计时"误判为 wrong_adoption.
+        """
+        volatile = {
+            "execution_time_ms",
+            "duration_ms",
+            "elapsed_ms",
+            "timestamp",
+            "ts",
+            "receipt_id",
+            "effect_receipt",
+            "started_at",
+            "finished_at",
+        }
+
+        def _strip(value: Any) -> Any:
+            if isinstance(value, Mapping):
+                return {k: _strip(v) for k, v in sorted(value.items()) if k not in volatile}
+            if isinstance(value, (list, tuple)):
+                return [_strip(item) for item in value]
+            return value
+
+        import json
+
+        return json.dumps(_strip(payload), ensure_ascii=False, sort_keys=True, default=str)
+
+    async def _audit_adopted_result(
+        self,
+        *,
+        invocation: Any,
+        speculative_payload: Any,
+        workspace: str,
+        turn_id: str,
+        tool_name: str,
+        shadow_engine: Any,
+    ) -> Any:
+        """重算权威结果并与投机结果比对（ADR-0077 不变量 A 的实运行验证）.
+
+        一致则沿用投机结果；不一致则记 ``wrong_adoption`` 并改用权威结果。
+        审计本身的任何失败都安全降级为"沿用投机结果"，绝不影响主流程正确性
+        （审计是只读叠加，不得改变不开启审计时的行为）。
+        """
+        try:
+            mode = invocation.get("execution_mode")
+            audit_batch = ToolBatch(
+                batch_id=BatchId(f"{turn_id}_audit"),
+                parallel_readonly=[invocation] if mode == ToolExecutionMode.READONLY_PARALLEL else [],
+                readonly_serial=[invocation] if mode == ToolExecutionMode.READONLY_SERIAL else [],
+                serial_writes=[],
+                async_receipts=[],
+            )
+            if not (audit_batch.parallel_readonly or audit_batch.readonly_serial):
+                # 仅审计只读领养；其余安全跳过。
+                return speculative_payload
+            receipts = await self._build_tool_batch_runtime(
+                workspace,
+                turn_id=turn_id,
+                cancel_token=CancelToken(),
+            ).execute_batch(audit_batch, TurnId(turn_id))
+            normalized = normalize_batch_receipts(receipts)
+            auth_payload: Any = None
+            for entry in normalized:
+                results = entry.get("results") if isinstance(entry, Mapping) else None
+                if isinstance(results, list) and results:
+                    first = results[0]
+                    auth_payload = first.get("result") if isinstance(first, Mapping) else None
+                    break
+            if self._canonical_result_payload(speculative_payload) != self._canonical_result_payload(auth_payload):
+                metrics = getattr(shadow_engine, "metrics", None)
+                if metrics is not None and hasattr(metrics, "record_wrong_adoption"):
+                    metrics.record_wrong_adoption(reason=f"{tool_name}:adopt_audit_mismatch")
+                logger.warning(
+                    "[tool_batch][audit] wrong adoption detected for %r (turn=%s); using authoritative result",
+                    tool_name,
+                    turn_id,
+                )
+                return auth_payload
+            return speculative_payload
+        except asyncio.CancelledError:
+            raise
+        except (RuntimeError, TypeError, ValueError, KeyError):
+            logger.debug(
+                "[tool_batch][audit] audit failed for %r; keeping speculative result", tool_name, exc_info=True
+            )
+            return speculative_payload
 
     async def execute_tool_batch(
         self,
@@ -851,6 +942,7 @@ class ToolBatchExecutor:
         replay_invocations: list[Any] = []
         batch_cancel_token = CancelToken()
 
+        audit_adoptions = is_adoption_audit_enabled()
         if shadow_engine is not None and hasattr(shadow_engine, "resolve_or_execute"):
             for invocation in invocations:
                 tool_name = str(invocation.get("tool_name", ""))
@@ -901,11 +993,24 @@ class ToolBatchExecutor:
                     replay_invocations.append(invocation)
                     continue
                 if action in ("adopt", "join") and not is_write_tool:
+                    final_payload = resolution.get("result")
+                    if audit_adoptions:
+                        # 领养审计模式：把投机结果与权威重算结果对比，证明 ADR-0077
+                        # 不变量 A（correctness 不变）。不一致即记 wrong_adoption，并
+                        # 改用权威结果（detector + 安全网）。默认关闭，仅评测/验证开启。
+                        final_payload = await self._audit_adopted_result(
+                            invocation=invocation,
+                            speculative_payload=final_payload,
+                            workspace=workspace,
+                            turn_id=turn_id,
+                            tool_name=tool_name,
+                            shadow_engine=shadow_engine,
+                        )
                     adopted_result = {
                         "call_id": call_id,
                         "tool_name": tool_name,
                         "status": "success",
-                        "result": resolution.get("result"),
+                        "result": final_payload,
                         "error": None,
                         "execution_time_ms": 0,
                         "effect_receipt": None,
@@ -914,7 +1019,7 @@ class ToolBatchExecutor:
                         "call_id": call_id,
                         "tool_name": tool_name,
                         "status": "success",
-                        "result": resolution.get("result"),
+                        "result": final_payload,
                     }
                     receipts_as_dicts.append(
                         {
@@ -963,6 +1068,14 @@ class ToolBatchExecutor:
             receipts_as_dicts.extend(normalize_batch_receipts(receipts))
 
         record_receipts_to_ledger(receipts_as_dicts, ledger)
+
+        # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此
+        # 发射 per-turn 推测执行汇总，确保它包含全部裁决指标（drain 阶段过早，
+        # 早于裁决）。emit_turn_summary 对每个 metrics 实例幂等，重试路径不会重复。
+        if shadow_engine is not None:
+            _spec_metrics = getattr(shadow_engine, "metrics", None)
+            if _spec_metrics is not None and hasattr(_spec_metrics, "emit_turn_summary"):
+                _spec_metrics.emit_turn_summary(turn_id)
 
         # FIX-20250422: Track successfully read files in session state
         # Only track files that were NOT truncated — truncated reads are NOT

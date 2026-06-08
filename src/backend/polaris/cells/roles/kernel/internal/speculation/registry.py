@@ -33,6 +33,18 @@ from polaris.cells.roles.kernel.internal.speculative_executor import (
 )
 
 
+def _consume_future_exception(future: asyncio.Future[Any]) -> None:
+    """done-callback：消费已完成 shadow future 的异常，避免未取回告警.
+
+    取消的 future 跳过（其 CancelledError 由取消方处理）；其余调用
+    ``future.exception()`` 以标记异常已取回，不向外抛出。
+    """
+    if future.cancelled():
+        return
+    with contextlib.suppress(Exception):
+        future.exception()
+
+
 def _new_id(prefix: str = "shadow") -> str:
     """生成轻量级唯一标识符."""
     return f"{prefix}_{int(time.time() * 1000)}_{id(object())}"
@@ -215,6 +227,12 @@ class ShadowTaskRegistry:
                     raise
 
             record.future = asyncio.create_task(_runner(), name=f"shadow:{task_id}")
+            # 失败的 shadow 由 REPLAY 裁决，其 future 不会被 join/await。挂一个
+            # done-callback 主动消费异常，避免 asyncio 在 GC 时报
+            # "Task exception was never retrieved"。失败语义已在 _runner 内完整
+            # 记录（state/error/metrics），此回调只消费异常、不改变任何行为；join
+            # 仍会在 await 时重新拿到异常并降级为 replay。
+            record.future.add_done_callback(_consume_future_exception)
             return record
 
     async def adopt(self, task_id: str, call_id: str) -> Any:

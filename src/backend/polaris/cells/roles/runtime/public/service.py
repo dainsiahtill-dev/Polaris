@@ -9,7 +9,7 @@ import importlib
 import importlib.util
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from threading import Lock
@@ -307,6 +307,38 @@ def _payload_string_tuple(payload: Mapping[str, Any], key: str) -> tuple[str, ..
     return None
 
 
+def _audit_evidence_refs(values: Iterable[Any]) -> tuple[str, ...]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        ref = str(value or "").strip()
+        if not ref or ref in seen:
+            continue
+        if ref == "audit.evidence" or ref.startswith("audit.evidence:"):
+            refs.append(ref)
+            seen.add(ref)
+    return tuple(refs)
+
+
+def _visual_audit_evidence_refs(values: Iterable[Any]) -> tuple[str, ...]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        ref = str(value or "").strip()
+        if not ref:
+            continue
+        if ref == "audit.evidence" or ref.startswith("audit.evidence:"):
+            evidence_ref = ref
+        elif ref.startswith("runtime/evidence/"):
+            evidence_ref = f"audit.evidence:path:{ref}"
+        else:
+            continue
+        if evidence_ref not in seen:
+            refs.append(evidence_ref)
+            seen.add(evidence_ref)
+    return tuple(refs)
+
+
 def _mapping_string_tuple(payload: Mapping[str, Any], key: str) -> tuple[str, ...]:
     value = payload.get(key)
     if value is None:
@@ -525,6 +557,7 @@ def instantiate_role_runtime_object(
 
 
 _TASK_MARKET_LIFECYCLE_CONTRACT_ATTRS: dict[str, str] = {
+    "publish": "publish_contract",
     "claim": "claim_contract",
     "lease": "lease_contract",
     "renew": "lease_contract",
@@ -716,6 +749,7 @@ def execute_role_task_market_lifecycle(
             AcknowledgeTaskStageCommandV1,
             ClaimTaskWorkItemCommandV1,
             FailTaskStageCommandV1,
+            PublishTaskWorkItemCommandV1,
             RenewTaskLeaseCommandV1,
             RequeueTaskCommandV1,
         )
@@ -726,7 +760,37 @@ def execute_role_task_market_lifecycle(
         workspace = _payload_string(command.payload, "workspace", identity.workspace)
         metadata = _task_market_lifecycle_metadata(command)
 
-        if operation == "claim":
+        if operation == "publish":
+            task_command = PublishTaskWorkItemCommandV1(
+                workspace=workspace,
+                trace_id=_payload_string(command.payload, "trace_id", identity.run_id or identity.task_id),
+                run_id=_payload_string(command.payload, "run_id", identity.run_id or identity.task_id),
+                task_id=_payload_string(command.payload, "task_id", identity.task_id),
+                stage=_payload_string(
+                    command.payload,
+                    "stage",
+                    str(lifecycle_capability.metadata.get("target_stage") or ""),
+                ),
+                source_role=identity.role_id,
+                payload=_payload_mapping(command.payload, "payload") or {},
+                priority=_payload_string(command.payload, "priority", "medium"),
+                max_attempts=int(command.payload.get("max_attempts", 3)),
+                metadata=metadata,
+                plan_id=_payload_string(command.payload, "plan_id"),
+                plan_revision_id=_payload_string(command.payload, "plan_revision_id"),
+                root_task_id=_payload_string(command.payload, "root_task_id"),
+                parent_task_id=_payload_string(command.payload, "parent_task_id"),
+                is_leaf=bool(command.payload.get("is_leaf", True)),
+                depends_on=tuple(command.payload.get("depends_on", ())),
+                requirement_digest=_payload_string(command.payload, "requirement_digest"),
+                constraint_digest=_payload_string(command.payload, "constraint_digest"),
+                summary_ref=_payload_string(command.payload, "summary_ref"),
+                superseded_by_revision=_payload_string(command.payload, "superseded_by_revision"),
+                change_policy=_payload_string(command.payload, "change_policy", "strict"),
+                compensation_group_id=_payload_string(command.payload, "compensation_group_id"),
+            )
+            result = service.publish_work_item(task_command)
+        elif operation == "claim":
             task_command = ClaimTaskWorkItemCommandV1(
                 workspace=workspace,
                 stage=_payload_string(command.payload, "stage"),
@@ -790,26 +854,56 @@ def execute_role_task_market_lifecycle(
             error_message=str(exc),
         )
 
+    ok = bool(getattr(result, "ok", False))
     task_id = str(getattr(result, "task_id", "") or "").strip()
     lease_token = str(getattr(result, "lease_token", "") or "").strip()
     status = str(getattr(result, "status", "") or "").strip() or ("lease_renewed" if operation == "lease" else "")
+    result_ref = _task_market_lifecycle_result_ref(task_id)
+    lease_token_ref = _task_market_lifecycle_lease_ref(lease_token)
+    if ok and not result_ref:
+        return _task_market_lifecycle_failure(
+            command,
+            operation=operation,
+            command_contract=command_contract,
+            error_code="task_market_lifecycle_missing_result_ref",
+            error_message="successful task-market lifecycle result must include a task_id result ref",
+            metadata={
+                "version": getattr(result, "version", 0),
+                "status": status,
+                "stage": getattr(result, "stage", ""),
+            },
+        )
+    if ok and operation in {"claim", "lease"} and not lease_token_ref:
+        return _task_market_lifecycle_failure(
+            command,
+            operation=operation,
+            command_contract=command_contract,
+            error_code="task_market_lifecycle_missing_lease_ref",
+            error_message="successful claim/lease task-market lifecycle result must include a lease token ref",
+            metadata={
+                "version": getattr(result, "version", 0),
+                "status": status,
+                "stage": getattr(result, "stage", ""),
+                "result_ref": result_ref,
+            },
+        )
     return RoleTaskMarketLifecycleResultV1(
-        ok=bool(getattr(result, "ok", False)),
+        ok=ok,
         role_id=command.runtime_object.identity.role_id,
         operation=operation,
         command_contract=command_contract,
         task_id=task_id,
         status=status,
-        result_ref=_task_market_lifecycle_result_ref(task_id),
-        lease_token_ref=_task_market_lifecycle_lease_ref(lease_token),
+        result_ref=result_ref,
+        lease_token_ref=lease_token_ref,
         metadata={
             "owner_cell": "runtime.task_market",
             "version": getattr(result, "version", 0),
             "stage": getattr(result, "stage", ""),
             "reason": getattr(result, "reason", ""),
         },
-        error_code=None if bool(getattr(result, "ok", False)) else "task_market_lifecycle_not_ok",
-        error_message=None if bool(getattr(result, "ok", False)) else str(getattr(result, "reason", "") or "not ok"),
+        error_code=None if ok else "task_market_lifecycle_not_ok",
+        error_message=None if ok else str(getattr(result, "reason", "") or "not ok"),
     )
 
 
@@ -2363,6 +2457,7 @@ def execute_role_capability_invocation(
             )
 
         result_ref = f"qa.audit_verdict:verdict:{audit_result.task_id}"
+        audit_evidence_refs = _audit_evidence_refs(evidence_paths)
         metadata = _capability_available_metadata(
             capability.capability_id,
             {
@@ -2371,6 +2466,7 @@ def execute_role_capability_invocation(
                 "findings": tuple(audit_result.findings),
                 "suggestions": tuple(audit_result.suggestions),
                 "evidence_paths": evidence_paths,
+                "audit_evidence_refs": audit_evidence_refs,
             },
         )
         if not audit_result.ok:
@@ -2386,7 +2482,7 @@ def execute_role_capability_invocation(
                 result_ref=result_ref,
                 task_id=audit_result.task_id,
                 status=audit_result.verdict,
-                evidence_refs=evidence_paths,
+                evidence_refs=audit_evidence_refs,
                 metadata=metadata,
                 error_code="qa_audit_rejected",
                 error_message="; ".join(audit_result.findings) or "QA audit rejected the task",
@@ -2403,7 +2499,7 @@ def execute_role_capability_invocation(
             result_ref=result_ref,
             task_id=audit_result.task_id,
             status=audit_result.verdict,
-            evidence_refs=evidence_paths,
+            evidence_refs=audit_evidence_refs,
             metadata=metadata,
         )
 
@@ -2566,7 +2662,8 @@ def execute_role_capability_invocation(
             )
 
         result_ref = f"qa.audit_verdict:visual-verdict:{visual_result.task_id}"
-        evidence_refs = tuple(getattr(visual_result, "evidence_refs", ()) or ())
+        target_evidence_refs = tuple(getattr(visual_result, "evidence_refs", ()) or ())
+        audit_evidence_refs = _visual_audit_evidence_refs(target_evidence_refs)
         metadata = _capability_available_metadata(
             capability.capability_id,
             {
@@ -2576,9 +2673,31 @@ def execute_role_capability_invocation(
                 "image_refs": tuple(visual_result.image_refs),
                 "finding_count": len(visual_result.findings),
                 "findings": tuple(finding.summary for finding in visual_result.findings),
-                "evidence_refs": evidence_refs,
+                "evidence_refs": target_evidence_refs,
+                "audit_evidence_refs": audit_evidence_refs,
             },
         )
+        if visual_result.ok and not audit_evidence_refs:
+            return RoleCapabilityInvocationResultV1(
+                ok=False,
+                invocation_id=invocation.invocation_id,
+                role_id=role_id,
+                capability_id=capability.capability_id,
+                command_contract=capability.contract_name,
+                allowed=False,
+                owner_cell=capability.owner_cell,
+                payload_ref=result_ref,
+                result_ref=result_ref,
+                task_id=visual_result.task_id,
+                status="EVIDENCE_MISSING",
+                metadata={
+                    **metadata,
+                    "owner_cell": capability.owner_cell,
+                    "evidence_owner_cell": "audit.evidence",
+                },
+                error_code="visual_qa_audit_missing_evidence_ref",
+                error_message="visual QA audit success must include an audit.evidence evidence ref",
+            )
         if not visual_result.ok:
             return RoleCapabilityInvocationResultV1(
                 ok=False,
@@ -2592,7 +2711,7 @@ def execute_role_capability_invocation(
                 result_ref=result_ref,
                 task_id=visual_result.task_id,
                 status=visual_result.verdict,
-                evidence_refs=evidence_refs,
+                evidence_refs=audit_evidence_refs,
                 metadata=metadata,
                 error_code="visual_qa_audit_rejected",
                 error_message="; ".join(finding.summary for finding in visual_result.findings)
@@ -2610,7 +2729,7 @@ def execute_role_capability_invocation(
             result_ref=result_ref,
             task_id=visual_result.task_id,
             status=visual_result.verdict,
-            evidence_refs=evidence_refs,
+            evidence_refs=audit_evidence_refs,
             metadata=metadata,
         )
 
@@ -2939,13 +3058,15 @@ def execute_role_capability_invocation(
             )
 
         result_ref = f"director.execution:task:{director_result.task_id}"
-        evidence_refs = tuple(director_result.evidence_paths)
+        evidence_paths = tuple(director_result.evidence_paths)
+        audit_evidence_refs = _audit_evidence_refs(evidence_paths)
         metadata = _capability_available_metadata(
             capability.capability_id,
             {
                 "director_status": director_result.status,
                 "output_summary": director_result.output_summary,
-                "evidence_paths": evidence_refs,
+                "evidence_paths": evidence_paths,
+                "audit_evidence_refs": audit_evidence_refs,
                 "asset_refs": director_asset_refs,
             },
         )
@@ -2962,7 +3083,7 @@ def execute_role_capability_invocation(
                 result_ref=result_ref,
                 task_id=director_result.task_id,
                 status=director_result.status,
-                evidence_refs=evidence_refs,
+                evidence_refs=audit_evidence_refs,
                 metadata=metadata,
                 error_code=director_result.error_code or "director_execution_rejected",
                 error_message=director_result.error_message or "director execution rejected the task",
@@ -2979,7 +3100,7 @@ def execute_role_capability_invocation(
             result_ref=result_ref,
             task_id=director_result.task_id,
             status=director_result.status,
-            evidence_refs=evidence_refs,
+            evidence_refs=audit_evidence_refs,
             metadata=metadata,
         )
 

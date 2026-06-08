@@ -403,16 +403,17 @@ class TestNormalizeArgs:
         assert result["outer"] == {"a": 1, "b": 2}
 
     def test_string_normalization(self) -> None:
-        """Test normalize_args normalizes strings."""
+        """归一化只统一换行符，不去首尾空白（抗碰撞优先，见 fingerprints docstring）."""
         args = {"text": "  hello world  \r\n"}
         result = normalize_args("test", args)
-        assert result["text"] == "hello world\n"
+        # \r\n -> \n，但首尾空白被保留（语义可能相关，折叠会制造 wrong-adoption 碰撞）
+        assert result["text"] == "  hello world  \n"
 
     def test_list_normalization(self) -> None:
-        """Test normalize_args normalizes lists."""
+        """列表内字符串同样只统一换行符，不去首尾空白."""
         args = {"items": ["  item1  ", "item2\r\n"]}
         result = normalize_args("test", args)
-        assert result["items"] == ["item1", "item2\n"]
+        assert result["items"] == ["  item1  ", "item2\n"]
 
     def test_non_dict_input(self) -> None:
         """Test normalize_args with non-dict input."""
@@ -425,7 +426,7 @@ class TestNormalizeArgs:
         assert result == {}
 
     def test_complex_normalization(self) -> None:
-        """Test normalize_args with complex structure."""
+        """Test normalize_args with complex structure (keys sorted, EOL normalized only)."""
         args = {
             "z": "  trailing  ",
             "a": {"nested": ["  item  "]},
@@ -433,9 +434,39 @@ class TestNormalizeArgs:
         }
         result = normalize_args("test", args)
         assert list(result.keys()) == ["a", "m", "z"]
-        assert result["z"] == "trailing"
-        assert result["a"]["nested"] == ["item"]
+        # 首尾空白保留，仅换行符被规范化
+        assert result["z"] == "  trailing  "
+        assert result["a"]["nested"] == ["  item  "]
         assert result["m"] == "line1\nline2"
+
+    def test_whitespace_is_collision_safe(self) -> None:
+        """抗碰撞：仅在首尾空白/尾换行上不同的值必须产生不同 spec_key.
+
+        这是 ADR-0077 的核心正确性约束——归一化绝不能把语义不同的值折叠成
+        同一指纹，否则会错误领养（wrong-adoption）陈旧 shadow 结果。
+        """
+        distinct_values = ["x", " x", "x ", "x\n", " x ", "x\t"]
+        keys = {
+            build_spec_key(
+                "write_file",
+                normalize_args("write_file", {"content": v}),
+            )
+            for v in distinct_values
+        }
+        # 全部互不相同
+        assert len(keys) == len(distinct_values)
+
+    def test_crlf_lf_collapse_is_safe(self) -> None:
+        """等价折叠：仅换行符风格（CRLF vs LF）不同的值产生相同 spec_key."""
+        key_crlf = build_spec_key(
+            "write_file",
+            normalize_args("write_file", {"content": "a\r\nb"}),
+        )
+        key_lf = build_spec_key(
+            "write_file",
+            normalize_args("write_file", {"content": "a\nb"}),
+        )
+        assert key_crlf == key_lf
 
 
 class TestBuildSpecKey:

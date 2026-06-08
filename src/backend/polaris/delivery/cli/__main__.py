@@ -81,7 +81,7 @@ _PROMPT_STYLE_CHOICES = ("plain", "omp")
 _JSON_RENDER_CHOICES = ("raw", "pretty", "pretty-color")
 _OUTPUT_FORMAT_CHOICES = ("text", "json", "json-pretty", "json-stream")
 _AGENTIC_EVAL_ROLE_CHOICES = ("all", "director", "pm", "architect", "chief_engineer", "qa")
-_AGENTIC_EVAL_SUITE_CHOICES = ("agentic_benchmark", "tool_calling_matrix")
+_AGENTIC_EVAL_SUITE_CHOICES = ("agentic_benchmark", "tool_calling_matrix", "speculation_matrix")
 
 
 def _add_workspace_argument(parser: argparse.ArgumentParser) -> None:

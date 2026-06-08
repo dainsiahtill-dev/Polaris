@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.speculation.candidate_decoder import (
@@ -8,6 +9,9 @@ from polaris.cells.roles.kernel.internal.speculation.candidate_decoder import (
 )
 from polaris.cells.roles.kernel.internal.speculation.chain_speculator import (
     ChainSpeculator,
+)
+from polaris.cells.roles.kernel.internal.speculation.metrics import (
+    SpeculationMetrics,
 )
 from polaris.cells.roles.kernel.internal.speculation.registry import (
     ShadowTaskRegistry,
@@ -42,6 +46,20 @@ async def _task_group_proxy(future: asyncio.Task[Any]) -> Any:
     return await future
 
 
+def _eval_read_shadow_timeout_ms() -> int:
+    """只读 shadow 的超时（毫秒）。默认 1200；评测注入大延迟时经 env 上调，
+    避免 shadow 在注入延迟完成前超时而无法被领养。
+    env: ``SPECULATION_EVAL_READ_TIMEOUT_MS``。
+    """
+    raw = os.environ.get("SPECULATION_EVAL_READ_TIMEOUT_MS")
+    if not raw:
+        return 1200
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 1200
+
+
 class StreamShadowEngine:
     """流式工具推测执行引擎的外观门面(Facade).
 
@@ -61,10 +79,12 @@ class StreamShadowEngine:
         candidate_decoder: CandidateDecoder | None = None,
         stability_scorer: StabilityScorer | None = None,
         chain_speculator: ChainSpeculator | None = None,
+        metrics: SpeculationMetrics | None = None,
     ) -> None:
         self._speculative_executor = speculative_executor
         self._registry = registry
         self._resolver = resolver
+        self._metrics = metrics
         self._salvage_governor = salvage_governor
         self._task_group = task_group
         self._candidate_decoder = candidate_decoder
@@ -226,6 +246,7 @@ class StreamShadowEngine:
                     cancellability="cooperative",
                     reusability="adoptable",
                     speculate_mode="speculative_allowed",
+                    timeout_ms=_eval_read_shadow_timeout_ms(),
                 )
                 record = await self._registry.start_shadow_task(
                     turn_id=effective_turn_id,
@@ -271,6 +292,17 @@ class StreamShadowEngine:
             tool_name=tool_name,
             args=args,
         )
+
+    @property
+    def metrics(self) -> SpeculationMetrics | None:
+        """暴露本 turn 的推测执行指标记录器（可能为 None）."""
+        return self._metrics
+
+    def metrics_snapshot(self) -> dict[str, float | int]:
+        """返回当前 turn 的推测执行指标快照；无 metrics 时返回空 dict."""
+        if self._metrics is None:
+            return {}
+        return self._metrics.snapshot()
 
     def reset(self) -> None:
         """Clear the internal buffer and close the task group."""

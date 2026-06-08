@@ -72,12 +72,17 @@ _PATCH_RESIDUE_RE = re.compile(
 )
 _TS_RETURN_OBJECT_BLOCK_RE = re.compile(r"return\s*\{(?P<body>.*?)^\s*\};", re.DOTALL | re.MULTILINE)
 _TS_OBJECT_PROPERTY_SEMICOLON_RE = re.compile(r"(?m)^\s*[A-Za-z_$][\w$]*\s*;\s*$")
+_TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE = re.compile(
+    r"//[^\r\n]*\\n\s*(?:export|import|const|let|var|class|function|interface|type|enum)\b",
+    re.IGNORECASE,
+)
 _IMPORT_SPECIFIER_RE = re.compile(
     r"(?:^|\n)\s*(?:import\s+(?:type\s+)?(?:[^'\"\n]*?\s+from\s+)?|export\s+[^'\"\n]*?\s+from\s+)"
     r"[\"']([^\"']+)[\"']",
     re.IGNORECASE,
 )
 _TS_JS_SOURCE_EXTS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
+_TS_SOURCE_EXTS = {".ts", ".tsx"}
 _NODE_BUILTIN_IMPORTS = {
     "assert",
     "async_hooks",
@@ -236,6 +241,10 @@ def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str
 def _scan_typescript_syntax_red_flags(full_path: Path, text: str, relative_path: str) -> list[str]:
     if full_path.suffix.lower() not in _TS_JS_SOURCE_EXTS:
         return []
+    if _typescript_line_comment_contains_escaped_newline_code(text):
+        return [
+            f"Artifact quality scan failed: TypeScript escaped newline in line comment before code in {relative_path}"
+        ]
     for match in _TS_RETURN_OBJECT_BLOCK_RE.finditer(text):
         if _TS_OBJECT_PROPERTY_SEMICOLON_RE.search(match.group("body")):
             return [
@@ -243,6 +252,18 @@ def _scan_typescript_syntax_red_flags(full_path: Path, text: str, relative_path:
                 f"semicolon-terminated property in {relative_path}"
             ]
     return []
+
+
+def _typescript_line_comment_contains_escaped_newline_code(text: str) -> bool:
+    for raw_line in str(text or "").splitlines():
+        if "//" not in raw_line or "\\n" not in raw_line:
+            continue
+        comment_index = raw_line.find("//")
+        if comment_index < 0:
+            continue
+        if _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE.search(raw_line[comment_index:]):
+            return True
+    return False
 
 
 def _scan_package_manifest(text: str, relative_path: str) -> list[str]:
@@ -292,9 +313,11 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
         return []
     declared_dependencies = _declared_package_dependencies(root_full)
     errors: list[str] = []
+    is_typescript = full_path.suffix.lower() in _TS_SOURCE_EXTS
+    node_types_error_added = False
     for match in _IMPORT_SPECIFIER_RE.finditer(text):
         specifier = str(match.group(1) or "").strip()
-        if not specifier or specifier.startswith("node:"):
+        if not specifier:
             continue
         if specifier.startswith((".", "/")):
             if not _relative_import_exists(root_full, full_path, specifier):
@@ -305,7 +328,16 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
         if _is_test_like_artifact_path(relative_path) and _package_root_name(specifier) in _TEST_FRAMEWORK_IMPORTS:
             continue
         root_name = _package_root_name(specifier)
-        if root_name in _NODE_BUILTIN_IMPORTS or root_name in declared_dependencies:
+        builtin_name = _node_builtin_root_name(specifier)
+        if builtin_name in _NODE_BUILTIN_IMPORTS:
+            if is_typescript and not node_types_error_added and not _node_types_declared(declared_dependencies):
+                errors.append(
+                    "Artifact quality scan failed: TypeScript node builtin import "
+                    f"{specifier!r} requires '@types/node' in {relative_path}"
+                )
+                node_types_error_added = True
+            continue
+        if root_name in declared_dependencies:
             continue
         if not _is_test_like_artifact_path(relative_path):
             errors.append(f"Artifact quality scan failed: undeclared runtime import {specifier!r} in {relative_path}")
@@ -334,6 +366,17 @@ def _package_root_name(specifier: str) -> str:
         parts = token.split("/")
         return "/".join(parts[:2]) if len(parts) >= 2 else token
     return token.split("/", 1)[0]
+
+
+def _node_builtin_root_name(specifier: str) -> str:
+    token = str(specifier or "").strip()
+    if token.startswith("node:"):
+        token = token.removeprefix("node:")
+    return token.split("/", 1)[0]
+
+
+def _node_types_declared(declared_dependencies: set[str]) -> bool:
+    return "@types/node" in declared_dependencies
 
 
 def _relative_import_exists(root_full: Path, importer_path: Path, specifier: str) -> bool:

@@ -44,6 +44,9 @@ from polaris.cells.llm.evaluation.internal.readiness_tests import (
     run_readiness_tests_streaming,
 )
 from polaris.cells.llm.evaluation.internal.runner import EvaluationRunner
+from polaris.cells.llm.evaluation.internal.speculation_matrix import (
+    run_speculation_matrix_suite,
+)
 from polaris.cells.llm.evaluation.internal.suites import run_connectivity_suite, run_connectivity_suite_sync
 from polaris.cells.llm.evaluation.internal.tool_calling_matrix import (
     load_builtin_tool_calling_matrix_cases,
@@ -96,6 +99,7 @@ __all__ = [
     "run_context_benchmark_suite",
     "run_readiness_tests",
     "run_readiness_tests_streaming",
+    "run_speculation_matrix_suite",
     "run_strategy_benchmark_suite",
     "run_tool_calling_matrix_suite",
     "save_interview_report",

@@ -564,7 +564,7 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
             "type": "module",
             "scripts": {
                 "build": "node -e \"const fs=require('fs'); if(!fs.existsSync('package.json')) throw new Error('missing package.json'); console.log('package build check passed');\"",
-                "test": "node -e \"const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); if(!pkg.name||!pkg.version) throw new Error('invalid package manifest'); console.log('package manifest check passed');\"",
+                "test": "node -e \"const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); if(!pkg.name||!pkg.version) throw new Error('invalid package manifest'); console.log('package manifest check passed');\" --",
             },
             "dependencies": {},
             "devDependencies": {},

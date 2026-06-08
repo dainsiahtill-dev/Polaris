@@ -14,9 +14,10 @@ def test_normalize_args_sorts_keys() -> None:
 
 
 def test_normalize_args_normalizes_strings() -> None:
+    # 抗碰撞优先：仅统一换行符（\r\n -> \n），首尾空白保留以避免 wrong-adoption 碰撞。
     args = {"text": "  hello\r\nworld  "}
     normalized = normalize_args("test_tool", args)
-    assert normalized["text"] == "hello\nworld"
+    assert normalized["text"] == "  hello\nworld  "
 
 
 def test_normalize_args_nested_dicts() -> None:

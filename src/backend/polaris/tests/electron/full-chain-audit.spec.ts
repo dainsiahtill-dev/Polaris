@@ -1348,14 +1348,35 @@ async function captureAuditScreenshot(
 }
 
 async function clickWorkspaceBack(window: Page, testId: string): Promise<void> {
+  const progressPanel = window.getByTestId("project-progress-panel");
+  if (await progressPanel.isVisible().catch(() => false)) {
+    return;
+  }
+  const domClicked = await window.evaluate((id) => {
+    const target = document.querySelector(`[data-testid="${id}"]`);
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+    target.click();
+    return true;
+  }, testId);
+  if (domClicked) {
+    await expect(progressPanel).toBeVisible({ timeout: 60_000 });
+    return;
+  }
   const backButton = window.getByTestId(testId);
   await expect(backButton).toBeVisible({ timeout: 30_000 });
   try {
     await backButton.click({ timeout: 10_000 });
   } catch {
-    await backButton.evaluate((element: HTMLElement) => element.click());
+    await window.evaluate((id) => {
+      const target = document.querySelector(`[data-testid="${id}"]`);
+      if (target instanceof HTMLElement) {
+        target.click();
+      }
+    }, testId);
   }
-  await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+  await expect(progressPanel).toBeVisible({ timeout: 60_000 });
 }
 
 function resolveRepoRoot(startDir: string): string {
