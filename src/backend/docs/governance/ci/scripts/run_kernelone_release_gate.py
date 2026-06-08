@@ -30,9 +30,12 @@ _LEGACY_ROLE_DIALOGUE_ENTRYPOINT_STAGE = "legacy_role_dialogue_entrypoint_bounda
 _ROLES_KERNEL_ADAPTER_DEPENDENCY_STAGE = "roles_kernel_adapter_dependency_boundary"
 _ROLES_KERNEL_DIALOGUE_DEPENDENCY_STAGE = "roles_kernel_dialogue_dependency_boundary"
 _ROLES_KERNEL_RUNTIME_DEPENDENCY_STAGE = "roles_kernel_runtime_dependency_boundary"
+_ROLES_KERNEL_MANIFEST_DEPENDENCY_STAGE = "roles_kernel_manifest_dependency_boundary"
 _KERNELONE_ROLES_BUSINESS_BOUNDARY_STAGE = "kernelone_roles_business_boundary"
 _ROLE_RUNTIME_PUBLIC_ROOT = Path("polaris/cells/roles/runtime/public")
 _ROLE_RUNTIME_CELL_YAML = Path("polaris/cells/roles/runtime/cell.yaml")
+_ROLES_KERNEL_CELL_YAML = Path("polaris/cells/roles/kernel/cell.yaml")
+_CATALOG_CELLS_YAML = Path("docs/graph/catalog/cells.yaml")
 _ROLES_KERNEL_ROOT = Path("polaris/cells/roles/kernel")
 _KERNELONE_ROLES_ROOT = Path("polaris/kernelone/roles")
 _ROLE_RUNTIME_OWN_INTERNAL_PREFIX = "polaris.cells.roles.runtime.internal"
@@ -86,6 +89,20 @@ _BUSINESS_ROLE_TOKENS = frozenset(
         "qa",
         "quality_assurance",
     }
+)
+_ROLES_KERNEL_FORBIDDEN_MANIFEST_DEPENDENCIES = (
+    (
+        "chief_engineer.blueprint",
+        "roles.kernel must receive business role assets through caller-supplied ports",
+    ),
+    (
+        "qa.audit_verdict",
+        "roles.kernel must receive business role assets through caller-supplied ports",
+    ),
+    (
+        "roles.runtime",
+        "roles.runtime composes roles.kernel, not the reverse",
+    ),
 )
 
 
@@ -341,6 +358,26 @@ def _find_roles_kernel_runtime_dependency_violations(tree: ast.AST, rel_path: st
                 "roles.kernel production code must not import roles.runtime; "
                 "roles.runtime composes the kernel through public contracts, not the reverse"
             )
+    return tuple(violations)
+
+
+def _find_roles_kernel_manifest_dependency_violations(payload: object, rel_path: str) -> tuple[str, ...]:
+    if not isinstance(payload, dict):
+        return (f"{rel_path}: expected mapping payload",)
+    if payload.get("id") != "roles.kernel":
+        return ()
+
+    raw_depends_on = payload.get("depends_on", ())
+    if raw_depends_on is None:
+        raw_depends_on = ()
+    if not isinstance(raw_depends_on, list):
+        return (f"{rel_path}: roles.kernel depends_on must be a list",)
+
+    declared = {value for value in raw_depends_on if isinstance(value, str)}
+    violations: list[str] = []
+    for dependency, reason in _ROLES_KERNEL_FORBIDDEN_MANIFEST_DEPENDENCIES:
+        if dependency in declared:
+            violations.append(f"{rel_path}: depends_on must not include {dependency}; {reason}")
     return tuple(violations)
 
 
@@ -731,6 +768,64 @@ def _check_roles_kernel_runtime_dependency_boundary() -> GateRunResult:
     )
 
 
+def _check_roles_kernel_manifest_dependency_boundary() -> GateRunResult:
+    started = time.monotonic()
+    command = [
+        "static",
+        _ROLES_KERNEL_MANIFEST_DEPENDENCY_STAGE,
+        _ROLES_KERNEL_CELL_YAML.as_posix(),
+        _CATALOG_CELLS_YAML.as_posix(),
+    ]
+    violations: list[str] = []
+
+    cell_yaml = BACKEND_ROOT / _ROLES_KERNEL_CELL_YAML
+    try:
+        cell_payload = yaml.safe_load(cell_yaml.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        violations.append(f"{_ROLES_KERNEL_CELL_YAML.as_posix()}: parse failed: {exc}")
+    else:
+        violations.extend(
+            _find_roles_kernel_manifest_dependency_violations(
+                cell_payload,
+                _ROLES_KERNEL_CELL_YAML.as_posix(),
+            )
+        )
+
+    catalog_yaml = BACKEND_ROOT / _CATALOG_CELLS_YAML
+    try:
+        catalog_payload = yaml.safe_load(catalog_yaml.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        violations.append(f"{_CATALOG_CELLS_YAML.as_posix()}: parse failed: {exc}")
+    else:
+        catalog_cells = catalog_payload.get("cells") if isinstance(catalog_payload, dict) else None
+        if not isinstance(catalog_cells, list):
+            violations.append(f"{_CATALOG_CELLS_YAML.as_posix()}: cells must be a list")
+        else:
+            role_kernel_entries = [
+                cell for cell in catalog_cells if isinstance(cell, dict) and cell.get("id") == "roles.kernel"
+            ]
+            if not role_kernel_entries:
+                violations.append(f"{_CATALOG_CELLS_YAML.as_posix()}: missing roles.kernel entry")
+            for entry in role_kernel_entries:
+                violations.extend(
+                    _find_roles_kernel_manifest_dependency_violations(
+                        entry,
+                        f"{_CATALOG_CELLS_YAML.as_posix()}#roles.kernel",
+                    )
+                )
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_ROLES_KERNEL_MANIFEST_DEPENDENCY_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
 def _check_kernelone_roles_business_boundary() -> GateRunResult:
     started = time.monotonic()
     roles_root = BACKEND_ROOT / _KERNELONE_ROLES_ROOT
@@ -816,6 +911,7 @@ def main() -> int:
     stage_results.append(_check_roles_kernel_adapter_dependency_boundary())
     stage_results.append(_check_roles_kernel_dialogue_dependency_boundary())
     stage_results.append(_check_roles_kernel_runtime_dependency_boundary())
+    stage_results.append(_check_roles_kernel_manifest_dependency_boundary())
     stage_results.append(_check_kernelone_roles_business_boundary())
 
     if args.mode in {"collect", "all"}:

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.storage import resolve_logical_path
 
 
@@ -31,10 +32,7 @@ class VerdictPersistence:
         """Atomically persist a verdict dictionary to disk."""
         self._dir.mkdir(parents=True, exist_ok=True)
         p = self._dir / f"{verdict_id}.json"
-        tmp = p.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        tmp.replace(p)
+        write_json_atomic(str(p), data)
 
     def load(self, verdict_id: str) -> dict[str, Any] | None:
         """Load a verdict dictionary from disk; None if missing/unreadable."""

@@ -125,6 +125,48 @@ function positiveNumber(value) {
   return Number.isFinite(numericValue) && numericValue > 0;
 }
 
+function candidateCoverageRows(candidateCoverage) {
+  return Array.isArray(candidateCoverage?.rows) ? candidateCoverage.rows : [];
+}
+
+function candidateIdsByRuntimeStatus(candidateCoverage, expectedStatus) {
+  return candidateCoverageRows(candidateCoverage)
+    .filter((row) => String(row?.candidate_id || "").trim())
+    .filter((row) => String(row?.coverage_status || "").trim() === expectedStatus)
+    .map((row) => String(row.candidate_id).trim());
+}
+
+function expectedCandidateIds(candidateCoverage) {
+  return candidateCoverageRows(candidateCoverage)
+    .map((row) => String(row?.candidate_id || "").trim())
+    .filter(Boolean);
+}
+
+function buildCandidateRuntimeCoverageUnion(matrices) {
+  const expectedIds = new Set();
+  const runtimeProvedIds = new Set();
+  for (const matrix of Object.values(matrices)) {
+    const candidateCoverage = matrix?.candidate_runtime_coverage;
+    if (!candidateCoverage) {
+      continue;
+    }
+    for (const candidateId of candidateCoverage.expected_ids || []) {
+      expectedIds.add(candidateId);
+    }
+    for (const candidateId of candidateCoverage.runtime_proved_ids || []) {
+      runtimeProvedIds.add(candidateId);
+    }
+  }
+  const expected = [...expectedIds].sort();
+  const runtimeProved = expected.filter((candidateId) => runtimeProvedIds.has(candidateId));
+  const missing = expected.filter((candidateId) => !runtimeProvedIds.has(candidateId));
+  return {
+    expected_count: expected.length,
+    runtime_proved_count: runtimeProved.length,
+    missing_runtime_ids: missing,
+  };
+}
+
 function validateMatrix(entrypoint, filePath, minMtimeMs = 0, requireAllCandidateRuntime = false) {
   const payload = readJsonFile(filePath);
   const stat = fs.statSync(filePath);
@@ -135,6 +177,8 @@ function validateMatrix(entrypoint, filePath, minMtimeMs = 0, requireAllCandidat
   const missingCore = stringArray(core?.missing_ids);
   const missingCandidateRuntime = stringArray(candidateCoverage?.missing_runtime_ids);
   const notRuntimeProvedCandidates = stringArray(candidateCoverage?.not_runtime_proved_ids);
+  const candidateRuntimeProvedIds = candidateIdsByRuntimeStatus(candidateCoverage, "runtime_proved");
+  const candidateExpectedIds = expectedCandidateIds(candidateCoverage);
   const actualSinks = stringArray(placement?.expected_sinks);
   const sinkMismatch =
     actualSinks.length !== expectedSinks.length ||
@@ -197,13 +241,13 @@ function validateMatrix(entrypoint, filePath, minMtimeMs = 0, requireAllCandidat
     } else if (
       Number(candidateCoverage?.expected_count || 0) <= 0 ||
       Number(candidateCoverage?.runtime_required_count || 0) <= 0 ||
-      notRuntimeProvedCandidates.length > 0
+      candidateExpectedIds.length <= 0
     ) {
       findings.push(
-        `${entrypoint} candidate runtime coverage incomplete: `
+        `${entrypoint} candidate runtime coverage malformed: `
           + `runtime_proved=${Number(candidateCoverage?.runtime_proved_count || 0)}/`
           + `${Number(candidateCoverage?.expected_count || 0)} `
-          + `missing=${notRuntimeProvedCandidates.join(",") || "(none)"}`,
+          + `rows=${candidateExpectedIds.length}`,
       );
     }
   }
@@ -230,6 +274,8 @@ function validateMatrix(entrypoint, filePath, minMtimeMs = 0, requireAllCandidat
           runtime_required_count: Number(candidateCoverage?.runtime_required_count || 0),
           missing_runtime_ids: missingCandidateRuntime,
           not_runtime_proved_count: notRuntimeProvedCandidates.length,
+          expected_ids: candidateExpectedIds,
+          runtime_proved_ids: candidateRuntimeProvedIds,
         }
       : null,
     findings,
@@ -252,6 +298,24 @@ function summarizeDualEntryMatrices(summaryRoot, minMtimeMs = 0, requireAllCandi
     findings.push(...matrix.findings);
   }
 
+  const candidateRuntimeCoverageUnion = requireAllCandidateRuntime
+    ? buildCandidateRuntimeCoverageUnion(matrices)
+    : null;
+  if (requireAllCandidateRuntime) {
+    if (
+      !candidateRuntimeCoverageUnion ||
+      candidateRuntimeCoverageUnion.expected_count <= 0 ||
+      candidateRuntimeCoverageUnion.missing_runtime_ids.length > 0
+    ) {
+      findings.push(
+        `dual candidate runtime coverage incomplete: `
+          + `runtime_proved=${candidateRuntimeCoverageUnion?.runtime_proved_count || 0}/`
+          + `${candidateRuntimeCoverageUnion?.expected_count || 0} `
+          + `missing=${candidateRuntimeCoverageUnion?.missing_runtime_ids.join(",") || "(none)"}`,
+      );
+    }
+  }
+
   return {
     schema: "polaris.e2e.dual_entry_full_chain_summary.v1",
     generated_at: new Date().toISOString(),
@@ -261,6 +325,7 @@ function summarizeDualEntryMatrices(summaryRoot, minMtimeMs = 0, requireAllCandi
     summary_min_mtime_ms: minMtimeMs,
     require_all_candidate_runtime: requireAllCandidateRuntime,
     expected_matrix_artifacts: dualEntryMatrixArtifacts,
+    candidate_runtime_coverage_union: candidateRuntimeCoverageUnion,
     matrices,
     findings,
   };

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence, cast
@@ -176,6 +176,11 @@ class ContextGatewayConfig:
     # Additional context sources to include
     extra_sources: tuple[str, ...] = field(default_factory=tuple)
 
+    # Role-specific signal data sources. The kernel owns signal assembly but not
+    # business asset lookup; runtime/adapters inject owner-cell public readers.
+    blueprint_overview_provider: Callable[[str, str], Any | None] | None = None
+    verdict_history_provider: Callable[[str, str], Any | None] | None = None
+
 
 class DuplicateStateOwnerError(Exception):
     """Raised when duplicate StateOwners are detected in a context request."""
@@ -250,9 +255,7 @@ class RoleContextGateway:
         self._projection_formatter = ProjectionFormatter()
         # learning_key=role_id：让各角色的投影自适应权重跨 turn 按角色独立累积
         # （模块级状态存储，绕过 gateway/ProjectionEngine 每 turn 新建的清零）。
-        self._projection_engine = ProjectionEngine(
-            learning_key=str(getattr(profile, "role_id", "") or "default")
-        )
+        self._projection_engine = ProjectionEngine(learning_key=str(getattr(profile, "role_id", "") or "default"))
         self._compression_engine = CompressionEngine(
             max_context_tokens=self.policy.max_context_tokens,
             compression_strategy=str(self.policy.compression_strategy or "none"),
@@ -774,11 +777,10 @@ class RoleContextGateway:
             },
             get_project_structure=self._get_project_structure,
             get_task_history=self._get_task_history,
-            # blueprint_overview 已接真实只读源（get_blueprint_status，按 task_id 寻址）；
-            # 仅当 role==chief_engineer 且 include_blueprint_overview 开启时才会被调用。
+            # blueprint_overview 只通过配置注入的数据源读取；roles.kernel 不认识
+            # chief_engineer.blueprint 的业务模块。
             get_blueprint_overview=lambda: self._get_blueprint_overview(str(request.task_id or "")),
-            # verdict_history 已接真实只读源（qa.audit_verdict.public.get_qa_verdict，按 task_id 寻址，
-            # 读取 run_qa_audit 持久化的最新判定）；仅 role==qa 且 include_verdict_history 开启时调用。
+            # verdict_history 同样只走配置注入的数据源，避免 kernel 反向依赖 QA owner Cell。
             get_verdict_history=lambda: self._get_verdict_history(str(request.task_id or "")),
         )
         # 跨 turn freshness 记忆（按 task_id）：压力下断流"自上次注入未变化"的 nice-to-have，
@@ -1011,19 +1013,18 @@ class RoleContextGateway:
     def _get_blueprint_overview(self, task_id: str) -> str | None:
         """读取本任务最新蓝图概览（ChiefEngineer 角色专属信号的数据源）。
 
-        经 chief_engineer.blueprint 公开只读契约 `get_blueprint_status`（按 task_id +
-        workspace 寻址）获取，渲染为简洁概览。仅在 role==chief_engineer 且
-        `include_blueprint_overview` 开启时被调用；任何失败/缺失 → None（不注入）。
+        数据源由运行时/适配层通过 ContextGatewayConfig 注入。roles.kernel 只负责编排
+        signal 与渲染，不直接 import chief_engineer.blueprint。任何失败/缺失 → None。
         """
         if not task_id:
             return None
+        provider = self._config.blueprint_overview_provider
+        if provider is None:
+            return None
         try:
-            from polaris.cells.chief_engineer.blueprint.public import (
-                GetBlueprintStatusQueryV1,
-                get_blueprint_status,
-            )
-
-            result = get_blueprint_status(GetBlueprintStatusQueryV1(task_id=task_id, workspace=str(self.workspace)))
+            result = provider(task_id, str(self.workspace))
+            if isinstance(result, str):
+                return result.strip() or None
             return render_blueprint_overview(result)
         except Exception as exc:  # noqa: BLE001 - 数据源失败必须优雅降级为不注入
             logger.debug(f"获取蓝图概览失败: {exc}")
@@ -1054,19 +1055,18 @@ class RoleContextGateway:
     def _get_verdict_history(self, task_id: str) -> str | None:
         """读取本任务最新 QA 判定历史（QA 角色专属信号的数据源）。
 
-        经 qa.audit_verdict 公开只读契约 `get_qa_verdict`（按 task_id + workspace 寻址）
-        获取已持久化判定，渲染为简洁概览。仅在 role==qa 且 `include_verdict_history`
-        开启时被调用；任何失败/缺失 → None（不注入）。
+        数据源由运行时/适配层通过 ContextGatewayConfig 注入。roles.kernel 只负责编排
+        signal 与渲染，不直接 import qa.audit_verdict。任何失败/缺失 → None。
         """
         if not task_id:
             return None
+        provider = self._config.verdict_history_provider
+        if provider is None:
+            return None
         try:
-            from polaris.cells.qa.audit_verdict.public import (
-                GetQaVerdictQueryV1,
-                get_qa_verdict,
-            )
-
-            result = get_qa_verdict(GetQaVerdictQueryV1(task_id=task_id, workspace=str(self.workspace)))
+            result = provider(task_id, str(self.workspace))
+            if isinstance(result, str):
+                return result.strip() or None
             return render_verdict_history(result)
         except Exception as exc:  # noqa: BLE001 - 数据源失败必须优雅降级为不注入
             logger.debug(f"获取判定历史失败: {exc}")

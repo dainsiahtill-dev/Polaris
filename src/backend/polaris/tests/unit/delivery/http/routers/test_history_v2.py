@@ -151,6 +151,47 @@ async def test_v2_history_runs_with_pagination(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_v2_history_runs_all_sorts_mixed_runtime_and_archive_mtime(
+    client: AsyncClient,
+) -> None:
+    """GET /v2/history/runs?source=all should not 500 when mtime types differ."""
+
+    class DirEntry:
+        name = "runtime-run"
+        path = "/runtime/runs/runtime-run"
+
+        def is_dir(self) -> bool:
+            return True
+
+    with (
+        patch("polaris.delivery.http.routers.history.os.path.isdir", return_value=True),
+        patch("polaris.delivery.http.routers.history.os.scandir", return_value=[DirEntry()]),
+        patch("polaris.delivery.http.routers.history.os.path.isfile", return_value=False),
+        patch(
+            "polaris.delivery.http.routers.history.format_mtime",
+            return_value="2026-06-08T05:15:49Z",
+        ),
+        patch(
+            "polaris.delivery.http.routers.history.list_archived_runs",
+            return_value=[
+                {
+                    "run_id": "archived-run",
+                    "status": "completed",
+                    "archive_timestamp": 1780895749.0,
+                    "reason": "auto",
+                },
+            ],
+        ),
+    ):
+        response = await client.get("/v2/history/runs?source=all&limit=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert {item["id"] for item in data["runs"]} == {"runtime-run", "archived-run"}
+    assert data["total"] == 2
+
+
+@pytest.mark.asyncio
 async def test_v2_history_run_manifest_found(client: AsyncClient) -> None:
     """GET /v2/history/runs/{run_id}/manifest should return manifest when found."""
     with patch(

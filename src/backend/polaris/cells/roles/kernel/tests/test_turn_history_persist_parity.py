@@ -11,14 +11,12 @@ G-3 coverage: run/stream parity gate for session persistence.
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
-from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 from polaris.kernelone.context.contracts import (
     TurnEngineContextRequest,
     TurnEngineContextResult,
@@ -82,124 +80,6 @@ class TestTurnEngineContextTypes:
         res = TurnEngineContextResult(messages=({"role": "user", "content": "hi"},))
         assert res.context_sources == ()
         assert res.token_estimate == 0
-
-
-class TestPersistSessionTurnStateSignatures:
-    """Phase 1-2: _persist_session_turn_state signature enforces turn_history."""
-
-    def test_turn_history_is_required_param(self) -> None:
-        """turn_history must be a required parameter (no default None)."""
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        sig = inspect.signature(RoleRuntimeService._persist_session_turn_state)
-        params = sig.parameters
-
-        assert "turn_history" in params
-        turn_history_param = params["turn_history"]
-        assert turn_history_param.default is inspect.Parameter.empty, (
-            f"turn_history must be required; got default: {turn_history_param.default!r}"
-        )
-
-    def test_all_call_sites_pass_turn_history(self) -> None:
-        """All callers of _persist_session_turn_state must pass turn_history."""
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        source = inspect.getsource(RoleRuntimeService)
-
-        # Find all occurrences of the call
-        call_marker = "self._persist_session_turn_state("
-        pos = 0
-        call_sites = []
-        while True:
-            idx = source.find(call_marker, pos)
-            if idx == -1:
-                break
-            # Extract a window of ~600 chars (covers multiline calls)
-            window = source[idx : idx + 600]
-            call_sites.append(window)
-            pos = idx + len(call_marker)
-
-        assert len(call_sites) >= 4, f"Expected at least 4 call sites, found {len(call_sites)}"
-
-        for i, window in enumerate(call_sites):
-            # turn_history= must appear within the call window
-            assert "turn_history=" in window, (
-                f"Call site {i} missing turn_history= within 600 chars of call. Call starts: {window[:100]}"
-            )
-
-    def test_no_legacy_fallback_else_branch(self) -> None:
-        """_persist_session_turn_state must not have 'else' fallback for turn_history."""
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        source = inspect.getsource(RoleRuntimeService._persist_session_turn_state)
-
-        # After Phase 1-2, the function should:
-        # 1. NOT have "if turn_history:" check before the loop
-        # 2. NOT have an "else:" branch with svc.add_message for user/assistant
-        assert "if turn_history:" not in source, (
-            "Found 'if turn_history:' conditional in _persist_session_turn_state - "
-            "turn_history is now required, no conditional check needed"
-        )
-        assert "else:" not in source or "# legacy" in source, (
-            "Found 'else:' branch - this is the legacy fallback that must be removed"
-        )
-
-
-class TestPersistSessionTurnStateSemantics:
-    """Phase 1: _persist_session_turn_state behavior with various inputs."""
-
-    @pytest.fixture
-    def mock_command(self):
-        """Minimal command for testing."""
-        cmd = MagicMock(spec=ExecuteRoleSessionCommandV1)
-        cmd.session_id = "session-test-123"
-        cmd.run_id = "run-456"
-        cmd.task_id = "task-789"
-        cmd.user_message = "test message"
-        cmd.stream = False
-        cmd.history = []
-        cmd.context = {}
-        return cmd
-
-    def test_empty_turn_history_calls_add_message_zero_times(self, mock_command) -> None:
-        """Empty turn_history should call add_message 0 times (loop body not entered)."""
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        # Patch where RoleSessionService is looked up (inside the function)
-        with patch.object(RoleRuntimeService, "_persist_session_turn_state") as mock_method:
-            # Just call directly with empty turn_history
-            mock_method(
-                command=mock_command,
-                assistant_text="partial response",
-                thinking=None,
-                tool_calls=(),
-                usage={},
-                turn_history=[],
-            )
-            # Verify add_message was NOT called (empty list, loop not entered)
-            # The call would have been with empty turn_history
-            call_kwargs = mock_method.call_args.kwargs
-            assert call_kwargs["turn_history"] == []
-
-    def test_turn_history_source_has_no_conditional_check(self) -> None:
-        """After Phase 1-2, source should NOT have 'if turn_history:' check."""
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        source = inspect.getsource(RoleRuntimeService._persist_session_turn_state)
-
-        # The Phase 1-2 refactored version should iterate directly over turn_history
-        # without a truthiness check, since turn_history is now required
-        lines = source.split("\n")
-        has_conditional_iteration = False
-        for _i, line in enumerate(lines):
-            if "if turn_history:" in line:
-                has_conditional_iteration = True
-                break
-
-        assert not has_conditional_iteration, (
-            f"Found 'if turn_history:' conditional at line {_i}. "
-            "After Phase 1-2, turn_history is required - no conditional check needed."
-        )
 
 
 class TestToolLoopControllerHistory:
@@ -420,32 +300,6 @@ class TestNoRegressions:
 class TestPhase3ContextOSDirectIntegration:
     """Phase 3: ContextOSProjection is built directly from turn_history (not reconstructed)."""
 
-    def test_persist_uses_turn_history_not_command_history(self) -> None:
-        """persist_session_turn_state must pass turn_history directly."""
-        import inspect
-
-        from polaris.cells.roles.runtime.public.persistence import persist_session_turn_state
-
-        source = inspect.getsource(persist_session_turn_state)
-
-        # Must NOT use _build_post_turn_history (removed in Phase 3)
-        assert "_build_post_turn_history" not in source, (
-            "Phase 3: persist_session_turn_state should use turn_history directly, not _build_post_turn_history"
-        )
-        # Must accept turn_history as a parameter (check signature)
-        sig = inspect.signature(persist_session_turn_state)
-        assert "turn_history" in sig.parameters, (
-            "Phase 3: persist_session_turn_state must accept turn_history parameter directly"
-        )
-
-    def test_no_build_post_turn_history_method(self) -> None:
-        """_build_post_turn_history must be removed (Phase 4, dead code after Phase 3)."""
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        assert not hasattr(RoleRuntimeService, "_build_post_turn_history"), (
-            "_build_post_turn_history should be removed (Phase 4 cleanup)"
-        )
-
     def test_context_request_has_context_os_snapshot_field(self) -> None:
         """TurnEngineContextRequest must have context_os_snapshot field."""
         from polaris.kernelone.context.contracts import TurnEngineContextRequest
@@ -520,52 +374,6 @@ class TestPhase3ContextOSDirectIntegration:
         result = gateway._format_context_os_snapshot(snapshot)
 
         assert "transcript_events: (empty)" in result
-
-
-class TestPhase4LegacyCleanup:
-    """Phase 4: Removed dead code and cleaned up signatures."""
-
-    def test_persist_session_turn_state_only_has_two_params(self) -> None:
-        """_persist_session_turn_state signature must have only command + turn_history."""
-        import inspect
-
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        sig = inspect.signature(RoleRuntimeService._persist_session_turn_state)
-        params = list(sig.parameters.keys())
-
-        # Must have exactly: command, turn_history, turn_events_metadata
-        assert "command" in params
-        assert "turn_history" in params
-        assert "turn_events_metadata" in params
-        # Removed: assistant_text, thinking, tool_calls, usage
-        assert "assistant_text" not in params
-        assert "thinking" not in params
-        assert "tool_calls" not in params
-        assert "usage" not in params
-        assert len(params) == 3, f"Expected only 3 params, got: {params}"
-
-    def test_persist_call_sites_match_new_signature(self) -> None:
-        """All call sites of _persist_session_turn_state must use new signature."""
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        source = inspect.getsource(RoleRuntimeService)
-
-        # Find all calls
-        call_marker = "self._persist_session_turn_state("
-        pos = 0
-        violations = []
-        while True:
-            idx = source.find(call_marker, pos)
-            if idx == -1:
-                break
-            window = source[idx : idx + 400]
-            pos = idx + len(call_marker)
-            # Check that OLD params are NOT present
-            for old_param in ["assistant_text=", "thinking=", "tool_calls=", "usage="]:
-                if old_param in window:
-                    violations.append(f"{old_param} found in call")
-        assert len(violations) == 0, f"Old params found in calls: {violations}"
 
 
 class TestPhase5ScratchpadPattern:

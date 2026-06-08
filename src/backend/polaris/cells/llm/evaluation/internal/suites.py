@@ -14,6 +14,77 @@ from .utils import (
     split_thinking_output,
 )
 
+INTERVIEW_EMPTY_OUTPUT_MAX_ATTEMPTS = 3
+INTERVIEW_EMPTY_OUTPUT_RETRY_DELAY_MS = 250
+
+
+class EmptyInterviewOutputError(ValueError):
+    def __init__(self, message: str, *, attempts: int, transient_errors: list[dict[str, Any]]) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.transient_errors = transient_errors
+
+
+def _positive_int_config(config: dict[str, Any], key: str, default: int) -> int:
+    try:
+        value = int(config.get(key) or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _non_negative_int_config(config: dict[str, Any], key: str, default: int) -> int:
+    try:
+        raw_value: Any = config.get(key, default)
+        value = int(default if raw_value is None else raw_value)
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+async def _invoke_interview_with_empty_output_retry(
+    provider: Any,
+    prompt: str,
+    model: str,
+    config: dict[str, Any],
+) -> tuple[Any, str, int, list[dict[str, Any]]]:
+    max_attempts = _positive_int_config(
+        config,
+        "empty_output_max_attempts",
+        INTERVIEW_EMPTY_OUTPUT_MAX_ATTEMPTS,
+    )
+    retry_delay_ms = _non_negative_int_config(
+        config,
+        "empty_output_retry_delay_ms",
+        INTERVIEW_EMPTY_OUTPUT_RETRY_DELAY_MS,
+    )
+    transient_errors: list[dict[str, Any]] = []
+    last_error = ""
+
+    for attempt in range(1, max_attempts + 1):
+        result = await asyncio.to_thread(provider.invoke, prompt, model, config)
+        output = str(getattr(result, "output", "") or "")
+        if output.strip():
+            return result, output, attempt, transient_errors
+
+        last_error = str(getattr(result, "error", "") or "")
+        transient_errors.append(
+            {
+                "attempt": attempt,
+                "reason": "empty_model_output",
+                "provider_error": last_error,
+            }
+        )
+        if attempt < max_attempts and retry_delay_ms > 0:
+            await asyncio.sleep(retry_delay_ms / 1000)
+
+    error_suffix = f": {last_error}" if last_error else ""
+    raise EmptyInterviewOutputError(
+        f"empty_model_output after {max_attempts} attempt(s){error_suffix}",
+        attempts=max_attempts,
+        transient_errors=transient_errors,
+    )
+
 
 async def run_connectivity_suite(
     provider_cfg: dict[str, Any],
@@ -454,14 +525,13 @@ Question: {q["question"]}
 Provide your answer in <thinking> and <answer> tags."""
 
         try:
-            result = await asyncio.to_thread(
-                provider.invoke,
+            result, output, attempts, transient_errors = await _invoke_interview_with_empty_output_retry(
+                provider,
                 prompt,
                 model,
                 {**provider_cfg, "temperature": 0.3},
             )
 
-            output = str(result.output or "")
             _thinking, answer = split_thinking_output(output)
 
             evaluation = evaluate_interview_answer(output, list(q["criteria"]), q["question"])  # type: ignore[arg-type]
@@ -479,6 +549,8 @@ Provide your answer in <thinking> and <answer> tags."""
                 "answer": answer,
                 "latency_ms": int(result.latency_ms or 0),
                 "scoring_mode": scoring_mode,
+                "attempts": attempts,
+                "transient_errors": transient_errors,
                 "has_thinking": bool(evaluation.get("has_thinking")),
                 "has_answer": bool(evaluation.get("has_answer")),
                 "not_deflection": bool(evaluation.get("not_deflection")),
@@ -486,6 +558,19 @@ Provide your answer in <thinking> and <answer> tags."""
             }
             results.append(case)
 
+        except EmptyInterviewOutputError as e:
+            results.append(
+                {
+                    "id": q["id"],
+                    "question": q["question"],
+                    "score": 0.0,
+                    "passed": False,
+                    "error": str(e),
+                    "error_code": "EMPTY_MODEL_OUTPUT",
+                    "attempts": e.attempts,
+                    "transient_errors": e.transient_errors,
+                }
+            )
         except (RuntimeError, ValueError) as e:
             results.append(
                 {

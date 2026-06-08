@@ -101,6 +101,23 @@ def _write_matrix_artifact(
     candidate_missing_runtime_ids: list[str] | None = None,
 ) -> None:
     candidate_missing_runtime_ids = candidate_missing_runtime_ids or []
+    candidate_ids = [
+        "source_candidate",
+        "desktop_only_candidate",
+        "web_only_candidate",
+        *[f"candidate-{index}" for index in range(1, 62)],
+    ]
+    for candidate_id in candidate_missing_runtime_ids:
+        if candidate_id not in candidate_ids:
+            candidate_ids.append(candidate_id)
+    candidate_rows = [
+        {
+            "candidate_id": candidate_id,
+            "coverage_status": "source_proved" if candidate_id in candidate_missing_runtime_ids else "runtime_proved",
+            "runtime_required": True,
+        }
+        for candidate_id in candidate_ids
+    ]
     sinks = {
         "audit": {"present": True, "evidence": [{"type": "runtime_artifact", "ref": "audit.json"}], "findings": []},
         "receipt": {"present": True, "evidence": [{"type": "api", "ref": "/receipt"}], "findings": []},
@@ -144,15 +161,15 @@ def _write_matrix_artifact(
         },
         "candidate_runtime_coverage": {
             "schema": "polaris.e2e.expanded_candidate_runtime_coverage.v1",
-            "expected_count": 64,
-            "runtime_proved_count": 64 - len(candidate_missing_runtime_ids),
+            "expected_count": len(candidate_rows),
+            "runtime_proved_count": len(candidate_rows) - len(candidate_missing_runtime_ids),
             "source_proved_count": 0,
             "gate_declared_count": 0,
             "declared_only_count": 0,
-            "runtime_required_count": 64,
+            "runtime_required_count": len(candidate_rows),
             "missing_runtime_ids": candidate_missing_runtime_ids,
             "not_runtime_proved_ids": candidate_missing_runtime_ids,
-            "rows": [],
+            "rows": candidate_rows,
         },
         "expanded_candidates": [],
         "probes": [],
@@ -1065,7 +1082,10 @@ def test_dual_entry_full_chain_runner_summary_rejects_unlinked_task_projection(t
 def test_dual_entry_full_chain_runner_summary_rejects_missing_candidate_runtime_when_strict(
     tmp_path: Path,
 ) -> None:
-    _write_matrix_artifact(tmp_path / "desktop" / "full-chain-expanded-tech-evidence-matrix.json")
+    _write_matrix_artifact(
+        tmp_path / "desktop" / "full-chain-expanded-tech-evidence-matrix.json",
+        candidate_missing_runtime_ids=["source_candidate"],
+    )
     _write_matrix_artifact(
         tmp_path / "web" / "web-full-chain-expanded-tech-evidence-matrix.json",
         candidate_missing_runtime_ids=["source_candidate"],
@@ -1082,8 +1102,36 @@ def test_dual_entry_full_chain_runner_summary_rejects_missing_candidate_runtime_
     )
 
     assert result.returncode == 1
-    assert "web candidate runtime coverage incomplete" in result.stderr
+    assert "dual candidate runtime coverage incomplete" in result.stderr
     assert "source_candidate" in result.stderr
+
+
+def test_dual_entry_full_chain_runner_summary_accepts_union_candidate_runtime_when_strict(
+    tmp_path: Path,
+) -> None:
+    _write_matrix_artifact(
+        tmp_path / "desktop" / "full-chain-expanded-tech-evidence-matrix.json",
+        candidate_missing_runtime_ids=["web_only_candidate"],
+    )
+    _write_matrix_artifact(
+        tmp_path / "web" / "web-full-chain-expanded-tech-evidence-matrix.json",
+        candidate_missing_runtime_ids=["desktop_only_candidate"],
+    )
+
+    result = _run_node_raw(
+        [
+            DUAL_ENTRY_FULL_CHAIN_RUNNER,
+            "--summarize-existing",
+            "--summary-root",
+            str(tmp_path),
+            "--require-all-candidate-runtime",
+        ]
+    )
+
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert data["status"] == "PASS"
+    assert data["candidate_runtime_coverage_union"]["missing_runtime_ids"] == []
 
 
 def test_real_flow_runner_rejects_ci_host_settings_fallback(tmp_path: Path) -> None:

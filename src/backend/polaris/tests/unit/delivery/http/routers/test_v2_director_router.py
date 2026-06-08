@@ -2251,6 +2251,41 @@ async def test_director_list_tasks_with_status_filter(client: AsyncClient) -> No
         assert data[0]["blueprint_id"] == "bp-1"
         assert data[0]["runtime_blueprint_path"] == "runtime/contracts/bp-1.json"
         assert data[0]["metadata"]["pm_task_id"] == "PM-1"
+        assert data[0]["metadata"]["projection_source"] == "runtime_projection"
+
+
+def test_runtime_backed_task_rows_expose_projection_source_from_runtime_lineage(
+    tmp_path: Path,
+) -> None:
+    """Runtime-backed Director task rows should preserve source provenance for E2E audits."""
+    from polaris.delivery.http.v2.director import _runtime_backed_task_rows
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    task_runtime = TaskRuntimeService(str(workspace))
+    task = task_runtime.create(
+        subject="Runtime backed task",
+        description="Runtime lineage should be visible through the HTTP task projection.",
+        metadata={
+            "pm_task_id": "PM-runtime-source",
+            "materialized_by": "runtime.task_runtime",
+        },
+    )
+
+    rows = _runtime_backed_task_rows(
+        [
+            {
+                "id": str(task.id),
+                "subject": "Runtime backed task",
+                "status": "RUNNING",
+                "metadata": {"pm_task_id": "PM-runtime-source"},
+            }
+        ],
+        workspace=str(workspace),
+    )
+
+    assert rows[0]["metadata"]["pm_task_id"] == "PM-runtime-source"
+    assert rows[0]["metadata"]["projection_source"] == "runtime.task_runtime"
 
 
 @pytest.mark.asyncio

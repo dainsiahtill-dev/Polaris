@@ -5,6 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.context_gateway.gateway import (
+    ContextGatewayConfig,
+    RoleContextGateway,
     render_blueprint_overview,
     render_verdict_history,
 )
@@ -58,3 +60,49 @@ def test_verdict_not_ok_returns_none() -> None:
 def test_verdict_pass_minimal() -> None:
     out = render_verdict_history(_verdict(ok=True, verdict="PASS", score=1.0))
     assert out == "最新判定: PASS (score=1.00)"
+
+
+def _profile(role_id: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        role_id=role_id,
+        context_domain="generic",
+        provider_id=None,
+        model=None,
+        context_policy=SimpleNamespace(
+            include_project_structure=False,
+            include_task_history=False,
+            include_blueprint_overview=True,
+            include_verdict_history=True,
+            max_context_tokens=4096,
+            compression_strategy="none",
+            max_history_turns=4,
+        ),
+    )
+
+
+def test_gateway_reads_blueprint_overview_from_configured_provider() -> None:
+    gateway = RoleContextGateway(
+        _profile("chief_engineer"),
+        workspace=".",
+        config=ContextGatewayConfig(
+            blueprint_overview_provider=lambda task_id, workspace: _result(
+                summary=f"{workspace}:{task_id}:v2 layered architecture"
+            )
+        ),
+    )
+
+    assert gateway._get_blueprint_overview("T9") == ".:T9:v2 layered architecture"
+
+
+def test_gateway_reads_verdict_history_from_configured_provider() -> None:
+    gateway = RoleContextGateway(
+        _profile("qa"),
+        workspace=".",
+        config=ContextGatewayConfig(
+            verdict_history_provider=lambda task_id, workspace: _verdict(
+                verdict="FAIL", score=0.5, findings=(f"{workspace}:{task_id}:gate",)
+            )
+        ),
+    )
+
+    assert gateway._get_verdict_history("T9") == "最新判定: FAIL (score=0.50)\n问题:\n- .:T9:gate"

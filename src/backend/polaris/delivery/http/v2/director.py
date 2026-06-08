@@ -186,12 +186,21 @@ def _director_run_task_ids_from_diagnostics(
 
 
 def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
+    projection_source = _projection_source_for_task_rows(projection)
     rows = getattr(projection, "task_rows", None)
     if isinstance(rows, list) and rows:
-        return [item for item in rows if isinstance(item, dict)]
+        return [
+            _with_task_projection_source(item, fallback_source=projection_source)
+            for item in rows
+            if isinstance(item, dict)
+        ]
     selected = select_task_rows_from_projection(projection)
     if selected:
-        return selected
+        return [
+            _with_task_projection_source(item, fallback_source=projection_source)
+            for item in selected
+            if isinstance(item, dict)
+        ]
     snapshot = getattr(projection, "snapshot", None)
     snapshot_tasks = snapshot.get("tasks") if isinstance(snapshot, dict) else None
     if not isinstance(snapshot_tasks, list):
@@ -211,16 +220,19 @@ def _projection_task_rows(projection: Any) -> list[dict[str, Any]]:
         if status_token in {"TODO", "TO_DO"}:
             status_token = "PENDING"
         fallback_rows.append(
-            {
-                "id": task_id,
-                "subject": str(item.get("subject") or item.get("title") or task_id).strip(),
-                "description": str(item.get("description") or item.get("goal") or "").strip(),
-                "status": status_token,
-                "priority": str(item.get("priority") or "MEDIUM").strip() or "MEDIUM",
-                "claimed_by": item.get("claimed_by"),
-                "result": item.get("result") if isinstance(item.get("result"), dict) else None,
-                "metadata": metadata,
-            }
+            _with_task_projection_source(
+                {
+                    "id": task_id,
+                    "subject": str(item.get("subject") or item.get("title") or task_id).strip(),
+                    "description": str(item.get("description") or item.get("goal") or "").strip(),
+                    "status": status_token,
+                    "priority": str(item.get("priority") or "MEDIUM").strip() or "MEDIUM",
+                    "claimed_by": item.get("claimed_by"),
+                    "result": item.get("result") if isinstance(item.get("result"), dict) else None,
+                    "metadata": metadata,
+                },
+                fallback_source=projection_source,
+            )
         )
     return fallback_rows
 
@@ -237,6 +249,7 @@ def _task_market_row_to_director_task_row(item: dict[str, Any]) -> dict[str, Any
     metadata.setdefault("task_market_stage", str(item.get("stage") or "").strip())
     metadata.setdefault("task_market_status", str(item.get("status") or "").strip())
     metadata.setdefault("task_market_source", "runtime.task_market")
+    metadata.setdefault("projection_source", "runtime.task_market")
     for key in (
         "route",
         "task_market_route",
@@ -393,7 +406,7 @@ def _contract_backed_task_rows(
             )
             normalized_metadata.setdefault("pm_task_id", contract_id)
             normalized["metadata"] = normalized_metadata
-            merged_rows.append(normalized)
+            merged_rows.append(_with_task_projection_source(normalized, fallback_source="pm_task_contract"))
             continue
 
         matched_runtime_ids.add(id(runtime_row))
@@ -411,11 +424,11 @@ def _contract_backed_task_rows(
         for key in ("dependencies", "depends_on", "blocked_by", "blockedBy"):
             if not merged.get(key) and contract.get(key):
                 merged[key] = contract.get(key)
-        merged_rows.append(merged)
+        merged_rows.append(_with_task_projection_source(merged, fallback_source="pm_task_contract"))
 
     for row in task_rows:
         if id(row) not in matched_runtime_ids:
-            merged_rows.append(row)
+            merged_rows.append(_with_task_projection_source(row, fallback_source="runtime_projection"))
     return merged_rows
 
 
@@ -496,11 +509,11 @@ def _runtime_backed_task_rows(
         for key in ("dependencies", "depends_on", "blocked_by", "blockedBy"):
             if not merged.get(key) and row.get(key):
                 merged[key] = row.get(key)
-        merged_rows.append(merged)
+        merged_rows.append(_with_task_projection_source(merged, fallback_source="runtime.task_runtime"))
 
     for runtime_row in runtime_rows:
         if id(runtime_row) not in matched_runtime_ids:
-            merged_rows.append(runtime_row)
+            merged_rows.append(_with_task_projection_source(runtime_row, fallback_source="runtime.task_runtime"))
 
     if runtime_rows:
         merged_rows = [row for row in merged_rows if not _is_workflow_shell_task(row)]
@@ -611,6 +624,46 @@ def _first_text(*values: Any) -> str | None:
     return None
 
 
+def _projection_source_for_task_rows(projection: Any) -> str:
+    """Return the best available provenance label for task projection rows."""
+
+    workflow_archive = getattr(projection, "workflow_archive", None)
+    if isinstance(workflow_archive, dict) and workflow_archive:
+        return "workflow_archive"
+
+    director_merged = getattr(projection, "director_merged", None)
+    if isinstance(director_merged, dict) and director_merged:
+        return "director_merged"
+
+    director_local = getattr(projection, "director_local", None)
+    if isinstance(director_local, dict) and director_local:
+        return "director_local"
+
+    return "runtime_projection"
+
+
+def _with_task_projection_source(row: dict[str, Any], *, fallback_source: str) -> dict[str, Any]:
+    normalized = dict(row)
+    metadata = dict(_as_dict(normalized.get("metadata")))
+    projection_source = _first_text(
+        metadata.get("projection_source"),
+        normalized.get("projection_source"),
+        metadata.get("materialized_by"),
+        normalized.get("materialized_by"),
+        metadata.get("task_market_source"),
+        normalized.get("task_market_source"),
+        metadata.get("director_task_source"),
+        normalized.get("director_task_source"),
+        metadata.get("source"),
+        normalized.get("source"),
+        fallback_source,
+    )
+    if projection_source and not _text_or_none(metadata.get("projection_source")):
+        metadata["projection_source"] = projection_source
+    normalized["metadata"] = metadata
+    return normalized
+
+
 def _string_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -687,23 +740,26 @@ def _normalize_task_status_token(value: Any) -> str:
 
 def _task_row_from_object(task: Any) -> dict[str, Any]:
     if isinstance(task, dict):
-        return task
+        return _with_task_projection_source(task, fallback_source="director_local")
 
     result = getattr(task, "result", None)
     result_payload = result.to_dict() if result and hasattr(result, "to_dict") else result
     metadata = getattr(task, "metadata", None)
     status_value = getattr(getattr(task, "status", None), "name", None) or getattr(task, "status", None)
     priority_value = getattr(getattr(task, "priority", None), "name", None) or getattr(task, "priority", None)
-    return {
-        "id": str(getattr(task, "id", "")),
-        "subject": getattr(task, "subject", ""),
-        "description": getattr(task, "description", ""),
-        "status": status_value,
-        "priority": priority_value,
-        "claimed_by": getattr(task, "claimed_by", None),
-        "result": result_payload if isinstance(result_payload, dict) else None,
-        "metadata": metadata if isinstance(metadata, dict) else {},
-    }
+    return _with_task_projection_source(
+        {
+            "id": str(getattr(task, "id", "")),
+            "subject": getattr(task, "subject", ""),
+            "description": getattr(task, "description", ""),
+            "status": status_value,
+            "priority": priority_value,
+            "claimed_by": getattr(task, "claimed_by", None),
+            "result": result_payload if isinstance(result_payload, dict) else None,
+            "metadata": metadata if isinstance(metadata, dict) else {},
+        },
+        fallback_source="director_local",
+    )
 
 
 def _task_rows_from_local_tasks(tasks: list[Any]) -> list[dict[str, Any]]:

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -50,6 +51,26 @@ def _read_json(path: str) -> Any:
 def _read_json_dict(path: str) -> dict[str, Any]:
     payload = _read_json(path)
     return payload if isinstance(payload, dict) else {}
+
+
+def _history_mtime_sort_key(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, int | float):
+        return float(value)
+
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        pass
+
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _first_existing_file(paths: list[str]) -> str:
@@ -522,7 +543,7 @@ def history_runs(
 
     # Combine and sort by mtime descending
     all_runs = runs + archived_runs
-    all_runs.sort(key=lambda x: x.get("mtime", ""), reverse=True)
+    all_runs.sort(key=lambda x: _history_mtime_sort_key(x.get("mtime", "")), reverse=True)
 
     return {"runs": all_runs[:limit]}
 
@@ -671,7 +692,7 @@ def v2_history_runs(
 
     # Combine and sort by mtime descending
     all_runs = runs + archived_runs
-    all_runs.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+    all_runs.sort(key=lambda x: _history_mtime_sort_key(x.get("mtime", 0)), reverse=True)
 
     return {"runs": all_runs[offset : offset + limit], "total": len(all_runs)}
 

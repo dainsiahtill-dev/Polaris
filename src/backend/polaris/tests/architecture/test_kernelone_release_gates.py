@@ -664,3 +664,53 @@ def execute() -> object:
     )
 
     assert violations == ()
+
+
+def test_kernelone_release_gate_blocks_roles_kernel_manifest_reverse_dependencies() -> None:
+    gate = _load_kernelone_release_gate_module()
+    payload = {
+        "id": "roles.kernel",
+        "depends_on": [
+            "chief_engineer.blueprint",
+            "director.execution",
+            "qa.audit_verdict",
+            "roles.profile",
+            "roles.runtime",
+        ],
+    }
+
+    violations = gate._find_roles_kernel_manifest_dependency_violations(
+        payload,
+        "polaris/cells/roles/kernel/cell.yaml",
+    )
+
+    assert violations == (
+        "polaris/cells/roles/kernel/cell.yaml: depends_on must not include "
+        "chief_engineer.blueprint; roles.kernel must receive business role assets through caller-supplied ports",
+        "polaris/cells/roles/kernel/cell.yaml: depends_on must not include "
+        "qa.audit_verdict; roles.kernel must receive business role assets through caller-supplied ports",
+        "polaris/cells/roles/kernel/cell.yaml: depends_on must not include "
+        "roles.runtime; roles.runtime composes roles.kernel, not the reverse",
+    )
+
+
+def test_kernelone_release_gate_allows_roles_kernel_manifest_kernel_dependencies() -> None:
+    gate = _load_kernelone_release_gate_module()
+    payload = {
+        "id": "roles.kernel",
+        "depends_on": [
+            "director.execution",
+            "roles.profile",
+            "roles.session",
+            "runtime.task_runtime",
+            "factory.cognitive_runtime",
+            "storage.layout",
+        ],
+    }
+
+    violations = gate._find_roles_kernel_manifest_dependency_violations(
+        payload,
+        "polaris/cells/roles/kernel/cell.yaml",
+    )
+
+    assert violations == ()

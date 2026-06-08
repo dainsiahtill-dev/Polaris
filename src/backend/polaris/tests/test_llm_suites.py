@@ -833,7 +833,7 @@ class TestRunQualificationSuite:
                 raise RuntimeError("Network error")
 
         fake = FakeProvider()
-        fake.invoke = MagicMock(side_effect=invoke_side_effect)
+        object.__setattr__(fake, "invoke", MagicMock(side_effect=invoke_side_effect))
 
         with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake
@@ -873,6 +873,82 @@ class TestRunInterviewSuite:
 
         assert result["ok"] is False
         assert "not found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_empty_output_is_retried_with_structured_evidence(self) -> None:
+        """Transient empty provider output should be retried instead of silently scored."""
+        outputs = [
+            "",
+            (
+                "<thinking>I will be systematic.</thinking>"
+                "<answer>I prioritize scope, communicate risks, and protect quality.</answer>"
+            ),
+            (
+                "<thinking>I reproduce and isolate.</thinking>"
+                "<answer>I reproduce the issue, isolate the failing layer, and add tests.</answer>"
+            ),
+        ]
+
+        def invoke_side_effect(prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            return InvokeResult(
+                ok=True,
+                output=outputs.pop(0),
+                latency_ms=100,
+                usage=Usage(0, 0, 0),
+            )
+
+        fake = FakeProvider()
+        fake.invoke = MagicMock(side_effect=invoke_side_effect)
+
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
+            mock_pm.return_value.get_provider_instance.return_value = fake
+
+            result = await run_interview_suite(
+                provider_cfg={
+                    "type": "test",
+                    "empty_output_retry_delay_ms": 0,
+                },
+                model="test-model",
+            )
+
+        assert len(fake.invoke.mock_calls) == 3
+        first_case = result["details"]["cases"][0]
+        assert first_case["output"]
+        assert first_case["attempts"] == 2
+        assert first_case["transient_errors"][0]["reason"] == "empty_model_output"
+
+    @pytest.mark.asyncio
+    async def test_persistent_empty_output_fails_with_error_code(self) -> None:
+        """Persistent empty provider output should fail closed with retry evidence."""
+        fake = FakeProvider(
+            invoke_result=FakeInvokeResult(
+                ok=True,
+                output="",
+                latency_ms=100,
+            )
+        )
+
+        with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
+            mock_pm.return_value.get_provider_instance.return_value = fake
+
+            result = await run_interview_suite(
+                provider_cfg={
+                    "type": "test",
+                    "empty_output_max_attempts": 2,
+                    "empty_output_retry_delay_ms": 0,
+                },
+                model="test-model",
+            )
+
+        assert result["ok"] is False
+        assert len(fake.invoke_calls) == 4
+        first_case = result["details"]["cases"][0]
+        assert first_case["error_code"] == "EMPTY_MODEL_OUTPUT"
+        assert first_case["attempts"] == 2
+        assert [item["reason"] for item in first_case["transient_errors"]] == [
+            "empty_model_output",
+            "empty_model_output",
+        ]
 
     @pytest.mark.asyncio
     async def test_semantic_scoring_enabled(self) -> None:
