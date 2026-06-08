@@ -147,6 +147,28 @@ def test_scan_detects_npm_no_test_specified_even_when_exit_code_is_zero(tmp_path
     assert "npm default failing test script" in errors[0]
 
 
+def test_scan_detects_npm_no_tests_specified_plural(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"No tests specified\\" && exit 0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert errors
+    assert "npm default failing test script" in errors[0]
+
+
 def test_scan_detects_return_object_property_semicolon(tmp_path: Path) -> None:
     target = tmp_path / "src" / "models" / "task.ts"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -219,6 +241,48 @@ def test_scan_detects_unresolved_runtime_typescript_imports(tmp_path: Path) -> N
 
     assert any("undeclared runtime import 'express'" in error for error in errors)
     assert any("unresolved relative import '../context'" in error for error in errors)
+
+
+def test_scan_allows_node_async_hooks_builtin_import(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        '{"name":"tenant-workspace","scripts":{"test":"node scripts/test.mjs"},"dependencies":{"express":"^4.18.2"}}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "middleware" / "tenant.middleware.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "import { Request, Response, NextFunction } from 'express';\n"
+        "import { AsyncLocalStorage } from 'async_hooks';\n"
+        "export const tenantContext = new AsyncLocalStorage<Map<string, string>>();\n"
+        "export function tenantMiddleware(req: Request, res: Response, next: NextFunction): void { next(); }\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["src/middleware/tenant.middleware.ts"],
+    )
+
+    assert errors == []
+
+
+def test_scan_resolves_dotted_typescript_relative_import_stems(tmp_path: Path) -> None:
+    dag_service = tmp_path / "src" / "services" / "dag.service.ts"
+    dag_service.parent.mkdir(parents=True, exist_ok=True)
+    dag_service.write_text("export class DagService {}\n", encoding="utf-8")
+    task_service = tmp_path / "src" / "services" / "task.service.ts"
+    task_service.write_text(
+        "import { DagService } from './dag.service';\nexport const taskService = new DagService();\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["src/services/task.service.ts"],
+    )
+
+    assert errors == []
 
 
 def test_scan_detects_patch_residue_marker(tmp_path: Path) -> None:

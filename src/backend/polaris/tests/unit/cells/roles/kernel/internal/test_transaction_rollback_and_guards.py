@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     _file_exists_in_workspace,
+    filter_out_of_scope_write_invocations,
     rollback_state_after_retry_batch_failure,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
@@ -57,6 +58,53 @@ class TestFileExistsInWorkspace:
         link_path.symlink_to(tmp_path.parent)
         # Accessing through symlink should be blocked because realpath resolves outside workspace
         assert _file_exists_in_workspace(str(link_path / "secret.txt"), workspace=str(tmp_path)) is False
+
+
+# ---------------------------------------------------------------------------
+# mutation target drift filtering
+# ---------------------------------------------------------------------------
+
+
+class TestMutationTargetDriftFiltering:
+    def test_drops_extra_out_of_scope_write_when_valid_target_write_exists(self) -> None:
+        invocations: list[dict[str, Any]] = [
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "package.json", "content": "{}"},
+            },
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "README.md", "content": "# App"},
+            },
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "pyproject.toml", "content": "[project]"},
+            },
+        ]
+
+        filtered, dropped = filter_out_of_scope_write_invocations(
+            "Implement Project Scaffolding target_files: package.json, README.md",
+            invocations,
+        )
+
+        assert dropped == ("pyproject.toml",)
+        assert [item["arguments"]["file"] for item in filtered] == ["package.json", "README.md"]
+
+    def test_keeps_all_out_of_scope_writes_for_strict_guard_failure(self) -> None:
+        invocations: list[dict[str, Any]] = [
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "pyproject.toml", "content": "[project]"},
+            }
+        ]
+
+        filtered, dropped = filter_out_of_scope_write_invocations(
+            "Implement Project Scaffolding target_files: package.json, README.md",
+            invocations,
+        )
+
+        assert dropped == ()
+        assert filtered == invocations
 
 
 # ---------------------------------------------------------------------------
@@ -185,3 +233,187 @@ class TestRetryOrchestratorBatchCountRollback:
             )
 
         assert isinstance(exc_info.value.__cause__, ConnectionError)
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_followup_uses_deterministic_write_when_model_repeats_no_write(
+        self,
+        orchestrator: RetryOrchestrator,
+    ) -> None:
+        """Weak local models may keep emitting execute_command after bootstrap; use write_file fallback."""
+        orchestrator.config.max_retry_attempts = 1
+        ledger = TurnLedger(turn_id="t-006")
+        state_machine = TurnStateMachine(turn_id="t-006")
+        state_machine.state = TurnState.TOOL_BATCH_EXECUTING
+        tool_definitions = [
+            {"type": "function", "function": {"name": "repo_tree"}},
+            {"type": "function", "function": {"name": "execute_command"}},
+            {"type": "function", "function": {"name": "write_file"}},
+        ]
+        bootstrap_decision: dict[str, Any] = {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "repo_tree",
+                        "arguments": {"path": "."},
+                    }
+                ]
+            },
+            "metadata": {"workspace": "."},
+        }
+        no_write_decision: dict[str, Any] = {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "execute_command",
+                        "arguments": {"cmd": "npm test"},
+                    }
+                ]
+            },
+            "metadata": {},
+        }
+        decoded_decisions = [bootstrap_decision, no_write_decision, no_write_decision, no_write_decision]
+        orchestrator.decoder.decode = MagicMock(side_effect=decoded_decisions)  # type: ignore[method-assign]
+        mock_response = MagicMock()
+        mock_response.native_tool_calls = []
+        orchestrator.call_llm_for_decision = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
+        orchestrator.execute_read_bootstrap_batch = AsyncMock(
+            return_value={
+                "results": [
+                    {
+                        "tool_name": "read_file",
+                        "status": "error",
+                        "arguments": {"file": "package.json"},
+                        "result": {"file": "package.json", "error": "File not found: package.json"},
+                    }
+                ]
+            }
+        )  # type: ignore[method-assign]
+        write_calls: list[dict[str, Any]] = []
+
+        async def _execute_tool_batch(decision: Any, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            tool_batch = decision.get("tool_batch")
+            invocations = list(tool_batch.get("invocations", []) if isinstance(tool_batch, dict) else [])
+            if not invocations and hasattr(tool_batch, "invocations"):
+                invocations = list(tool_batch.invocations)
+            tool_names = [str(item.get("tool_name") or item.tool_name) for item in invocations]
+            if "write_file" not in tool_names:
+                raise RuntimeError(
+                    "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch"
+                )
+            invocation = invocations[0]
+            raw_arguments = invocation.get("arguments") if isinstance(invocation, dict) else invocation.arguments
+            arguments = dict(raw_arguments) if isinstance(raw_arguments, dict) else {}
+            write_calls.append(dict(arguments))
+            return {"ok": True, "tool_results": [{"tool": "write_file", "success": True, "result": arguments}]}
+
+        orchestrator.execute_tool_batch = _execute_tool_batch  # type: ignore[method-assign]
+
+        result = await orchestrator.retry_tool_batch_after_contract_violation(
+            turn_id="t-006",
+            context=[{"role": "user", "content": "Create project scaffold target_files: package.json"}],
+            tool_definitions=tool_definitions,
+            state_machine=state_machine,
+            ledger=ledger,
+            stream=False,
+        )
+
+        assert result["ok"] is True
+        assert write_calls
+        assert write_calls[0]["file"] == "package.json"
+        assert "no test specified" not in write_calls[0]["content"]
+        assert "package manifest check passed" in write_calls[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_followup_uses_deterministic_write_when_model_returns_no_tool_batch(
+        self,
+        orchestrator: RetryOrchestrator,
+    ) -> None:
+        """A blank/summary follow-up from a weak model must still materialize a scoped write."""
+        orchestrator.config.max_retry_attempts = 1
+        ledger = TurnLedger(turn_id="t-007")
+        state_machine = TurnStateMachine(turn_id="t-007")
+        state_machine.state = TurnState.TOOL_BATCH_EXECUTING
+        tool_definitions = [
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "write_file"}},
+        ]
+        bootstrap_decision: dict[str, Any] = {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "read_file",
+                        "arguments": {"file": "src/services/dag.service.ts"},
+                    }
+                ]
+            },
+            "metadata": {"workspace": "."},
+        }
+        no_tool_batch_decision: dict[str, Any] = {
+            "kind": TurnDecisionKind.FINAL_ANSWER,
+            "visible_message": "",
+            "metadata": {},
+        }
+        orchestrator.decoder.decode = MagicMock(  # type: ignore[method-assign]
+            side_effect=[bootstrap_decision, no_tool_batch_decision]
+        )
+        mock_response = MagicMock()
+        mock_response.native_tool_calls = []
+        orchestrator.call_llm_for_decision = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
+        orchestrator.execute_read_bootstrap_batch = AsyncMock(
+            return_value={
+                "results": [
+                    {
+                        "tool_name": "read_file",
+                        "status": "success",
+                        "arguments": {"file": "src/services/dag.service.ts"},
+                        "result": {
+                            "file": "src/services/dag.service.ts",
+                            "content": "import { Injectable } from '@nestjs/common';\nexport class DagService {}\n",
+                        },
+                    }
+                ]
+            }
+        )  # type: ignore[method-assign]
+        write_calls: list[dict[str, Any]] = []
+
+        async def _execute_tool_batch(decision: Any, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            tool_batch = decision.get("tool_batch")
+            invocations = list(tool_batch.get("invocations", []) if isinstance(tool_batch, dict) else [])
+            if not invocations and hasattr(tool_batch, "invocations"):
+                invocations = list(tool_batch.invocations)
+            tool_names = [str(item.get("tool_name") or item.tool_name) for item in invocations]
+            if "write_file" not in tool_names:
+                raise RuntimeError(
+                    "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch"
+                )
+            invocation = invocations[0]
+            raw_arguments = invocation.get("arguments") if isinstance(invocation, dict) else invocation.arguments
+            arguments = dict(raw_arguments) if isinstance(raw_arguments, dict) else {}
+            write_calls.append(dict(arguments))
+            return {"ok": True, "tool_results": [{"tool": "write_file", "success": True, "result": arguments}]}
+
+        orchestrator.execute_tool_batch = _execute_tool_batch  # type: ignore[method-assign]
+
+        result = await orchestrator.retry_tool_batch_after_contract_violation(
+            turn_id="t-007",
+            context=[
+                {
+                    "role": "user",
+                    "content": "Implement DAG Dependency Validation Engine target_files: src/services/dag.service.ts",
+                }
+            ],
+            tool_definitions=tool_definitions,
+            state_machine=state_machine,
+            ledger=ledger,
+            stream=False,
+        )
+
+        assert result["ok"] is True
+        assert write_calls
+        assert write_calls[0]["file"] == "src/services/dag.service.ts"
+        assert "@nestjs/common" not in write_calls[0]["content"]
+        assert "DagValidationError" in write_calls[0]["content"]
+        assert "Circular task dependency detected" in write_calls[0]["content"]

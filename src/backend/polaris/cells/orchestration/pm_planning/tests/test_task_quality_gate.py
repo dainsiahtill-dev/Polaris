@@ -850,6 +850,53 @@ class TestAutofixPmContractForQuality:
         assert not any("workspace-bound scope paths" in item for item in report["critical_issues"])
         assert not any("concrete relative scope paths" in item for item in report["critical_issues"])
 
+    def test_adds_final_cleanup_task_for_deterministic_scaffold_residue(self, tmp_path: Any) -> None:
+        seed_file = tmp_path / "src" / "server" / "app.ts"
+        seed_file.parent.mkdir(parents=True)
+        seed_file.write_text(
+            'export const marker = "audit-seed";\nexport const title = "planning scenario";\n',
+            encoding="utf-8",
+        )
+        script_file = tmp_path / "scripts" / "test.mjs"
+        script_file.parent.mkdir(parents=True)
+        script_file.write_text(
+            "console.log('test verification completed: 1 files');\n",
+            encoding="utf-8",
+        )
+        payload: dict[str, Any] = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Implement runtime service",
+                    "goal": "Replace generated runtime service with production behavior.",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "target_files": ["src/server/app.ts"],
+                    "scope_paths": ["src/server"],
+                    "acceptance_criteria": ["Run `npm run test -- --watch=false` exits 0"],
+                    "execution_checklist": ["Implement runtime service"],
+                    "assigned_to": "director",
+                }
+            ]
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        cleanup_tasks = [
+            task
+            for task in payload["tasks"]
+            if isinstance(task, dict)
+            and task.get("metadata", {}).get("autofix_reason") == "deterministic_scaffold_residue_cleanup"
+        ]
+        assert stats["seed_residue_cleanup_tasks_added"] == 1
+        assert len(cleanup_tasks) == 1
+        cleanup = cleanup_tasks[0]
+        assert cleanup["target_files"] == ["scripts/test.mjs", "src/server/app.ts"]
+        assert cleanup["depends_on"] == ["T01"]
+        acceptance = "\n".join(cleanup["acceptance_criteria"])
+        assert "audit-seed" in acceptance
+        assert "deterministic scaffold markers" in acceptance
+
     def test_unknown_dependencies_are_critical(self) -> None:
         payload = {
             "tasks": [

@@ -20,6 +20,7 @@ import pytest
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _apply_deterministic_patch_residue_cleanup,
+    _apply_deterministic_scaffold_marker_cleanup,
     _apply_deterministic_typescript_reexport_repair,
     _build_existing_workspace_task_evidence,
     _build_substantive_node_test_script,
@@ -37,6 +38,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
 )
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
+from polaris.kernelone.quality import scan_workspace_artifact_quality
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -178,6 +180,13 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert metadata["run_id"] == "run-1"
         assert metadata["task_id"] == "TASK-1"
         assert metadata["source"] == "caller"
+        assert metadata["cognitive_runtime_approval_mode"] == "auto_accept"
+        assert metadata["cognitive_runtime_approval"] == {
+            "mode": "auto_accept",
+            "source": "roles.adapters.director",
+            "scope": "director_execution_preflight",
+            "approved_by": "director_adapter",
+        }
 
     @pytest.mark.asyncio
     async def test_role_runtime_session_promotes_metadata_tool_receipts(
@@ -1076,6 +1085,579 @@ export function summary() {
         assert "src/models/tenant.model.ts" in result["changed_files"]
 
     @pytest.mark.asyncio
+    async def test_execute_declares_mongoose_runtime_dependency_for_audit_log_model(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "tenant-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {}
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Tenant Context & Audit Log Middleware",
+            description="Implement immutable audit log model with tenant context.",
+            metadata={
+                "target_files": ["src/models/auditlog.ts"],
+                "scope_paths": ["src/models/auditlog.ts", "package.json"],
+                "steps": ["Create audit log model"],
+                "acceptance": ["No undeclared runtime imports remain"],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _mongoose_audit_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_labels.append(str(kwargs.get("stage_label") or ""))
+            target = tmp_path / "src" / "models" / "auditlog.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "import { Schema, model, Document } from 'mongoose';\n\n"
+                "export interface IAuditLog extends Document {\n"
+                "  actor_id: string;\n"
+                "  tenant_id: string;\n"
+                "  action: 'CREATE' | 'UPDATE' | 'DELETE';\n"
+                "  target_entity: string;\n"
+                "  delta: Record<string, unknown>;\n"
+                "  timestamp: Date;\n"
+                "}\n\n"
+                "const AuditLogSchema = new Schema<IAuditLog>({\n"
+                "  actor_id: { type: String, required: true },\n"
+                "  tenant_id: { type: String, required: true },\n"
+                "  action: { type: String, enum: ['CREATE', 'UPDATE', 'DELETE'], required: true },\n"
+                "  target_entity: { type: String, required: true },\n"
+                "  delta: { type: Object, required: true },\n"
+                "  timestamp: { type: Date, default: Date.now },\n"
+                "});\n\n"
+                "export const AuditLog = model<IAuditLog>('AuditLog', AuditLogSchema);\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote audit log model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/auditlog.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _mongoose_audit_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-mongoose-runtime-dependency-repair"},
+        )
+
+        package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["src/models/auditlog.ts", "package.json"],
+        )
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+
+        assert result["success"] is True
+        assert stage_labels == ["first_call"]
+        assert quality_errors == []
+        assert '"mongoose":' in package_text
+        assert "deterministic_runtime_dependency_repair" in source_tools
+        assert "package.json" in result["changed_files"]
+        assert "src/models/auditlog.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_declares_uuid_and_winston_runtime_dependencies_for_audit_log(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "workflow-audit-service",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {}
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Immutable Audit Logging Implementation",
+            description="Create a TypeScript audit log service with stable event IDs and structured logging.",
+            metadata={
+                "target_files": ["src/services/auditlog.ts"],
+                "scope_paths": ["src/services/auditlog.ts", "package.json"],
+                "steps": ["Create the audit log service"],
+                "acceptance": ["No undeclared runtime imports remain"],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _audit_log_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_labels.append(str(kwargs.get("stage_label") or ""))
+            target = tmp_path / "src" / "services" / "auditlog.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "import { v4 as uuidv4 } from 'uuid';\n"
+                "import winston from 'winston';\n\n"
+                "export interface AuditEvent {\n"
+                "  id: string;\n"
+                "  action: string;\n"
+                "  targetId: string;\n"
+                "  createdAt: string;\n"
+                "}\n\n"
+                "const logger = winston.createLogger({\n"
+                "  transports: [new winston.transports.Console()],\n"
+                "});\n\n"
+                "export function recordAuditEvent(action: string, targetId: string): AuditEvent {\n"
+                "  const event = { id: uuidv4(), action, targetId, createdAt: new Date().toISOString() };\n"
+                "  logger.info('audit.event', event);\n"
+                "  return event;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote audit log service.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/services/auditlog.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _audit_log_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-audit-log-runtime-dependency-repair"},
+        )
+
+        package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["src/services/auditlog.ts", "package.json"],
+        )
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+
+        assert result["success"] is True
+        assert stage_labels == ["first_call"]
+        assert quality_errors == []
+        assert '"uuid":' in package_text
+        assert '"winston":' in package_text
+        assert "deterministic_runtime_dependency_repair" in source_tools
+        assert "package.json" in result["changed_files"]
+        assert "src/services/auditlog.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_normalizes_declared_task_model_before_qa_typecheck(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "tenant-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "typeorm": "^0.3.20"
+  }
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Define task model",
+            description="Create a strict TypeScript task model used by task services and DAG validation.",
+            metadata={
+                "target_files": ["src/models/task.model.ts"],
+                "scope_paths": ["src/models"],
+                "steps": ["Create the task model"],
+                "acceptance": ["The model compiles under strict TypeScript and exposes dependency IDs"],
+            },
+        )
+
+        async def _bad_task_model_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target = tmp_path / "src" / "models" / "task.model.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } "
+                "from 'typeorm';\n\n"
+                "export enum TaskStatus {\n"
+                "  PENDING = 'pending',\n"
+                "  IN_PROGRESS = 'in_progress',\n"
+                "  COMPLETED = 'completed',\n"
+                "  CANCELLED = 'cancelled',\n"
+                "}\n\n"
+                "@Entity('tasks')\n"
+                "export class Task {\n"
+                "  @PrimaryGeneratedColumn('uuid')\n"
+                "  id: string;\n\n"
+                "  @Column()\n"
+                "  title: string;\n\n"
+                "  @Column({ type: 'text', nullable: true })\n"
+                "  description: string;\n\n"
+                "  @Column({ type: 'enum', enum: TaskStatus, default: TaskStatus.PENDING })\n"
+                "  status: TaskStatus;\n\n"
+                "  @Column({ default: 0 })\n"
+                "  priority: number;\n\n"
+                "  @Column({ nullable: true })\n"
+                "  tenantId: string;\n\n"
+                "  @CreateDateColumn()\n"
+                "  createdAt: Date;\n\n"
+                "  @UpdateDateColumn()\n"
+                "  updatedAt: Date;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote task model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/task.model.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _bad_task_model_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-task-model-contract-repair"},
+        )
+
+        task_model_text = (tmp_path / "src" / "models" / "task.model.ts").read_text(encoding="utf-8")
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+        assert result["success"] is True
+        assert "from 'typeorm'" not in task_model_text
+        assert 'id: string = "";' in task_model_text
+        assert "dependencies: string[] = [];" in task_model_text
+        assert "predecessorIds: string[] = [];" in task_model_text
+        assert "deterministic_task_model_contract_repair" in source_tools
+        assert "src/models/task.model.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_normalizes_declared_tenant_model_self_import_before_qa_typecheck(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Define tenant model",
+            description="Create a strict TypeScript tenant model for multi-tenant task isolation.",
+            metadata={
+                "target_files": ["src/models/tenant.model.ts"],
+                "scope_paths": ["src/models"],
+                "steps": ["Create the tenant model"],
+                "acceptance": ["The tenant model compiles under strict TypeScript"],
+            },
+        )
+
+        async def _bad_tenant_model_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target = tmp_path / "src" / "models" / "tenant.model.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "import { Tenant } from './tenant.model';\n\n"
+                "export class Tenant {\n"
+                '    id: string = "";\n'
+                '    name: string = "";\n'
+                '    description: string = "";\n'
+                "    isActive: boolean = false;\n"
+                "    tasks: unknown[] = [];\n"
+                "    auditLogs: unknown[] = [];\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote tenant model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/tenant.model.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _bad_tenant_model_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-tenant-model-contract-repair"},
+        )
+
+        tenant_model_text = (tmp_path / "src" / "models" / "tenant.model.ts").read_text(encoding="utf-8")
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+        assert result["success"] is True
+        assert "from './tenant.model'" not in tenant_model_text
+        assert "export class Tenant" in tenant_model_text
+        assert "taskIds: string[] = [];" in tenant_model_text
+        assert "auditLogIds: string[] = [];" in tenant_model_text
+        assert "deterministic_tenant_model_contract_repair" in source_tools
+        assert "src/models/tenant.model.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_framework_coupled_dag_service_after_llm_quality_repair(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "tenant-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {}
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="DAG Validation Engine",
+            description="Implement cycle detection and orphan predecessor validation for task dependency chains.",
+            metadata={
+                "target_files": ["src/services/dag.service.ts", "src/services/task.service.ts"],
+                "scope_paths": ["src/services"],
+                "steps": ["Implement the DAG service", "Implement task creation validation"],
+                "acceptance": [
+                    "Create a task with a circular dependency returns 400 error",
+                    "Identify and report missing predecessor IDs as errors",
+                    "Unit tests cover simple chain, branching, cycle detection, and orphan nodes",
+                ],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _gemma_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_label = str(kwargs.get("stage_label") or "")
+            stage_labels.append(stage_label)
+            dag_target = tmp_path / "src" / "services" / "dag.service.ts"
+            task_target = tmp_path / "src" / "services" / "task.service.ts"
+            dag_target.parent.mkdir(parents=True, exist_ok=True)
+            if stage_label == "first_call":
+                dag_target.write_text(
+                    "export const dagService = 'structural build passed';\n",
+                    encoding="utf-8",
+                )
+                task_target.write_text(
+                    "export class TaskService {\n  createTask(): string {\n    return 'pending';\n  }\n}\n",
+                    encoding="utf-8",
+                )
+            else:
+                dag_target.write_text(
+                    "import { Injectable, BadRequestException } from '@nestjs/common';\n\n"
+                    "@Injectable()\n"
+                    "export class DagService {\n"
+                    "  validateDag(): void {\n"
+                    "    throw new BadRequestException('Circular dependency detected');\n"
+                    "  }\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+                task_target.write_text(
+                    "import { Injectable } from '@nestjs/common';\n"
+                    "import { DagService } from './dag.service';\n"
+                    "import { CreateTaskDto } from '../dto/create-task.dto';\n\n"
+                    "@Injectable()\n"
+                    "export class TaskService {\n"
+                    "  constructor(private readonly dagService: DagService) {}\n"
+                    "  createTask(dto: CreateTaskDto): void {\n"
+                    "    this.dagService.validateDag();\n"
+                    "  }\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+            return {
+                "content": "Wrote service files.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/services/dag.service.ts"},
+                    },
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/services/task.service.ts"},
+                    },
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _gemma_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-framework-free-dag-repair"},
+        )
+
+        dag_text = (tmp_path / "src" / "services" / "dag.service.ts").read_text(encoding="utf-8")
+        task_text = (tmp_path / "src" / "services" / "task.service.ts").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["src/services/dag.service.ts", "src/services/task.service.ts"],
+        )
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+        assert result["success"] is True
+        assert stage_labels == ["first_call", "quality_repair"]
+        assert quality_errors == []
+        assert "@nestjs/common" not in dag_text
+        assert "@nestjs/common" not in task_text
+        assert "CreateTaskDto" not in task_text
+        assert "DagValidationError" in dag_text
+        assert "statusCode = 400" in dag_text
+        assert "predecessorIds" in task_text
+        assert "deterministic_framework_free_service_repair" in source_tools
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_framework_coupled_dag_service_with_only_dag_target(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="DAG Dependency Validation Engine",
+            description="Implement cycle detection and missing reference checks for task dependencies.",
+            metadata={
+                "target_files": ["src/services/dag.service.ts"],
+                "scope_paths": ["src/services"],
+                "steps": ["Implement the DAG service"],
+                "acceptance": [
+                    "Cycle detection returns 400 with descriptive error for circular refs",
+                    "Missing reference check identifies undefined task IDs in a graph",
+                    "Validation runs before any task persistence or execution",
+                ],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _gemma_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_label = str(kwargs.get("stage_label") or "")
+            stage_labels.append(stage_label)
+            dag_target = tmp_path / "src" / "services" / "dag.service.ts"
+            dag_target.parent.mkdir(parents=True, exist_ok=True)
+            dag_target.write_text(
+                "import { Injectable, BadRequestException } from '@nestjs/common';\n\n"
+                "@Injectable()\n"
+                "export class DagService {\n"
+                "  validateDag(): void {\n"
+                "    throw new BadRequestException('Circular dependency detected');\n"
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote dag service.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/services/dag.service.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _gemma_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-framework-free-dag-only-repair"},
+        )
+
+        dag_text = (tmp_path / "src" / "services" / "dag.service.ts").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["src/services/dag.service.ts"],
+        )
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+
+        assert result["success"] is True
+        assert stage_labels == ["first_call"]
+        assert quality_errors == []
+        assert "@nestjs/common" not in dag_text
+        assert "DagValidationError" in dag_text
+        assert "statusCode = 400" in dag_text
+        assert "deterministic_framework_free_service_repair" in source_tools
+
+    @pytest.mark.asyncio
     async def test_execute_repairs_missing_declared_target_from_nearby_existing_module(
         self,
         tmp_path: Any,
@@ -1183,7 +1765,8 @@ export function summary() {
         repaired_text = (tmp_path / "src" / "models" / "task.model.ts").read_text(encoding="utf-8")
         assert result["success"] is True
         assert "audit-seed" not in repaired_text
-        assert "export class TaskModel" in repaired_text
+        assert "export class Task" in repaired_text
+        assert "dependencies: string[] = [];" in repaired_text
         assert "src/models/task.model.ts" in result["changed_files"]
 
     @pytest.mark.asyncio
@@ -1244,6 +1827,297 @@ export function summary() {
         assert "tenantId: string" in permission_text
         assert "src/models/user.ts" in result["changed_files"]
         assert "src/models/permission.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_off_target_package_write_and_missing_declared_target(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Build server skeleton",
+            description="Create the explicit server entrypoint and preserve a runnable test contract.",
+            metadata={
+                "target_files": ["src/server/index.ts"],
+                "scope_paths": ["src/middleware", "src/models", "src/server/index.ts"],
+                "steps": ["Create src/server/index.ts"],
+                "acceptance": ["verify src/server/index.ts exists", "npm test must not be a placeholder"],
+            },
+        )
+
+        async def _package_only_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            package_path = tmp_path / "package.json"
+            package_path.write_text(
+                "{\n"
+                '  "name": "project-skeleton",\n'
+                '  "version": "1.0.0",\n'
+                '  "scripts": {\n'
+                '    "test": "echo \\"Error: no test specified\\" && exit 0"\n'
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote package metadata.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "package.json"},
+                    }
+                ],
+            }
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _package_only_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-package-only-missing-target-repair"},
+        )
+
+        package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        server_text = (tmp_path / "src" / "server" / "index.ts").read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert "Error: no test specified" not in package_text
+        assert "package manifest check passed" in package_text
+        assert "export" in server_text
+        assert "src/server/index.ts" in result["changed_files"]
+        assert "package.json" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_root_scaffold_targets_from_package_only_write(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Project Scaffolding & Dependency Setup",
+            description="Initialize package scripts, Python metadata, TypeScript config, and README overview.",
+            metadata={
+                "target_files": ["package.json", "pyproject.toml", "tsconfig.json", "readme.md"],
+                "scope_paths": ["package.json", "pyproject.toml", "tsconfig.json", "readme.md"],
+                "steps": ["Create root project scaffold files"],
+                "acceptance": [
+                    "package.json exists with basic scripts dev, build, test",
+                    "pyproject.toml is valid for the intended language environment",
+                    "tsconfig.json is configured for TypeScript",
+                    "README.md contains project overview",
+                ],
+            },
+        )
+
+        async def _package_only_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            (tmp_path / "package.json").write_text(
+                "{\n"
+                '  "name": "polaris-project",\n'
+                '  "version": "1.0.0",\n'
+                '  "scripts": {\n'
+                '    "dev": "tsc --watch",\n'
+                '    "build": "tsc",\n'
+                '    "test": "echo \\"No tests specified\\" && exit 0"\n'
+                "  },\n"
+                '  "devDependencies": {\n'
+                '    "typescript": "^5.0.0"\n'
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote package metadata.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "package.json"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _package_only_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-root-scaffold-target-repair"},
+        )
+
+        package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        pyproject_text = (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+        tsconfig_text = (tmp_path / "tsconfig.json").read_text(encoding="utf-8")
+        readme_text = (tmp_path / "readme.md").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["package.json", "pyproject.toml", "tsconfig.json", "readme.md"],
+        )
+        assert result["success"] is True
+        assert quality_errors == []
+        assert "No tests specified" not in package_text
+        assert '"test": "node -e' in package_text
+        assert "[project]" in pyproject_text
+        assert "polaris-generated-workspace" in pyproject_text
+        assert '"moduleResolution": "NodeNext"' in tsconfig_text
+        assert "TypeScript project scaffold" in readme_text
+        assert "package.json" in result["changed_files"]
+        assert "pyproject.toml" in result["changed_files"]
+        assert "tsconfig.json" in result["changed_files"]
+        assert "readme.md" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_synthesizes_root_scaffold_targets_when_model_returns_no_write_tools(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Project Scaffolding & Dependency Setup",
+            description="Initialize package scripts, Python metadata, TypeScript config, and README overview.",
+            metadata={
+                "target_files": ["package.json", "pyproject.toml", "tsconfig.json", "readme.md"],
+                "scope_paths": ["package.json", "pyproject.toml", "tsconfig.json", "readme.md"],
+                "steps": ["Create root project scaffold files"],
+                "acceptance": [
+                    "package.json exists with basic scripts dev, build, test",
+                    "pyproject.toml is valid for the intended language environment",
+                    "tsconfig.json is configured for TypeScript",
+                    "README.md contains project overview",
+                ],
+            },
+        )
+
+        async def _empty_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {
+                "content": '<|tool_call>call:repo_tree{path:<|"|>.<|"|>}<tool_call|>',
+                "success": False,
+                "error": "single_batch_contract_violation",
+                "tool_results": [],
+            }
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _empty_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-no-write-root-scaffold-repair"},
+        )
+
+        source_tools: list[str] = []
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+        assert result["success"] is True
+        assert (tmp_path / "package.json").is_file()
+        assert (tmp_path / "pyproject.toml").is_file()
+        assert (tmp_path / "tsconfig.json").is_file()
+        assert (tmp_path / "readme.md").is_file()
+        assert "package.json" in result["changed_files"]
+        assert "pyproject.toml" in result["changed_files"]
+        assert "tsconfig.json" in result["changed_files"]
+        assert "readme.md" in result["changed_files"]
+        assert "deterministic_missing_declared_target_repair" in source_tools
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_missing_root_targets_after_contract_exception_side_effect(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Initialize Project Scaffolding",
+            description="Create core dependency and configuration files for the workspace.",
+            metadata={
+                "target_files": ["package.json", "tsconfig.json", "readme.md"],
+                "scope_paths": ["package.json", "tsconfig.json", "readme.md"],
+                "steps": ["Create root project scaffold files"],
+                "acceptance": [
+                    "package.json exists with runnable scripts",
+                    "tsconfig.json configures TypeScript compilation",
+                    "README.md documents the generated workspace",
+                ],
+            },
+        )
+
+        async def _contract_exception_after_write(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            (tmp_path / "package.json").write_text(
+                "{\n"
+                '  "name": "polaris-engine",\n'
+                '  "version": "1.0.0",\n'
+                '  "private": true,\n'
+                '  "scripts": {\n'
+                '    "build": "tsc",\n'
+                '    "test": "node -e \\"JSON.parse(require('
+                "'fs').readFileSync('package.json', 'utf8')); console.log('package ok')\\"
+                "\n"
+                "  },\n"
+                '  "devDependencies": {\n'
+                '    "typescript": "^5.0.0"\n'
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            raise RuntimeError(
+                "TransactionKernel execution failed: single_batch_contract_violation: "
+                "mutation requested but no write tool invocation in decision batch."
+            )
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _contract_exception_after_write  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-contract-exception-side-effect"},
+        )
+
+        source_tools: list[str] = []
+        for item in result.get("tool_results", []):
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+        assert result["success"] is True
+        assert (tmp_path / "package.json").is_file()
+        assert (tmp_path / "tsconfig.json").is_file()
+        assert (tmp_path / "readme.md").is_file()
+        assert "package.json" in result["changed_files"]
+        assert "tsconfig.json" in result["changed_files"]
+        assert "readme.md" in result["changed_files"]
+        assert "deterministic_missing_declared_target_repair" in source_tools
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert (
+            adapter_result.get("primary_llm", {})
+            .get("error", "")
+            .startswith("TransactionKernel execution failed: single_batch_contract_violation")
+        )
 
     @pytest.mark.asyncio
     async def test_execute_fails_when_changed_file_has_no_domain_signal(self, tmp_path: Any) -> None:
@@ -1789,6 +2663,85 @@ export function summary() {
 
         assert results == []
         assert target.read_text(encoding="utf-8") == original
+
+    def test_deterministic_scaffold_marker_cleanup_rewrites_declared_residue_files(self, tmp_path: Any) -> None:
+        source = tmp_path / "src" / "server" / "app.ts"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            'export const tags = ["runtime", "audit-seed"];\nexport const title = "server planning scenario 0";\n',
+            encoding="utf-8",
+        )
+        script = tmp_path / "scripts" / "test.mjs"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(
+            "throw new Error(`trivial arithmetic placeholder test scripts/test.mjs`);\n"
+            "console.log(`test verification completed: 1 files`);\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+
+        results = _apply_deterministic_scaffold_marker_cleanup(
+            adapter,
+            task={
+                "metadata": {
+                    "target_files": ["src/server/app.ts", "scripts/test.mjs"],
+                    "scope_paths": ["src/server/app.ts", "scripts/test.mjs"],
+                    "autofix_reason": "deterministic_scaffold_residue_cleanup",
+                }
+            },
+            task_id="PM-AUTO-SEED-RESIDUE-CLEANUP",
+        )
+
+        assert len(results) == 2
+        assert {item["result"]["source_tool"] for item in results} == {"deterministic_scaffold_marker_cleanup"}
+        source_text = source.read_text(encoding="utf-8")
+        script_text = script.read_text(encoding="utf-8")
+        assert "audit-seed" not in source_text
+        assert "planning scenario" not in source_text
+        assert "test verification completed" not in script_text
+        assert "placeholder" not in script_text
+        assert "verified-sample" in source_text
+        assert "test contract checks passed" in script_text
+
+    @pytest.mark.asyncio
+    async def test_execute_completes_scaffold_marker_cleanup_without_llm_call(self, tmp_path: Any) -> None:
+        source = tmp_path / "src" / "server" / "app.ts"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            'export const tags = ["runtime", "audit-seed"];\nexport const title = "server planning scenario 0";\n',
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Clean deterministic scaffold residue",
+            description="Remove deterministic scaffold residue before QA.",
+            metadata={
+                "target_files": ["src/server/app.ts"],
+                "scope_paths": ["src/server/app.ts"],
+                "steps": ["Clean deterministic scaffold residue"],
+                "acceptance": ["Declared files contain no audit-seed or deterministic scaffold markers"],
+                "autofix_reason": "deterministic_scaffold_residue_cleanup",
+            },
+        )
+
+        async def _unexpected_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("cleanup task should complete without invoking Gemma")
+
+        adapter._invoke_role_dialogue_with_timeout = _unexpected_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-scaffold-marker-cleanup"},
+        )
+
+        assert result["success"] is True
+        assert result["tools_executed"] >= 1
+        assert "src/server/app.ts" in result["changed_files"]
+        source_text = source.read_text(encoding="utf-8")
+        assert "audit-seed" not in source_text
+        assert "planning scenario" not in source_text
 
     @pytest.mark.asyncio
     async def test_ready_queue_fallback_claim_preserves_selected_task_identity(self, tmp_path: Any) -> None:

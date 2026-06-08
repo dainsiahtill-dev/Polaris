@@ -160,6 +160,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     GetRoleRuntimeStatusQueryV1,
     InstantiateRoleRuntimeObjectCommandV1,
     IRoleRuntime,
+    RoleCapabilityDescriptor,
     RoleCapabilityInvocationResultV1,
     RoleExecutionResultV1,
     RoleIdentity,
@@ -244,14 +245,14 @@ def _capability_invocation_failure(
     *,
     error_code: str,
     error_message: str,
-    allowed: bool = False,
+    capability_available: bool = False,
     owner_cell: str = "",
     evidence_refs: tuple[str, ...] = (),
     metadata: Mapping[str, Any] | None = None,
 ) -> RoleCapabilityInvocationResultV1:
     invocation = command.invocation
     failure_metadata: Mapping[str, Any] = metadata or {}
-    if allowed:
+    if capability_available:
         failure_metadata = _capability_available_metadata(invocation.capability_id, failure_metadata)
     return RoleCapabilityInvocationResultV1(
         ok=False,
@@ -495,6 +496,7 @@ def instantiate_role_runtime_object(
             ledger_binding=RoleLedgerBinding(turn_ledger_ref=command.turn_ledger_ref),
             policy_fingerprint=command.policy_fingerprint,
             capability_id=command.capability_id,
+            task_market_binding=command.task_market_binding,
             metadata={
                 **dict(command.metadata),
                 "profile_ref": profile_ref,
@@ -534,6 +536,16 @@ _TASK_MARKET_LIFECYCLE_CONTRACT_ATTRS: dict[str, str] = {
 }
 
 
+def _task_market_lifecycle_capability(
+    runtime_object: RoleRuntimeObject,
+    command_contract: str,
+) -> RoleCapabilityDescriptor | None:
+    for capability in runtime_object.capability_ports.capabilities:
+        if capability.owner_cell == "runtime.task_market" and capability.contract_name == command_contract:
+            return capability
+    return None
+
+
 def _task_market_lifecycle_result_ref(task_id: str) -> str:
     return f"runtime.task_market:task:{task_id}" if task_id else ""
 
@@ -549,7 +561,10 @@ def _task_market_lifecycle_failure(
     command_contract: str = "",
     error_code: str,
     error_message: str,
+    metadata: Mapping[str, Any] | None = None,
 ) -> RoleTaskMarketLifecycleResultV1:
+    failure_metadata = {"owner_cell": "runtime.task_market"}
+    failure_metadata.update(dict(metadata or {}))
     return RoleTaskMarketLifecycleResultV1(
         ok=False,
         role_id=command.runtime_object.identity.role_id,
@@ -557,7 +572,7 @@ def _task_market_lifecycle_failure(
         command_contract=command_contract or "unknown",
         error_code=error_code,
         error_message=error_message,
-        metadata={"owner_cell": "runtime.task_market"},
+        metadata=failure_metadata,
     )
 
 
@@ -606,6 +621,96 @@ def execute_role_task_market_lifecycle(
 
     binding = command.runtime_object.task_market_binding
     command_contract = str(getattr(binding, contract_attr))
+    runtime_object = command.runtime_object
+    lifecycle_capability = _task_market_lifecycle_capability(runtime_object, command_contract)
+    if lifecycle_capability is None:
+        return _task_market_lifecycle_failure(
+            command,
+            operation=operation,
+            command_contract=command_contract,
+            error_code="task_market_capability_not_mounted",
+            error_message="task-market lifecycle operation requires a mounted runtime.task_market capability port",
+            metadata={"command_contract": command_contract},
+        )
+    role_id = runtime_object.identity.role_id
+    if role_id not in lifecycle_capability.allowed_roles:
+        return _task_market_lifecycle_failure(
+            command,
+            operation=operation,
+            command_contract=command_contract,
+            error_code="task_market_capability_role_denied",
+            error_message="task-market lifecycle capability is not allowed for this role",
+            metadata={
+                "capability_id": lifecycle_capability.capability_id,
+                "allowed_roles": lifecycle_capability.allowed_roles,
+                "role_id": role_id,
+            },
+        )
+    capability_fingerprint = runtime_object.capability_fingerprint
+    expected_tool = lifecycle_capability.endpoint_ref or ""
+    if (
+        capability_fingerprint.role_id != role_id
+        or capability_fingerprint.capability_id != lifecycle_capability.capability_id
+        or capability_fingerprint.effect != lifecycle_capability.effect
+        or (expected_tool and capability_fingerprint.tool != expected_tool)
+    ):
+        return _task_market_lifecycle_failure(
+            command,
+            operation=operation,
+            command_contract=command_contract,
+            error_code="task_market_capability_fingerprint_mismatch",
+            error_message="task-market lifecycle capability must match the current RoleCapabilityFingerprint",
+            metadata={
+                "expected_capability_id": lifecycle_capability.capability_id,
+                "actual_capability_id": capability_fingerprint.capability_id,
+                "expected_effect": lifecycle_capability.effect,
+                "actual_effect": capability_fingerprint.effect,
+                "expected_tool": expected_tool,
+                "actual_tool": capability_fingerprint.tool,
+            },
+        )
+    if operation in {"lease", "ack", "fail", "requeue"}:
+        task_id = _payload_string(command.payload, "task_id")
+        task_ref = _task_market_lifecycle_result_ref(task_id)
+        if not task_ref or task_ref not in runtime_object.turn_context.task_refs:
+            return _task_market_lifecycle_failure(
+                command,
+                operation=operation,
+                command_contract=command_contract,
+                error_code="task_market_task_ref_outside_turn_context",
+                error_message="task-market lifecycle task_id must match the current RoleTurnContext task refs",
+                metadata={
+                    "task_ref": task_ref,
+                    "turn_task_refs": runtime_object.turn_context.task_refs,
+                },
+            )
+    if operation in {"lease", "ack", "fail"}:
+        lease_token_ref = _task_market_lifecycle_lease_ref(_payload_string(command.payload, "lease_token"))
+        binding_lease_token_ref = runtime_object.task_market_binding.lease_token_ref or ""
+        if not binding_lease_token_ref:
+            return _task_market_lifecycle_failure(
+                command,
+                operation=operation,
+                command_contract=command_contract,
+                error_code="task_market_lease_ref_missing_from_binding",
+                error_message="task-market lifecycle lease operations require the current RoleTaskMarketBinding lease ref",
+                metadata={
+                    "lease_token_ref": lease_token_ref,
+                    "binding_lease_token_ref": binding_lease_token_ref,
+                },
+            )
+        if lease_token_ref != binding_lease_token_ref:
+            return _task_market_lifecycle_failure(
+                command,
+                operation=operation,
+                command_contract=command_contract,
+                error_code="task_market_lease_ref_outside_binding",
+                error_message="task-market lifecycle lease_token must match the current RoleTaskMarketBinding lease ref",
+                metadata={
+                    "lease_token_ref": lease_token_ref,
+                    "binding_lease_token_ref": binding_lease_token_ref,
+                },
+            )
     try:
         from polaris.cells.runtime.task_market.public.contracts import (
             AcknowledgeTaskStageCommandV1,
@@ -981,6 +1086,42 @@ def _role_runtime_chain_ref(chain_id: str) -> str:
     return f"roles.runtime:chain:{chain_id}"
 
 
+_FULL_PHASE5_REQUIRED_ROLES = ("pm", "chief_engineer", "director", "qa")
+_FULL_PHASE5_REQUIRED_HANDOFF_ROLES = ("chief_engineer", "director")
+_FULL_PHASE5_REQUIRED_RECEIPT_ROLES = ("chief_engineer", "director", "qa")
+
+
+def _ref_has_namespace(ref: str, namespace: str) -> bool:
+    return str(ref or "").strip().split(":", 1)[0] == namespace
+
+
+def _first_ref_outside_namespace(refs: tuple[str, ...], namespace: str) -> str:
+    for ref in refs:
+        if not _ref_has_namespace(ref, namespace):
+            return ref
+    return ""
+
+
+def _chain_invalid_ref_failure(
+    *,
+    chain_ref: str,
+    error_code: str,
+    error_message: str,
+    required_owner_cell: str,
+    invalid_ref: str,
+) -> RoleRuntimeChainAssemblyResultV1:
+    return RoleRuntimeChainAssemblyResultV1(
+        ok=False,
+        chain_ref=chain_ref,
+        error_code=error_code,
+        error_message=error_message,
+        metadata={
+            "required_owner_cell": required_owner_cell,
+            "invalid_ref": invalid_ref,
+        },
+    )
+
+
 def assemble_role_runtime_chain(
     command: AssembleRoleRuntimeChainCommandV1,
 ) -> RoleRuntimeChainAssemblyResultV1:
@@ -990,6 +1131,15 @@ def assemble_role_runtime_chain(
         raise TypeError("command must be an AssembleRoleRuntimeChainCommandV1")
 
     chain_ref = _role_runtime_chain_ref(command.chain_id)
+    if not _ref_has_namespace(command.turn_ledger_ref, "roles.kernel"):
+        return _chain_invalid_ref_failure(
+            chain_ref=chain_ref,
+            error_code="invalid_turn_ledger_ref",
+            error_message="turn_ledger_ref must point to roles.kernel",
+            required_owner_cell="roles.kernel",
+            invalid_ref=command.turn_ledger_ref,
+        )
+
     present_roles = {step.role_id for step in command.steps}
     missing_roles = tuple(role for role in command.required_roles if role not in present_roles)
     if missing_roles:
@@ -1001,6 +1151,61 @@ def assemble_role_runtime_chain(
             error_message="role runtime chain is missing required role step(s): " + ", ".join(missing_roles),
         )
 
+    is_full_phase5_chain = all(role in present_roles for role in _FULL_PHASE5_REQUIRED_ROLES)
+    if is_full_phase5_chain and command.required_roles != _FULL_PHASE5_REQUIRED_ROLES:
+        return RoleRuntimeChainAssemblyResultV1(
+            ok=False,
+            chain_ref=chain_ref,
+            error_code="required_roles_cannot_downgrade_full_phase5_chain",
+            error_message="full Phase 5 role runtime chain cannot downgrade required_roles",
+            metadata={
+                "expected_required_roles": _FULL_PHASE5_REQUIRED_ROLES,
+                "actual_required_roles": command.required_roles,
+            },
+        )
+
+    required_role_positions = {role: index for index, role in enumerate(command.required_roles)}
+    actual_required_order = tuple(step.role_id for step in command.steps if step.role_id in required_role_positions)
+    last_required_position = -1
+    for role_id in actual_required_order:
+        required_position = required_role_positions[role_id]
+        if required_position < last_required_position:
+            return RoleRuntimeChainAssemblyResultV1(
+                ok=False,
+                chain_ref=chain_ref,
+                error_code="chain_required_roles_out_of_order",
+                error_message="role runtime chain required roles must follow declared required_roles order",
+                metadata={
+                    "expected_order": command.required_roles,
+                    "actual_order": actual_required_order,
+                },
+            )
+        last_required_position = required_position
+
+    if is_full_phase5_chain and not command.runtime_projection_refs:
+        return RoleRuntimeChainAssemblyResultV1(
+            ok=False,
+            chain_ref=chain_ref,
+            error_code="missing_runtime_projection_ref",
+            error_message="full Phase 5 role runtime chain requires at least one runtime.projection ref",
+            metadata={
+                "required_roles": command.required_roles,
+                "required_owner_cell": "runtime.projection",
+            },
+        )
+    invalid_runtime_projection_ref = _first_ref_outside_namespace(
+        command.runtime_projection_refs,
+        "runtime.projection",
+    )
+    if invalid_runtime_projection_ref:
+        return _chain_invalid_ref_failure(
+            chain_ref=chain_ref,
+            error_code="invalid_runtime_projection_ref",
+            error_message="runtime_projection_refs must point to runtime.projection",
+            required_owner_cell="runtime.projection",
+            invalid_ref=invalid_runtime_projection_ref,
+        )
+
     task_market_refs = _merge_refs(
         tuple(step.task_ref or "" for step in command.steps),
         tuple(step.work_item_ref or "" for step in command.steps),
@@ -1009,9 +1214,85 @@ def assemble_role_runtime_chain(
         command.audit_evidence_refs,
         *(step.evidence_refs for step in command.steps),
     )
+    if is_full_phase5_chain and not audit_evidence_refs:
+        return RoleRuntimeChainAssemblyResultV1(
+            ok=False,
+            chain_ref=chain_ref,
+            error_code="missing_audit_evidence_ref",
+            error_message="full Phase 5 role runtime chain requires at least one audit.evidence ref",
+            metadata={
+                "required_roles": command.required_roles,
+                "required_owner_cell": "audit.evidence",
+            },
+        )
+    invalid_audit_evidence_ref = _first_ref_outside_namespace(audit_evidence_refs, "audit.evidence")
+    if invalid_audit_evidence_ref:
+        return _chain_invalid_ref_failure(
+            chain_ref=chain_ref,
+            error_code="invalid_audit_evidence_ref",
+            error_message="audit_evidence_refs must point to audit.evidence",
+            required_owner_cell="audit.evidence",
+            invalid_ref=invalid_audit_evidence_ref,
+        )
     capability_fingerprint_refs = _merge_refs(tuple(step.capability_fingerprint_ref for step in command.steps))
     handoff_refs = _merge_refs(*(step.handoff_refs for step in command.steps))
     runtime_receipt_refs = _merge_refs(*(step.receipt_refs for step in command.steps))
+    if is_full_phase5_chain and not handoff_refs:
+        return RoleRuntimeChainAssemblyResultV1(
+            ok=False,
+            chain_ref=chain_ref,
+            error_code="missing_handoff_ref",
+            error_message="full Phase 5 role runtime chain requires at least one handoff ref",
+            metadata={
+                "required_roles": command.required_roles,
+                "required_owner_cell": "factory.cognitive_runtime",
+                "missing_ref": "handoff",
+            },
+        )
+    if is_full_phase5_chain:
+        for role_id in _FULL_PHASE5_REQUIRED_HANDOFF_ROLES:
+            step = next(step for step in command.steps if step.role_id == role_id)
+            if not step.handoff_refs:
+                return RoleRuntimeChainAssemblyResultV1(
+                    ok=False,
+                    chain_ref=chain_ref,
+                    error_code="missing_phase5_role_handoff_ref",
+                    error_message="full Phase 5 role runtime chain requires typed handoff refs for each role transition",
+                    metadata={
+                        "required_roles": command.required_roles,
+                        "required_owner_cell": "factory.cognitive_runtime",
+                        "missing_role": role_id,
+                        "required_handoff_roles": _FULL_PHASE5_REQUIRED_HANDOFF_ROLES,
+                    },
+                )
+    if is_full_phase5_chain and not runtime_receipt_refs:
+        return RoleRuntimeChainAssemblyResultV1(
+            ok=False,
+            chain_ref=chain_ref,
+            error_code="missing_runtime_receipt_ref",
+            error_message="full Phase 5 role runtime chain requires at least one runtime receipt ref",
+            metadata={
+                "required_roles": command.required_roles,
+                "required_owner_cell": "factory.cognitive_runtime",
+                "missing_ref": "runtime_receipt",
+            },
+        )
+    if is_full_phase5_chain:
+        for role_id in _FULL_PHASE5_REQUIRED_RECEIPT_ROLES:
+            step = next(step for step in command.steps if step.role_id == role_id)
+            if not step.receipt_refs:
+                return RoleRuntimeChainAssemblyResultV1(
+                    ok=False,
+                    chain_ref=chain_ref,
+                    error_code="missing_phase5_role_runtime_receipt_ref",
+                    error_message="full Phase 5 role runtime chain requires runtime receipt refs for each executed role",
+                    metadata={
+                        "required_roles": command.required_roles,
+                        "required_owner_cell": "factory.cognitive_runtime",
+                        "missing_role": role_id,
+                        "required_receipt_roles": _FULL_PHASE5_REQUIRED_RECEIPT_ROLES,
+                    },
+                )
     chain = RoleRuntimeChainEnvelope(
         chain_id=command.chain_id,
         workspace=command.workspace,
@@ -1077,7 +1358,7 @@ def execute_role_capability_invocation(
             error_message=f"capability {invocation.capability_id!r} is not mounted on role {role_id!r}",
         )
 
-    if capability.allowed_roles and role_id not in capability.allowed_roles:
+    if role_id not in capability.allowed_roles:
         return _capability_invocation_failure(
             command,
             error_code="capability_role_denied",
@@ -1096,22 +1377,79 @@ def execute_role_capability_invocation(
             owner_cell=capability.owner_cell,
         )
 
+    is_qa_pytest_verification = (
+        capability.capability_id == "invoke_container_pytest"
+        and capability.owner_cell == "factory.verification_guard"
+        and capability.contract_name == "VerifyCompletionCommandV1"
+    )
+    is_qa_visual_audit_verdict = (
+        capability.capability_id == "issue_visual_audit_verdict"
+        and capability.owner_cell == "qa.audit_verdict"
+        and capability.contract_name == "RunVisualQaAuditCommandV1"
+    )
+
+    if is_qa_pytest_verification and role_id != "qa":
+        return _capability_invocation_failure(
+            command,
+            capability_available=False,
+            owner_cell=capability.owner_cell,
+            error_code="qa_capability_role_denied",
+            error_message="invoke_container_pytest requires the qa role runtime object",
+            metadata=_capability_available_metadata(
+                capability.capability_id,
+                {
+                    "required_role": "qa",
+                    "actual_role": role_id,
+                    "required_effect": "process.spawn:qa/pytest",
+                },
+            ),
+        )
+
+    if is_qa_visual_audit_verdict and role_id != "qa":
+        return _capability_invocation_failure(
+            command,
+            capability_available=False,
+            owner_cell=capability.owner_cell,
+            error_code="qa_visual_capability_role_denied",
+            error_message="issue_visual_audit_verdict requires the qa role runtime object",
+            metadata=_capability_available_metadata(
+                capability.capability_id,
+                {
+                    "required_role": "qa",
+                    "actual_role": role_id,
+                    "required_effect": "llm.invoke:vision",
+                },
+            ),
+        )
+
+    capability_fingerprint = runtime_object.capability_fingerprint
+    expected_tool = capability.endpoint_ref or f"{capability.owner_cell}:{capability.contract_name}"
     if (
-        runtime_object.capability_fingerprint.capability_id != capability.capability_id
-        or invocation.fingerprint_ref != runtime_object.capability_fingerprint.fingerprint
+        capability_fingerprint.capability_id != capability.capability_id
+        or capability_fingerprint.effect != capability.effect
+        or capability_fingerprint.tool != expected_tool
+        or invocation.fingerprint_ref != capability_fingerprint.fingerprint
     ):
         return _capability_invocation_failure(
             command,
             error_code="capability_fingerprint_mismatch",
             error_message=f"capability fingerprint does not unlock {capability.capability_id!r}",
             owner_cell=capability.owner_cell,
+            metadata={
+                "expected_capability_id": capability.capability_id,
+                "actual_capability_id": capability_fingerprint.capability_id,
+                "expected_effect": capability.effect,
+                "actual_effect": capability_fingerprint.effect,
+                "expected_tool": expected_tool,
+                "actual_tool": capability_fingerprint.tool,
+            },
         )
 
     allowed_payload_refs = _turn_context_payload_refs(runtime_object)
     if invocation.payload_ref not in allowed_payload_refs:
         return _capability_invocation_failure(
             command,
-            allowed=False,
+            capability_available=False,
             owner_cell=capability.owner_cell,
             error_code="payload_ref_outside_turn_context",
             error_message="capability invocation payload_ref must match the current RoleTurnContext typed input or task refs",
@@ -1147,20 +1485,10 @@ def execute_role_capability_invocation(
         and capability.owner_cell == "code_intelligence.engine"
         and capability.contract_name == "VerifyAstDependencyQueryV1"
     )
-    is_qa_pytest_verification = (
-        capability.capability_id == "invoke_container_pytest"
-        and capability.owner_cell == "factory.verification_guard"
-        and capability.contract_name == "VerifyCompletionCommandV1"
-    )
     is_qa_audit_verdict = (
         capability.capability_id == "issue_audit_verdict"
         and capability.owner_cell == "qa.audit_verdict"
         and capability.contract_name == "RunQaAuditCommandV1"
-    )
-    is_qa_visual_audit_verdict = (
-        capability.capability_id == "issue_visual_audit_verdict"
-        and capability.owner_cell == "qa.audit_verdict"
-        and capability.contract_name == "RunVisualQaAuditCommandV1"
     )
     is_qa_traceback_parse = (
         capability.capability_id == "parse_traceback_frames"
@@ -1188,46 +1516,12 @@ def execute_role_capability_invocation(
         and capability.contract_name == "ExecuteDirectorTaskCommandV1"
     )
 
-    if is_qa_pytest_verification and role_id != "qa":
-        return _capability_invocation_failure(
-            command,
-            allowed=False,
-            owner_cell=capability.owner_cell,
-            error_code="qa_capability_role_denied",
-            error_message="invoke_container_pytest requires the qa role runtime object",
-            metadata=_capability_available_metadata(
-                capability.capability_id,
-                {
-                    "required_role": "qa",
-                    "actual_role": role_id,
-                    "required_effect": "process.spawn:qa/pytest",
-                },
-            ),
-        )
-
-    if is_qa_visual_audit_verdict and role_id != "qa":
-        return _capability_invocation_failure(
-            command,
-            allowed=False,
-            owner_cell=capability.owner_cell,
-            error_code="qa_visual_capability_role_denied",
-            error_message="issue_visual_audit_verdict requires the qa role runtime object",
-            metadata=_capability_available_metadata(
-                capability.capability_id,
-                {
-                    "required_role": "qa",
-                    "actual_role": role_id,
-                    "required_effect": "llm.invoke:vision",
-                },
-            ),
-        )
-
     if is_architect_budget_reservation:
         budget_metadata = _payload_mapping(command.payload, "metadata")
         if budget_metadata is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_budget_metadata",
                 error_message="payload.metadata must be a mapping when provided",
@@ -1255,7 +1549,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_budget_command",
                 error_message=str(exc),
@@ -1269,7 +1563,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="budget_guard_failed",
                 error_message=str(exc),
@@ -1323,7 +1617,7 @@ def execute_role_capability_invocation(
         if not target_path:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_workspace_guard_path",
                 error_message="payload.path must be a non-empty string",
@@ -1339,7 +1633,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_workspace_guard_query",
                 error_message=str(exc),
@@ -1353,7 +1647,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="workspace_guard_failed",
                 error_message=str(exc),
@@ -1404,7 +1698,7 @@ def execute_role_capability_invocation(
         if boundary_context is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_architect_boundary_context",
                 error_message="payload.context must be a mapping when provided",
@@ -1413,7 +1707,7 @@ def execute_role_capability_invocation(
         if boundary_constraints is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_architect_boundary_constraints",
                 error_message="payload.constraints must be a mapping when provided",
@@ -1422,7 +1716,7 @@ def execute_role_capability_invocation(
         if changed_paths is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_architect_boundary_changed_paths",
                 error_message="payload.changed_paths must be a sequence of strings when provided",
@@ -1430,7 +1724,7 @@ def execute_role_capability_invocation(
         if not changed_paths:
             return _capability_invocation_failure(
                 command,
-                allowed=False,
+                capability_available=False,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_architect_boundary_changed_paths",
                 error_message="payload.changed_paths must include at least one changed path",
@@ -1443,7 +1737,7 @@ def execute_role_capability_invocation(
         if not target_cell:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_architect_boundary_target_cell",
                 error_message="payload.target_cell must be a non-empty string",
@@ -1473,7 +1767,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_permission_command",
                 error_message=str(exc),
@@ -1487,7 +1781,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="permission_evaluation_failed",
                 error_message=str(exc),
@@ -1501,7 +1795,7 @@ def execute_role_capability_invocation(
         if not permission_result.allowed:
             return _capability_invocation_failure(
                 command,
-                allowed=False,
+                capability_available=False,
                 owner_cell=capability.owner_cell,
                 error_code="permission_denied",
                 error_message=permission_result.reason or "permission denied",
@@ -1517,7 +1811,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="workspace_guard_failed",
                 error_message=str(exc),
@@ -1532,7 +1826,7 @@ def execute_role_capability_invocation(
         if not guard_allowed:
             return _capability_invocation_failure(
                 command,
-                allowed=False,
+                capability_available=False,
                 owner_cell=capability.owner_cell,
                 error_code="workspace_guard_denied",
                 error_message=guard_reason or "workspace guard denied mutation",
@@ -1564,7 +1858,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_architect_design_command",
                 error_message=str(exc),
@@ -1585,7 +1879,7 @@ def execute_role_capability_invocation(
         except FutureTimeoutError:
             return _capability_invocation_failure(
                 command,
-                allowed=False,
+                capability_available=False,
                 owner_cell=capability.owner_cell,
                 error_code="architect_design_timeout",
                 error_message=f"architect design timed out after {timeout_seconds:g}s",
@@ -1594,7 +1888,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="architect_design_failed",
                 error_message=str(exc),
@@ -1656,7 +1950,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_task_market_status_query",
                 error_message=str(exc),
@@ -1668,7 +1962,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="task_market_status_query_failed",
                 error_message=str(exc),
@@ -1749,7 +2043,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_runtime_projection_query",
                 error_message=str(exc),
@@ -1758,7 +2052,7 @@ def execute_role_capability_invocation(
         if runtime_projection_service is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="runtime_projection_service_unavailable",
                 error_message="runtime.projection query service must be injected by the host boundary",
@@ -1768,7 +2062,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="runtime_projection_query_failed",
                 error_message=str(exc),
@@ -1795,7 +2089,7 @@ def execute_role_capability_invocation(
         if ast_metadata is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_ast_dependency_metadata",
                 error_message="payload.metadata must be a mapping when provided",
@@ -1826,7 +2120,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_ast_dependency_query",
                 error_message=str(exc),
@@ -1840,7 +2134,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="ast_dependency_verification_failed",
                 error_message=str(exc),
@@ -1897,7 +2191,7 @@ def execute_role_capability_invocation(
         if traceback_metadata is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_traceback_metadata",
                 error_message="payload.metadata must be a mapping when provided",
@@ -1906,7 +2200,7 @@ def execute_role_capability_invocation(
         if not traceback_text:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_traceback_text",
                 error_message="payload.traceback_text must be a non-empty string",
@@ -1933,7 +2227,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_traceback_parse_command",
                 error_message=str(exc),
@@ -1947,7 +2241,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="traceback_parse_failed",
                 error_message=str(exc),
@@ -2012,7 +2306,7 @@ def execute_role_capability_invocation(
         if audit_criteria is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_qa_audit_criteria",
                 error_message="payload.criteria must be a mapping when provided",
@@ -2021,7 +2315,7 @@ def execute_role_capability_invocation(
         if evidence_paths is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_qa_audit_evidence_paths",
                 error_message="payload.evidence_paths must be a sequence of strings when provided",
@@ -2048,7 +2342,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_qa_audit_command",
                 error_message=str(exc),
@@ -2062,7 +2356,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="qa_audit_failed",
                 error_message=str(exc),
@@ -2118,7 +2412,7 @@ def execute_role_capability_invocation(
         if image_refs is None or not image_refs:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_visual_audit_image_refs",
                 error_message="payload.image_refs must be a non-empty sequence of image evidence refs",
@@ -2127,7 +2421,7 @@ def execute_role_capability_invocation(
         if visual_criteria is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_visual_audit_criteria",
                 error_message="payload.criteria must be a mapping when provided",
@@ -2136,7 +2430,7 @@ def execute_role_capability_invocation(
         if evidence_paths is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_visual_audit_evidence_paths",
                 error_message="payload.evidence_paths must be a sequence of strings when provided",
@@ -2150,7 +2444,7 @@ def execute_role_capability_invocation(
         if normalized_requested_model_capability and normalized_requested_model_capability != required_model_capability:
             return _capability_invocation_failure(
                 command,
-                allowed=False,
+                capability_available=False,
                 owner_cell="llm.control_plane",
                 error_code="visual_model_capability_override_denied",
                 error_message=(
@@ -2172,7 +2466,7 @@ def execute_role_capability_invocation(
 
             model_query = CheckLlmModelCapabilityQueryV1(
                 workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
-                role=_payload_string(command.payload, "llm_role", "qa"),
+                role=role_id,
                 capability=required_model_capability,
                 model=_payload_string(command.payload, "model") or None,
                 metadata={
@@ -2180,12 +2474,13 @@ def execute_role_capability_invocation(
                     "role_payload_ref": invocation.payload_ref,
                     "role_fingerprint_ref": invocation.fingerprint_ref,
                     "role_capability_id": capability.capability_id,
+                    "payload_llm_role": _payload_string(command.payload, "llm_role"),
                 },
             )
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_visual_model_capability_query",
                 error_message=str(exc),
@@ -2199,7 +2494,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell="llm.control_plane",
                 error_code="visual_model_capability_check_failed",
                 error_message=str(exc),
@@ -2216,7 +2511,7 @@ def execute_role_capability_invocation(
         if not bool(getattr(model_capability, "ok", False)) or not bool(getattr(model_capability, "supported", False)):
             return _capability_invocation_failure(
                 command,
-                allowed=False,
+                capability_available=False,
                 owner_cell="llm.control_plane",
                 error_code="visual_model_capability_missing",
                 error_message=getattr(model_capability, "reason", "")
@@ -2250,7 +2545,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_visual_qa_audit_command",
                 error_message=str(exc),
@@ -2264,7 +2559,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="visual_qa_audit_failed",
                 error_message=str(exc),
@@ -2324,7 +2619,7 @@ def execute_role_capability_invocation(
         if verification_commands is None or not verification_commands:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_verification_commands",
                 error_message="payload.verification_commands must be a non-empty sequence of strings",
@@ -2333,7 +2628,7 @@ def execute_role_capability_invocation(
         if evidence_paths is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_verification_evidence_paths",
                 error_message="payload.evidence_paths must be a sequence of strings when provided",
@@ -2342,7 +2637,7 @@ def execute_role_capability_invocation(
         if allowed_commands is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_verification_allowed_commands",
                 error_message="payload.allowed_commands must be a sequence of strings when provided",
@@ -2351,7 +2646,7 @@ def execute_role_capability_invocation(
         if claim_metadata is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_verification_metadata",
                 error_message="payload.metadata must be a mapping when provided",
@@ -2390,7 +2685,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_verification_command",
                 error_message=str(exc),
@@ -2404,7 +2699,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="verification_guard_failed",
                 error_message=str(exc),
@@ -2461,7 +2756,7 @@ def execute_role_capability_invocation(
         if blueprint_context is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_blueprint_context",
                 error_message="payload.context must be a mapping when provided",
@@ -2470,7 +2765,7 @@ def execute_role_capability_invocation(
         if blueprint_constraints is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_blueprint_constraints",
                 error_message="payload.constraints must be a mapping when provided",
@@ -2506,7 +2801,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_blueprint_command",
                 error_message=str(exc),
@@ -2520,7 +2815,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="blueprint_generation_failed",
                 error_message=str(exc),
@@ -2582,7 +2877,7 @@ def execute_role_capability_invocation(
         if director_metadata is None:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_director_execution_metadata",
                 error_message="payload.metadata must be a mapping when provided",
@@ -2621,7 +2916,7 @@ def execute_role_capability_invocation(
         except (TypeError, ValueError) as exc:
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="invalid_director_execution_command",
                 error_message=str(exc),
@@ -2637,7 +2932,7 @@ def execute_role_capability_invocation(
         except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
             return _capability_invocation_failure(
                 command,
-                allowed=True,
+                capability_available=True,
                 owner_cell=capability.owner_cell,
                 error_code="director_execution_failed",
                 error_message=str(exc),
@@ -2700,7 +2995,7 @@ def execute_role_capability_invocation(
     if task_payload is None or not task_payload:
         return _capability_invocation_failure(
             command,
-            allowed=True,
+            capability_available=True,
             owner_cell=capability.owner_cell,
             error_code="invalid_task_market_payload",
             error_message="payload.payload must be a non-empty mapping",
@@ -2709,7 +3004,7 @@ def execute_role_capability_invocation(
     if task_metadata is None:
         return _capability_invocation_failure(
             command,
-            allowed=True,
+            capability_available=True,
             owner_cell=capability.owner_cell,
             error_code="invalid_task_market_metadata",
             error_message="payload.metadata must be a mapping when provided",
@@ -2765,7 +3060,7 @@ def execute_role_capability_invocation(
     except (TypeError, ValueError) as exc:
         return _capability_invocation_failure(
             command,
-            allowed=True,
+            capability_available=True,
             owner_cell=capability.owner_cell,
             error_code="invalid_task_market_command",
             error_message=str(exc),
@@ -2777,7 +3072,7 @@ def execute_role_capability_invocation(
     except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
         return _capability_invocation_failure(
             command,
-            allowed=True,
+            capability_available=True,
             owner_cell=capability.owner_cell,
             error_code="task_market_publish_failed",
             error_message=str(exc),

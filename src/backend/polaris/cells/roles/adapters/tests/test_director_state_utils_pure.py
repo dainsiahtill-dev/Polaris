@@ -113,6 +113,14 @@ class TestExtractDomainTokens:
         assert "extend" not in result
         assert "execute" not in result
 
+    def test_preserves_target_file_stem_stopwords(self) -> None:
+        task = {
+            "subject": "Implement task definition model",
+            "metadata": {"target_files": ["src/models/task.model.ts"]},
+        }
+        result = extract_domain_tokens(task)
+        assert result[:3] == ["models", "task", "model"]
+
     def test_limits_to_10(self) -> None:
         task = {"subject": "a1 b2 c3 d4 e5 f6 g7 h8 i9 j10 k11 l12"}
         result = extract_domain_tokens(task)

@@ -16,7 +16,7 @@ import pathlib
 
 import yaml
 
-BACKEND_ROOT = pathlib.Path(__file__).parent.parent
+BACKEND_ROOT = pathlib.Path(__file__).resolve().parents[2]
 CELLS_YAML = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
 RUNTIME_CELL_YAML = BACKEND_ROOT / "polaris" / "cells" / "roles" / "runtime" / "cell.yaml"
 SESSION_CELL_YAML = BACKEND_ROOT / "polaris" / "cells" / "roles" / "session" / "cell.yaml"
@@ -152,6 +152,24 @@ class TestCatalogConsistency:
         assert catalog_owners == cell_owners, (
             f"roles.runtime state_owners mismatch between catalog and cell.yaml: "
             f"catalog={sorted(catalog_owners)}, cell={sorted(cell_owners)}"
+        )
+
+    def test_catalog_and_cell_yaml_runtime_depends_on_agree(self):
+        catalog_depends_on: set = set((self.runtime_entry or {}).get("depends_on") or [])
+        cell_data = _load_yaml(RUNTIME_CELL_YAML)
+        cell_depends_on: set = set(cell_data.get("depends_on") or [])
+        assert catalog_depends_on == cell_depends_on, (
+            f"roles.runtime depends_on mismatch between catalog and cell.yaml: "
+            f"catalog={sorted(catalog_depends_on)}, cell={sorted(cell_depends_on)}"
+        )
+
+    def test_catalog_and_cell_yaml_runtime_effects_allowed_agree(self):
+        catalog_effects: set = set((self.runtime_entry or {}).get("effects_allowed") or [])
+        cell_data = _load_yaml(RUNTIME_CELL_YAML)
+        cell_effects: set = set(cell_data.get("effects_allowed") or [])
+        assert catalog_effects == cell_effects, (
+            f"roles.runtime effects_allowed mismatch between catalog and cell.yaml: "
+            f"catalog={sorted(catalog_effects)}, cell={sorted(cell_effects)}"
         )
 
     def test_catalog_and_cell_yaml_session_state_owners_agree(self):

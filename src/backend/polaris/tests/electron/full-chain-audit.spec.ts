@@ -1347,6 +1347,17 @@ async function captureAuditScreenshot(
   return { pngPath, reviewJpgPath };
 }
 
+async function clickWorkspaceBack(window: Page, testId: string): Promise<void> {
+  const backButton = window.getByTestId(testId);
+  await expect(backButton).toBeVisible({ timeout: 30_000 });
+  try {
+    await backButton.click({ timeout: 10_000 });
+  } catch {
+    await backButton.evaluate((element: HTMLElement) => element.click());
+  }
+  await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+}
+
 function resolveRepoRoot(startDir: string): string {
   let current = path.resolve(startDir);
   while (true) {
@@ -3676,8 +3687,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         audit.acceptance_results.pm_phase = "PASS";
       }
 
-      await window.getByTestId("pm-workspace-back").click();
-      await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+      await clickWorkspaceBack(window, "pm-workspace-back");
       } else {
         const snapshot = await requestJson<SnapshotPayload>(window, "/state/snapshot");
         const snapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.snapshot.resumed.json`);
@@ -3747,8 +3757,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
         audit.acceptance_results.chief_engineer_phase = "PASS";
         const chiefShot = await captureAuditScreenshot(window, testInfo, `round-${String(round).padStart(2, "0")}.chief-engineer`);
         audit.evidence_paths.screenshots.push(toPosixPath(chiefShot.pngPath), toPosixPath(chiefShot.reviewJpgPath));
-        await window.getByTestId("chief-engineer-workspace-back").click();
-        await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+        await clickWorkspaceBack(window, "chief-engineer-workspace-back");
       } else {
         const chiefDiagnostics = await requestJson<ChiefEngineerDiagnosticsPayload>(window, "/v2/chief-engineer/diagnostics");
         const chiefSnapshotPath = testInfo.outputPath(`round-${String(round).padStart(2, "0")}.chief-engineer-diagnostics.resumed.json`);
@@ -3859,8 +3868,7 @@ test("unattended full-chain audit with strong JSON evidence package", async ({ w
           });
         }
 
-        await window.getByTestId("director-workspace-back").click();
-        await expect(window.getByTestId("project-progress-panel")).toBeVisible({ timeout: 60_000 });
+        await clickWorkspaceBack(window, "director-workspace-back");
       } else {
         let directorResultArtifact = await tryRuntimeArtifact(window, "results/director.result.json");
         if (!directorResultArtifact) {

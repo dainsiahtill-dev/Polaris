@@ -899,6 +899,7 @@ class InterviewSaveResponse(BaseModel):
     saved: bool
     report_path: str | None = None
     readiness_updated: bool = False
+    role_readiness_updated: bool = False
 
 
 class InterviewCancelResponse(BaseModel):

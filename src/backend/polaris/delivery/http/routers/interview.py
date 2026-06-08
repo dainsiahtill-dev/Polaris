@@ -13,6 +13,7 @@ from polaris.cells.llm.evaluation.public.service import (
     generate_interview_answer_streaming,
     save_interview_report,
 )
+from polaris.cells.runtime.projection.internal.io_helpers import build_cache_root
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas import (
     InterviewAskResponse,
@@ -20,12 +21,67 @@ from polaris.delivery.http.schemas import (
     InterviewSaveResponse,
 )
 from polaris.delivery.http.workspace import active_workspace_value
+from polaris.kernelone.llm import config_store as llm_config
+from polaris.kernelone.llm.model_identity import model_identity_equal
 
 from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
 from .sse_utils import create_sse_response, sse_event_generator
 
+logger = logging.getLogger(__name__)
+
 
 # 适配器函数，保持与旧接口的兼容性
+def _active_role_binding(settings: Any, workspace: str, role: str) -> dict[str, Any] | None:
+    role_key = str(role or "").strip().lower()
+    if not role_key:
+        return None
+
+    try:
+        cache_root = build_cache_root(str(getattr(settings, "ramdisk_root", "") or ""), workspace)
+        config = llm_config.load_llm_config(workspace, cache_root, settings=settings)
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        logger.debug("Failed to load LLM config for interview readiness guard: %s", exc)
+        return None
+
+    roles = config.get("roles") if isinstance(config.get("roles"), dict) else {}
+    if not isinstance(roles, dict):
+        return None
+    role_cfg = roles.get(role_key)
+    if isinstance(role_cfg, dict):
+        return role_cfg
+    for key, value in roles.items():
+        if str(key or "").strip().lower() == role_key and isinstance(value, dict):
+            return value
+    return {}
+
+
+def _can_update_role_readiness(
+    *,
+    settings: Any,
+    workspace: str,
+    role: str,
+    provider_id: str,
+    model: str | None,
+) -> bool:
+    """Only the current role/provider/model binding may overwrite role readiness."""
+
+    role_cfg = _active_role_binding(settings, workspace, role)
+    if role_cfg is None:
+        return True
+    if not role_cfg:
+        return False
+
+    active_provider = str(role_cfg.get("provider_id") or "").strip()
+    active_model = str(role_cfg.get("model") or "").strip()
+    tested_provider = str(provider_id or "").strip()
+    tested_model = str(model or "").strip()
+    if not active_provider or not active_model:
+        return False
+    if active_provider != tested_provider:
+        return False
+    return bool(tested_model and model_identity_equal(active_model, tested_model))
+
+
 async def run_interactive_interview_question(settings, role, provider_id, model, question, **kwargs):
     """兼容旧接口的面试问答函数"""
     workspace = active_workspace_value(settings)
@@ -59,6 +115,13 @@ async def run_interactive_interview_question(settings, role, provider_id, model,
 def save_interactive_interview_report(settings, role, provider_id, model, report, **kwargs):
     """兼容旧接口的保存报告函数"""
     workspace = active_workspace_value(settings)
+    update_role_readiness = _can_update_role_readiness(
+        settings=settings,
+        workspace=workspace,
+        role=role,
+        provider_id=provider_id,
+        model=model,
+    )
     return save_interview_report(
         workspace=workspace,
         role=role,
@@ -66,6 +129,7 @@ def save_interactive_interview_report(settings, role, provider_id, model, report
         model=model,
         report=report,
         session_id=kwargs.get("session_id"),
+        update_role_readiness=update_role_readiness,
     )
 
 
@@ -91,7 +155,6 @@ def cancel_interactive_interview_stream(session_id: str) -> dict:
 
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 @router.post(

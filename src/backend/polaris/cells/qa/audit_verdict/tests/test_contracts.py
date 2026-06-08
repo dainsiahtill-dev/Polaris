@@ -192,6 +192,18 @@ class TestVisualQaAuditContracts:
                 model_capability_ref="llm.control_plane:model-capability:qa:image_input:abc",
             )
 
+    def test_visual_audit_command_rejects_unverified_model_capability_ref(self) -> None:
+        with pytest.raises(
+            ValueError,
+            match=r"model_capability_ref must point to llm\.control_plane image_input capability",
+        ):
+            RunVisualQaAuditCommandV1(
+                task_id="qa-visual-1",
+                workspace="/repo",
+                image_refs=("audit.evidence:image:screenshot-1",),
+                model_capability_ref="qa.audit_verdict:model-capability:qa:image_input:abc",
+            )
+
     def test_visual_audit_result_carries_typed_findings(self) -> None:
         finding = VisualAuditFindingV1(
             finding_id="visual-finding-1",

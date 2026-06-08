@@ -102,14 +102,21 @@ def extract_domain_tokens(task: dict[str, Any]) -> list[str]:
     """从任务描述中提取领域关键词"""
     metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     text_blocks: list[str] = []
+    path_blocks: list[str] = []
 
-    def append_values(source: dict[str, Any], keys: tuple[str, ...]) -> None:
+    def append_values(source: dict[str, Any], keys: tuple[str, ...], *, collect_paths: bool = False) -> None:
         for key in keys:
             value = source.get(key)
             if isinstance(value, list):
-                text_blocks.extend(str(item or "") for item in value[:20])
+                values = [str(item or "") for item in value[:20]]
+                text_blocks.extend(values)
+                if collect_paths:
+                    path_blocks.extend(values)
             elif value is not None:
-                text_blocks.append(str(value or ""))
+                text = str(value or "")
+                text_blocks.append(text)
+                if collect_paths:
+                    path_blocks.append(text)
 
     append_values(
         task,
@@ -119,6 +126,7 @@ def extract_domain_tokens(task: dict[str, Any]) -> list[str]:
             "files",
             "paths",
         ),
+        collect_paths=True,
     )
     if isinstance(metadata, dict):
         append_values(
@@ -129,6 +137,7 @@ def extract_domain_tokens(task: dict[str, Any]) -> list[str]:
                 "files",
                 "paths",
             ),
+            collect_paths=True,
         )
     append_values(task, ("subject", "description"))
     if isinstance(metadata, dict):
@@ -145,11 +154,16 @@ def extract_domain_tokens(task: dict[str, Any]) -> list[str]:
             ),
         )
 
-    tokens = re.findall(r"[a-z][a-z0-9_-]{2,}", " ".join(text_blocks).lower())
+    path_noise = {"src", "test", "tests", "spec", "dist", "build", "index"}
+    path_tokens = [
+        token for token in re.findall(r"[a-z][a-z0-9_-]{2,}", " ".join(path_blocks).lower()) if token not in path_noise
+    ]
+    path_token_set = set(path_tokens)
+    tokens = [*path_tokens, *re.findall(r"[a-z][a-z0-9_-]{2,}", " ".join(text_blocks).lower())]
     unique: list[str] = []
     seen: set[str] = set()
     for token in tokens:
-        if token in _DOMAIN_STOPWORDS:
+        if token in _DOMAIN_STOPWORDS and token not in path_token_set:
             continue
         if token in seen:
             continue

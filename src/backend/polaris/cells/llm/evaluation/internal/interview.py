@@ -381,6 +381,7 @@ def save_interview_report(
     model: str | None,
     report: dict[str, Any],
     session_id: str | None = None,
+    update_role_readiness: bool = True,
 ) -> dict[str, Any]:
     """Persist an interactive interview report and mirror its verdict to readiness."""
 
@@ -438,15 +439,18 @@ def save_interview_report(
     write_json_atomic(str(report_path), artifact)
 
     readiness_updated = False
+    role_readiness_updated = False
     if has_verdict and role_id and provider and tested_model:
-        update_index_with_report(workspace_path, artifact)
+        update_index_with_report(workspace_path, artifact, update_role_readiness=update_role_readiness)
         readiness_updated = True
+        role_readiness_updated = update_role_readiness
 
     return {
         "ok": True,
         "saved": True,
         "report_path": str(report_path),
         "readiness_updated": readiness_updated,
+        "role_readiness_updated": role_readiness_updated,
     }
 
 

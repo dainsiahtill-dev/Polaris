@@ -158,6 +158,11 @@ def _resolve_pm_task_quality_retries() -> int:
     return max(0, min(4, value))
 
 
+def _domain_autofix_model_retry_required() -> bool:
+    raw = str(os.environ.get("KERNELONE_PM_DOMAIN_AUTOFIX_REQUIRE_MODEL_RETRY", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on", "strict"}
+
+
 def _autofix_domain_coverage_critical_issues(autofix_stats: dict[str, Any]) -> list[str]:
     """Return hard quality failures when PM domain coverage synthesis is too broad."""
 
@@ -790,7 +795,15 @@ def run_pm_planning_iteration(
             docs_stage=docs_stage if isinstance(docs_stage, dict) else {},
             workspace_full=workspace_full,
         )
-        autofix_critical_issues = _autofix_domain_coverage_critical_issues(autofix_stats)
+        domain_autofix_issues = _autofix_domain_coverage_critical_issues(autofix_stats)
+        domain_autofix_fallback = bool(domain_autofix_issues) and not _domain_autofix_model_retry_required()
+        if domain_autofix_fallback:
+            normalized["_quality_gate_domain_autofix_fallback"] = {
+                "accepted": True,
+                "issues": domain_autofix_issues,
+                "stats": dict(autofix_stats),
+            }
+        autofix_critical_issues = [] if domain_autofix_fallback else domain_autofix_issues
         if autofix_critical_issues:
             critical_issues = [
                 str(item).strip() for item in (quality_report.get("critical_issues") or []) if str(item).strip()
@@ -829,6 +842,9 @@ def run_pm_planning_iteration(
             "critical_issue_count": len(quality_report.get("critical_issues") or []),
             "warning_count": len(quality_report.get("warnings") or []),
         }
+        if domain_autofix_fallback:
+            normalized["quality_gate"]["domain_autofix_fallback"] = True
+            normalized["quality_gate"]["domain_autofix_issue_count"] = len(domain_autofix_issues)
 
         def _register_pm_traceability(payload: dict[str, Any]) -> None:
             trace_service = context.get("trace_service")

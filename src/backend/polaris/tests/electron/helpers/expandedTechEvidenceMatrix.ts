@@ -4406,13 +4406,14 @@ async function collectLlmInterviewSaveRuntimeProbe(page: Page, workspace: string
 
   try {
     const sessionId = `e2e-interview-${Date.now()}`;
+    const role = "e2e_probe";
     const providerId = "e2e-provider";
     const model = "e2e-model";
     const saved = asRecord(
       await requestJson<JsonRecord>(page, "/v2/llm/interview/save", {
         method: "POST",
         body: {
-          role: "pm",
+          role,
           provider_id: providerId,
           model,
           session_id: sessionId,
@@ -4420,7 +4421,7 @@ async function collectLlmInterviewSaveRuntimeProbe(page: Page, workspace: string
             id: sessionId,
             overallStatus: "PASS",
             target: {
-              role: "pm",
+              role,
               provider_id: providerId,
               model,
             },
@@ -4457,18 +4458,20 @@ async function collectLlmInterviewSaveRuntimeProbe(page: Page, workspace: string
         payload: await readJsonIfExists<JsonRecord>(indexPath),
       })),
     );
-    const indexedRoles = indexes.map(({ path: indexPath, payload }) => {
-      const pm = asRecord(asRecord(payload).roles ? asRecord(asRecord(payload).roles).pm : {});
+    const indexedProviders = indexes.map(({ path: indexPath, payload }) => {
+      const provider = asRecord(asRecord(payload).providers ? asRecord(asRecord(payload).providers)[providerId] : {});
       return {
         path: indexPath,
         exists: Boolean(payload),
-        pm_last_run_id: asString(pm.last_run_id),
-        pm_provider_id: asString(pm.provider_id),
-        pm_model: asString(pm.model),
-        pm_ready: Boolean(pm.ready),
+        provider_last_run_id: asString(provider.last_run_id),
+        provider_role: asString(provider.role),
+        provider_model: asString(provider.model),
+        provider_ready: Boolean(provider.ready),
       };
     });
-    const mirrored = indexedRoles.length >= 2 && indexedRoles.every((row) => row.pm_last_run_id === sessionId);
+    const mirrored =
+      indexedProviders.length >= 2 &&
+      indexedProviders.every((row) => row.provider_last_run_id === sessionId && row.provider_role === role);
     const pass = Boolean(
       saved.saved === true &&
         saved.readiness_updated === true &&
@@ -4491,6 +4494,7 @@ async function collectLlmInterviewSaveRuntimeProbe(page: Page, workspace: string
             saved: Boolean(saved.saved),
             report_path: reportPath,
             readiness_updated: Boolean(saved.readiness_updated),
+            role_readiness_updated: Boolean(saved.role_readiness_updated),
             session_id: sessionId,
           },
         },
@@ -4508,7 +4512,7 @@ async function collectLlmInterviewSaveRuntimeProbe(page: Page, workspace: string
         {
           type: "runtime_artifact",
           ref: "llm_test_index_dual_mirror",
-          value: { indexed_roles: indexedRoles },
+          value: { indexed_providers: indexedProviders },
         },
       ],
       findings: pass ? [] : ["LLM interview save did not update both readiness index mirrors for the saved run"],

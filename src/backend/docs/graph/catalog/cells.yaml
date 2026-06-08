@@ -1428,8 +1428,14 @@ cells:
       - bus.consume:agent_messages/*
       - task_market.publish:*
       - task_market.read
+      - task_market.claim
+      - task_market.lease
+      - task_market.ack
+      - task_market.fail
+      - task_market.requeue
       - runtime_projection.read
       - blueprint.generate:*
+      - blueprint.memo.record
       - process.spawn:qa/pytest
       - qa.failure_signal.parse
       - qa.verdict.issue

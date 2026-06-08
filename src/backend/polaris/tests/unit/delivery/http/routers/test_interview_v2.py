@@ -333,10 +333,19 @@ async def test_v2_llm_interview_save_accepts_frontend_camel_case_payload(
     mock_settings.workspace = str(tmp_path)
     mock_settings.workspace_path = str(tmp_path)
     index_path = tmp_path / ".polaris" / "llm_test_index.json"
+    config_payload = {
+        "roles": {"pm": {"provider_id": "openai_compat-1", "model": "Qwen3-Max"}},
+    }
 
-    with patch(
-        "polaris.cells.llm.evaluation.internal.index._resolve_index_paths",
-        return_value=[str(index_path)],
+    with (
+        patch(
+            "polaris.cells.llm.evaluation.internal.index._resolve_index_paths",
+            return_value=[str(index_path)],
+        ),
+        patch(
+            "polaris.delivery.http.routers.interview.llm_config.load_llm_config",
+            return_value=config_payload,
+        ),
     ):
         response = await client.post(
             "/v2/llm/interview/save",
@@ -375,10 +384,19 @@ async def test_v2_llm_interview_save_prefers_active_workspace_path(
     mock_settings.workspace = str(stale_workspace)
     mock_settings.workspace_path = str(active_workspace)
     index_path = active_workspace / ".polaris" / "llm_test_index.json"
+    config_payload = {
+        "roles": {"pm": {"provider_id": "openai_compat-1", "model": "Qwen3-Max"}},
+    }
 
-    with patch(
-        "polaris.cells.llm.evaluation.internal.index._resolve_index_paths",
-        return_value=[str(index_path)],
+    with (
+        patch(
+            "polaris.cells.llm.evaluation.internal.index._resolve_index_paths",
+            return_value=[str(index_path)],
+        ),
+        patch(
+            "polaris.delivery.http.routers.interview.llm_config.load_llm_config",
+            return_value=config_payload,
+        ),
     ):
         response = await client.post(
             "/v2/llm/interview/save",
@@ -401,6 +419,80 @@ async def test_v2_llm_interview_save_prefers_active_workspace_path(
     normalized_report_path = str(data["report_path"]).replace("\\", "/")
     assert "/projects/active-" in normalized_report_path
     assert "/projects/stale-" not in normalized_report_path
+
+
+@pytest.mark.asyncio
+async def test_v2_llm_interview_save_does_not_overwrite_role_readiness_for_unbound_provider(
+    client: AsyncClient,
+    tmp_path: Path,
+    mock_settings: Settings,
+) -> None:
+    """Candidate/probe interviews must not poison the active role readiness slot."""
+    mock_settings.workspace = str(tmp_path)
+    mock_settings.workspace_path = str(tmp_path)
+    index_path = tmp_path / ".polaris" / "llm_test_index.json"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        json.dumps(
+            {
+                "version": "2.0",
+                "roles": {
+                    "pm": {
+                        "ready": True,
+                        "grade": "PASS",
+                        "provider_id": "openai_compat-1",
+                        "model": "Qwen3-Max",
+                        "last_run_id": "sess-current-pm",
+                        "timestamp": "2026-06-08T00:00:00+00:00",
+                        "suites": {"interview": {"ok": True}},
+                    }
+                },
+                "providers": {},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    config_payload = {
+        "roles": {"pm": {"provider_id": "openai_compat-1", "model": "Qwen3-Max"}},
+    }
+
+    with (
+        patch(
+            "polaris.cells.llm.evaluation.internal.index._resolve_index_paths",
+            return_value=[str(index_path)],
+        ),
+        patch(
+            "polaris.delivery.http.routers.interview.llm_config.load_llm_config",
+            return_value=config_payload,
+        ),
+    ):
+        response = await client.post(
+            "/v2/llm/interview/save",
+            json={
+                "role": "pm",
+                "provider_id": "e2e-provider",
+                "model": "e2e-model",
+                "session_id": "sess-e2e-probe",
+                "report": {
+                    "id": "sess-e2e-probe",
+                    "overallStatus": "passed",
+                    "target": {"role": "pm", "provider_id": "e2e-provider", "model": "e2e-model"},
+                    "final": {"ready": True, "grade": "PASS"},
+                    "suites": {"interview": {"ok": True}},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["readiness_updated"] is True
+    assert data["role_readiness_updated"] is False
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    assert index["roles"]["pm"]["provider_id"] == "openai_compat-1"
+    assert index["roles"]["pm"]["model"] == "Qwen3-Max"
+    assert index["roles"]["pm"]["last_run_id"] == "sess-current-pm"
+    assert index["providers"]["e2e-provider"]["last_run_id"] == "sess-e2e-probe"
 
 
 # ---------------------------------------------------------------------------

@@ -80,6 +80,7 @@ _IMPORT_SPECIFIER_RE = re.compile(
 _TS_JS_SOURCE_EXTS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
 _NODE_BUILTIN_IMPORTS = {
     "assert",
+    "async_hooks",
     "buffer",
     "child_process",
     "crypto",
@@ -256,7 +257,7 @@ def _scan_package_manifest(text: str, relative_path: str) -> list[str]:
     if isinstance(scripts, dict):
         test_script = str(scripts.get("test") or "")
         lowered = test_script.lower()
-        if "no test specified" in lowered:
+        if "no test specified" in lowered or "no tests specified" in lowered:
             errors.append(f"Artifact quality scan failed: npm default failing test script in {relative_path}")
         for script_name, script_value in scripts.items():
             script_text = str(script_value or "")
@@ -355,12 +356,24 @@ def _relative_import_exists(root_full: Path, importer_path: Path, specifier: str
 
 def _relative_import_candidates(base: Path) -> list[Path]:
     suffixes = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts")
-    candidates: list[Path] = [base]
+    raw_candidates: list[Path] = [base]
     if base.suffix:
-        candidates.extend(base.with_suffix(suffix) for suffix in suffixes)
+        if base.suffix.lower() in suffixes:
+            raw_candidates.extend(base.with_suffix(suffix) for suffix in suffixes)
+        else:
+            raw_candidates.extend(Path(f"{base}{suffix}") for suffix in suffixes)
+            raw_candidates.extend(base.with_suffix(suffix) for suffix in suffixes)
     else:
-        candidates.extend(base.with_suffix(suffix) for suffix in suffixes)
-        candidates.extend(base / f"index{suffix}" for suffix in suffixes)
+        raw_candidates.extend(base.with_suffix(suffix) for suffix in suffixes)
+        raw_candidates.extend(base / f"index{suffix}" for suffix in suffixes)
+
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in raw_candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
     return candidates
 
 

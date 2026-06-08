@@ -7,6 +7,7 @@ execution, status query, and event/result payloads.
 from __future__ import annotations
 
 import hashlib
+import posixpath
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -33,6 +34,7 @@ _FORBIDDEN_ROLE_OBJECT_OWNER_CELLS = frozenset(
         "polaris.kernelone.roles",
     }
 )
+_TASK_MARKET_TASK_REF_PREFIX = "runtime.task_market:task:"
 
 
 def _is_forbidden_role_object_owner_cell(owner_cell: str) -> bool:
@@ -59,8 +61,68 @@ def _require_refs_namespace(name: str, refs: tuple[str, ...], namespace: str) ->
         raise ValueError(f"{name} must point to {namespace}")
 
 
+def _normalize_scope_path(path: str) -> str:
+    token = str(path or "").strip().replace("\\", "/")
+    normalized = posixpath.normpath(token)
+    if normalized == ".":
+        return ""
+    return normalized.lstrip("/")
+
+
+def _path_is_within_scope(path: str, scopes: tuple[str, ...]) -> bool:
+    if str(path or "").strip().replace("\\", "/").startswith("/"):
+        return False
+    normalized_path = _normalize_scope_path(path)
+    if not normalized_path or normalized_path == ".." or normalized_path.startswith("../"):
+        return False
+    for scope in scopes:
+        normalized_scope = _normalize_scope_path(scope).rstrip("/")
+        if not normalized_scope or normalized_scope == ".." or normalized_scope.startswith("../"):
+            continue
+        if normalized_path == normalized_scope or normalized_path.startswith(f"{normalized_scope}/"):
+            return True
+    return False
+
+
 def _has_any_ref_namespace(ref: str, namespaces: tuple[str, ...]) -> bool:
     return any(_has_ref_namespace(ref, namespace) for namespace in namespaces)
+
+
+def _asset_ref_namespace_matches_owner(
+    *,
+    owner_cell: str,
+    ref: str,
+    asset_kind: str,
+    metadata: Mapping[str, Any],
+) -> bool:
+    ref_namespace = str(ref or "").strip().split(":", 1)[0]
+    if ref_namespace == owner_cell:
+        return True
+
+    graph_source_ref = str(metadata.get("graph_source_ref", "")).strip()
+    return (
+        owner_cell == "context.catalog"
+        and asset_kind == "constraint_topology"
+        and ref_namespace == "docs.graph"
+        and graph_source_ref.startswith("docs/graph/")
+    )
+
+
+def _capability_endpoint_matches_owner(owner_cell: str, endpoint_ref: str) -> bool:
+    if not endpoint_ref:
+        return True
+    if endpoint_ref.startswith(f"{owner_cell}:"):
+        return True
+    return endpoint_ref.startswith(f"polaris.cells.{owner_cell}.public.")
+
+
+def _is_task_market_task_ref(ref: str | None) -> bool:
+    token = str(ref or "").strip()
+    return token.startswith(_TASK_MARKET_TASK_REF_PREFIX) and bool(token[len(_TASK_MARKET_TASK_REF_PREFIX) :])
+
+
+def _is_legacy_task_market_task_ref(ref: str | None) -> bool:
+    return str(ref or "").strip().startswith("runtime.task_market:task-")
 
 
 def _is_hex_sha256(value: str) -> bool:
@@ -277,6 +339,16 @@ class RoleAssetMountTable:
                 raise ValueError(
                     f"asset mount {mount.mount_name!r} asset ref must point to the real owner Cell; got {asset_ref!r}"
                 )
+            if not _asset_ref_namespace_matches_owner(
+                owner_cell=owner_cell,
+                ref=asset_ref,
+                asset_kind=mount.asset_ref.asset_kind,
+                metadata=mount.asset_ref.metadata,
+            ):
+                raise ValueError(
+                    f"asset mount {mount.mount_name!r} asset ref namespace must match owner_cell {owner_cell!r}; "
+                    f"got {asset_ref!r}"
+                )
             key = mount.mount_name
             if key in seen:
                 raise ValueError(f"duplicate asset mount: {key}")
@@ -314,7 +386,10 @@ class RoleCapabilityDescriptor:
         object.__setattr__(self, "contract_name", _require_non_empty("contract_name", self.contract_name))
         object.__setattr__(self, "effect", _require_non_empty("effect", self.effect))
         object.__setattr__(self, "allowed_roles", _normalize_string_tuple("allowed_roles", self.allowed_roles))
-        object.__setattr__(self, "endpoint_ref", str(self.endpoint_ref or "").strip())
+        endpoint_ref = str(self.endpoint_ref or "").strip()
+        if not _capability_endpoint_matches_owner(owner_cell, endpoint_ref):
+            raise ValueError("endpoint_ref must point to owner_cell public contract")
+        object.__setattr__(self, "endpoint_ref", endpoint_ref)
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
@@ -335,6 +410,8 @@ class RoleCapabilityPorts:
                 raise ValueError(
                     f"capability {capability.capability_id!r} must be owned by a target public Cell; got {owner_cell!r}"
                 )
+            if not capability.allowed_roles:
+                raise ValueError(f"capability {capability.capability_id!r} must declare allowed_roles")
             key = capability.capability_id
             if key in seen:
                 raise ValueError(f"duplicate capability: {key}")
@@ -347,6 +424,34 @@ class RoleCapabilityPorts:
             if capability.capability_id == key:
                 return capability
         raise KeyError(key)
+
+
+def _require_capability_ports_allow_role(role_id: str, capability_ports: RoleCapabilityPorts) -> None:
+    for capability in capability_ports.capabilities:
+        if role_id not in capability.allowed_roles:
+            raise ValueError(f"capability {capability.capability_id!r} is not allowed for role {role_id!r}")
+
+
+def _compute_role_capability_fingerprint(
+    *,
+    role_id: str,
+    capability_id: str,
+    effect: str,
+    tool: str,
+    policy_fingerprint: str,
+    profile_fingerprint: str,
+) -> str:
+    content = "\n".join(
+        (
+            role_id,
+            capability_id,
+            effect,
+            tool,
+            policy_fingerprint,
+            profile_fingerprint,
+        )
+    )
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -374,20 +479,23 @@ class RoleCapabilityFingerprint:
         object.__setattr__(self, "tool", tool)
         object.__setattr__(self, "policy_fingerprint", policy_fingerprint)
         object.__setattr__(self, "profile_fingerprint", profile_fingerprint)
+        expected_fingerprint = _compute_role_capability_fingerprint(
+            role_id=role_id,
+            capability_id=capability_id,
+            effect=effect,
+            tool=tool,
+            policy_fingerprint=policy_fingerprint,
+            profile_fingerprint=profile_fingerprint,
+        )
         if not self.fingerprint:
-            content = "\n".join(
-                (
-                    role_id,
-                    capability_id,
-                    effect,
-                    tool,
-                    policy_fingerprint,
-                    profile_fingerprint,
-                )
-            )
-            object.__setattr__(self, "fingerprint", hashlib.sha256(content.encode("utf-8")).hexdigest())
+            object.__setattr__(self, "fingerprint", expected_fingerprint)
         else:
-            object.__setattr__(self, "fingerprint", _require_non_empty("fingerprint", self.fingerprint))
+            fingerprint = _require_non_empty("fingerprint", self.fingerprint)
+            if not _is_hex_sha256(fingerprint):
+                raise ValueError("fingerprint must be a 64-character hex capability fingerprint")
+            if fingerprint != expected_fingerprint:
+                raise ValueError("fingerprint must match role, capability, effect, tool, policy, and profile fields")
+            object.__setattr__(self, "fingerprint", fingerprint)
 
 
 @dataclass(frozen=True)
@@ -472,6 +580,8 @@ class RoleTurnContext:
             raise ValueError("context_snapshot_ref must point to context.engine or roles.session")
         _require_refs_namespace("handoff_refs", handoff_refs, "factory.cognitive_runtime")
         _require_refs_namespace("task_refs", task_refs, "runtime.task_market")
+        if any(not _is_task_market_task_ref(ref) for ref in task_refs):
+            raise ValueError("task_refs must use runtime.task_market:task:<task_id>")
 
         object.__setattr__(self, "typed_input_ref", typed_input_ref)
         object.__setattr__(self, "context_snapshot_ref", context_snapshot_ref)
@@ -542,6 +652,8 @@ class RoleTaskMarketBinding:
         active_refs = tuple(ref for ref in (work_item_ref, lease_token_ref) if ref)
         if any(not _has_ref_namespace(ref, "runtime.task_market") for ref in active_refs):
             raise ValueError("task-market binding refs must point to runtime.task_market")
+        if _is_legacy_task_market_task_ref(work_item_ref):
+            raise ValueError("work_item_ref active task refs must use runtime.task_market:task:<task_id>")
         object.__setattr__(self, "work_item_ref", work_item_ref)
         object.__setattr__(self, "lease_token_ref", lease_token_ref)
 
@@ -570,14 +682,21 @@ class RoleTurnEnvelope:
         invocations = tuple(self.capability_invocations)
         if any(not isinstance(item, RoleCapabilityInvocation) for item in invocations):
             raise TypeError("capability_invocations entries must be RoleCapabilityInvocation instances")
+        allowed_payload_refs = (self.turn_context.typed_input_ref, *self.turn_context.task_refs)
+        for invocation in invocations:
+            if invocation.role_id != self.identity.role_id:
+                raise ValueError("capability_invocations role_id must match identity.role_id")
+            if invocation.payload_ref not in allowed_payload_refs:
+                raise ValueError("capability_invocations payload_ref must match turn_context")
         if not isinstance(self.ledger_binding, RoleLedgerBinding):
             raise TypeError("ledger_binding must be a RoleLedgerBinding")
         if not isinstance(self.task_market_binding, RoleTaskMarketBinding):
             raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
+        work_item_ref = self.task_market_binding.work_item_ref
         if (
-            self.task_market_binding.work_item_ref
-            and self.turn_context.task_refs
-            and self.task_market_binding.work_item_ref not in self.turn_context.task_refs
+            work_item_ref
+            and _is_task_market_task_ref(work_item_ref)
+            and work_item_ref not in self.turn_context.task_refs
         ):
             raise ValueError("task_market_binding.work_item_ref must be listed in turn_context.task_refs")
         object.__setattr__(self, "capability_invocations", invocations)
@@ -601,18 +720,21 @@ class RoleStateCommitRequest:
         object.__setattr__(self, "request_id", _require_non_empty("request_id", self.request_id))
         if not isinstance(self.envelope, RoleTurnEnvelope):
             raise TypeError("envelope must be a RoleTurnEnvelope")
-        object.__setattr__(
-            self,
-            "changed_asset_refs",
-            _normalize_string_tuple("changed_asset_refs", self.changed_asset_refs),
-        )
-        object.__setattr__(self, "changed_files", _normalize_string_tuple("changed_files", self.changed_files))
-        object.__setattr__(
-            self,
-            "allowed_scope_paths",
-            _normalize_string_tuple("allowed_scope_paths", self.allowed_scope_paths),
-        )
-        object.__setattr__(self, "evidence_refs", _normalize_string_tuple("evidence_refs", self.evidence_refs))
+        changed_asset_refs = _normalize_string_tuple("changed_asset_refs", self.changed_asset_refs)
+        changed_files = _normalize_string_tuple("changed_files", self.changed_files)
+        allowed_scope_paths = _normalize_string_tuple("allowed_scope_paths", self.allowed_scope_paths)
+        evidence_refs = _normalize_string_tuple("evidence_refs", self.evidence_refs)
+        if any(ref not in self.envelope.turn_context.task_refs for ref in changed_asset_refs):
+            raise ValueError("changed_asset_refs must be listed in turn_context task refs")
+        _require_refs_namespace("evidence_refs", evidence_refs, "audit.evidence")
+        if changed_files and not allowed_scope_paths:
+            raise ValueError("allowed_scope_paths must be provided when changed_files are present")
+        if any(not _path_is_within_scope(path, allowed_scope_paths) for path in changed_files):
+            raise ValueError("changed_files must be within allowed_scope_paths")
+        object.__setattr__(self, "changed_asset_refs", changed_asset_refs)
+        object.__setattr__(self, "changed_files", changed_files)
+        object.__setattr__(self, "allowed_scope_paths", allowed_scope_paths)
+        object.__setattr__(self, "evidence_refs", evidence_refs)
         object.__setattr__(self, "reason", str(self.reason or "").strip())
         object.__setattr__(self, "require_change_validation", bool(self.require_change_validation))
 
@@ -719,6 +841,12 @@ class RoleRuntimeChainStepRef:
             raise ValueError("result_ref must point to owner_cell")
         task_ref = _normalize_optional_string(self.task_ref)
         work_item_ref = _normalize_optional_string(self.work_item_ref)
+        if not (task_ref or work_item_ref):
+            raise ValueError("chain step must include task_ref or work_item_ref")
+        if task_ref and not _is_task_market_task_ref(task_ref):
+            raise ValueError("task_ref must use runtime.task_market:task:<task_id>")
+        if _is_legacy_task_market_task_ref(work_item_ref):
+            raise ValueError("work_item_ref active task refs must use runtime.task_market:task:<task_id>")
         _require_refs_namespace(
             "chain step task/work item refs",
             tuple(ref for ref in (task_ref, work_item_ref) if ref),
@@ -894,6 +1022,7 @@ class RoleRuntimeChainAssemblyResultV1:
     missing_roles: tuple[str, ...] = field(default_factory=tuple)
     error_code: str | None = None
     error_message: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "ok", bool(self.ok))
@@ -903,6 +1032,7 @@ class RoleRuntimeChainAssemblyResultV1:
         object.__setattr__(self, "missing_roles", _normalize_string_tuple("missing_roles", self.missing_roles))
         object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
         object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
         if self.ok and self.chain is None:
             raise ValueError("successful chain assembly must include chain")
         if not self.ok and not (self.error_code or self.error_message):
@@ -936,14 +1066,33 @@ class RoleRuntimeObject:
             raise TypeError("asset_mounts must be a RoleAssetMountTable")
         if not isinstance(self.capability_ports, RoleCapabilityPorts):
             raise TypeError("capability_ports must be a RoleCapabilityPorts")
+        _require_capability_ports_allow_role(self.identity.role_id, self.capability_ports)
         if not isinstance(self.ledger_binding, RoleLedgerBinding):
             raise TypeError("ledger_binding must be a RoleLedgerBinding")
         if not isinstance(self.task_market_binding, RoleTaskMarketBinding):
             raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
+        work_item_ref = self.task_market_binding.work_item_ref
+        if (
+            work_item_ref
+            and _is_task_market_task_ref(work_item_ref)
+            and work_item_ref not in self.turn_context.task_refs
+        ):
+            raise ValueError("task_market_binding.work_item_ref must be listed in turn_context.task_refs")
         if not isinstance(self.capability_fingerprint, RoleCapabilityFingerprint):
             raise TypeError("capability_fingerprint must be a RoleCapabilityFingerprint")
         if self.identity.role_id != self.capability_fingerprint.role_id:
             raise ValueError("identity.role_id must match capability_fingerprint.role_id")
+        try:
+            mounted_capability = self.capability_ports.get(self.capability_fingerprint.capability_id)
+        except KeyError as exc:
+            raise ValueError("capability_fingerprint.capability_id must be mounted in capability_ports") from exc
+        if self.capability_fingerprint.effect != mounted_capability.effect:
+            raise ValueError("capability_fingerprint.effect must match mounted capability effect")
+        mounted_tool = (
+            mounted_capability.endpoint_ref or f"{mounted_capability.owner_cell}:{mounted_capability.contract_name}"
+        )
+        if self.capability_fingerprint.tool != mounted_tool:
+            raise ValueError("capability_fingerprint.tool must match mounted capability tool")
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
@@ -979,6 +1128,7 @@ class InstantiateRoleRuntimeObjectCommandV1:
     task_id: str | None = None
     session_id: str | None = None
     capability_id: str | None = None
+    task_market_binding: RoleTaskMarketBinding | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -995,6 +1145,8 @@ class InstantiateRoleRuntimeObjectCommandV1:
         object.__setattr__(self, "task_id", _normalize_optional_string(self.task_id))
         object.__setattr__(self, "session_id", _normalize_optional_string(self.session_id))
         object.__setattr__(self, "capability_id", _normalize_optional_string(self.capability_id))
+        if self.task_market_binding is not None and not isinstance(self.task_market_binding, RoleTaskMarketBinding):
+            raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
 
@@ -1172,6 +1324,32 @@ class RoleCapabilityInvocationResultV1:
             raise ValueError("failed capability invocation result must include error_code or error_message")
 
 
+def _capability_required_asset_mount_names(capability: RoleCapabilityDescriptor) -> tuple[str, ...]:
+    mount_names: list[str] = []
+    for key in (
+        "requires_asset_mounts",
+        "asset_mount",
+        "input_asset_mount",
+        "output_asset_mount",
+        "evidence_asset_mount",
+    ):
+        value = capability.metadata.get(key)
+        if value is None:
+            continue
+        tokens: tuple[str, ...]
+        if isinstance(value, str):
+            tokens = (value,)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            tokens = tuple(str(item or "") for item in value)
+        else:
+            tokens = (str(value),)
+        for token in tokens:
+            mount_name = token.strip()
+            if mount_name and mount_name not in mount_names:
+                mount_names.append(mount_name)
+    return tuple(mount_names)
+
+
 @dataclass(frozen=True)
 class RoleRuntimeObjectSpec:
     """Reusable runtime-object composition spec for one business role.
@@ -1198,6 +1376,14 @@ class RoleRuntimeObjectSpec:
         default_capability_id = _require_non_empty("default_capability_id", self.default_capability_id)
         self.capability_ports.get(default_capability_id)
         object.__setattr__(self, "default_capability_id", default_capability_id)
+        _require_capability_ports_allow_role(role_id, self.capability_ports)
+        mounted_asset_names = {mount.mount_name for mount in self.asset_mounts.mounts}
+        for capability in self.capability_ports.capabilities:
+            for mount_name in _capability_required_asset_mount_names(capability):
+                if mount_name not in mounted_asset_names:
+                    raise ValueError(
+                        f"capability {capability.capability_id!r} requires missing asset mount {mount_name!r}"
+                    )
         if not isinstance(self.task_market_binding, RoleTaskMarketBinding):
             raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
@@ -1212,6 +1398,7 @@ class RoleRuntimeObjectSpec:
         capability_id: str | None = None,
         tool: str | None = None,
         turn_context: RoleTurnContext | None = None,
+        task_market_binding: RoleTaskMarketBinding | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> RoleRuntimeObject:
         """Instantiate a `RoleRuntimeObject` from this spec and runtime bindings."""
@@ -1223,6 +1410,8 @@ class RoleRuntimeObjectSpec:
             raise TypeError("ledger_binding must be a RoleLedgerBinding")
         if turn_context is not None and not isinstance(turn_context, RoleTurnContext):
             raise TypeError("turn_context must be a RoleTurnContext")
+        if task_market_binding is not None and not isinstance(task_market_binding, RoleTaskMarketBinding):
+            raise TypeError("task_market_binding must be a RoleTaskMarketBinding")
         if identity.role_id != self.role_id:
             raise ValueError("identity.role_id must match spec.role_id")
         if profile_binding.role_id != self.role_id:
@@ -1230,7 +1419,7 @@ class RoleRuntimeObjectSpec:
 
         resolved_capability_id = _normalize_optional_string(capability_id) or self.default_capability_id
         capability = self.capability_ports.get(resolved_capability_id)
-        if capability.allowed_roles and self.role_id not in capability.allowed_roles:
+        if self.role_id not in capability.allowed_roles:
             raise ValueError(f"capability {resolved_capability_id!r} is not allowed for role {self.role_id!r}")
         resolved_tool = str(
             tool or capability.endpoint_ref or f"{capability.owner_cell}:{capability.contract_name}"
@@ -1246,7 +1435,7 @@ class RoleRuntimeObjectSpec:
             asset_mounts=self.asset_mounts,
             capability_ports=self.capability_ports,
             ledger_binding=ledger_binding,
-            task_market_binding=self.task_market_binding,
+            task_market_binding=task_market_binding or self.task_market_binding,
             capability_fingerprint=RoleCapabilityFingerprint(
                 role_id=self.role_id,
                 capability_id=resolved_capability_id,
@@ -1311,6 +1500,56 @@ def _capability(
         allowed_roles=allowed_roles,
         endpoint_ref=endpoint_ref,
         metadata=metadata or {},
+    )
+
+
+def _task_market_lifecycle_capabilities(allowed_roles: tuple[str, ...]) -> tuple[RoleCapabilityDescriptor, ...]:
+    return (
+        _capability(
+            capability_id="claim_task_market_work_item",
+            owner_cell="runtime.task_market",
+            contract_name="ClaimTaskWorkItemCommandV1",
+            effect="task_market.claim",
+            allowed_roles=allowed_roles,
+            endpoint_ref="polaris.cells.runtime.task_market.public.service.claim_work_item",
+            metadata={"lifecycle_operation": "claim"},
+        ),
+        _capability(
+            capability_id="renew_task_market_lease",
+            owner_cell="runtime.task_market",
+            contract_name="RenewTaskLeaseCommandV1",
+            effect="task_market.lease",
+            allowed_roles=allowed_roles,
+            endpoint_ref="polaris.cells.runtime.task_market.public.service.renew_task_lease",
+            metadata={"lifecycle_operation": "lease"},
+        ),
+        _capability(
+            capability_id="acknowledge_task_market_stage",
+            owner_cell="runtime.task_market",
+            contract_name="AcknowledgeTaskStageCommandV1",
+            effect="task_market.ack",
+            allowed_roles=allowed_roles,
+            endpoint_ref="polaris.cells.runtime.task_market.public.service.acknowledge_task_stage",
+            metadata={"lifecycle_operation": "ack"},
+        ),
+        _capability(
+            capability_id="fail_task_market_stage",
+            owner_cell="runtime.task_market",
+            contract_name="FailTaskStageCommandV1",
+            effect="task_market.fail",
+            allowed_roles=allowed_roles,
+            endpoint_ref="polaris.cells.runtime.task_market.public.service.fail_task_stage",
+            metadata={"lifecycle_operation": "fail"},
+        ),
+        _capability(
+            capability_id="requeue_task_market_work_item",
+            owner_cell="runtime.task_market",
+            contract_name="RequeueTaskCommandV1",
+            effect="task_market.requeue",
+            allowed_roles=allowed_roles,
+            endpoint_ref="polaris.cells.runtime.task_market.public.service.requeue_task",
+            metadata={"lifecycle_operation": "requeue"},
+        ),
     )
 
 
@@ -1479,6 +1718,7 @@ def _build_chief_engineer_runtime_spec() -> RoleRuntimeObjectSpec:
                     endpoint_ref="polaris.cells.chief_engineer.blueprint.public.service.generate_task_blueprint",
                     metadata={"asset_mount": "ArchConstraintMemo"},
                 ),
+                *_task_market_lifecycle_capabilities(("chief_engineer",)),
             )
         ),
         default_capability_id="generate_diff_specification",
@@ -1653,6 +1893,7 @@ def _build_qa_runtime_spec() -> RoleRuntimeObjectSpec:
                         "output_contract": "VisualQaAuditResultV1",
                     },
                 ),
+                *_task_market_lifecycle_capabilities(("qa",)),
             )
         ),
         default_capability_id="invoke_container_pytest",
@@ -1716,6 +1957,7 @@ def _build_director_runtime_spec() -> RoleRuntimeObjectSpec:
                         "output_contract": "DirectorExecutionResultV1",
                     },
                 ),
+                *_task_market_lifecycle_capabilities(("director",)),
             )
         ),
         default_capability_id="execute_director_task",

@@ -150,6 +150,33 @@ class TestValidateGeneratedOutput:
 
         assert error is None
 
+    def test_accepts_target_stem_domain_signal_in_typescript_symbols(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "models" / "task.model.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "export interface TaskParameter {\n"
+            "  name: string;\n"
+            "  type: 'string' | 'number' | 'boolean' | 'object' | 'array';\n"
+            "}\n\n"
+            "export interface TaskDefinition {\n"
+            "  id: string;\n"
+            "  parameters: TaskParameter[];\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        executor = DirectorPatchExecutor(str(tmp_path))
+
+        error = executor.validate_generated_output(
+            {
+                "subject": "任务定义模型与参数模板开发",
+                "description": "Execute according to the task contract",
+                "metadata": {"target_files": ["src/models/task.model.ts"]},
+            },
+            ["src/models/task.model.ts"],
+        )
+
+        assert error is None
+
 
 # ---------------------------------------------------------------------------
 # Tool Argument Normalization

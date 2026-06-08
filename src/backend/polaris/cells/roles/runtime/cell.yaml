@@ -78,9 +78,12 @@ depends_on:
 - roles.session
 - runtime.task_market
 - runtime.projection
+- runtime.execution_broker
 - runtime.state_owner
 - archive.run_archive
+- audit.evidence
 - audit.diagnosis
+- orchestration.pm_dispatch
 - cognitive.knowledge_distiller
 subgraphs:
 - execution_governance_pipeline
@@ -92,6 +95,8 @@ effects_allowed:
 - fs.write:runtime/tasks/*
 - fs.write:runtime/state/*
 - fs.write:runtime/events/*
+- fs.write:runtime/strategy_runs/*
+- fs.write:runtime/cognitive_runtime/*
 - ws.outbound:runtime/*
 - process.spawn:roles/*
 - process.spawn:director/*
@@ -99,8 +104,14 @@ effects_allowed:
 - bus.consume:agent_messages/*
 - task_market.publish:*
 - task_market.read
+- task_market.claim
+- task_market.lease
+- task_market.ack
+- task_market.fail
+- task_market.requeue
 - runtime_projection.read
 - blueprint.generate:*
+- blueprint.memo.record
 - process.spawn:qa/pytest
 - qa.failure_signal.parse
 - qa.verdict.issue

@@ -383,6 +383,50 @@ def resolve_mutation_target_guard_violation(
     )
 
 
+def filter_out_of_scope_write_invocations(
+    latest_user_request: str,
+    invocations: list[Any],
+) -> tuple[list[Any], tuple[str, ...]]:
+    """Drop out-of-scope writes when a batch also contains valid target writes.
+
+    This preserves the target guard: a batch that only writes outside the
+    declared contract is left intact so the strict guard can fail it. The
+    filter is only a defensive normalizer for noisy model batches that include
+    useful in-scope writes plus extra files.
+    """
+
+    explicit_targets = extract_target_files_from_message(latest_user_request)
+    if not explicit_targets:
+        return invocations, ()
+
+    read_targets = extract_read_targets_from_invocations(invocations)
+    allowed_candidates = build_path_match_candidates(explicit_targets + read_targets)
+    if not allowed_candidates:
+        return invocations, ()
+
+    kept: list[Any] = []
+    dropped: list[str] = []
+    kept_write_count = 0
+    dropped_write_count = 0
+    for invocation in invocations:
+        if not is_write_invocation(invocation):
+            kept.append(invocation)
+            continue
+        target_file = extract_target_file_from_invocation_args(invocation)
+        normalized = normalize_path_token(target_file).lower()
+        basename = normalized.rsplit("/", 1)[-1].strip().lower() if normalized else ""
+        if normalized and normalized not in allowed_candidates and basename not in allowed_candidates:
+            dropped_write_count += 1
+            dropped.append(target_file)
+            continue
+        kept_write_count += 1
+        kept.append(invocation)
+
+    if not dropped_write_count or not kept_write_count:
+        return invocations, ()
+    return kept, tuple(dropped)
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap / Stale-edit
 # ---------------------------------------------------------------------------

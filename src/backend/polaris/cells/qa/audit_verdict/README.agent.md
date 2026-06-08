@@ -47,9 +47,10 @@ internal/
   `FailureSignalIndex` asset mount.
 - `run_visual_qa_audit(RunVisualQaAuditCommandV1) -> VisualQaAuditResultV1`
   records typed image evidence refs after the caller has obtained an
-  `llm.control_plane` image-input model capability ref. This Cell does not
-  accept natural-language image descriptions as visual source of truth. The
-  visual audit TruthLog receipt is appended through
+  `llm.control_plane` image-input model capability ref; the command contract
+  rejects model capability refs outside `llm.control_plane:model-capability:*:image_input:*`.
+  This Cell does not accept natural-language image descriptions as visual
+  source of truth. The visual audit TruthLog receipt is appended through
   `audit.evidence.public.service.append_evidence_event`; QA does not directly
   write `runtime/evidence/*`.
 

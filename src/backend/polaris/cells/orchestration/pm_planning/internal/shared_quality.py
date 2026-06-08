@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
@@ -71,6 +72,13 @@ _PM_MEASURABLE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+)",
 )
 _PM_MEASURABLE_BACKTICK_RE = re.compile(r"`[^`]{2,}`")
+
+
+def _python_module_command(module: str, args: list[str] | None = None) -> str:
+    executable = shlex.quote(str(sys.executable or "python3"))
+    tokens = [executable, "-m", shlex.quote(str(module or "").strip())]
+    tokens.extend(shlex.quote(str(arg)) for arg in args or [])
+    return " ".join(token for token in tokens if token)
 
 
 def _strip_wrapping_quotes(token: str) -> str:
@@ -370,7 +378,7 @@ def detect_integration_verify_command(workspace_full: str) -> str:
 
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["python"]):
         if has_python_tests or has_root_python_tests:
-            return "python -m pytest -q"
+            return _python_module_command("pytest", ["-q"])
         compile_targets: list[str] = []
         for candidate in ("app", "src", "storage", "services", "tests"):
             if os.path.isdir(os.path.join(workspace_full, candidate)):
@@ -388,14 +396,14 @@ def detect_integration_verify_command(workspace_full: str) -> str:
         for item in compile_targets:
             if item not in unique_targets:
                 unique_targets.append(item)
-        return "python -m compileall -q " + " ".join(unique_targets)
+        return _python_module_command("compileall", ["-q", *unique_targets])
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["node"]):
         return _detect_node_verify_command(workspace_full)
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["go"]):
         return "go test ./... -run TestDoesNotExist"
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["rust"]):
         return "cargo test --no-run"
-    return "python -m compileall -q ."
+    return _python_module_command("compileall", ["-q", "."])
 
 
 _TS_TYPECHECK_IGNORE_CODES: tuple[str, ...] = ("TS6053", "TS18003")

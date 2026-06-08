@@ -29,6 +29,21 @@ def _to_string_tuple(values: tuple[str, ...] | list[str] | set[str] | None) -> t
     return tuple(rows)
 
 
+def _require_image_model_capability_ref(value: str) -> str:
+    ref = _require_non_empty("model_capability_ref", value)
+    parts = ref.split(":")
+    if (
+        len(parts) != 5
+        or parts[0] != "llm.control_plane"
+        or parts[1] != "model-capability"
+        or not parts[2]
+        or parts[3] != "image_input"
+        or not parts[4]
+    ):
+        raise ValueError("model_capability_ref must point to llm.control_plane image_input capability")
+    return ref
+
+
 @dataclass(frozen=True)
 class TracebackFrameV1:
     path: str
@@ -171,7 +186,7 @@ class RunVisualQaAuditCommandV1:
         object.__setattr__(
             self,
             "model_capability_ref",
-            _require_non_empty("model_capability_ref", self.model_capability_ref),
+            _require_image_model_capability_ref(self.model_capability_ref),
         )
         object.__setattr__(self, "criteria", _to_dict_copy(self.criteria))
         object.__setattr__(self, "evidence_paths", _to_string_tuple(list(self.evidence_paths)))

@@ -509,6 +509,8 @@ def reconcile_llm_test_index(
 def update_index_with_report(
     workspace: Any,
     report: dict[str, Any],
+    *,
+    update_role_readiness: bool = True,
 ) -> None:
     """Update index with a single test report.
 
@@ -540,7 +542,7 @@ def update_index_with_report(
         suites = _extract_suites(report)
         suite_summary = {name: {"ok": bool(value.get("ok"))} for name, value in suites.items()}
 
-        if role:
+        if role and update_role_readiness:
             index["roles"][role] = {
                 "ready": ready,
                 "grade": grade,

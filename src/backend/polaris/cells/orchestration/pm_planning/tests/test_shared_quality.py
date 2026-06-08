@@ -10,6 +10,8 @@ run_integration_verify_runner (mocked).
 from __future__ import annotations
 
 import json
+import shlex
+import sys
 
 import pytest
 from polaris.cells.orchestration.pm_planning.internal.shared_quality import (
@@ -215,11 +217,13 @@ class TestDetectIntegrationVerifyCommand:
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_foo.py").write_text("", encoding="utf-8")
         result = detect_integration_verify_command(str(tmp_path))
+        assert shlex.split(result)[0] == sys.executable
         assert "pytest" in result
 
     def test_python_without_tests(self, monkeypatch, tmp_path) -> None:
         (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
         result = detect_integration_verify_command(str(tmp_path))
+        assert shlex.split(result)[0] == sys.executable
         assert "compileall" in result
 
     def test_nodejs_with_test_script(self, monkeypatch, tmp_path) -> None:
@@ -258,6 +262,7 @@ class TestDetectIntegrationVerifyCommand:
 
     def test_fallback_compileall(self, monkeypatch, tmp_path) -> None:
         result = detect_integration_verify_command(str(tmp_path))
+        assert shlex.split(result)[0] == sys.executable
         assert "compileall" in result
 
 

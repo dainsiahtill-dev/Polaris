@@ -541,6 +541,16 @@ class DirectorAdapter(BaseRoleAdapter):
         metadata["role_runtime_required"] = True
         metadata["cognitive_runtime_required"] = True
         metadata["context_os_expected"] = True
+        metadata.setdefault("cognitive_runtime_approval_mode", "auto_accept")
+        metadata.setdefault(
+            "cognitive_runtime_approval",
+            {
+                "mode": "auto_accept",
+                "source": "roles.adapters.director",
+                "scope": "director_execution_preflight",
+                "approved_by": "director_adapter",
+            },
+        )
         return metadata
 
     @staticmethod

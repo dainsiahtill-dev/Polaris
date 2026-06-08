@@ -15,6 +15,7 @@ from polaris.cells.orchestration.pm_planning.internal.dependency_validator impor
     DependencyCycleError,
     validate_dependency_dag,
 )
+from polaris.kernelone.quality import scan_workspace_artifact_quality
 
 _PM_PROMPT_LEAK_TOKENS = (
     "you are ",
@@ -96,6 +97,10 @@ _PM_FILE_EVIDENCE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+\.[A-Za-z0-9]+)",
 )
 _PM_MEASURABLE_BACKTICK_RE = re.compile(r"`[^`]{2,}`")
+_DETERMINISTIC_SCAFFOLD_MARKER_ERROR_RE = re.compile(
+    r"deterministic scaffold marker .+ in (?P<path>.+)$",
+    re.IGNORECASE,
+)
 _PM_EXECUTABLE_BACKTICK_RE = re.compile(r"`([^`]{2,})`")
 _PM_SCOPE_ROOTS = {
     "app",
@@ -1716,6 +1721,108 @@ def _dedupe_text_items(items: list[str]) -> list[str]:
     return deduped
 
 
+def _normalize_artifact_quality_relative_path(value: Any) -> str:
+    text = str(value or "").strip().strip("'\"").replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    if not text or text.startswith("../") or text.startswith("/"):
+        return ""
+    if any(ch in text for ch in ("*", "?")):
+        return ""
+    return text
+
+
+def _deterministic_scaffold_residue_paths(workspace_full: str) -> list[str]:
+    paths: list[str] = []
+    for error in scan_workspace_artifact_quality(workspace_full):
+        match = _DETERMINISTIC_SCAFFOLD_MARKER_ERROR_RE.search(str(error or ""))
+        if not match:
+            continue
+        relative_path = _normalize_artifact_quality_relative_path(match.group("path"))
+        if relative_path:
+            paths.append(relative_path)
+    return sorted(set(paths))
+
+
+def _scope_paths_for_target_files(target_files: list[str]) -> list[str]:
+    scope_paths: list[str] = []
+    for relative_path in target_files:
+        parent = str(Path(relative_path).parent).replace("\\", "/")
+        scope_paths.append(relative_path if parent == "." else parent)
+    return _dedupe_text_items(scope_paths)
+
+
+def _append_deterministic_scaffold_residue_cleanup_task(
+    normalized: dict[str, Any],
+    normalized_tasks: list[dict[str, Any]],
+    *,
+    workspace_full: str,
+    verify_command: str,
+) -> int:
+    if any(
+        isinstance(task.get("metadata"), dict)
+        and task["metadata"].get("autofix_reason") == "deterministic_scaffold_residue_cleanup"
+        for task in normalized_tasks
+    ):
+        return 0
+
+    residue_paths = _deterministic_scaffold_residue_paths(workspace_full)
+    if not residue_paths:
+        return 0
+
+    existing_ids = {str(task.get("id") or "").strip() for task in normalized_tasks}
+    task_id = "PM-AUTO-SEED-RESIDUE-CLEANUP"
+    suffix = 2
+    while task_id in existing_ids:
+        task_id = f"PM-AUTO-SEED-RESIDUE-CLEANUP-{suffix}"
+        suffix += 1
+
+    previous_task_id = ""
+    for task in reversed(normalized_tasks):
+        previous_task_id = str(task.get("id") or "").strip()
+        if previous_task_id:
+            break
+
+    normalized_tasks.append(
+        {
+            "id": task_id,
+            "title": "Clean deterministic scaffold residue",
+            "goal": ("Remove generated seed/scaffold markers from final workspace artifacts before integration QA."),
+            "description": (
+                "Rewrite declared residue files so production verification no longer depends on deterministic "
+                "seed markers or placeholder verification strings."
+            ),
+            "phase": "verification",
+            "assigned_to": "director",
+            "depends_on": [previous_task_id] if previous_task_id else [],
+            "target_files": residue_paths,
+            "scope_paths": _scope_paths_for_target_files(residue_paths),
+            "execution_checklist": [
+                "Read each declared residue target file.",
+                (
+                    "Replace audit-seed, planning scenario, build verification completed, "
+                    "test verification completed, and related deterministic scaffold markers."
+                ),
+                f"Run `{verify_command}` and confirm artifact quality passes.",
+            ],
+            "acceptance_criteria": [
+                (
+                    "Declared target files contain no audit-seed, planning scenario, build verification completed, "
+                    "test verification completed, or deterministic scaffold markers."
+                ),
+                f"Run `{verify_command}` passes.",
+            ],
+            "metadata": {
+                "autofix_reason": "deterministic_scaffold_residue_cleanup",
+                "source": "artifact_quality_scan",
+                "residue_count": len(residue_paths),
+                "overall_goal": str(normalized.get("overall_goal") or "").strip(),
+            },
+        }
+    )
+    return 1
+
+
 def _representative_workspace_file_for_scope(scope_path: Any, workspace_full: Any) -> str:
     relative = _workspace_relative_path(scope_path, workspace_full)
     if not relative:
@@ -2086,6 +2193,7 @@ def autofix_pm_contract_for_quality(
         "game_dependency_policy_sanitized": 0,
         "game_policy_tasks_removed": 0,
         "paths_normalized": 0,
+        "seed_residue_cleanup_tasks_added": 0,
     }
     if not tasks:
         return stats
@@ -2217,6 +2325,13 @@ def autofix_pm_contract_for_quality(
                 task["id"] = f"TASK-{normalized_tasks.index(task) + 1}"
                 prev_task_id = task["id"]
 
+    stats["seed_residue_cleanup_tasks_added"] += _append_deterministic_scaffold_residue_cleanup_task(
+        normalized,
+        normalized_tasks,
+        workspace_full=workspace_full,
+        verify_command=verify_command,
+    )
+    stats["task_count"] = len(normalized_tasks)
     normalized["tasks"] = normalized_tasks
     return stats
 

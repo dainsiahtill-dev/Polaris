@@ -84,12 +84,54 @@ function createTempDir(root: string, prefix: string, label: string): string {
 
 function createWorkspace(): string {
   const workspace = createTempDir(workspaceBase, "workspace-", "KERNELONE_WORKSPACE");
+  const productDocs = path.join(workspace, "docs", "product");
+  fs.mkdirSync(productDocs, { recursive: true });
+  const requirements = [
+    "# Web E2E Workflow Audit Service",
+    "",
+    "Build a Node.js + TypeScript service for task workflow auditing.",
+    "",
+    "## Required Modules",
+    "",
+    "- `src/models/task.ts`: task state model with `PENDING`, `RUNNING`, and `DONE` states.",
+    "- `src/services/taskGraph.ts`: validate dependency graphs and reject circular dependencies.",
+    "- `src/services/auditLog.ts`: append immutable audit entries when a task status changes.",
+    "- `src/server/app.ts`: expose a small HTTP-style application entry for integration tests.",
+    "- `tests/unit/taskGraph.test.ts`: unit coverage for graph validation.",
+    "- `tests/integration/auditFlow.test.ts`: integration coverage for task transition audit records.",
+    "- `package.json`, `tsconfig.json`, and a test script must be present.",
+    "",
+    "## Acceptance Criteria",
+    "",
+    "- At least three source modules are created under `src/`.",
+    "- A task transition from `PENDING` to `RUNNING` creates an audit record with a stable `audit_id`.",
+    "- A dependency cycle such as A -> B and B -> A is rejected with a deterministic error code.",
+    "- Unit and integration tests are present and can be invoked through the package test script.",
+    "- Use UTF-8 text files only.",
+    "",
+    "## Constraints",
+    "",
+    "- Use TypeScript/JavaScript only.",
+    "- Do not create Python, Go, Rust, or shell application entry points.",
+    "- Do not create `src/main.py`, `src/app.py`, `requirements.txt`, `pyproject.toml`, or `setup.py`.",
+  ].join("\n");
+  const plan = [
+    "# Web E2E Implementation Plan",
+    "",
+    "1. Create project configuration: `package.json`, `tsconfig.json`, and test script.",
+    "2. Implement task model and task graph validation modules.",
+    "3. Implement immutable audit logging for task state transitions.",
+    "4. Add HTTP-style app composition in `src/server/app.ts`.",
+    "5. Add unit and integration tests covering graph cycles and audit transitions.",
+  ].join("\n");
   fs.mkdirSync(path.join(workspace, "docs"), { recursive: true });
   fs.writeFileSync(
     path.join(workspace, "docs", "README.md"),
-    "# Web E2E Workspace\n\nThis temporary workspace is created outside the Polaris meta-project.\n",
+    `${requirements}\n`,
     { encoding: "utf8" },
   );
+  fs.writeFileSync(path.join(productDocs, "requirements.md"), `${requirements}\n`, { encoding: "utf8" });
+  fs.writeFileSync(path.join(productDocs, "plan.md"), `${plan}\n`, { encoding: "utf8" });
   return workspace;
 }
 

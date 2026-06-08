@@ -187,6 +187,7 @@ def test_run_pm_planning_iteration_prefers_real_card3d_retry_over_autofix_bulk(
             return json.loads(raw_output)
 
     monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_RETRIES", "1")
+    monkeypatch.setenv("KERNELONE_PM_DOMAIN_AUTOFIX_REQUIRE_MODEL_RETRY", "1")
     monkeypatch.setattr(pipeline, "get_pm_invoke_port", lambda: _FakePmInvokePort())
 
     state = SimpleNamespace(events_full="", ollama_full="", timeout=0)
@@ -224,6 +225,88 @@ def test_run_pm_planning_iteration_prefers_real_card3d_retry_over_autofix_bulk(
     assert all(task_id.startswith("PM-CARD3D-") for task_id in task_ids)
     assert not any(task_id.startswith("PM-AUTO-") for task_id in task_ids)
     assert payload["quality_gate"]["passed"] is True
+
+
+def test_run_pm_planning_iteration_accepts_card3d_domain_autofix_as_degraded_fallback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    class _FakePmInvokePort:
+        def build_prompt(self, *args: Any, **kwargs: Any) -> str:
+            return "build a Card3D task contract"
+
+        def invoke(self, state: Any, prompt: str, backend_kind: str, args: Any, usage_ctx: Any) -> str:
+            del state, prompt, backend_kind, args, usage_ctx
+            calls.append("invoke")
+            return json.dumps(
+                {
+                    "schema_version": 2,
+                    "overall_goal": (
+                        "Build a multiplayer online creative card game with Three.js 3D table, "
+                        "Node.js realtime backend, matchmaking, rooms, cards, rules, and tests."
+                    ),
+                    "focus": "Generic bootstrap task that needs deterministic Card3D domain repair",
+                    "tasks": [
+                        {
+                            "id": "PM-0001-F1",
+                            "title": "Requirements bootstrap",
+                            "goal": "Prepare generated project requirements.",
+                            "target_files": ["package.json"],
+                            "scope_paths": ["."],
+                            "acceptance_criteria": ["Generated project structure exists."],
+                            "assigned_to": "Director",
+                            "phase": "planning",
+                            "depends_on": [],
+                            "execution_checklist": ["Create scaffold"],
+                        }
+                    ],
+                }
+            )
+
+        def extract_json(self, raw_output: str) -> dict[str, Any] | None:
+            return json.loads(raw_output)
+
+    monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_RETRIES", "0")
+    monkeypatch.delenv("KERNELONE_PM_DOMAIN_AUTOFIX_REQUIRE_MODEL_RETRY", raising=False)
+    monkeypatch.setattr(pipeline, "get_pm_invoke_port", lambda: _FakePmInvokePort())
+
+    state = SimpleNamespace(events_full="", ollama_full="", timeout=0)
+    args = SimpleNamespace(pm_backend="auto", _resolved_pm_backend_kind="codex", timeout=0)
+    context: dict[str, Any] = {
+        "requirements": "Build a multiplayer online creative Card3D game.",
+        "plan_text": "Implement Card3D client, server, realtime sync, game rules, persistence, moderation, and tests.",
+        "gap_report": "",
+        "last_qa": "",
+        "last_tasks": None,
+        "director_result": None,
+        "pm_state": {},
+        "docs_stage": {},
+        "run_id": "pm-card3d-autofix-fallback",
+        "start_timestamp": "2026-05-30 00:00:00",
+        "run_events": str(tmp_path / "runtime.events.jsonl"),
+        "dialogue_full": str(tmp_path / "dialogue.jsonl"),
+        "pm_last_full": str(tmp_path / "pm-last.md"),
+        "pm_llm_events_full": str(tmp_path / "pm.llm.events.jsonl"),
+        "pm_state_full": str(tmp_path / "pm.state.json"),
+    }
+
+    exit_code, payload = pipeline.run_pm_planning_iteration(
+        args=args,
+        workspace_full=str(tmp_path),
+        iteration=1,
+        state=state,
+        context=context,
+    )
+
+    task_ids = [str(task.get("id") or "") for task in payload.get("tasks", []) if isinstance(task, dict)]
+    assert exit_code == 0
+    assert calls == ["invoke"]
+    assert len(task_ids) == len(_CARD3D_PM_REQUIRED_DOMAINS)
+    assert all(task_id.startswith("PM-AUTO-CARD3D-") for task_id in task_ids)
+    assert payload["quality_gate"]["passed"] is True
+    assert payload["quality_gate"]["domain_autofix_fallback"] is True
 
 
 def test_cell_pm_invoke_port_builds_codex_env_without_di(monkeypatch) -> None:
