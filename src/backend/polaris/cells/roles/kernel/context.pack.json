@@ -10,5 +10,5 @@
     "internal/kernel.py",
     "internal/turn_engine.py"
   ],
-  "notes": "Read verify.pack before touching turn_engine, transcript persistence, stream tool parsing, or llm contract boundaries."
+  "notes": "Read verify.pack before touching turn_engine, transcript persistence, stream tool parsing, or llm contract boundaries. roles.kernel production code must not import roles.adapters; role-specific structured-output schema decisions must be supplied through caller payloads backed by roles.profile or runtime-owned public contracts instead of migration adapter schema bridges. roles.kernel production code must not import llm.dialogue; prompt-driven role dialogue remains outside the Turn transaction kernel and production role turns enter through roles.runtime plus kernel/provider/control-plane contracts. roles.kernel production code must not import roles.runtime; roles.runtime composes the kernel through public contracts, not the reverse."
 }

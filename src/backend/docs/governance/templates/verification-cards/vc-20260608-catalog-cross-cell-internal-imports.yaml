@@ -1,0 +1,55 @@
+id: vc-20260608-catalog-cross-cell-internal-imports
+title: Catalog Cross-Cell Internal Import Cleanup
+date: 2026-06-08
+classification: structural
+owner: architecture-team
+scope:
+  - polaris/cells/llm/evaluation/internal/context_projection_matrix.py
+  - polaris/cells/llm/evaluation/internal/speculation_matrix.py
+  - polaris/cells/llm/evaluation/tests/test_speculation_matrix.py
+  - polaris/delivery/http/routers/interview.py
+assumption_register:
+  - id: A1
+    statement: llm.evaluation may depend on roles.kernel only through public contracts or public services.
+    evidence:
+      - src/backend/polaris/cells/llm/evaluation/cell.yaml declares roles.kernel in depends_on.
+      - src/backend/AGENTS.md requires Public/Internal Fence for cross-Cell access.
+    status: verified
+  - id: A2
+    statement: ContextProjection matrix should not import roles.kernel context_gateway internals to test role signal behavior.
+    evidence:
+      - src/backend/polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py already owns role signal behavior tests.
+      - src/backend/polaris/cells/llm/evaluation/README.agent.md says evaluation owns readiness/evaluation suites, not kernel internals.
+    status: verified
+  - id: A3
+    statement: Speculation matrix requires a public observation port for speculation events.
+    evidence:
+      - src/backend/polaris/cells/llm/evaluation/internal/speculation_matrix.py subscribes to speculation.turn.summary telemetry.
+      - src/backend/polaris/cells/roles/kernel/internal/speculation/events.py documents evaluation matrix as a subscriber use case.
+    status: verified
+  - id: A4
+    statement: Delivery interview router can resolve cache roots without importing runtime.projection internal helpers.
+    evidence:
+      - src/backend/polaris/cells/runtime/projection/public/service.py already re-exports build_cache_root.
+      - src/backend/polaris/kernelone/storage/io_paths.py owns the low-level helper.
+    status: verified
+pre_mortem:
+  likely_failure_modes:
+    - Removing role signal cases from llm.evaluation could reduce coverage unless roles.kernel owner tests are retained.
+    - Public speculation telemetry exports could accidentally expose mutation APIs if named as general-purpose emitters.
+    - Importing runtime.projection.public.service may pull heavier runtime projection symbols into delivery import time.
+verification_plan:
+  red_tests:
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/architecture/test_catalog_governance_gate.py -k role_runtime_cross_cell_internal
+  fix_tests:
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/llm/evaluation/tests/test_speculation_matrix.py
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/architecture/test_catalog_governance_gate.py -k "role_runtime_cross_cell_internal or fail_on_new"
+    - cd src/backend && PYTHONPATH=. python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
+  quality_gates:
+    - ruff check <changed_paths> --fix
+    - ruff format <changed_paths>
+    - mypy <changed_python_files>
+    - python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+rollback_plan:
+  - Revert the public speculation telemetry facade and return llm.evaluation imports to internal only if a better typed telemetry contract is added first.
+  - Revert ContextProjection matrix case list changes if equivalent roles.kernel owner tests are missing.

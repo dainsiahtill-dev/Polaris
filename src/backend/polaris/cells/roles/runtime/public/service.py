@@ -160,9 +160,11 @@ from polaris.cells.roles.runtime.public.contracts import (
     GetRoleRuntimeStatusQueryV1,
     InstantiateRoleRuntimeObjectCommandV1,
     IRoleRuntime,
+    RehydrateRoleHandoffCommandV1,
     RoleCapabilityDescriptor,
     RoleCapabilityInvocationResultV1,
     RoleExecutionResultV1,
+    RoleHandoffRehydrationResultV1,
     RoleIdentity,
     RoleLedgerBinding,
     RoleProfileBinding,
@@ -312,11 +314,17 @@ def _audit_evidence_refs(values: Iterable[Any]) -> tuple[str, ...]:
     seen: set[str] = set()
     for value in values:
         ref = str(value or "").strip()
-        if not ref or ref in seen:
+        if not ref:
             continue
         if ref == "audit.evidence" or ref.startswith("audit.evidence:"):
-            refs.append(ref)
-            seen.add(ref)
+            evidence_ref = ref
+        elif ref.startswith("runtime/evidence/"):
+            evidence_ref = f"audit.evidence:path:{ref}"
+        else:
+            continue
+        if evidence_ref not in seen:
+            refs.append(evidence_ref)
+            seen.add(evidence_ref)
     return tuple(refs)
 
 
@@ -448,6 +456,40 @@ def _handoff_pack_ref(handoff_id: str) -> str:
     return f"factory.cognitive_runtime:handoff:{handoff_id}"
 
 
+def _handoff_rehydration_ref(rehydration_id: str) -> str:
+    return f"factory.cognitive_runtime:rehydration:{rehydration_id}"
+
+
+def _handoff_id_from_ref(handoff_ref: str) -> str:
+    parts = str(handoff_ref or "").strip().split(":", 2)
+    if len(parts) != 3 or parts[0] != "factory.cognitive_runtime" or parts[1] != "handoff":
+        raise ValueError("handoff_ref must use factory.cognitive_runtime:handoff:<handoff_id>")
+    handoff_id = parts[2].strip()
+    if not handoff_id:
+        raise ValueError("handoff_ref must include a handoff id")
+    return handoff_id
+
+
+def _normalize_owner_ref(ref: str, *, owner_cell: str, ref_kind: str) -> str:
+    token = str(ref or "").strip()
+    if not token:
+        return ""
+    if token.split(":", 1)[0] == owner_cell:
+        return token
+    return f"{owner_cell}:{ref_kind}:{token}"
+
+
+def _normalize_owner_refs(refs: Iterable[Any], *, owner_cell: str, ref_kind: str) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        token = _normalize_owner_ref(str(ref or ""), owner_cell=owner_cell, ref_kind=ref_kind)
+        if token and token not in seen:
+            normalized.append(token)
+            seen.add(token)
+    return tuple(normalized)
+
+
 def _profile_policy_ref(role_id: str, policy_name: str, profile_fingerprint: str) -> str:
     return f"roles.profile:{role_id}:{policy_name}:{profile_fingerprint}"
 
@@ -566,6 +608,9 @@ _TASK_MARKET_LIFECYCLE_CONTRACT_ATTRS: dict[str, str] = {
     "acknowledge": "ack_contract",
     "fail": "fail_contract",
     "requeue": "requeue_contract",
+    "dead_letter": "dead_letter_contract",
+    "dlq": "dead_letter_contract",
+    "move_to_dead_letter": "dead_letter_contract",
 }
 
 
@@ -651,6 +696,8 @@ def execute_role_task_market_lifecycle(
         operation = "lease"
     if operation == "acknowledge":
         operation = "ack"
+    if operation in {"dlq", "move_to_dead_letter"}:
+        operation = "dead_letter"
 
     binding = command.runtime_object.task_market_binding
     command_contract = str(getattr(binding, contract_attr))
@@ -702,7 +749,7 @@ def execute_role_task_market_lifecycle(
                 "actual_tool": capability_fingerprint.tool,
             },
         )
-    if operation in {"lease", "ack", "fail", "requeue"}:
+    if operation in {"lease", "ack", "fail", "requeue", "dead_letter"}:
         task_id = _payload_string(command.payload, "task_id")
         task_ref = _task_market_lifecycle_result_ref(task_id)
         if not task_ref or task_ref not in runtime_object.turn_context.task_refs:
@@ -749,6 +796,7 @@ def execute_role_task_market_lifecycle(
             AcknowledgeTaskStageCommandV1,
             ClaimTaskWorkItemCommandV1,
             FailTaskStageCommandV1,
+            MoveTaskToDeadLetterCommandV1,
             PublishTaskWorkItemCommandV1,
             RenewTaskLeaseCommandV1,
             RequeueTaskCommandV1,
@@ -836,7 +884,7 @@ def execute_role_task_market_lifecycle(
                 metadata=metadata,
             )
             result = service.fail_task_stage(task_command)
-        else:
+        elif operation == "requeue":
             task_command = RequeueTaskCommandV1(
                 workspace=workspace,
                 task_id=_payload_string(command.payload, "task_id"),
@@ -845,6 +893,15 @@ def execute_role_task_market_lifecycle(
                 metadata=metadata,
             )
             result = service.requeue_task(task_command)
+        else:
+            task_command = MoveTaskToDeadLetterCommandV1(
+                workspace=workspace,
+                task_id=_payload_string(command.payload, "task_id"),
+                reason=_payload_string(command.payload, "reason"),
+                error_code=_payload_string(command.payload, "error_code") or None,
+                metadata=metadata,
+            )
+            result = service.move_task_to_dead_letter(task_command)
     except Exception as exc:  # noqa: BLE001 - public facade returns structured failure
         return _task_market_lifecycle_failure(
             command,
@@ -1176,11 +1233,133 @@ def commit_role_state(
             service.close()
 
 
+def rehydrate_role_handoff(
+    command: RehydrateRoleHandoffCommandV1,
+    *,
+    cognitive_runtime_service: Any | None = None,
+) -> RoleHandoffRehydrationResultV1:
+    """Rehydrate a Cognitive Runtime handoff pack without owning handoff state."""
+    if not isinstance(command, RehydrateRoleHandoffCommandV1):
+        raise TypeError("command must be a RehydrateRoleHandoffCommandV1")
+
+    identity = command.identity
+    turn_context = command.turn_context
+    turn_envelope = {
+        "identity": {
+            "role_id": identity.role_id,
+            "run_id": identity.run_id,
+            "task_id": identity.task_id,
+            "session_id": identity.session_id,
+            "workspace": identity.workspace,
+            "host_kind": identity.host_kind,
+        },
+        "turn_context": {
+            "typed_input_ref": turn_context.typed_input_ref,
+            "context_snapshot_ref": turn_context.context_snapshot_ref,
+            "handoff_refs": turn_context.handoff_refs,
+            "task_refs": turn_context.task_refs,
+            "metadata": dict(turn_context.metadata),
+        },
+        "metadata": dict(command.metadata),
+    }
+
+    close_after = cognitive_runtime_service is None
+    service = cognitive_runtime_service
+    try:
+        from polaris.cells.factory.cognitive_runtime.public.contracts import RehydrateHandoffPackCommandV1
+        from polaris.cells.factory.cognitive_runtime.public.service import get_cognitive_runtime_public_service
+
+        if service is None:
+            service = get_cognitive_runtime_public_service()
+
+        result = service.rehydrate_handoff_pack(
+            RehydrateHandoffPackCommandV1(
+                workspace=identity.workspace,
+                handoff_id=_handoff_id_from_ref(command.handoff_ref),
+                target_role=command.target_role,
+                target_session_id=command.target_session_id,
+                turn_envelope=turn_envelope,
+                metadata={
+                    **dict(command.metadata),
+                    "handoff_ref": command.handoff_ref,
+                    "role_payload_ref": turn_context.typed_input_ref,
+                    "source_role": identity.role_id,
+                },
+            )
+        )
+        if not bool(getattr(result, "ok", False)):
+            error_message = str(getattr(result, "error_message", "") or "").strip()
+            error_code = str(getattr(result, "error_code", "") or "").strip()
+            return RoleHandoffRehydrationResultV1(
+                ok=False,
+                handoff_ref=command.handoff_ref,
+                target_role=command.target_role,
+                target_session_id=command.target_session_id,
+                status="rehydration_failed",
+                error_code=error_code or "handoff_rehydration_failed",
+                error_message=error_message or "Cognitive Runtime handoff rehydration failed",
+            )
+
+        rehydration = getattr(result, "rehydration", None)
+        rehydration_id = str(getattr(rehydration, "rehydration_id", "") or "").strip()
+        if not rehydration_id:
+            return RoleHandoffRehydrationResultV1(
+                ok=False,
+                handoff_ref=command.handoff_ref,
+                target_role=command.target_role,
+                target_session_id=command.target_session_id,
+                status="rehydration_failed",
+                error_code="handoff_rehydration_missing_id",
+                error_message="Cognitive Runtime handoff rehydration response did not include rehydration_id",
+            )
+
+        return RoleHandoffRehydrationResultV1(
+            ok=True,
+            handoff_ref=command.handoff_ref,
+            target_role=command.target_role,
+            target_session_id=command.target_session_id,
+            rehydration_ref=_handoff_rehydration_ref(rehydration_id),
+            context_override=dict(getattr(rehydration, "context_override", {}) or {}),
+            metadata_patch=dict(getattr(rehydration, "metadata_patch", {}) or {}),
+            runtime_receipt_refs=_normalize_owner_refs(
+                getattr(rehydration, "receipt_refs", ()) or (),
+                owner_cell="factory.cognitive_runtime",
+                ref_kind="receipt",
+            ),
+            artifact_refs=_normalize_owner_refs(
+                getattr(rehydration, "artifact_refs", ()) or (),
+                owner_cell="roles.session",
+                ref_kind="artifact",
+            ),
+            episode_refs=_normalize_owner_refs(
+                getattr(rehydration, "episode_refs", ()) or (),
+                owner_cell="roles.session",
+                ref_kind="episode",
+            ),
+            source_spans=tuple(getattr(rehydration, "source_spans", ()) or ()),
+            status="rehydrated",
+        )
+    except (RuntimeError, ValueError) as exc:
+        return RoleHandoffRehydrationResultV1(
+            ok=False,
+            handoff_ref=command.handoff_ref,
+            target_role=command.target_role,
+            target_session_id=command.target_session_id,
+            status="failed",
+            error_code="role_handoff_rehydration_failed",
+            error_message=str(exc),
+        )
+    finally:
+        if close_after and service is not None and hasattr(service, "close"):
+            service.close()
+
+
 def _role_runtime_chain_ref(chain_id: str) -> str:
     return f"roles.runtime:chain:{chain_id}"
 
 
 _FULL_PHASE5_REQUIRED_ROLES = ("pm", "chief_engineer", "director", "qa")
+_FULL_PHASE5_REQUIRED_EVIDENCE_ROLES = ("director", "qa")
 _FULL_PHASE5_REQUIRED_HANDOFF_ROLES = ("chief_engineer", "director")
 _FULL_PHASE5_REQUIRED_RECEIPT_ROLES = ("chief_engineer", "director", "qa")
 
@@ -1328,6 +1507,22 @@ def assemble_role_runtime_chain(
             required_owner_cell="audit.evidence",
             invalid_ref=invalid_audit_evidence_ref,
         )
+    if is_full_phase5_chain:
+        for role_id in _FULL_PHASE5_REQUIRED_EVIDENCE_ROLES:
+            step = next(step for step in command.steps if step.role_id == role_id)
+            if not step.evidence_refs:
+                return RoleRuntimeChainAssemblyResultV1(
+                    ok=False,
+                    chain_ref=chain_ref,
+                    error_code="missing_phase5_role_audit_evidence_ref",
+                    error_message="full Phase 5 role runtime chain requires audit evidence refs for each audited role",
+                    metadata={
+                        "required_roles": command.required_roles,
+                        "required_owner_cell": "audit.evidence",
+                        "missing_role": role_id,
+                        "required_evidence_roles": _FULL_PHASE5_REQUIRED_EVIDENCE_ROLES,
+                    },
+                )
     capability_fingerprint_refs = _merge_refs(tuple(step.capability_fingerprint_ref for step in command.steps))
     handoff_refs = _merge_refs(*(step.handoff_refs for step in command.steps))
     runtime_receipt_refs = _merge_refs(*(step.receipt_refs for step in command.steps))
@@ -7719,6 +7914,7 @@ __all__ = [
     "ProtocolFSM",
     "ProtocolType",
     "ReActEngine",
+    "RehydrateRoleHandoffCommandV1",
     "RetryHint",
     "RoleAgent",
     "RoleCapabilityInvocationResultV1",
@@ -7730,6 +7926,7 @@ __all__ = [
     "RoleExecutionKernel",
     "RoleExecutionMode",
     "RoleExecutionResultV1",
+    "RoleHandoffRehydrationResultV1",
     "RoleLibraryPolicy",
     "RoleProfile",
     "RoleProfileRegistry",
@@ -7798,6 +7995,7 @@ __all__ = [
     "query_role_runtime_status",
     "register_engine",
     "registry",
+    "rehydrate_role_handoff",
     "reset_role_runtime_service",
     "run_tui",
     "should_enable_sequential",

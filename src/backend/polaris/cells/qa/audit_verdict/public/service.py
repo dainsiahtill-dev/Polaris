@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +18,7 @@ from polaris.cells.qa.audit_verdict.internal.qa_service import AuditResult, QACo
 from polaris.cells.qa.audit_verdict.internal.quality_service import QualityService, get_quality_service
 from polaris.cells.qa.audit_verdict.public.contracts import (
     FailureSignalV1,
+    GetQaVerdictQueryV1,
     ParseTracebackFramesCommandV1,
     ParseTracebackFramesResultV1,
     QaAuditResultV1,
@@ -26,6 +28,8 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     VisualAuditFindingV1,
     VisualQaAuditResultV1,
 )
+
+logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 _TRACEBACK_FRAME_RE = re.compile(r'^\s*File "([^"]+)", line (\d+), in ([^\n]+)\s*$')
@@ -89,7 +93,7 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
         raise TypeError("QAService.audit_task must return AuditResult")
 
     findings = tuple(_finding_from_issue(issue) for issue in audit.issues)
-    return QaAuditResultV1(
+    result = QaAuditResultV1(
         ok=audit.verdict == "PASS",
         task_id=command.task_id,
         workspace=command.workspace,
@@ -97,6 +101,100 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
         score=1.0 if audit.verdict == "PASS" else 0.0,
         findings=findings,
         suggestions=(),
+    )
+    # 持久化最新判定，供后续只读上下文信号（verdict_history）回读。失败不得影响审计本身。
+    _persist_qa_verdict(command.task_id, command.workspace, result, run_id=str(criteria.get("run_id") or "") or None)
+    return result
+
+
+def _persist_qa_verdict(
+    task_id: str,
+    workspace: str,
+    result: QaAuditResultV1,
+    *,
+    run_id: str | None = None,
+) -> None:
+    """把一次 QA 判定持久化到磁盘（原子写）。任何失败仅记日志、不抛出。"""
+    try:
+        from datetime import datetime, timezone
+
+        from polaris.cells.qa.audit_verdict.internal.verdict_persistence import VerdictPersistence
+
+        now = datetime.now(timezone.utc).isoformat()
+        safe_task = re.sub(r"[^A-Za-z0-9_.-]", "_", str(task_id)) or "task"
+        # 微秒级时间戳保证同一 task 多次判定的 verdict_id 唯一且按时间可排序。
+        stamp = now.replace(":", "").replace("-", "").replace(".", "")
+        verdict_id = f"{safe_task}__{stamp}"
+        VerdictPersistence(workspace).save(
+            verdict_id,
+            {
+                "task_id": str(task_id),
+                "workspace": str(workspace),
+                "run_id": run_id or "",
+                "verdict": result.verdict,
+                "score": float(result.score),
+                "findings": list(result.findings),
+                "suggestions": list(result.suggestions),
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+    except Exception:  # noqa: BLE001 - 持久化是旁路，绝不能影响审计主流程
+        logger.debug("persist qa verdict failed", exc_info=True)
+
+
+def _latest_verdict_for_task(
+    persistence: Any,
+    *,
+    task_id: str,
+    run_id: str | None,
+) -> dict[str, Any] | None:
+    """返回该 task 最新的已持久化判定 payload；无则 None。"""
+    matches: list[tuple[str, str, dict[str, Any]]] = []
+    for verdict_id in persistence.list_all():
+        payload = persistence.load(verdict_id)
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("task_id") or "").strip() != task_id:
+            continue
+        if run_id and str(payload.get("run_id") or "").strip() != run_id:
+            continue
+        updated_at = str(payload.get("updated_at") or payload.get("created_at") or "").strip()
+        matches.append((updated_at, verdict_id, payload))
+    if not matches:
+        return None
+    _ts, _vid, payload = max(matches, key=lambda item: (item[0], item[1]))
+    return payload
+
+
+def get_qa_verdict(query: GetQaVerdictQueryV1) -> QaAuditResultV1:
+    """读取某 task 最新的已持久化 QA 判定（只读，无副作用）。
+
+    无持久化判定时返回 ``ok=False, verdict="missing"``。这是 verdict_history
+    上下文信号的数据源（对应 chief_engineer 的 get_blueprint_status）。
+    """
+    if not isinstance(query, GetQaVerdictQueryV1):
+        raise TypeError("query must be GetQaVerdictQueryV1")
+    from polaris.cells.qa.audit_verdict.internal.verdict_persistence import VerdictPersistence
+
+    persistence = VerdictPersistence(query.workspace, ensure_directory=False)
+    payload = _latest_verdict_for_task(persistence, task_id=query.task_id, run_id=query.run_id)
+    if payload is None:
+        return QaAuditResultV1(
+            ok=False,
+            task_id=query.task_id,
+            workspace=query.workspace,
+            verdict="missing",
+            score=0.0,
+        )
+    return QaAuditResultV1(
+        ok=True,
+        task_id=query.task_id,
+        workspace=query.workspace,
+        verdict=str(payload.get("verdict") or "unknown").strip() or "unknown",
+        score=float(payload.get("score") or 0.0),
+        findings=_string_tuple(payload.get("findings")),
+        suggestions=_string_tuple(payload.get("suggestions")),
     )
 
 

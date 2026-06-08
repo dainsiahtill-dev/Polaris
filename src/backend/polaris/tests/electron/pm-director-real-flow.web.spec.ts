@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import {
   assertExpandedTechEvidenceMatrix,
   collectExpandedTechEvidenceMatrix,
@@ -31,9 +32,19 @@ type SnapshotPayload = {
 };
 
 type IntegrationQaArtifact = {
+  ok?: boolean;
   reason?: string;
   ran?: boolean;
   passed?: boolean | null;
+  result_path?: string;
+  runtime_result_path?: string;
+  result?: {
+    reason?: string;
+    ran?: boolean;
+    passed?: boolean | null;
+    result_path?: string;
+    runtime_result_path?: string;
+  };
 };
 
 type DirectorResultArtifact = {
@@ -115,9 +126,20 @@ test("web entry triggers PM -> Director -> QA and verifies 16x4 runtime evidence
     method: "POST",
     body: { run_id: `web-full-chain-qa-${Date.now()}` },
   });
-  expect(qa.ran, JSON.stringify(qa)).toBe(true);
-  expect(qa.passed, JSON.stringify(qa)).toBe(true);
-  expect(String(qa.reason || "")).toBe("integration_qa_passed");
+  expect(qa.ok, JSON.stringify(qa)).not.toBe(false);
+  const qaResult = qa.result ?? qa;
+  expect(qaResult.ran, JSON.stringify(qa)).toBe(true);
+  expect(qaResult.passed, JSON.stringify(qa)).toBe(true);
+  expect(String(qaResult.reason || "")).toBe("integration_qa_passed");
+  const qaResultPath = String(qaResult.result_path || "").trim();
+  const qaRuntimeResultPath = String(qaResult.runtime_result_path || "").trim();
+  expect(qaRuntimeResultPath, JSON.stringify(qa)).not.toBe("");
+  expect(path.resolve(qaRuntimeResultPath)).toBe(
+    path.resolve(runtimeRoot, "results", "integration_qa.result.json"),
+  );
+  expect(fs.existsSync(qaRuntimeResultPath), qaRuntimeResultPath).toBe(true);
+  expect(qaResultPath, JSON.stringify(qa)).not.toBe("");
+  expect(fs.existsSync(qaResultPath), qaResultPath).toBe(true);
 
   const report = await collectExpandedTechEvidenceMatrix(webPage, {
     requireRealChain: true,

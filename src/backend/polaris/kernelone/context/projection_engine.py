@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from polaris.kernelone.context.context_os.helpers import get_metadata_value
+from polaris.kernelone.context.control_plane_noise import (
+    is_signal_role,
+    strip_control_plane_markers,
+)
 
 if TYPE_CHECKING:
     from polaris.kernelone.context.receipt_store import ReceiptStore
@@ -83,6 +87,34 @@ _ROLE_PRIORITY = {
 }
 
 
+@dataclass
+class _AdaptiveState:
+    """跨 turn 持久的自适应学习状态（权重 + outcomes 滚动窗口）。"""
+
+    weights: _AdaptiveWeights
+    outcomes: list[_ProjectionOutcome]
+
+
+# 模块级状态存储（与 RoleSignalFreshnessCache 同一模板）：解开 ProjectionEngine
+# "每 turn 新建 → 学习状态清零"的架构阻断。按 learning_key（通常是角色）累积，
+# 使权重与 outcomes 窗口跨 turn 存活。
+_ADAPTIVE_STATE_STORE: dict[str, _AdaptiveState] = {}
+
+
+def _get_adaptive_state(learning_key: str) -> _AdaptiveState:
+    key = learning_key or "default"
+    state = _ADAPTIVE_STATE_STORE.get(key)
+    if state is None:
+        state = _AdaptiveState(weights=_AdaptiveWeights(), outcomes=[])
+        _ADAPTIVE_STATE_STORE[key] = state
+    return state
+
+
+def reset_projection_adaptive_state() -> None:
+    """测试用：清空跨 turn 自适应状态。"""
+    _ADAPTIVE_STATE_STORE.clear()
+
+
 class ProjectionEngine:
     """Generate prompt-safe messages from ContextOS projections.
 
@@ -124,12 +156,23 @@ class ProjectionEngine:
         "clear": 0,
     }
 
-    def __init__(self) -> None:
-        """Initialize ProjectionEngine with adaptive learning state."""
-        self._weights = _AdaptiveWeights()
-        self._outcomes: list[_ProjectionOutcome] = []
+    def __init__(self, learning_key: str = "default") -> None:
+        """Initialize ProjectionEngine with adaptive learning state.
+
+        ``learning_key`` 选择跨 turn 持久的自适应状态桶（通常传角色），使权重与
+        outcomes 窗口跨 turn 累积（解开"每 turn 新建即清零"的阻断）。默认 "default"
+        保持所有现有构造点行为不变（共享同一桶）。
+        """
+        self._state = _get_adaptive_state(learning_key)
+        # 引用共享状态：权重在 adjust 中原地变更、outcomes 原地增删 → 跨 turn 存活。
+        self._weights = self._state.weights
+        self._outcomes: list[_ProjectionOutcome] = self._state.outcomes
         self._max_outcomes: int = 100  # Rolling window for weight learning
         self._projection_count: int = 0
+        # 记住最近一次实际投影所用的事件，供 record_outcome 计算真实质量分。
+        # （修复历史缺陷：record_outcome 原先喂入常量 0.5，使 _compute_projection_quality
+        #  形同虚设、自适应学习恒为空转。）
+        self._last_projected_events: list[Any] = []
 
     @staticmethod
     def _as_mapping(value: Any) -> dict[str, Any]:
@@ -152,9 +195,21 @@ class ProjectionEngine:
         raw = self._as_mapping(metadata)
         return {key: value for key, value in raw.items() if key not in self._TURN_BLOCKED_KEYS}
 
+    @staticmethod
+    def _clean_turn_content(role: str, content: str) -> str:
+        """对非信号角色(tool/system)内容剥离框架性控制面标记。
+
+        兑现类 docstring "control-plane noise excluded at turn level" 的承诺:工具/系统
+        内容里泄漏的 ``<tool_result>`` 包裹标签、``[system warning]`` 等整行会被清掉,而
+        信号角色(user/assistant)的内容——模型与用户的真实话语——保持原样不动。
+        """
+        if is_signal_role(role):
+            return content
+        return strip_control_plane_markers(content)
+
     def _normalize_turn(self, turn: Mapping[str, Any], receipt_store: ReceiptStore) -> dict[str, Any] | None:
         role = str(turn.get("role") or "").strip()
-        content = str(turn.get("content") or "")
+        content = self._clean_turn_content(role, str(turn.get("content") or ""))
         if not role:
             return None
 
@@ -194,6 +249,8 @@ class ProjectionEngine:
 
     def sort_events(self, active_window: Iterable[Any]) -> list[Any]:
         events = list(active_window)
+        # 记录本次投影的事件，供后续 record_outcome 计算真实质量分。
+        self._last_projected_events = events
         if not events:
             return []
 
@@ -283,20 +340,24 @@ class ProjectionEngine:
             tokens_used: Token budget consumed for this projection
         """
         self._projection_count += 1
+        # 从最近一次实际投影的事件计算真实质量分（修复：原先硬编码 0.5 导致学习空转）。
+        route_score, confidence_score, recency_score = self._compute_projection_quality(
+            self._last_projected_events, success
+        )
         outcome = _ProjectionOutcome(
             projection_id=f"proj_{self._projection_count}",
             timestamp=datetime.now(timezone.utc),
             success=success,
-            route_score=0.5,
-            confidence_score=0.5,
-            recency_score=0.5,
+            route_score=route_score,
+            confidence_score=confidence_score,
+            recency_score=recency_score,
             tokens_used=tokens_used,
         )
         self._outcomes.append(outcome)
 
-        # Rolling window: keep last _max_outcomes
+        # Rolling window: keep last _max_outcomes（**原地**截断，保持与共享状态同引用）。
         if len(self._outcomes) > self._max_outcomes:
-            self._outcomes = self._outcomes[-self._max_outcomes :]
+            del self._outcomes[: -self._max_outcomes]
 
         # Adjust weights if we have enough data (at least 5 outcomes)
         if len(self._outcomes) >= 5:
@@ -340,7 +401,7 @@ class ProjectionEngine:
                     continue
 
             role = str(getattr(event, "role", "user") or "user")
-            content = str(getattr(event, "content", "") or "")
+            content = self._clean_turn_content(role, str(getattr(event, "content", "") or ""))
             event_id = str(getattr(event, "event_id", "") or f"idx_{index}")
 
             if route == "archive":

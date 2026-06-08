@@ -10,7 +10,9 @@ import yaml
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 GATE_SCRIPT = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_catalog_governance_gate.py"
-BASELINE_FILE = BACKEND_ROOT / "polaris" / "tests" / "architecture" / "allowlists" / "catalog_governance_gate.baseline.json"
+BASELINE_FILE = (
+    BACKEND_ROOT / "polaris" / "tests" / "architecture" / "allowlists" / "catalog_governance_gate.baseline.json"
+)
 MISMATCH_BASELINE_FILE = (
     BACKEND_ROOT / "polaris" / "tests" / "architecture" / "allowlists" / "manifest_catalog_mismatches.baseline.jsonl"
 )
@@ -67,6 +69,50 @@ def test_catalog_governance_gate_fail_on_new_baseline() -> None:
     # manifest_catalog key is present (even if empty) when --mismatch-baseline is used
     assert "manifest_catalog" in payload
     assert payload["manifest_catalog"].get("new_mismatch_count") == 0
+
+
+def test_catalog_governance_gate_has_no_role_runtime_cross_cell_internal_imports() -> None:
+    command = [
+        sys.executable,
+        str(GATE_SCRIPT),
+        "--workspace",
+        str(BACKEND_ROOT),
+        "--mode",
+        "audit-only",
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=str(BACKEND_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=_build_utf8_env(),
+        timeout=240,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        "Catalog governance audit could not run.\n"
+        f"command: {' '.join(command)}\n"
+        f"stdout:\n{completed.stdout}\n"
+        f"stderr:\n{completed.stderr}"
+    )
+
+    payload = json.loads(completed.stdout or "{}")
+    targeted = []
+    for issue in payload.get("issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        path = str(issue.get("path") or "")
+        message = str(issue.get("message") or "")
+        rule_id = str(issue.get("rule_id") or "")
+        if rule_id != "no_cross_cell_internal_import":
+            continue
+        if (path.startswith("polaris/cells/llm/evaluation/") and "roles.kernel internal module" in message) or (
+            path == "polaris/delivery/http/routers/interview.py" and "runtime.projection internal module" in message
+        ):
+            targeted.append(f"{path}: {message}")
+
+    assert targeted == [], "role runtime adjacent paths must use public Cell contracts:\n" + "\n".join(targeted)
 
 
 def test_fitness_rules_document_depends_on_gate() -> None:

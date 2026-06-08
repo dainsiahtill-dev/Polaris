@@ -76,6 +76,11 @@ _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE = re.compile(
     r"//[^\r\n]*\\n\s*(?:export|import|const|let|var|class|function|interface|type|enum)\b",
     re.IGNORECASE,
 )
+_TS_ZOD_INFERRED_TYPE_RE = re.compile(
+    r"(?:^|\n)\s*(?:export\s+)?type\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*"
+    r"z\.infer\s*<\s*typeof\s+[A-Za-z_$][\w$]*\s*>\s*;",
+    re.MULTILINE,
+)
 _IMPORT_SPECIFIER_RE = re.compile(
     r"(?:^|\n)\s*(?:import\s+(?:type\s+)?(?:[^'\"\n]*?\s+from\s+)?|export\s+[^'\"\n]*?\s+from\s+)"
     r"[\"']([^\"']+)[\"']",
@@ -103,6 +108,7 @@ _NODE_BUILTIN_IMPORTS = {
     "zlib",
 }
 _TEST_FRAMEWORK_IMPORTS = {"@jest/globals", "jest", "vitest", "mocha"}
+_NPM_TEST_RUNNER_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(vitest|jest|mocha|ava)(?:$|[\s;&|])", re.IGNORECASE)
 _PYTHON_COMMAND_IN_NPM_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(python3?|pytest|pip3?)(?:$|[\s;&|])", re.IGNORECASE)
 _PYTHON_PACKAGE_MANIFEST_DEPENDENCIES = {
     "django",
@@ -212,7 +218,7 @@ def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str
 
     errors: list[str] = []
     if os.path.basename(relative_path).lower() == "package.json":
-        errors.extend(_scan_package_manifest(text, relative_path))
+        errors.extend(_scan_package_manifest(root_full, text, relative_path))
     errors.extend(_scan_typescript_imports(root_full, full_path, text, relative_path))
     errors.extend(_scan_typescript_syntax_red_flags(full_path, text, relative_path))
     for marker in _DETERMINISTIC_SCAFFOLD_MARKERS:
@@ -245,6 +251,12 @@ def _scan_typescript_syntax_red_flags(full_path: Path, text: str, relative_path:
         return [
             f"Artifact quality scan failed: TypeScript escaped newline in line comment before code in {relative_path}"
         ]
+    collision_name = _typescript_zod_inferred_type_class_collision_name(text)
+    if collision_name:
+        return [
+            "Artifact quality scan failed: TypeScript zod inferred type collides "
+            f"with class {collision_name} in {relative_path}"
+        ]
     for match in _TS_RETURN_OBJECT_BLOCK_RE.finditer(text):
         if _TS_OBJECT_PROPERTY_SEMICOLON_RE.search(match.group("body")):
             return [
@@ -252,6 +264,17 @@ def _scan_typescript_syntax_red_flags(full_path: Path, text: str, relative_path:
                 f"semicolon-terminated property in {relative_path}"
             ]
     return []
+
+
+def _typescript_zod_inferred_type_class_collision_name(text: str) -> str:
+    for match in _TS_ZOD_INFERRED_TYPE_RE.finditer(str(text or "")):
+        name = str(match.group("name") or "").strip()
+        if not name:
+            continue
+        class_re = re.compile(rf"(?:^|\n)\s*(?:export\s+)?class\s+{re.escape(name)}\b", re.MULTILINE)
+        if class_re.search(text):
+            return name
+    return ""
 
 
 def _typescript_line_comment_contains_escaped_newline_code(text: str) -> bool:
@@ -266,7 +289,7 @@ def _typescript_line_comment_contains_escaped_newline_code(text: str) -> bool:
     return False
 
 
-def _scan_package_manifest(text: str, relative_path: str) -> list[str]:
+def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> list[str]:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
@@ -280,6 +303,15 @@ def _scan_package_manifest(text: str, relative_path: str) -> list[str]:
         lowered = test_script.lower()
         if "no test specified" in lowered or "no tests specified" in lowered:
             errors.append(f"Artifact quality scan failed: npm default failing test script in {relative_path}")
+        if (
+            _NPM_TEST_RUNNER_SCRIPT_RE.search(test_script)
+            and _workspace_has_node_source_files(root_full)
+            and not _workspace_has_node_test_files(root_full)
+        ):
+            errors.append(
+                "Artifact quality scan failed: npm package manifest has test runner script "
+                f"but no test/spec files exist in {relative_path}"
+            )
         for script_name, script_value in scripts.items():
             script_text = str(script_value or "")
             if _PYTHON_COMMAND_IN_NPM_SCRIPT_RE.search(script_text):
@@ -308,12 +340,41 @@ def _scan_package_manifest(text: str, relative_path: str) -> list[str]:
     return errors
 
 
+def _workspace_has_node_source_files(root_full: Path) -> bool:
+    for relative_path in _iter_workspace_relative_files(root_full):
+        if _is_test_like_artifact_path(relative_path):
+            continue
+        if Path(relative_path).suffix.lower() in _TS_JS_SOURCE_EXTS:
+            return True
+    return False
+
+
+def _workspace_has_node_test_files(root_full: Path) -> bool:
+    return any(
+        _is_test_like_artifact_path(relative_path) for relative_path in _iter_workspace_relative_files(root_full)
+    )
+
+
+def _iter_workspace_relative_files(root_full: Path) -> Iterable[str]:
+    for current_root, dir_names, file_names in os.walk(root_full):
+        dir_names[:] = [name for name in dir_names if name not in _ARTIFACT_QUALITY_SKIP_DIRS]
+        current = Path(current_root)
+        for name in file_names:
+            full_path = current / name
+            try:
+                relative_path = full_path.relative_to(root_full).as_posix()
+            except ValueError:
+                continue
+            yield relative_path
+
+
 def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
     if full_path.suffix.lower() not in _TS_JS_SOURCE_EXTS:
         return []
     declared_dependencies = _declared_package_dependencies(root_full)
     errors: list[str] = []
     is_typescript = full_path.suffix.lower() in _TS_SOURCE_EXTS
+    has_package_manifest = (root_full / "package.json").is_file()
     node_types_error_added = False
     for match in _IMPORT_SPECIFIER_RE.finditer(text):
         specifier = str(match.group(1) or "").strip()
@@ -330,7 +391,12 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
         root_name = _package_root_name(specifier)
         builtin_name = _node_builtin_root_name(specifier)
         if builtin_name in _NODE_BUILTIN_IMPORTS:
-            if is_typescript and not node_types_error_added and not _node_types_declared(declared_dependencies):
+            if (
+                is_typescript
+                and has_package_manifest
+                and not node_types_error_added
+                and not _node_types_declared(declared_dependencies)
+            ):
                 errors.append(
                     "Artifact quality scan failed: TypeScript node builtin import "
                     f"{specifier!r} requires '@types/node' in {relative_path}"

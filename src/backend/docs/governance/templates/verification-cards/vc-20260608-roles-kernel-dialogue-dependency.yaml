@@ -1,0 +1,57 @@
+id: vc-20260608-roles-kernel-dialogue-dependency
+title: Roles kernel must not depend on prompt-driven LLM dialogue
+date: "2026-06-08"
+classification: structural
+owner: architecture-team
+scope:
+  cells:
+    - roles.kernel
+    - roles.runtime
+    - llm.dialogue
+    - llm.control_plane
+  governance_assets:
+    - docs/graph/catalog/cells.yaml
+    - docs/governance/ci/scripts/run_kernelone_release_gate.py
+assumption_register:
+  - id: A1
+    statement: roles.kernel is the Turn transaction kernel and must not depend on prompt-driven llm.dialogue role facades.
+    evidence:
+      - src/backend/polaris/cells/roles/kernel/cell.yaml
+      - src/backend/polaris/cells/roles/kernel/README.agent.md
+      - src/backend/polaris/cells/roles/kernel/context.pack.json
+    decision: Kernel production code must not import polaris.cells.llm.dialogue.
+  - id: A2
+    statement: Role chat and docs dialogue compatibility remain owned by llm.dialogue or delivery surfaces, not by roles.kernel.
+    evidence:
+      - src/backend/polaris/cells/llm/dialogue/cell.yaml
+      - src/backend/polaris/delivery/http/routers/role_runtime_chat.py
+    decision: The release gate only blocks roles.kernel imports; owner-cell dialogue code is allowed.
+  - id: A3
+    statement: Graph depends_on should represent real source dependency, not historic prompt-route memory.
+    evidence:
+      - src/backend/docs/graph/catalog/cells.yaml
+      - src/backend/polaris/cells/roles/kernel/cell.yaml
+    decision: Remove roles.kernel -> llm.dialogue once source imports are absent and the release gate prevents reintroduction.
+pre_mortem:
+  likely_failure_modes:
+    - Kernel code still imports a public dialogue helper that codegraph missed because the file was recently edited.
+    - Delivery role chat routes are accidentally blocked even though they should enter roles.runtime through role_runtime_chat.
+    - The graph catalog and cell.yaml diverge after removing only one declaration.
+verification_plan:
+  tests:
+    - path: src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+      expected: Release gate blocks roles.kernel importing llm.dialogue and allows llm.dialogue owner-cell code.
+    - path: src/backend/polaris/cells/roles/kernel/tests
+      expected: Kernel transaction, context gateway, parser, and stream behavior remains green without llm.dialogue graph dependency.
+  commands:
+    - ruff check src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py --fix
+    - ruff format src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+    - mypy src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/runtime/tests
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/runtime/task_market/tests
+    - cd src/backend && PYTHONPATH=. python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all --print-report
+    - cd src/backend && PYTHONPATH=. python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
+rollback:
+  strategy: Restore the graph dependency and remove the release gate stage together if a real kernel dialogue dependency is found.

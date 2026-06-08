@@ -1351,6 +1351,7 @@ cells:
         - ExecuteRoleCapabilityInvocationCommandV1
         - AssembleRoleRuntimeChainCommandV1
         - RoleStateCommitRequest
+        - RehydrateRoleHandoffCommandV1
         - ExecuteRoleTaskCommandV1
         - ExecuteRoleSessionCommandV1
         - AggregateChatCompletionsCommandV1
@@ -1367,6 +1368,7 @@ cells:
         - RoleCapabilityInvocationResultV1
         - RoleRuntimeChainAssemblyResultV1
         - RoleStateCommitReceipt
+        - RoleHandoffRehydrationResultV1
         - RoleExecutionResultV1
         - AggregateRolePlanResultV1
         - AggregateRoleLobeV1
@@ -1433,6 +1435,7 @@ cells:
       - task_market.ack
       - task_market.fail
       - task_market.requeue
+      - task_market.dead_letter
       - runtime_projection.read
       - blueprint.generate:*
       - blueprint.memo.record
@@ -1447,6 +1450,7 @@ cells:
       - change_set.validate
       - runtime_receipt.record
       - handoff.export
+      - handoff.rehydrate
     verification:
       tests:
         - tests/test_roles_kernel.py
@@ -1674,14 +1678,11 @@ cells:
       - policy.permission
       - audit.evidence
       - director.execution
-      - llm.dialogue
-      - roles.adapters
       - roles.profile
       - roles.session
       - runtime.execution_broker
       - runtime.task_runtime
       - factory.cognitive_runtime
-      - roles.runtime
       - storage.layout
     subgraphs:
       - execution_governance_pipeline

@@ -195,6 +195,33 @@ emit 工具调用后**仍持续生成**更多 token（更长 reasoning/thinking 
    亚秒级收益是错误仪器（信噪比太低）。speculation 的收益**真实、可加、在关键路径上**，但在 agent
    turn 的端到端层面被模型生成抖动掩盖。
 
+## 8. 净机制收益（零 LLM、确定性）——剔除模型抖动后的真值
+
+第 7 节端到端被 LLM 生成方差（±1200ms）淹没。为测 speculation 机制本身的净收益，用
+**真实 speculation 原语**（`SpeculativeExecutor`/`ShadowTaskRegistry`/`SpeculationResolver`/
+`StreamShadowEngine` + 真实只读延迟注入），把"流式生成"替换为**确定性窗口 `sleep(W)`**，
+工具成本由注入延迟 `D` 精确控制。ON 与 OFF 之差**只来自 speculation 机制**。
+
+固化为确定性单测：`speculation/tests/test_net_benefit_deterministic.py`（3 测试，无 LLM、无网络）。
+
+统计（N=15/combo，脚本 `/tmp/spec_net_benefit.py`，本机）：
+
+| W (窗口) | D (工具成本) | ON | OFF | **NET (OFF−ON)** | 95% CI | 动作 |
+|---|---|---|---|---|---|---|
+| 800 | 200 | 820.4 ms | 1001.9 ms | **181.5 ms** | [166, 197] | adopt×15 |
+| 800 | 500 | 810.8 ms | 1302.4 ms | **491.7 ms** | [491.4, 492.0] | adopt×15 |
+| 800 | 800 | 811.8 ms | 1602.5 ms | **790.8 ms** | [790.6, 791.0] | join×15 |
+| 400 | 800 | 806.7 ms | 1202.1 ms | **395.4 ms** | [395.2, 395.5] | join×15 |
+
+**结论（净机制真值）**：
+1. **NET ≈ min(W, D)**，被实测精确证实（181≈200、492≈500、791≈800、395≈400；缺口 ~8–20ms 是
+   shadow 创建/调度开销）。
+2. **ON ≈ W 恒定**（~810ms，= 窗口 + ~10ms 开销），与 D 无关——因为工具执行被完全藏进窗口；
+   **OFF = W + D**（随 D 线性增长）。这是"speculation 把工具延迟移出关键路径"的直接证据。
+3. 剔除 LLM 后 **CI 收缩到 ±0.1–0.5ms**（对比第 7 节端到端 ±1000ms 跨 0）——证明第 7 节端到端
+   不显著**不是收益不存在，而是被模型抖动掩盖**；机制净收益真实、确定、可加。
+4. adopt（W≥D，shadow 先跑完）与 join（W<D，等剩余）都交付收益；join 的收益被窗口 W 封顶。
+
 ### 已知非本任务缺陷（不在范围内，未改）
 - `policy/budget_policy.py::from_metadata` 对非法 `max_calls` 做 `int('invalid')` 抛
   `ValueError`（`test_from_metadata_invalid_values` 红）——预存，与 speculation 无关。

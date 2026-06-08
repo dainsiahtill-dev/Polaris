@@ -1391,6 +1391,97 @@ export function summary() {
         assert "package.json" in result["changed_files"]
 
     @pytest.mark.asyncio
+    async def test_execute_repairs_zod_type_class_name_collision(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "task-definition-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  }
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Task Definition Model",
+            description="Create zod-backed task definition model.",
+            metadata={
+                "target_files": ["src/models/task_definition.ts"],
+                "scope_paths": ["src/models/task_definition.ts", "package.json"],
+                "steps": ["Create task definition schema and model"],
+                "acceptance": ["TypeScript typecheck accepts schema and class exports"],
+            },
+        )
+
+        async def _zod_collision_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            target = tmp_path / "src" / "models" / "task_definition.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "import { z } from 'zod';\n\n"
+                "export const TaskDefinitionSchema = z.object({\n"
+                "  id: z.string().uuid().optional(),\n"
+                "  name: z.string().min(1),\n"
+                "});\n\n"
+                "type TaskDefinition = z.infer<typeof TaskDefinitionSchema>;\n\n"
+                "export class TaskDefinition {\n"
+                "  constructor(public data: TaskDefinition) {}\n\n"
+                "  static validate(data: any): TaskDefinition {\n"
+                "    const result = TaskDefinitionSchema.safeParse(data);\n"
+                "    if (!result.success) throw new Error('Validation failed');\n"
+                "    return new TaskDefinition(result.data);\n"
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote task definition model.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/task_definition.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _zod_collision_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-zod-type-class-collision-repair"},
+        )
+
+        repaired = (tmp_path / "src" / "models" / "task_definition.ts").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["src/models/task_definition.ts", "package.json"],
+        )
+        source_tools = [
+            str((item.get("result") if isinstance(item, dict) else {}).get("source_tool") or "")
+            for item in result["tool_results"]
+        ]
+
+        assert result["success"] is True, result
+        assert "type TaskDefinitionData = z.infer<typeof TaskDefinitionSchema>;" in repaired
+        assert "constructor(public data: TaskDefinitionData)" in repaired
+        assert quality_errors == []
+        assert "deterministic_typescript_zod_type_class_collision_repair" in source_tools
+        assert "src/models/task_definition.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
     async def test_execute_repairs_framework_coupled_audit_service_contract(
         self,
         tmp_path: Any,
@@ -1613,6 +1704,289 @@ export function summary() {
         assert "deterministic_task_service_contract_repair" in source_tools
         assert "src/services/task.service.ts" in result["changed_files"]
         assert "src/server/task.controller.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_synthesizes_node_test_file_when_test_runner_has_no_tests(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "typescript-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^1.6.1"
+  }
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext","target":"ES2022","strict":true},'
+            '"include":["src/**/*.ts","tests/**/*.ts"]}\n',
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Task Model and Graph Validation Implementation",
+            description="Implement task model and graph validation for a TypeScript project.",
+            metadata={
+                "target_files": ["src/models/task.ts", "src/services/taskgraph.ts"],
+                "scope_paths": ["src"],
+                "steps": ["Create task model and graph validation service"],
+                "acceptance": ["npm run test verifies graph validation"],
+            },
+        )
+
+        async def _taskgraph_without_tests_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            model_path = tmp_path / "src" / "models" / "task.ts"
+            graph_path = tmp_path / "src" / "services" / "taskgraph.ts"
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+            model_path.write_text(
+                "export interface TaskRecord {\n  id: string;\n  dependencies: string[];\n}\n",
+                encoding="utf-8",
+            )
+            graph_path.write_text(
+                "export interface TaskDependencyNode {\n"
+                "  id: string;\n"
+                "  dependencies: readonly string[];\n"
+                "}\n\n"
+                "export interface DagValidationResult {\n"
+                "  valid: boolean;\n"
+                "  errors: string[];\n"
+                "}\n\n"
+                "export class TaskGraph {\n"
+                "  validate(nodes: readonly TaskDependencyNode[]): DagValidationResult {\n"
+                "    const ids = new Set(nodes.map((node) => node.id));\n"
+                "    const errors: string[] = [];\n"
+                "    for (const node of nodes) {\n"
+                "      for (const dependency of node.dependencies) {\n"
+                "        if (!ids.has(dependency)) errors.push(`Missing dependency ${dependency}`);\n"
+                "      }\n"
+                "    }\n"
+                "    const visiting = new Set<string>();\n"
+                "    const visited = new Set<string>();\n"
+                "    const byId = new Map(nodes.map((node) => [node.id, node]));\n"
+                "    const visit = (id: string): boolean => {\n"
+                "      if (visiting.has(id)) return true;\n"
+                "      if (visited.has(id)) return false;\n"
+                "      visiting.add(id);\n"
+                "      for (const dependency of byId.get(id)?.dependencies ?? []) {\n"
+                "        if (visit(dependency)) return true;\n"
+                "      }\n"
+                "      visiting.delete(id);\n"
+                "      visited.add(id);\n"
+                "      return false;\n"
+                "    };\n"
+                "    for (const node of nodes) {\n"
+                "      if (visit(node.id)) errors.push('Circular dependency detected');\n"
+                "    }\n"
+                "    return { valid: errors.length === 0, errors };\n"
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote task model and graph.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/models/task.ts"},
+                    },
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/services/taskgraph.ts"},
+                    },
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _taskgraph_without_tests_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-node-test-file-repair"},
+        )
+
+        test_path = tmp_path / "tests" / "unit" / "taskgraph.test.ts"
+        quality_errors = scan_workspace_artifact_quality(str(tmp_path))
+        source_tools: list[str] = []
+        assert result["success"] is True, result
+        for item in result["tool_results"]:
+            if not isinstance(item, dict):
+                continue
+            raw_tool_result = item.get("result")
+            if isinstance(raw_tool_result, dict):
+                source_tools.append(str(raw_tool_result.get("source_tool") or ""))
+
+        assert test_path.is_file()
+        assert "TaskGraph" in test_path.read_text(encoding="utf-8")
+        assert quality_errors == []
+        assert "deterministic_node_test_file_repair" in source_tools
+        assert "tests/unit/taskgraph.test.ts" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_synthesizes_jest_compatible_test_file_when_jest_runner_has_no_tests(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "polaris-engine",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "typescript": "^5.0.0"
+  }
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Task Graph Validation Logic",
+            description="Implement task graph validation for a Jest-based TypeScript project.",
+            metadata={
+                "target_files": ["src/services/taskgraph.ts"],
+                "scope_paths": ["src"],
+                "steps": ["Create task graph validation"],
+                "acceptance": ["npm run test verifies graph validation"],
+            },
+        )
+
+        async def _taskgraph_without_tests_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            graph_path = tmp_path / "src" / "services" / "taskgraph.ts"
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+            graph_path.write_text(
+                "export class TaskGraph {\n"
+                "  validate(tasks: Array<{ id: string; dependencies?: string[] }>): { valid: boolean } {\n"
+                "    return { valid: tasks.length > 0 };\n"
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote task graph.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/services/taskgraph.ts"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _taskgraph_without_tests_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-jest-node-test-file-repair"},
+        )
+
+        test_text = (tmp_path / "tests" / "unit" / "taskgraph.test.ts").read_text(encoding="utf-8")
+        assert result["success"] is True, result
+        assert "from 'vitest'" not in test_text
+        assert "describe('TaskGraph'" in test_text
+        assert "deterministic_node_test_file_repair" in [
+            str((item.get("result") if isinstance(item, dict) else {}).get("source_tool") or "")
+            for item in result["tool_results"]
+        ]
+
+    @pytest.mark.asyncio
+    async def test_execute_synthesizes_declared_targets_when_llm_returns_no_write_tool(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        (tmp_path / "package.json").write_text(
+            """
+{
+  "name": "polaris-engine",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  }
+}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="搭建基础目录结构与模型定义",
+            description="Create base model and repository contracts.",
+            metadata={
+                "phase": "implementation",
+                "scope_paths": ["src"],
+                "target_files": [
+                    "src/models/base.model.ts",
+                    "src/repositories/base.repository.ts",
+                ],
+                "steps": ["Create base model and repository"],
+                "acceptance": ["verify src/models/base.model.ts exists"],
+            },
+        )
+
+        async def _no_write_contract_violation(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {
+                "content": "",
+                "success": False,
+                "error": (
+                    "TransactionKernel execution failed: single_batch_contract_violation: "
+                    "mutation requested but no write tool invocation in decision batch."
+                ),
+            }
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _no_write_contract_violation  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-no-write-declared-target-repair"},
+        )
+
+        model_text = (tmp_path / "src" / "models" / "base.model.ts").read_text(encoding="utf-8")
+        repository_text = (tmp_path / "src" / "repositories" / "base.repository.ts").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(
+            str(tmp_path),
+            relative_paths=["src/models/base.model.ts", "src/repositories/base.repository.ts"],
+        )
+        source_tools = [
+            str((item.get("result") if isinstance(item, dict) else {}).get("source_tool") or "")
+            for item in result["tool_results"]
+        ]
+
+        assert result["success"] is True, result
+        assert "BaseModel" in model_text
+        assert "BaseRepository" in repository_text
+        assert quality_errors == []
+        assert "deterministic_missing_declared_target_repair" in source_tools
+        assert "src/models/base.model.ts" in result["changed_files"]
+        assert "src/repositories/base.repository.ts" in result["changed_files"]
 
     def test_missing_declared_target_repair_synthesizes_taskgraph_contract_targets(
         self,

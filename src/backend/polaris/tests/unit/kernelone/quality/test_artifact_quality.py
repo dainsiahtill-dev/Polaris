@@ -169,6 +169,57 @@ def test_scan_detects_npm_no_tests_specified_plural(tmp_path: Path) -> None:
     assert "npm default failing test script" in errors[0]
 
 
+def test_scan_detects_node_test_runner_without_test_files_when_sources_exist(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "typescript-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.1"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "src" / "services" / "taskgraph.ts"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("export class TaskGraph {}\n", encoding="utf-8")
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("test runner script but no test/spec files exist" in error for error in errors)
+
+
+def test_scan_allows_self_contained_node_test_script_without_test_files(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "typescript-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "src" / "services" / "taskgraph.ts"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("export class TaskGraph {}\n", encoding="utf-8")
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert errors == []
+
+
 def test_scan_detects_return_object_property_semicolon(tmp_path: Path) -> None:
     target = tmp_path / "src" / "models" / "task.ts"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -190,6 +241,40 @@ export function summary() {
 
     assert errors
     assert "semicolon-terminated property" in errors[0]
+
+
+def test_scan_detects_typescript_zod_type_class_name_collision(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"dependencies":{"zod":"^3.23.8"}}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "models" / "task_definition.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        """
+import { z } from 'zod';
+
+export const TaskDefinitionSchema = z.object({
+  name: z.string(),
+});
+
+type TaskDefinition = z.infer<typeof TaskDefinitionSchema>;
+
+export class TaskDefinition {
+  constructor(public data: TaskDefinition) {}
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(
+        str(tmp_path),
+        relative_paths=["src/models/task_definition.ts"],
+    )
+
+    assert errors
+    assert "TypeScript zod inferred type collides with class TaskDefinition" in errors[0]
 
 
 def test_scan_detects_python_runtime_masquerading_as_npm_manifest(tmp_path: Path) -> None:

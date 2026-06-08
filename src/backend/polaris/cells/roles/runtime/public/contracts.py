@@ -679,6 +679,7 @@ class RoleTaskMarketBinding:
     ack_contract: str = "AcknowledgeTaskStageCommandV1"
     fail_contract: str = "FailTaskStageCommandV1"
     requeue_contract: str = "RequeueTaskCommandV1"
+    dead_letter_contract: str = "MoveTaskToDeadLetterCommandV1"
     work_item_ref: str | None = None
     lease_token_ref: str | None = None
 
@@ -690,6 +691,7 @@ class RoleTaskMarketBinding:
             "ack_contract",
             "fail_contract",
             "requeue_contract",
+            "dead_letter_contract",
         ):
             object.__setattr__(self, name, _require_non_empty(name, getattr(self, name)))
         work_item_ref = _normalize_optional_string(self.work_item_ref)
@@ -853,6 +855,89 @@ class RoleStateCommitReceipt:
             raise ValueError("successful commit receipt must include runtime_receipt_refs")
         if not self.ok and not (self.error_code or self.error_message):
             raise ValueError("failed commit receipt must include error_code or error_message")
+
+
+@dataclass(frozen=True)
+class RehydrateRoleHandoffCommandV1:
+    """Request to rehydrate a typed handoff pack through Cognitive Runtime."""
+
+    identity: RoleIdentity
+    handoff_ref: str
+    target_role: str
+    turn_context: RoleTurnContext
+    target_session_id: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, RoleIdentity):
+            raise TypeError("identity must be a RoleIdentity")
+        if not isinstance(self.turn_context, RoleTurnContext):
+            raise TypeError("turn_context must be a RoleTurnContext")
+        handoff_ref = _require_non_empty("handoff_ref", self.handoff_ref)
+        if not _has_ref_namespace(handoff_ref, "factory.cognitive_runtime"):
+            raise ValueError("handoff_ref must point to factory.cognitive_runtime")
+        if handoff_ref not in self.turn_context.handoff_refs:
+            raise ValueError("handoff_ref must be listed in turn_context.handoff_refs")
+        object.__setattr__(self, "handoff_ref", handoff_ref)
+        object.__setattr__(self, "target_role", _require_non_empty("target_role", self.target_role))
+        target_session_id = _normalize_optional_string(self.target_session_id)
+        object.__setattr__(self, "target_session_id", target_session_id or None)
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RoleHandoffRehydrationResultV1:
+    """Refs-only result of rehydrating a Cognitive Runtime handoff pack."""
+
+    ok: bool
+    handoff_ref: str
+    target_role: str
+    rehydration_ref: str | None = None
+    target_session_id: str | None = None
+    context_override: Mapping[str, Any] = field(default_factory=dict)
+    metadata_patch: Mapping[str, Any] = field(default_factory=dict)
+    runtime_receipt_refs: tuple[str, ...] = field(default_factory=tuple)
+    artifact_refs: tuple[str, ...] = field(default_factory=tuple)
+    episode_refs: tuple[str, ...] = field(default_factory=tuple)
+    source_spans: tuple[str, ...] = field(default_factory=tuple)
+    status: str = "rehydrated"
+    error_code: str | None = None
+    error_message: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ok", bool(self.ok))
+        handoff_ref = _require_non_empty("handoff_ref", self.handoff_ref)
+        if not _has_ref_namespace(handoff_ref, "factory.cognitive_runtime"):
+            raise ValueError("handoff_ref must point to factory.cognitive_runtime")
+        rehydration_ref = _normalize_optional_string(self.rehydration_ref)
+        if rehydration_ref and not _has_ref_namespace(rehydration_ref, "factory.cognitive_runtime"):
+            raise ValueError("rehydration_ref must point to factory.cognitive_runtime")
+        runtime_receipt_refs = _normalize_unique_string_tuple("runtime_receipt_refs", self.runtime_receipt_refs)
+        artifact_refs = _normalize_unique_string_tuple("artifact_refs", self.artifact_refs)
+        episode_refs = _normalize_unique_string_tuple("episode_refs", self.episode_refs)
+        source_spans = _normalize_unique_string_tuple("source_spans", self.source_spans)
+        _require_refs_namespace("runtime_receipt_refs", runtime_receipt_refs, "factory.cognitive_runtime")
+        _require_refs_namespace("artifact_refs", artifact_refs, "roles.session")
+        _require_refs_namespace("episode_refs", episode_refs, "roles.session")
+
+        object.__setattr__(self, "handoff_ref", handoff_ref)
+        object.__setattr__(self, "target_role", _require_non_empty("target_role", self.target_role))
+        target_session_id = _normalize_optional_string(self.target_session_id)
+        object.__setattr__(self, "target_session_id", target_session_id or None)
+        object.__setattr__(self, "rehydration_ref", rehydration_ref)
+        object.__setattr__(self, "context_override", _to_dict_copy(self.context_override))
+        object.__setattr__(self, "metadata_patch", _to_dict_copy(self.metadata_patch))
+        object.__setattr__(self, "runtime_receipt_refs", runtime_receipt_refs)
+        object.__setattr__(self, "artifact_refs", artifact_refs)
+        object.__setattr__(self, "episode_refs", episode_refs)
+        object.__setattr__(self, "source_spans", source_spans)
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "error_code", _normalize_optional_string(self.error_code))
+        object.__setattr__(self, "error_message", _normalize_optional_string(self.error_message))
+        if self.ok and not self.rehydration_ref:
+            raise ValueError("successful handoff rehydration result must include rehydration_ref")
+        if not self.ok and not (self.error_code or self.error_message):
+            raise ValueError("failed handoff rehydration result must include error_code or error_message")
 
 
 @dataclass(frozen=True)
@@ -1620,6 +1705,15 @@ def _task_market_lifecycle_capabilities(allowed_roles: tuple[str, ...]) -> tuple
             allowed_roles=allowed_roles,
             endpoint_ref="polaris.cells.runtime.task_market.public.service.requeue_task",
             metadata={"lifecycle_operation": "requeue"},
+        ),
+        _capability(
+            capability_id="move_task_to_dead_letter",
+            owner_cell="runtime.task_market",
+            contract_name="MoveTaskToDeadLetterCommandV1",
+            effect="task_market.dead_letter",
+            allowed_roles=allowed_roles,
+            endpoint_ref="polaris.cells.runtime.task_market.public.service.move_task_to_dead_letter",
+            metadata={"lifecycle_operation": "dead_letter"},
         ),
     )
 
@@ -2793,6 +2887,7 @@ __all__ = [
     "IRoleRuntime",
     "InstantiateRoleRuntimeObjectCommandV1",
     "MessageType",
+    "RehydrateRoleHandoffCommandV1",
     "RoleAgent",
     "RoleAssetMount",
     "RoleAssetMountTable",
@@ -2804,6 +2899,7 @@ __all__ = [
     "RoleCapabilityInvocationResultV1",
     "RoleCapabilityPorts",
     "RoleExecutionResultV1",
+    "RoleHandoffRehydrationResultV1",
     "RoleIdentity",
     "RoleLedgerBinding",
     "RoleProfileBinding",

@@ -51,13 +51,10 @@ public_contracts:
   - RoleKernelErrorV1
 depends_on:
 - director.execution
-- llm.dialogue
-- roles.adapters
 - roles.profile
 - roles.session
 - runtime.task_runtime
 - factory.cognitive_runtime
-- roles.runtime
 - storage.layout
 subgraphs:
 - execution_governance_pipeline

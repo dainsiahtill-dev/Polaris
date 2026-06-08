@@ -1,0 +1,55 @@
+id: vc-20260608-roles-kernel-runtime-reverse-dependency
+title: Roles kernel must not depend on roles runtime
+date: "2026-06-08"
+classification: structural
+owner: architecture-team
+scope:
+  cells:
+    - roles.kernel
+    - roles.runtime
+    - roles.profile
+  governance_assets:
+    - docs/graph/catalog/cells.yaml
+    - docs/governance/ci/scripts/run_kernelone_release_gate.py
+assumption_register:
+  - id: A1
+    statement: roles.runtime is the composition and lifecycle boundary that invokes roles.kernel, not a dependency of roles.kernel.
+    evidence:
+      - src/backend/polaris/cells/roles/runtime/cell.yaml
+      - src/backend/polaris/cells/roles/kernel/cell.yaml
+    decision: roles.kernel production code must not import polaris.cells.roles.runtime.
+  - id: A2
+    statement: roles.kernel may expose contracts for roles.runtime consumers without importing runtime public or internal modules.
+    evidence:
+      - src/backend/polaris/cells/roles/kernel/public/transaction_contracts.py
+      - src/backend/polaris/cells/roles/kernel/public/workflow_contracts.py
+    decision: Contract documentation may mention roles.runtime as a consumer; graph depends_on must not point kernel back to runtime.
+  - id: A3
+    statement: Existing kernel tests may import roles.runtime to validate integration behavior, but production kernel files must stay runtime-free.
+    evidence:
+      - src/backend/polaris/cells/roles/kernel/tests/test_turn_history_persist_parity.py
+      - src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py
+    decision: The release gate scans production Python only and excludes tests.
+pre_mortem:
+  likely_failure_modes:
+    - A runtime import remains hidden in a production kernel module and breaks the new gate.
+    - Removing the graph edge reveals a stale catalog mismatch if cell.yaml and cells.yaml diverge.
+    - A test import is accidentally treated as production and blocked.
+verification_plan:
+  tests:
+    - path: src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+      expected: Release gate blocks roles.kernel importing roles.runtime and allows roles.runtime owner-cell code.
+    - path: src/backend/polaris/cells/roles/kernel/tests
+      expected: Kernel tests remain green after removing the graph edge.
+  commands:
+    - ruff check src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py --fix
+    - ruff format src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+    - mypy src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/runtime/tests
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/runtime/task_market/tests
+    - cd src/backend && PYTHONPATH=. python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all --print-report
+    - cd src/backend && PYTHONPATH=. python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
+rollback:
+  strategy: Restore the graph edge and remove the gate stage together only if a real production kernel runtime dependency is found.

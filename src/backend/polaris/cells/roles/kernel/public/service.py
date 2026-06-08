@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from polaris.cells.roles.kernel.internal.constitution_adaptor import (
     ConstitutionalRoleContext,
     ConstitutionGuard,
@@ -21,6 +23,13 @@ from polaris.cells.roles.kernel.internal.context_gateway import (
     ContextRequest,
     ContextResult,
     RoleContextGateway,
+)
+from polaris.cells.roles.kernel.internal.context_gateway.role_signals import (
+    DEFAULT_SIGNAL_PROVIDERS,
+    RoleSignalRegistry,
+    SignalBlock,
+    SignalBuildContext,
+    allocate_role_signals,
 )
 from polaris.cells.roles.kernel.internal.context_models import (
     ContextOverride,
@@ -64,6 +73,11 @@ from polaris.cells.roles.kernel.internal.output_parser import (
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder, PromptContext
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker, QualityResult
 from polaris.cells.roles.kernel.internal.retry_policy_engine import RetryDecision, RetryPolicyEngine
+from polaris.cells.roles.kernel.internal.speculation.events import (
+    SpeculationEvent,
+    emit as _emit_speculation_event,
+    subscribe as _subscribe_speculation_events,
+)
 from polaris.cells.roles.kernel.internal.token_budget import (
     AllocationResult,
     CompressionStrategy,
@@ -85,6 +99,7 @@ from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 __all__ = [
     # Constitution
     "CONSTITUTION",
+    "DEFAULT_SIGNAL_PROVIDERS",
     "AllocationResult",
     "AntiPattern",
     "CacheEntry",
@@ -117,7 +132,11 @@ __all__ = [
     "RoleBoundary",
     "RoleContextGateway",
     "RoleExecutionKernel",
+    "RoleSignalRegistry",
     "RoleToolGateway",
+    "SignalBlock",
+    "SignalBuildContext",
+    "SpeculationEvent",
     "StructuredLLMResponse",
     "SystemContext",
     "TaskContext",
@@ -129,6 +148,7 @@ __all__ = [
     "ToolGatewayManager",
     "ToolGatewayPort",
     "ViolationLevel",
+    "allocate_role_signals",
     "classify_error",
     "emit_llm_event",
     "extract_target_path_from_payload",
@@ -144,9 +164,11 @@ __all__ = [
     "is_control_plane_write_path",
     "is_retryable",
     "normalize_write_target_path",
+    "publish_speculation_event",
     "reset_metrics_collector_for_test",
     "reset_role_action_registry_for_test",
     "set_global_llm_cache",
+    "subscribe_speculation_events",
 ]
 
 
@@ -181,3 +203,13 @@ def reset_role_action_registry_for_test() -> None:
     _global_registry to ensure a clean state between tests.
     """
     _global_registry.reset_for_testing()
+
+
+def subscribe_speculation_events(sink: Callable[[SpeculationEvent], None]) -> Callable[[], None]:
+    """Subscribe to kernel speculation telemetry through the public Cell boundary."""
+    return _subscribe_speculation_events(sink)
+
+
+def publish_speculation_event(event: SpeculationEvent) -> None:
+    """Publish kernel speculation telemetry through the public Cell boundary."""
+    _emit_speculation_event(event)

@@ -18,6 +18,9 @@ from polaris.cells.llm.evaluation.internal.benchmark_models import (
     AgenticJudgeConfig,
     ToolArgumentRule as LegacyToolArgumentRule,
 )
+from polaris.cells.llm.evaluation.internal.context_projection_matrix import (
+    run_context_projection_matrix_suite,
+)
 from polaris.cells.llm.evaluation.internal.deterministic_judge import judge_agentic_case
 from polaris.cells.llm.evaluation.internal.index import (
     load_llm_test_index,
@@ -97,6 +100,7 @@ __all__ = [
     "run_connectivity_suite",
     "run_connectivity_suite_sync",
     "run_context_benchmark_suite",
+    "run_context_projection_matrix_suite",
     "run_readiness_tests",
     "run_readiness_tests_streaming",
     "run_speculation_matrix_suite",

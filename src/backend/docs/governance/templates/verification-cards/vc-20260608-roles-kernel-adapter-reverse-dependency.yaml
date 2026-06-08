@@ -1,0 +1,56 @@
+id: vc-20260608-roles-kernel-adapter-reverse-dependency
+title: Roles kernel must not depend on roles adapters schema bridges
+date: "2026-06-08"
+classification: structural
+owner: architecture-team
+scope:
+  cells:
+    - roles.kernel
+    - roles.adapters
+    - roles.runtime
+    - roles.profile
+  governance_assets:
+    - docs/graph/catalog/cells.yaml
+    - docs/governance/ci/scripts/run_kernelone_release_gate.py
+assumption_register:
+  - id: A1
+    statement: roles.kernel is the Turn transaction kernel and must not depend on migration adapters for role-specific output schema decisions.
+    evidence:
+      - src/backend/polaris/cells/roles/kernel/cell.yaml
+      - src/backend/polaris/cells/roles/kernel/README.agent.md
+      - src/backend/polaris/cells/roles/adapters/README.agent.md
+    decision: Kernel production code must not import polaris.cells.roles.adapters.
+  - id: A2
+    statement: roles.adapters may keep migration schema bridges inside its owner Cell while production execution converges on roles.runtime and explicit profile/runtime contracts.
+    evidence:
+      - src/backend/docs/graph/catalog/cells.yaml
+      - src/backend/polaris/cells/roles/adapters/cell.yaml
+    decision: The release gate permits adapter imports only inside the roles.adapters owner Cell.
+  - id: A3
+    statement: Removing the kernel-to-adapter schema import should fail closed to no implicit role-specific schema rather than falling back to a business schema owned by adapters.
+    evidence:
+      - src/backend/polaris/cells/roles/kernel/internal/kernel/core.py
+      - src/backend/polaris/cells/roles/kernel/internal/kernel/turn_runner.py
+    decision: Kernel response schema resolution returns None unless a future public profile/runtime contract supplies one explicitly.
+pre_mortem:
+  likely_failure_modes:
+    - Kernel structured output tests assume adapter Pydantic models are available through roles.kernel.
+    - A dynamic import in turn execution bypasses the static top-level import check.
+    - Graph catalog still declares roles.kernel -> roles.adapters after source imports are removed.
+verification_plan:
+  tests:
+    - path: src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+      expected: Release gate blocks roles.kernel importing roles.adapters and allows roles.adapters owner-cell code.
+    - path: src/backend/polaris/cells/roles/kernel/tests
+      expected: Kernel turn, transaction, parser, and stream behavior remains green without adapter schema imports.
+  commands:
+    - ruff check src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/turn_runner.py --fix
+    - ruff format src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/turn_runner.py
+    - mypy src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py src/backend/polaris/tests/architecture/test_kernelone_release_gates.py src/backend/polaris/cells/roles/kernel/internal/kernel/core.py src/backend/polaris/cells/roles/kernel/internal/kernel/turn_runner.py
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/architecture/test_kernelone_release_gates.py
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/runtime/tests
+    - PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/runtime/task_market/tests
+    - cd src/backend && PYTHONPATH=. python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all --print-report
+rollback:
+  strategy: Revert the release gate stage and kernel schema resolver change together; do not restore kernel adapter imports without an explicit graph decision.

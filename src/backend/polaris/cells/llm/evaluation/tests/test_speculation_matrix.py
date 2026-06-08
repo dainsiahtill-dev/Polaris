@@ -14,9 +14,9 @@ import pytest
 from polaris.cells.llm.evaluation.internal.speculation_matrix import (
     run_speculation_matrix_suite,
 )
-from polaris.cells.roles.kernel.internal.speculation.events import (
+from polaris.cells.roles.kernel.public.service import (
     SpeculationEvent,
-    emit,
+    publish_speculation_event,
 )
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 
@@ -38,7 +38,7 @@ class _FakeExecutor:
         yield {"type": "tool_call", "tool": "repo_rg", "args": {"query": "needle"}}
         yield {"type": "tool_result", "result": {"content": "match", "ok": True}}
         if is_on and self._on_summary is not None:
-            emit(
+            publish_speculation_event(
                 SpeculationEvent(
                     event_type="speculation.turn.summary",
                     turn_id=command.session_id,

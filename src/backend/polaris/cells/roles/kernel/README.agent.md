@@ -48,6 +48,14 @@ parsing, quality checks, retry policy, and runtime-level event emission.
 
 - kernel logic must stay free of session ownership semantics
 - adapter selection belongs outside the kernel boundary
+- kernel turn execution must not import `roles.adapters`; role-specific schema
+  decisions must arrive through caller-supplied public command payloads backed by
+  `roles.profile` or runtime-owned public contracts
+- kernel turn execution must not import `llm.dialogue`; prompt-driven role
+  dialogue remains a compatibility owner Cell and production role turns enter
+  through `roles.runtime` plus kernel/provider/control-plane contracts
+- kernel turn execution must not import `roles.runtime`; `roles.runtime` is the
+  composition/lifecycle caller of the kernel, not a dependency of it
 - runtime events must be emitted explicitly
 - assistant turn handling must separate raw parser input from sanitized transcript output
 

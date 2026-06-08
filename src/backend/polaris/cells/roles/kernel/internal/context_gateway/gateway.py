@@ -98,6 +98,49 @@ def _deep_merge_strategy_payload(target: dict[str, Any], source: Mapping[str, An
         target[key_text] = _copy_strategy_value(value)
 
 
+def render_blueprint_overview(result: Any) -> str | None:
+    """把蓝图状态结果渲染成简洁概览字符串（纯函数，便于单测）。
+
+    result 期望具备 ok/summary/recommendations/risks 字段（duck-typed）。
+    not ok 或无实质内容 → None（→ 不注入信号）。
+    """
+    if not getattr(result, "ok", False):
+        return None
+    parts: list[str] = []
+    summary = str(getattr(result, "summary", "") or "").strip()
+    if summary:
+        parts.append(summary)
+    recs = tuple(getattr(result, "recommendations", ()) or ())
+    if recs:
+        parts.append("推荐:\n" + "\n".join(f"- {r}" for r in recs))
+    risks = tuple(getattr(result, "risks", ()) or ())
+    if risks:
+        parts.append("风险:\n" + "\n".join(f"- {k}" for k in risks))
+    text = "\n".join(parts).strip()
+    return text or None
+
+
+def render_verdict_history(result: Any) -> str | None:
+    """把 QA 判定结果渲染成简洁概览（纯函数，便于单测）。
+
+    result 期望具备 ok/verdict/score/findings/suggestions（duck-typed）。
+    not ok（无持久化判定）→ None（→ 不注入）。
+    """
+    if not getattr(result, "ok", False):
+        return None
+    verdict = str(getattr(result, "verdict", "") or "").strip()
+    if not verdict:
+        return None
+    parts: list[str] = [f"最新判定: {verdict} (score={float(getattr(result, 'score', 0.0)):.2f})"]
+    findings = tuple(getattr(result, "findings", ()) or ())
+    if findings:
+        parts.append("问题:\n" + "\n".join(f"- {f}" for f in findings))
+    suggestions = tuple(getattr(result, "suggestions", ()) or ())
+    if suggestions:
+        parts.append("建议:\n" + "\n".join(f"- {s}" for s in suggestions))
+    return "\n".join(parts).strip() or None
+
+
 def _coerce_float(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
@@ -205,7 +248,11 @@ class RoleContextGateway:
         self._token_estimator = TokenEstimator()
         self._security = SecuritySanitizer()
         self._projection_formatter = ProjectionFormatter()
-        self._projection_engine = ProjectionEngine()
+        # learning_key=role_id：让各角色的投影自适应权重跨 turn 按角色独立累积
+        # （模块级状态存储，绕过 gateway/ProjectionEngine 每 turn 新建的清零）。
+        self._projection_engine = ProjectionEngine(
+            learning_key=str(getattr(profile, "role_id", "") or "default")
+        )
         self._compression_engine = CompressionEngine(
             max_context_tokens=self.policy.max_context_tokens,
             compression_strategy=str(self.policy.compression_strategy or "none"),
@@ -700,31 +747,59 @@ class RoleContextGateway:
 
         supplemental_turns: list[dict[str, Any]] = []
 
-        # 2. Add project structure info (if policy allows)
-        if self.policy.include_project_structure:
-            structure_info = self._get_project_structure()
-            if structure_info:
-                supplemental_turns.append(
-                    {
-                        "role": "system",
-                        "content": f"【项目结构】\n{structure_info}",
-                        "name": "project_structure",
-                    }
-                )
-                sources.append("project_structure")
+        # 2+3. Role-scoped signal plane（泛化自原硬编码的 project_structure / task_history）。
+        # 由 RoleSignalRegistry 按角色 + context_policy 解析适用信号，再分配进 supplemental_turns。
+        # 这里以"无上限/无压力"调用 → 与旧实现逐字节一致（seed 信号永不被卸载/丢弃）；
+        # 预算/熔断机制由后续 signal 与 CompressionEngine 协同时再启用。
+        from .role_signal_freshness import (
+            get_previous_freshness,
+            record_injected_freshness,
+        )
+        from .role_signals import (
+            RoleSignalRegistry,
+            SignalBuildContext,
+            allocate_role_signals,
+        )
 
-        # 3. Add task history (if policy allows and task_id is present)
-        if self.policy.include_task_history and request.task_id:
-            task_history = self._get_task_history(request.task_id)
-            if task_history:
-                supplemental_turns.append(
-                    {
-                        "role": "system",
-                        "content": f"【任务历史】\n{task_history}",
-                        "name": "task_history",
-                    }
-                )
-                sources.append("task_history")
+        signal_ctx = SignalBuildContext(
+            role=str(getattr(self.profile, "role_id", "") or ""),
+            phase="",
+            task_id=str(request.task_id or ""),
+            policy_flags={
+                "include_project_structure": bool(self.policy.include_project_structure),
+                "include_task_history": bool(self.policy.include_task_history),
+                # 角色专属信号开关（默认 False；按角色 profile opt-in）。
+                "include_blueprint_overview": bool(getattr(self.policy, "include_blueprint_overview", False)),
+                "include_verdict_history": bool(getattr(self.policy, "include_verdict_history", False)),
+            },
+            get_project_structure=self._get_project_structure,
+            get_task_history=self._get_task_history,
+            # blueprint_overview 已接真实只读源（get_blueprint_status，按 task_id 寻址）；
+            # 仅当 role==chief_engineer 且 include_blueprint_overview 开启时才会被调用。
+            get_blueprint_overview=lambda: self._get_blueprint_overview(str(request.task_id or "")),
+            # verdict_history 已接真实只读源（qa.audit_verdict.public.get_qa_verdict，按 task_id 寻址，
+            # 读取 run_qa_audit 持久化的最新判定）；仅 role==qa 且 include_verdict_history 开启时调用。
+            get_verdict_history=lambda: self._get_verdict_history(str(request.task_id or "")),
+        )
+        # 跨 turn freshness 记忆（按 task_id）：压力下断流"自上次注入未变化"的 nice-to-have，
+        # 把窗口让给即时工具结果。无压力时 budget_pressure=False → 不断流 → 与旧实现逐字节一致。
+        _cache_key = str(request.task_id or "")
+        _budget_pressure = self._estimate_signal_budget_pressure(projection, request)
+        _signal_alloc = allocate_role_signals(
+            registry=RoleSignalRegistry(),
+            ctx=signal_ctx,
+            receipt_store=receipt_store,
+            budget_pressure=_budget_pressure,
+            previous_freshness=get_previous_freshness(_cache_key),
+            per_signal_char_cap=None,
+            total_char_budget=None,
+        )
+        supplemental_turns.extend(_signal_alloc.turns)
+        sources.extend(_signal_alloc.sources)
+        # 记住本 turn 实际注入信号的 freshness，供下一 turn 的熔断判断。
+        _injected_fresh = _signal_alloc.telemetry.get("injected_freshness")
+        if isinstance(_injected_fresh, dict) and _injected_fresh:
+            record_injected_freshness(_cache_key, _injected_fresh)
 
         # 4. Add Context OS state summary as supplemental system message (optional)
         if projection is not None and projection.snapshot is not None:
@@ -931,6 +1006,70 @@ class RoleContextGateway:
 
         except (RuntimeError, ValueError) as e:
             logger.debug(f"获取任务历史失败: {e}")
+            return None
+
+    def _get_blueprint_overview(self, task_id: str) -> str | None:
+        """读取本任务最新蓝图概览（ChiefEngineer 角色专属信号的数据源）。
+
+        经 chief_engineer.blueprint 公开只读契约 `get_blueprint_status`（按 task_id +
+        workspace 寻址）获取，渲染为简洁概览。仅在 role==chief_engineer 且
+        `include_blueprint_overview` 开启时被调用；任何失败/缺失 → None（不注入）。
+        """
+        if not task_id:
+            return None
+        try:
+            from polaris.cells.chief_engineer.blueprint.public import (
+                GetBlueprintStatusQueryV1,
+                get_blueprint_status,
+            )
+
+            result = get_blueprint_status(GetBlueprintStatusQueryV1(task_id=task_id, workspace=str(self.workspace)))
+            return render_blueprint_overview(result)
+        except Exception as exc:  # noqa: BLE001 - 数据源失败必须优雅降级为不注入
+            logger.debug(f"获取蓝图概览失败: {exc}")
+            return None
+
+    def _estimate_signal_budget_pressure(self, projection: Any, request: ContextRequest) -> bool:
+        """保守预估"角色信号分配阶段是否已处于预算压力"。
+
+        在真正组装/压缩前给一个便宜的早期信号：若历史窗口的估算 token 已超过
+        ``max_context_tokens * trigger_pct``，视为压力 → 允许熔断断流未变化的 nice-to-have。
+        任何失败 → False（不熔断 → 保持逐字节一致，安全优先）。
+        """
+        try:
+            strategy_override = request.strategy_override or {}
+            trigger_pct = self._context_budget_trigger_pct(strategy_override)
+            threshold = max(1, int(self.policy.max_context_tokens * trigger_pct))
+            history_messages = [
+                {"role": str(role), "content": str(content)} for role, content in (request.history or ()) if content
+            ]
+            if not history_messages:
+                return False
+            estimate = self._token_estimator.estimate(history_messages)
+            return int(estimate) > threshold
+        except Exception:  # noqa: BLE001 - 预估失败必须安全降级为"无压力"
+            logger.debug("signal budget pressure estimate failed", exc_info=True)
+            return False
+
+    def _get_verdict_history(self, task_id: str) -> str | None:
+        """读取本任务最新 QA 判定历史（QA 角色专属信号的数据源）。
+
+        经 qa.audit_verdict 公开只读契约 `get_qa_verdict`（按 task_id + workspace 寻址）
+        获取已持久化判定，渲染为简洁概览。仅在 role==qa 且 `include_verdict_history`
+        开启时被调用；任何失败/缺失 → None（不注入）。
+        """
+        if not task_id:
+            return None
+        try:
+            from polaris.cells.qa.audit_verdict.public import (
+                GetQaVerdictQueryV1,
+                get_qa_verdict,
+            )
+
+            result = get_qa_verdict(GetQaVerdictQueryV1(task_id=task_id, workspace=str(self.workspace)))
+            return render_verdict_history(result)
+        except Exception as exc:  # noqa: BLE001 - 数据源失败必须优雅降级为不注入
+            logger.debug(f"获取判定历史失败: {exc}")
             return None
 
     def _is_state_first_mode_active_from_receipt(self, receipt: StrategyReceipt | None) -> bool:

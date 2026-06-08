@@ -81,20 +81,6 @@ if TYPE_CHECKING:
     from polaris.cells.roles.session.public.service import RoleDataStore
     from polaris.kernelone.context.compaction import RoleContextCompressor
 
-# Instructor integration - structured output schemas
-try:
-    from polaris.cells.roles.adapters.public.service import ROLE_OUTPUT_SCHEMAS, get_schema_for_role
-
-    INSTRUCTOR_SCHEMAS_AVAILABLE = True
-except ImportError:
-    ROLE_OUTPUT_SCHEMAS = {}
-
-    def get_schema_for_role(role: str) -> type | None:
-        """Fallback schema resolver when adapter schema package is unavailable."""
-        return dict
-
-    INSTRUCTOR_SCHEMAS_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
 
 _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS = frozenset(
@@ -288,6 +274,18 @@ class RoleExecutionKernel:
         TransactionKernel is now the only production role-turn execution path.
         """
         return True
+
+    def _get_response_schema(self, role: str) -> type | None:
+        """Resolve explicit structured output schema for this turn.
+
+        roles.kernel must not import role-specific schema bridges from
+        roles.adapters. Future structured-output contracts must be supplied
+        through roles.profile or roles.runtime public contracts.
+        """
+
+        if not self._use_structured_output:
+            return None
+        return None
 
     @staticmethod
     def _benchmark_requires_no_tools(request: RoleTurnRequest) -> bool:
@@ -1701,7 +1699,7 @@ class RoleExecutionKernel:
                 base_system_prompt, quality_result_to_dict(last_validation), attempt
             )
 
-            response_schema = get_schema_for_role(role) if self._use_structured_output else None
+            response_schema = self._get_response_schema(role)
 
             # Get tracer for OpenTelemetry integration
             tracer = get_tracer()

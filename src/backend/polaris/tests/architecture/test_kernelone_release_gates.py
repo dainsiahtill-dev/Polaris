@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -260,6 +262,16 @@ def _build_utf8_env() -> dict[str, str]:
     return env
 
 
+def _load_kernelone_release_gate_module() -> Any:
+    script_path = BACKEND_ROOT / "docs" / "governance" / "ci" / "scripts" / "run_kernelone_release_gate.py"
+    spec = importlib.util.spec_from_file_location("kernelone_release_gate_under_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_kernelone_import_fence_blocks_reverse_layer_imports() -> None:
     violations: list[str] = []
 
@@ -438,3 +450,217 @@ def test_kernelone_release_suite_collect_only_has_no_errors() -> None:
         f"stdout:\n{completed.stdout}\n"
         f"stderr:\n{completed.stderr}"
     )
+
+
+def test_kernelone_release_gate_blocks_role_execution_kernel_bypass() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.roles.kernel.public.service import RoleExecutionKernel
+
+
+def execute() -> None:
+    RoleExecutionKernel(workspace=".")
+"""
+    tree = ast.parse(source)
+    violations = gate._find_role_execution_kernel_entrypoint_violations(
+        tree,
+        "polaris/cells/director/execution/internal/bypass.py",
+    )
+
+    assert violations == (
+        "polaris/cells/director/execution/internal/bypass.py:2: "
+        "production code must enter RoleRuntimeService instead of importing RoleExecutionKernel",
+        "polaris/cells/director/execution/internal/bypass.py:6: "
+        "production code must enter RoleRuntimeService instead of constructing RoleExecutionKernel",
+    )
+
+
+def test_kernelone_release_gate_allows_roles_runtime_kernel_composition_boundary() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.roles.kernel.public.service import RoleExecutionKernel
+
+
+def execute() -> None:
+    RoleExecutionKernel(workspace=".")
+"""
+    tree = ast.parse(source)
+    violations = gate._find_role_execution_kernel_entrypoint_violations(
+        tree,
+        "polaris/cells/roles/runtime/public/service.py",
+    )
+
+    assert violations == ()
+
+
+def test_kernelone_release_gate_blocks_legacy_role_dialogue_bypass() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.llm.dialogue.public import generate_role_response
+from polaris.cells.llm.dialogue.internal.role_dialogue import generate_role_response_streaming
+
+
+async def execute() -> None:
+    await generate_role_response(
+        workspace=".",
+        settings=None,
+        role="pm",
+        message="plan",
+    )
+    await generate_role_response_streaming(".", None, "pm", "plan", None)
+"""
+    tree = ast.parse(source)
+    violations = gate._find_legacy_role_dialogue_entrypoint_violations(
+        tree,
+        "polaris/cells/director/execution/internal/bypass.py",
+    )
+
+    assert violations == (
+        "polaris/cells/director/execution/internal/bypass.py:2: "
+        "production code must enter RoleRuntimeService instead of importing legacy role dialogue",
+        "polaris/cells/director/execution/internal/bypass.py:3: "
+        "production code must enter RoleRuntimeService instead of importing legacy role dialogue",
+        "polaris/cells/director/execution/internal/bypass.py:7: "
+        "production code must enter RoleRuntimeService instead of calling legacy role dialogue",
+        "polaris/cells/director/execution/internal/bypass.py:13: "
+        "production code must enter RoleRuntimeService instead of calling legacy role dialogue",
+    )
+
+
+def test_kernelone_release_gate_allows_llm_dialogue_owner_facade() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+async def generate_role_response() -> None:
+    pass
+
+
+async def execute() -> None:
+    await generate_role_response()
+"""
+    tree = ast.parse(source)
+    violations = gate._find_legacy_role_dialogue_entrypoint_violations(
+        tree,
+        "polaris/cells/llm/dialogue/internal/role_dialogue.py",
+    )
+
+    assert violations == ()
+
+
+def test_kernelone_release_gate_blocks_roles_kernel_adapter_reverse_dependency() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.roles.adapters.public.service import get_schema_for_role
+
+
+def execute() -> object:
+    return get_schema_for_role("pm")
+"""
+    tree = ast.parse(source)
+    violations = gate._find_roles_kernel_adapter_dependency_violations(
+        tree,
+        "polaris/cells/roles/kernel/internal/kernel/turn_runner.py",
+    )
+
+    assert violations == (
+        "polaris/cells/roles/kernel/internal/kernel/turn_runner.py:2: "
+        "roles.kernel production code must not import roles.adapters; "
+        "runtime/profile contracts must provide role-specific schema decisions",
+    )
+
+
+def test_kernelone_release_gate_allows_roles_adapters_owner_cell() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.roles.adapters.public.service import get_schema_for_role
+
+
+def execute() -> object:
+    return get_schema_for_role("pm")
+"""
+    tree = ast.parse(source)
+    violations = gate._find_roles_kernel_adapter_dependency_violations(
+        tree,
+        "polaris/cells/roles/adapters/internal/workflow_adapter.py",
+    )
+
+    assert violations == ()
+
+
+def test_kernelone_release_gate_blocks_roles_kernel_dialogue_dependency() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.llm.dialogue.public import RoleOutputParser
+
+
+def execute() -> object:
+    return RoleOutputParser()
+"""
+    tree = ast.parse(source)
+    violations = gate._find_roles_kernel_dialogue_dependency_violations(
+        tree,
+        "polaris/cells/roles/kernel/internal/output_parser.py",
+    )
+
+    assert violations == (
+        "polaris/cells/roles/kernel/internal/output_parser.py:2: "
+        "roles.kernel production code must not import llm.dialogue; "
+        "role turns must enter provider/control-plane paths through roles.runtime and roles.kernel contracts",
+    )
+
+
+def test_kernelone_release_gate_allows_llm_dialogue_owner_cell_dependency() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.llm.dialogue.public.contracts import InvokeRoleDialogueCommandV1
+
+
+def execute() -> object:
+    return InvokeRoleDialogueCommandV1(role="pm", message="plan")
+"""
+    tree = ast.parse(source)
+    violations = gate._find_roles_kernel_dialogue_dependency_violations(
+        tree,
+        "polaris/cells/llm/dialogue/public/service.py",
+    )
+
+    assert violations == ()
+
+
+def test_kernelone_release_gate_blocks_roles_kernel_runtime_reverse_dependency() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+
+def execute() -> object:
+    return RoleRuntimeService()
+"""
+    tree = ast.parse(source)
+    violations = gate._find_roles_kernel_runtime_dependency_violations(
+        tree,
+        "polaris/cells/roles/kernel/internal/kernel/core.py",
+    )
+
+    assert violations == (
+        "polaris/cells/roles/kernel/internal/kernel/core.py:2: "
+        "roles.kernel production code must not import roles.runtime; "
+        "roles.runtime composes the kernel through public contracts, not the reverse",
+    )
+
+
+def test_kernelone_release_gate_allows_roles_runtime_owner_cell_dependency() -> None:
+    gate = _load_kernelone_release_gate_module()
+    source = """
+from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+
+
+def execute() -> object:
+    return ExecuteRoleSessionCommandV1(role="pm", session_id="s", workspace=".", user_message="plan")
+"""
+    tree = ast.parse(source)
+    violations = gate._find_roles_kernel_runtime_dependency_violations(
+        tree,
+        "polaris/cells/roles/runtime/public/service.py",
+    )
+
+    assert violations == ()

@@ -169,14 +169,7 @@ class TurnRunner:
 
     def _get_response_schema(self, role: str) -> type | None:
         """获取响应模式"""
-        if not self._kernel._use_structured_output:
-            return None
-        try:
-            from polaris.cells.roles.adapters.public.service import get_schema_for_role
-
-            return get_schema_for_role(role)
-        except ImportError:
-            return None
+        return self._kernel._get_response_schema(role)
 
     def _record_llm_latency(self, latency: float) -> None:
         """记录 LLM 延迟"""

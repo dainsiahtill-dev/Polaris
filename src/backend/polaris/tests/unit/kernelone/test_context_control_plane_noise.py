@@ -6,7 +6,29 @@ from polaris.kernelone.context.control_plane_noise import (
     is_control_plane_noise,
     is_signal_role,
     normalize_control_plane_text,
+    strip_control_plane_markers,
 )
+
+
+class TestStripControlPlaneMarkers:
+    def test_strips_tool_result_tags_keeps_inner(self) -> None:
+        assert strip_control_plane_markers("<tool_result>3 matches</tool_result>") == "3 matches"
+
+    def test_removes_system_warning_line_keeps_real(self) -> None:
+        out = strip_control_plane_markers("[system warning] budget exceeded\nreal grep: API_PORT")
+        assert "[system warning]" not in out
+        assert "real grep: API_PORT" in out
+
+    def test_removes_circuit_breaker_and_tool_result_prefix_lines(self) -> None:
+        out = strip_control_plane_markers("[circuit breaker] tripped\ntool result: x\nkeep me")
+        assert out.strip() == "keep me"
+
+    def test_clean_content_unchanged(self) -> None:
+        assert strip_control_plane_markers("a normal grep line") == "a normal grep line"
+
+    def test_empty(self) -> None:
+        assert strip_control_plane_markers("") == ""
+        assert strip_control_plane_markers(None) == ""
 
 
 class TestNormalizeControlPlaneText:

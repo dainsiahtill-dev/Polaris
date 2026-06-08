@@ -21,6 +21,7 @@ from polaris.bootstrap.config import Settings
 from polaris.cells.runtime.state_owner.public.service import AppState
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.storage.io_paths import build_cache_root
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -3069,6 +3070,83 @@ async def test_director_token_budget_stats(client: AsyncClient) -> None:
         data = response.json()
         assert data["total_budget"] == 50000
         assert data["used_tokens"] == 2500
+
+
+# ---------------------------------------------------------------------------
+# Integration QA
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_director_integration_qa_persists_to_active_runtime_root(
+    client: AsyncClient,
+    mock_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """API-triggered integration QA should persist artifacts in the active runtime root."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime_base = tmp_path / "runtime-base"
+    mock_settings.workspace = str(workspace)
+    mock_settings.workspace_path = str(workspace)
+    mock_settings.ramdisk_root = str(runtime_base)
+    cache_root = build_cache_root(str(runtime_base), str(workspace))
+
+    director_result = {
+        "status": "success",
+        "successes": 1,
+        "failures": 0,
+        "blocked": 0,
+        "tasks": [{"id": "PM-1", "status": "done"}],
+    }
+    task_rows = [
+        {
+            "task_id": "PM-1",
+            "assigned_to": "director",
+            "status": "done",
+            "target_files": ["src/index.ts"],
+            "metadata": {"pm_task_id": "PM-1"},
+        }
+    ]
+
+    with (
+        patch(
+            "polaris.cells.orchestration.workflow_runtime.public.service.persist_director_result_from_runtime",
+            return_value=director_result,
+        ),
+        patch(
+            "polaris.cells.orchestration.workflow_runtime.public.service.build_integration_qa_tasks_from_director_result",
+            return_value=task_rows,
+        ),
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._resolve_verify_runner",
+            return_value=lambda _workspace: (True, "Integration verification passed", []),
+        ),
+        patch(
+            "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._attach_pm_dispatch_qa_cognitive_receipt",
+        ),
+    ):
+        response = await client.post(
+            "/v2/director/integration-qa",
+            json={
+                "workspace": str(workspace),
+                "run_id": "api-qa-1",
+                "iteration": 2,
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    result = data["result"]
+    result_path = Path(result["result_path"])
+    runtime_result_path = Path(result["runtime_result_path"])
+    assert result_path == Path(cache_root) / "runs" / "api-qa-1" / "qa" / "integration_qa.result.json"
+    assert runtime_result_path == Path(cache_root) / "results" / "integration_qa.result.json"
+    assert result_path.is_file()
+    assert runtime_result_path.is_file()
+    persisted = json.loads(runtime_result_path.read_text(encoding="utf-8"))
+    assert persisted["reason"] == "integration_qa_passed"
+    assert persisted["passed"] is True
 
 
 # ---------------------------------------------------------------------------

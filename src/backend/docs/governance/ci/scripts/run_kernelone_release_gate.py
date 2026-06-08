@@ -25,11 +25,56 @@ BACKEND_ROOT = Path(__file__).resolve().parents[4]
 _ROLE_RUNTIME_PUBLIC_IMPORT_BOUNDARY_STAGE = "roles_runtime_public_import_boundary"
 _ROLE_RUNTIME_CELL_IMPORT_BOUNDARY_STAGE = "roles_runtime_cell_import_boundary"
 _ROLE_RUNTIME_CAPABILITY_RESULT_SANDBOX_STAGE = "roles_runtime_capability_result_sandbox"
+_ROLE_EXECUTION_KERNEL_ENTRYPOINT_STAGE = "role_execution_kernel_entrypoint_boundary"
+_LEGACY_ROLE_DIALOGUE_ENTRYPOINT_STAGE = "legacy_role_dialogue_entrypoint_boundary"
+_ROLES_KERNEL_ADAPTER_DEPENDENCY_STAGE = "roles_kernel_adapter_dependency_boundary"
+_ROLES_KERNEL_DIALOGUE_DEPENDENCY_STAGE = "roles_kernel_dialogue_dependency_boundary"
+_ROLES_KERNEL_RUNTIME_DEPENDENCY_STAGE = "roles_kernel_runtime_dependency_boundary"
 _KERNELONE_ROLES_BUSINESS_BOUNDARY_STAGE = "kernelone_roles_business_boundary"
 _ROLE_RUNTIME_PUBLIC_ROOT = Path("polaris/cells/roles/runtime/public")
 _ROLE_RUNTIME_CELL_YAML = Path("polaris/cells/roles/runtime/cell.yaml")
+_ROLES_KERNEL_ROOT = Path("polaris/cells/roles/kernel")
 _KERNELONE_ROLES_ROOT = Path("polaris/kernelone/roles")
 _ROLE_RUNTIME_OWN_INTERNAL_PREFIX = "polaris.cells.roles.runtime.internal"
+_ROLE_EXECUTION_KERNEL_ALLOWED_PATHS = frozenset(
+    {
+        "polaris/cells/roles/runtime/public/service.py",
+    }
+)
+_ROLE_EXECUTION_KERNEL_ALLOWED_PREFIXES = ("polaris/cells/roles/kernel/",)
+_ROLE_EXECUTION_KERNEL_IMPORT_MODULES = frozenset(
+    {
+        "polaris.cells.roles.kernel",
+        "polaris.cells.roles.kernel.public",
+        "polaris.cells.roles.kernel.public.service",
+        "polaris.cells.roles.kernel.internal.kernel",
+        "polaris.cells.roles.kernel.internal.kernel.core",
+    }
+)
+_LEGACY_ROLE_DIALOGUE_ALLOWED_PREFIXES = ("polaris/cells/llm/dialogue/",)
+_LEGACY_ROLE_DIALOGUE_FUNCTIONS = frozenset(
+    {
+        "generate_role_response",
+        "generate_role_response_streaming",
+    }
+)
+_LEGACY_ROLE_DIALOGUE_IMPORT_MODULES = frozenset(
+    {
+        "polaris.cells.llm.dialogue",
+        "polaris.cells.llm.dialogue.internal",
+        "polaris.cells.llm.dialogue.internal.role_dialogue",
+        "polaris.cells.llm.dialogue.public",
+        "polaris.cells.llm.dialogue.public.service",
+    }
+)
+_PRODUCTION_SOURCE_ROOTS = (
+    Path("polaris/application"),
+    Path("polaris/cells"),
+    Path("polaris/delivery"),
+)
+_ROLES_ADAPTERS_MODULE_PREFIX = "polaris.cells.roles.adapters"
+_LLM_DIALOGUE_MODULE_PREFIX = "polaris.cells.llm.dialogue"
+_ROLES_RUNTIME_MODULE_PREFIX = "polaris.cells.roles.runtime"
 _BUSINESS_ROLE_TOKENS = frozenset(
     {
         "architect",
@@ -121,6 +166,182 @@ def _is_cross_cell_internal_import(module: str) -> bool:
     if ".internal" not in module:
         return False
     return not module.startswith(_ROLE_RUNTIME_OWN_INTERNAL_PREFIX)
+
+
+def _is_production_python_file(path: Path) -> bool:
+    if not path.is_file() or path.suffix != ".py":
+        return False
+    if "__pycache__" in path.parts:
+        return False
+    if "tests" in path.parts:
+        return False
+    return not path.name.startswith("test_")
+
+
+def _iter_production_python_files() -> Iterable[Path]:
+    yielded: set[Path] = set()
+    for root in _PRODUCTION_SOURCE_ROOTS:
+        absolute_root = BACKEND_ROOT / root
+        if not absolute_root.exists():
+            continue
+        for path in sorted(absolute_root.rglob("*.py")):
+            if path in yielded or not _is_production_python_file(path):
+                continue
+            yielded.add(path)
+            yield path
+
+
+def _is_role_execution_kernel_allowed_path(rel_path: str) -> bool:
+    if rel_path in _ROLE_EXECUTION_KERNEL_ALLOWED_PATHS:
+        return True
+    return any(rel_path.startswith(prefix) for prefix in _ROLE_EXECUTION_KERNEL_ALLOWED_PREFIXES)
+
+
+def _is_role_execution_kernel_import(module: str, names: Iterable[str] = ()) -> bool:
+    module_token = str(module or "").strip()
+    if module_token not in _ROLE_EXECUTION_KERNEL_IMPORT_MODULES:
+        return False
+    imported_names = tuple(str(name or "").strip() for name in names)
+    if not imported_names:
+        return True
+    return "RoleExecutionKernel" in imported_names
+
+
+def _find_role_execution_kernel_entrypoint_violations(tree: ast.AST, rel_path: str) -> tuple[str, ...]:
+    if _is_role_execution_kernel_allowed_path(rel_path):
+        return ()
+
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_role_execution_kernel_import(alias.name):
+                    violations.append(
+                        f"{rel_path}:{node.lineno}: "
+                        "production code must enter RoleRuntimeService instead of importing RoleExecutionKernel"
+                    )
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported_names = tuple(alias.name for alias in node.names)
+            if _is_role_execution_kernel_import(node.module, imported_names):
+                violations.append(
+                    f"{rel_path}:{node.lineno}: "
+                    "production code must enter RoleRuntimeService instead of importing RoleExecutionKernel"
+                )
+            continue
+        if isinstance(node, ast.Call):
+            func = node.func
+            if (isinstance(func, ast.Name) and func.id == "RoleExecutionKernel") or (
+                isinstance(func, ast.Attribute) and func.attr == "RoleExecutionKernel"
+            ):
+                violations.append(
+                    f"{rel_path}:{node.lineno}: "
+                    "production code must enter RoleRuntimeService instead of constructing RoleExecutionKernel"
+                )
+    return tuple(violations)
+
+
+def _is_legacy_role_dialogue_allowed_path(rel_path: str) -> bool:
+    return any(rel_path.startswith(prefix) for prefix in _LEGACY_ROLE_DIALOGUE_ALLOWED_PREFIXES)
+
+
+def _find_legacy_role_dialogue_entrypoint_violations(tree: ast.AST, rel_path: str) -> tuple[str, ...]:
+    if _is_legacy_role_dialogue_allowed_path(rel_path):
+        return ()
+
+    violations: list[str] = []
+    imported_legacy_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _LEGACY_ROLE_DIALOGUE_IMPORT_MODULES:
+                    imported_name = alias.asname or alias.name.rsplit(".", 1)[-1]
+                    imported_legacy_names.add(imported_name)
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module in _LEGACY_ROLE_DIALOGUE_IMPORT_MODULES:
+            blocked_names = tuple(alias for alias in node.names if alias.name in _LEGACY_ROLE_DIALOGUE_FUNCTIONS)
+            if blocked_names:
+                imported_legacy_names.update(alias.asname or alias.name for alias in blocked_names)
+                violations.append(
+                    f"{rel_path}:{node.lineno}: "
+                    "production code must enter RoleRuntimeService instead of importing legacy role dialogue"
+                )
+            continue
+        if isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Name)
+                and (func.id in imported_legacy_names or func.id in _LEGACY_ROLE_DIALOGUE_FUNCTIONS)
+            ) or (isinstance(func, ast.Attribute) and func.attr in _LEGACY_ROLE_DIALOGUE_FUNCTIONS):
+                violations.append(
+                    f"{rel_path}:{node.lineno}: "
+                    "production code must enter RoleRuntimeService instead of calling legacy role dialogue"
+                )
+    return tuple(violations)
+
+
+def _is_roles_kernel_path(rel_path: str) -> bool:
+    return rel_path.startswith(_ROLES_KERNEL_ROOT.as_posix() + "/")
+
+
+def _is_roles_adapters_import(module: str) -> bool:
+    module_token = str(module or "").strip()
+    return module_token == _ROLES_ADAPTERS_MODULE_PREFIX or module_token.startswith(_ROLES_ADAPTERS_MODULE_PREFIX + ".")
+
+
+def _is_llm_dialogue_import(module: str) -> bool:
+    module_token = str(module or "").strip()
+    return module_token == _LLM_DIALOGUE_MODULE_PREFIX or module_token.startswith(_LLM_DIALOGUE_MODULE_PREFIX + ".")
+
+
+def _is_roles_runtime_import(module: str) -> bool:
+    module_token = str(module or "").strip()
+    return module_token == _ROLES_RUNTIME_MODULE_PREFIX or module_token.startswith(_ROLES_RUNTIME_MODULE_PREFIX + ".")
+
+
+def _find_roles_kernel_adapter_dependency_violations(tree: ast.AST, rel_path: str) -> tuple[str, ...]:
+    if not _is_roles_kernel_path(rel_path):
+        return ()
+
+    violations: list[str] = []
+    for lineno, module in _iter_import_modules(tree):
+        if _is_roles_adapters_import(module):
+            violations.append(
+                f"{rel_path}:{lineno}: "
+                "roles.kernel production code must not import roles.adapters; "
+                "runtime/profile contracts must provide role-specific schema decisions"
+            )
+    return tuple(violations)
+
+
+def _find_roles_kernel_dialogue_dependency_violations(tree: ast.AST, rel_path: str) -> tuple[str, ...]:
+    if not _is_roles_kernel_path(rel_path):
+        return ()
+
+    violations: list[str] = []
+    for lineno, module in _iter_import_modules(tree):
+        if _is_llm_dialogue_import(module):
+            violations.append(
+                f"{rel_path}:{lineno}: "
+                "roles.kernel production code must not import llm.dialogue; "
+                "role turns must enter provider/control-plane paths through roles.runtime and roles.kernel contracts"
+            )
+    return tuple(violations)
+
+
+def _find_roles_kernel_runtime_dependency_violations(tree: ast.AST, rel_path: str) -> tuple[str, ...]:
+    if not _is_roles_kernel_path(rel_path):
+        return ()
+
+    violations: list[str] = []
+    for lineno, module in _iter_import_modules(tree):
+        if _is_roles_runtime_import(module):
+            violations.append(
+                f"{rel_path}:{lineno}: "
+                "roles.kernel production code must not import roles.runtime; "
+                "roles.runtime composes the kernel through public contracts, not the reverse"
+            )
+    return tuple(violations)
 
 
 def _is_role_capability_invocation_result_call(node: ast.Call) -> bool:
@@ -360,6 +581,156 @@ def _check_role_runtime_capability_result_sandbox() -> GateRunResult:
     )
 
 
+def _check_role_execution_kernel_entrypoint_boundary() -> GateRunResult:
+    started = time.monotonic()
+    command = [
+        "static",
+        _ROLE_EXECUTION_KERNEL_ENTRYPOINT_STAGE,
+        *[root.as_posix() for root in _PRODUCTION_SOURCE_ROOTS],
+    ]
+    violations: list[str] = []
+
+    for path in _iter_production_python_files():
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+            violations.append(f"{rel_path}: parse failed: {exc}")
+            continue
+        violations.extend(_find_role_execution_kernel_entrypoint_violations(tree, rel_path))
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_ROLE_EXECUTION_KERNEL_ENTRYPOINT_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
+def _check_legacy_role_dialogue_entrypoint_boundary() -> GateRunResult:
+    started = time.monotonic()
+    command = [
+        "static",
+        _LEGACY_ROLE_DIALOGUE_ENTRYPOINT_STAGE,
+        *[root.as_posix() for root in _PRODUCTION_SOURCE_ROOTS],
+    ]
+    violations: list[str] = []
+
+    for path in _iter_production_python_files():
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+            violations.append(f"{rel_path}: parse failed: {exc}")
+            continue
+        violations.extend(_find_legacy_role_dialogue_entrypoint_violations(tree, rel_path))
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_LEGACY_ROLE_DIALOGUE_ENTRYPOINT_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
+def _check_roles_kernel_adapter_dependency_boundary() -> GateRunResult:
+    started = time.monotonic()
+    command = ["static", _ROLES_KERNEL_ADAPTER_DEPENDENCY_STAGE, _ROLES_KERNEL_ROOT.as_posix()]
+    violations: list[str] = []
+
+    kernel_root = BACKEND_ROOT / _ROLES_KERNEL_ROOT
+    if kernel_root.exists():
+        for path in sorted(kernel_root.rglob("*.py")):
+            if not _is_production_python_file(path):
+                continue
+            rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+            except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+                violations.append(f"{rel_path}: parse failed: {exc}")
+                continue
+            violations.extend(_find_roles_kernel_adapter_dependency_violations(tree, rel_path))
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_ROLES_KERNEL_ADAPTER_DEPENDENCY_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
+def _check_roles_kernel_dialogue_dependency_boundary() -> GateRunResult:
+    started = time.monotonic()
+    command = ["static", _ROLES_KERNEL_DIALOGUE_DEPENDENCY_STAGE, _ROLES_KERNEL_ROOT.as_posix()]
+    violations: list[str] = []
+
+    kernel_root = BACKEND_ROOT / _ROLES_KERNEL_ROOT
+    if kernel_root.exists():
+        for path in sorted(kernel_root.rglob("*.py")):
+            if not _is_production_python_file(path):
+                continue
+            rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+            except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+                violations.append(f"{rel_path}: parse failed: {exc}")
+                continue
+            violations.extend(_find_roles_kernel_dialogue_dependency_violations(tree, rel_path))
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_ROLES_KERNEL_DIALOGUE_DEPENDENCY_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
+def _check_roles_kernel_runtime_dependency_boundary() -> GateRunResult:
+    started = time.monotonic()
+    command = ["static", _ROLES_KERNEL_RUNTIME_DEPENDENCY_STAGE, _ROLES_KERNEL_ROOT.as_posix()]
+    violations: list[str] = []
+
+    kernel_root = BACKEND_ROOT / _ROLES_KERNEL_ROOT
+    if kernel_root.exists():
+        for path in sorted(kernel_root.rglob("*.py")):
+            if not _is_production_python_file(path):
+                continue
+            rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel_path)
+            except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+                violations.append(f"{rel_path}: parse failed: {exc}")
+                continue
+            violations.extend(_find_roles_kernel_runtime_dependency_violations(tree, rel_path))
+
+    duration_seconds = time.monotonic() - started
+    stderr = "\n".join(violations)
+    return GateRunResult(
+        stage=_ROLES_KERNEL_RUNTIME_DEPENDENCY_STAGE,
+        command=command,
+        returncode=1 if violations else 0,
+        duration_seconds=float(round(duration_seconds, 3)),
+        stdout="",
+        stderr=stderr,
+    )
+
+
 def _check_kernelone_roles_business_boundary() -> GateRunResult:
     started = time.monotonic()
     roles_root = BACKEND_ROOT / _KERNELONE_ROLES_ROOT
@@ -440,6 +811,11 @@ def main() -> int:
     stage_results.append(_check_role_runtime_public_import_boundaries())
     stage_results.append(_check_roles_runtime_cell_import_boundaries())
     stage_results.append(_check_role_runtime_capability_result_sandbox())
+    stage_results.append(_check_role_execution_kernel_entrypoint_boundary())
+    stage_results.append(_check_legacy_role_dialogue_entrypoint_boundary())
+    stage_results.append(_check_roles_kernel_adapter_dependency_boundary())
+    stage_results.append(_check_roles_kernel_dialogue_dependency_boundary())
+    stage_results.append(_check_roles_kernel_runtime_dependency_boundary())
     stage_results.append(_check_kernelone_roles_business_boundary())
 
     if args.mode in {"collect", "all"}:

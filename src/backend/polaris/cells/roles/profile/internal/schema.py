@@ -224,6 +224,12 @@ class RoleContextPolicy:
     # 是否包含任务历史
     include_task_history: bool = True
 
+    # 角色专属信号（RoleSignalPlane，默认关 → 不改变历史 baseline；按角色 opt-in）
+    # ChiefEngineer 蓝图/技术架构概览
+    include_blueprint_overview: bool = False
+    # QA 质量判定/门禁历史概览
+    include_verdict_history: bool = False
+
     # 上下文压缩策略（summarize/truncate/sliding_window）
     compression_strategy: Literal["summarize", "truncate", "sliding_window"] = "sliding_window"
 

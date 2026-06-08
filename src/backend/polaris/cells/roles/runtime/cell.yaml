@@ -27,6 +27,7 @@ public_contracts:
     - ExecuteRoleCapabilityInvocationCommandV1
     - AssembleRoleRuntimeChainCommandV1
     - RoleStateCommitRequest
+    - RehydrateRoleHandoffCommandV1
     - ExecuteRoleTaskCommandV1
     - ExecuteRoleSessionCommandV1
     - AggregateChatCompletionsCommandV1
@@ -43,6 +44,7 @@ public_contracts:
     - RoleCapabilityInvocationResultV1
     - RoleRuntimeChainAssemblyResultV1
     - RoleStateCommitReceipt
+    - RoleHandoffRehydrationResultV1
     - RoleExecutionResultV1
     - AggregateRolePlanResultV1
     - AggregateRoleLobeV1
@@ -109,6 +111,7 @@ effects_allowed:
 - task_market.ack
 - task_market.fail
 - task_market.requeue
+- task_market.dead_letter
 - runtime_projection.read
 - blueprint.generate:*
 - blueprint.memo.record
@@ -123,6 +126,7 @@ effects_allowed:
 - change_set.validate
 - runtime_receipt.record
 - handoff.export
+- handoff.rehydrate
 verification:
   tests:
   - tests/test_roles_kernel.py

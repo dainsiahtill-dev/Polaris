@@ -27,6 +27,7 @@ from polaris.cells.llm.evaluation.public.service import (
     pull_baseline_library,
     run_agentic_benchmark_suite,
     run_context_benchmark_suite,
+    run_context_projection_matrix_suite,
     run_speculation_matrix_suite,
     run_strategy_benchmark_suite,
     run_tool_calling_matrix_suite,
@@ -267,6 +268,7 @@ def _suite_runners() -> dict[str, Any]:
         "agentic_benchmark": run_agentic_benchmark_suite,
         "tool_calling_matrix": run_tool_calling_matrix_suite,
         "speculation_matrix": run_speculation_matrix_suite,
+        "context_projection_matrix": run_context_projection_matrix_suite,
     }
 
 
@@ -1894,7 +1896,7 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     if case_ids:
         options["benchmark_case_ids"] = case_ids
         options["matrix_case_ids"] = case_ids
-    if suite in ("tool_calling_matrix", "speculation_matrix"):
+    if suite in ("tool_calling_matrix", "speculation_matrix", "context_projection_matrix"):
         options["matrix_transport"] = matrix_transport
         options["observable"] = observable
         # Add level prefixes for range filtering (e.g., l1-l3 -> ["l1_", "l2_", "l3_"])
@@ -1913,7 +1915,7 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     mode = str(getattr(args, "mode", "agentic") or "agentic").strip().lower() or "agentic"
 
     try:
-        if suite in ("tool_calling_matrix", "speculation_matrix"):
+        if suite in ("tool_calling_matrix", "speculation_matrix", "context_projection_matrix"):
             # matrix-style suites use their own runner (ignores mode)
             suite_runner = _suite_runners()[suite]
             run_result = asyncio.run(
@@ -1950,6 +1952,10 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
             workspace=workspace,
             output_format=output_format,
         )
+
+    # context_projection_matrix 是确定性 ProjectionEngine 矩阵，单独呈现。
+    if suite == "context_projection_matrix":
+        return _report_context_projection_matrix(_as_dict(run_result), output_format=output_format)
 
     package = build_agentic_eval_audit_package(
         workspace=workspace,
@@ -2013,6 +2019,40 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
         _print_human(package)
 
     return 0 if str(package.get("status") or "").strip().upper() == "PASS" else 1
+
+
+def _report_context_projection_matrix(run_result: dict[str, Any], *, output_format: str) -> int:
+    """呈现 context_projection_matrix 确定性结果。退出码 0 当且仅当 ok。"""
+    ok = bool(run_result.get("ok"))
+    details = _as_dict(run_result.get("details"))
+    summary = _as_dict(details.get("summary"))
+    cases_raw = details.get("cases")
+    cases: list[Any] = cases_raw if isinstance(cases_raw, list) else []
+
+    if output_format == "json":
+        print(json.dumps({"status": "PASS" if ok else "FAIL", **run_result}, ensure_ascii=False, indent=2))
+        return 0 if ok else 1
+
+    print(f"\n=== context_projection_matrix {'PASS' if ok else 'FAIL'} ===")
+    print(
+        "cases={total_cases} passed={passed_cases} failed={failed_cases} "
+        "control_plane_leaks={control_plane_leaks_total} receipt_chars_saved={receipt_chars_saved_total}".format(
+            total_cases=summary.get("total_cases", 0),
+            passed_cases=summary.get("passed_cases", 0),
+            failed_cases=summary.get("failed_cases", 0),
+            control_plane_leaks_total=summary.get("control_plane_leaks_total", 0),
+            receipt_chars_saved_total=summary.get("receipt_chars_saved_total", 0),
+        )
+    )
+    for case in cases:
+        if not isinstance(case, Mapping):
+            continue
+        flag = "PASS" if case.get("passed") else "FAIL"
+        print(f"  [{flag}] {case.get('case')}")
+        for check in case.get("checks", []) if isinstance(case.get("checks"), list) else []:
+            if isinstance(check, Mapping) and not check.get("ok"):
+                print(f"       x {check.get('name')}: {check.get('detail')}")
+    return 0 if ok else 1
 
 
 def _report_speculation_matrix(

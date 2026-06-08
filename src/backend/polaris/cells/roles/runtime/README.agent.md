@@ -39,6 +39,7 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 - `task_market.ack`
 - `task_market.fail`
 - `task_market.requeue`
+- `task_market.dead_letter`
 - `runtime_projection.read`
 - `blueprint.generate:*`
 - `blueprint.memo.record`
@@ -53,6 +54,7 @@ behavior stays in dedicated cells (`orchestration.pm_planning`,
 - `change_set.validate`
 - `runtime_receipt.record`
 - `handoff.export`
+- `handoff.rehydrate`
 
 ## Public Contracts
 Defined in `public/contracts.py`:
@@ -61,6 +63,7 @@ Defined in `public/contracts.py`:
 - `ExecuteRoleCapabilityInvocationCommandV1`
 - `AssembleRoleRuntimeChainCommandV1`
 - `RoleStateCommitRequest`
+- `RehydrateRoleHandoffCommandV1`
 - `ExecuteRoleTaskCommandV1`
 - `ExecuteRoleSessionCommandV1`
 - `AggregateChatCompletionsCommandV1`
@@ -72,6 +75,7 @@ Defined in `public/contracts.py`:
 - `RoleCapabilityInvocationResultV1`
 - `RoleRuntimeChainAssemblyResultV1`
 - `RoleStateCommitReceipt`
+- `RoleHandoffRehydrationResultV1`
 - `RoleTaskStartedEventV1`
 - `RoleTaskCompletedEventV1`
 - `RoleExecutionResultV1`
@@ -175,25 +179,36 @@ Defined in `public/contracts.py`:
   release gate scans all `roles.runtime` owned Python paths from `cell.yaml`
   (`public/**`, `internal/**`, `role_chat.py`, and `role_session.py`) and rejects
   cross-Cell `polaris.cells.*.internal` imports before release. It also scans
+  production Python entrypoints under `polaris/application`, `polaris/cells`, and
+  `polaris/delivery` and rejects direct `RoleExecutionKernel` imports or
+  construction outside the `roles.kernel` owner Cell and
+  `roles.runtime.public.service` composition boundary, so new production code
+  cannot bypass `RoleRuntimeService` and its runtime-object/session/ledger
+  preflight. It also rejects production call sites that import or call the
+  `llm.dialogue` role compatibility functions `generate_role_response` and
+  `generate_role_response_streaming` outside the `llm.dialogue` owner Cell, so
+  prompt-driven role dialogue cannot re-enter as a production route. It also scans
   `polaris/kernelone/roles/**` and rejects business-role filenames or Python
   definitions for PM, Chief Engineer, Architect, QA, and Director so that
   KernelOne stays limited to shared types and low-level role templates.
 - Role task-market lifecycle operations use
   `execute_role_task_market_lifecycle(ExecuteRoleTaskMarketLifecycleCommandV1)`
-  to translate role-bound publish/claim/lease/ack/fail/requeue requests into
-  `runtime.task_market` public contracts. `RoleTaskMarketBinding` rejects active
-  work item and lease token refs outside `runtime.task_market`, and rejects old
-  active work refs such as `runtime.task_market:task-1`; lease/ack/fail and
-  requeue operations additionally require `payload.task_id` to resolve to a task
-  ref listed in the runtime object's current `RoleTurnContext.task_refs` before
-  the Task Market public service is called. They also require a mounted
-  `runtime.task_market` capability port whose public contract matches the
-  lifecycle command, whose `allowed_roles` contains the current role, and whose
-  capability/effect/tool match the runtime object's current
-  `RoleCapabilityFingerprint`. Lease, ack, and fail also require
-  `payload.lease_token` to match the runtime object's active
+  to translate role-bound publish/claim/lease/ack/fail/requeue/dead-letter
+  requests into `runtime.task_market` public contracts. `RoleTaskMarketBinding`
+  rejects active work item and lease token refs outside `runtime.task_market`,
+  and rejects old active work refs such as `runtime.task_market:task-1`;
+  lease/ack/fail/requeue/dead-letter operations additionally require
+  `payload.task_id` to resolve to a task ref listed in the runtime object's
+  current `RoleTurnContext.task_refs` before the Task Market public service is
+  called. They also require a mounted `runtime.task_market` capability port
+  whose public contract matches the lifecycle command, whose `allowed_roles`
+  contains the current role, and whose capability/effect/tool match the runtime
+  object's current `RoleCapabilityFingerprint`. Lease, ack, and fail also
+  require `payload.lease_token` to match the runtime object's active
   `RoleTaskMarketBinding.lease_token_ref`; unbound or mismatched leases are
-  rejected in `roles.runtime`. Successful `RoleTaskMarketLifecycleResultV1`
+  rejected in `roles.runtime`. Dead-letter operations delegate to
+  `MoveTaskToDeadLetterCommandV1` and do not create a second DLQ. Successful
+  `RoleTaskMarketLifecycleResultV1`
   values must include a `runtime.task_market` `result_ref`; malformed upstream
   `ok=true` task-market responses without a task id/ref return the structured
   `task_market_lifecycle_missing_result_ref` failure instead of becoming an
@@ -216,7 +231,8 @@ Defined in `public/contracts.py`:
   a subset to bypass complete-chain gates. A complete default Phase 5 chain must
   include at least one `runtime.projection` ref so the runtime status endpoint is
   represented by its real owner Cell, at least one `audit.evidence` ref so the
-  audit trail has a real owner-backed anchor, typed handoff refs on both
+  audit trail has a real owner-backed anchor, per-step `audit.evidence` refs on
+  the Director and QA execution/audit steps, typed handoff refs on both
   Chief Engineer -> Director and Director -> QA role transitions, and runtime
   receipt refs from `factory.cognitive_runtime` for Chief Engineer, Director,
   and QA execution steps so typed handoff and receipt systems remain the only
@@ -234,10 +250,16 @@ Defined in `public/contracts.py`:
 - Role state commits use `commit_role_state(RoleStateCommitRequest)` to bind an
   existing `roles.kernel` commit receipt to `factory.cognitive_runtime`
   `ValidateChangeSetCommandV1`, `RecordRuntimeReceiptCommandV1`, and
-  `ExportHandoffPackCommandV1`; runtime does not create a second Turn Ledger,
-  change-set validator, handoff system, or receipt store. Successful
+  `ExportHandoffPackCommandV1`; handoff rehydration uses
+  `rehydrate_role_handoff(RehydrateRoleHandoffCommandV1)` to delegate to
+  `factory.cognitive_runtime` `RehydrateHandoffPackCommandV1`. Runtime does not
+  create a second Turn Ledger, change-set validator, handoff system, or receipt
+  store. Successful
   ledger/commit refs must point to `roles.kernel`, and runtime receipt,
   handoff, and change-set refs must point to `factory.cognitive_runtime`.
+  Rehydrated receipt refs are normalized to `factory.cognitive_runtime`, and
+  rehydrated artifact/episode refs are normalized to `roles.session` even when
+  Cognitive Runtime returns raw owner ids.
   `RoleStateCommitReceipt` values must include both a kernel commit receipt ref
   and at least one Cognitive Runtime receipt ref.
   `RoleStateCommitRequest` rejects changed asset refs outside the current
@@ -267,7 +289,9 @@ Defined in `public/contracts.py`:
   `DirectorEvidenceTrail` refs, then delegates to
   `director.execution.public.service.execute_director_task` with
   `ExecuteDirectorTaskCommandV1`; runtime objects keep only result/evidence refs
-  and capability metadata.
+  and capability metadata. Owner-service `runtime/evidence/**` paths returned by
+  Director are normalized to `audit.evidence:path:*` refs before being exposed in
+  `RoleCapabilityInvocationResultV1.evidence_refs`.
 - QA pytest verification delegates to `factory.verification_guard` and requires
   both the `qa` role runtime object and QA capability fingerprint before any
   verification command is built, even if a capability port is misconfigured.
@@ -276,6 +300,9 @@ Defined in `public/contracts.py`:
   and metadata.
 - QA verdict issuance delegates to `qa.audit_verdict.public.service.run_qa_audit`
   with `RunQaAuditCommandV1`; runtime objects keep only result refs and metadata.
+  Runtime evidence paths from the verdict payload are normalized to
+  `audit.evidence:path:*` refs so QA audit results remain anchored to the Audit
+  Evidence Cell.
 - QA `TruthLog` mounts must include both the `audit.evidence` owner ref and a
   `factory.cognitive_runtime` `runtime_receipt_ref`; runtime objects never treat
   transcript or natural-language handoff text as the receipt truth.

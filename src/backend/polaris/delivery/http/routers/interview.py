@@ -13,7 +13,6 @@ from polaris.cells.llm.evaluation.public.service import (
     generate_interview_answer_streaming,
     save_interview_report,
 )
-from polaris.cells.runtime.projection.internal.io_helpers import build_cache_root
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas import (
     InterviewAskResponse,
@@ -23,6 +22,7 @@ from polaris.delivery.http.schemas import (
 from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.model_identity import model_identity_equal
+from polaris.kernelone.storage.io_paths import build_cache_root
 
 from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
 from .sse_utils import create_sse_response, sse_event_generator

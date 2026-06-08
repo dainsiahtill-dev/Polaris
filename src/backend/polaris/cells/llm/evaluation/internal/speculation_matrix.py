@@ -26,9 +26,9 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.roles.kernel.internal.speculation.events import (
+from polaris.cells.roles.kernel.public.service import (
     SpeculationEvent,
-    subscribe,
+    subscribe_speculation_events,
 )
 from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleSessionCommandV1,
@@ -274,7 +274,7 @@ async def _evaluate_case(
     on_run_id = f"{run_id}-{case.case_id}-on"
     on_workspace = materialize_case_workspace(benchmark_root=workspace_root, run_id=on_run_id, case=case)
     on_collector = _SpeculationCollector()
-    unsubscribe = subscribe(on_collector)
+    unsubscribe = subscribe_speculation_events(on_collector)
     try:
         with _speculation_env(enabled=True, audit=True):
             on_run = await _run_session(

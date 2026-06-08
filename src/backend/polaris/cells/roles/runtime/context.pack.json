@@ -21,7 +21,8 @@
     "TruthLog asset mounts must include runtime_receipt_owner_cell=factory.cognitive_runtime and a factory.cognitive_runtime runtime_receipt_ref so QA truth logs stay anchored to Audit Evidence and Cognitive Runtime receipts."
   ],
   "role_task_market_lifecycle_invariants": [
-    "RoleTaskMarketLifecycleResultV1 requires every successful task-market lifecycle result to include a runtime.task_market result_ref so publish/claim/lease/ack/fail/requeue successes are anchored to the Task Market owner Cell.",
+    "RoleTaskMarketLifecycleResultV1 requires every successful task-market lifecycle result to include a runtime.task_market result_ref so publish/claim/lease/ack/fail/requeue/dead-letter successes are anchored to the Task Market owner Cell.",
+    "Dead-letter role lifecycle operations delegate to runtime.task_market MoveTaskToDeadLetterCommandV1 through a mounted capability fingerprint and never create a second DLQ state owner.",
     "execute_role_task_market_lifecycle returns task_market_lifecycle_missing_result_ref for malformed upstream ok=true task-market responses without a task id/ref instead of exposing an unauditable success.",
     "RoleTaskMarketLifecycleResultV1 requires successful claim/lease lifecycle results to include a runtime.task_market lease_token_ref so active leases remain auditable.",
     "execute_role_task_market_lifecycle returns task_market_lifecycle_missing_lease_ref for malformed upstream ok=true claim/lease responses without a lease token/ref."
@@ -29,11 +30,22 @@
   "role_capability_invocation_result_invariants": [
     "RoleCapabilityInvocationResultV1 requires every successful capability result to include a target owner_cell and result_ref so successful RPC/API calls are anchored to the owning public Cell.",
     "RoleCapabilityInvocationResultV1 rejects evidence refs outside audit.evidence and rejects duplicate evidence refs so capability results cannot carry foreign or collapsed audit anchors.",
+    "Role capability results normalize owner-service runtime/evidence/** paths into audit.evidence:path:* refs before exposing evidence_refs, including Director execution and QA audit verdict results.",
     "QA visual audit capability successes must include an audit.evidence evidence ref; roles.runtime maps owner-service runtime/evidence/** receipt paths to audit.evidence:path:* refs and rejects unaudited visual audit success results."
   ],
   "role_state_commit_invariants": [
     "RoleStateCommitRequest rejects empty commits that omit changed asset refs, changed files, and audit evidence refs.",
     "RoleStateCommitReceipt rejects duplicate factory.cognitive_runtime runtime receipt and handoff refs instead of silently collapsing audit anchors."
+  ],
+  "role_handoff_rehydration_invariants": [
+    "rehydrate_role_handoff delegates to factory.cognitive_runtime RehydrateHandoffPackCommandV1 and returns only factory.cognitive_runtime rehydration/receipt refs plus roles.session artifact/episode refs.",
+    "RoleHandoffRehydrationResultV1 rejects successful handoff rehydration results without a factory.cognitive_runtime rehydration ref.",
+    "rehydrate_role_handoff normalizes raw Cognitive Runtime receipt/artifact/episode ids into factory.cognitive_runtime or roles.session owner refs before returning the runtime public result."
+  ],
+  "latest_runtime_path_invariants": [
+    "KernelOne release gate rejects production Python files under polaris/application, polaris/cells, and polaris/delivery that directly import or construct RoleExecutionKernel outside the roles.kernel owner Cell and roles.runtime.public.service composition boundary.",
+    "KernelOne release gate rejects production Python files under polaris/application, polaris/cells, and polaris/delivery that import or call llm.dialogue role compatibility functions generate_role_response or generate_role_response_streaming outside the llm.dialogue owner Cell.",
+    "Production role execution must enter RoleRuntimeService so runtime-object/session/ledger preflight remains the only route to RoleExecutionKernel."
   ],
   "phase5_chain_invariants": [
     "RoleRuntimeChainStepRef must include task_ref or work_item_ref so every chain step is anchored to runtime.task_market.",
@@ -42,6 +54,7 @@
     "assemble_role_runtime_chain rejects callers that include all default PM -> Chief Engineer -> Director -> QA steps but downgrade required_roles to a subset.",
     "A complete default PM -> Chief Engineer -> Director -> QA Phase 5 chain must include at least one runtime.projection ref before assembly succeeds.",
     "A complete default PM -> Chief Engineer -> Director -> QA Phase 5 chain must include at least one audit.evidence ref before assembly succeeds.",
+    "A complete default PM -> Chief Engineer -> Director -> QA Phase 5 chain must include audit.evidence refs on the Director and QA steps before assembly succeeds.",
     "A complete default PM -> Chief Engineer -> Director -> QA Phase 5 chain must include factory.cognitive_runtime handoff refs on the Chief Engineer -> Director and Director -> QA role transitions before assembly succeeds.",
     "A complete default PM -> Chief Engineer -> Director -> QA Phase 5 chain must include factory.cognitive_runtime runtime receipt refs for Chief Engineer, Director, and QA execution steps before assembly succeeds.",
     "assemble_role_runtime_chain returns typed RoleRuntimeChainAssemblyResultV1 failures for invalid aggregate Turn Ledger, Runtime Projection, or Audit Evidence owner refs instead of leaking RoleRuntimeChainEnvelope constructor exceptions.",

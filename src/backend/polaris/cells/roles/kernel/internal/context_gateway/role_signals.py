@@ -1,0 +1,343 @@
+"""RoleSignalPlane —— 按角色注入"领域资产概览"信号的统一机制。
+
+这不是新建平行平面，而是把 gateway `_build_projection_dict` 里原本**硬编码**的
+supplemental_turns（`project_structure` /【项目结构】、`task_history` /【任务历史】）
+**泛化**为 registry 驱动、按角色绑定、预算受控的信号管线。三件既有基建全部复用：
+
+- 注入点：仍是 `supplemental_turns`（`{role:"system", content, name}`）。
+- 角色绑定：仍由 `RoleProfile.context_policy` 的 include_* 开关决定（每角色独立）。
+- 预算卡点：仍由 gateway 的 `CompressionEngine` / `max_context_tokens` 收尾兜底；
+  本模块在其之前做**每信号级**的排序/截断/熔断，避免一刀切压缩。
+
+设计铁律（与 ProjectionEngine 同源）：provider **只读、纯函数、可缓存**，从权威资产
+投影，绝不 mutate；大块走 ReceiptStore（摘要+引用）。
+
+防御性保证：
+1. **逐字节 + 绝对索引一致**：seed provider 保留原 id（`project_structure`/`task_history`）
+   与原内容格式，并以 priority 0/1 排在最前；只启用这两者时输出与旧实现完全一致。
+2. **sources 溯源泛化**：每个被注入的信号把 `block.id` 压入 sources，便于 trace
+   "本 turn 到底塞了哪个资产、是否过期"。
+3. **budget_pressure 熔断**：压力下，freshness_key 较上一 turn 未变的 nice-to-have 信号
+   一律断流；只有 freshness 变化（底层资产刚被工具改过）的 must-have 才经 ReceiptStore
+   摘要+引用"极限挤入"。
+"""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Protocol
+
+# 每个信号块的默认体积上限（字符）。超限 → 卸载到 ReceiptStore（摘要+引用）。
+DEFAULT_PER_SIGNAL_CHAR_CAP = 4000
+# role_signals 段整体字符预算（所有信号之和的软上限；超出后 nice-to-have 被丢弃）。
+DEFAULT_TOTAL_CHAR_BUDGET = 12000
+
+_MUST_HAVE = "must_have"
+_NICE_TO_HAVE = "nice_to_have"
+
+
+def _freshness_of(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class SignalBlock:
+    """一个角色信号的最终产物。content 已含【...】表头以保证逐字节一致。
+
+    ``max_chars`` 为该信号自带的体积上限（None = 不限，由 seed 信号采用以保证
+    逐字节一致；新增大信号可设自己的上限触发卸载）。
+    """
+
+    id: str
+    content: str
+    priority: int = 100
+    level: str = _NICE_TO_HAVE
+    freshness_key: str = ""
+    max_chars: int | None = None
+
+    def to_turn(self) -> dict[str, str]:
+        return {"role": "system", "content": self.content, "name": self.id}
+
+
+def _none_accessor() -> str | None:
+    return None
+
+
+@dataclass
+class SignalBuildContext:
+    """provider 构建所需的只读上下文（含数据访问回调，便于单测注入）。
+
+    新增角色专属信号的访问器默认返回 None（优雅降级：未接源/无数据 → 不注入），
+    故在未启用对应 context_policy 开关时，行为与历史完全一致。
+    """
+
+    role: str
+    phase: str
+    task_id: str
+    policy_flags: Mapping[str, bool]
+    get_project_structure: Callable[[], str | None]
+    get_task_history: Callable[[str], str | None]
+    # 角色专属资产访问器（只读、可缺省）。默认 None-accessor → 无数据 → 不注入。
+    get_blueprint_overview: Callable[[], str | None] = _none_accessor
+    get_verdict_history: Callable[[], str | None] = _none_accessor
+
+
+class RoleContextSignal(Protocol):
+    """角色上下文信号 provider 端口。"""
+
+    id: str
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool: ...
+
+    def priority(self, ctx: SignalBuildContext) -> int: ...
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None: ...
+
+
+# ---------------------------------------------------------------------------
+# Seed providers —— 由原硬编码 supplemental_turns 重构而来（行为逐字节保持）
+# ---------------------------------------------------------------------------
+
+
+class ProjectStructureSignal:
+    """code_repo 类信号：项目结构概览。所有角色的 default/fallback。
+
+    id 保留 ``project_structure`` 以锁死旧 name + sources（逐字节一致）。
+    """
+
+    id = "project_structure"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return bool(ctx.policy_flags.get("include_project_structure", True))
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 0  # 最前
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        structure = ctx.get_project_structure()
+        if not structure:
+            return None
+        content = f"【项目结构】\n{structure}"
+        return SignalBlock(
+            id=self.id,
+            content=content,
+            priority=0,
+            level=_NICE_TO_HAVE,
+            freshness_key=_freshness_of(structure),
+        )
+
+
+class TaskHistorySignal:
+    """plan_overview 类信号：任务历史/计划概览（PM 资产雏形）。
+
+    id 保留 ``task_history``；门控沿用原 ``include_task_history and task_id``。
+    """
+
+    id = "task_history"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return bool(ctx.policy_flags.get("include_task_history", True)) and bool(ctx.task_id)
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 1
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        history = ctx.get_task_history(ctx.task_id)
+        if not history:
+            return None
+        content = f"【任务历史】\n{history}"
+        return SignalBlock(
+            id=self.id,
+            content=content,
+            priority=1,
+            level=_NICE_TO_HAVE,
+            freshness_key=_freshness_of(history),
+        )
+
+
+class BlueprintOverviewSignal:
+    """ChiefEngineer 专属：蓝图 / 技术架构概览。
+
+    role-bound（仅 chief_engineer）+ flag-gated（``include_blueprint_overview``，默认 False）。
+    数据经 ``get_blueprint_overview`` 访问器获取（缺省 None → 不注入）。priority 在 seed 之后。
+    """
+
+    id = "blueprint_overview"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return ctx.role == "chief_engineer" and bool(ctx.policy_flags.get("include_blueprint_overview", False))
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 10
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        overview = ctx.get_blueprint_overview()
+        if not overview:
+            return None
+        content = f"【蓝图/技术架构】\n{overview}"
+        return SignalBlock(
+            id=self.id,
+            content=content,
+            priority=10,
+            level=_NICE_TO_HAVE,
+            freshness_key=_freshness_of(overview),
+            max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,  # 蓝图可能很大 → 超限自动卸载
+        )
+
+
+class VerdictHistorySignal:
+    """QA 专属：质量判定 / 门禁历史概览。
+
+    role-bound（仅 qa）+ flag-gated（``include_verdict_history``，默认 False）。
+    级别 must-have：质量判定对 QA 是关键资产，压力下也要（必要时卸载）挤入。
+    """
+
+    id = "verdict_history"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return ctx.role == "qa" and bool(ctx.policy_flags.get("include_verdict_history", False))
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 11
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        verdict = ctx.get_verdict_history()
+        if not verdict:
+            return None
+        content = f"【质量判定历史】\n{verdict}"
+        return SignalBlock(
+            id=self.id,
+            content=content,
+            priority=11,
+            level=_MUST_HAVE,
+            freshness_key=_freshness_of(verdict),
+            max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,
+        )
+
+
+# 默认注册表：seed（全角色）+ 角色专属（role+flag 双门控，默认 flag 关 → 不影响 baseline）。
+DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
+    ProjectStructureSignal(),
+    TaskHistorySignal(),
+    BlueprintOverviewSignal(),
+    VerdictHistorySignal(),
+)
+
+
+class RoleSignalRegistry:
+    """按角色解析适用信号，镜像 strategy_overlay 的 per-role 解析模式（但只管内容）。"""
+
+    def __init__(self, providers: Sequence[RoleContextSignal] = DEFAULT_SIGNAL_PROVIDERS) -> None:
+        self._providers = tuple(providers)
+
+    def resolve(self, ctx: SignalBuildContext) -> list[RoleContextSignal]:
+        """返回适用于当前角色/阶段/策略的 provider，按 priority 升序（稳定）。"""
+        applicable = [p for p in self._providers if p.applies_to(ctx)]
+        return sorted(applicable, key=lambda p: (p.priority(ctx), p.id))
+
+
+@dataclass
+class AllocationResult:
+    """分配结果：可直接拼进 supplemental_turns 的 turns + sources + 遥测。"""
+
+    turns: list[dict[str, str]] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
+    telemetry: dict[str, object] = field(default_factory=dict)
+
+
+class _ReceiptOffloader(Protocol):
+    def offload_content(
+        self, receipt_id: str, content: str, *, threshold: int, placeholder: str
+    ) -> tuple[str, tuple[str, ...]]: ...
+
+
+def allocate_role_signals(
+    *,
+    registry: RoleSignalRegistry,
+    ctx: SignalBuildContext,
+    receipt_store: _ReceiptOffloader,
+    budget_pressure: bool = False,
+    previous_freshness: Mapping[str, str] | None = None,
+    per_signal_char_cap: int | None = DEFAULT_PER_SIGNAL_CHAR_CAP,
+    total_char_budget: int | None = DEFAULT_TOTAL_CHAR_BUDGET,
+) -> AllocationResult:
+    """把适用信号分配进 supplemental_turns，受三道预算/熔断约束。
+
+    顺序与语义：
+    - 按 priority 升序处理（seed 在最前 → 逐字节+索引一致）。
+    - **熔断（budget_pressure）**：freshness 较上一 turn 未变的 nice-to-have 直接跳过；
+      must-have 即便在压力下也保留（必要时卸载）。
+    - **每信号体积上限**：content 超 ``per_signal_char_cap`` → 卸载 ReceiptStore，
+      turn 内容替换为占位符（带 ``receipt://`` 引用），原文可取回。
+    - **整体预算**：running 总量超 ``total_char_budget`` 后，nice-to-have 丢弃、
+      must-have 仍以卸载形式挤入。
+    每个最终注入的信号把 ``id`` 压入 sources（溯源泛化）。
+    """
+    prev = dict(previous_freshness or {})
+    result = AllocationResult()
+    running = 0
+    skipped_unchanged: list[str] = []
+    dropped_budget: list[str] = []
+    offloaded: list[str] = []
+    injected_freshness: dict[str, str] = {}  # 本 turn 实际注入信号的 freshness（供跨 turn 记忆）
+
+    for provider in registry.resolve(ctx):
+        block = provider.build(ctx)
+        if block is None:
+            continue
+
+        is_must = block.level == _MUST_HAVE
+        unchanged = bool(block.freshness_key) and prev.get(block.id) == block.freshness_key
+
+        # 熔断：压力下，未变化的 nice-to-have 断流。
+        if budget_pressure and not is_must and unchanged:
+            skipped_unchanged.append(block.id)
+            continue
+
+        content = block.content
+        size = len(content)
+        over_total = total_char_budget is not None and running + size > total_char_budget
+        effective_cap = block.max_chars if block.max_chars is not None else per_signal_char_cap
+        over_cap = effective_cap is not None and size > effective_cap
+
+        if over_cap or (over_total and is_must):
+            # 卸载：摘要 + receipt 引用（must-have 极限挤入 / 超大信号截断）。
+            placeholder = f"[{block.id} stored — receipt://{block.id}]"
+            # threshold 取 effective_cap（不为 None 时）或 0（must-have 超总预算强制卸载）。
+            offload_threshold = effective_cap if effective_cap is not None else 0
+            display, refs = receipt_store.offload_content(
+                block.id, content, threshold=offload_threshold, placeholder=placeholder
+            )
+            turn: dict[str, str] = {"role": "system", "content": display, "name": block.id}
+            if refs:
+                turn["receipt_refs"] = list(refs)  # type: ignore[assignment]
+                offloaded.append(block.id)
+            result.turns.append(turn)
+            result.sources.append(block.id)
+            if block.freshness_key:
+                injected_freshness[block.id] = block.freshness_key
+            running += len(display)
+            continue
+
+        if over_total and not is_must:
+            dropped_budget.append(block.id)
+            continue
+
+        result.turns.append(block.to_turn())
+        result.sources.append(block.id)
+        if block.freshness_key:
+            injected_freshness[block.id] = block.freshness_key
+        running += size
+
+    result.telemetry = {
+        "injected": list(result.sources),
+        "injected_freshness": injected_freshness,
+        "skipped_unchanged": skipped_unchanged,
+        "dropped_budget": dropped_budget,
+        "offloaded": offloaded,
+        "total_chars": running,
+        "budget_pressure": budget_pressure,
+    }
+    return result

@@ -27,7 +27,9 @@ from polaris.cells.director.execution.public.contracts import (
 from polaris.cells.factory.cognitive_runtime.public.contracts import (
     ExportHandoffPackCommandV1,
     HandoffPackResultV1,
+    HandoffRehydrationResultV1,
     RecordRuntimeReceiptCommandV1,
+    RehydrateHandoffPackCommandV1,
     RuntimeReceiptResultV1,
     ValidateChangeSetCommandV1,
     ValidateChangeSetResultV1,
@@ -285,6 +287,8 @@ class FakeCognitiveRuntimeCommitService:
         self.validations: list[ValidateChangeSetCommandV1] = []
         self.receipts: list[RecordRuntimeReceiptCommandV1] = []
         self.handoffs: list[ExportHandoffPackCommandV1] = []
+        self.rehydrations: list[RehydrateHandoffPackCommandV1] = []
+        self.rehydrate_refs_are_raw = False
 
     def validate_change_set(self, command: ValidateChangeSetCommandV1) -> ValidateChangeSetResultV1:
         self.validations.append(command)
@@ -302,6 +306,29 @@ class FakeCognitiveRuntimeCommitService:
     def export_handoff_pack(self, command: ExportHandoffPackCommandV1) -> HandoffPackResultV1:
         self.handoffs.append(command)
         return HandoffPackResultV1(ok=True, handoff=SimpleNamespace(handoff_id="handoff-1"))
+
+    def rehydrate_handoff_pack(self, command: RehydrateHandoffPackCommandV1) -> HandoffRehydrationResultV1:
+        self.rehydrations.append(command)
+        receipt_ref = (
+            "receipt-handoff-1" if self.rehydrate_refs_are_raw else "factory.cognitive_runtime:receipt:handoff-1"
+        )
+        artifact_ref = "artifact-handoff-1" if self.rehydrate_refs_are_raw else "roles.session:artifact:handoff-1"
+        episode_ref = "episode-handoff-1" if self.rehydrate_refs_are_raw else "roles.session:episode:handoff-1"
+        return HandoffRehydrationResultV1(
+            ok=True,
+            rehydration=SimpleNamespace(
+                rehydration_id="rehydration-1",
+                handoff_id=command.handoff_id,
+                target_role=command.target_role,
+                target_session_id=command.target_session_id,
+                context_override={"state_first_context_os": {"mode": "state_first_context_os.handoff_rehydrate"}},
+                metadata_patch={"handoff_rehydrated": True},
+                receipt_refs=(receipt_ref,),
+                artifact_refs=(artifact_ref,),
+                episode_refs=(episode_ref,),
+                source_spans=("ep-1:t1:t4",),
+            ),
+        )
 
 
 class FakeBlueprintService:
@@ -2882,6 +2909,89 @@ def test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_run
     )
 
 
+def test_rehydrate_role_handoff_delegates_to_cognitive_runtime_public_contract() -> None:
+    command_cls = getattr(runtime_contracts, "RehydrateRoleHandoffCommandV1", None)
+    result_cls = getattr(runtime_contracts, "RoleHandoffRehydrationResultV1", None)
+    rehydrate_role_handoff = getattr(runtime_service, "rehydrate_role_handoff", None)
+    assert command_cls is not None
+    assert result_cls is not None
+    assert rehydrate_role_handoff is not None
+
+    cognitive_runtime = FakeCognitiveRuntimeCommitService()
+    command = command_cls(
+        identity=_identity("director"),
+        handoff_ref="factory.cognitive_runtime:handoff:handoff-1",
+        target_role="director",
+        target_session_id="session-director-1",
+        turn_context=RoleTurnContext(
+            typed_input_ref="roles.runtime:typed-input:director-run-1",
+            context_snapshot_ref="roles.session:context-snapshot:session-director-1",
+            handoff_refs=("factory.cognitive_runtime:handoff:handoff-1",),
+            task_refs=("runtime.task_market:task:task-1",),
+        ),
+    )
+
+    result = rehydrate_role_handoff(command, cognitive_runtime_service=cognitive_runtime)
+
+    assert isinstance(result, result_cls)
+    assert result.ok is True
+    assert result.handoff_ref == "factory.cognitive_runtime:handoff:handoff-1"
+    assert result.rehydration_ref == "factory.cognitive_runtime:rehydration:rehydration-1"
+    assert result.target_role == "director"
+    assert result.target_session_id == "session-director-1"
+    assert result.context_override["state_first_context_os"]["mode"] == "state_first_context_os.handoff_rehydrate"
+    assert result.metadata_patch["handoff_rehydrated"] is True
+    assert result.runtime_receipt_refs == ("factory.cognitive_runtime:receipt:handoff-1",)
+    assert result.artifact_refs == ("roles.session:artifact:handoff-1",)
+    assert result.episode_refs == ("roles.session:episode:handoff-1",)
+    assert result.source_spans == ("ep-1:t1:t4",)
+    assert len(cognitive_runtime.rehydrations) == 1
+
+    rehydrate_command = cognitive_runtime.rehydrations[0]
+    assert rehydrate_command.workspace == "/repo"
+    assert rehydrate_command.handoff_id == "handoff-1"
+    assert rehydrate_command.target_role == "director"
+    assert rehydrate_command.target_session_id == "session-director-1"
+    assert rehydrate_command.turn_envelope["identity"]["role_id"] == "director"
+    assert rehydrate_command.turn_envelope["turn_context"]["handoff_refs"] == (
+        "factory.cognitive_runtime:handoff:handoff-1",
+    )
+    assert rehydrate_command.metadata["handoff_ref"] == "factory.cognitive_runtime:handoff:handoff-1"
+    assert rehydrate_command.metadata["role_payload_ref"] == "roles.runtime:typed-input:director-run-1"
+
+
+def test_rehydrate_role_handoff_normalizes_owner_refs_from_raw_cognitive_runtime_ids() -> None:
+    command_cls = getattr(runtime_contracts, "RehydrateRoleHandoffCommandV1", None)
+    result_cls = getattr(runtime_contracts, "RoleHandoffRehydrationResultV1", None)
+    rehydrate_role_handoff = getattr(runtime_service, "rehydrate_role_handoff", None)
+    assert command_cls is not None
+    assert result_cls is not None
+    assert rehydrate_role_handoff is not None
+
+    cognitive_runtime = FakeCognitiveRuntimeCommitService()
+    cognitive_runtime.rehydrate_refs_are_raw = True
+    command = command_cls(
+        identity=_identity("director"),
+        handoff_ref="factory.cognitive_runtime:handoff:handoff-1",
+        target_role="director",
+        target_session_id="session-director-1",
+        turn_context=RoleTurnContext(
+            typed_input_ref="roles.runtime:typed-input:director-run-1",
+            context_snapshot_ref="roles.session:context-snapshot:session-director-1",
+            handoff_refs=("factory.cognitive_runtime:handoff:handoff-1",),
+            task_refs=("runtime.task_market:task:task-1",),
+        ),
+    )
+
+    result = rehydrate_role_handoff(command, cognitive_runtime_service=cognitive_runtime)
+
+    assert isinstance(result, result_cls)
+    assert result.ok is True
+    assert result.runtime_receipt_refs == ("factory.cognitive_runtime:receipt:receipt-handoff-1",)
+    assert result.artifact_refs == ("roles.session:artifact:artifact-handoff-1",)
+    assert result.episode_refs == ("roles.session:episode:episode-handoff-1",)
+
+
 def test_commit_role_state_rejects_failed_change_set_validation_without_receipt_or_handoff() -> None:
     envelope = RoleTurnEnvelope(
         identity=_identity("pm"),
@@ -3276,6 +3386,8 @@ def _phase5_chain_steps(
     *,
     include_handoff: bool = True,
     include_director_handoff: bool = True,
+    include_director_evidence: bool = True,
+    include_qa_evidence: bool = True,
     include_chief_engineer_receipt: bool = True,
     include_director_receipt: bool = True,
     include_receipt: bool = True,
@@ -3312,7 +3424,7 @@ def _phase5_chain_steps(
             command_contract="ExecuteDirectorTaskCommandV1",
             result_ref="director.execution:task:task-1",
             task_ref="runtime.task_market:task:task-1",
-            evidence_refs=("audit.evidence:director:task-1",),
+            evidence_refs=("audit.evidence:director:task-1",) if include_director_evidence else (),
             handoff_refs=("factory.cognitive_runtime:handoff:director-to-qa",) if include_director_handoff else (),
             receipt_refs=("factory.cognitive_runtime:receipt:director-1",) if include_director_receipt else (),
         ),
@@ -3325,7 +3437,7 @@ def _phase5_chain_steps(
             command_contract="RunQaAuditCommandV1",
             result_ref="qa.audit_verdict:verdict:task-1",
             task_ref="runtime.task_market:task:task-1",
-            evidence_refs=("audit.evidence:qa:task-1",),
+            evidence_refs=("audit.evidence:qa:task-1",) if include_qa_evidence else (),
             receipt_refs=("factory.cognitive_runtime:receipt:qa-1",) if include_receipt else (),
         ),
     )
@@ -3426,6 +3538,33 @@ def test_role_runtime_chain_assembly_rejects_full_phase5_without_role_runtime_re
     assert result.metadata["required_owner_cell"] == "factory.cognitive_runtime"
     assert result.metadata["missing_role"] == missing_role
     assert result.metadata["required_receipt_roles"] == ("chief_engineer", "director", "qa")
+
+
+@pytest.mark.parametrize(
+    ("missing_role", "step_kwargs"),
+    (
+        ("director", {"include_director_evidence": False}),
+        ("qa", {"include_qa_evidence": False}),
+    ),
+)
+def test_role_runtime_chain_assembly_rejects_full_phase5_without_role_audit_evidence_ref(
+    missing_role: str,
+    step_kwargs: dict[str, bool],
+) -> None:
+    result = assemble_role_runtime_chain(
+        dataclasses.replace(
+            _valid_phase5_chain_command(f"phase5-chain-missing-{missing_role}-evidence"),
+            steps=_phase5_chain_steps(**step_kwargs),
+        )
+    )
+
+    assert result.ok is False
+    assert result.chain is None
+    assert result.error_code == "missing_phase5_role_audit_evidence_ref"
+    assert result.metadata["required_roles"] == ("pm", "chief_engineer", "director", "qa")
+    assert result.metadata["required_owner_cell"] == "audit.evidence"
+    assert result.metadata["missing_role"] == missing_role
+    assert result.metadata["required_evidence_roles"] == ("director", "qa")
 
 
 def test_role_runtime_chain_assembly_rejects_full_phase5_required_role_downgrade() -> None:
@@ -4029,10 +4168,10 @@ def test_director_execute_capability_invokes_director_execution_public_contract(
     assert result.task_id == "director-task-1"
     assert result.status == "completed"
     assert result.result_ref == "director.execution:task:director-task-1"
-    assert result.evidence_refs == ()
+    assert result.evidence_refs == ("audit.evidence:path:runtime/evidence/director-task-1.jsonl",)
     assert result.metadata["director_status"] == "completed"
     assert result.metadata["evidence_paths"] == ("runtime/evidence/director-task-1.jsonl",)
-    assert result.metadata["audit_evidence_refs"] == ()
+    assert result.metadata["audit_evidence_refs"] == ("audit.evidence:path:runtime/evidence/director-task-1.jsonl",)
     assert result.metadata["asset_refs"] == {
         "execution_task": "runtime.task_market:director/execution-task",
         "director_execution_state": "director.execution:runtime/state",
@@ -4478,11 +4617,11 @@ def test_qa_issue_audit_verdict_invokes_qa_audit_contract() -> None:
     assert result.command_contract == "RunQaAuditCommandV1"
     assert result.status == "PASS"
     assert result.result_ref == "qa.audit_verdict:verdict:qa-task-1"
-    assert result.evidence_refs == ()
+    assert result.evidence_refs == ("audit.evidence:path:runtime/evidence/qa.jsonl",)
     assert result.metadata["verdict"] == "PASS"
     assert result.metadata["score"] == 1.0
     assert result.metadata["evidence_paths"] == ("pytest-report.xml", "runtime/evidence/qa.jsonl")
-    assert result.metadata["audit_evidence_refs"] == ()
+    assert result.metadata["audit_evidence_refs"] == ("audit.evidence:path:runtime/evidence/qa.jsonl",)
     assert len(qa_audit.audit_commands) == 1
 
     audit_command = qa_audit.audit_commands[0]
