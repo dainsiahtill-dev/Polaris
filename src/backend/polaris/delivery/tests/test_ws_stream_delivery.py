@@ -214,6 +214,39 @@ def test_handle_client_message_rejects_non_object_json_without_closing() -> None
     assert payload["payload"]["error"] == "Invalid message"
 
 
+def test_handle_client_message_rejects_legacy_subscribe_protocol() -> None:
+    async def _run() -> tuple[dict[str, Any], tuple[str, int, str | None, Any, str, list[str], int]]:
+        websocket = FakeWebSocket()
+        result = await handle_client_message(
+            raw=json.dumps({"type": "SUBSCRIBE", "channels": ["llm"]}),
+            status_sig="sig",
+            websocket=cast(Any, websocket),
+            state=SimpleNamespace(),
+            resolved_workspace="C:/workspace",
+            cache_root="C:/runtime",
+            roles_filter=set(),
+            connection_id="conn-1",
+            client="test-client",
+            tail_lines=200,
+            v2_protocol=None,
+            v2_consumer_manager=None,
+            v2_client_id="",
+            v2_channels=[],
+            v2_cursor=0,
+            legacy_subscriptions=set(),
+            legacy_channel_states={},
+            send_status_func=None,
+            send_all_snapshots_func=None,
+        )
+        return websocket.messages[-1], result
+
+    payload, result = asyncio.run(_run())
+
+    assert result == ("sig", 200, None, None, "", [], 0)
+    assert payload["type"] == "ERROR"
+    assert payload["payload"]["code"] == "RUNTIME_V2_REQUIRED"
+
+
 def test_run_main_loop_disconnects_v2_consumer_on_receive_disconnect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

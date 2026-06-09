@@ -187,4 +187,17 @@ describe('ResidentWorkspace', () => {
     expect(mockResidentState.stageGoal).toHaveBeenNthCalledWith(2, 'goal-approved', true);
     expect(mockResidentState.runGoal).toHaveBeenCalledWith('goal-approved', false, 1);
   });
+
+  it('triggers a reflection tick from the header', () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('resident-tick'));
+    expect(mockResidentState.tick).toHaveBeenCalledTimes(1);
+  });
 });

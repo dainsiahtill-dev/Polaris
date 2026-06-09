@@ -7,6 +7,7 @@ export const UI_TERMS = {
     architect: 'Architect',
     cfo: 'CFO',
     hr: 'HR',
+    scout: 'Scout',
   },
   nouns: {
     workspace: 'Workspace',

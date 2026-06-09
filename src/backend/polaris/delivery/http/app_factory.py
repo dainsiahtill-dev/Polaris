@@ -6,6 +6,7 @@ Legacy `api.main` delegates to this module.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager, suppress
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     from polaris.bootstrap.assembly import assemble_core_services
     from polaris.cells.resident.autonomy.public.service import reset_resident_services
+    from polaris.delivery.http.resident_autotick import maybe_start_resident_autotick
     from polaris.infrastructure.di.container import get_container, reset_container
     from polaris.infrastructure.log_pipeline.jetstream_publisher import (
         shutdown_log_jetstream_publisher,
@@ -86,8 +88,15 @@ async def lifespan(app: FastAPI):
                 f"[startup] terminated stale PM loop processes for workspace={workspace}: {stale_pids}",
             )
 
+    # Opt-in unattended ignition for the Resident autonomy loop (default off).
+    resident_autotick_task = maybe_start_resident_autotick(workspace)
+
     yield
 
+    if resident_autotick_task is not None:
+        resident_autotick_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await resident_autotick_task
     with suppress(Exception):
         await close_default_client()
     with suppress(Exception):

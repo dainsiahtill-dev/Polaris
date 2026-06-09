@@ -24,6 +24,10 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp(prefix="resident_test_")
         self.workspace = self.temp_dir
 
+        # Remember the original working directory so tearDown can restore it
+        # (tests chdir into the temp workspace for git operations).
+        self._origin_cwd = os.getcwd()
+
         # Initialize git repo (required for EvidenceBundle)
         os.chdir(self.workspace)
         os.system("git init -q")
@@ -49,7 +53,7 @@ class TestResidentEvidenceIntegration(unittest.TestCase):
         import shutil
 
         # Return to original directory
-        os.chdir("C:\\Users\\dains\\Documents\\GitLab\\polaris")
+        os.chdir(getattr(self, "_origin_cwd", tempfile.gettempdir()))
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         # Reset service cache
         from polaris.cells.resident.autonomy.internal.resident_runtime_service import reset_resident_services

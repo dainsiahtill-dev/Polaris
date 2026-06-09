@@ -3,7 +3,7 @@
   "role": "scout",
   "title": "Scout Discovers Codebase Structure",
   "description": "The Scout role must quickly understand and document the codebase structure.",
-  "workspace_fixture": "director_safe_scope_plan",
+  "workspace_fixture": "base_tooling_workspace",
   "prompt": "Explore the codebase and create a comprehensive map. Return JSON: {architecture: string, modules: [{name, purpose, dependencies: [string]}], entry_points: [string], data_flow: string}. Be thorough but concise.",
   "tags": [
     "scout",

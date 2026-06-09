@@ -317,8 +317,8 @@ async def test_subscribe_handles_previous_consumer_disconnect_error(monkeypatch:
 
 
 @pytest.mark.asyncio
-async def test_subscribe_degrades_to_legacy_when_jetstream_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A JetStream timeout must not escape the WebSocket handler."""
+async def test_subscribe_rejects_when_jetstream_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A runtime.v2 subscription must not activate without JetStream."""
     sent_payloads: list[dict[str, Any]] = []
 
     async def _send_json_safe(*_args: Any, **_kwargs: Any) -> bool:
@@ -345,7 +345,7 @@ async def test_subscribe_degrades_to_legacy_when_jetstream_times_out(monkeypatch
     channels_ref: list[list[str]] = [[]]
     cursor_ref = [0]
 
-    await protocol.handle_v2_message(
+    status_sig, protocol_activated = await protocol.handle_v2_message(
         message={"type": "SUBSCRIBE", "protocol": "runtime.v2", "client_id": "same", "channels": ["llm"]},
         websocket=object(),
         status_sig="",
@@ -363,6 +363,12 @@ async def test_subscribe_degrades_to_legacy_when_jetstream_times_out(monkeypatch
         handle_event_query_func=None,
     )
 
+    assert status_sig == ""
+    assert protocol_activated is False
     assert consumer_ref[0] is None
-    assert sent_payloads[-1]["type"] == "SUBSCRIBED"
-    assert sent_payloads[-1]["payload"]["jetstream"] is False
+    assert client_id_ref[0] == ""
+    assert channels_ref[0] == []
+    assert cursor_ref[0] == 0
+    assert sent_payloads[-1]["type"] == "ERROR"
+    assert sent_payloads[-1]["protocol"] == "runtime.v2"
+    assert sent_payloads[-1]["payload"]["code"] == "JETSTREAM_REQUIRED"

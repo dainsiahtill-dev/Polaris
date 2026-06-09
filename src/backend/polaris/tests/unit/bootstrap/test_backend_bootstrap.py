@@ -268,6 +268,8 @@ class TestBackendBootstrapperRuntimeEnvironment:
         assert os.environ.get("KERNELONE_RUNTIME_ROOT") == "/tmp/runtime-root"
         assert os.environ.get("KERNELONE_RUNTIME_CACHE_ROOT") == "/tmp/runtime-cache"
         assert os.environ.get("KERNELONE_STATE_TO_RAMDISK") == "0"
+        assert os.environ.get("KERNELONE_NATS_ENABLED") == "1"
+        assert os.environ.get("KERNELONE_NATS_REQUIRED") == "1"
 
 
 class TestBackendBootstrapperWorkspacePolicy:

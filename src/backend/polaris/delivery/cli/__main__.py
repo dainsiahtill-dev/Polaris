@@ -87,6 +87,7 @@ _AGENTIC_EVAL_SUITE_CHOICES = (
     "speculation_matrix",
     "context_projection_matrix",
     "projection_adaptive_matrix",
+    "scout_matrix",
 )
 
 

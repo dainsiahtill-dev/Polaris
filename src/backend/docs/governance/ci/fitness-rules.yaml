@@ -995,3 +995,24 @@ rules:
     desired_automation:
       - python docs/governance/ci/scripts/check_directory_hygiene.py --workspace .
       - fail if any temp/cache/auto-generated directory exists without .gitignore coverage
+
+  # ---------------------------------------------------------------------------
+  # Benchmark CLI-only Rule (2026-06-09)
+  # ---------------------------------------------------------------------------
+
+  - id: benchmark_cli_only
+    severity: high
+    description: >
+      Any matrix test / benchmark MUST be expressed as agentic-eval CASE JSON and
+      run through the agentic-eval CLI (`--suite ...`). Encoding a benchmark/matrix
+      scoring run as a pytest test is forbidden. pytest may host framework component
+      unit tests (models, validators, helpers) but NEVER a suite/matrix execution
+      (`run_*_suite(...)` / `UnifiedBenchmarkRunner().run_suite(...)`).
+    evidence:
+      - docs/governance/ci/scripts/check_no_pytest_benchmark.py
+      - polaris/tests/architecture/test_no_pytest_benchmark_gate.py
+      - docs/blueprints/SCOUT_BENCHMARK_MATRIX_BLUEPRINT_20260609.md
+    current_status: enforced
+    desired_automation:
+      - python docs/governance/ci/scripts/check_no_pytest_benchmark.py --root polaris
+      - fail if any test_*.py executes run_*_suite(...) or UnifiedBenchmarkRunner().run_suite(...)

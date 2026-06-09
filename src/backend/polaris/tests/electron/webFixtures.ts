@@ -359,8 +359,8 @@ export const test = base.extend<WebFixtures>({
       KERNELONE_WORKSPACE: workspace,
       KERNELONE_STATE_TO_RAMDISK: "0",
       KERNELONE_E2E: "1",
-      KERNELONE_NATS_ENABLED: process.env.KERNELONE_NATS_ENABLED || "0",
-      KERNELONE_NATS_REQUIRED: process.env.KERNELONE_NATS_REQUIRED || "0",
+      KERNELONE_NATS_ENABLED: process.env.KERNELONE_NATS_ENABLED || "1",
+      KERNELONE_NATS_REQUIRED: process.env.KERNELONE_NATS_REQUIRED || "1",
       KERNELONE_BACKEND_PORT: String(backendPort),
       KERNELONE_BACKEND_TOKEN: token,
       KERNELONE_CORS_ORIGINS: [

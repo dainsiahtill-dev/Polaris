@@ -50,6 +50,7 @@ from polaris.cells.llm.evaluation.internal.readiness_tests import (
     run_readiness_tests_streaming,
 )
 from polaris.cells.llm.evaluation.internal.runner import EvaluationRunner
+from polaris.cells.llm.evaluation.internal.scout_matrix import run_scout_matrix_suite
 from polaris.cells.llm.evaluation.internal.speculation_matrix import (
     run_speculation_matrix_suite,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "run_projection_adaptive_matrix_suite",
     "run_readiness_tests",
     "run_readiness_tests_streaming",
+    "run_scout_matrix_suite",
     "run_speculation_matrix_suite",
     "run_strategy_benchmark_suite",
     "run_tool_calling_matrix_suite",

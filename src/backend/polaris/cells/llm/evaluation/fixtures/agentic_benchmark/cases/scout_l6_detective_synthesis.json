@@ -1,0 +1,48 @@
+{
+  "case_id": "scout_l6_detective_synthesis",
+  "role": "scout",
+  "title": "Scout Produces A Structured Multi-Suspect Diagnosis",
+  "description": "L6 detective synthesis: the scout must reconnoiter every suspect file, attach concrete evidence to each, explicitly dismiss the config.py TODO red herring, conclude the true root cause is the precision-omitting stale memo key in cache.py, and propose a fix direction -- all read-only, grounded in actual file reads.",
+  "prompt": "Produce a structured root-cause diagnosis for the failing integration_test.py (output mismatch) while tests/test_calculator.py passes. Investigate read-only and return a report with: (1) suspects considered (src/calculator.py, src/config.py, src/cache.py) with the concrete evidence you found in each file, (2) which suspects you ruled out and why (explicitly address the config.py 'precision may be wrong' TODO as a red herring), (3) the final root cause naming the exact file and defect, and (4) a fix direction. Do not edit anything.",
+  "workspace_fixture": "scout_multi_cause_detective",
+  "tags": [
+    "scout",
+    "l6",
+    "detective"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_tree",
+      "repo_rg",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "write_file",
+      "edit_file",
+      "search_replace",
+      "execute_command",
+      "delete_file"
+    ],
+    "required_output_substrings": [
+      "cache.py",
+      "calculator.py",
+      "config.py",
+      "precision",
+      "stale",
+      "red herring"
+    ],
+    "forbidden_output_substrings": [
+      "root cause: config",
+      "root cause is config.py",
+      "<tool_call>"
+    ],
+    "validators": [
+      "scout_readonly_contract",
+      "scout_detective_root_cause",
+      "scout_evidence_paths"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 15
+  }
+}

@@ -5,10 +5,36 @@ Handles search operations: search_code, grep, ripgrep.
 
 from __future__ import annotations
 
+import fnmatch
+import os
 import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+# Directories never worth scanning in the pure-Python search fallback.
+_FALLBACK_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".venv",
+        "venv",
+        "node_modules",
+        ".polaris",
+        "build",
+        "dist",
+        ".eggs",
+    }
+)
+# Bound the fallback so a huge repo cannot stall a turn (mirrors rg's 10s budget intent).
+_FALLBACK_MAX_FILES = 20000
+_FALLBACK_MAX_FILE_BYTES = 2_000_000
 
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
@@ -66,6 +92,118 @@ _RG_CONTEXT_LINE = re.compile(r"^(.+?)-(\d+)-(.*)$")
 _RG_SINGLE_FILE_MATCH_LINE = re.compile(r"^(\d+):(.*)$")
 _RG_SINGLE_FILE_CONTEXT_LINE = re.compile(r"^(\d+)-(.*)$")
 _RG_SEPARATOR = re.compile(r"^--+")
+
+
+def _fallback_pattern_matches(rel_path: str, file_patterns: list[str] | None) -> bool:
+    """Approximate ripgrep ``-g`` glob filtering with stdlib fnmatch.
+
+    A pattern containing ``/`` is matched against the relative path; otherwise it
+    is matched against the basename (so ``*.py`` behaves as expected).
+    """
+    if not file_patterns:
+        return True
+    base = rel_path.rsplit("/", 1)[-1]
+    for raw in file_patterns:
+        token = str(raw or "").strip()
+        if not token:
+            continue
+        target = rel_path if "/" in token else base
+        if fnmatch.fnmatch(target, token):
+            return True
+    return False
+
+
+def _python_search_fallback(
+    *,
+    workspace: Path,
+    query: str,
+    file_patterns: list[str] | None,
+    safe_max_results: int,
+    case_sensitive: bool,
+    search_path: str,
+) -> dict[str, Any]:
+    """Pure-Python recursive regex search used when the ``rg`` binary is absent.
+
+    The product must not silently return zero results (which misleads the agent
+    into believing the symbol does not exist). This fallback performs a real
+    search over the workspace and returns the same payload shape as the rg path,
+    tagged ``backend="python_fallback"``.
+    """
+    try:
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            matcher = re.compile(query, flags)
+        except re.error:
+            # Treat an invalid regex as a literal substring search.
+            matcher = re.compile(re.escape(query), flags)
+
+        root = workspace
+        if search_path and search_path != ".":
+            candidate = (workspace / search_path).resolve()
+            if candidate.exists():
+                root = candidate
+
+        results: list[dict[str, Any]] = []
+        files_scanned = 0
+        truncated = False
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in _FALLBACK_SKIP_DIRS]
+            for filename in filenames:
+                if files_scanned >= _FALLBACK_MAX_FILES:
+                    truncated = True
+                    break
+                files_scanned += 1
+                abs_path = os.path.join(dirpath, filename)
+                try:
+                    rel_path = os.path.relpath(abs_path, workspace).replace("\\", "/")
+                except ValueError:
+                    continue
+                if not _fallback_pattern_matches(rel_path, file_patterns):
+                    continue
+                try:
+                    if os.path.getsize(abs_path) > _FALLBACK_MAX_FILE_BYTES:
+                        continue
+                    with open(abs_path, encoding="utf-8", errors="strict") as handle:
+                        for line_no, raw_line in enumerate(handle, start=1):
+                            if matcher.search(raw_line):
+                                snippet = raw_line.rstrip("\n")
+                                if snippet.strip():
+                                    results.append({"file": rel_path, "line": line_no, "snippet": snippet[:500]})
+                                if len(results) >= safe_max_results:
+                                    truncated = True
+                                    break
+                except (OSError, UnicodeDecodeError):
+                    # Unreadable or binary file: skip silently.
+                    continue
+                if len(results) >= safe_max_results:
+                    break
+            if len(results) >= safe_max_results or files_scanned >= _FALLBACK_MAX_FILES:
+                break
+
+        return {
+            "ok": True,
+            "result": {
+                "query": query,
+                "total_results": len(results),
+                "returned_count": len(results),
+                "results": results,
+                "backend": "python_fallback",
+                "truncated": truncated,
+            },
+        }
+    except (OSError, ValueError) as exc:
+        logger.warning("python search fallback failed: %s", exc)
+        return {
+            "ok": True,
+            "result": {
+                "query": query,
+                "total_results": 0,
+                "returned_count": 0,
+                "results": [],
+                "backend": "python_fallback_error",
+                "error": f"fallback search failed: {type(exc).__name__}",
+            },
+        }
 
 
 def _run_rg_search(
@@ -141,12 +279,17 @@ def _run_rg_search(
             timeout=10,
         )
     except FileNotFoundError:
-        return {
-            "query": query,
-            "returned_count": 0,
-            "results": [],
-            "backend": "rg_unavailable",
-        }
+        # ripgrep is not installed on this deployment. Degrade to a real
+        # pure-Python search instead of returning an empty (and misleading)
+        # success result that makes the agent believe the symbol is absent.
+        return _python_search_fallback(
+            workspace=Path(self.workspace).resolve(),
+            query=query,
+            file_patterns=file_patterns,
+            safe_max_results=safe_max_results,
+            case_sensitive=case_sensitive,
+            search_path=search_path,
+        )
     except subprocess.TimeoutExpired:
         return {
             "query": query,

@@ -292,6 +292,20 @@ Cell 是最小自治边界。
 5. `自检 (Self-Check)`
 6. `后续优化 (Future Optimization)`
 
+### 10.5 Benchmark / 矩阵测试只走 agentic-eval CLI（强制）
+
+1. 任何**矩阵测试 / benchmark / 评分跑分**必须表达为 agentic-eval **CASE JSON**
+   （`polaris/cells/llm/evaluation/fixtures/agentic_benchmark/cases/*.json`），
+   并通过 agentic-eval CLI 运行：`python -m polaris.delivery.cli.agentic_eval --suite <suite> [--level l1-l6]`。
+2. **禁止**把 benchmark / 矩阵的"评分跑分"写成 pytest（即 `test_*.py` 中调用
+   `run_*_suite(...)` 或 `UnifiedBenchmarkRunner().run_suite(...)`）。pytest 只允许承载
+   框架**组件**单测（models / validators / helpers），不得承载 suite/matrix 执行。
+3. 新增校验器属于 agentic-eval 框架的 judge 组件（`unified_judge.py`），通过 CASE 的
+   `judge.validators` 引用并经 CLI 评分，不是 pytest benchmark。
+4. 门禁：`docs/governance/ci/scripts/check_no_pytest_benchmark.py`
+   （fitness-rule `benchmark_cli_only`，enforced 于
+   `polaris/tests/architecture/test_no_pytest_benchmark_gate.py`）。
+
 ## 11. 交付要求
 
 交付时至少说明：

@@ -22,11 +22,40 @@ Architecture constraints (AGENTS.md):
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _record_director_decision_safe(workspace: str, payload: Mapping[str, Any]) -> None:
+    """Append a Resident decision for a Director task execution. Never raises.
+
+    This feeds the ``resident.autonomy`` decision trace (the fuel for its
+    meta-cognition / skill / counterfactual loops) from the canonical
+    application-layer execution path, which previously recorded nothing.
+
+    Skipped when running inside a workflow context (``KERNELONE_WORKFLOW_ID``
+    set), because the ``workflow_runtime`` engine records its own Resident
+    decision for the same task and we must not double-count.  Decision capture
+    is observability, not a task-execution dependency, so any failure is
+    swallowed.
+    """
+    if str(os.environ.get("KERNELONE_WORKFLOW_ID", "")).strip():
+        return
+    try:
+        from polaris.cells.resident.autonomy.public.service import record_resident_decision
+
+        record_resident_decision(workspace, payload)
+    except Exception:  # noqa: BLE001 - resident capture must never break director execution
+        logger.debug(
+            "resident decision capture skipped for workspace=%s",
+            workspace,
+            exc_info=True,
+        )
+
 
 __all__ = [
     "DirectorExecutionConfig",
@@ -256,6 +285,31 @@ class DirectorOrchestrator:
             board.update(normalized_id, status=status, metadata=metadata)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Failed to update Director task %s after adapter execution: %s", task_id, exc)
+
+        _record_director_decision_safe(
+            self._workspace,
+            {
+                "run_id": task_id,
+                "actor": "director",
+                "stage": "task_execution",
+                "summary": f"Director executed task {task_id}: {subject}",
+                "strategy_tags": [
+                    "orchestrator_direct",
+                    f"{self._config.execution_mode}_dispatch",
+                ],
+                "expected_outcome": {"status": "completed", "success": True},
+                "actual_outcome": {
+                    "status": status,
+                    "success": success,
+                    "changed_files": changed_files,
+                    "qa_required_for_final_verdict": metadata["qa_required_for_final_verdict"],
+                },
+                "verdict": "success" if success else "failure",
+                "evidence_refs": changed_files,
+                "context_refs": [task_id],
+                "confidence": 0.7,
+            },
+        )
 
         return DirectorTaskResult(
             task_id=task_id,

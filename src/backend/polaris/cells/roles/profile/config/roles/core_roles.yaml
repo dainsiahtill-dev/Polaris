@@ -505,7 +505,20 @@ roles:
 
     tool_policy:
       whitelist:
+        # Canonical read/search/tree tools (the names advertised to the model).
+        # The gateway checks the RAW requested name BEFORE alias normalization, so
+        # the canonical repo_* names MUST be whitelisted explicitly — not just the
+        # legacy aliases (search_code/grep/ripgrep) — or the model's repo_rg/repo_tree
+        # calls get rejected and scout cannot actually reconnoiter.
         - read_file
+        - repo_tree
+        - repo_rg
+        - repo_read_head
+        - repo_read_slice
+        - repo_read_tail
+        - repo_read_around
+        - repo_symbols_index
+        # Legacy aliases (kept for non-FC/textual models that emit alias names)
         - search_code
         - grep
         - ripgrep

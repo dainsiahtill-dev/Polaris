@@ -100,9 +100,6 @@ async def handle_v2_message(
 
     # SUBSCRIBE - channel subscription
     if msg_type == "SUBSCRIBE":
-        # Mark protocol as activated
-        protocol_activated = True
-
         raw_roles = message.get("roles")
         if isinstance(raw_roles, list):
             roles_filter.clear()
@@ -164,16 +161,37 @@ async def handle_v2_message(
 
             if connected:
                 consumer_manager_ref[0] = consumer_manager
+                protocol_activated = True
                 logger.info(
                     f"v2 protocol activated: client_id={client_id_ref[0]}, "
                     f"channels={channels_ref[0]}, cursor={cursor_ref[0]}"
                 )
             else:
                 consumer_manager_ref[0] = None
-                logger.warning("JetStream consumer failed, operating in legacy mode")
+                logger.error("runtime.v2 JetStream consumer is required but unavailable")
         except (TimeoutError, RuntimeError, ValueError) as e:
             logger.error(f"Failed to create v2 consumer manager: {e}")
             consumer_manager_ref[0] = None
+
+        if consumer_manager_ref[0] is None or not consumer_manager_ref[0].is_connected:
+            client_id_ref[0] = ""
+            channels_ref[0] = []
+            cursor_ref[0] = 0
+            await send_json_safe(
+                websocket,
+                {
+                    "type": "ERROR",
+                    "protocol": "runtime.v2",
+                    "payload": {
+                        "code": "JETSTREAM_REQUIRED",
+                        "error": "JetStream is required for runtime.v2 WebSocket subscriptions.",
+                    },
+                },
+                connection_id=connection_id,
+                client=client,
+                workspace=workspace,
+            )
+            return status_sig, False
 
         # Send confirmation
         # Canonical v2 protocol: includes strategy_receipt hint for context propagation.
@@ -224,9 +242,7 @@ async def handle_v2_message(
                 consumer_manager_ref[0] = None
             else:
                 # Keep consumer alive for partial unsubscribe and update in-process filter.
-                active_consumer_manager.channels = [
-                    ch[4:] if ch.startswith("log.") else ch for ch in channels_ref[0]
-                ]
+                active_consumer_manager.channels = [ch[4:] if ch.startswith("log.") else ch for ch in channels_ref[0]]
 
         await send_json_safe(
             websocket,

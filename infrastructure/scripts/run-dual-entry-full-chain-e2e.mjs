@@ -397,8 +397,8 @@ const childEnv = {
   ...process.env,
   ...realSettingsBootstrap.envPatch,
   KERNELONE_E2E_USE_REAL_SETTINGS: "1",
-  KERNELONE_NATS_ENABLED: process.env.KERNELONE_NATS_ENABLED || "0",
-  KERNELONE_NATS_REQUIRED: process.env.KERNELONE_NATS_REQUIRED || "0",
+  KERNELONE_NATS_ENABLED: process.env.KERNELONE_NATS_ENABLED || "1",
+  KERNELONE_NATS_REQUIRED: process.env.KERNELONE_NATS_REQUIRED || "1",
   KERNELONE_DIRECTOR_RUNTIME_CODEGEN: process.env.KERNELONE_DIRECTOR_RUNTIME_CODEGEN || "1",
 };
 const childEnvSummary = {

@@ -62,7 +62,9 @@ def _node_executable() -> str:
     return node
 
 
-def _run_node(args: list[str], *, env: dict[str, str] | None = None, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
+def _run_node(
+    args: list[str], *, env: dict[str, str] | None = None, timeout: float = 60.0
+) -> subprocess.CompletedProcess[str]:
     result = _run_node_raw(args, env=env, timeout=timeout)
     assert result.returncode == 0, (
         f"node {' '.join(args)} failed with {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
@@ -70,7 +72,9 @@ def _run_node(args: list[str], *, env: dict[str, str] | None = None, timeout: fl
     return result
 
 
-def _run_node_raw(args: list[str], *, env: dict[str, str] | None = None, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
+def _run_node_raw(
+    args: list[str], *, env: dict[str, str] | None = None, timeout: float = 60.0
+) -> subprocess.CompletedProcess[str]:
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
@@ -699,7 +703,7 @@ def test_dual_entry_full_chain_runner_dry_run_uses_desktop_and_web_specs() -> No
     assert payload["summary_min_mtime_ms"] > 0
     assert payload["child_env"]["KERNELONE_E2E_USE_REAL_SETTINGS"] == "1"
     assert payload["child_env"]["KERNELONE_NATS_ENABLED"] == "1"
-    assert payload["child_env"]["KERNELONE_NATS_REQUIRED"] == "0"
+    assert payload["child_env"]["KERNELONE_NATS_REQUIRED"] == "1"
     if os.name == "nt":
         assert payload["spawn_command"] == "cmd.exe"
         assert payload["spawn_args"][:4] == ["/d", "/s", "/c", "npx.cmd"]

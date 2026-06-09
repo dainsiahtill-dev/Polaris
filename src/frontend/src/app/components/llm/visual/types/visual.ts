@@ -5,7 +5,8 @@ export type VisualRoleId =
   | 'qa'           // QA
   | 'architect'    // Architect
   | 'cfo'          // CFO
-  | 'hr';          // HR
+  | 'hr'           // HR
+  | 'scout';       // Scout (read-only reconnaissance; optional, escalation-only)
 
 export type VisualNodeKind = 'role' | 'provider' | 'model';
 

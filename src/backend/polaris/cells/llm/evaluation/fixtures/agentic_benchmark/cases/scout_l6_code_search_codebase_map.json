@@ -1,0 +1,44 @@
+{
+  "case_id": "scout_l6_code_search_codebase_map",
+  "role": "scout",
+  "title": "L6 Code Search: Full Reconnaissance Codebase Map",
+  "description": "Probes full reconnaissance synthesis. The scout must explore the multi-file, multi-language base_tooling_workspace and emit a single structured JSON codebase map with architecture, modules (name/purpose/dependencies), entry_points, and data_flow. The output must be valid JSON grounded in real reads of the fixture files (server.py, config.py, backend/api.py, src/utils/helpers.py).",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "Perform full reconnaissance of this workspace and produce a single JSON codebase map of the form {\"architecture\": string, \"modules\": [{\"name\": string, \"purpose\": string, \"dependencies\": [string]}], \"entry_points\": [string], \"data_flow\": string}. Ground every entry in files you actually read; include server.py among the entry_points. Return only the JSON object.",
+  "tags": [
+    "scout",
+    "l6",
+    "code_search",
+    "contract"
+  ],
+  "judge": {
+    "score_threshold": 0.8,
+    "required_tools": [
+      "repo_tree",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "execute_command",
+      "search_replace",
+      "append_to_file",
+      "delete_file"
+    ],
+    "min_tool_calls": 4,
+    "max_tool_calls": 15,
+    "required_output_substrings": [
+      "architecture",
+      "modules",
+      "entry_points",
+      "data_flow",
+      "server.py"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "scout_readonly_contract",
+      "scout_codebase_map",
+      "scout_evidence_paths"
+    ]
+  }
+}

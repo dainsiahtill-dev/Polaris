@@ -29,6 +29,7 @@ from polaris.cells.llm.evaluation.public.service import (
     run_context_benchmark_suite,
     run_context_projection_matrix_suite,
     run_projection_adaptive_matrix_suite,
+    run_scout_matrix_suite,
     run_speculation_matrix_suite,
     run_strategy_benchmark_suite,
     run_tool_calling_matrix_suite,
@@ -271,6 +272,7 @@ def _suite_runners() -> dict[str, Any]:
         "speculation_matrix": run_speculation_matrix_suite,
         "context_projection_matrix": run_context_projection_matrix_suite,
         "projection_adaptive_matrix": run_projection_adaptive_matrix_suite,
+        "scout_matrix": run_scout_matrix_suite,
     }
 
 
@@ -1917,6 +1919,7 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
             "speculation_matrix",
             "context_projection_matrix",
             "projection_adaptive_matrix",
+            "scout_matrix",
         ):
             # matrix-style suites use their own runner (ignores mode)
             suite_runner = _suite_runners()[suite]

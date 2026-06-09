@@ -1,0 +1,33 @@
+{
+  "case_id": "scout_caller_pm_recon",
+  "role": "pm",
+  "title": "PM Delegates Codebase Recon to Scout Before Planning",
+  "description": "Before drafting a plan, the PM must understand the existing codebase layout. The PM is expected to delegate read-only reconnaissance to the scout_probe sub-agent rather than hand-rolling broad exploration, then summarize the scope it learned. Probes that PM uses scout_probe and reports a real top-level location from the workspace.",
+  "workspace_fixture": "base_tooling_workspace",
+  "prompt": "You are about to plan a feature for this repository, but you have not seen its structure yet. Before writing any plan, delegate a read-only reconnaissance of the codebase to the scout sub-agent (scout_probe) so you understand the existing top-level layout. After the scout reports back, summarize the project scope: name the top-level directories and entry files you must account for in planning. Do not edit or run anything yourself; this is read-only scoping.",
+  "tags": [
+    "scout",
+    "caller",
+    "pm"
+  ],
+  "judge": {
+    "score_threshold": 0.7,
+    "required_tools": [
+      "scout_probe"
+    ],
+    "forbidden_tools": [],
+    "min_tool_calls": 1,
+    "max_tool_calls": null,
+    "required_output_substrings": [
+      "backend",
+      "server.py"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "scout_readonly_contract",
+      "scout_subagent_used"
+    ]
+  }
+}

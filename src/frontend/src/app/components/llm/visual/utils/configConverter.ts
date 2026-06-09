@@ -20,6 +20,7 @@ const ROLE_ORDER: VisualRoleId[] = [
   'architect',
   'cfo',
   'hr',
+  'scout',
 ];
 
 const ROLE_META: Record<VisualRoleId, { label: string; description: string }> = {
@@ -30,6 +31,7 @@ const ROLE_META: Record<VisualRoleId, { label: string; description: string }> = 
   architect: { label: 'Architect', description: '草拟项目规格与架构文档。' },
   cfo: { label: 'CFO', description: '核算预算，监控Token用量与成本。' },
   hr: { label: 'HR', description: '管理LLM配置与模型任免。' },
+  scout: { label: 'Scout', description: '只读代码/文档侦察（探子）。可选：仅当 scout_probe 升级为 LLM 侦察时才需要绑定模型。' },
 };
 
 const encodeNodeSegment = (value: string) => encodeURIComponent(value);

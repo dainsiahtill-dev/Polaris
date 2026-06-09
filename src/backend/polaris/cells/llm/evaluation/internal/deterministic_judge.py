@@ -2006,6 +2006,48 @@ def validator_safety_check(
     return _validator_safety_check(output_text, observed, known_paths)
 
 
+# ------------------------------------------------------------------
+# Scout (探子) read-only reconnaissance validators
+#
+# The canonical scout validator implementations live in
+# ``polaris.kernelone.benchmark.unified_judge.BUILTIN_VALIDATORS`` as
+# ``ValidatorPort`` objects. The agentic-benchmark runtime path
+# (``run_agentic_benchmark_suite`` -> ``judge_agentic_case``) resolves
+# validators exclusively through this module's ``VALIDATOR_REGISTRY``.
+# Without this bridge every ``scout_*`` benchmark case would fail with a
+# critical "unknown validator" check, so we register the canonical scout
+# validators here (single source of truth preserved; no logic duplicated).
+# ------------------------------------------------------------------
+
+
+def _register_scout_validators_from_builtin() -> None:
+    """Bridge canonical scout validators into this module's registry."""
+    from polaris.kernelone.benchmark.unified_judge import BUILTIN_VALIDATORS
+
+    def _wrap(port: object) -> ValidatorFunc:
+        def _validator(
+            output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]
+        ) -> tuple[bool, str]:
+            return port.validate(output_text, observed, known_paths)  # type: ignore[attr-defined]
+
+        return _validator
+
+    for name, port in BUILTIN_VALIDATORS.items():
+        if not name.startswith("scout_"):
+            continue
+        if name in VALIDATOR_REGISTRY._validators:  # noqa: SLF001 - intentional registry sync
+            continue
+        VALIDATOR_REGISTRY.register(
+            name,
+            category=str(getattr(port, "category", "contract")),
+            critical=bool(getattr(port, "critical", False)),
+            description=str(getattr(port, "__doc__", "") or "scout reconnaissance validator"),
+        )(_wrap(port))
+
+
+_register_scout_validators_from_builtin()
+
+
 # Backward compatibility: Legacy VALIDATORS dict
 # Maps validator name -> (category_string, critical, function)
 # This allows existing code to continue working without modification.

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+_MANDATORY_NATS_OVERRIDES = {"nats.enabled": True, "nats.required": True}
 
 
 # BootstrapError is defined in polaris.kernelone.errors for consistency
@@ -332,12 +333,18 @@ class BackendBootstrapper:
             cli_overrides["runtime.ramdisk_root"] = str(request.ramdisk_root)
 
         if request.config_snapshot:
-            return request.config_snapshot.with_override(cli_overrides, SourceType.CLI)
+            return self._enforce_mandatory_nats(request.config_snapshot.with_override(cli_overrides, SourceType.CLI))
 
-        return loader.load(
-            workspace=request.workspace,
-            cli_overrides=cli_overrides,
+        return self._enforce_mandatory_nats(
+            loader.load(
+                workspace=request.workspace,
+                cli_overrides=cli_overrides,
+            )
         )
+
+    def _enforce_mandatory_nats(self, config: ConfigSnapshot) -> ConfigSnapshot:
+        """Force backend runtime messaging onto NATS/JetStream."""
+        return config.with_override(_MANDATORY_NATS_OVERRIDES, SourceType.CLI)
 
     def _setup_environment_variables(self, config: ConfigSnapshot, request: BackendLaunchRequest) -> None:
         """Setup environment variables from configuration.
@@ -390,11 +397,8 @@ class BackendBootstrapper:
             os.environ.pop("KERNELONE_RAMDISK_ROOT", None)
 
         # NATS configuration
-        nats_enabled = "1" if config.get_typed("nats.enabled", bool, True) else "0"
-        os.environ["KERNELONE_NATS_ENABLED"] = nats_enabled
-
-        nats_required = "1" if config.get_typed("nats.required", bool, True) else "0"
-        os.environ["KERNELONE_NATS_REQUIRED"] = nats_required
+        os.environ["KERNELONE_NATS_ENABLED"] = "1"
+        os.environ["KERNELONE_NATS_REQUIRED"] = "1"
 
         nats_url = str(config.get("nats.url") or "").strip()
         if nats_url:
@@ -484,6 +488,10 @@ class BackendBootstrapper:
             runtime_cfg = mutable.get("runtime")
             if isinstance(runtime_cfg, dict) and runtime_cfg.get("ramdisk_root") == "":
                 runtime_cfg["ramdisk_root"] = None
+            nats_cfg = mutable.setdefault("nats", {})
+            if isinstance(nats_cfg, dict):
+                nats_cfg["enabled"] = True
+                nats_cfg["required"] = True
             settings = Settings(**mutable)
 
             # Create app

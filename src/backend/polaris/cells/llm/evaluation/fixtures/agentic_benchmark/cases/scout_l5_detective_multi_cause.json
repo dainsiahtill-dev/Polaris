@@ -1,0 +1,43 @@
+{
+  "case_id": "scout_l5_detective_multi_cause",
+  "role": "scout",
+  "title": "Scout Isolates True Root Cause Among Plausible Suspects",
+  "description": "L5 detective: a bug with several plausible causes and a planted red herring. integration_test.py fails while the unit suite passes. config.py carries a misleading 'precision may be wrong' TODO (decoy); the real defect is a stale memo key in cache.py that omits precision. The scout must follow the indirection (calculator -> cache, calculator -> config) and NOT be misled into blaming config.",
+  "prompt": "integration_test.py is failing with an output mismatch, but tests/test_calculator.py passes. Several files could be responsible: src/calculator.py, src/config.py, and src/cache.py. Investigate read-only, follow how divide() is computed, and identify the ONE true root cause. State the exact file and the precise defect. Be careful: do not be misled by unrelated TODOs or a low default value. Do not edit anything.",
+  "workspace_fixture": "scout_multi_cause_detective",
+  "tags": [
+    "scout",
+    "l5",
+    "detective"
+  ],
+  "judge": {
+    "score_threshold": 0.9,
+    "required_tools": [
+      "repo_rg",
+      "read_file"
+    ],
+    "forbidden_tools": [
+      "write_file",
+      "edit_file",
+      "search_replace",
+      "execute_command",
+      "delete_file"
+    ],
+    "required_output_substrings": [
+      "cache.py",
+      "precision",
+      "stale"
+    ],
+    "forbidden_output_substrings": [
+      "root cause: config",
+      "root cause is config.py",
+      "<tool_call>"
+    ],
+    "validators": [
+      "scout_readonly_contract",
+      "scout_detective_root_cause"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 12
+  }
+}

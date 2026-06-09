@@ -1,0 +1,46 @@
+{
+  "case_id": "scout_l3_code_search_dependency",
+  "role": "scout",
+  "title": "L3 Code Search: Map Who Imports the Shared SessionContext DTO",
+  "description": "Probes cross-reference / dependency mapping. The shared DTO SessionContext is defined once in core/contracts.py and imported across the auth, api, storage, and billing layers. The scout must enumerate which modules import (depend on) it across the codebase and express the relationship, while excluding the deprecated module that does NOT import it. Requires multiple recon hops.",
+  "workspace_fixture": "scout_import_graph",
+  "prompt": "The shared DTO 'SessionContext' is defined in core/contracts.py. Map its dependency fan-in: list every module in this codebase that imports SessionContext, and describe the import/dependency relationship (who depends on the core contract). Be exhaustive and exclude any deprecated module that does not actually import it.",
+  "tags": [
+    "scout",
+    "l3",
+    "code_search",
+    "dependency"
+  ],
+  "judge": {
+    "score_threshold": 0.7,
+    "required_tools": [
+      "repo_rg",
+      "repo_read_head"
+    ],
+    "forbidden_tools": [
+      "execute_command",
+      "search_replace",
+      "append_to_file",
+      "delete_file"
+    ],
+    "min_tool_calls": 3,
+    "max_tool_calls": 10,
+    "required_output_substrings": [
+      "auth_service/tokens.py",
+      "auth_service/permissions.py",
+      "api_service/handlers.py",
+      "storage/database.py",
+      "storage/cache.py",
+      "billing/invoices.py",
+      "core/contracts.py"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>",
+      "_deprecated/legacy_auth.py"
+    ],
+    "validators": [
+      "scout_readonly_contract",
+      "scout_dependency_report"
+    ]
+  }
+}

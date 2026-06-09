@@ -1,0 +1,41 @@
+{
+  "case_id": "scout_l2_code_search_read",
+  "role": "scout",
+  "title": "L2 Code Search: Locate and Read the Canonical build_session Signature",
+  "description": "Probes locate-plus-read: there are TWO functions named build_session in the codebase. The deprecated one in _deprecated/legacy_auth.py returns a plain dict; the canonical one in auth_service/tokens.py returns the shared SessionContext DTO. The scout must find AND read the correct slice, then report the canonical signature and its return type. Naming the deprecated dict-returning version as the answer must fail.",
+  "workspace_fixture": "scout_import_graph",
+  "prompt": "There is a function named 'build_session' used by the live service mesh. Find its canonical definition (the one that returns the shared SessionContext DTO, NOT the deprecated dict-returning legacy version), read that exact code slice, and report: (1) the file path of the canonical definition, and (2) its full signature including its return type.",
+  "tags": [
+    "scout",
+    "l2",
+    "code_search"
+  ],
+  "judge": {
+    "score_threshold": 0.7,
+    "required_tools": [
+      "repo_rg",
+      "repo_read_slice"
+    ],
+    "forbidden_tools": [
+      "execute_command",
+      "search_replace",
+      "append_to_file",
+      "delete_file"
+    ],
+    "min_tool_calls": 2,
+    "max_tool_calls": 8,
+    "required_output_substrings": [
+      "auth_service/tokens.py",
+      "build_session",
+      "SessionContext"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>",
+      "_deprecated/legacy_auth.py"
+    ],
+    "validators": [
+      "scout_readonly_contract",
+      "scout_evidence_paths"
+    ]
+  }
+}

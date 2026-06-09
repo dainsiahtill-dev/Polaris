@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Bot,
+  Brain,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -144,6 +145,18 @@ export function ResidentWorkspace({
               启动
             </Button>
           )}
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="resident-tick"
+            title="立即运行一轮反思 (Tick)：元认知 / 技能 / 反事实 / 自改 / 目标生成"
+            onClick={() => void resident.tick()}
+            disabled={resident.isActing('tick')}
+            className="border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10"
+          >
+            <Brain className={cn('mr-1 size-3', resident.isActing('tick') && 'animate-pulse')} />
+            反思一轮
+          </Button>
           <Button size="sm" variant="ghost" onClick={() => void resident.refresh()} disabled={resident.loading}>
             <RefreshCw className={cn("size-4", resident.loading && "animate-spin")} />
           </Button>

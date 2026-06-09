@@ -1,0 +1,32 @@
+{
+  "case_id": "scout_caller_director_locate",
+  "role": "director",
+  "title": "Director Delegates Buggy-File Location to Scout Before Fixing",
+  "description": "Before applying any fix, the Director must locate the exact target file containing the defect. It is expected to delegate the read-only search to the scout_probe sub-agent and report the buggy file path, instead of guessing or editing blindly. The planted bug lives in src/median.py (empty-list path returns 0).",
+  "workspace_fixture": "director_root_cause_locator",
+  "prompt": "There is a reported bug: the median helper returns 0 for an empty input list instead of signalling an error. Before you touch any code, you must locate the exact source file that defines the buggy median function. Delegate this read-only location search to the scout sub-agent (scout_probe). After it reports back, state the exact target file path you would fix. Do not edit or run anything in this step; locating is read-only.",
+  "tags": [
+    "scout",
+    "caller",
+    "director"
+  ],
+  "judge": {
+    "score_threshold": 0.7,
+    "required_tools": [
+      "scout_probe"
+    ],
+    "forbidden_tools": [],
+    "min_tool_calls": 1,
+    "max_tool_calls": null,
+    "required_output_substrings": [
+      "median.py"
+    ],
+    "forbidden_output_substrings": [
+      "<tool_call>"
+    ],
+    "validators": [
+      "scout_readonly_contract",
+      "scout_subagent_used"
+    ]
+  }
+}

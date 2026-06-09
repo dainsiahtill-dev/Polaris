@@ -24,8 +24,14 @@ def load_all_cases() -> list[tuple[Path, dict[str, Any]]]:
     cases = []
     for cases_dir in CASES_DIRS:
         if cases_dir.is_dir():
-            for path in sorted(cases_dir.glob("l*.json")):
-                cases.append((path, load_case(path)))
+            # Audit the L-level cases AND the scout_* capability-matrix cases.
+            seen: set[Path] = set()
+            for pattern in ("l*.json", "scout_*.json"):
+                for path in sorted(cases_dir.glob(pattern)):
+                    if path in seen:
+                        continue
+                    seen.add(path)
+                    cases.append((path, load_case(path)))
     return cases
 
 
@@ -50,6 +56,19 @@ VALID_TOOLS: set[str] = {
     "ripgrep",
     "search_code",
 }
+
+# Root-cause: keep VALID_TOOLS in sync with the canonical tool registry so the
+# audit never flags a REAL tool as unknown (e.g. scout_probe, write_file, edit_file,
+# edit_blocks). Import defensively — the audit must still run if the import fails.
+try:
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry as _ToolSpecRegistry
+
+    for _name, _spec in _ToolSpecRegistry.get_all_specs().items():
+        VALID_TOOLS.add(str(_name))
+        for _alias in getattr(_spec, "aliases", ()) or ():
+            VALID_TOOLS.add(str(_alias))
+except (ImportError, AttributeError, TypeError):
+    pass
 
 
 class CaseIssue:
@@ -252,7 +271,14 @@ def audit_prompt_logic(path: Path, data: dict[str, Any]) -> list[CaseIssue]:
         ("rm -rf", "delete"),
     ]
     for pattern, _action in dangerous_patterns:
-        if pattern.lower() in prompt.lower() and "execute_command" not in judge.get("forbidden_tools", []):
+        token = pattern.strip()
+        # Word-boundary match for shell command tokens so 'perform'/'transform' do
+        # not falsely trigger the 'rm ' rule.
+        if token.startswith("rm"):
+            mentioned = re.search(r"\brm\b", prompt, re.IGNORECASE) is not None
+        else:
+            mentioned = pattern.lower() in prompt.lower()
+        if mentioned and "execute_command" not in judge.get("forbidden_tools", []):
             issues.append(
                 CaseIssue(
                     case_id,
@@ -320,6 +346,16 @@ def audit_validators(path: Path, data: dict[str, Any]) -> list[CaseIssue]:
         "handles_sequence_break",
     }
 
+    # Root-cause: keep the known-validator set in sync with the ACTIVE judge
+    # registry (unified_judge) so it never drifts (e.g. the scout_* validators).
+    # Import defensively — the audit must still run if the import is unavailable.
+    try:
+        from polaris.kernelone.benchmark.unified_judge import BUILTIN_VALIDATORS, VALIDATOR_SPECS
+
+        known_validators |= set(BUILTIN_VALIDATORS) | set(VALIDATOR_SPECS)
+    except (ImportError, AttributeError):
+        pass
+
     for validator in judge.get("validators", []):
         if validator not in known_validators and not validator.startswith("validator:"):
             issues.append(
@@ -336,14 +372,23 @@ def audit_case_id_naming(path: Path, data: dict[str, Any]) -> list[CaseIssue]:
     issues: list[CaseIssue] = []
     case_id = data.get("case_id", "")
 
-    # Expected pattern: l[0-9]_[a-z_]+
-    if not re.match(r"^l[0-9]_[a-z_]+$", case_id):
+    # Accepted patterns:
+    #   l[0-9]_[a-z_]+                      — L-level cases
+    #   scout_l[0-9]_[a-z_]+                — scout capability-matrix level cases
+    #   scout_caller_(pm|chief_engineer|director)_[a-z_]+  — scout caller cases
+    accepted = (
+        r"^l[0-9]_[a-z_]+$",
+        r"^scout_l[0-9]_[a-z_]+$",
+        r"^scout_caller_(?:pm|chief_engineer|director)_[a-z_]+$",
+    )
+    if not any(re.match(pattern, case_id) for pattern in accepted):
         issues.append(
             CaseIssue(
                 case_id,
                 "WARNING",
                 "NAMING",
-                f"case_id '{case_id}' doesn't follow naming convention (l[0-9]_[a-z_]+)",
+                f"case_id '{case_id}' doesn't follow naming convention "
+                "(l[0-9]_[a-z_]+ | scout_l[0-9]_[a-z_]+ | scout_caller_<role>_[a-z_]+)",
                 "case_id",
             )
         )
@@ -472,7 +517,14 @@ def audit_refusal_cases(path: Path, data: dict[str, Any]) -> list[CaseIssue]:
 
     dangerous_keywords = ["删除", "删除所有", "delete all", "rm ", "drop "]
     for kw in dangerous_keywords:
-        if kw.lower() in prompt.lower() and judge.get("min_tool_calls", 0) > 0:
+        token = kw.strip()
+        # Word-boundary for shell command tokens (rm/drop) to avoid matching
+        # 'perform'/'transform'/'dropdown'; substring for phrases/CJK.
+        if token in ("rm", "drop"):
+            mentioned = re.search(rf"\b{re.escape(token)}\b", prompt, re.IGNORECASE) is not None
+        else:
+            mentioned = kw.lower() in prompt.lower()
+        if mentioned and judge.get("min_tool_calls", 0) > 0:
             issues.append(
                 CaseIssue(
                     case_id,
