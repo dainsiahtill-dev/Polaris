@@ -1,7 +1,7 @@
 # Finding: `workflow_activity` is a non-production duplicate of `workflow_runtime`
 
 - **Date**: 2026-06-09 (deep-dive added 2026-06-10)
-- **Status**: Open — step 1 (shared kernelone timeout policy) DONE 2026-06-10; the larger definitions merge is still a dedicated wave, and a forced full merge remains empirically unsafe (see deep-dive)
+- **Status**: Open — steps 1–2 (shared kernelone timeout policy + task-payload helpers, incl. `_task_dependencies`) DONE 2026-06-10; the larger divergent-body merge is still a dedicated wave, and a forced full merge remains empirically unsafe (see deep-dive)
 - **Severity**: Low (internal duplication; no runtime impact, no user-facing effect)
 - **Origin**: Resident Engineer availability audit, gap G5
 - **Related blueprint**: `docs/blueprints/RESIDENT_AUTONOMY_ROUND2_BLUEPRINT_20260609.md`
@@ -92,9 +92,15 @@ modified**; this note is the deliverable.
    import from it. Behavior provably unchanged (210 workflow tests + 2 cross-cell parity
    tests pass; ruff/mypy clean). Note discovered during extraction: `director_workflow`'s
    `_task_payload_list` is a *less-defensive* variant (`task.payload` vs `getattr`),
-   behaviorally identical for real `TaskContract` inputs — left local, not merged.
-   `_task_dependencies` (divergent source) was **not** touched and still needs explicit
-   reconciliation before any further merge.
+   behaviorally identical for real `TaskContract` inputs; the canonical `getattr` form won.
+
+   **Step 2 (✅ DONE 2026-06-10):** unified `_task_dependencies` — which diverged across the two
+   cells *only* in a local variable name (`payload` vs `task_payload`), behaviorally identical for
+   all inputs — into a new `polaris/kernelone/workflow/task_payload.py`, alongside
+   `_task_payload_list` (moved there; `timeout_policy` now re-exports it). Both `director_workflow`
+   cells import it. Validated: 259 workflow + parity + boundary tests green; ruff/mypy clean. The
+   genuinely divergent **workflow bodies** (193/282/155 diff-lines in pm/director_task/qa) are what
+   remains for a dedicated, per-symbol equivalence-verified wave.
 2. Decide the canonical owner of director/pm workflow *definitions* (`workflow_runtime` is
    the live engine and the natural canonical).
 3. Diff the two implementations symbol-by-symbol; pin behavioral equivalence with tests

@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
+from polaris.kernelone.workflow.task_payload import _task_payload_list
 
 _DIRECTOR_TASK_ROUND_TIMEOUT_SECONDS = 600
 _DIRECTOR_TASK_TIMEOUT_MARGIN_SECONDS = 300
@@ -31,14 +32,6 @@ def _director_positive_int(value: Any, default: int) -> int:
         return max(1, int(value))
     except (RuntimeError, ValueError):
         return max(1, int(default))
-
-
-def _task_payload_list(task: Any, key: str) -> list[str]:
-    payload = task.payload if isinstance(getattr(task, "payload", None), dict) else {}
-    value = payload.get(key)
-    if not isinstance(value, list):
-        return []
-    return [str(item or "").strip() for item in value if str(item or "").strip()]
 
 
 def _director_child_workflow_timeout_seconds(

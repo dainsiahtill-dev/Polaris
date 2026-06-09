@@ -29,6 +29,7 @@ from polaris.cells.orchestration.workflow_activity.internal.workflows.director_t
     DirectorTaskWorkflow,
 )
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
+from polaris.kernelone.workflow.task_payload import _task_dependencies
 from polaris.kernelone.workflow.timeout_policy import _task_run_timeout_seconds
 
 logger = logging.getLogger(__name__)
@@ -83,18 +84,6 @@ def _coerce_task_result(payload: Any) -> DirectorTaskResult | None:
         errors=errors,
         metadata={str(key): value for key, value in metadata.items()},
     )
-
-
-def _task_dependencies(task: TaskContract) -> set[str]:
-    task_payload = task.payload if isinstance(task.payload, dict) else {}
-    raw_dependencies: list[Any] = []
-    if isinstance(task_payload.get("depends_on"), list):
-        raw_dependencies.extend(task_payload.get("depends_on") or [])
-    if isinstance(task_payload.get("dependencies"), list):
-        raw_dependencies.extend(task_payload.get("dependencies") or [])
-    if isinstance(task_payload.get("blocked_by"), list):
-        raw_dependencies.extend(task_payload.get("blocked_by") or [])
-    return {str(item).strip() for item in raw_dependencies if str(item).strip()}
 
 
 def _positive_int(value: Any, default: int) -> int:
