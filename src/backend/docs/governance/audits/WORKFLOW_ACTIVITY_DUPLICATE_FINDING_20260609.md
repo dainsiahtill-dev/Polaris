@@ -1,7 +1,7 @@
 # Finding: `workflow_activity` is a non-production duplicate of `workflow_runtime`
 
 - **Date**: 2026-06-09 (deep-dive added 2026-06-10)
-- **Status**: Open — dedicated wave required; a forced merge is empirically unsafe (see deep-dive)
+- **Status**: Open — step 1 (shared kernelone timeout policy) DONE 2026-06-10; the larger definitions merge is still a dedicated wave, and a forced full merge remains empirically unsafe (see deep-dive)
 - **Severity**: Low (internal duplication; no runtime impact, no user-facing effect)
 - **Origin**: Resident Engineer availability audit, gap G5
 - **Related blueprint**: `docs/blueprints/RESIDENT_AUTONOMY_ROUND2_BLUEPRINT_20260609.md`
@@ -83,11 +83,18 @@ modified**; this note is the deliverable.
 
 ## Recommended dedicated wave
 
-1. **Safe first step (low risk):** extract the 3 byte-identical timeout helpers
-   (`_director_child_workflow_timeout_seconds`, `_task_phase_timeout_seconds`,
-   `_task_run_timeout_seconds`) into a shared `kernelone` timeout-policy module both cells
-   may import (kernelone is the shared base — no cross-cell rule violation). Behavior is
-   provably unchanged. Reconcile `_task_dependencies` (divergent source) explicitly first.
+1. **Safe first step (low risk): ✅ DONE 2026-06-10.** Extracted the byte-identical timeout
+   policy — 4 `_DIRECTOR_TASK_*` constants + helpers `_director_positive_int` /
+   `_task_payload_list` + the 3 timeout functions (`_director_child_workflow_timeout_seconds`,
+   `_task_phase_timeout_seconds`, `_task_run_timeout_seconds`) — into
+   `polaris/kernelone/workflow/timeout_policy.py` (kernelone is the shared base — no
+   cross-cell rule violation; semantic-boundary gate green). All 6 cell workflow files now
+   import from it. Behavior provably unchanged (210 workflow tests + 2 cross-cell parity
+   tests pass; ruff/mypy clean). Note discovered during extraction: `director_workflow`'s
+   `_task_payload_list` is a *less-defensive* variant (`task.payload` vs `getattr`),
+   behaviorally identical for real `TaskContract` inputs — left local, not merged.
+   `_task_dependencies` (divergent source) was **not** touched and still needs explicit
+   reconciliation before any further merge.
 2. Decide the canonical owner of director/pm workflow *definitions* (`workflow_runtime` is
    the live engine and the natural canonical).
 3. Diff the two implementations symbol-by-symbol; pin behavioral equivalence with tests

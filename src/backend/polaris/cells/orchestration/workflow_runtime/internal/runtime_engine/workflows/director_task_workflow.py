@@ -11,14 +11,14 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_queries impor
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import get_workflow_api
 from polaris.infrastructure.di.container import get_container
 from polaris.kernelone.events.message_bus import MessageBus, MessageType
+from polaris.kernelone.workflow.timeout_policy import (
+    _task_phase_timeout_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
 workflow = get_workflow_api()
-_DIRECTOR_TASK_ROUND_TIMEOUT_SECONDS = 600
-_DIRECTOR_TASK_TIMEOUT_MARGIN_SECONDS = 300
-_DIRECTOR_TASK_TIMEOUT_MAX_ROUNDS = 12
-_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS = 3600
+# timeout constants/helpers moved to polaris.kernelone.workflow.timeout_policy
 
 
 async def _broadcast_task_progress(
@@ -96,30 +96,6 @@ def _normalize_file_list(value: Any) -> list[str]:
         seen.add(token)
         normalized.append(token)
     return normalized
-
-
-def _task_payload_list(task: Any, key: str) -> list[str]:
-    payload = task.payload if isinstance(getattr(task, "payload", None), dict) else {}
-    value = payload.get(key)
-    if not isinstance(value, list):
-        return []
-    return [str(item or "").strip() for item in value if str(item or "").strip()]
-
-
-def _task_phase_timeout_seconds(task: Any, phase: str, base_timeout_seconds: int) -> int:
-    """Scale implementation phase timeout for multi-round code generation."""
-    phase_name = str(phase or "").strip().lower()
-    if phase_name not in {"implement", "execution"}:
-        return max(1, int(base_timeout_seconds))
-
-    target_files = _task_payload_list(task, "target_files")
-    scope_paths = _task_payload_list(task, "scope_paths")
-    estimated_rounds = len(target_files) if target_files else len(scope_paths)
-    estimated_rounds = max(1, min(_DIRECTOR_TASK_TIMEOUT_MAX_ROUNDS, estimated_rounds))
-    floor_seconds = (
-        30 + (estimated_rounds * _DIRECTOR_TASK_ROUND_TIMEOUT_SECONDS) + _DIRECTOR_TASK_TIMEOUT_MARGIN_SECONDS
-    )
-    return min(_DIRECTOR_TASK_TIMEOUT_MAX_SECONDS, max(int(base_timeout_seconds), floor_seconds))
 
 
 def _director_config_for_phase(config: dict[str, Any], phase: str, phase_timeout_seconds: int) -> dict[str, Any]:

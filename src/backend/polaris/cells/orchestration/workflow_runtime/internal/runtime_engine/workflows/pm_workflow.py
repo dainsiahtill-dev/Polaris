@@ -19,8 +19,11 @@ from polaris.cells.orchestration.workflow_runtime.internal.models import (
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_queries import WorkflowQueryState
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import get_workflow_api
 from polaris.infrastructure.di.container import get_container
-from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.events.message_bus import MessageBus, MessageType
+from polaris.kernelone.workflow.timeout_policy import (
+    _director_child_workflow_timeout_seconds,
+    _director_positive_int,
+)
 
 from .director_workflow import DirectorWorkflow
 from .qa_workflow import QAWorkflow
@@ -85,25 +88,7 @@ def _director_execution_mode(value: Any) -> str:
     return "parallel"
 
 
-def _director_positive_int(value: Any, default: int) -> int:
-    try:
-        return max(1, int(value))
-    except (RuntimeError, ValueError):
-        return max(1, int(default))
-
-
-def _director_child_workflow_timeout_seconds(
-    director_config: dict[str, Any],
-    *,
-    task_count: int,
-) -> int:
-    per_task_seconds = _director_positive_int(
-        director_config.get("task_timeout_seconds"),
-        MAX_WORKFLOW_TIMEOUT_SECONDS,
-    )
-    ready_seconds = _director_positive_int(director_config.get("ready_timeout_seconds"), 30)
-    budget = ready_seconds + per_task_seconds * max(1, int(task_count or 0)) + 120
-    return min(max(120, budget), MAX_WORKFLOW_TIMEOUT_SECONDS)
+# timeout helpers moved to polaris.kernelone.workflow.timeout_policy
 
 
 def _record_resident_decision_safe(workspace: str, payload: dict[str, Any]) -> None:

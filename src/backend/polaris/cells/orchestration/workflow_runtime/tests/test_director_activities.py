@@ -9,6 +9,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.models import TaskCon
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.workflows import (
     director_task_workflow as workflow_runtime_director_task_workflow,
 )
+from polaris.kernelone.workflow.timeout_policy import _DIRECTOR_TASK_TIMEOUT_MAX_SECONDS
 
 
 def _large_implementation_task() -> TaskContract:
@@ -30,7 +31,7 @@ def test_runtime_director_task_timeout_caps_at_global_workflow_budget() -> None:
             "implement",
             900,
         )
-        == workflow_runtime_director_task_workflow._DIRECTOR_TASK_TIMEOUT_MAX_SECONDS
+        == _DIRECTOR_TASK_TIMEOUT_MAX_SECONDS
     )
 
 
@@ -41,7 +42,7 @@ def test_activity_director_task_timeout_caps_at_global_workflow_budget() -> None
             "implement",
             900,
         )
-        == workflow_activity_director_task_workflow._DIRECTOR_TASK_TIMEOUT_MAX_SECONDS
+        == _DIRECTOR_TASK_TIMEOUT_MAX_SECONDS
     )
 
 
