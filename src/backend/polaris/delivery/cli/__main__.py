@@ -86,6 +86,7 @@ _AGENTIC_EVAL_SUITE_CHOICES = (
     "tool_calling_matrix",
     "speculation_matrix",
     "context_projection_matrix",
+    "projection_adaptive_matrix",
 )
 
 
@@ -690,6 +691,15 @@ def create_parser() -> argparse.ArgumentParser:
         help=(
             "Stop benchmark early after N failures are reached (0 = disabled, run all cases). "
             "Useful for rapid iteration: fix failures as soon as threshold is hit."
+        ),
+    )
+    agentic_eval_parser.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help=(
+            "For projection_adaptive_matrix: run each case ON/OFF N times and report mean delta ± 95%% CI "
+            "(separates adaptive-ordering signal from LLM noise). Default 1."
         ),
     )
     agentic_eval_parser.add_argument(

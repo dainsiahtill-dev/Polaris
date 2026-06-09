@@ -28,6 +28,7 @@ from polaris.cells.llm.evaluation.public.service import (
     run_agentic_benchmark_suite,
     run_context_benchmark_suite,
     run_context_projection_matrix_suite,
+    run_projection_adaptive_matrix_suite,
     run_speculation_matrix_suite,
     run_strategy_benchmark_suite,
     run_tool_calling_matrix_suite,
@@ -269,6 +270,7 @@ def _suite_runners() -> dict[str, Any]:
         "tool_calling_matrix": run_tool_calling_matrix_suite,
         "speculation_matrix": run_speculation_matrix_suite,
         "context_projection_matrix": run_context_projection_matrix_suite,
+        "projection_adaptive_matrix": run_projection_adaptive_matrix_suite,
     }
 
 
@@ -459,10 +461,6 @@ def _normalize_suite_name(value: Any) -> str:
     return "agentic_benchmark"
 
 
-# Backward compatibility alias
-_utc_now = utc_now_iso
-
-
 def _as_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
@@ -615,15 +613,6 @@ def _expand_level_range_to_case_ids(level_ranges: Iterable[Any] | None) -> list[
         if prefix:
             prefixes.append(prefix)
     return prefixes
-
-
-def _filter_cases_by_level_prefix(cases: list[Any], level_prefixes: list[str]) -> list[Any]:
-    """Filter a list of cases by level prefixes (e.g., 'l1_', 'l2_')."""
-    if not level_prefixes:
-        return cases
-    return [
-        case for case in cases if any(str(getattr(case, "case_id", "") or "").startswith(p) for p in level_prefixes)
-    ]
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
@@ -987,7 +976,7 @@ def _summarize_tool_calls(tool_calls: Iterable[Any], *, limit: int = 5) -> list[
         args = _as_dict(call.get("args"))
         try:
             args_text = json.dumps(args, ensure_ascii=False, sort_keys=True)
-        except (RuntimeError, ValueError):
+        except (RuntimeError, ValueError, TypeError):
             args_text = str(args)
         summary.append(
             {
@@ -1160,7 +1149,7 @@ def _build_observed_trace(
         "thinking_preview": _truncate_text(observed.get("thinking"), limit=240),
         "error": str(observed.get("error") or "").strip(),
         "duration_ms": _to_int(observed.get("duration_ms"), 0),
-        "event_count": _to_int(observed.get("event_count"), default=len(list(raw_events))),
+        "event_count": _to_int(observed.get("event_count"), default=sum(event_histogram.values())),
         "event_type_histogram": event_histogram,
         "raw_event_samples": _summarize_raw_events(raw_events),
         "workspace_files_sample": [str(item).strip() for item in list(workspace_files)[:12] if str(item).strip()],
@@ -1433,7 +1422,7 @@ def build_agentic_eval_audit_package(
     return {
         "status": status,
         "workspace": str(Path(workspace).resolve()),
-        "generated_at": _utc_now(),
+        "generated_at": utc_now_iso(),
         "benchmark": {
             "suite": str(report.get("suite") or "agentic_benchmark"),
             "run_id": benchmark_run_id,
@@ -1888,7 +1877,7 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
         try:
             baseline_compare_path = _resolve_baseline_audit_path(workspace, compare_baseline_ref)
             baseline_compare_payload = _read_json_file(baseline_compare_path)
-        except (RuntimeError, ValueError) as exc:
+        except (RuntimeError, ValueError, FileNotFoundError, OSError) as exc:
             print(f"Error: invalid --compare-baseline reference ({exc})")
             return 1
 
@@ -1896,7 +1885,12 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     if case_ids:
         options["benchmark_case_ids"] = case_ids
         options["matrix_case_ids"] = case_ids
-    if suite in ("tool_calling_matrix", "speculation_matrix", "context_projection_matrix"):
+    if suite in (
+        "tool_calling_matrix",
+        "speculation_matrix",
+        "context_projection_matrix",
+        "projection_adaptive_matrix",
+    ):
         options["matrix_transport"] = matrix_transport
         options["observable"] = observable
         # Add level prefixes for range filtering (e.g., l1-l3 -> ["l1_", "l2_", "l3_"])
@@ -1905,6 +1899,9 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
             options["matrix_case_ids"] = list(existing) + level_prefixes
     if max_failed > 0:
         options["max_failed"] = max_failed
+    _repeats = _to_int(getattr(args, "repeats", None), default=1)
+    if _repeats > 1:
+        options["repeats"] = _repeats
 
     context = {"provider_id": provider_id}
     progress_callback = _build_progress_callback(enabled=output_format == "human")
@@ -1915,7 +1912,12 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     mode = str(getattr(args, "mode", "agentic") or "agentic").strip().lower() or "agentic"
 
     try:
-        if suite in ("tool_calling_matrix", "speculation_matrix", "context_projection_matrix"):
+        if suite in (
+            "tool_calling_matrix",
+            "speculation_matrix",
+            "context_projection_matrix",
+            "projection_adaptive_matrix",
+        ):
             # matrix-style suites use their own runner (ignores mode)
             suite_runner = _suite_runners()[suite]
             run_result = asyncio.run(
@@ -1956,6 +1958,10 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     # context_projection_matrix 是确定性 ProjectionEngine 矩阵，单独呈现。
     if suite == "context_projection_matrix":
         return _report_context_projection_matrix(_as_dict(run_result), output_format=output_format)
+
+    # projection_adaptive_matrix 是自适应排序 A/B 评测，单独呈现。
+    if suite == "projection_adaptive_matrix":
+        return _report_projection_adaptive_matrix(_as_dict(run_result), output_format=output_format)
 
     package = build_agentic_eval_audit_package(
         workspace=workspace,
@@ -2021,6 +2027,54 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     return 0 if str(package.get("status") or "").strip().upper() == "PASS" else 1
 
 
+def _report_projection_adaptive_matrix(run_result: dict[str, Any], *, output_format: str) -> int:
+    """呈现自适应排序 A/B（ON vs OFF）结果。测量性套件，退出码 0 当且仅当 ok。"""
+    details = _as_dict(run_result.get("details"))
+    summary = _as_dict(details.get("summary"))
+    cases_raw = details.get("cases")
+    cases: list[Any] = cases_raw if isinstance(cases_raw, list) else []
+    ok = bool(run_result.get("ok"))
+
+    if output_format == "json":
+        print(json.dumps({"status": "PASS" if ok else "FAIL", **run_result}, ensure_ascii=False, indent=2))
+        return 0 if ok else 1
+
+    print(f"\n=== projection_adaptive_matrix (A/B: adaptive ON vs OFF) {'OK' if ok else 'FAIL'} ===")
+    if run_result.get("error"):
+        print(f"error: {run_result['error']}")
+    print(
+        "cases={total_cases} repeats={repeats} helped={adaptive_helped} hurt={adaptive_hurt} "
+        "tie={tie} inconclusive={inconclusive} mean_delta(on-off)={mean_delta_on_minus_off} "
+        "(on={mean_score_on} off={mean_score_off})".format(
+            total_cases=summary.get("total_cases", 0),
+            repeats=summary.get("repeats", 1),
+            adaptive_helped=summary.get("adaptive_helped", 0),
+            adaptive_hurt=summary.get("adaptive_hurt", 0),
+            tie=summary.get("tie", 0),
+            inconclusive=summary.get("inconclusive", 0),
+            mean_delta_on_minus_off=summary.get("mean_delta_on_minus_off", 0.0),
+            mean_score_on=summary.get("mean_score_on", 0.0),
+            mean_score_off=summary.get("mean_score_off", 0.0),
+        )
+    )
+    for case in cases:
+        if not isinstance(case, Mapping):
+            continue
+        ci = case.get("ci95")
+        ci_str = f" ±{ci}" if ci else ""
+        print(
+            "  [{v}] {cid}: on={on} off={off} delta={d}{ci}".format(
+                v=case.get("verdict"),
+                cid=case.get("case_id"),
+                on=case.get("score_on"),
+                off=case.get("score_off"),
+                d=case.get("delta"),
+                ci=ci_str,
+            )
+        )
+    return 0 if ok else 1
+
+
 def _report_context_projection_matrix(run_result: dict[str, Any], *, output_format: str) -> int:
     """呈现 context_projection_matrix 确定性结果。退出码 0 当且仅当 ok。"""
     ok = bool(run_result.get("ok"))
@@ -2036,12 +2090,14 @@ def _report_context_projection_matrix(run_result: dict[str, Any], *, output_form
     print(f"\n=== context_projection_matrix {'PASS' if ok else 'FAIL'} ===")
     print(
         "cases={total_cases} passed={passed_cases} failed={failed_cases} "
-        "control_plane_leaks={control_plane_leaks_total} receipt_chars_saved={receipt_chars_saved_total}".format(
+        "control_plane_leaks={control_plane_leaks_total} receipt_chars_saved={receipt_chars_saved_total} "
+        "adaptive_affects_prompt={adaptive_affects_prompt}".format(
             total_cases=summary.get("total_cases", 0),
             passed_cases=summary.get("passed_cases", 0),
             failed_cases=summary.get("failed_cases", 0),
             control_plane_leaks_total=summary.get("control_plane_leaks_total", 0),
             receipt_chars_saved_total=summary.get("receipt_chars_saved_total", 0),
+            adaptive_affects_prompt=summary.get("adaptive_affects_prompt", 0),
         )
     )
     for case in cases:

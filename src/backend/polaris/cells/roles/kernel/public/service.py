@@ -20,6 +20,7 @@ from polaris.cells.roles.kernel.internal.constitution_rules import (
     is_action_allowed,
 )
 from polaris.cells.roles.kernel.internal.context_gateway import (
+    ContextGatewayConfig,
     ContextRequest,
     ContextResult,
     RoleContextGateway,
@@ -108,6 +109,7 @@ __all__ = [
     "ConstitutionGuard",
     "ConstitutionViolationError",
     "ConstitutionalRoleContext",
+    "ContextGatewayConfig",
     "ContextOverride",
     "ContextRequest",
     "ContextResult",

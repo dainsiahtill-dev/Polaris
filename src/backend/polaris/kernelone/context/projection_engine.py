@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
@@ -99,6 +100,18 @@ class _AdaptiveState:
 # "每 turn 新建 → 学习状态清零"的架构阻断。按 learning_key（通常是角色）累积，
 # 使权重与 outcomes 窗口跨 turn 存活。
 _ADAPTIVE_STATE_STORE: dict[str, _AdaptiveState] = {}
+
+
+def adaptive_ordering_enabled() -> bool:
+    """自适应排序总开关。默认开（与当前线上行为一致）；置 0/false 退回纯时序排序。
+
+    供真实 LLM A/B 评测（ON vs OFF 比任务效果）与紧急回滚使用。
+    env: ``ENABLE_PROJECTION_ADAPTIVE_ORDERING``。
+    """
+    raw = os.environ.get("ENABLE_PROJECTION_ADAPTIVE_ORDERING")
+    if raw is None:
+        return True
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _get_adaptive_state(learning_key: str) -> _AdaptiveState:
@@ -254,19 +267,27 @@ class ProjectionEngine:
         if not events:
             return []
 
+        # A/B 总开关：关闭自适应排序时退回纯时序（sequence 升序），用于 ON/OFF 对照评测与回滚。
+        if not adaptive_ordering_enabled():
+            return sorted(events, key=lambda e: int(getattr(e, "sequence", 0)))
+
         # Sequence ceiling is invariant across the window; compute it once here
         # instead of re-deriving it inside the per-element sort key (was O(n^2)).
         max_seq = max((int(getattr(e, "sequence", 0)) for e in events), default=1)
 
-        # Compute adaptive priority key using current weights
-        def event_priority_key(event: Any) -> tuple[int, float, float, float, int]:
+        # Compute adaptive priority key using current weights.  Sequence remains
+        # the stable tie-breaker, but it is no longer the primary key; otherwise
+        # learned route/confidence/dialog weights can never affect real prompts
+        # when transcript sequence values are unique.
+        def event_priority_key(event: Any) -> tuple[float, int]:
             sequence = int(getattr(event, "sequence", 0))
             route = str(getattr(event, "route", "clear") or "clear").lower()
             metadata = getattr(event, "metadata", ())
             confidence = float(get_metadata_value(metadata, "routing_confidence", 0.5))
-            dialog_act_bonus = self._dialog_act_priority(metadata) * 0.1
+            dialog_act_score = min(1.0, self._dialog_act_priority(metadata) / 2.0)
             role = str(getattr(event, "role", "user") or "user")
             role_prio = self._role_priority(role)
+            role_score = role_prio / max(1, max(_ROLE_PRIORITY.values()))
 
             # Route score (higher route priority = more signal)
             route_score = float(self._ROUTE_PRIORITY.get(route, 0)) / 3.0
@@ -274,18 +295,25 @@ class ProjectionEngine:
             # Recency score (normalized to 0-1 based on position)
             recency_score = sequence / max(1, max_seq) if max_seq > 0 else 0.0
 
-            # Combined confidence with dialog act bonus
-            combined_confidence = min(1.0, confidence + dialog_act_bonus)
+            combined_confidence = min(1.0, confidence)
 
-            # Weighted composite score (lower = higher priority in sort)
-            composite = (
-                sequence,  # Primary: earlier events first (ascending by sequence)
-                -(self._weights.route_weight * route_score),  # Route contribution
-                -(self._weights.confidence_weight * combined_confidence),  # Confidence contribution
-                -(self._weights.recency_weight * recency_score),  # Recency contribution
-                -role_prio,  # Role priority as tiebreaker
+            # Patch/code-turns keep chronological stability when their semantic
+            # scores tie. Non-patch context can use adaptive recency/role boost
+            # to surface fresh supporting context without destabilizing equal
+            # patch events.
+            recency_component = (
+                0.0 if route == "patch" else self._weights.recency_weight * recency_score * (1.0 - route_score)
             )
-            return composite
+            role_component = 0.0 if route == "patch" else self._weights.role_priority_weight * role_score
+
+            priority_score = (
+                self._weights.route_weight * route_score
+                + self._weights.confidence_weight * combined_confidence
+                + recency_component
+                + self._weights.dialog_act_weight * dialog_act_score
+                + role_component
+            )
+            return (-priority_score, sequence)
 
         return sorted(events, key=event_priority_key)
 
@@ -384,12 +412,13 @@ class ProjectionEngine:
         }
 
     def build_turns(self, active_window: Iterable[Any], receipt_store: ReceiptStore) -> list[dict[str, Any]]:
-        sorted_events = self.sort_events(active_window)
+        events = list(active_window)
+        sorted_events = self.sort_events(events)
         if not sorted_events:
             return []
 
         turns: list[dict[str, Any]] = []
-        latest_sequence = int(getattr(sorted_events[-1], "sequence", 0))
+        latest_sequence = max((int(getattr(event, "sequence", 0)) for event in events), default=0)
 
         for index, event in enumerate(sorted_events):
             route = str(getattr(event, "route", "clear") or "clear").lower()

@@ -292,6 +292,17 @@ class RoleContextGateway:
         finally:
             set_trace_id("")
 
+    def record_projection_outcome(self, *, success: bool, tokens_used: int = 0) -> dict[str, float]:
+        """Feed turn outcome back into the role-scoped ProjectionEngine.
+
+        RoleContextGateway owns the role-keyed ProjectionEngine instance for the
+        turn. Calling this from the role execution path closes the production
+        learning loop: ContextOS projection -> TransactionKernel outcome ->
+        adaptive weights for the next turn.
+        """
+        self._projection_engine.record_outcome(success=success, tokens_used=tokens_used)
+        return self._projection_engine.get_adaptive_weights()
+
     async def _build_context_impl(self, request: ContextRequest, start_time: float) -> ContextResult:
         """Internal implementation of build_context with timing instrumentation."""
         sources: list[str] = []
@@ -513,6 +524,7 @@ class RoleContextGateway:
                 "effective_context_budget_tokens": effective_context_budget_tokens,
                 "budget_pressure_detected": budget_pressure_detected,
                 "context_decision_hints": context_decision_hints,
+                "projection_adaptive_weights": self._projection_engine.get_adaptive_weights(),
             },
         )
 

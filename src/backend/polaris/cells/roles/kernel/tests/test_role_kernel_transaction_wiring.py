@@ -271,6 +271,16 @@ class TestExecuteTransactionKernelTurn:
             "visible_content": "Hello from TK",
             "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
         }
+        context_gateway = MagicMock(
+            build_context=AsyncMock(
+                return_value=SimpleNamespace(
+                    messages=[{"role": "user", "content": "hi"}],
+                    token_estimate=37,
+                    metadata={},
+                )
+            ),
+            record_projection_outcome=MagicMock(return_value={"route_weight": 0.31}),
+        )
 
         with (
             patch.object(
@@ -280,9 +290,7 @@ class TestExecuteTransactionKernelTurn:
             ) as mock_create_tk,
             patch(
                 "polaris.cells.roles.kernel.public.service.RoleContextGateway",
-                return_value=MagicMock(
-                    build_context=AsyncMock(return_value=MagicMock(messages=[{"role": "user", "content": "hi"}]))
-                ),
+                return_value=context_gateway,
             ),
         ):
             result = await kernel._execute_transaction_kernel_turn(
@@ -299,6 +307,8 @@ class TestExecuteTransactionKernelTurn:
         assert result.content == "Hello from TK"
         assert result.is_complete is True
         assert result.execution_stats.get("transaction_kernel") is True
+        context_gateway.record_projection_outcome.assert_called_once_with(success=True, tokens_used=37)
+        assert result.metadata["projection_adaptive_weights_after_turn"] == {"route_weight": 0.31}
 
     @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_exposes_context_os_audit_metadata(self) -> None:

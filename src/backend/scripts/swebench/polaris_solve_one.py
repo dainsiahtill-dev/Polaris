@@ -221,7 +221,12 @@ def _git_has_changes(workspace: str) -> bool:
 
 
 def _cloud_complete(prompt: str, provider_id: str, max_tokens: int = 4000) -> tuple[str, dict[str, int]]:
-    """Call the mid-cloud edit model; return (text, usage) with REAL token counts."""
+    """Call the mid-cloud edit model; return (text, usage) with REAL token counts.
+
+    Defensive: a non-JSON / error response must NOT crash the solver — return
+    empty content. The calling loop will see the empty draft and either skip
+    the refine or treat it as a no-op patch.
+    """
     import httpx
 
     cfg_path = os.path.expanduser("~/.polaris/config/llm/llm_config.json")
@@ -229,23 +234,37 @@ def _cloud_complete(prompt: str, provider_id: str, max_tokens: int = 4000) -> tu
         cfg = json.load(fh)
     provider = cfg["providers"][provider_id]
     base = str(provider["base_url"]).rstrip("/")
-    resp = httpx.post(
-        f"{base}/v1/messages",
-        headers={
-            "x-api-key": str(provider["api_key"]),
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": provider["model"],
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=300,
-    )
-    body = resp.json()
+    empty: tuple[str, dict[str, int]] = ("", {"input_tokens": 0, "output_tokens": 0})
+    try:
+        resp = httpx.post(
+            f"{base}/v1/messages",
+            headers={
+                "x-api-key": str(provider["api_key"]),
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": provider["model"],
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=300,
+        )
+    except (httpx.HTTPError, OSError) as exc:
+        print(f"[solve-one] _cloud_complete transport error: {type(exc).__name__}: {exc}", flush=True)
+        return empty
+    if resp.status_code >= 400:
+        snippet = (resp.text or "")[:200].replace("\n", " ")
+        print(f"[solve-one] _cloud_complete HTTP {resp.status_code} body={snippet!r}", flush=True)
+        return empty
+    try:
+        body = resp.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        snippet = (resp.text or "")[:200].replace("\n", " ")
+        print(f"[solve-one] _cloud_complete json error: {type(exc).__name__} body={snippet!r}", flush=True)
+        return empty
     if not isinstance(body, dict):
-        return "", {"input_tokens": 0, "output_tokens": 0}
+        return empty
     text = "".join(part.get("text", "") for part in body.get("content", []) if isinstance(part, dict))
     raw_usage = body.get("usage") or {}
     usage = {
@@ -258,27 +277,47 @@ def _cloud_complete(prompt: str, provider_id: str, max_tokens: int = 4000) -> tu
 def _openai_complete(
     prompt: str, provider: dict[str, object], max_tokens: int, temperature: float
 ) -> tuple[str, dict[str, int]]:
-    """Call an OpenAI-compatible chat endpoint (e.g. the local vLLM gemma server)."""
+    """Call an OpenAI-compatible chat endpoint (e.g. the local vLLM gemma server).
+
+    Defensive: an HTTP 502/HTML error page or empty body must NOT crash the
+    whole convergence loop — we return ("", usage) instead and let the caller
+    decide (refine loop already degrades gracefully on empty draft). The LLM
+    endpoint can flap when gemma is restarting or the model is reloading.
+    """
     import httpx
 
     base = str(provider["base_url"]).rstrip("/")
-    resp = httpx.post(
-        f"{base}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {provider.get('api_key') or 'x'}",
-            "content-type": "application/json",
-        },
-        json={
-            "model": str(provider["model"]),
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=300,
-    )
-    body = resp.json()
+    empty: tuple[str, dict[str, int]] = ("", {"input_tokens": 0, "output_tokens": 0})
+    try:
+        resp = httpx.post(
+            f"{base}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {provider.get('api_key') or 'x'}",
+                "content-type": "application/json",
+            },
+            json={
+                "model": str(provider["model"]),
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=300,
+        )
+    except (httpx.HTTPError, OSError) as exc:
+        print(f"[solve-one] _openai_complete transport error: {type(exc).__name__}: {exc}", flush=True)
+        return empty
+    if resp.status_code >= 400:
+        snippet = (resp.text or "")[:200].replace("\n", " ")
+        print(f"[solve-one] _openai_complete HTTP {resp.status_code} body={snippet!r}", flush=True)
+        return empty
+    try:
+        body = resp.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        snippet = (resp.text or "")[:200].replace("\n", " ")
+        print(f"[solve-one] _openai_complete json error: {type(exc).__name__} body={snippet!r}", flush=True)
+        return empty
     if not isinstance(body, dict):
-        return "", {"input_tokens": 0, "output_tokens": 0}
+        return empty
     choices = body.get("choices") or []
     text = ""
     if choices and isinstance(choices[0], dict):

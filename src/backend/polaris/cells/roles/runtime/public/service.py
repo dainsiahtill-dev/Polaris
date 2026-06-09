@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # ── Standard library imports ─────────────────────────────────────────────────
 import argparse
+import dataclasses
 import hashlib
 import importlib
 import importlib.util
@@ -39,6 +40,7 @@ from polaris.cells.roles.engine.public.service import (
     register_engine,
 )
 from polaris.cells.roles.kernel.public.service import (
+    ContextGatewayConfig,
     ContextRequest,
     ContextResult,
     RoleContextGateway,
@@ -373,6 +375,15 @@ def _asset_mount_ref(runtime_object: RoleRuntimeObject, mount_name: str) -> str:
         return ""
 
 
+def _pm_asset_refs(runtime_object: RoleRuntimeObject) -> dict[str, str]:
+    return {
+        "project_function_index": _asset_mount_ref(runtime_object, "ProjectFunctionIndex"),
+        "task_graph": _asset_mount_ref(runtime_object, "TaskGraph"),
+        "runtime_projection_state": _asset_mount_ref(runtime_object, "RuntimeProjectionState"),
+        "open_loop_registry": _asset_mount_ref(runtime_object, "OpenLoopRegistry"),
+    }
+
+
 def _chief_engineer_asset_refs(runtime_object: RoleRuntimeObject) -> dict[str, str]:
     return {
         "blueprint_database": _asset_mount_ref(runtime_object, "BlueprintDatabase"),
@@ -494,6 +505,49 @@ def _profile_policy_ref(role_id: str, policy_name: str, profile_fingerprint: str
     return f"roles.profile:{role_id}:{policy_name}:{profile_fingerprint}"
 
 
+def _unique_string_tuple(values: Iterable[Any]) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = str(value or "").strip()
+        if token and token not in seen:
+            result.append(token)
+            seen.add(token)
+    return tuple(result)
+
+
+def _runtime_object_audit_metadata(runtime_object: RoleRuntimeObject) -> dict[str, Any]:
+    """Build a refs-only audit index for an instantiated runtime object."""
+    asset_mounts = runtime_object.asset_mounts.mounts
+    capabilities = runtime_object.capability_ports.capabilities
+    task_market_binding = runtime_object.task_market_binding
+    capability_fingerprint = runtime_object.capability_fingerprint
+    task_market_binding_refs = _unique_string_tuple(
+        (
+            task_market_binding.work_item_ref,
+            task_market_binding.lease_token_ref,
+        )
+    )
+
+    return {
+        "asset_refs": _unique_string_tuple(mount.asset_ref.ref for mount in asset_mounts),
+        "asset_owner_cells": _unique_string_tuple(mount.asset_ref.owner_cell for mount in asset_mounts),
+        "capability_refs": _unique_string_tuple(
+            f"{capability.owner_cell}:{capability.contract_name}" for capability in capabilities
+        ),
+        "capability_owner_cells": _unique_string_tuple(capability.owner_cell for capability in capabilities),
+        "turn_ledger_ref": runtime_object.ledger_binding.turn_ledger_ref,
+        "commit_receipt_ref": runtime_object.ledger_binding.commit_receipt_ref or "",
+        "runtime_receipt_refs": tuple(runtime_object.ledger_binding.receipt_refs),
+        "task_market_binding_refs": task_market_binding_refs,
+        "turn_task_refs": tuple(runtime_object.turn_context.task_refs),
+        "handoff_refs": tuple(runtime_object.turn_context.handoff_refs),
+        "typed_input_ref": runtime_object.turn_context.typed_input_ref,
+        "context_snapshot_ref": runtime_object.turn_context.context_snapshot_ref,
+        "capability_fingerprint_ref": f"roles.runtime:capability-fingerprint:{capability_fingerprint.fingerprint}",
+    }
+
+
 def instantiate_role_runtime_object(
     command: InstantiateRoleRuntimeObjectCommandV1,
     *,
@@ -557,6 +611,7 @@ def instantiate_role_runtime_object(
     )
 
     try:
+        command_metadata = dict(command.metadata)
         runtime_object = spec.instantiate(
             identity=RoleIdentity(
                 role_id=spec.role_id,
@@ -572,7 +627,7 @@ def instantiate_role_runtime_object(
             capability_id=command.capability_id,
             task_market_binding=command.task_market_binding,
             metadata={
-                **dict(command.metadata),
+                **command_metadata,
                 "profile_ref": profile_ref,
                 "profile_owner_cell": "roles.profile",
             },
@@ -585,6 +640,14 @@ def instantiate_role_runtime_object(
             error_message=str(exc),
         )
 
+    audit_metadata = _runtime_object_audit_metadata(runtime_object)
+    runtime_object_metadata = {
+        **dict(runtime_object.metadata),
+        **audit_metadata,
+    }
+    if runtime_object_metadata != dict(runtime_object.metadata):
+        runtime_object = dataclasses.replace(runtime_object, metadata=runtime_object_metadata)
+
     return RoleRuntimeObjectResultV1(
         ok=True,
         role_id=spec.role_id,
@@ -594,6 +657,7 @@ def instantiate_role_runtime_object(
             "profile_ref": profile_ref,
             "default_capability_id": spec.default_capability_id,
             "capability_id": runtime_object.capability_fingerprint.capability_id,
+            **audit_metadata,
         },
     )
 
@@ -3332,6 +3396,27 @@ def execute_role_capability_invocation(
             "role_payload_ref": invocation.payload_ref,
             "role_fingerprint_ref": invocation.fingerprint_ref,
             "role_capability_id": capability.capability_id,
+            "capability_fingerprint_ref": (
+                f"roles.runtime:capability-fingerprint:{runtime_object.capability_fingerprint.fingerprint}"
+            ),
+            "turn_ledger_ref": runtime_object.ledger_binding.turn_ledger_ref,
+            "commit_receipt_ref": runtime_object.ledger_binding.commit_receipt_ref or "",
+            "runtime_receipt_refs": tuple(runtime_object.ledger_binding.receipt_refs),
+            "typed_input_ref": runtime_object.turn_context.typed_input_ref,
+            "context_snapshot_ref": runtime_object.turn_context.context_snapshot_ref,
+            "turn_task_refs": tuple(runtime_object.turn_context.task_refs),
+            "handoff_refs": tuple(runtime_object.turn_context.handoff_refs),
+            "profile_ref": runtime_object.profile_binding.profile_ref,
+            "tool_policy_ref": runtime_object.profile_binding.tool_policy_ref,
+            "prompt_policy_ref": runtime_object.profile_binding.prompt_policy_ref,
+            "data_policy_ref": runtime_object.profile_binding.data_policy_ref,
+            "task_market_binding_refs": _unique_string_tuple(
+                (
+                    runtime_object.task_market_binding.work_item_ref,
+                    runtime_object.task_market_binding.lease_token_ref,
+                )
+            ),
+            "asset_refs": _pm_asset_refs(runtime_object),
         }
     )
 
@@ -5942,6 +6027,41 @@ def _to_contract_result(
     )
 
 
+def _read_blueprint_status_for_context(task_id: str, workspace: str) -> Any | None:
+    """Read CE blueprint status through the owner Cell public contract."""
+    task_token = str(task_id or "").strip()
+    if not task_token:
+        return None
+    workspace_token = str(workspace or "").strip() or "."
+    from polaris.cells.chief_engineer.blueprint.public import GetBlueprintStatusQueryV1, get_blueprint_status
+
+    return get_blueprint_status(GetBlueprintStatusQueryV1(task_id=task_token, workspace=workspace_token))
+
+
+def _read_qa_verdict_for_context(task_id: str, workspace: str) -> Any | None:
+    """Read QA verdict history through the owner Cell public contract."""
+    task_token = str(task_id or "").strip()
+    if not task_token:
+        return None
+    workspace_token = str(workspace or "").strip() or "."
+    from polaris.cells.qa.audit_verdict.public import GetQaVerdictQueryV1, get_qa_verdict
+
+    return get_qa_verdict(GetQaVerdictQueryV1(task_id=task_token, workspace=workspace_token))
+
+
+def _build_context_gateway_config_for_role(
+    role: str,
+    profile: RoleProfile,
+    request: RoleTurnRequest,
+) -> ContextGatewayConfig:
+    """Mount role asset reader ports for kernel-owned context signal assembly."""
+    del role, profile, request
+    return ContextGatewayConfig(
+        blueprint_overview_provider=_read_blueprint_status_for_context,
+        verdict_history_provider=_read_qa_verdict_for_context,
+    )
+
+
 class RoleRuntimeService(IRoleRuntime):
     """Contract-first service facade for `roles.runtime`."""
 
@@ -5962,7 +6082,11 @@ class RoleRuntimeService(IRoleRuntime):
             if kernel is None:
                 if not registry.list_roles():
                     load_core_roles()
-                kernel = RoleExecutionKernel(workspace=token, registry=registry)
+                kernel = RoleExecutionKernel(
+                    workspace=token,
+                    registry=registry,
+                    context_gateway_config_factory=_build_context_gateway_config_for_role,
+                )
                 self._kernels[token] = kernel
         return kernel
 

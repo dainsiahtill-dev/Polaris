@@ -898,7 +898,7 @@ class TestRunInterviewSuite:
             )
 
         fake = FakeProvider()
-        fake.invoke = MagicMock(side_effect=invoke_side_effect)
+        object.__setattr__(fake, "invoke", MagicMock(side_effect=invoke_side_effect))
 
         with patch("polaris.cells.llm.evaluation.internal.suites.get_provider_manager") as mock_pm:
             mock_pm.return_value.get_provider_instance.return_value = fake

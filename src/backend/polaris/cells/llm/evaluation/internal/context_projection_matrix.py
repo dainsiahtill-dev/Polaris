@@ -8,8 +8,9 @@ ProjectionEngine 是真实热路径上的"最终 prompt 组装器"（`context_ga
 2. **receipt 卸载**：超阈值的大工具输出被替换成占位符 + receipt_ref（省 token），
    且原文可经 ReceiptStore 取回（不丢信息）。
 3. **user 指令置末**：当前 user turn 必须是最后一条，历史 run_card/tail_hint 不得盖过它。
-4. **结构化发现注入 / system_hint 置首 / 时序**：confirmed_facts 进 system；system_hint
-   在最前；事件按 sequence 时序输出。
+4. **结构化发现注入 / system_hint 置首 / 稳定排序**：confirmed_facts 进 system；
+   system_hint 在最前；同等 patch 信号按 sequence 稳定输出，自适应权重必须能改变
+   支撑上下文的投影排序。
 
 这些是每个 prompt 的正确性/卫生属性，确定性可判定——故本套件是确定性矩阵（像
 deterministic judge，不需要 LLM）。运行产出每用例 PASS/FAIL + 聚合指标
@@ -449,7 +450,7 @@ def _case_signal_role_content_untouched() -> dict[str, Any]:
 def _case_chronological_order_and_system_first() -> dict[str, Any]:
     engine = ProjectionEngine()
     rs = ReceiptStore()
-    # 故意乱序输入，断言按 sequence 时序输出，且 system_hint 在最前
+    # 故意乱序输入；同等 patch 信号应按 sequence 稳定输出，且 system_hint 在最前。
     events = [
         _evt(sequence=3, role="assistant", content="third"),
         _evt(sequence=1, role="user", content="first"),
@@ -501,6 +502,97 @@ def _case_empty_window_robust() -> dict[str, Any]:
     }
 
 
+def _case_adaptive_learning_effect_probe() -> dict[str, Any]:
+    """硬门禁：ProjectionEngine 自适应学习必须真实改变 prompt 投影。
+
+    确定性地走完整因果链（无需 LLM——若机制不改 prompt，真实 LLM 必然测不到信号）：
+      (1) 训练（record_outcome）改变角色级权重；
+      (2) 权重改变会改变 active_window 的最终排序；
+      (3) 两者共同证明 adaptive learning 不再只是内部计数或文档声明。
+    """
+    from polaris.kernelone.context.projection_engine import (
+        ProjectionEngine,
+        reset_projection_adaptive_state,
+    )
+
+    reset_projection_adaptive_state()
+
+    # (1) 训练是否改变权重
+    e = ProjectionEngine(learning_key="probe_train")
+    win = [
+        _evt(sequence=1, role="assistant", content="a", route="patch", metadata=(("routing_confidence", 0.95),)),
+        _evt(sequence=2, role="assistant", content="b", route="patch", metadata=(("routing_confidence", 0.9),)),
+    ]
+    e.sort_events(win)
+    before = e.get_adaptive_weights()["route_weight"]
+    for _ in range(6):
+        e.record_outcome(success=True)
+    training_changes_weights = abs(e.get_adaptive_weights()["route_weight"] - before) > 1e-6
+
+    # (2) 极端权重是否改变投影顺序（唯一 sequence = 真实常态）
+    events = [
+        _evt(
+            sequence=1,
+            role="assistant",
+            content="s1_clear_high_conf",
+            route="clear",
+            metadata=(("routing_confidence", 0.99),),
+        ),
+        _evt(
+            sequence=2,
+            role="assistant",
+            content="s2_archive_low_conf",
+            route="archive",
+            metadata=(("routing_confidence", 0.01),),
+        ),
+        _evt(
+            sequence=3,
+            role="assistant",
+            content="s3_summarize_mid_conf",
+            route="summarize",
+            metadata=(("routing_confidence", 0.3),),
+        ),
+    ]
+    e2 = ProjectionEngine(learning_key="probe_order")
+    order_default = [x.content for x in e2.sort_events(events)]
+    e2._weights.route_weight = 0.99
+    e2._weights.confidence_weight = 0.0
+    e2._weights.recency_weight = 0.0
+    order_extreme = [x.content for x in e2.sort_events(events)]
+    weights_change_ordering = order_default != order_extreme
+
+    affects_prompt = training_changes_weights and weights_change_ordering
+
+    checks = [
+        # 可验证不变量（本会话修复的"训练半边"）——作为 gating check。
+        {
+            "name": "training_mechanism_changes_weights",
+            "ok": training_changes_weights,
+            "detail": f"before={before:.4f}",
+        },
+        {
+            "name": "adaptive_weights_change_ordering",
+            "ok": weights_change_ordering,
+            "detail": f"default={order_default} extreme={order_extreme}",
+        },
+        {
+            "name": "adaptive_affects_prompt",
+            "ok": affects_prompt,
+            "detail": f"affects_prompt={int(affects_prompt)}",
+        },
+    ]
+    return {
+        "case": "adaptive_learning_effect_probe",
+        "passed": affects_prompt,
+        "checks": checks,
+        "metrics": {
+            "adaptive_affects_prompt": int(affects_prompt),
+            "adaptive_weights_change_ordering": int(weights_change_ordering),
+            "adaptive_training_works": int(training_changes_weights),
+        },
+    }
+
+
 _CASES = (
     _case_control_plane_isolation,
     _case_content_level_control_plane_stripped,
@@ -514,6 +606,7 @@ _CASES = (
     _case_role_signal_cross_role_isolation,
     _case_role_specific_assets_and_isolation,
     _case_role_signal_circuit_breaker,
+    _case_adaptive_learning_effect_probe,
 )
 
 
@@ -536,6 +629,7 @@ async def run_context_projection_matrix_suite(
     passed = sum(1 for r in results if r["passed"])
     total_leaks = sum(int(r["metrics"].get("leaks", 0)) for r in results)
     total_saved = sum(int(r["metrics"].get("chars_saved", 0)) for r in results)
+    adaptive_affects_prompt = max((int(r["metrics"].get("adaptive_affects_prompt", 0)) for r in results), default=0)
     ok = passed == len(results) and total_leaks == 0
     return {
         "ok": ok,
@@ -548,6 +642,8 @@ async def run_context_projection_matrix_suite(
                 "failed_cases": len(results) - passed,
                 "control_plane_leaks_total": total_leaks,
                 "receipt_chars_saved_total": total_saved,
+                # 硬门禁指标：自适应学习是否真正影响 prompt（0=否）。
+                "adaptive_affects_prompt": adaptive_affects_prompt,
             },
         },
     }

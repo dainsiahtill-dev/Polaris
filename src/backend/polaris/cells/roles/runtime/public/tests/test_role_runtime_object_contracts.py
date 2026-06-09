@@ -1022,6 +1022,48 @@ def test_runtime_instantiation_binds_profile_via_roles_profile_public_contract()
     assert len(profile_service.queries) == 1
 
 
+def test_runtime_instantiation_result_exposes_refs_only_audit_index() -> None:
+    profile_service = FakeRoleProfileService()
+
+    result = instantiate_role_runtime_object(
+        InstantiateRoleRuntimeObjectCommandV1(
+            role_id="chief_engineer",
+            run_id="run-1",
+            task_id="task-1",
+            session_id="session-1",
+            workspace="/workspace",
+            host_kind="task_market_worker",
+            turn_ledger_ref="roles.kernel:turn-ledger:run-1",
+            policy_fingerprint="ce-policy-fp",
+            capability_id="generate_diff_specification",
+        ),
+        profile_service=profile_service,
+    )
+
+    assert result.ok is True
+    assert result.runtime_object is not None
+    metadata = dict(result.metadata)
+
+    assert metadata["turn_ledger_ref"] == "roles.kernel:turn-ledger:run-1"
+    assert metadata["capability_fingerprint_ref"] == (
+        f"roles.runtime:capability-fingerprint:{result.runtime_object.capability_fingerprint.fingerprint}"
+    )
+    assert metadata["asset_refs"] == (
+        "chief_engineer.blueprint:runtime/blueprints",
+        "chief_engineer.blueprint:arch-constraint-memo",
+        "chief_engineer.blueprint:diff-map-archive",
+    )
+    assert metadata["asset_owner_cells"] == ("chief_engineer.blueprint",)
+    assert "chief_engineer.blueprint:GenerateTaskBlueprintCommandV1" in metadata["capability_refs"]
+    assert "runtime.task_market:ClaimTaskWorkItemCommandV1" in metadata["capability_refs"]
+    assert metadata["capability_owner_cells"] == (
+        "chief_engineer.blueprint",
+        "code_intelligence.engine",
+        "runtime.task_market",
+    )
+    assert metadata["task_market_binding_refs"] == ("runtime.task_market:pending_design",)
+
+
 def test_public_runtime_instantiation_accepts_active_task_market_binding() -> None:
     profile_service = FakeRoleProfileService()
     task_market_binding = RoleTaskMarketBinding(
@@ -3954,6 +3996,18 @@ def test_pm_dispatch_capability_invokes_task_market_publish_contract() -> None:
     assert publish_command.priority == "high"
     assert publish_command.payload == {"objective": "publish a typed work item"}
     assert publish_command.metadata["role_invocation_id"] == "invoke-dispatch-1"
+    assert publish_command.metadata["role_fingerprint_ref"] == runtime_object.capability_fingerprint.fingerprint
+    assert publish_command.metadata["turn_ledger_ref"] == "roles.kernel:turn-ledger:pm-run"
+    assert publish_command.metadata["typed_input_ref"] == runtime_object.turn_context.typed_input_ref
+    assert publish_command.metadata["context_snapshot_ref"] == runtime_object.turn_context.context_snapshot_ref
+    assert publish_command.metadata["turn_task_refs"] == runtime_object.turn_context.task_refs
+    assert publish_command.metadata["profile_ref"] == runtime_object.profile_binding.profile_ref
+    assert publish_command.metadata["asset_refs"] == {
+        "project_function_index": "context.catalog:project-function-index",
+        "task_graph": "runtime.task_market:task-graph",
+        "runtime_projection_state": "runtime.projection:runtime-status",
+        "open_loop_registry": "runtime.task_market:open-loops",
+    }
     assert publish_command.depends_on == ("dep-1",)
 
 

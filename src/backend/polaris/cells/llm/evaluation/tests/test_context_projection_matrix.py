@@ -28,3 +28,14 @@ async def test_projection_matrix_covers_content_leak_and_signal_safety() -> None
     assert cases["content_level_control_plane_stripped"]["passed"] is True
     # signal-role (user/assistant) content must remain verbatim
     assert cases["signal_role_content_untouched"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_adaptive_learning_effect_probe_changes_prompt_projection() -> None:
+    """自适应学习必须真正影响 prompt 投影，而不只是改变内部权重。"""
+    result = await run_context_projection_matrix_suite({}, "m", "director", workspace=".")
+    cases = {c["case"]: c for c in result["details"]["cases"]}
+    probe = cases["adaptive_learning_effect_probe"]
+    assert probe["metrics"]["adaptive_training_works"] == 1
+    assert probe["metrics"]["adaptive_weights_change_ordering"] == 1
+    assert result["details"]["summary"]["adaptive_affects_prompt"] == 1

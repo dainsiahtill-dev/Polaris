@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from polaris.kernelone.context.projection_engine import (
     ProjectionEngine,
     reset_projection_adaptive_state,
@@ -61,7 +62,9 @@ def test_quality_distinguishes_calibration() -> None:
     rw_success = e_success.get_adaptive_weights()["route_weight"]
     rw_failure = e_failure.get_adaptive_weights()["route_weight"]
     # 高 route + 成功（route 预测准）应与 高 route + 失败（route 过度自信）分道扬镳。
-    assert abs(rw_success - rw_failure) > 1e-6, "weights must diverge between well-calibrated and mis-calibrated outcomes"
+    assert abs(rw_success - rw_failure) > 1e-6, (
+        "weights must diverge between well-calibrated and mis-calibrated outcomes"
+    )
 
 
 def test_record_outcome_uses_last_projection_events() -> None:
@@ -103,3 +106,22 @@ def test_adaptive_state_persists_across_instances_same_key() -> None:
     # 不同 key 的实例不受影响（角色隔离）
     other = ProjectionEngine(learning_key="qa")
     assert other.get_adaptive_weights()["route_weight"] == 0.30  # 默认值，独立桶
+
+
+def test_adaptive_ordering_env_switch_is_read_per_sort(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A/B suite 的 env 开关必须真实控制 ProjectionEngine 排序，而非空开关。"""
+    reset_projection_adaptive_state()
+    events = [
+        _evt(1, "clear", 0.99),
+        _evt(2, "archive", 0.01),
+        _evt(3, "summarize", 0.30),
+    ]
+    engine = ProjectionEngine(learning_key="env_switch")
+
+    monkeypatch.setenv("ENABLE_PROJECTION_ADAPTIVE_ORDERING", "0")
+    chronological = [event.sequence for event in engine.sort_events(events)]
+    assert chronological == [1, 2, 3]
+
+    monkeypatch.setenv("ENABLE_PROJECTION_ADAPTIVE_ORDERING", "1")
+    adaptive = [event.sequence for event in engine.sort_events(events)]
+    assert adaptive != chronological

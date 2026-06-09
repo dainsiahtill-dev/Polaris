@@ -634,6 +634,13 @@ class TurnEngine(TurnEngineCompatMixin):
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
         except Exception as exc:
             logger.exception("TransactionKernel execute failed: turn_id=%s", turn_id)
+            try:
+                context_gateway.record_projection_outcome(
+                    success=False,
+                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.debug("Projection outcome feedback failed after TransactionKernel error", exc_info=True)
             return RoleTurnResult(
                 content="",
                 error=f"TransactionKernel execution failed: {exc}",
@@ -776,6 +783,14 @@ class TurnEngine(TurnEngineCompatMixin):
         final_thinking = thinking_text
         if final_thinking is None and isinstance(finalization, dict):
             final_thinking = finalization.get("final_visible_message")
+
+        try:
+            metadata["projection_adaptive_weights_after_turn"] = context_gateway.record_projection_outcome(
+                success=bool(is_complete and not error_msg),
+                tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            logger.debug("Projection outcome feedback failed", exc_info=True)
 
         # Build turn history and events metadata for ContextOS persistence
         turn_history, turn_events_metadata = self._build_turn_transcript(
@@ -974,7 +989,24 @@ class TurnEngine(TurnEngineCompatMixin):
                         receipt_ids=receipt_ids,
                         response_model=response_model,
                     )
+                    try:
+                        adaptive_weights = context_gateway.record_projection_outcome(
+                            success=event.status == "success",
+                            tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                        )
+                        result_metadata = dict(getattr(event_dict["result"], "metadata", {}) or {})
+                        result_metadata["projection_adaptive_weights_after_turn"] = adaptive_weights
+                        event_dict["result"].metadata = result_metadata
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        logger.debug("Projection outcome feedback failed after stream completion", exc_info=True)
                 elif isinstance(event, ErrorEvent):
+                    try:
+                        context_gateway.record_projection_outcome(
+                            success=False,
+                            tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                        )
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        logger.debug("Projection outcome feedback failed after stream error", exc_info=True)
                     event_dict = {
                         "type": "error",
                         "error": event.message,
@@ -986,6 +1018,13 @@ class TurnEngine(TurnEngineCompatMixin):
                 yield event_dict
         except Exception as exc:
             logger.exception("TransactionKernel execute_stream failed: turn_id=%s", turn_id)
+            try:
+                context_gateway.record_projection_outcome(
+                    success=False,
+                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.debug("Projection outcome feedback failed after stream exception", exc_info=True)
             yield {"type": "error", "error": f"TransactionKernel stream execution failed: {exc}"}
 
 

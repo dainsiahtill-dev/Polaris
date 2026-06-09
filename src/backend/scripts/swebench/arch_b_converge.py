@@ -480,6 +480,10 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
 
     # seed round 1 with the best prior patch (V11 starts from the v10 hardened state, then
     # converges via test feedback) — the system's first attempt is round 1's baseline.
+    # Fallback: when no prior patch is found for this instance (fresh 30-instance subset),
+    # run polaris_solve_one.py once to produce a real initial patch. Without this fallback,
+    # round 1 would submit an empty patch (F2P 0/0, harness returns empty_patch) and the
+    # convergence loop would never make progress on new instances.
     seed = ""
     for src in (
         "predictions_v10_final.jsonl",
@@ -506,6 +510,47 @@ def converge(instance: dict[str, Any], work_dir: Path, max_rounds: int, run_pref
         if proc.returncode != 0:
             run_git(["checkout", "-f", base_commit], cwd=ws)
             seed = ""
+    if not seed:
+        # Fresh-instance fallback: produce a real baseline patch WITHOUT going through
+        # `generate_role_response` (the Transaction Kernel wraps that path with a hard
+        # 60s LLM timeout, which gemma-4-12B blows on long problem statements). Instead
+        # reuse the proven, embedding-free localization stack + `_complete_for_role`
+        # (300s timeout, fail-closed LLM transport handled earlier in this file) and
+        # `_apply_blocks` (the official handler). One hypothesis is enough for the seed.
+        run_git(["checkout", "-f", base_commit], cwd=ws)
+        try:
+            ranked, loc_tel = _ranked_candidates(str(ws), problem)
+            content_ranked: list[str] = []
+            if bool(loc_tel.get("degraded")) or len(ranked) < CONTENT_FALLBACK_MIN_RANKED:
+                idents = _extract_identifiers(problem)
+                content_ranked = _content_ranked_candidates(str(ws), idents)
+            merged = ranked + [c for c in content_ranked if c not in set(ranked)]
+            target = merged[0] if merged else ""
+            if target and (ws / target).is_file():
+                content = (ws / target).read_text(encoding="utf-8", errors="replace")
+                if len(content) > MAX_CONTENT_CHARS:
+                    content = content[:MAX_CONTENT_CHARS]
+                # Director (gemma) transcribes a SEARCH/REPLACE for the local target.
+                edit_prompt = (
+                    f"Fix the following bug in {target}. Output ONLY Aider SEARCH/REPLACE block(s), no prose.\n"
+                    "Format each block EXACTLY as:\n"
+                    f"<<<< SEARCH:{target}\n<lines copied VERBATIM from CONTENT>\n====\n<fixed lines>\n>>>> REPLACE\n\n"
+                    "Rules: SEARCH copied character-for-character (exact indentation); REPLACE must differ; "
+                    "keep every block CLOSED with `>>>> REPLACE`; do not touch tests.\n\n"
+                    f"BUG REPORT:\n{problem[:4000]}\n\n"
+                    f"CONTENT of {target}:\n```\n{content}\n```\n"
+                )
+                draft, _usage = _complete_for_role(
+                    "director", edit_prompt, max_tokens=_context_budget_max_tokens(edit_prompt)
+                )
+                _applied, _detail, _path = _apply_blocks(str(ws), target, draft)
+        except (RuntimeError, ValueError, OSError, TypeError, AttributeError) as exc:
+            print(
+                f"[arch-b] {iid} fresh-solve fallback failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+        # Whatever the solver produced (or did not), the next round will harvest it.
+        seed = current_patch(ws)  # may be empty; the loop will treat it as a real attempt
 
     trace: list[dict[str, Any]] = []
     tokens = {"local_in_est": 0, "local_out_est": 0, "cloud_in": 0, "cloud_out": 0}

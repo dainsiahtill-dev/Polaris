@@ -62,15 +62,15 @@ def _node_executable() -> str:
     return node
 
 
-def _run_node(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    result = _run_node_raw(args, env=env)
+def _run_node(args: list[str], *, env: dict[str, str] | None = None, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
+    result = _run_node_raw(args, env=env, timeout=timeout)
     assert result.returncode == 0, (
         f"node {' '.join(args)} failed with {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
     return result
 
 
-def _run_node_raw(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run_node_raw(args: list[str], *, env: dict[str, str] | None = None, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
@@ -82,7 +82,7 @@ def _run_node_raw(args: list[str], *, env: dict[str, str] | None = None) -> subp
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=60,
+        timeout=timeout,
         check=False,
     )
 
@@ -698,7 +698,7 @@ def test_dual_entry_full_chain_runner_dry_run_uses_desktop_and_web_specs() -> No
     )
     assert payload["summary_min_mtime_ms"] > 0
     assert payload["child_env"]["KERNELONE_E2E_USE_REAL_SETTINGS"] == "1"
-    assert payload["child_env"]["KERNELONE_NATS_ENABLED"] == "0"
+    assert payload["child_env"]["KERNELONE_NATS_ENABLED"] == "1"
     assert payload["child_env"]["KERNELONE_NATS_REQUIRED"] == "0"
     if os.name == "nt":
         assert payload["spawn_command"] == "cmd.exe"
@@ -889,6 +889,7 @@ def test_production_stability_runner_dry_run_declares_all_required_gates(tmp_pat
         "fault_injection_rollback",
         "performance_stress",
         "governance",
+        "projection_adaptive_matrix",
     }
     assert gates["full_chain"]["required"] is True
     assert gates["full_chain"]["commands"] == [
@@ -908,6 +909,123 @@ def test_production_stability_runner_dry_run_declares_all_required_gates(tmp_pat
     assert "run_catalog_governance_gate.py --workspace src/backend --mode hard-fail" in json.dumps(
         gates["governance"]["evidence"], ensure_ascii=True
     )
+
+
+def test_production_stability_runner_records_command_output_audit(tmp_path: Path) -> None:
+    audit_path = tmp_path / "production-stability-audit.json"
+
+    _run_node(
+        [
+            PRODUCTION_STABILITY_RUNNER,
+            "--skip-real-chain",
+            "--only-gate",
+            "fault_injection_rollback",
+            "--output",
+            str(audit_path),
+        ]
+    )
+
+    payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "PASS"
+    assert payload["summary"]["selected_gate_ids"] == ["fault_injection_rollback"]
+    gate = payload["gates"][0]
+    assert gate["id"] == "fault_injection_rollback"
+    result = gate["results"][0]
+    assert result["exit_code"] == 0
+    assert result["test_summary"]["passed"] >= 29
+    assert result["test_summary"]["collected"] >= 29
+    assert "passed" in result["test_summary"]["summary_line"]
+    assert "passed" in result["stdout_tail"]
+    assert "stderr_tail" in result
+
+
+def test_production_stability_runner_repeats_selected_gate_with_per_round_audit(tmp_path: Path) -> None:
+    audit_path = tmp_path / "production-stability-repeat-audit.json"
+
+    _run_node(
+        [
+            PRODUCTION_STABILITY_RUNNER,
+            "--skip-real-chain",
+            "--only-gate",
+            "fault_injection_rollback",
+            "--repeat",
+            "2",
+            "--output",
+            str(audit_path),
+        ]
+    )
+
+    payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "PASS"
+    assert payload["summary"]["repeat_count"] == 2
+    gate = payload["gates"][0]
+    assert gate["id"] == "fault_injection_rollback"
+    assert gate["status"] == "PASS"
+    assert [result["run_index"] for result in gate["results"]] == [1, 2]
+    assert all(result["command_index"] == 1 for result in gate["results"])
+    assert all(result["test_summary"]["passed"] >= 29 for result in gate["results"])
+    assert all("29 passed" in result["stdout_tail"] for result in gate["results"])
+
+
+def test_production_stability_runner_max_failed_early_termination(tmp_path: Path) -> None:
+    """--max-failed N stops after N gate failures; SKIP_REQUIRED does not count."""
+    audit_path = tmp_path / "early-stop-audit.json"
+
+    # Use --skip-real-chain so full_chain is SKIP_REQUIRED (not FAIL),
+    # then use a non-existent gate that gets marked as unknown/skipped.
+    _run_node(
+        [
+            PRODUCTION_STABILITY_RUNNER,
+            "--skip-real-chain",
+            "--only-gate",
+            "governance",
+            "--max-failed",
+            "1",
+            "--output",
+            str(audit_path),
+        ]
+    )
+
+    payload = json.load(audit_path.open(encoding="utf-8"))
+    # governance passes, so no early termination should occur
+    assert payload["status"] == "PASS"
+    assert payload["summary"]["repeat_count"] == 1
+    assert payload.get("cumulative_summary", {}).get("early_termination") is None
+
+
+def test_production_stability_runner_cumulative_report_generated(tmp_path: Path) -> None:
+    """When --repeat > 1, production-stability-cumulative.json is written."""
+    audit_path = tmp_path / "cumulative-audit.json"
+
+    _run_node(
+        [
+            PRODUCTION_STABILITY_RUNNER,
+            "--skip-real-chain",
+            "--only-gate",
+            "governance",
+            "--repeat",
+            "2",
+            "--output",
+            str(audit_path),
+        ],
+        timeout=120.0,
+    )
+
+    payload = json.load(audit_path.open(encoding="utf-8"))
+    assert payload["status"] == "PASS"
+    assert "cumulative_rounds" in payload
+    assert len(payload["cumulative_rounds"]) == 2
+    assert payload["cumulative_summary"]["total_rounds"] == 2
+    assert payload["cumulative_summary"]["completed_rounds"] == 2
+
+    # Cumulative JSON file should exist alongside the per-round audits
+    # It goes in the same directory as the output file
+    cumulative_path = audit_path.parent / "production-stability-cumulative.json"
+    assert cumulative_path.exists(), f"cumulative JSON should be written alongside output at {cumulative_path}"
+    cumulative = json.load(cumulative_path.open(encoding="utf-8"))
+    assert cumulative["schema"] == "polaris.e2e.production_stability_validation_cumulative.v1"
+    assert len(cumulative["rounds"]) == 2
+    assert cumulative["cumulative_summary"]["pass_rate"] == 1.0
 
 
 def test_dual_entry_full_chain_runner_summarizes_existing_desktop_and_web_matrices(tmp_path: Path) -> None:

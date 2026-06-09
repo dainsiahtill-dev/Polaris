@@ -36,6 +36,9 @@ from polaris.cells.llm.evaluation.internal.interview import (
     generate_interview_answer_streaming,
     save_interview_report,
 )
+from polaris.cells.llm.evaluation.internal.projection_adaptive_matrix import (
+    run_projection_adaptive_matrix_suite,
+)
 from polaris.cells.llm.evaluation.internal.readiness_freshness import (
     DEFAULT_READINESS_MAX_AGE_SECONDS,
     parse_readiness_timestamp,
@@ -101,6 +104,7 @@ __all__ = [
     "run_connectivity_suite_sync",
     "run_context_benchmark_suite",
     "run_context_projection_matrix_suite",
+    "run_projection_adaptive_matrix_suite",
     "run_readiness_tests",
     "run_readiness_tests_streaming",
     "run_speculation_matrix_suite",

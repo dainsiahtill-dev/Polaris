@@ -25,11 +25,12 @@ import os
 import time
 import uuid
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
-from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
+from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig, ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
     KernelEventEmitter,
@@ -90,6 +91,7 @@ _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS = frozenset(
     }
 )
 _CONTEXT_EXPENSIVE_TOOL_NAMES = frozenset({"read_file"})
+ContextGatewayConfigFactory = Callable[[str, RoleProfile, RoleTurnRequest], ContextGatewayConfig | None]
 
 
 @dataclass(frozen=True)
@@ -153,6 +155,7 @@ class RoleExecutionKernel:
         output_parser: IOutputParser | None = None,
         quality_checker: IQualityChecker | None = None,
         event_emitter: IEventEmitter | None = None,
+        context_gateway_config_factory: ContextGatewayConfigFactory | None = None,
     ) -> None:
         """初始化执行内核
 
@@ -168,6 +171,7 @@ class RoleExecutionKernel:
             output_parser: 输出解析服务（可选，用于依赖注入）
             quality_checker: 质量检查服务（可选，用于依赖注入）
             event_emitter: 事件发射服务（可选，用于依赖注入）
+            context_gateway_config_factory: 上下文网关配置工厂（可选，由 runtime/adapters 注入）
         """
         self.workspace = workspace
         self.registry = registry or RoleProfileRegistry()  # type: ignore[no-untyped-call]
@@ -180,6 +184,7 @@ class RoleExecutionKernel:
         self._injected_output_parser = output_parser
         self._injected_quality_checker = quality_checker
         self._injected_event_emitter = event_emitter
+        self._context_gateway_config_factory = context_gateway_config_factory
 
         # M1: 工具网关 DI 支持
         self._tool_gateway = tool_gateway
@@ -266,6 +271,21 @@ class RoleExecutionKernel:
     def config(self) -> KernelConfig:
         """获取当前 Kernel 配置"""
         return self._config
+
+    def _build_context_gateway_config(
+        self,
+        role: str,
+        profile: RoleProfile,
+        request: RoleTurnRequest,
+    ) -> ContextGatewayConfig | None:
+        """Build ContextGatewayConfig through the injected owner-agnostic runtime factory."""
+        if self._context_gateway_config_factory is None:
+            return None
+        try:
+            return self._context_gateway_config_factory(role, profile, request)
+        except Exception:  # noqa: BLE001 - context asset providers must degrade to baseline context
+            logger.debug("ContextGatewayConfig factory failed", exc_info=True)
+            return None
 
     @staticmethod
     def _use_transaction_kernel() -> bool:
@@ -1134,7 +1154,11 @@ class RoleExecutionKernel:
 
         controller = ToolLoopController.from_request(request=request, profile=profile)
         context_request = controller.build_context_request()
-        context_gateway = RoleContextGateway(profile, self.workspace)
+        context_gateway = RoleContextGateway(
+            profile,
+            self.workspace,
+            config=self._build_context_gateway_config(role, profile, request),
+        )
         context_result = await context_gateway.build_context(context_request)
         from polaris.kernelone.context.projection_engine import ProjectionEngine
         from polaris.kernelone.context.receipt_store import ReceiptStore
@@ -1157,6 +1181,13 @@ class RoleExecutionKernel:
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
         except Exception as exc:
             logger.exception("TransactionKernel execute failed: turn_id=%s", turn_id)
+            try:
+                context_gateway.record_projection_outcome(
+                    success=False,
+                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.debug("Projection outcome feedback failed after TransactionKernel error", exc_info=True)
             return RoleTurnResult(
                 content="",
                 error=f"TransactionKernel execution failed: {exc}",
@@ -1266,6 +1297,14 @@ class RoleExecutionKernel:
         if final_thinking is None and isinstance(finalization, dict):
             final_thinking = finalization.get("final_visible_message")
 
+        try:
+            metadata["projection_adaptive_weights_after_turn"] = context_gateway.record_projection_outcome(
+                success=bool(is_complete and not error_msg),
+                tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            logger.debug("Projection outcome feedback failed", exc_info=True)
+
         # Build turn history and events metadata for ContextOS persistence
         turn_history, turn_events_metadata = self._build_turn_history_and_events(
             turn_id=turn_id,
@@ -1329,7 +1368,11 @@ class RoleExecutionKernel:
 
         controller = ToolLoopController.from_request(request=request, profile=profile)
         context_request = controller.build_context_request()
-        context_gateway = RoleContextGateway(profile, self.workspace)
+        context_gateway = RoleContextGateway(
+            profile,
+            self.workspace,
+            config=self._build_context_gateway_config(role, profile, request),
+        )
         context_result = await context_gateway.build_context(context_request)
         from polaris.kernelone.context.projection_engine import ProjectionEngine
         from polaris.kernelone.context.receipt_store import ReceiptStore
@@ -1415,6 +1458,13 @@ class RoleExecutionKernel:
                 final_thinking = "".join(accumulated_thinking) or None
                 # Backward compat: failed / suspended completions map to error events
                 if event.status in ("failed", "suspended"):
+                    try:
+                        context_gateway.record_projection_outcome(
+                            success=False,
+                            tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                        )
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        logger.debug("Projection outcome feedback failed after stream failure", exc_info=True)
                     event_dict = {
                         "type": "error",
                         "error": event.error or "execution_failed",
@@ -1448,6 +1498,16 @@ class RoleExecutionKernel:
                 if isinstance(context_os_audit, dict):
                     result_metadata["context_os_audit"] = dict(context_os_audit)
                     event_dict["metadata"] = dict(result_metadata)
+                try:
+                    result_metadata["projection_adaptive_weights_after_turn"] = (
+                        context_gateway.record_projection_outcome(
+                            success=event.status == "success",
+                            tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                        )
+                    )
+                    event_dict["metadata"] = dict(result_metadata)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    logger.debug("Projection outcome feedback failed after stream completion", exc_info=True)
                 # Include RoleTurnResult so that stream consumers can persist turn state
                 turn_history, turn_events_metadata = self._build_turn_history_and_events(
                     turn_id=turn_id,
@@ -1482,6 +1542,13 @@ class RoleExecutionKernel:
                     metadata=result_metadata,
                 )
             elif isinstance(event, ErrorEvent):
+                try:
+                    context_gateway.record_projection_outcome(
+                        success=False,
+                        tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                    )
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    logger.debug("Projection outcome feedback failed after stream error", exc_info=True)
                 event_dict = {
                     "type": "error",
                     "error": event.message,
