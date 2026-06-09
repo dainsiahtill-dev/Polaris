@@ -3,7 +3,7 @@
   "role": "scout",
   "title": "Scout reports the doc-vs-code mismatch in the DataSync client",
   "description": "L4 doc_exploration: requires reading BOTH docs/API.md and src/api.py and reporting the consistency gap. docs/API.md claims a default timeout of 30 seconds and 5 required constructor params; src/api.py actually defaults the timeout to 10 seconds and requires only 2 params. A correct answer surfaces the mismatch with both numbers; an answer that just parrots the docs fails.",
-  "prompt": "The docs in this DataSync client workspace may be out of date. Compare docs/API.md against the real implementation in src/api.py and report every place where the documentation contradicts the code. For each discrepancy give BOTH the documented value and the actual code value. In particular cover (a) the default request timeout and (b) how many parameters the DataSyncClient constructor actually requires. Make the word 'mismatch' explicit for each discrepancy you find.",
+  "prompt": "The docs in this DataSync client workspace may be out of date. Compare docs/API.md against the real implementation in src/api.py and report every place where the documentation contradicts the code. For each discrepancy give BOTH the documented value and the actual code value. In particular cover (a) the default request timeout and (b) how many parameters the DataSyncClient constructor actually requires. Make the word 'mismatch' explicit for each discrepancy you find. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "workspace_fixture": "scout_outdated_api_docs",
   "tags": [
     "scout",
@@ -30,7 +30,8 @@
     ],
     "validators": [
       "scout_readonly_contract",
-      "scout_doc_facts"
+      "scout_doc_facts",
+      "scout_min_recon"
     ]
   }
 }

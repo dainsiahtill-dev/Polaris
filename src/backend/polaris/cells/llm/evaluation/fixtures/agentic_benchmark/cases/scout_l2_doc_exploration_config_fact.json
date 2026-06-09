@@ -3,7 +3,7 @@
   "role": "scout",
   "title": "Scout extracts the real default timeout from code",
   "description": "L2 doc_exploration: probes whether the scout extracts a specific configured value (the default request timeout) from the AUTHORITATIVE source (src/api.py) rather than trusting the stale docs/API.md. The README explicitly says src/api.py is the source of truth.",
-  "prompt": "In this DataSync client workspace, what is the ACTUAL default request timeout (in seconds) that a constructed DataSyncClient uses? Read the real source of truth (src/api.py) to confirm the configured value rather than relying on any documentation. State the exact number of seconds and name the file and constant you read it from.",
+  "prompt": "In this DataSync client workspace, what is the ACTUAL default request timeout (in seconds) that a constructed DataSyncClient uses? Read the real source of truth (src/api.py) to confirm the configured value rather than relying on any documentation. State the exact number of seconds and name the file and constant you read it from. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "workspace_fixture": "scout_outdated_api_docs",
   "tags": [
     "scout",
@@ -28,7 +28,8 @@
     ],
     "validators": [
       "scout_readonly_contract",
-      "scout_doc_facts"
+      "scout_doc_facts",
+      "scout_min_recon"
     ]
   }
 }

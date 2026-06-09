@@ -9,6 +9,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -620,6 +621,22 @@ class RoleContextGateway:
             "review",
         }
 
+    def _recon_mode_active(self) -> bool:
+        """Recon mode: starve the scout of pre-fed code content so it MUST use
+        read/search tools to discover (information-asymmetry forcing function).
+
+        Sourced from the role profile's ``context_policy.recon_mode`` (the
+        durable 档位) OR the ``KERNELONE_SCOUT_RECON_MODE`` env toggle scoped to
+        the scout role (for benchmark gray-rollout without touching production
+        scout). The project-structure TREE is intentionally kept (path scaffold);
+        only code-snippet CONTENT is withheld.
+        """
+        if bool(getattr(self.policy, "recon_mode", False)):
+            return True
+        env = os.getenv("KERNELONE_SCOUT_RECON_MODE", "").strip().lower()
+        role = str(getattr(self.profile, "role_id", "") or "").strip().lower()
+        return env in {"1", "true", "yes", "on"} and role == "scout"
+
     def build_system_context(self, base_prompt: str, appendix: str | None = None) -> str:
         """构建系统上下文（提示词部分）
 
@@ -632,8 +649,8 @@ class RoleContextGateway:
         """
         parts = [base_prompt]
 
-        # 追加提示词（仅追加，不覆盖）
-        if appendix and self.policy.include_code_snippets:
+        # 追加提示词（仅追加，不覆盖）。Recon 模式下不预喂代码内容，强制工具侦察。
+        if appendix and self.policy.include_code_snippets and not self._recon_mode_active():
             parts.append("\n\n【追加上下文】\n" + appendix)
 
         return "\n".join(parts)

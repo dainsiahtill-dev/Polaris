@@ -153,31 +153,24 @@ def solve_normal_mode(
             )
         return result
 
-    # Send the problem ONCE. The session orchestrator's own loop (execute_stream,
-    # max_auto_turns=10) drives localize -> read -> edit across internal turns and
-    # builds its OWN continuation prompts; the harness must NOT inject hand-crafted
-    # "continue" text (it would break TurnEngine continuity / look like a new user
-    # request). The thin outer loop only nudges the rare case where the agent stops
-    # while still signalling more work, and provides retry across calls.
-    loops_run = 0
-    saw_error = False
+    # Drive the session with ONE user message. The session orchestrator's own loop
+    # (execute_stream, max_auto_turns=10) already drives localize -> read -> edit
+    # across internal turns and builds its OWN continuation prompts. The harness must
+    # NOT re-send a follow-up "continue" message: once the session reaches its terminal
+    # `done` phase, a new user turn triggers an InvariantViolation (phase done ->
+    # exploring) and aborts. The single call IS the full agentic session; only transient
+    # transport errors are retried in place.
+    _ = max_loops  # retained for CLI compat; the inner agentic loop owns turn count
     message = _build_problem_message(problem)
-    for loop_idx in range(1, max(1, max_loops) + 1):
-        loops_run = loop_idx
-        result = run_turn_with_retry(message, f"loop {loop_idx}/{max_loops}")
-        final_content = str(getattr(result, "final_content", "") or "")
-        saw_error = bool(getattr(result, "saw_error", False))
-        more_work = _director_output_suggests_more_work(final_content)
-        print(
-            f"[normal] {iid} loop {loop_idx}/{max_loops}: "
-            f"saw_error={saw_error} chars={len(final_content)} more_work={more_work}",
-            flush=True,
-        )
-        if saw_error or not more_work:
-            break
-        # Minimal nudge ONLY (no re-planning, no verbose instructions): let the
-        # agent's own continuation machinery resume.
-        message = "[mode:materialize]\nContinue until the fix is complete."
+    result = run_turn_with_retry(message, "session")
+    final_content = str(getattr(result, "final_content", "") or "")
+    saw_error = bool(getattr(result, "saw_error", False))
+    loops_run = 1
+    print(
+        f"[normal] {iid} session: saw_error={saw_error} chars={len(final_content)} "
+        f"more_work={_director_output_suggests_more_work(final_content)}",
+        flush=True,
+    )
 
     patch = clean_model_patch(ws, base_commit)
     print(

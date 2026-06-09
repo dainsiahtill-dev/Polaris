@@ -4,7 +4,7 @@
   "title": "L3 Code Search: Map Who Imports the Shared SessionContext DTO",
   "description": "Probes cross-reference / dependency mapping. The shared DTO SessionContext is defined once in core/contracts.py and imported across the auth, api, storage, and billing layers. The scout must enumerate which modules import (depend on) it across the codebase and express the relationship, while excluding the deprecated module that does NOT import it. Requires multiple recon hops.",
   "workspace_fixture": "scout_import_graph",
-  "prompt": "The shared DTO 'SessionContext' is defined in core/contracts.py. Map its dependency fan-in: list every module in this codebase that imports SessionContext, and describe the import/dependency relationship (who depends on the core contract). Be exhaustive and exclude any deprecated module that does not actually import it.",
+  "prompt": "The shared DTO 'SessionContext' is defined in core/contracts.py. Map its dependency fan-in: list every module in this codebase that imports SessionContext, and describe the import/dependency relationship (who depends on the core contract). Be exhaustive and exclude any deprecated module that does not actually import it. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "tags": [
     "scout",
     "l3",
@@ -40,7 +40,8 @@
     ],
     "validators": [
       "scout_readonly_contract",
-      "scout_dependency_report"
+      "scout_dependency_report",
+      "scout_min_recon"
     ]
   }
 }

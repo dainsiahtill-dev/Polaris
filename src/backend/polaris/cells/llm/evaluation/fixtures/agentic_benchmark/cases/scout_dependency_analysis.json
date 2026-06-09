@@ -4,14 +4,14 @@
   "title": "Scout Analyzes Dependencies",
   "description": "The Scout role must identify and assess project dependencies.",
   "workspace_fixture": "base_tooling_workspace",
-  "prompt": "Analyze project dependencies and their status. Return JSON: {direct_deps: [{name, version, purpose}], transitive_deps: int, outdated: [{name, current, latest, risk}], vulnerable: [{name, cve, severity, fix}], license_issues: [string]}.",
+  "prompt": "Analyze project dependencies and their status. Return JSON: {direct_deps: [{name, version, purpose}], transitive_deps: int, outdated: [{name, current, latest, risk}], vulnerable: [{name, cve, severity, fix}], license_issues: [string]}. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "tags": [
     "scout",
     "dependencies",
     "security"
   ],
   "judge": {
-    "score_threshold": 0.80,
+    "score_threshold": 0.8,
     "required_tools": [
       "repo_tree",
       "read_file"
@@ -25,7 +25,8 @@
       "<tool_call>"
     ],
     "validators": [
-      "scout_dependency_report"
+      "scout_dependency_report",
+      "scout_min_recon"
     ],
     "min_tool_calls": 3,
     "max_tool_calls": 8

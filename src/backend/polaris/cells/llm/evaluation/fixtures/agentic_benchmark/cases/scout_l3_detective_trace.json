@@ -3,7 +3,7 @@
   "role": "scout",
   "title": "Scout Traces A Test-vs-Source Expectation Mismatch",
   "description": "L3 detective: the test expects an exception on empty input but the source silently returns a value. The scout must cross-reference the failing test against the source it imports, then localize the exact defect to a single file -- read-only.",
-  "prompt": "A test about median calculation is failing. The test in tests/test_median.py expects median([]) to raise an exception, but the implementation does not. Search the workspace, read the failing test and the source it imports, and explain precisely why the expectation is not met. Name the exact source file and the exact line/behavior that is wrong. Do not edit anything.",
+  "prompt": "A test about median calculation is failing. The test in tests/test_median.py expects median([]) to raise an exception, but the implementation does not. Search the workspace, read the failing test and the source it imports, and explain precisely why the expectation is not met. Name the exact source file and the exact line/behavior that is wrong. Do not edit anything. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "workspace_fixture": "director_root_cause_locator",
   "tags": [
     "scout",
@@ -34,7 +34,8 @@
     ],
     "validators": [
       "scout_readonly_contract",
-      "scout_detective_root_cause"
+      "scout_detective_root_cause",
+      "scout_min_recon"
     ],
     "min_tool_calls": 2,
     "max_tool_calls": 8

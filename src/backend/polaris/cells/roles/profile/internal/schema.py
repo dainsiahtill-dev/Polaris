@@ -221,6 +221,10 @@ class RoleContextPolicy:
     # 代码片段最大行数
     max_code_lines: int = 100
 
+    # Recon 模式：不预喂代码内容（信息真空），强制用只读检索工具实地侦察。
+    # 默认 False；侦察类角色（scout）opt-in。仅切代码内容，保留目录树路径脚手架。
+    recon_mode: bool = False
+
     # 是否包含任务历史
     include_task_history: bool = True
 

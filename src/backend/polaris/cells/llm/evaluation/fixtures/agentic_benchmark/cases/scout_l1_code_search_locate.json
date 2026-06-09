@@ -4,7 +4,7 @@
   "title": "L1 Code Search: Locate Where SessionContext Is Defined",
   "description": "Probes single-hop code search: the scout must locate the one file where the shared DTO SessionContext is DEFINED (its class definition), not merely where it is imported. A same-named build_session red herring and DTO mentions in docstrings make a naive grep ambiguous, so the answer must point at the real defining file core/contracts.py.",
   "workspace_fixture": "scout_import_graph",
-  "prompt": "In this codebase, find where the shared DTO class 'SessionContext' is DEFINED (the file containing its class definition, not the files that merely import it). Report the exact file path of its definition.",
+  "prompt": "In this codebase, find where the shared DTO class 'SessionContext' is DEFINED (the file containing its class definition, not the files that merely import it). Report the exact file path of its definition. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "tags": [
     "scout",
     "l1",
@@ -32,7 +32,8 @@
     ],
     "validators": [
       "scout_readonly_contract",
-      "scout_evidence_paths"
+      "scout_evidence_paths",
+      "scout_min_recon"
     ]
   }
 }

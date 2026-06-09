@@ -3,7 +3,7 @@
   "role": "scout",
   "title": "Scout Produces A Structured Multi-Suspect Diagnosis",
   "description": "L6 detective synthesis: the scout must reconnoiter every suspect file, attach concrete evidence to each, explicitly dismiss the config.py TODO red herring, conclude the true root cause is the precision-omitting stale memo key in cache.py, and propose a fix direction -- all read-only, grounded in actual file reads.",
-  "prompt": "Produce a structured root-cause diagnosis for the failing integration_test.py (output mismatch) while tests/test_calculator.py passes. Investigate read-only and return a report with: (1) suspects considered (src/calculator.py, src/config.py, src/cache.py) with the concrete evidence you found in each file, (2) which suspects you ruled out and why (explicitly address the config.py 'precision may be wrong' TODO as a red herring), (3) the final root cause naming the exact file and defect, and (4) a fix direction. Do not edit anything.",
+  "prompt": "Produce a structured root-cause diagnosis for the failing integration_test.py (output mismatch) while tests/test_calculator.py passes. Investigate read-only and return a report with: (1) suspects considered (src/calculator.py, src/config.py, src/cache.py) with the concrete evidence you found in each file, (2) which suspects you ruled out and why (explicitly address the config.py 'precision may be wrong' TODO as a red herring), (3) the final root cause naming the exact file and defect, and (4) a fix direction. Do not edit anything. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "workspace_fixture": "scout_multi_cause_detective",
   "tags": [
     "scout",
@@ -40,7 +40,8 @@
     "validators": [
       "scout_readonly_contract",
       "scout_detective_root_cause",
-      "scout_evidence_paths"
+      "scout_evidence_paths",
+      "scout_min_recon"
     ],
     "min_tool_calls": 3,
     "max_tool_calls": 15

@@ -4,7 +4,7 @@
   "title": "Scout Discovers Codebase Structure",
   "description": "The Scout role must quickly understand and document the codebase structure.",
   "workspace_fixture": "base_tooling_workspace",
-  "prompt": "Explore the codebase and create a comprehensive map. Return JSON: {architecture: string, modules: [{name, purpose, dependencies: [string]}], entry_points: [string], data_flow: string}. Be thorough but concise.",
+  "prompt": "Explore the codebase and create a comprehensive map. Return JSON: {architecture: string, modules: [{name, purpose, dependencies: [string]}], entry_points: [string], data_flow: string}. Be thorough but concise. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "tags": [
     "scout",
     "discovery",
@@ -26,7 +26,8 @@
       "<tool_call>"
     ],
     "validators": [
-      "scout_codebase_map"
+      "scout_codebase_map",
+      "scout_min_recon"
     ],
     "min_tool_calls": 5,
     "max_tool_calls": 15

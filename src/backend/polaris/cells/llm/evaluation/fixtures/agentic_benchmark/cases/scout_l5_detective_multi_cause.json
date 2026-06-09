@@ -3,7 +3,7 @@
   "role": "scout",
   "title": "Scout Isolates True Root Cause Among Plausible Suspects",
   "description": "L5 detective: a bug with several plausible causes and a planted red herring. integration_test.py fails while the unit suite passes. config.py carries a misleading 'precision may be wrong' TODO (decoy); the real defect is a stale memo key in cache.py that omits precision. The scout must follow the indirection (calculator -> cache, calculator -> config) and NOT be misled into blaming config.",
-  "prompt": "integration_test.py is failing with an output mismatch, but tests/test_calculator.py passes. Several files could be responsible: src/calculator.py, src/config.py, and src/cache.py. Investigate read-only, follow how divide() is computed, and identify the ONE true root cause. State the exact file and the precise defect. Be careful: do not be misled by unrelated TODOs or a low default value. Do not edit anything.",
+  "prompt": "integration_test.py is failing with an output mismatch, but tests/test_calculator.py passes. Several files could be responsible: src/calculator.py, src/config.py, and src/cache.py. Investigate read-only, follow how divide() is computed, and identify the ONE true root cause. State the exact file and the precise defect. Be careful: do not be misled by unrelated TODOs or a low default value. Do not edit anything. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
   "workspace_fixture": "scout_multi_cause_detective",
   "tags": [
     "scout",
@@ -35,7 +35,8 @@
     ],
     "validators": [
       "scout_readonly_contract",
-      "scout_detective_root_cause"
+      "scout_detective_root_cause",
+      "scout_min_recon"
     ],
     "min_tool_calls": 3,
     "max_tool_calls": 12

@@ -1259,6 +1259,28 @@ class ScoutDetectiveRootCauseValidator:
         return True, "detective output localizes a concrete root-cause anchor"
 
 
+class ScoutMinReconValidator:
+    """CRITICAL: scout must actually reconnoiter — at least one read/search tool
+    call — rather than answer from pre-loaded context. Without a real recon call
+    the case fails outright, regardless of how good the output text looks. This is
+    what makes the matrix discriminate genuine investigation from context-recall."""
+
+    name: str = "scout_min_recon"
+    category: str = "tooling"
+    critical: bool = True
+
+    def validate(
+        self,
+        output_text: str,
+        observed: ObservedBenchmarkRun,
+        known_paths: list[str],
+    ) -> tuple[bool, str]:
+        del output_text, known_paths
+        if _scout_has_recon_tool_call(observed):
+            return True, "scout performed at least one reconnaissance tool call"
+        return False, "scout answered with NO reconnaissance tool call (context-recall, not investigation)"
+
+
 class ScoutSubagentUsedValidator:
     """A non-scout role (pm/chief_engineer/director) must delegate reconnaissance
     to the ``scout_probe`` sub-agent rather than hand-rolling broad exploration."""
@@ -1317,6 +1339,7 @@ BUILTIN_VALIDATORS: dict[str, ValidatorPort] = {
     "scout_doc_facts": ScoutDocFactsValidator(),
     "scout_detective_root_cause": ScoutDetectiveRootCauseValidator(),
     "scout_subagent_used": ScoutSubagentUsedValidator(),
+    "scout_min_recon": ScoutMinReconValidator(),
 }
 
 VALIDATOR_SPECS: dict[str, tuple[str, bool, Callable[[str], tuple[bool, str]]]] = {

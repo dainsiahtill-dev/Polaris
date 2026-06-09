@@ -542,6 +542,7 @@ roles:
       include_project_structure: true
       include_code_snippets: true
       max_code_lines: 5000
+      recon_mode: true   # 侦察模式：不预喂代码内容，强制用只读工具实地侦察（信息真空驱动真实工具调用）
       include_task_history: false
       compression_strategy: adaptive_sliding_window
 

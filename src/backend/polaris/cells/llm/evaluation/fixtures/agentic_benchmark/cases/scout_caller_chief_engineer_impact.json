@@ -4,7 +4,7 @@
   "title": "Chief Engineer Delegates Change-Impact Recon to Scout",
   "description": "The Chief Engineer must assess the blast radius of changing a shared module before approving a refactor. It is expected to delegate dependent/caller discovery to the scout_probe sub-agent (read-only) rather than scanning by hand, then report the impacted call sites. The shared module under assessment is core/contracts.py (defines the SessionContext DTO), imported across auth_service, api_service, storage, and billing in the scout_import_graph fixture.",
   "workspace_fixture": "scout_import_graph",
-  "prompt": "A teammate proposes changing the signature of the shared SessionContext DTO defined in core/contracts.py. Before you approve, you must assess the change impact: which files import or depend on this shared module, and which call sites are affected. Delegate this dependency/caller reconnaissance to the scout sub-agent (scout_probe) in read-only mode. After it reports, summarize the impacted dependents and the contracts.py symbols at risk. Do not edit or run anything; assessment is read-only.",
+  "prompt": "A teammate proposes changing the signature of the shared SessionContext DTO defined in core/contracts.py. Before you approve, you must assess the change impact: which files import or depend on this shared module, and which call sites are affected. Delegate this dependency/caller reconnaissance to the scout sub-agent (scout_probe) in read-only mode. After it reports, summarize the impacted dependents and the contracts.py symbols at risk. Do not edit or run anything; assessment is read-only. 你必须先调用 scout_probe 子代理完成只读侦察，再基于其返回结果作答。",
   "tags": [
     "scout",
     "caller",
@@ -26,7 +26,8 @@
     ],
     "validators": [
       "scout_readonly_contract",
-      "scout_subagent_used"
+      "scout_subagent_used",
+      "scout_min_recon"
     ]
   }
 }

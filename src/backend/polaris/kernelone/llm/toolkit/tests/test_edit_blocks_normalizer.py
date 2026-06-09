@@ -42,6 +42,29 @@ class TestEditBlocksNormalizer:
         text = "<<<< SEARCH:f.py\nx\n====\ny\n>>>> REPLACE"
         assert normalize_edit_blocks_args({"blocks": text})["blocks"] == text
 
+    # ----- broadened shapes (qwen3-coder & other capable models) -----
+
+    def test_single_dict_not_wrapped_in_list(self) -> None:
+        args = normalize_edit_blocks_args({"file": "z.py", "blocks": {"search": "a", "replace": "b"}})
+        assert isinstance(args["blocks"], str)
+        assert len(parse_edit_blocks(args["blocks"], default_filepath="z.py")) == 1
+
+    def test_old_new_key_aliases(self) -> None:
+        args = normalize_edit_blocks_args({"file": "z.py", "blocks": [{"old": "a", "new": "b"}]})
+        assert isinstance(args["blocks"], str)
+        assert len(parse_edit_blocks(args["blocks"], default_filepath="z.py")) == 1
+
+    def test_search_replace_pair_list(self) -> None:
+        args = normalize_edit_blocks_args({"file": "z.py", "blocks": [["a", "b"]]})
+        assert isinstance(args["blocks"], str)
+        assert len(parse_edit_blocks(args["blocks"], default_filepath="z.py")) == 1
+
+    def test_direct_block_text_key(self) -> None:
+        block = "<<<< SEARCH:z.py\na\n====\nb\n>>>> REPLACE"
+        args = normalize_edit_blocks_args({"file": "z.py", "blocks": [{"block": block}]})
+        assert isinstance(args["blocks"], str)
+        assert len(parse_edit_blocks(args["blocks"], default_filepath="z.py")) == 1
+
     def test_unknown_dict_shape_left_for_validator(self) -> None:
         # Unrecognized shape must be preserved so the existing validator surfaces it.
         assert isinstance(normalize_edit_blocks_args({"blocks": [{"foo": "bar"}]})["blocks"], list)
