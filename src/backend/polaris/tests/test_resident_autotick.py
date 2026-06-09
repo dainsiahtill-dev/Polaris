@@ -67,14 +67,29 @@ class _FakeService:
         return self._status
 
 
-async def test_run_once_returns_status(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_once_returns_result(monkeypatch: pytest.MonkeyPatch) -> None:
     status = {"runtime": {"active": True, "last_summary": {"decision_count": 3}}}
     monkeypatch.setattr(
         "polaris.cells.resident.autonomy.public.service.get_resident_service",
         lambda ws: _FakeService(status),
     )
     result = await autotick.run_autotick_once("/tmp/ws")
-    assert result == status
+    assert result is not None
+    assert result.ok is True
+    assert result.status == "completed"
+    assert result.workspace == "/tmp/ws"
+    assert result.metrics == {"decision_count": 3}
+
+
+async def test_run_once_skipped_when_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "polaris.cells.resident.autonomy.public.service.get_resident_service",
+        lambda ws: _FakeService({"runtime": {"active": False}}),
+    )
+    result = await autotick.run_autotick_once("/tmp/ws")
+    assert result is not None
+    assert result.status == "skipped_inactive"
+    assert result.actions == ()
 
 
 async def test_run_once_swallows_errors(monkeypatch: pytest.MonkeyPatch) -> None:

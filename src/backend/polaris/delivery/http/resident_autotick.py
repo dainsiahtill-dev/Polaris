@@ -26,7 +26,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any, Final
+from typing import TYPE_CHECKING, Final
+from uuid import uuid4
+
+if TYPE_CHECKING:
+    from polaris.cells.resident.autonomy.public.contracts import ResidentAutonomyResultV1
 
 logger = logging.getLogger(__name__)
 
@@ -72,34 +76,41 @@ def resolve_interval_seconds() -> float:
     return value
 
 
-async def run_autotick_once(workspace: str) -> dict[str, Any] | None:
-    """Advance the resident loop a single tick. Never raises.
+async def run_autotick_once(workspace: str) -> ResidentAutonomyResultV1 | None:
+    """Advance the resident loop a single cycle via the public contract. Never raises.
 
-    Returns the resident status payload on success, or ``None`` if the tick
-    failed (the failure is logged, not propagated).
+    Drives the declared ``RunResidentCycleCommandV1`` → ``ResidentAutonomyResultV1``
+    contract (no ``force`` in context, so the cycle no-ops unless the resident is
+    active).  Returns the result on success, or ``None`` if the cycle failed (the
+    failure is logged, not propagated).
     """
 
-    def _tick() -> dict[str, Any]:
-        # Imported lazily to keep this delivery module free of cell-internal
-        # import cost at process start and to avoid import cycles.
-        from polaris.cells.resident.autonomy.public.service import get_resident_service
+    def _cycle() -> ResidentAutonomyResultV1:
+        # Imported lazily to keep this delivery module free of cell import cost
+        # at process start and to avoid import cycles.
+        from polaris.cells.resident.autonomy.public.contracts import RunResidentCycleCommandV1
+        from polaris.cells.resident.autonomy.public.service import run_resident_cycle
 
-        return get_resident_service(workspace).tick(force=False)
+        command = RunResidentCycleCommandV1(
+            workspace=workspace,
+            cycle_id=f"autotick-{uuid4().hex[:12]}",
+            goal="scheduled_autonomy_cycle",
+        )
+        return run_resident_cycle(command)
 
     try:
-        status = await asyncio.to_thread(_tick)
+        result = await asyncio.to_thread(_cycle)
     except Exception:
-        logger.exception("[resident-autotick] tick failed for workspace=%s", workspace)
+        logger.exception("[resident-autotick] cycle failed for workspace=%s", workspace)
         return None
 
-    runtime = status.get("runtime") if isinstance(status, dict) else None
-    if isinstance(runtime, dict) and runtime.get("active"):
-        logger.info(
-            "[resident-autotick] ticked workspace=%s summary=%s",
-            workspace,
-            runtime.get("last_summary"),
-        )
-    return status
+    logger.info(
+        "[resident-autotick] cycle workspace=%s status=%s actions=%s",
+        workspace,
+        result.status,
+        result.actions,
+    )
+    return result
 
 
 async def _loop(workspace: str, interval_seconds: float) -> None:

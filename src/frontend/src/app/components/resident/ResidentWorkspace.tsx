@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ArrowLeft,
   Bot,
@@ -16,6 +16,10 @@ import {
   Target,
   X,
   FileSearch,
+  Sparkles,
+  FlaskConical,
+  Wrench,
+  Ban,
 } from 'lucide-react';
 
 import { EvidenceViewer } from './EvidenceViewer';
@@ -34,7 +38,7 @@ import { Textarea } from '@/app/components/ui/textarea';
 import { Badge } from '@/app/components/ui/badge';
 import { cn } from '@/app/components/ui/utils';
 
-const TAB_OPTIONS = ['overview', 'goals', 'decisions'] as const;
+const TAB_OPTIONS = ['overview', 'goals', 'decisions', 'evolution'] as const;
 type AgiTab = (typeof TAB_OPTIONS)[number];
 
 interface ResidentWorkspaceProps {
@@ -210,6 +214,7 @@ export function ResidentWorkspace({
             { key: 'overview', label: '概览' },
             { key: 'goals', label: '目标' },
             { key: 'decisions', label: '决策' },
+            { key: 'evolution', label: '进化' },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -310,6 +315,7 @@ export function ResidentWorkspace({
                   expanded={expandedGoal === goal.goal_id}
                   onToggle={() => setExpandedGoal(expandedGoal === goal.goal_id ? null : goal.goal_id || null)}
                   onApprove={() => void resident.approveGoal(String(goal.goal_id))}
+                  onReject={() => void resident.rejectGoal(String(goal.goal_id))}
                   onStage={() => void resident.stageGoal(String(goal.goal_id), false)}
                   onPromoteToPm={() => void resident.stageGoal(String(goal.goal_id), true)}
                   onRun={() => void resident.runGoal(String(goal.goal_id), false, 1)}
@@ -406,6 +412,7 @@ export function ResidentWorkspace({
                   expanded={expandedGoal === goal.goal_id}
                   onToggle={() => setExpandedGoal(expandedGoal === goal.goal_id ? null : goal.goal_id || null)}
                   onApprove={() => void resident.approveGoal(String(goal.goal_id))}
+                  onReject={() => void resident.rejectGoal(String(goal.goal_id))}
                   onStage={() => void resident.stageGoal(String(goal.goal_id), false)}
                   onPromoteToPm={() => void resident.stageGoal(String(goal.goal_id), true)}
                   onRun={() => void resident.runGoal(String(goal.goal_id), false, 1)}
@@ -437,8 +444,130 @@ export function ResidentWorkspace({
             )}
           </div>
         )}
+
+        {activeTab === 'evolution' && (
+          <div className="space-y-4">
+            {/* Skill Foundry */}
+            <EvolutionSection
+              icon={<Sparkles className="size-4 text-cyan-400" />}
+              title="技能工坊"
+              count={resident.residentSkills.length}
+              actionLabel="提炼技能"
+              actionTestId="resident-extract-skills"
+              onAction={() => void resident.extractSkills()}
+              acting={resident.isActing('extract-skills')}
+              emptyHint="尚无技能（运行一轮反思后生成）"
+            >
+              {resident.residentSkills.map((skill, idx) => (
+                <div key={skill.skill_id || idx} className="rounded border border-slate-800 bg-slate-950/50 p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-200">{skill.name || '未命名技能'}</span>
+                    <span className="text-xs text-slate-500">
+                      v{skill.version ?? 1} · {Math.round((skill.confidence ?? 0) * 100)}%
+                    </span>
+                  </div>
+                  {skill.trigger && <div className="mt-1 text-xs text-slate-400">触发: {skill.trigger}</div>}
+                </div>
+              ))}
+            </EvolutionSection>
+
+            {/* Counterfactual Lab */}
+            <EvolutionSection
+              icon={<FlaskConical className="size-4 text-cyan-400" />}
+              title="反事实实验"
+              count={resident.residentExperiments.length}
+              actionLabel="运行实验"
+              actionTestId="resident-run-experiments"
+              onAction={() => void resident.runExperiments()}
+              acting={resident.isActing('run-experiments')}
+              emptyHint="尚无实验（需有失败决策作为输入）"
+            >
+              {resident.residentExperiments.map((exp, idx) => (
+                <div key={exp.experiment_id || idx} className="rounded border border-slate-800 bg-slate-950/50 p-2">
+                  <div className="text-sm text-slate-200">
+                    {(exp.baseline_strategy || '基线') + ' → ' + (exp.counterfactual_strategy || '反事实')}
+                  </div>
+                  {exp.recommendation && <div className="mt-1 text-xs text-slate-400">建议: {exp.recommendation}</div>}
+                  {exp.status && <div className="mt-1 text-xs text-slate-500">状态: {exp.status}</div>}
+                </div>
+              ))}
+            </EvolutionSection>
+
+            {/* Self-Improvement Lab */}
+            <EvolutionSection
+              icon={<Wrench className="size-4 text-cyan-400" />}
+              title="自改提案"
+              count={resident.residentImprovements.length}
+              actionLabel="生成提案"
+              actionTestId="resident-run-improvements"
+              onAction={() => void resident.runImprovements()}
+              acting={resident.isActing('run-improvements')}
+              emptyHint="尚无提案（需有高分实验作为输入）"
+            >
+              {resident.residentImprovements.map((imp, idx) => (
+                <div key={imp.improvement_id || idx} className="rounded border border-slate-800 bg-slate-950/50 p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-200">{imp.title || '未命名提案'}</span>
+                    {imp.status && <span className="text-xs text-slate-500">{imp.status}</span>}
+                  </div>
+                  {(imp.category || imp.target_surface) && (
+                    <div className="mt-1 text-xs text-slate-400">
+                      {[imp.category, imp.target_surface].filter(Boolean).join(' · ')}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </EvolutionSection>
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+// Evolution section: skill / experiment / improvement list with a run action
+function EvolutionSection({
+  icon,
+  title,
+  count,
+  actionLabel,
+  actionTestId,
+  onAction,
+  acting,
+  emptyHint,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  count: number;
+  actionLabel: string;
+  actionTestId: string;
+  onAction: () => void;
+  acting: boolean;
+  emptyHint: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card className="border-slate-800 bg-slate-900/50">
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm text-slate-300">
+          {icon}
+          {title} ({count})
+        </CardTitle>
+        <Button
+          size="sm"
+          variant="outline"
+          data-testid={actionTestId}
+          onClick={onAction}
+          disabled={acting}
+        >
+          {actionLabel}
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {count === 0 ? <div className="text-xs text-slate-500">{emptyHint}</div> : children}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -449,6 +578,7 @@ function GoalItem({
   expanded,
   onToggle,
   onApprove,
+  onReject,
   onStage,
   onPromoteToPm,
   onRun,
@@ -459,6 +589,7 @@ function GoalItem({
   expanded: boolean;
   onToggle: () => void;
   onApprove: () => void;
+  onReject: () => void;
   onStage: () => void;
   onPromoteToPm: () => void;
   onRun: () => void;
@@ -504,10 +635,23 @@ function GoalItem({
           )}
           <div className="mt-3 flex gap-2">
             {isPending && (
-              <Button size="sm" onClick={onApprove} disabled={disabled} className="bg-emerald-500 text-black hover:bg-emerald-400">
-                <CheckCircle2 className="mr-1 size-3" />
-                批准
-              </Button>
+              <>
+                <Button size="sm" onClick={onApprove} disabled={disabled} className="bg-emerald-500 text-black hover:bg-emerald-400">
+                  <CheckCircle2 className="mr-1 size-3" />
+                  批准
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-testid="resident-reject-goal"
+                  onClick={onReject}
+                  disabled={disabled}
+                  className="border-rose-500/30 text-rose-300 hover:bg-rose-500/10"
+                >
+                  <Ban className="mr-1 size-3" />
+                  拒绝
+                </Button>
+              </>
             )}
             {isApproved && (
               <>

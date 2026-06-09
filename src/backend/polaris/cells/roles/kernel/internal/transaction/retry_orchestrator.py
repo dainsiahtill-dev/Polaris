@@ -104,6 +104,24 @@ def resolve_retry_model_override(retry_llm_call_ordinal: int) -> str | None:
     return selected or None
 
 
+def _extract_latest_assistant_message(context: list[dict]) -> str:
+    """Return the most recent assistant message content (the model's own analysis).
+
+    Weak models often narrate the fix in prose without emitting an edit tool call.
+    Surfacing that prior analysis back into the retry lets the model transcribe its
+    OWN plan into a concrete edit instead of re-deriving (or re-narrating) it.
+    """
+    for message in reversed(context):
+        if not isinstance(message, Mapping):
+            continue
+        if str(message.get("role") or "").strip().lower() != "assistant":
+            continue
+        content = str(message.get("content") or "").strip()
+        if content:
+            return content
+    return ""
+
+
 def build_contract_retry_context(
     context: list[dict],
     tool_definitions: list[dict],
@@ -112,6 +130,7 @@ def build_contract_retry_context(
 ) -> list[dict]:
     """构建突变合约违反后的 retry 上下文。"""
     latest_user = extract_latest_user_message(context)
+    latest_assistant = _extract_latest_assistant_message(context)
     raw_target_file_tokens = [
         token.strip()
         for token in re.findall(
@@ -155,6 +174,24 @@ def build_contract_retry_context(
             "Do not guess precision_edit/search_replace search text. "
             "For create-file or whole-file replacement tasks, prefer write_file. "
             "For existing targeted edits, prefer edit_blocks or edit_file after verifying exact content."
+        )
+    # Weak-model EASIEST-PATH: the line-range form of edit_blocks removes the hardest
+    # task (reproducing exact SEARCH text). Steer low-precision models there explicitly.
+    if "edit_blocks" in write_tools:
+        retry_lines.append(
+            "EASIEST EDIT (no exact-match needed): call edit_blocks with `file`, `start` and `end` "
+            "(1-based inclusive line numbers — reuse the range you already read via repo_read_slice) "
+            "and `replace` = the FULL new source for those lines. The tool reads the current lines itself, "
+            "so you do NOT need to copy the original text."
+        )
+    # Narration->edit transcription: if the model already analysed the fix in prose,
+    # feed that analysis back and demand a transcription, not a re-explanation.
+    if latest_assistant and len(latest_assistant.strip()) > 40:
+        analysis_snippet = latest_assistant.strip()[:1200]
+        retry_lines.append(
+            "You ALREADY analysed the fix in your previous message:\n---\n"
+            + analysis_snippet
+            + "\n---\nDo NOT re-explain. Transcribe THAT plan into ONE concrete edit tool call now."
         )
     if forced_write_tool_name:
         retry_lines.append(f"MANDATORY: your batch must include write tool `{forced_write_tool_name}`.")

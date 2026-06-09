@@ -18,6 +18,17 @@ const mockResidentState = {
       evidence_refs: ['docs/resident/resident-engineering-rfc.md'],
       scope: ['src/backend/app/orchestration'],
     },
+    {
+      goal_id: 'goal-pending',
+      title: 'Investigate flaky retries',
+      goal_type: 'reliability',
+      source: 'auto',
+      status: 'pending',
+      motivation: 'Retry storms are noisy',
+      updated_at: '2026-03-07T00:00:00Z',
+      evidence_refs: [],
+      scope: [],
+    },
   ],
   decisions: [
     {
@@ -199,5 +210,43 @@ describe('ResidentWorkspace', () => {
 
     fireEvent.click(screen.getByTestId('resident-tick'));
     expect(mockResidentState.tick).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces evolution lab actions', () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('resident-tab-evolution'));
+    expect(screen.getByText(/技能工坊/)).toBeInTheDocument();
+    expect(screen.getByText(/反事实实验/)).toBeInTheDocument();
+    expect(screen.getByText(/自改提案/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('resident-extract-skills'));
+    fireEvent.click(screen.getByTestId('resident-run-experiments'));
+    fireEvent.click(screen.getByTestId('resident-run-improvements'));
+
+    expect(mockResidentState.extractSkills).toHaveBeenCalledTimes(1);
+    expect(mockResidentState.runExperiments).toHaveBeenCalledTimes(1);
+    expect(mockResidentState.runImprovements).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a pending goal', () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+        initialTab="goals"
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Investigate flaky retries'));
+    fireEvent.click(screen.getByTestId('resident-reject-goal'));
+    expect(mockResidentState.rejectGoal).toHaveBeenCalledWith('goal-pending');
   });
 });

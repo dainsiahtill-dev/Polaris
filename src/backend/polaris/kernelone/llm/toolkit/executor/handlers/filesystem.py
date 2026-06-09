@@ -812,10 +812,118 @@ def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     return {"ok": False, "error": "Must specify either line range (start_line/end_line) or search/replace"}
 
 
+def _normalize_block_input(text: Any) -> str:
+    """Make weak-model edit payloads parseable.
+
+    Two common low-precision-model artifacts are repaired:
+    - the whole payload wrapped in a Markdown code fence (```/```python);
+    - real newlines collapsed into literal ``\\n``/``\\t`` escapes (single-line JSON).
+    """
+    if not isinstance(text, str):
+        return ""
+    s = text
+    stripped = s.strip()
+    if stripped.startswith("```"):
+        fence_lines = stripped.splitlines()
+        if fence_lines and fence_lines[0].lstrip().startswith("```"):
+            fence_lines = fence_lines[1:]
+        if fence_lines and fence_lines[-1].strip().startswith("```"):
+            fence_lines = fence_lines[:-1]
+        s = "\n".join(fence_lines)
+    # Only unescape when the payload has no real newlines but does carry escaped ones —
+    # never mangle a payload that already contains genuine newlines (e.g. literal "\n"
+    # inside a string the model intends to write).
+    if "\n" not in s and "\\n" in s:
+        s = s.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+    return s
+
+
+def _has_search_replace_markers(text: str) -> bool:
+    """True when the text already looks like SEARCH/REPLACE block(s)."""
+    if not text:
+        return False
+    for line in text.splitlines():
+        if re.match(r"^\s*<{3,}\s*(SEARCH|ORIGINAL|SOURCE)\b", line):
+            return True
+    return False
+
+
+def _coerce_line_no(value: Any) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _synthesize_line_range_block(
+    self: AgentAccelToolExecutor,
+    file: str | None,
+    start: Any,
+    end: Any,
+    replacement: Any,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Build a SEARCH/REPLACE block from a line range (weak-model affordance).
+
+    Low-precision models reliably express edits as "replace lines start..end of FILE
+    with NEW CODE" but cannot reproduce exact SEARCH text. We read the EXACT current
+    lines ourselves (so the SEARCH text is guaranteed to match) and hand the synthesized
+    block to the normal validation/apply path. Returns (blocks_text, None) on success or
+    (None, error_dict) otherwise.
+    """
+    if not file:
+        return None, {"ok": False, "error": "line-range edit requires a 'file' argument."}
+    target = resolve_workspace_path(self._kernel_fs, str(file))
+    rel = to_workspace_relative_path(self._kernel_fs, target)
+    if not self._kernel_fs.workspace_exists(rel):
+        return None, {
+            "ok": False,
+            "error": f"File not found: {file}",
+            "suggestion": "Verify the path with repo_tree() or repo_rg() before editing.",
+        }
+    if not self._kernel_fs.workspace_is_file(rel):
+        return None, {"ok": False, "error": f"Path is not a file: {file}"}
+    try:
+        content = self._kernel_fs.workspace_read_text(rel, encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, {"ok": False, "error": f"Failed to read {file}: {exc}"}
+
+    lines = content.splitlines(keepends=True)
+    total = len(lines)
+    start_no = _coerce_line_no(start)
+    end_no = _coerce_line_no(end)
+    if start_no is None or end_no is None:
+        return None, {"ok": False, "error": "line-range edit requires integer start and end line numbers."}
+    if start_no < 1 or end_no < 1 or start_no > end_no or start_no > total:
+        return None, {
+            "ok": False,
+            "error": f"Invalid line range [{start_no},{end_no}] for {file} (file has {total} lines).",
+        }
+    end_no = min(end_no, total)
+    search_text = "".join(lines[start_no - 1 : end_no])
+
+    repl = "" if replacement is None else str(replacement)
+    if not repl.strip():
+        return None, {
+            "ok": False,
+            "error": (
+                f"line-range edit for {file}[{start_no}:{end_no}] has no replacement code. "
+                "Provide the new code for those lines via 'replace' (or 'new_text'/'content')."
+            ),
+            "suggestion": "Pass the actual replacement source for the range; an empty replacement is rejected.",
+        }
+    # Preserve the trailing-newline shape of the replaced slice.
+    if search_text.endswith("\n") and not repl.endswith("\n"):
+        repl = repl + "\n"
+    block = f"<<<< SEARCH:{file}\n{search_text}====\n{repl}>>>> REPLACE\n"
+    return block, None
+
+
 def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     """Handle edit_blocks tool call (SEARCH/REPLACE block format).
 
     Implements two-phase commit (validation + execution) for atomic multi-file edits.
+    Also accepts a weak-model-friendly line-range form (file + start/end + replacement),
+    and normalizes code-fenced / escaped-newline payloads.
 
     Args:
         self: Executor instance
@@ -824,8 +932,35 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
     Returns:
         Execution result dict
     """
-    file = kwargs.get("file")
-    blocks_text = kwargs.get("blocks") or kwargs.get("content") or kwargs.get("edits")
+    file = kwargs.get("file") or kwargs.get("path") or kwargs.get("file_path") or kwargs.get("filepath")
+    blocks_text = _normalize_block_input(
+        kwargs.get("blocks") or kwargs.get("content") or kwargs.get("edits") or kwargs.get("diff")
+    )
+
+    # Weak-model line-range affordance: when start/end line numbers are supplied and the
+    # payload is not already a SEARCH/REPLACE block, synthesize one from the exact file
+    # lines. This removes the hardest task for low-precision models — reproducing SEARCH
+    # text byte-for-byte — while reusing the same validation/apply path below.
+    start = kwargs.get("start", kwargs.get("start_line"))
+    end = kwargs.get("end", kwargs.get("end_line"))
+    if start is not None and end is not None and not _has_search_replace_markers(blocks_text):
+        replacement = (
+            kwargs.get("replace")
+            if kwargs.get("replace") is not None
+            else kwargs.get("new_text")
+            if kwargs.get("new_text") is not None
+            else kwargs.get("new_content")
+            if kwargs.get("new_content") is not None
+            else kwargs.get("replacement")
+            if kwargs.get("replacement") is not None
+            else kwargs.get("code")
+            if kwargs.get("code") is not None
+            else (blocks_text or None)
+        )
+        synth, err = _synthesize_line_range_block(self, file, start, end, replacement)
+        if err is not None:
+            return err
+        blocks_text = synth or ""
 
     if not blocks_text or not isinstance(blocks_text, str):
         return {

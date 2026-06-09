@@ -6,7 +6,12 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from polaris.cells.resident.autonomy.public.service import ResidentMode, get_resident_service
+from polaris.cells.resident.autonomy.public.service import (
+    QueryResidentStatusV1,
+    ResidentMode,
+    get_resident_service,
+    query_resident_status,
+)
 from polaris.delivery.http.dependencies import require_auth
 from pydantic import BaseModel, Field
 
@@ -112,8 +117,8 @@ class GoalRunRequest(ResidentWorkspaceRequest):
 
 @router.get("/status", dependencies=[Depends(require_auth)])
 def resident_status(request: Request, details: bool = False, workspace: str = "") -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, workspace))
-    return service.get_status(include_details=details)
+    ws = _resolve_workspace(request, workspace)
+    return query_resident_status(QueryResidentStatusV1(workspace=ws or "."), include_details=details)
 
 
 @router.post("/start", dependencies=[Depends(require_auth)])
