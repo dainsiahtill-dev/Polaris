@@ -20,6 +20,8 @@ import {
   FlaskConical,
   Wrench,
   Ban,
+  Package,
+  Pencil,
 } from 'lucide-react';
 
 import { EvidenceViewer } from './EvidenceViewer';
@@ -90,6 +92,11 @@ export function ResidentWorkspace({
   // New goal form state
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalDesc, setNewGoalDesc] = useState('');
+
+  // Identity edit state
+  const [editingIdentity, setEditingIdentity] = useState(false);
+  const [identityName, setIdentityName] = useState('');
+  const [identityMission, setIdentityMission] = useState('');
 
   const isActive = Boolean(resident.residentRuntime?.active);
   const mode = resident.residentRuntime?.mode || 'observe';
@@ -237,19 +244,74 @@ export function ResidentWorkspace({
           <div className="space-y-3">
             <div className="grid gap-3 lg:grid-cols-2">
               <Card className="border-slate-800 bg-slate-900/50">
-                <CardHeader className="pb-2">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
                   <CardTitle className="flex items-center gap-2 text-sm text-slate-300">
                     <Bot className="size-4 text-cyan-400" />
                     AGI 身份
                   </CardTitle>
+                  {!editingIdentity && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      data-testid="resident-edit-identity"
+                      onClick={() => {
+                        setIdentityName(resident.residentIdentity?.name || '');
+                        setIdentityMission(resident.residentIdentity?.mission || '');
+                        setEditingIdentity(true);
+                      }}
+                    >
+                      <Pencil className="size-3" />
+                    </Button>
+                  )}
                 </CardHeader>
                 <CardContent>
-                  <div className="text-base font-medium text-white">
-                    {resident.residentIdentity?.name || 'Software Engineering AGI'}
-                  </div>
-                  <div className="mt-1 text-sm text-slate-400">
-                    {resident.residentIdentity?.mission || '尚未设定任务宣言'}
-                  </div>
+                  {editingIdentity ? (
+                    <div className="space-y-2">
+                      <Input
+                        aria-label="AGI 名称"
+                        value={identityName}
+                        onChange={(e) => setIdentityName(e.target.value)}
+                        placeholder="名称"
+                        className="bg-slate-950"
+                      />
+                      <Textarea
+                        aria-label="AGI 任务宣言"
+                        value={identityMission}
+                        onChange={(e) => setIdentityMission(e.target.value)}
+                        placeholder="任务宣言"
+                        className="bg-slate-950"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          data-testid="resident-save-identity"
+                          disabled={resident.isActing('save-identity')}
+                          onClick={async () => {
+                            await resident.saveIdentity({
+                              name: identityName.trim(),
+                              mission: identityMission.trim(),
+                            });
+                            setEditingIdentity(false);
+                          }}
+                          className="bg-cyan-500 text-black hover:bg-cyan-400"
+                        >
+                          保存
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingIdentity(false)}>
+                          取消
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-base font-medium text-white">
+                        {resident.residentIdentity?.name || 'Software Engineering AGI'}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-400">
+                        {resident.residentIdentity?.mission || '尚未设定任务宣言'}
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -316,6 +378,7 @@ export function ResidentWorkspace({
                   onToggle={() => setExpandedGoal(expandedGoal === goal.goal_id ? null : goal.goal_id || null)}
                   onApprove={() => void resident.approveGoal(String(goal.goal_id))}
                   onReject={() => void resident.rejectGoal(String(goal.goal_id))}
+                  onMaterialize={() => void resident.materializeGoal(String(goal.goal_id))}
                   onStage={() => void resident.stageGoal(String(goal.goal_id), false)}
                   onPromoteToPm={() => void resident.stageGoal(String(goal.goal_id), true)}
                   onRun={() => void resident.runGoal(String(goal.goal_id), false, 1)}
@@ -413,6 +476,7 @@ export function ResidentWorkspace({
                   onToggle={() => setExpandedGoal(expandedGoal === goal.goal_id ? null : goal.goal_id || null)}
                   onApprove={() => void resident.approveGoal(String(goal.goal_id))}
                   onReject={() => void resident.rejectGoal(String(goal.goal_id))}
+                  onMaterialize={() => void resident.materializeGoal(String(goal.goal_id))}
                   onStage={() => void resident.stageGoal(String(goal.goal_id), false)}
                   onPromoteToPm={() => void resident.stageGoal(String(goal.goal_id), true)}
                   onRun={() => void resident.runGoal(String(goal.goal_id), false, 1)}
@@ -579,6 +643,7 @@ function GoalItem({
   onToggle,
   onApprove,
   onReject,
+  onMaterialize,
   onStage,
   onPromoteToPm,
   onRun,
@@ -590,6 +655,7 @@ function GoalItem({
   onToggle: () => void;
   onApprove: () => void;
   onReject: () => void;
+  onMaterialize: () => void;
   onStage: () => void;
   onPromoteToPm: () => void;
   onRun: () => void;
@@ -655,6 +721,18 @@ function GoalItem({
             )}
             {isApproved && (
               <>
+                {status === 'approved' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    data-testid="resident-materialize-goal"
+                    onClick={onMaterialize}
+                    disabled={disabled}
+                  >
+                    <Package className="mr-1 size-3" />
+                    固化
+                  </Button>
+                )}
                 <Button size="sm" variant="outline" onClick={onStage} disabled={disabled}>
                   暂存
                 </Button>

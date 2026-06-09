@@ -92,6 +92,58 @@ async def test_run_once_skipped_when_inactive(monkeypatch: pytest.MonkeyPatch) -
     assert result.actions == ()
 
 
+async def test_completed_cycle_published_to_fact_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    status = {"runtime": {"active": True, "last_summary": {"decision_count": 4}}}
+    monkeypatch.setattr(
+        "polaris.cells.resident.autonomy.public.service.get_resident_service",
+        lambda ws: _FakeService(status),
+    )
+    published: list[Any] = []
+    monkeypatch.setattr(
+        "polaris.cells.events.fact_stream.public.service.append_fact_event",
+        lambda command: published.append(command),
+    )
+    await autotick.run_autotick_once("/tmp/ws")
+    assert len(published) == 1
+    assert published[0].stream == "resident.cycle.events"
+    assert published[0].event_type == "resident.cycle.completed"
+    assert published[0].payload["status"] == "completed"
+
+
+async def test_skipped_cycle_not_published(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "polaris.cells.resident.autonomy.public.service.get_resident_service",
+        lambda ws: _FakeService({"runtime": {"active": False}}),
+    )
+    published: list[Any] = []
+    monkeypatch.setattr(
+        "polaris.cells.events.fact_stream.public.service.append_fact_event",
+        lambda command: published.append(command),
+    )
+    await autotick.run_autotick_once("/tmp/ws")
+    assert published == []
+
+
+async def test_cycle_survives_fact_sink_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    status = {"runtime": {"active": True, "last_summary": {}}}
+    monkeypatch.setattr(
+        "polaris.cells.resident.autonomy.public.service.get_resident_service",
+        lambda ws: _FakeService(status),
+    )
+
+    def _boom(_command: Any) -> None:
+        raise RuntimeError("fact stream down")
+
+    monkeypatch.setattr(
+        "polaris.cells.events.fact_stream.public.service.append_fact_event",
+        _boom,
+    )
+    # Sink failure must not break the cycle result.
+    result = await autotick.run_autotick_once("/tmp/ws")
+    assert result is not None
+    assert result.status == "completed"
+
+
 async def test_run_once_swallows_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom(_ws: str) -> _FakeService:
         raise RuntimeError("tick exploded")

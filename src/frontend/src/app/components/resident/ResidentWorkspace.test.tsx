@@ -120,6 +120,7 @@ const mockResidentState = {
   createGoal: vi.fn(async () => ({ goal_id: 'goal-new' })),
   approveGoal: vi.fn(async () => null),
   rejectGoal: vi.fn(async () => null),
+  materializeGoal: vi.fn(async () => null),
   stageGoal: vi.fn(async () => null),
   runGoal: vi.fn(async () => null),
   extractSkills: vi.fn(async () => null),
@@ -248,5 +249,39 @@ describe('ResidentWorkspace', () => {
     fireEvent.click(screen.getByText('Investigate flaky retries'));
     fireEvent.click(screen.getByTestId('resident-reject-goal'));
     expect(mockResidentState.rejectGoal).toHaveBeenCalledWith('goal-pending');
+  });
+
+  it('materializes an approved goal', () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+        initialTab="goals"
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Stabilize PM contract quality'));
+    fireEvent.click(screen.getByTestId('resident-materialize-goal'));
+    expect(mockResidentState.materializeGoal).toHaveBeenCalledWith('goal-approved');
+  });
+
+  it('edits the AGI identity', () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('resident-edit-identity'));
+    fireEvent.change(screen.getByLabelText('AGI 名称'), { target: { value: 'Polaris Resident' } });
+    fireEvent.change(screen.getByLabelText('AGI 任务宣言'), { target: { value: 'Keep main green' } });
+    fireEvent.click(screen.getByTestId('resident-save-identity'));
+    expect(mockResidentState.saveIdentity).toHaveBeenCalledWith({
+      name: 'Polaris Resident',
+      mission: 'Keep main green',
+    });
   });
 });

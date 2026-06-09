@@ -192,6 +192,8 @@ export function useResident(options: UseResidentOptions = {}) {
       runAction('approve-goal', () => residentService.approveGoal(goalId, workspace, note), 'AGI 目标已批准'),
     rejectGoal: (goalId: string, note = 'rejected in AGI workspace') =>
       runAction('reject-goal', () => residentService.rejectGoal(goalId, workspace, note), 'AGI 目标已拒绝'),
+    materializeGoal: (goalId: string) =>
+      runAction('materialize-goal', () => residentService.materializeGoal(goalId, workspace), 'AGI 目标已固化'),
     stageGoal: (goalId: string, promoteToPmRuntime = false) =>
       runAction<ResidentGoalStagePayload>(
         'stage-goal',

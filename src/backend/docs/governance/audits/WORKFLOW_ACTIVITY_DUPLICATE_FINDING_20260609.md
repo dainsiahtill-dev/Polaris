@@ -1,7 +1,7 @@
 # Finding: `workflow_activity` is a non-production duplicate of `workflow_runtime`
 
-- **Date**: 2026-06-09
-- **Status**: Open — recommend a dedicated, equivalence-verified consolidation wave
+- **Date**: 2026-06-09 (deep-dive added 2026-06-10)
+- **Status**: Open — dedicated wave required; a forced merge is empirically unsafe (see deep-dive)
 - **Severity**: Low (internal duplication; no runtime impact, no user-facing effect)
 - **Origin**: Resident Engineer availability audit, gap G5
 - **Related blueprint**: `docs/blueprints/RESIDENT_AUTONOMY_ROUND2_BLUEPRINT_20260609.md`
@@ -30,6 +30,41 @@ The live workflow engine is `workflow_runtime` (15,663 LoC). The two cells have
 **diverged** (≈3.6× line difference) — `workflow_activity` is not a byte-for-byte
 copy, so any merge needs per-symbol equivalence verification, not a blind redirect.
 
+## Deep-dive: divergence map (2026-06-10)
+
+The two cells are **not** a clean copy — they have substantially diverged. Forcing a
+re-export/merge would silently change `workflow_activity`'s behavior to
+`workflow_runtime`'s.
+
+Per-file divergence (`diff` changed-line count, activity vs runtime LoC):
+
+| file | activity | runtime | changed lines |
+|---|---|---|---|
+| `pm_workflow.py` | 471 | 596 | 193 |
+| `director_workflow.py` | 535 | 537 | 62 |
+| `director_task_workflow.py` | 653 | 577 | 282 |
+| `qa_workflow.py` | 168 | 175 | 155 |
+
+The 2 parity tests (`workflow_runtime/tests/{test_pm_workflow_timeouts,test_director_activities}.py`)
+only pin **4 private timeout-policy functions** as output-equivalent across the cells.
+Byte-identity check of those 4:
+
+| function | module | byte-identical? |
+|---|---|---|
+| `_director_child_workflow_timeout_seconds` | `pm_workflow` | ✅ identical |
+| `_task_phase_timeout_seconds` | `director_task_workflow` | ✅ identical |
+| `_task_run_timeout_seconds` | `director_workflow` | ✅ identical |
+| `_task_dependencies` | `director_workflow` | ❌ different source, same tested output |
+
+So even the "equivalent" subset is not uniformly mechanical: 3/4 are byte-identical, 1 has
+divergent source. There ARE enforced boundary gates
+(`polaris/tests/architecture/governance/test_semantic_boundary.py`,
+`docs/governance/ci/scripts/check_semantic_boundary.py`) that a cross-cell-internal
+re-export shim could trip. `workflow_runtime` is the live engine.
+
+**Conclusion**: a behavior-preserving, ACGA-clean full consolidation is a genuine
+dedicated-wave task, not a mechanical dedup, and must not be forced inline.
+
 ## Why no code change in this round
 
 1. **Risk/value asymmetry.** A 4k-LoC workflow-engine consolidation touches code the
@@ -48,11 +83,18 @@ modified**; this note is the deliverable.
 
 ## Recommended dedicated wave
 
-1. Decide the canonical owner of director/pm workflow *definitions* (`workflow_activity`
-   vs `workflow_runtime`).
-2. Diff the two implementations symbol-by-symbol; pin behavioral equivalence with tests
-   before collapsing either copy.
-3. Collapse the loser into a thin re-export of the canonical cell (no deletion), and
-   move the 2 cross-internal tests onto the canonical public surface.
-4. Remove the misleading docstring/string-literal references that made `workflow_activity`
+1. **Safe first step (low risk):** extract the 3 byte-identical timeout helpers
+   (`_director_child_workflow_timeout_seconds`, `_task_phase_timeout_seconds`,
+   `_task_run_timeout_seconds`) into a shared `kernelone` timeout-policy module both cells
+   may import (kernelone is the shared base — no cross-cell rule violation). Behavior is
+   provably unchanged. Reconcile `_task_dependencies` (divergent source) explicitly first.
+2. Decide the canonical owner of director/pm workflow *definitions* (`workflow_runtime` is
+   the live engine and the natural canonical).
+3. Diff the two implementations symbol-by-symbol; pin behavioral equivalence with tests
+   for each before collapsing — the 193/282/155-line divergences are real behavior, not
+   formatting.
+4. Collapse the non-canonical copy into a thin re-export of the canonical **public**
+   surface (no deletion); expose the timeout policy publicly so the 2 cross-internal tests
+   can move onto the public surface (removing the ACGA-smell internal reach).
+5. Remove the misleading docstring/string-literal references that make `workflow_activity`
    look imported.

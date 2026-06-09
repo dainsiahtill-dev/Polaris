@@ -76,13 +76,49 @@ def resolve_interval_seconds() -> float:
     return value
 
 
+def _sink_cycle_fact_event(result: ResidentAutonomyResultV1) -> None:
+    """Best-effort: publish a completed cycle to the canonical fact stream.
+
+    Only ``completed`` cycles (resident active, loop advanced) are published, to
+    avoid streaming no-op ``skipped_inactive`` ticks.  Failure is swallowed: the
+    fact-stream sink is observability, not a cycle dependency.
+    """
+    if result.status != "completed":
+        return
+    try:
+        from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
+        from polaris.cells.events.fact_stream.public.service import append_fact_event
+
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=result.workspace,
+                stream="resident.cycle.events",
+                event_type="resident.cycle.completed",
+                source="resident.autotick",
+                run_id=result.cycle_id,
+                payload={
+                    "cycle_id": result.cycle_id,
+                    "status": result.status,
+                    "actions": list(result.actions),
+                    "metrics": dict(result.metrics),
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001 - best-effort sink must never break the cycle
+        logger.debug(
+            "[resident-autotick] fact-stream sink skipped for cycle=%s",
+            result.cycle_id,
+            exc_info=True,
+        )
+
+
 async def run_autotick_once(workspace: str) -> ResidentAutonomyResultV1 | None:
     """Advance the resident loop a single cycle via the public contract. Never raises.
 
     Drives the declared ``RunResidentCycleCommandV1`` → ``ResidentAutonomyResultV1``
     contract (no ``force`` in context, so the cycle no-ops unless the resident is
-    active).  Returns the result on success, or ``None`` if the cycle failed (the
-    failure is logged, not propagated).
+    active) and publishes completed cycles to the canonical fact stream.  Returns
+    the result on success, or ``None`` if the cycle failed (logged, not propagated).
     """
 
     def _cycle() -> ResidentAutonomyResultV1:
@@ -96,7 +132,9 @@ async def run_autotick_once(workspace: str) -> ResidentAutonomyResultV1 | None:
             cycle_id=f"autotick-{uuid4().hex[:12]}",
             goal="scheduled_autonomy_cycle",
         )
-        return run_resident_cycle(command)
+        result = run_resident_cycle(command)
+        _sink_cycle_fact_event(result)
+        return result
 
     try:
         result = await asyncio.to_thread(_cycle)
