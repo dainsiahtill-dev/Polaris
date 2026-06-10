@@ -107,6 +107,57 @@ def _flatten_text(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _build_chat_messages_payload(
+    chat_messages: Any,
+    prompt: str,
+    system_prompt: str | None = None,
+) -> list[dict[str, str]]:
+    """Build the request ``messages`` array, preserving real role structure.
+
+    ADR-0090 W1.5: weak local models depend heavily on their chat template's
+    role anchoring. When the caller supplies a structured ``chat_messages``
+    array, use it (system/user/assistant pass through; tool results become
+    user turns with a marker; consecutive same-role turns merge). Otherwise
+    fall back to the legacy single-user-message flattening.
+    """
+    if not isinstance(chat_messages, list) or not chat_messages:
+        fallback: list[dict[str, str]] = [{"role": "user", "content": prompt}]
+        if system_prompt:
+            fallback.insert(0, {"role": "system", "content": str(system_prompt)})
+        return fallback
+
+    normalized: list[dict[str, str]] = []
+    seen_non_system = False
+    for item in chat_messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "")
+        if not content.strip():
+            continue
+        if role == "tool":
+            role, content = "user", f"【工具结果】\n{content}"
+        elif role == "system":
+            # Strict chat templates (vLLM: "System message must be at the
+            # beginning") only accept a LEADING system block. Supplemental
+            # system turns injected mid-conversation (role signals, tail hints)
+            # are downgraded to marked user turns.
+            if seen_non_system:
+                role, content = "user", f"【系统提示】\n{content}"
+        elif role not in ("user", "assistant"):
+            role = "user"
+        if role != "system":
+            seen_non_system = True
+        if normalized and normalized[-1]["role"] == role:
+            normalized[-1]["content"] = f"{normalized[-1]['content']}\n\n{content}"
+        else:
+            normalized.append({"role": role, "content": content})
+
+    if not normalized:
+        normalized = [{"role": "user", "content": prompt}]
+    return normalized
+
+
 def _extract_delta_content_parts(content: Any) -> list[tuple[str, str]]:
     parts: list[tuple[str, str]] = []
     if isinstance(content, str):
@@ -381,12 +432,15 @@ class OpenAICompatProvider(BaseProvider):
                 error=f"Invalid model name: {validation.error}",
             )
 
-        # NOTE: For sync invoke(), we use direct message construction as RoleContextGateway
-        # requires async context. The async invoke_stream() and invoke_stream_events()
-        # methods properly use RoleContextGateway for context building.
+        # ADR-0090 W1.5: prefer the caller-supplied structured message array so
+        # the model's chat template sees real system/user/assistant anchoring.
         payload: dict[str, Any] = {
             "model": resolved.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": _build_chat_messages_payload(
+                config.get("chat_messages"),
+                prompt,
+                system_prompt=config.get("system_prompt"),
+            ),
             "temperature": float(config.get("temperature") or 0.2),
         }
         tools = config.get("tools")
@@ -477,7 +531,12 @@ class OpenAICompatProvider(BaseProvider):
 
         # Use RoleContextGateway to build context properly
         system_prompt = config.get("system_prompt")
-        if self._context_builder is not None:
+        chat_messages = config.get("chat_messages")
+        if isinstance(chat_messages, list) and chat_messages:
+            # ADR-0090 W1.5: caller-supplied structured array wins — real
+            # system/user/assistant anchoring for the model's chat template.
+            messages = _build_chat_messages_payload(chat_messages, prompt, system_prompt=system_prompt)
+        elif self._context_builder is not None:
             request = ContextRequest(
                 message=prompt,
                 history=(),

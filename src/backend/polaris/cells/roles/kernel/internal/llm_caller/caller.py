@@ -274,8 +274,6 @@ class LLMCaller:
         """Build canonical LLM request bundle."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
         from polaris.kernelone.context.contracts import TurnEngineContextResult
-        from polaris.kernelone.context.projection_engine import ProjectionEngine
-        from polaris.kernelone.context.receipt_store import ReceiptStore
 
         override = getattr(context, "context_override", None)
         prebuilt_messages = self._extract_prebuilt_projection_messages(context)
@@ -342,9 +340,10 @@ class LLMCaller:
             )
         else:
             context_gateway = RoleContextGateway(profile, self.workspace)
-            context_result = await context_gateway.build_context(context)
-            projection_dict = {"system_hint": system_prompt, "turns": list(context_result.messages)}
-            messages = ProjectionEngine().project(projection_dict, ReceiptStore())
+            # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt —
+            # no second projection pass.
+            context_result = await context_gateway.build_context(context, system_prompt=system_prompt)
+            messages = list(context_result.messages)
 
         input_text = messages_to_input(
             messages,
@@ -459,6 +458,13 @@ class LLMCaller:
                 "response_format_mode": response_format_mode,
                 "interaction_contract": contract.to_metadata(),
                 "context_os_audit": context_os_audit,
+                # ADR-0090 W1.5: carry the STRUCTURED message array alongside the
+                # flattened input so OpenAI-compatible providers can preserve real
+                # chat-template role anchoring (weak local models lose system/user
+                # structure when the whole transcript rides in one user message).
+                "chat_messages": [
+                    {"role": str(m.get("role", "")), "content": str(m.get("content", ""))} for m in messages
+                ],
             },
         )
         return PreparedLLMRequest(

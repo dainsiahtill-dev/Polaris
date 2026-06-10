@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.472525Z",
-  "source_hash": "bc69eade6b289f84",
+  "generated_at": "2026-06-10T11:24:03.961876Z",
+  "source_hash": "9fb1360b001ac297",
   "cell_id": "director.planning",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",

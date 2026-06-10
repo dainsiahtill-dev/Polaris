@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.992155Z",
-  "source_hash": "41b7379bb72037b4",
+  "generated_at": "2026-06-10T11:24:05.764191Z",
+  "source_hash": "b92260e0937a6620",
   "cell_id": "context.engine",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -134,6 +134,107 @@
       "name": "reset_search_service_for_tests",
       "description": "Test hook: clear singleton.",
       "defined_in": "polaris/cells/context/engine/internal/search_gateway.py"
+    },
+    {
+      "type": "class",
+      "name": "BuildRoleContextCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResolveRoleContextQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleContextResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ContextResolvedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ContextEngineError",
+      "description": "Raised when graph-constrained context assembly fails.",
+      "defined_in": "polaris/cells/context/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "build_context_window",
+      "description": "Build a role-scoped context window through the canonical context engine.",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_anthropomorphic_context_v2",
+      "description": "Build the v2 prompt context bundle through the canonical context engine.",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_search_service",
+      "description": "Return the graph-constrained semantic search service via the public boundary.",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_context_request",
+      "description": "Build ContextRequest with lazy import (P1-CTX-003 convergence).",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_context_os_overlay",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_context_os_overlay",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_context_os_summary",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_context_pack",
+      "description": "Build context pack with lazy import (P1-CTX-003 convergence).",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_estimate_tokens",
+      "description": "Estimate tokens with lazy import (P1-CTX-006 convergence).",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_context_override",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_int",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

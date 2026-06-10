@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.154845Z",
-  "source_hash": "fe1d1fabcf4533ce",
+  "generated_at": "2026-06-10T11:24:14.410960Z",
+  "source_hash": "9300d249c85c6f80",
   "cell_id": "factory.verification_guard",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -185,6 +185,40 @@
     },
     {
       "type": "class",
+      "name": "VerificationGuardService",
+      "description": "Thin public wrapper over the verification engine.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "verify_completion",
+          "doc": "Verify a completion claim through the public command contract."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_verification_guard_service",
+      "description": "Return the process-local verification guard service.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_verification_guard_service",
+      "description": "Reset the process-local verification guard service.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_completion",
+      "description": "Verify a completion claim through the default service.",
+      "defined_in": "polaris/cells/factory/verification_guard/public/service.py"
+    },
+    {
+      "type": "class",
       "name": "TestVerificationClaim",
       "description": "Tests for VerificationClaim dataclass validation.",
       "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
@@ -232,6 +266,22 @@
         {
           "name": "test_invalid_claim_type_raises",
           "doc": "Test that non-VerificationClaim raises TypeError."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerificationGuardPublicService",
+      "description": "Tests for the public VerificationGuard service boundary.",
+      "defined_in": "polaris/cells/factory/verification_guard/tests/test_verification_guard.py",
+      "methods": [
+        {
+          "name": "test_public_service_verifies_completion_command",
+          "doc": ""
+        },
+        {
+          "name": "test_service_object_implements_public_contract",
+          "doc": ""
         }
       ]
     },

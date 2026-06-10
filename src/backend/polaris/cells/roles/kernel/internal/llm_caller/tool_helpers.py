@@ -13,15 +13,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_GEMMA_INLINE_TOOL_CALL_RE = re.compile(
-    r"<\|tool_call\>\s*call:(?P<name>[A-Za-z_][A-Za-z0-9_-]{0,63})\{(?P<body>.*?)\}<tool_call\|>",
-    re.DOTALL,
-)
-_GEMMA_INLINE_ARG_RE = re.compile(
-    r"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*<\|\"\|>(?P<value>.*?)<\|\"\|>\s*(?:,|$)",
-    re.DOTALL,
-)
-
 
 def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
     """Resolve tool call format provider hint.
@@ -359,28 +350,33 @@ def _extract_tool_calls_from_text(text: str, *, provider_hint: str = "auto") -> 
 
 
 def _extract_gemma_inline_tool_calls_from_text(text: str) -> list[dict[str, Any]]:
-    """Extract Gemma-style inline tool calls from plain response text."""
+    """Extract Gemma-style inline tool calls from plain response text.
+
+    ADR-0090 W1.6: delegates to the kernelone textual-recovery parser — the
+    single tolerant implementation — instead of a stricter parallel regex that
+    required the ``<tool_call|>`` close marker and ``<|"|>``-quoted values
+    (silently dropping e.g. unquoted ``n:50``). One parser, one behavior.
+    """
+    from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
+        recover_textual_tool_calls,
+    )
+
     results: list[dict[str, Any]] = []
-    for match in _GEMMA_INLINE_TOOL_CALL_RE.finditer(text):
-        name = str(match.group("name") or "").strip()
+    for recovered in recover_textual_tool_calls(text):
+        name = str(recovered.get("tool") or "").strip()
         if not name:
             continue
-
-        arguments: dict[str, Any] = {}
-        body = str(match.group("body") or "")
-        for arg_match in _GEMMA_INLINE_ARG_RE.finditer(body):
-            key = str(arg_match.group("key") or "").strip()
-            if not key:
-                continue
-            arguments[key] = str(arg_match.group("value") or "")
-
+        arguments = recovered.get("arguments")
         results.append(
             {
                 "id": str(uuid.uuid4()),
                 "type": "function",
                 "function": {
                     "name": name.replace("-", "_"),
-                    "arguments": json.dumps(arguments),
+                    "arguments": json.dumps(
+                        arguments if isinstance(arguments, dict) else {},
+                        ensure_ascii=False,
+                    ),
                 },
             }
         )

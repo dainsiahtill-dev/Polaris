@@ -31,10 +31,7 @@ def _profile(max_context_tokens: int = 12000) -> MagicMock:
 
 def _budget_with_window(gateway: RoleContextGateway, window: int | Exception) -> int:
     target = type(gateway._context_os)
-    if isinstance(window, Exception):
-        prop = PropertyMock(side_effect=window)
-    else:
-        prop = PropertyMock(return_value=window)
+    prop = PropertyMock(side_effect=window) if isinstance(window, Exception) else PropertyMock(return_value=window)
     with patch.object(target, "resolved_context_window", new_callable=lambda: prop):
         return gateway._compute_enforcement_budget()
 

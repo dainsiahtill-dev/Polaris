@@ -1,10 +1,64 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.522414Z",
-  "source_hash": "af8567bcafee2a3c",
+  "generated_at": "2026-06-10T11:24:12.953681Z",
+  "source_hash": "a10cc82b6996196a",
   "cell_id": "llm.dialogue",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "function",
+      "name": "_get_cognitive_runtime_public_service",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_cognitive_runtime_commands",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_session_id",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_llm_context",
+      "description": "Resolve Context OS evidence for an LLM dialogue turn.",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "append_context_to_prompt",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "compact_evidence_for_meta",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "attach_cognitive_meta",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
+    {
+      "type": "function",
+      "name": "record_llm_cognitive_receipt",
+      "description": "Record an LLM turn receipt and return updated cognitive evidence.",
+      "defined_in": "polaris/cells/llm/dialogue/internal/cognitive_evidence.py"
+    },
     {
       "type": "function",
       "name": "split_lines",
@@ -177,6 +231,18 @@
     },
     {
       "type": "function",
+      "name": "_coerce_runtime_history",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_runtime_identifier",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_role_provider_model",
       "description": "通过 Cell 公共服务解析角色的 provider 和 model.",
       "defined_in": "polaris/cells/llm/dialogue/internal/role_dialogue.py"
@@ -327,6 +393,18 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_string",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_create_role_runtime_service",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/public/service.py"
     },
     {
       "type": "class",

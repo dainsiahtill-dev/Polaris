@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.494544Z",
-  "source_hash": "19c87d39f341f294",
+  "generated_at": "2026-06-10T11:24:12.765486Z",
+  "source_hash": "aa5052fe0fffcd6d",
   "cell_id": "llm.control_plane",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -445,8 +445,20 @@
     },
     {
       "type": "function",
+      "name": "_active_role_binding",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_can_update_role_readiness",
+      "description": "Only the current role/provider/model binding may overwrite role readiness.",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
       "name": "save_interactive_interview_report",
-      "description": "兼容旧接口的保存报告函数（简化实现）",
+      "description": "兼容旧接口的保存报告函数",
       "defined_in": "polaris/delivery/http/routers/interview.py"
     },
     {
@@ -464,7 +476,7 @@
     {
       "type": "function",
       "name": "v2_llm_interview_save",
-      "description": "",
+      "description": "Save an interview report.",
       "defined_in": "polaris/delivery/http/routers/interview.py"
     },
     {
@@ -476,8 +488,14 @@
     {
       "type": "function",
       "name": "v2_llm_interview_cancel",
-      "description": "",
+      "description": "Best-effort cancellation of an interview stream.",
       "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_and_cache_root",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
@@ -536,37 +554,37 @@
     {
       "type": "function",
       "name": "get_llm_config_v2",
-      "description": "",
+      "description": "Get the current LLM configuration (redacted).",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
       "name": "save_llm_config_v2",
-      "description": "",
+      "description": "Save and reconcile LLM configuration.",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
       "name": "migrate_config_v2",
-      "description": "",
+      "description": "Migrate legacy LLM configuration to the current schema.",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
       "name": "llm_status_v2",
-      "description": "",
+      "description": "Get overall LLM system status.",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
       "name": "get_runtime_status_v2",
-      "description": "",
+      "description": "Get runtime status for all LLM roles.",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
       "type": "function",
       "name": "get_role_runtime_status_v2",
-      "description": "",
+      "description": "Get runtime status for a single LLM role.",
       "defined_in": "polaris/delivery/http/routers/llm.py"
     },
     {
@@ -616,6 +634,18 @@
       "description": "",
       "defined_in": "polaris/delivery/http/routers/llm_models.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_workspace_and_cache_root",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_provider_context",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/providers.py"
     },
     {
       "type": "function",
@@ -674,43 +704,43 @@
     {
       "type": "function",
       "name": "v2_provider_health",
-      "description": "",
+      "description": "Run a health check against a specific LLM provider.",
       "defined_in": "polaris/delivery/http/routers/providers.py"
     },
     {
       "type": "function",
       "name": "v2_provider_models",
-      "description": "",
+      "description": "List available models for a specific LLM provider.",
       "defined_in": "polaris/delivery/http/routers/providers.py"
     },
     {
       "type": "function",
       "name": "v2_list_providers",
-      "description": "List all available providers with their information",
+      "description": "List all available LLM providers with metadata.",
       "defined_in": "polaris/delivery/http/routers/providers.py"
     },
     {
       "type": "function",
       "name": "v2_get_provider_info",
-      "description": "Get detailed information about a specific provider",
+      "description": "Get detailed information about a specific LLM provider.",
       "defined_in": "polaris/delivery/http/routers/providers.py"
     },
     {
       "type": "function",
       "name": "v2_get_provider_default_config",
-      "description": "Get default configuration for a provider",
+      "description": "Get default configuration schema for a provider.",
       "defined_in": "polaris/delivery/http/routers/providers.py"
     },
     {
       "type": "function",
       "name": "v2_validate_provider_config",
-      "description": "Validate provider configuration",
+      "description": "Validate a provider configuration payload.",
       "defined_in": "polaris/delivery/http/routers/providers.py"
     },
     {
       "type": "function",
       "name": "v2_health_check_all",
-      "description": "Perform health checks on all configured providers",
+      "description": "Run health checks on all configured LLM providers.",
       "defined_in": "polaris/delivery/http/routers/providers.py"
     },
     {

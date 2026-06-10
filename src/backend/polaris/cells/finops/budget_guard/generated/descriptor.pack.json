@@ -1,10 +1,75 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.038249Z",
-  "source_hash": "c427f2db221050d4",
+  "generated_at": "2026-06-10T11:24:12.535594Z",
+  "source_hash": "d354c9b4c07a0238",
   "cell_id": "finops.budget_guard",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "ReserveBudgetCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RecordUsageCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetBudgetStatusQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BudgetThresholdExceededEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BudgetDecisionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FinOpsBudgetError",
+      "description": "Raised when `finops.budget_guard` contract processing fails.",
+      "defined_in": "polaris/cells/finops/budget_guard/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "reserve_budget",
+      "description": "Reserve a token budget through the FinOps public command contract.",
+      "defined_in": "polaris/cells/finops/budget_guard/public/service.py"
+    },
     {
       "type": "class",
       "name": "TokenEstimate",

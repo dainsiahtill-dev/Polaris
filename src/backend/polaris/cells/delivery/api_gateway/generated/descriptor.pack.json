@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.804848Z",
-  "source_hash": "638f33ae854c7d17",
+  "generated_at": "2026-06-10T11:24:03.521316Z",
+  "source_hash": "3a9f9c960f970603",
   "cell_id": "delivery.api_gateway",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
@@ -247,6 +247,10 @@
         {
           "name": "reset",
           "doc": "Reset rate limit for a client or all clients."
+        },
+        {
+          "name": "snapshot",
+          "doc": "Return a diagnostic snapshot without exposing raw client IPs."
         }
       ]
     },
@@ -259,6 +263,10 @@
         {
           "name": "__init__",
           "doc": ""
+        },
+        {
+          "name": "diagnostics_snapshot",
+          "doc": "Return current middleware configuration and token bucket state."
         }
       ]
     },
@@ -272,6 +280,12 @@
       "type": "function",
       "name": "get_rate_limit_middleware",
       "description": "Factory function to create rate limit middleware with config from environment.",
+      "defined_in": "polaris/delivery/http/middleware/rate_limit.py"
+    },
+    {
+      "type": "function",
+      "name": "get_rate_limit_diagnostics",
+      "description": "Return rate-limit diagnostics without creating middleware state.",
       "defined_in": "polaris/delivery/http/middleware/rate_limit.py"
     },
     {
@@ -346,7 +360,115 @@
     },
     {
       "type": "function",
+      "name": "_workspace_value",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_settings_qa_enabled",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_key",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_lookup_role_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_role_compatible",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_index_candidates",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_status_from_index",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_role_status_matches_binding",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_status_identity_matches_binding",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_provider_status_matches_binding",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_status_identity_matches_binding",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_binding_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_readiness_candidate_issue",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_readiness_identity_issue",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_readiness_failed_issue",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
       "name": "_ensure_llm_ready",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_binding_for_live_check",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_sanitize_live_check_error",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_llm_live_connectivity",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/_shared.py"
     },

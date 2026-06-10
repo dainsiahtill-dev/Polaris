@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:45.035003Z",
-  "source_hash": "2af88349be684ccc",
+  "generated_at": "2026-06-10T11:24:05.327383Z",
+  "source_hash": "7e18d214b4faadc2",
   "cell_id": "audit.evidence",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -125,6 +125,13 @@
       "methods": []
     },
     {
+      "type": "class",
+      "name": "_AuditRoleRuntimeInvokeResult",
+      "description": "Audit-facing normalized result for RoleRuntime invocations.",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py",
+      "methods": []
+    },
+    {
       "type": "function",
       "name": "get_audit_role_descriptor",
       "description": "Return canonical audit role mapping used by the runtime.",
@@ -140,6 +147,54 @@
       "type": "function",
       "name": "_resolve_non_local_provider_types",
       "description": "Collect all configured provider types except local Ollama.",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_provider_type_for_provider_id",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_value",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_int",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_role_runtime_from_sync",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_create_role_runtime_service",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_role_runtime_policy_context",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_from_role_runtime",
+      "description": "",
       "defined_in": "polaris/cells/audit/evidence/internal/task_audit_llm_binding.py"
     },
     {
@@ -220,6 +275,30 @@
       "description": "Raised when evidence append or verification fails.",
       "defined_in": "polaris/cells/audit/evidence/public/contracts.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence_event_id",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_evidence_logical_path",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "append_evidence_event",
+      "description": "Append one typed evidence event through the audit.evidence public boundary.",
+      "defined_in": "polaris/cells/audit/evidence/public/service.py"
     },
     {
       "type": "class",
@@ -373,6 +452,22 @@
     },
     {
       "type": "class",
+      "name": "_FakeKernelFs",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "append_jsonl",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestDetectLanguage",
       "description": "Language detection from file path extension.",
       "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py",
@@ -486,6 +581,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "test_append_evidence_event_public_service_writes_append_only_jsonl_utf8",
+      "description": "",
+      "defined_in": "polaris/cells/audit/evidence/tests/test_evidence_contract.py"
     },
     {
       "type": "function",
@@ -1031,6 +1132,102 @@
       "name": "safe_value",
       "description": "安全获取值，自动处理各种边界类型。",
       "defined_in": "polaris/kernelone/audit/audit_field.py"
+    },
+    {
+      "type": "function",
+      "name": "_message_role",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_message_content",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_message_metadata",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_metadata_key_hits",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_current_user_instruction",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_content_hits",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_count_roles",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_prompt_digest",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_current_user_instruction_present",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_payload",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "_int_payload",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "compact_context_os_audit",
+      "description": "Return a metadata-safe audit summary without prompt text.",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_context_os_audits",
+      "description": "Aggregate per-request ContextOS prompt audits for return metadata.",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_context_os_audit_from_ledger",
+      "description": "Extract compact ContextOS prompt audit summaries from a TurnLedger.",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "audit_context_os_prompt_messages",
+      "description": "Audit LLM-ready messages generated from ContextOS.",
+      "defined_in": "polaris/kernelone/audit/context_os_prompt.py"
     },
     {
       "type": "class",
@@ -4558,6 +4755,10 @@
         {
           "name": "test_raw_store_property_with_wrapper",
           "doc": "Test raw_store property when store has raw_store attribute."
+        },
+        {
+          "name": "test_windows_key_permission_check_skips_posix_warning",
+          "doc": "Windows reports POSIX-like modes loosely; do not warn there."
         }
       ]
     },
@@ -4826,6 +5027,31 @@
       "name": "runtime",
       "description": "Create a KernelAuditRuntime instance with mock store.",
       "defined_in": "polaris/kernelone/audit/tests/test_audit_runtime.py"
+    },
+    {
+      "type": "class",
+      "name": "_Ledger",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/tests/test_context_os_prompt.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "test_context_os_prompt_audit_accepts_state_first_projection_with_user_literal_key",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/tests/test_context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "test_context_os_prompt_audit_rejects_control_plane_content_leak",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/tests/test_context_os_prompt.py"
+    },
+    {
+      "type": "function",
+      "name": "test_context_os_audit_summary_from_ledger_is_prompt_text_free",
+      "description": "",
+      "defined_in": "polaris/kernelone/audit/tests/test_context_os_prompt.py"
     },
     {
       "type": "class",

@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.110856Z",
-  "source_hash": "bc020555d2a54601",
+  "generated_at": "2026-06-10T11:24:12.178261Z",
+  "source_hash": "42c23e043c34e145",
   "cell_id": "roles.runtime",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -2680,6 +2680,2967 @@
       "defined_in": "polaris/cells/roles/runtime/internal/worker_pool.py"
     },
     {
+      "type": "class",
+      "name": "CliRunner",
+      "description": "CLI execution modes for role agents.",
+      "defined_in": "polaris/cells/roles/runtime/public/cli_runner.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "merge_context_override",
+      "description": "Merge two context override dicts with special handling for nested keys.",
+      "defined_in": "polaris/cells/roles/runtime/public/context_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "to_string_list",
+      "description": "Convert value to a list of stripped strings.",
+      "defined_in": "polaris/cells/roles/runtime/public/context_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "augment_context_with_repo_intelligence",
+      "description": "Inject repo intelligence summary for code/research domains when hinted.",
+      "defined_in": "polaris/cells/roles/runtime/public/context_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "augment_context_with_handoff_rehydration",
+      "description": "Inject handoff rehydration context for Cognitive Runtime continuity.",
+      "defined_in": "polaris/cells/roles/runtime/public/context_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "load_session_context_os_snapshot",
+      "description": "Load Context OS snapshot and prior turn_events from session service.",
+      "defined_in": "polaris/cells/roles/runtime/public/context_adapter.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleIdentity",
+      "description": "Stable identity for one instantiated role runtime object.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleProfileBinding",
+      "description": "Binding to `roles.profile` state without copying profile-owned truth.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleAssetRef",
+      "description": "Reference to an asset owned by another Cell public boundary.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleAssetMount",
+      "description": "One named mount in a runtime object asset table.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleAssetMountTable",
+      "description": "Immutable table of mounted asset references for one role object.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "get",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleCapabilityDescriptor",
+      "description": "Public-contract port descriptor for a role-owned capability call.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleCapabilityPorts",
+      "description": "Immutable capability port table for one role object.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "get",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleCapabilityFingerprint",
+      "description": "Auditable fingerprint for role + capability + effect + tool + policy.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleCapabilityInvocation",
+      "description": "One capability call request, carrying refs instead of payload ownership.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleCapabilityDecision",
+      "description": "Structured sandbox decision for one capability invocation.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleTurnContext",
+      "description": "Typed turn context refs for current input, context, handoff, and task state.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleLedgerBinding",
+      "description": "Refs to kernel ledger/commit and Cognitive Runtime receipt contracts.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleTaskMarketBinding",
+      "description": "Public task-market lifecycle contract names and active work refs.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleTurnEnvelope",
+      "description": "Single typed turn envelope consumed by runtime/kernel boundaries.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleStateCommitRequest",
+      "description": "Request to commit role-object turn state through existing kernel contracts.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleStateCommitReceipt",
+      "description": "Receipt refs produced after role state commit reaches kernel/runtime stores.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RehydrateRoleHandoffCommandV1",
+      "description": "Request to rehydrate a typed handoff pack through Cognitive Runtime.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleHandoffRehydrationResultV1",
+      "description": "Refs-only result of rehydrating a Cognitive Runtime handoff pack.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleRuntimeChainStepRef",
+      "description": "One refs-only step in a multi-role runtime execution chain.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleRuntimeChainEnvelope",
+      "description": "Typed refs-only envelope for an audited multi-role execution chain.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AssembleRoleRuntimeChainCommandV1",
+      "description": "Assemble a refs-only runtime chain envelope from completed role steps.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleRuntimeChainAssemblyResultV1",
+      "description": "Result of assembling a refs-only multi-role runtime chain envelope.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleRuntimeObject",
+      "description": "Instantiated role object composed from refs, ports, and bindings only.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InstantiateRoleRuntimeObjectCommandV1",
+      "description": "Instantiate one stateful role runtime object from public profile bindings.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleRuntimeObjectResultV1",
+      "description": "Structured result for role runtime object instantiation.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecuteRoleTaskMarketLifecycleCommandV1",
+      "description": "Execute one task-market lifecycle operation through a role binding.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleTaskMarketLifecycleResultV1",
+      "description": "Structured result for a role-bound task-market lifecycle operation.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecuteRoleCapabilityInvocationCommandV1",
+      "description": "Execute one mounted role capability through its public contract port.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleCapabilityInvocationResultV1",
+      "description": "Structured result for a role capability RPC/API port invocation.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleRuntimeObjectSpec",
+      "description": "Reusable runtime-object composition spec for one business role.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "instantiate",
+          "doc": "Instantiate a `RoleRuntimeObject` from this spec and runtime bindings."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ExecuteRoleTaskCommandV1",
+      "description": "Execute one role task under the runtime role kernel.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecuteRoleSessionCommandV1",
+      "description": "Execute one user turn on an existing role session.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetRoleRuntimeStatusQueryV1",
+      "description": "Query role runtime health/status for one workspace.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "BuildAggregateRolePlanQueryV1",
+      "description": "Build a deterministic role-lobe plan for an aggregate model wrapper.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AuditAggregateRuntimeIntegrationsQueryV1",
+      "description": "Audit aggregate-model integrations against current runtime entrypoints.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateRoleLobeV1",
+      "description": "One internal functional lobe of a Polaris aggregate role plan.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateCognitiveLedgerEntryV1",
+      "description": "One internal state handoff in the aggregate model plan.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateTakeoverDirectiveV1",
+      "description": "Planned internal lobe takeover for an observed failure signal.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateRuntimeEntrypointCheckV1",
+      "description": "Runtime-verifiable production entrypoint evidence for one integration.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateRuntimeIntegrationV1",
+      "description": "One auditable Polaris-unique technology mapped to runtime entrypoints.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateRuntimeAuditResultV1",
+      "description": "Machine-readable aggregate runtime integration audit result.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateRolePlanResultV1",
+      "description": "Query result for an aggregate role/lobe composition plan.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateChatMessageV1",
+      "description": "Chat message for the aggregate model wrapper.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateChatCompletionsCommandV1",
+      "description": "Single-model-shaped command for a Polaris aggregate LLM wrapper.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateChatChoiceV1",
+      "description": "One chat-completions choice emitted by the aggregate model wrapper.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AggregateChatCompletionsResultV1",
+      "description": "Chat-completions-shaped result for the Polaris aggregate model wrapper.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleTaskStartedEventV1",
+      "description": "Event emitted when role runtime starts a task.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleTaskCompletedEventV1",
+      "description": "Event emitted when role runtime completes a task.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleExecutionResultV1",
+      "description": "Unified role execution result for task/session calls.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StreamTurnOptions",
+      "description": "Options for streamed role chat turns (Task #2).",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StandardStreamEvent",
+      "description": "Dict-subclass canonical stream event for the contracts layer (Task #2).",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "event_type",
+          "doc": ""
+        },
+        {
+          "name": "event_data",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleRuntimeError",
+      "description": "Structured runtime contract error for roles.runtime.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IRoleRuntime",
+      "description": "Public role runtime interface.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "stream_chat_turn",
+          "doc": "Stream role chat turn events as an async iterator."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_is_forbidden_role_object_owner_cell",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_forbidden_role_object_ref_namespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_roles_profile_ref_namespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_ref_namespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_refs_namespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_scope_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_is_within_scope",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_any_ref_namespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_asset_ref_namespace_matches_owner",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_endpoint_matches_owner",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_task_market_task_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_legacy_task_market_task_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_hex_sha256",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_optional_domain",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_optional_string",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_history",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_unique_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_ref_superset",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_capability_ports_allow_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_compute_role_capability_fingerprint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_role_turn_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_required_asset_mount_names",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_asset_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_mount",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_lifecycle_capabilities",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_pm_runtime_spec",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_chief_engineer_runtime_spec",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_architect_runtime_spec",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_qa_runtime_spec",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_runtime_spec",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "get_builtin_role_runtime_spec",
+      "description": "Return the built-in role runtime composition spec for a known role.",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_chat_messages",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_session_override",
+      "description": "Read session strategy override from roles.session source-of-truth.",
+      "defined_in": "polaris/cells/roles/runtime/public/persistence.py"
+    },
+    {
+      "type": "function",
+      "name": "emit_strategy_receipt",
+      "description": "Persist a strategy run's receipt to `<metadata_dir>/runtime/strategy_runs/`.",
+      "defined_in": "polaris/cells/roles/runtime/public/persistence.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRoleAdapter",
+      "description": "Lazy proxy to avoid adapter-side effects at import time.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRoleResult",
+      "description": "Compatibility marker type for workflow role execution results.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleRuntimeService",
+      "description": "Contract-first service facade for `roles.runtime`.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_kernel",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_execution_domain",
+          "doc": ""
+        },
+        {
+          "name": "_strategy_domain_from_execution",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_execution_domain",
+          "doc": ""
+        },
+        {
+          "name": "_next_turn_index",
+          "doc": "Return and increment the turn counter for a session."
+        },
+        {
+          "name": "_resolve_session_override",
+          "doc": "Read session strategy override from roles.session source-of-truth."
+        },
+        {
+          "name": "resolve_strategy_profile",
+          "doc": "Resolve the effective strategy profile for a run."
+        },
+        {
+          "name": "create_strategy_run",
+          "doc": "Create a per-turn StrategyRunContext with resolved strategy identity."
+        },
+        {
+          "name": "emit_strategy_receipt",
+          "doc": "Persist a strategy run's receipt to `<metadata_dir>/runtime/strategy_runs/`."
+        },
+        {
+          "name": "_emit_cognitive_runtime_shadow_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "resolve_strategy",
+          "doc": "Resolve the effective strategy for a role execution."
+        },
+        {
+          "name": "_build_task_request",
+          "doc": ""
+        },
+        {
+          "name": "_build_session_request",
+          "doc": ""
+        },
+        {
+          "name": "_get_cli_runner",
+          "doc": "Get CliRunner instance for CLI method forwarding."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_capability_invocation_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_string",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_model_capability",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_audit_evidence_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_visual_audit_evidence_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_asset_mount_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_asset_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_chief_engineer_asset_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_available_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_with_timeout",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_workspace_guard_paths",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_turn_context_payload_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_receipt_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_change_set_validation_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_handoff_pack_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_handoff_rehydration_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_handoff_id_from_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_owner_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_owner_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_profile_policy_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_unique_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_object_audit_metadata",
+      "description": "Build a refs-only audit index for an instantiated runtime object.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "instantiate_role_runtime_object",
+      "description": "Instantiate a stateful role object from public profile and runtime contracts.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_lifecycle_capability",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_lifecycle_result_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_lifecycle_lease_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_lifecycle_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_lifecycle_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_role_task_market_lifecycle",
+      "description": "Execute claim/lease/ack/fail/requeue through the task-market public boundary.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_role_state_commit_envelope",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "commit_role_state",
+      "description": "Commit role turn refs through kernel commit receipt and Cognitive Runtime receipts.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "rehydrate_role_handoff",
+      "description": "Rehydrate a Cognitive Runtime handoff pack without owning handoff state.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_runtime_chain_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_ref_has_namespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_ref_outside_namespace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_chain_invalid_ref_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "assemble_role_runtime_chain",
+      "description": "Assemble a refs-only Phase 5 role runtime chain envelope.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_role_capability_invocation",
+      "description": "Execute a mounted role capability through its declared public contract.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_session_public_symbol",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_exists",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_file_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_attribute_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_route_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_graph_cell_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_generated_pack_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_runtime_path_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_roles_runtime_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_roles_kernel_public_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_cognitive_runtime_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_public_context_adapter_check",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_aggregate_entrypoint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_aggregate_role_ids",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_lobe",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_cognitive_ledger",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_compute_policy",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_runtime_integrations",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_runtime_audit_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_failure_signal",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_failure_signals",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_failure_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_takeover_evidence_status",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_takeover_directive",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_lobe_by_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_aggregate_execution_lobe",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_lobe_has_current_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_max_lobe_turns",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_memory_recall_limit",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_memory_recall_triggers",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_memory_recall_query",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_memory_current_facts",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_memory_recall_pack",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_phase_for_contextos",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_estimate_aggregate_text_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_attention_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_contextos_attention_budget_pack",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_task_market_projection_pack",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_aggregate_generated_pack_summary",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_context_budget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_context_governance_pack",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_distilled_knowledge_unit",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_distilled_knowledge_pack",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_suspected_files_from_failure_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_distill_aggregate_lobe_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_aggregate_lobe_chain",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_aggregate_execution_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_selected_message_index",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_history_from_messages",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_lobe_directive",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_summarize_aggregate_memory_pack",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_aggregate_lobe_turn_envelope",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_execution_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_execution_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_handoff_from_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_render_aggregate_execution_content",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_render_aggregate_chain_content",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_objective_from_messages",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_completion_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_render_aggregate_plan_content",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_workflow_role",
+      "description": "Forward workflow role execution to `roles.adapters` public service.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_role_system_prompt",
+      "description": "Lazy proxy to avoid control-plane import cycles at module import time.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_tool_calls",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_artifacts",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_result_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_tool_result_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_batch_receipt_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_result_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_metadata_flag_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_enforce_required_context_os",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_result_metadata_patch",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_cognitive_runtime_result_patch",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_llm_provider_policy_into_context",
+      "description": "Expose role-runtime provider policy metadata to the LLM executor path.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_float",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_cognitive_guidance",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_cognitive_runtime_blocker_approval",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_deep_merge_strategy_overrides",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_copy_strategy_override",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_cognitive_strategy_override",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_turn_envelope_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_contract_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_blueprint_status_for_context",
+      "description": "Read CE blueprint status through the owner Cell public contract.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_qa_verdict_for_context",
+      "description": "Read QA verdict history through the owner Cell public contract.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_context_gateway_config_for_role",
+      "description": "Mount role asset reader ports for kernel-owned context signal assembly.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_role_runtime_service",
+      "description": "Reset the singleton RoleRuntimeService for test isolation.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_role_cli_parser",
+      "description": "Create a standard CLI argument parser for role agents.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_tui",
+      "description": "Run the Textual TUI console for a role.",
+      "defined_in": "polaris/cells/roles/runtime/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestToStringList",
+      "description": "Tests for to_string_list helper.",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_context_adapter.py",
+      "methods": [
+        {
+          "name": "test_list_input",
+          "doc": ""
+        },
+        {
+          "name": "test_tuple_input",
+          "doc": ""
+        },
+        {
+          "name": "test_set_input",
+          "doc": ""
+        },
+        {
+          "name": "test_single_string",
+          "doc": ""
+        },
+        {
+          "name": "test_string_with_whitespace",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_list",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_string",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_only",
+          "doc": ""
+        },
+        {
+          "name": "test_mixed_whitespace_items",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMergeContextOverride",
+      "description": "Tests for merge_context_override function.",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_context_adapter.py",
+      "methods": [
+        {
+          "name": "test_empty_base",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_overlay",
+          "doc": ""
+        },
+        {
+          "name": "test_simple_merge",
+          "doc": ""
+        },
+        {
+          "name": "test_state_first_context_os_nested_merge",
+          "doc": ""
+        },
+        {
+          "name": "test_cognitive_runtime_handoff_base_takes_precedence",
+          "doc": ""
+        },
+        {
+          "name": "test_both_empty",
+          "doc": ""
+        },
+        {
+          "name": "test_preserves_keys_not_in_overlay",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAugmentContextWithRepoIntelligence",
+      "description": "Tests for augment_context_with_repo_intelligence function.",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_context_adapter.py",
+      "methods": [
+        {
+          "name": "test_non_code_domain_returns_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_research_domain_triggers_repo_intel",
+          "doc": ""
+        },
+        {
+          "name": "test_code_domain_without_flags_returns_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_code_domain_with_chat_files",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestLoadSessionContextOsSnapshot",
+      "description": "Tests for load_session_context_os_snapshot function.",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_context_adapter.py",
+      "methods": [
+        {
+          "name": "test_empty_session_id_returns_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_session_id_returns_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_valid_session_id_returns_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAugmentContextWithHandoffRehydration",
+      "description": "Tests for augment_context_with_handoff_rehydration function.",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_context_adapter.py",
+      "methods": [
+        {
+          "name": "test_no_handoff_id_returns_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_handoff_id_in_metadata",
+          "doc": ""
+        },
+        {
+          "name": "test_handoff_id_in_context",
+          "doc": ""
+        },
+        {
+          "name": "test_cognitive_runtime_handoff_payload",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeTaskMarketService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "publish_work_item",
+          "doc": ""
+        },
+        {
+          "name": "query_status",
+          "doc": ""
+        },
+        {
+          "name": "claim_work_item",
+          "doc": ""
+        },
+        {
+          "name": "renew_task_lease",
+          "doc": ""
+        },
+        {
+          "name": "acknowledge_task_stage",
+          "doc": ""
+        },
+        {
+          "name": "fail_task_stage",
+          "doc": ""
+        },
+        {
+          "name": "requeue_task",
+          "doc": ""
+        },
+        {
+          "name": "move_task_to_dead_letter",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeRuntimeProjectionService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "query_runtime_projection",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeRoleProfileService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_profile",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeCognitiveRuntimeCommitService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "validate_change_set",
+          "doc": ""
+        },
+        {
+          "name": "record_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "export_handoff_pack",
+          "doc": ""
+        },
+        {
+          "name": "rehydrate_handoff_pack",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeBlueprintService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "generate_task_blueprint",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeCodeIntelligenceService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "verify_ast_dependency",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeDirectorExecutionService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "execute_director_task",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeVerificationGuardService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "verify_completion",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeLlmControlPlaneService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "check_model_capability",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeBudgetGuardService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "reserve_budget",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeWorkspaceGuardService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "check_workspace_write_guard",
+          "doc": ""
+        },
+        {
+          "name": "check_workspace_write_guard_batch",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakePermissionService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "evaluate_permission",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeArchitectDesignService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "generate_architecture_design",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeQaAuditVerdictService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "run_qa_audit",
+          "doc": ""
+        },
+        {
+          "name": "run_visual_qa_audit",
+          "doc": ""
+        },
+        {
+          "name": "parse_traceback_frames",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SlowArchitectDesignService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "generate_architecture_design",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MalformedTaskMarketService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "claim_work_item",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MalformedTaskMarketService",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "renew_task_lease",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_profile_binding",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_profile_binding_rejects_non_profile_owner_cell",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_profile_binding_rejects_refs_outside_roles_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_architect_validation_runtime_object",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_mount_table",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_ports",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_mixed_role_capability_ports",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_object_mounts_assets_and_ports_by_public_contract_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_object_rejects_fingerprint_that_does_not_match_mounted_port",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_object_rejects_mounted_capability_ports_that_exclude_identity_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_runtime_spec_instantiation_derives_refs_only_turn_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_runtime_spec_instantiation_accepts_active_task_market_binding",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_runtime_object_rejects_active_task_market_binding_outside_turn_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_builtin_pm_runtime_spec_mounts_pm_assets_and_task_market_capabilities",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_runtime_instantiation_binds_profile_via_roles_profile_public_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_runtime_instantiation_result_exposes_refs_only_audit_index",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_public_runtime_instantiation_accepts_active_task_market_binding",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_builtin_chief_engineer_runtime_spec_mounts_blueprint_assets_and_code_intel_capabilities",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_builtin_qa_runtime_spec_mounts_truth_assets_and_pytest_capability",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_builtin_architect_runtime_spec_mounts_graph_budget_and_boundary_capabilities",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_builtin_director_runtime_spec_mounts_execution_assets_and_execute_capability",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_runtime_effect_is_allowed",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_builtin_role_capability_effects_are_declared_in_roles_runtime_cell_yaml",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_runtime_spec_rejects_capability_asset_mount_dependency_that_is_not_mounted",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_runtime_spec_rejects_role_excluded_capability_ports",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_asset_mount_table_rejects_duplicate_mount_names",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_asset_mount_table_rejects_role_runtime_or_kernelone_role_asset_owners",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_asset_mount_table_rejects_role_runtime_or_kernelone_role_asset_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_asset_mount_table_rejects_asset_ref_namespace_that_does_not_match_owner_cell",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_asset_mount_table_rejects_unanchored_diff_map_archive",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_asset_mount_table_rejects_open_loop_registry_without_evidence_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_asset_mount_table_rejects_truth_log_without_runtime_receipt_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_ports_reject_duplicate_capability_ids",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_ports_reject_unscoped_role_capabilities",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_runtime_role_scope_checks_do_not_keep_empty_allowed_roles_compatibility",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_descriptor_rejects_public_endpoint_outside_owner_cell",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_descriptor_rejects_role_runtime_or_kernelone_role_owners",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_ports_reject_role_runtime_or_kernelone_role_capability_owners",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_fingerprint_is_deterministic_and_policy_sensitive",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_fingerprint_rejects_fabricated_override",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_envelope_and_commit_request_carry_refs_not_foreign_state",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_envelope_rejects_invocation_role_outside_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_envelope_rejects_invocation_payload_outside_turn_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_envelope_rejects_duplicate_capability_invocation_ids",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_envelope_rejects_active_task_market_binding_without_turn_task_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_commit_envelope",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_state_commit_request_rejects_changed_asset_ref_outside_turn_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_state_commit_request_rejects_empty_commit_without_audit_anchor",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_state_commit_request_rejects_evidence_refs_outside_audit_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_state_commit_request_rejects_changed_files_outside_allowed_scope",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_capability_invocation_rejects_unowned_payload_or_invalid_fingerprint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_context_rejects_refs_outside_source_of_truth",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_capability_decision_rejects_evidence_refs_outside_audit_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_capability_invocation_result_rejects_failed_allowed_true",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_invocation_failure_helper_does_not_use_allowed_for_capability_availability",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_capability_invocation_result_rejects_unowned_result_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_successful_role_capability_invocation_result_requires_target_result_anchor",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_capability_invocation_result_rejects_invalid_evidence_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_successful_role_state_commit_receipt_requires_runtime_receipt_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_state_commit_receipt_rejects_refs_outside_source_of_truth",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_state_commit_receipt_rejects_duplicate_cognitive_runtime_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_ledger_binding_rejects_refs_outside_source_of_truth",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_binding_rejects_refs_outside_task_market",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_binding_rejects_legacy_active_task_ref_shape",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_envelope_rejects_profile_role_mismatch",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_turn_envelope_rejects_task_market_ref_outside_turn_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_uses_binding_contracts_and_public_service",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "runtime_object_for",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_supports_publish_public_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_supports_dead_letter_public_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_successful_role_task_market_lifecycle_result_requires_task_market_result_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_successful_claim_or_lease_lifecycle_result_requires_task_market_lease_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_returns_structured_failure_for_missing_result_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_returns_structured_failure_for_missing_lease_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_rejects_task_outside_current_turn_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_rejects_lease_outside_current_binding",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_rejects_lease_operation_without_binding",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_rejects_missing_capability_port_without_service_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_rejects_fingerprint_mismatch_without_service_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_task_market_lifecycle_rejects_unknown_operation_without_service_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_commit_role_state_records_runtime_receipt_and_handoff_via_cognitive_runtime",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_rehydrate_role_handoff_delegates_to_cognitive_runtime_public_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_rehydrate_role_handoff_normalizes_owner_refs_from_raw_cognitive_runtime_ids",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_commit_role_state_rejects_failed_change_set_validation_without_receipt_or_handoff",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_commit_role_state_rejects_missing_kernel_commit_receipt_without_runtime_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_keeps_phase5_refs_typed_and_ordered",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_missing_required_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_required_roles_out_of_order",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_full_phase5_without_runtime_projection_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_full_phase5_without_audit_evidence_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_phase5_chain_steps",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_valid_phase5_chain_command",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_full_phase5_without_cognitive_runtime_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_full_phase5_without_director_qa_handoff_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_full_phase5_without_role_runtime_receipt_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_full_phase5_without_role_audit_evidence_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_full_phase5_required_role_downgrade",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_invalid_turn_ledger_ref_as_typed_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_invalid_runtime_projection_ref_as_typed_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_rejects_invalid_audit_evidence_ref_as_typed_result",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_assembly_aggregates_capability_fingerprint_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_step_requires_task_market_anchor_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_step_rejects_legacy_task_ref_shape",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_step_rejects_role_runtime_or_kernelone_role_owners",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_step_rejects_refs_outside_source_of_truth",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_envelope_rejects_missing_step_aggregate_refs",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_role_runtime_chain_envelope_rejects_aggregate_refs_outside_source_of_truth",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_pm_dispatch_capability_invokes_task_market_publish_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_invocation_rejects_payload_ref_outside_current_turn_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_non_pm_dispatch_capability_is_structurally_denied_without_task_market_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_pm_evaluate_critical_path_reads_task_market_status_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_pm_project_runtime_status_invokes_runtime_projection_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_director_execute_capability_invokes_director_execution_public_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_chief_engineer_generate_diff_capability_invokes_blueprint_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_chief_engineer_record_arch_memo_targets_arch_constraint_memo_ref",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_fingerprint_mismatch_is_denied_before_blueprint_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_capability_fingerprint_effect_mismatch_is_rejected_by_runtime_object",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_chief_engineer_verify_ast_dependency_invokes_code_intelligence_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_pytest_capability_invokes_verification_guard_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_non_qa_pytest_capability_is_denied_without_verification_guard_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_non_qa_pytest_capability_is_denied_even_if_misconfigured_as_mounted",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_issue_audit_verdict_invokes_qa_audit_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_visual_audit_rejects_without_image_capable_model_before_qa_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_visual_audit_rejects_payload_model_capability_downgrade_before_preflight",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_visual_audit_model_preflight_uses_current_qa_role",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_visual_audit_invokes_qa_contract_after_image_capability_preflight",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_visual_audit_requires_audit_evidence_ref_after_owner_success",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_non_qa_issue_audit_verdict_is_denied_without_qa_audit_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_parse_traceback_frames_invokes_failure_signal_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_non_qa_parse_traceback_frames_is_denied_without_qa_audit_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_budget_capability_invokes_finops_budget_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_budget_denial_has_allowed_false_and_capability_available_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_intercept_illegal_mutation_uses_workspace_guard_refusal",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_non_architect_mutation_guard_is_denied_without_workspace_guard_call",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_validate_cell_boundary_change_invokes_permission_guard_and_design",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_validate_cell_boundary_permission_denial_has_allowed_false",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_validate_cell_boundary_workspace_guard_denial_has_allowed_false",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_validate_cell_boundary_rejects_empty_changed_paths_before_guards",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_validate_cell_boundary_invalid_context_has_allowed_false",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_architect_validate_cell_boundary_design_timeout_has_structured_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "TestUEPStreamParity",
+      "description": "Test suite for UEP stream parity across entry points.",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_uep_stream_parity.py",
+      "methods": [
+        {
+          "name": "temp_workspace",
+          "doc": "Create a temporary workspace with proper structure."
+        },
+        {
+          "name": "message_bus",
+          "doc": "Create and register a fresh MessageBus."
+        },
+        {
+          "name": "runtime_service",
+          "doc": "Create a RoleRuntimeService instance."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestUEPEntryPointParity",
+      "description": "Test that different entry points produce identical outputs.",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_uep_stream_parity.py",
+      "methods": [
+        {
+          "name": "temp_workspace",
+          "doc": "Create a temporary workspace."
+        },
+        {
+          "name": "message_bus",
+          "doc": "Create and register a fresh MessageBus."
+        },
+        {
+          "name": "_discover_journal_files",
+          "doc": "Discover all journal files in workspace."
+        },
+        {
+          "name": "_discover_archive_files",
+          "doc": "Discover all archive files in workspace."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestUEPSilentFailure",
+      "description": "Test that UEP failures are explicit, not silent.",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_uep_stream_parity.py",
+      "methods": [
+        {
+          "name": "_restore_global_bus",
+          "doc": "Ensure global bus is restored after each test."
+        },
+        {
+          "name": "temp_workspace",
+          "doc": "Create a temporary workspace."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_temp_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/runtime/public/tests/test_uep_stream_parity.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_value",
+      "description": "Resolve the active desktop workspace from compatible settings fields.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_workspace",
+      "description": "Read an explicit workspace from a role-chat payload context.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_for_role_request",
+      "description": "Resolve workspace from query/body context before falling back to active desktop state.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
+      "type": "function",
+      "name": "_state_for_workspace",
+      "description": "Return a lightweight state pinned to the resolved role-chat workspace.",
+      "defined_in": "polaris/delivery/http/routers/role_chat.py"
+    },
+    {
       "type": "function",
       "name": "_validate_role",
       "description": "Validate that the requested role is supported.",
@@ -2722,6 +5683,13 @@
     },
     {
       "type": "class",
+      "name": "AppendAuditEventRequest",
+      "description": "Append a role-session audit event.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "ExportToWorkflowRequest",
       "description": "Request to export session to workflow",
       "defined_in": "polaris/delivery/http/routers/role_session.py",
@@ -2729,14 +5697,122 @@
     },
     {
       "type": "function",
+      "name": "_record_value",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_text",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_records",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_workflow_export_runtime_ready",
+      "description": "Fail closed before exporting role-session evidence into role workflows.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_non_negative_int",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_export_token",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_artifact",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_message",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_audit_event",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_message_directive_lines",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
       "name": "_build_directive_from_artifacts",
-      "description": "Build a directive string from session artifacts.",
+      "description": "Build a directive string from session artifacts and conversation messages.",
       "defined_in": "polaris/delivery/http/routers/role_session.py"
     },
     {
       "type": "function",
       "name": "_build_task_filter_from_artifacts",
-      "description": "Build a task filter from session artifacts.",
+      "description": "Build a task filter from session artifacts and conversation messages.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_session_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_message_total",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_audit_total",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_value",
+      "description": "Resolve active desktop workspace from compatible settings fields.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_active_workspace",
+      "description": "Resolve active workspace from the request app state.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_session_workspace",
+      "description": "Prefer persisted session workspace before active settings fallback.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_path_for_session",
+      "description": "Return workspace path for session-scoped evidence services.",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_session_service",
+      "description": "Construct RoleSessionService bound to the active desktop workspace.",
       "defined_in": "polaris/delivery/http/routers/role_session.py"
     }
   ],

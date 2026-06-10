@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:40.905154Z",
-  "source_hash": "2393b37aac0e14a3",
+  "generated_at": "2026-06-10T11:24:15.011218Z",
+  "source_hash": "75421654ebecb349",
   "cell_id": "runtime.task_market",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -614,6 +614,26 @@
         {
           "name": "_get_store",
           "doc": "Return the appropriate store backend (lazy)."
+        },
+        {
+          "name": "_coerce_optional_bool",
+          "doc": ""
+        },
+        {
+          "name": "_payload_flag",
+          "doc": ""
+        },
+        {
+          "name": "_task_market_session_id",
+          "doc": ""
+        },
+        {
+          "name": "_record_cognitive_runtime_lifecycle_receipt",
+          "doc": "Record a Cognitive Runtime receipt for a task-market lifecycle event."
+        },
+        {
+          "name": "_attach_lifecycle_evidence",
+          "doc": ""
         },
         {
           "name": "publish_work_item",
@@ -3252,6 +3272,26 @@
     },
     {
       "type": "class",
+      "name": "_FakeCognitiveRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "record_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "close",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "FakeConsumerForService",
       "description": "Minimal consumer stub for service-level consumer loop tests.",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
@@ -3273,6 +3313,18 @@
     {
       "type": "function",
       "name": "test_publish_claim_ack_flow",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_publish_claim_ack_records_cognitive_runtime_lifecycle_receipts",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_required_cognitive_runtime_receipt_failure_blocks_publish",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
     },

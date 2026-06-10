@@ -1,7 +1,28 @@
 # Scout Recon-Gate Blueprint (2026-06-10)
 
-**Status:** PROPOSED (structural — touches the single-commit transaction kernel, ADR-0071).
-Requires a Verification Card before execution per `src/backend/AGENTS.md §8.6`.
+**Status:** ACCEPTED & IMPLEMENTED (v1, block-only) — see ADR-0091 and
+`vc-20260610-scout-recon-gate.yaml` (both under `src/backend/docs/governance/`).
+
+**v1 amendments vs the original proposal below (recorded per ADR-0091):**
+
+1. **Block-only, no bootstrap drive.** The §3 drive path
+   (`execute_read_bootstrap_batch` injection before blocking) is deferred:
+   (a) `_handle_final_answer` does not receive `context`/`tool_definitions`,
+   and changing its signature ripples into `StreamOrchestrator` (which holds
+   the same bound method); (b) a kernel-fabricated search query is itself a
+   fake-grounding risk — recon receipts must come from the model's own calls.
+   If self-correction is wanted later, reuse the ADR-0090 I3 corrective-retry
+   channel at the decision layer, not finalize.
+2. **`recon_required` lives on `TransactionConfig`, not `DeliveryContract`**
+   (§3.2 superseded). recon_mode is a ROLE property, not a per-turn intent;
+   the config is built once in `TurnEngine._create_transaction_kernel` where
+   `profile` is in scope, and the gate reads `self.config` — covering the
+   stream path for free, with zero edits to the 5+ `DeliveryContract`
+   construction sites in `stream_orchestrator.py`.
+3. **Shared recon set** lives in
+   `polaris/kernelone/tool_execution/tool_categories.py` (the existing tool
+   classification SSOT), not a new transaction constant; `unified_judge` and
+   the kernel predicate both import it (§3.1 refined).
 
 ## 1. Problem
 

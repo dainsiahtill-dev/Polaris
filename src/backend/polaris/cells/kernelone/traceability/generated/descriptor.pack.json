@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.023346Z",
-  "source_hash": "c726490f062f25e4",
+  "generated_at": "2026-06-10T11:24:06.468346Z",
+  "source_hash": "fec204a9900ae8cb",
   "cell_id": "kernelone.traceability",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",

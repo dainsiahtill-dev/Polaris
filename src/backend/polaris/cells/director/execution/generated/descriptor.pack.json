@@ -1,99 +1,10 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.375367Z",
-  "source_hash": "f723f1f4cf862938",
+  "generated_at": "2026-06-10T11:24:04.139114Z",
+  "source_hash": "1c1f8c3421a6ae0d",
   "cell_id": "director.execution",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
-    {
-      "type": "class",
-      "name": "CodeGenerationPolicyViolationError",
-      "description": "Raised when forbidden code-writing behavior is requested.",
-      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "CodeGenerationEngine",
-      "description": "Policy guard for legacy code-generation entry points.",
-      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "resolve_llm_timeout",
-          "doc": "Resolve per-call LLM timeout with sane upper/lower bounds."
-        },
-        {
-          "name": "resolve_task_timeout_budget",
-          "doc": "Resolve total timeout budget for one task, not per round."
-        },
-        {
-          "name": "remaining_timeout",
-          "doc": "Return remaining whole seconds to deadline."
-        },
-        {
-          "name": "resolve_patch_retry_attempts",
-          "doc": "Resolve retry attempts for legacy call sites."
-        },
-        {
-          "name": "_env_flag",
-          "doc": ""
-        },
-        {
-          "name": "stress_strict_mode_enabled",
-          "doc": "Return strict-mode switch."
-        },
-        {
-          "name": "allow_template_fallback",
-          "doc": "Always deny template fallback to enforce policy."
-        },
-        {
-          "name": "resolve_spin_guard_repeat_limit",
-          "doc": "Resolve spin-guard limit for legacy call sites."
-        },
-        {
-          "name": "is_low_signal_response",
-          "doc": "Check low-signal responses (utility retained for compatibility)."
-        },
-        {
-          "name": "register_spin_guard",
-          "doc": "Register spin guard and detect repeated prompt-output pairs."
-        },
-        {
-          "name": "invoke_runtime_provider",
-          "doc": "Blocked: runtime provider invocation for code writing."
-        },
-        {
-          "name": "invoke_ollama",
-          "doc": "Blocked: LLM invocation for code writing."
-        },
-        {
-          "name": "build_patch_retry_prompt",
-          "doc": "Blocked: patch prompt construction for code writing."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_raise_policy_violation",
-      "description": "Raise a fail-closed policy error for forbidden actions.",
-      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py"
-    },
-    {
-      "type": "function",
-      "name": "generate_fallback_code_content",
-      "description": "Blocked: deterministic fallback code generation is forbidden.",
-      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py"
-    },
-    {
-      "type": "function",
-      "name": "generate_phase_aware_fallback_content",
-      "description": "Blocked: phase-aware fallback code generation is forbidden.",
-      "defined_in": "polaris/cells/director/execution/internal/code_generation_engine.py"
-    },
     {
       "type": "class",
       "name": "GatheredContext",
@@ -435,6 +346,36 @@
       "defined_in": "polaris/cells/director/execution/public/contracts.py"
     },
     {
+      "type": "function",
+      "name": "_run_director_awaitable",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_timeout_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_task",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "execute_director_task",
+      "description": "Execute a Director task through the `director.execution` public contract.",
+      "defined_in": "polaris/cells/director/execution/public/service.py"
+    },
+    {
       "type": "class",
       "name": "DirectorCodeIntelMixin",
       "description": "",
@@ -533,6 +474,18 @@
         {
           "name": "test_resolve_llm_timeout_bounds_max",
           "doc": ""
+        },
+        {
+          "name": "test_resolve_llm_timeout_runtime_codegen_uses_larger_cap",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_llm_timeout_runtime_codegen_cap",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_llm_timeout_runtime_codegen_default_hint",
+          "doc": ""
         }
       ]
     },
@@ -548,6 +501,18 @@
         },
         {
           "name": "test_resolve_task_timeout_budget_from_task",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_task_timeout_budget_scales_for_multi_round_task",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_task_timeout_budget_runtime_codegen_uses_runtime_per_round_floor",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_task_timeout_budget_caps_large_multi_round_task",
           "doc": ""
         },
         {
@@ -638,6 +603,61 @@
     },
     {
       "type": "class",
+      "name": "FakeCognitiveRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "lease_edit_scope",
+          "doc": ""
+        },
+        {
+          "name": "validate_change_set",
+          "doc": ""
+        },
+        {
+          "name": "record_runtime_receipt",
+          "doc": ""
+        },
+        {
+          "name": "map_diff_to_cells",
+          "doc": ""
+        },
+        {
+          "name": "request_projection_compile",
+          "doc": ""
+        },
+        {
+          "name": "promote_or_reject",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeCognitiveRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": [
+        {
+          "name": "lease_edit_scope",
+          "doc": ""
+        },
+        {
+          "name": "validate_change_set",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeRoleRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "TestBlockedEntryPoints",
       "description": "",
       "defined_in": "polaris/cells/director/execution/tests/test_code_generation.py",
@@ -652,6 +672,34 @@
         },
         {
           "name": "test_build_patch_retry_prompt_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_extract_response_text_recovers_nested_response_content",
+          "doc": ""
+        },
+        {
+          "name": "test_workspace_policy_prompt_includes_agents_and_package_scripts",
+          "doc": ""
+        },
+        {
+          "name": "test_proposal_policy_violations_rejects_forbidden_package_changes",
+          "doc": ""
+        },
+        {
+          "name": "test_proposal_policy_violations_rejects_forbidden_tooling_files",
+          "doc": ""
+        },
+        {
+          "name": "test_file_policy_violations_rejects_package_script_and_dependency_changes",
+          "doc": ""
+        },
+        {
+          "name": "test_file_policy_violations_rejects_forbidden_tooling_files",
+          "doc": ""
+        },
+        {
+          "name": "test_recover_response_text_from_director_llm_events",
           "doc": ""
         }
       ]
@@ -933,6 +981,18 @@
     },
     {
       "type": "class",
+      "name": "FakeDirectorExecutionService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestExecuteDirectorTaskCommandV1",
       "description": "Tests for ExecuteDirectorTaskCommandV1 contract.",
       "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
@@ -968,6 +1028,18 @@
         {
           "name": "test_command_with_metadata",
           "doc": "Test command with metadata."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteDirectorTaskPublicService",
+      "description": "",
+      "defined_in": "polaris/cells/director/execution/tests/test_execution_contracts.py",
+      "methods": [
+        {
+          "name": "test_execute_director_task_maps_public_command_to_typed_result",
+          "doc": ""
         }
       ]
     },
@@ -1425,6 +1497,20 @@
     },
     {
       "type": "class",
+      "name": "DirectorIntegrationQaRequest",
+      "description": "Run post-Director integration QA for a workspace.",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorIntegrationQaResponse",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "TaskCreateRequest",
       "description": "",
       "defined_in": "polaris/delivery/http/v2/director.py",
@@ -1433,7 +1519,7 @@
     {
       "type": "class",
       "name": "TaskResponse",
-      "description": "",
+      "description": "Director task response bound to the shared role task contract.",
       "defined_in": "polaris/delivery/http/v2/director.py",
       "methods": []
     },
@@ -1441,6 +1527,41 @@
       "type": "class",
       "name": "DirectorStatusResponse",
       "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorDiagnosticsStatusSection",
+      "description": "Runtime status evidence for Director desktop readiness.",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorDiagnosticsTaskSection",
+      "description": "Task queue evidence for Director handoff readiness.",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorDiagnosticsWorkerSection",
+      "description": "Worker pool evidence for Director handoff readiness.",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorDiagnosticsLLMSection",
+      "description": "Director role-specific LLM readiness evidence.",
+      "defined_in": "polaris/delivery/http/v2/director.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectorDiagnosticsResponse",
+      "description": "Side-effect-free Director desktop readiness snapshot.",
       "defined_in": "polaris/delivery/http/v2/director.py",
       "methods": []
     },
@@ -1470,7 +1591,175 @@
     },
     {
       "type": "function",
+      "name": "_director_tasks_queued",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_run_task_ids_from_diagnostics",
+      "description": "Resolve Director run task IDs from explicit request or diagnostics.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
       "name": "_projection_task_rows",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_row_to_director_task_row",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_execution_rows_for_workspace",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_task_rows_by_identity",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_backed_task_rows",
+      "description": "Use the PM contract as Director diagnostics' full task universe.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_task_rows_for_workspace",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_workflow_shell_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_backed_task_rows",
+      "description": "Overlay canonical task runtime rows so diagnostics honor lease expiry.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_row_matches_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_cancel_success_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_cancel_failure_detail",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_from_request",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_snapshot_workspace",
+      "description": "Hide orchestration runs that do not belong to the requested desktop workspace.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_dict",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_text_or_none",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_text",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_projection_source_for_task_rows",
+      "description": "Return the best available provenance label for task projection rows.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_task_projection_source",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_string_list",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_status_token",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_row_from_object",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_rows_from_local_tasks",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_id_from_row",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_details",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_row_requires_blueprint_evidence",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_response_from_row",
       "description": "",
       "defined_in": "polaris/delivery/http/v2/director.py"
     },
@@ -1478,6 +1767,204 @@
       "type": "function",
       "name": "_get_workflow_snapshot_sync",
       "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_snapshot_status",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_snapshot_task_count",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_orchestration_response",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_is_within",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_reference_values",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_identity_tokens",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_task_identity_values",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_payload_matches_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_contract_list",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_handoff_missing_fields",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_payload_is_handoff_ready",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_payload_is_traceability_only",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_blueprint_payload_by_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_all_blueprint_payloads",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_blueprint_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_blueprint_payload_by_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_artifact_state",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_diagnostics_from_rows",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker_payload_from_object",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker_id_from_row",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker_row_matches_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker_rows_from_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker_rows_from_projection",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_worker_diagnostics_from_workers",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_llm_diagnostics",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_diagnostic_issues",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_execution_blockers",
+      "description": "Return hard blockers that should disable a new Director run.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_director_can_execute",
+      "description": "Raise a structured 409 when Director execution prerequisites are not met.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_director_lifecycle_can_start",
+      "description": "Ensure the Director role LLM runtime is ready before service startup.",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_task_priority",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/director.py"
+    },
+    {
+      "type": "function",
+      "name": "get_director_capabilities",
+      "description": "Return the Director capability matrix for desktop and workflow hosts.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     }
   ],

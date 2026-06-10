@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from polaris.domain.verification.business_validators import (
     validate_director_safe_scope as _validate_director_safe_scope_domain,
 )
+from polaris.kernelone.tool_execution.tool_categories import SCOUT_RECON_TOOLS
 
 from .unified_models import (
     SCORE_WEIGHTS,
@@ -41,6 +42,24 @@ from .unified_models import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+def aggregate_overall_score(category_scores: dict[str, float], checks: list[JudgeCheck]) -> float:
+    """Weighted overall score over categories that actually have checks (ADR-0090 I5.2).
+
+    The legacy aggregation gave every EMPTY weighted category a free 1.0 × weight
+    (e.g. scout cases without evidence checks gained +0.15 for nothing), which
+    compressed real quality differences. Weights are renormalized over the
+    non-empty weighted categories; with no checks at all the score is 1.0
+    (vacuous case, preserved legacy semantics).
+    """
+    non_empty = {check.category for check in checks}
+    weighted = [(name, weight) for name, weight in SCORE_WEIGHTS.items() if name in non_empty]
+    weight_total = sum(weight for _, weight in weighted)
+    if weight_total <= 0:
+        return 1.0 if not checks else sum(c.effective_score for c in checks) / len(checks)
+    return sum(category_scores.get(name, 0.0) * weight for name, weight in weighted) / weight_total
+
 
 # ------------------------------------------------------------------
 # Validator Protocol
@@ -83,7 +102,7 @@ class ValidatorPort(Protocol):
         output_text: str,
         observed: ObservedBenchmarkRun,
         known_paths: list[str],
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str] | tuple[bool, str, float]:
         """Validate the benchmark output.
 
         Args:
@@ -92,7 +111,9 @@ class ValidatorPort(Protocol):
             known_paths: List of known valid file paths in workspace.
 
         Returns:
-            A tuple of (is_valid, message).
+            ``(is_valid, message)`` for binary checks, or
+            ``(is_valid, message, graded_score)`` with ``graded_score`` in
+            [0, 1] for quality-graded checks (ADR-0090 I5.1).
         """
         ...
 
@@ -1061,26 +1082,11 @@ def _looks_like_structured_steps(text: str) -> bool:
 # Scout (探子) read-only reconnaissance validators
 # ------------------------------------------------------------------
 
-_SCOUT_RECON_TOOLS: frozenset[str] = frozenset(
-    {
-        "repo_tree",
-        "repo_rg",
-        "grep",
-        "ripgrep",
-        "search_code",
-        "read_file",
-        "repo_read_head",
-        "repo_read_slice",
-        "repo_read_tail",
-        "repo_read_around",
-        "repo_symbols_index",
-        "repo_map",
-        "glob",
-        "list_directory",
-        "file_exists",
-        "scout_probe",
-    }
-)
+# SSOT (ADR-0091 R4): shared with the kernel recon-required finalize gate.
+# Do NOT redefine locally — judge and kernel must agree on what counts as
+# reconnaissance. Canonical definition:
+# polaris/kernelone/tool_execution/tool_categories.py
+_SCOUT_RECON_TOOLS: frozenset[str] = SCOUT_RECON_TOOLS
 
 _SCOUT_READ_FILE_TOOLS: frozenset[str] = frozenset(
     {"read_file", "repo_read_head", "repo_read_slice", "repo_read_tail", "repo_read_around"}
@@ -1147,7 +1153,12 @@ class ScoutReadOnlyContractValidator:
 
 
 class ScoutEvidencePathsValidator:
-    """Scout findings must be grounded in real reconnaissance, not fabricated."""
+    """Scout findings must be grounded in real reconnaissance, not fabricated.
+
+    Graded (ADR-0090 I5): the score rewards reconnaissance DEPTH — distinct
+    recon invocations / 3, capped at 1.0 — so a one-peek answer ranks below a
+    properly investigated one even when both pass.
+    """
 
     name: str = "scout_evidence_paths"
     category: str = "evidence"
@@ -1158,13 +1169,19 @@ class ScoutEvidencePathsValidator:
         output_text: str,
         observed: ObservedBenchmarkRun,
         known_paths: list[str],
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, float]:
         del known_paths
         if not _scout_has_recon_tool_call(observed):
-            return False, "scout produced findings without any read/search tool call (ungrounded)"
+            return False, "scout produced findings without any read/search tool call (ungrounded)", 0.0
         if len((output_text or "").strip()) < 20:
-            return False, "scout output too thin to constitute evidence"
-        return True, "scout findings grounded in real reconnaissance"
+            return False, "scout output too thin to constitute evidence", 0.0
+        distinct_recon = {
+            (str(call.tool or "").strip().lower(), str(sorted((call.args or {}).items())))
+            for call in observed.tool_calls
+            if str(call.tool or "").strip().lower() in _SCOUT_RECON_TOOLS
+        }
+        depth_score = min(1.0, len(distinct_recon) / 3.0)
+        return True, f"scout findings grounded ({len(distinct_recon)} distinct recon calls)", depth_score
 
 
 class ScoutCodebaseMapValidator:
@@ -1179,20 +1196,23 @@ class ScoutCodebaseMapValidator:
         output_text: str,
         observed: ObservedBenchmarkRun,
         known_paths: list[str],
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, float]:
         del known_paths
         data = _extract_json_dict(output_text)
         if data is None:
-            return False, "scout codebase map must be a JSON object"
+            return False, "scout codebase map must be a JSON object", 0.0
         missing = [k for k in ("architecture", "modules", "entry_points") if k not in data]
         if missing:
-            return False, f"scout codebase map missing keys: {missing}"
+            return False, f"scout codebase map missing keys: {missing}", 0.0
         modules = data.get("modules")
         if not isinstance(modules, list) or not modules:
-            return False, "scout codebase map 'modules' must be a non-empty list"
+            return False, "scout codebase map 'modules' must be a non-empty list", 0.0
         if not _scout_has_recon_tool_call(observed):
-            return False, "scout codebase map produced without reconnaissance tool calls"
-        return True, "scout codebase map is structured and grounded"
+            return False, "scout codebase map produced without reconnaissance tool calls", 0.0
+        # Graded (ADR-0090 I5): map richness — 0.4 floor for a minimal valid map,
+        # full credit at >= 5 documented modules.
+        richness = max(0.4, min(1.0, len(modules) / 5.0))
+        return True, f"scout codebase map structured and grounded ({len(modules)} modules)", richness
 
 
 class ScoutDependencyReportValidator:
@@ -1239,7 +1259,11 @@ class ScoutDocFactsValidator:
 
 
 class ScoutDetectiveRootCauseValidator:
-    """Detective output must localize a concrete root-cause anchor (file/symbol/line)."""
+    """Detective output must localize a concrete root-cause anchor (file/symbol/line).
+
+    Graded (ADR-0090 I5): anchor precision tiers — file only 0.4, +symbol 0.7,
+    +line number 1.0 — so a precise localization outranks a vague one.
+    """
 
     name: str = "scout_detective_root_cause"
     category: str = "contract"
@@ -1250,13 +1274,25 @@ class ScoutDetectiveRootCauseValidator:
         output_text: str,
         observed: ObservedBenchmarkRun,
         known_paths: list[str],
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, float]:
         del known_paths
         if not _scout_has_recon_tool_call(observed):
-            return False, "detective conclusion produced without reconnaissance"
-        if not _scout_localizes_anchor(output_text or ""):
-            return False, "detective output did not localize a concrete file/symbol/line"
-        return True, "detective output localizes a concrete root-cause anchor"
+            return False, "detective conclusion produced without reconnaissance", 0.0
+        text = output_text or ""
+        if not _scout_localizes_anchor(text):
+            return False, "detective output did not localize a concrete file/symbol/line", 0.0
+        has_line = bool(re.search(r":\d+\b|line\s+\d+|第\s*\d+\s*行", text))
+        has_symbol = bool(re.search(r"[A-Za-z_][A-Za-z0-9_]*\s*\(", text))
+        if has_line:
+            precision = 1.0
+            tier = "file+symbol+line"
+        elif has_symbol:
+            precision = 0.7
+            tier = "file+symbol"
+        else:
+            precision = 0.4
+            tier = "file only"
+        return True, f"detective localizes a root-cause anchor ({tier})", precision
 
 
 class ScoutMinReconValidator:
@@ -1566,7 +1602,10 @@ class UnifiedJudge:
                 continue
 
             try:
-                ok, message = validator.validate(combined_output, observed, known_paths)
+                result = validator.validate(combined_output, observed, known_paths)
+                ok, message = result[0], result[1]
+                # ADR-0090 I5.1: validators may return (ok, msg, graded_score).
+                graded_score = float(result[2]) if len(result) > 2 and result[2] is not None else None
                 checks.append(
                     JudgeCheck(
                         code=f"validator:{validator_name}",
@@ -1574,6 +1613,7 @@ class UnifiedJudge:
                         passed=bool(ok),
                         message=str(message or validator_name),
                         critical=validator.critical,
+                        score=graded_score,
                     )
                 )
             except (TypeError, ValueError, AttributeError) as exc:
@@ -1599,9 +1639,7 @@ class UnifiedJudge:
 
         # Calculate scores
         category_scores = self._calculate_category_scores(checks)
-        overall_score = sum(
-            category_scores[name] * weight for name, weight in SCORE_WEIGHTS.items() if name in category_scores
-        )
+        overall_score = aggregate_overall_score(category_scores, checks)
 
         critical_failures = [c for c in checks if c.critical and not c.passed]
 
@@ -1852,7 +1890,13 @@ class UnifiedJudge:
         ]
 
     def _calculate_category_scores(self, checks: list[JudgeCheck]) -> dict[str, float]:
-        """Calculate per-category scores."""
+        """Calculate per-category scores (mean of graded check scores, ADR-0090 I5).
+
+        Categories without any check keep a nominal 1.0 in the returned mapping
+        for report-shape compatibility, but they are EXCLUDED from the overall
+        weighted score by ``aggregate_overall_score`` — an empty category must
+        never gift free credit.
+        """
         grouped: dict[str, list[JudgeCheck]] = {}
         for check in checks:
             grouped.setdefault(check.category, []).append(check)
@@ -1863,14 +1907,12 @@ class UnifiedJudge:
             if not items:
                 scores[category] = 1.0
             else:
-                passed = sum(1 for c in items if c.passed)
-                scores[category] = passed / len(items)
+                scores[category] = sum(c.effective_score for c in items) / len(items)
 
         # Include any categories not in SCORE_WEIGHTS
         for category, items in grouped.items():
             if category not in scores:
-                passed = sum(1 for c in items if c.passed)
-                scores[category] = passed / len(items)
+                scores[category] = sum(c.effective_score for c in items) / len(items)
 
         return scores
 

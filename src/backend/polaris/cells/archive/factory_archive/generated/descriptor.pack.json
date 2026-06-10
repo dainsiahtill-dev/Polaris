@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:45.195596Z",
-  "source_hash": "5121296128db0a07",
+  "generated_at": "2026-06-10T11:24:14.661526Z",
+  "source_hash": "e491f05ef096fe65",
   "cell_id": "archive.factory_archive",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -53,6 +53,14 @@
         },
         {
           "name": "_copy_directory",
+          "doc": ""
+        },
+        {
+          "name": "_replace_directory_with_retry",
+          "doc": ""
+        },
+        {
+          "name": "_remove_tree_with_retry",
           "doc": ""
         },
         {
@@ -148,6 +156,14 @@
         },
         {
           "name": "_copy_directory",
+          "doc": ""
+        },
+        {
+          "name": "_replace_directory_with_retry",
+          "doc": ""
+        },
+        {
+          "name": "_remove_tree_with_retry",
           "doc": ""
         },
         {

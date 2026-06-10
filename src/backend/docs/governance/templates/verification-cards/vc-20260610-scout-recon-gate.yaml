@@ -1,0 +1,140 @@
+card_id: "vc-20260610-scout-recon-gate"
+bug_summary: >
+  A recon_mode role (scout) can finalize a FINAL_ANSWER having executed zero
+  read/search tools — an ungrounded recon answer. The transaction kernel
+  guarantees the write side (must_materialize blocks receipt-less finalize in
+  turn_transaction_controller._handle_final_answer) but has no symmetric
+  read-side guarantee; today the invariant lives only in benchmark validators
+  (unified_judge.scout_min_recon), not in the engine.
+
+classification: structural
+
+bug_path:
+  file: "src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
+  method: "_handle_final_answer"
+  symptom: >
+    Production scout turns may return confident answers with
+    observed_tools=none (observed repeatedly in pre-fix scout_matrix runs);
+    nothing in the kernel prevents it outside the benchmark.
+
+assumptions:
+  - id: "A1"
+    statement: >
+      _handle_final_answer is the single finalize choke point for BOTH the
+      non-stream and stream paths.
+    status: verified
+    evidence: >
+      Non-stream routing calls it at turn_transaction_controller.py:1444;
+      StreamOrchestrator receives the same bound method via
+      handle_final_answer=self._handle_final_answer in __init__ (~:300).
+  - id: "A2"
+    statement: >
+      ledger.tool_executions records every executed tool with a status field
+      where "success" denotes success, on both stream and non-stream paths.
+    status: verified
+    evidence: >
+      receipt_utils.record_receipts_to_ledger (:144-158) writes
+      {tool_name, call_id, status, ...} and is called from both
+      tool_batch_executor.py:1070 and retry_orchestrator.py:929; status is
+      compared against "success" for read/write receipts in the same function.
+  - id: "A3"
+    statement: >
+      The role profile (hence context_policy.recon_mode) is in scope where the
+      TransactionKernel's TransactionConfig is constructed.
+    status: verified
+    evidence: >
+      turn_engine/engine.py:_create_transaction_kernel(self, role, profile,
+      request) builds TransactionConfig at :483-485; profile comes from
+      kernel.registry.get_profile_or_raise(role) at :590/:847.
+  - id: "A4"
+    statement: >
+      recon_required defaults to False everywhere, so non-recon roles
+      (pm/architect/chief_engineer/director/qa) take a byte-identical path.
+    status: verified
+    evidence: >
+      New TransactionConfig field defaults False; only the engine derive site
+      sets it, from profile.context_policy.recon_mode (scout-only today) or
+      the scout-scoped KERNELONE_SCOUT_RECON_MODE env mirror of
+      RoleContextGateway._recon_mode_active (gateway.py:688-703).
+  - id: "A5"
+    statement: >
+      A blocked finalize that transitions to COMPLETED and returns cannot loop
+      (no one-shot flag needed for the block-only gate).
+    status: verified
+    evidence: >
+      Mirror of the existing must_materialize block path (:2088-2156): it
+      finalizes the ledger and returns a turn result; the turn is over.
+  - id: "A6"
+    statement: >
+      The kernel gate and the benchmark judge agree on what counts as a recon
+      tool (single source of truth).
+    status: verified
+    evidence: >
+      SCOUT_RECON_TOOLS lifted to
+      polaris/kernelone/tool_execution/tool_categories.py (existing tool
+      classification SSOT); unified_judge._SCOUT_RECON_TOOLS replaced by an
+      import; kernel predicate imports the same set via transaction constants.
+
+pre_mortem:
+  failure_point: >
+    Most likely wrong spot: a legitimate scout turn whose recon happened in a
+    PREVIOUS turn (multi-turn session) finalizes a summary answer this turn
+    with zero tool calls and gets blocked. Mitigations: (1) REFUSAL_MARKERS
+    exemption identical to the write gate; (2) scope strictly to
+    recon_mode roles — scout is single-shot probe-style today (ScoutProbeTargetV1
+    one-question contract); (3) matrix spot-check must show no
+    previously-passing case flips to blocked. Second risk: alias mismatch
+    (e.g. rg vs repo_rg) makes real recon invisible to the predicate —
+    mitigated by normalizing names and including judge-recognized aliases in
+    the shared set.
+  risk_zone:
+    - "src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py:_handle_final_answer"
+    - "src/backend/polaris/cells/roles/kernel/internal/turn_engine/engine.py:_create_transaction_kernel"
+    - "src/backend/polaris/kernelone/benchmark/unified_judge.py (recon set import refactor must not change judge behavior)"
+
+verification_plan:
+  unit_tests:
+    - file: "src/backend/polaris/cells/roles/kernel/tests/test_recon_gate.py"
+      description: >
+        has_successful_recon_execution truth table (zero tools / failed-only
+        recon / one successful repo_rg / non-recon tool only / alias+case
+        normalization); TransactionConfig.recon_required defaults False;
+        gate blocks zero-recon FINAL_ANSWER for recon_required kernels with
+        BlockedReason.NO_RECON_PERFORMED; gate passes when a successful recon
+        execution exists; refusal exemption honored; non-recon config takes
+        the pre-change path.
+      expected: "All green; no existing kernel test regresses."
+      status: new
+  integration_tests:
+    - description: "Touched-module pytest sweep"
+      command: >
+        pytest src/backend/polaris/cells/roles/kernel/tests/test_recon_gate.py
+        src/backend/polaris/cells/roles/kernel/tests/ -q
+      status: new
+    - description: "Judge parity — unified_judge behavior unchanged after import refactor"
+      command: "pytest src/backend/polaris/kernelone/benchmark -q"
+      status: new
+  manual_check:
+    - >
+      CLI matrix spot-check (agentic-eval scout_matrix, representative cases):
+      no previously-passing case flips to blocked; a scout turn that runs
+      repo_rg finalizes normally.
+
+related_adrs:
+  - "ADR-0071"
+  - "ADR-0091"
+
+sign_off:
+  completed_by: "claude-code"
+  completed_at: "2026-06-10"
+  verified_by: "claude-code"
+  verified_at: "2026-06-10"
+  verification_evidence: >
+    Unit: test_recon_gate.py 18/18 pass. Regression: roles/kernel tests
+    1662 passed / 1 skipped; transaction internal 269 passed; kernelone
+    benchmark 201 passed (reproducibility torch-RNG failures pre-existing,
+    unrelated). mypy clean on all 9 touched files; ruff clean.
+    Live derivation: scout->recon_required=True, director->False from the
+    real registry. Live CLI matrix with gate active: scout_l2_code_search_read
+    PASS 70.0, scout_l3_detective_trace PASS 93.14, scout_caller_pm_recon
+    PASS 100.0 — no previously-passing case flipped to blocked.

@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.671134Z",
-  "source_hash": "33c2d7acc77bf614",
+  "generated_at": "2026-06-10T11:24:13.524516Z",
+  "source_hash": "488f0cf44527cc8a",
   "cell_id": "llm.provider_runtime",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -34,6 +34,10 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_build_context",
           "doc": ""
         }
       ]
@@ -123,6 +127,30 @@
     {
       "type": "function",
       "name": "get_role_runtime_provider_kind",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "function",
+      "name": "_truthy_config_flag",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_choice_disabled",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "function",
+      "name": "_codex_exec_sandbox",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    },
+    {
+      "type": "function",
+      "name": "role_runtime_support_issue",
       "description": "",
       "defined_in": "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
     },
@@ -220,6 +248,18 @@
     {
       "type": "function",
       "name": "_to_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_http_exception",
+      "description": "",
+      "defined_in": "polaris/cells/llm/provider_runtime/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_http_exception_message",
       "description": "",
       "defined_in": "polaris/cells/llm/provider_runtime/public/service.py"
     },

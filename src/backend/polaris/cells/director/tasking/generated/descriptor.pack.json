@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.680026Z",
-  "source_hash": "25b5bb712494566b",
+  "generated_at": "2026-06-10T11:24:04.506455Z",
+  "source_hash": "bfee292cf9ab80ad",
   "cell_id": "director.tasking",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
@@ -61,6 +61,253 @@
     },
     {
       "type": "class",
+      "name": "CodeGenerationPolicyViolationError",
+      "description": "Raised when forbidden code-writing behavior is requested.",
+      "defined_in": "polaris/cells/director/tasking/internal/code_generation_engine.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CodeGenerationEngine",
+      "description": "Policy guard for deterministic code-generation entry points.",
+      "defined_in": "polaris/cells/director/tasking/internal/code_generation_engine.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "resolve_llm_timeout",
+          "doc": "Resolve per-call LLM timeout with sane upper/lower bounds."
+        },
+        {
+          "name": "_default_llm_timeout_hint",
+          "doc": "Return the default per-call timeout for the active codegen mode."
+        },
+        {
+          "name": "resolve_task_timeout_budget",
+          "doc": "Resolve total timeout budget for one task, not per round."
+        },
+        {
+          "name": "remaining_timeout",
+          "doc": "Return remaining whole seconds to deadline."
+        },
+        {
+          "name": "resolve_patch_retry_attempts",
+          "doc": "Resolve retry attempts for legacy call sites."
+        },
+        {
+          "name": "_env_flag",
+          "doc": ""
+        },
+        {
+          "name": "stress_strict_mode_enabled",
+          "doc": "Return strict-mode switch."
+        },
+        {
+          "name": "allow_template_fallback",
+          "doc": "Always deny template fallback to enforce policy."
+        },
+        {
+          "name": "resolve_spin_guard_repeat_limit",
+          "doc": "Resolve spin-guard limit for legacy call sites."
+        },
+        {
+          "name": "is_low_signal_response",
+          "doc": "Check low-signal responses (utility retained for compatibility)."
+        },
+        {
+          "name": "register_spin_guard",
+          "doc": "Register spin guard and detect repeated prompt-output pairs."
+        },
+        {
+          "name": "runtime_codegen_enabled",
+          "doc": "Return whether real Director runtime code writing is explicitly enabled."
+        },
+        {
+          "name": "_read_workspace_text_file",
+          "doc": "Read a small UTF-8 workspace text file through a path-boundary check."
+        },
+        {
+          "name": "_workspace_rules_text",
+          "doc": "Return user/workspace rules that must constrain Director proposals."
+        },
+        {
+          "name": "_workspace_package_scripts",
+          "doc": "Return current package.json scripts, preserving only string values."
+        },
+        {
+          "name": "_string_dict",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_package_policy_snapshot",
+          "doc": "Return protected package.json sections before a runtime call mutates files."
+        },
+        {
+          "name": "_build_workspace_policy_prompt",
+          "doc": "Build a compact immutable-policy appendix from workspace facts."
+        },
+        {
+          "name": "_proposal_policy_violations",
+          "doc": "Return proposal violations against local workspace rules before applying writes."
+        },
+        {
+          "name": "_forbidden_workspace_file_names",
+          "doc": "Resolve forbidden tooling filenames from workspace policy text."
+        },
+        {
+          "name": "_file_policy_violations",
+          "doc": "Return policy violations for actual files written by tools or direct workspace writes."
+        },
+        {
+          "name": "_normalize_workspace_relative_paths",
+          "doc": ""
+        },
+        {
+          "name": "_changed_paths_from_file_records",
+          "doc": ""
+        },
+        {
+          "name": "_identity_token",
+          "doc": ""
+        },
+        {
+          "name": "_director_codegen_task_identity",
+          "doc": ""
+        },
+        {
+          "name": "_director_codegen_session_id",
+          "doc": ""
+        },
+        {
+          "name": "_allowed_scope_for_round",
+          "doc": ""
+        },
+        {
+          "name": "_cognitive_runtime_write_gate_violations",
+          "doc": ""
+        },
+        {
+          "name": "_proposal_mentions_path",
+          "doc": "Return whether a proposal declares a PATCH_FILE/FILE block for a path."
+        },
+        {
+          "name": "_path_matches_forbidden_file_pattern",
+          "doc": ""
+        },
+        {
+          "name": "_proposal_mentions_file_pattern",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_proposal_prompt",
+          "doc": "Ensure projected task prompts still carry the proposal/no-tools contract."
+        },
+        {
+          "name": "_extract_response_text",
+          "doc": ""
+        },
+        {
+          "name": "_iter_response_text_candidates",
+          "doc": "Collect possible final text fields from role/dialogue response shapes."
+        },
+        {
+          "name": "_extract_turn_ids",
+          "doc": "Extract turn/run ids that can join role results to LLM event logs."
+        },
+        {
+          "name": "add",
+          "doc": ""
+        },
+        {
+          "name": "_director_llm_event_paths",
+          "doc": "Return candidate director LLM event logs for this workspace."
+        },
+        {
+          "name": "_recover_response_text_from_llm_events",
+          "doc": "Recover raw LLM content when RoleTurnResult visible content was empty."
+        },
+        {
+          "name": "_file_operation_marker_score",
+          "doc": "Score whether text contains actionable file operation protocol."
+        },
+        {
+          "name": "_should_prefer_recovered_response",
+          "doc": "Return true when event-log content is a more complete codegen payload."
+        },
+        {
+          "name": "_response_timeout_warning",
+          "doc": "Return a terminal timeout warning when the provider reports timeout."
+        },
+        {
+          "name": "_normalize_tool_results",
+          "doc": ""
+        },
+        {
+          "name": "_extract_written_files_from_tool_results",
+          "doc": ""
+        },
+        {
+          "name": "_collect_existing_round_files",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_round_file_path",
+          "doc": "Resolve a round file path inside the workspace boundary."
+        },
+        {
+          "name": "_snapshot_round_files",
+          "doc": "Capture file existence, size, and mtime before a runtime generation call."
+        },
+        {
+          "name": "_collect_changed_round_files",
+          "doc": "Collect target files that were created or changed by the runtime call."
+        },
+        {
+          "name": "_apply_response_operations",
+          "doc": ""
+        },
+        {
+          "name": "invoke_runtime_provider",
+          "doc": "Blocked: runtime provider invocation for code writing."
+        },
+        {
+          "name": "invoke_ollama",
+          "doc": "Blocked: LLM invocation for code writing."
+        },
+        {
+          "name": "build_patch_retry_prompt",
+          "doc": "Blocked: patch prompt construction for code writing."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_env_flag",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/code_generation_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_raise_policy_violation",
+      "description": "Raise a fail-closed policy error for forbidden actions.",
+      "defined_in": "polaris/cells/director/tasking/internal/code_generation_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_fallback_code_content",
+      "description": "Blocked: deterministic fallback code generation is forbidden.",
+      "defined_in": "polaris/cells/director/tasking/internal/code_generation_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_phase_aware_fallback_content",
+      "description": "Blocked: phase-aware fallback code generation is forbidden.",
+      "defined_in": "polaris/cells/director/tasking/internal/code_generation_engine.py"
+    },
+    {
+      "type": "class",
       "name": "GateResult",
       "description": "Result of an existence gate check.",
       "defined_in": "polaris/cells/director/tasking/internal/existence_gate.py",
@@ -104,8 +351,40 @@
           "doc": ""
         },
         {
+          "name": "_validate_director_policy_for_write",
+          "doc": "Return a deterministic policy error for a pending file apply write."
+        },
+        {
           "name": "write_files",
           "doc": "Write generated files to workspace with broadcast support."
+        },
+        {
+          "name": "_validate_applied_files_against_director_policy",
+          "doc": "Validate already-applied protocol writes and let caller roll back."
+        },
+        {
+          "name": "_resolve_workspace_path",
+          "doc": "Resolve a workspace-relative path inside the workspace boundary."
+        },
+        {
+          "name": "_snapshot_files",
+          "doc": "Snapshot existing file contents before applying a risky operation."
+        },
+        {
+          "name": "_restore_snapshots",
+          "doc": "Restore files after a post-apply validation failure."
+        },
+        {
+          "name": "_protocol_paths",
+          "doc": "Extract explicit file operation paths from protocol text."
+        },
+        {
+          "name": "_structured_file_validation_error",
+          "doc": "Return a syntax error for structured files, if validation fails."
+        },
+        {
+          "name": "_validate_structured_files",
+          "doc": "Validate structured files included in applied file records."
         },
         {
           "name": "collect_workspace_files",
@@ -120,6 +399,78 @@
           "doc": "Calculate diff statistics between old and new content."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_is_package_manifest_path",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_workspace_agents_policy_text",
+      "description": "Read root and nested AGENTS.md files that apply to a workspace-relative path.",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_fs",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_next_nonempty_line_index",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_nested_markdown_fence_open",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_escape_nested_markdown_fences_for_protocol",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_fenced_file_blocks",
+      "description": "Extract explicit ```file: path fenced sections from an LLM response.",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_fenced_file_blocks_to_protocol",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_fenced_file_blocks",
+      "description": "Remove explicit ```file: path fenced sections, preserving surrounding protocol text.",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_patch_or_delete_protocol",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_fenced_file_blocks",
+      "description": "Convert ```file: path fences into protocol FILE blocks.",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_replace",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/file_apply_service.py"
     },
     {
       "type": "class",
@@ -474,12 +825,104 @@
           "doc": "Extract technology stack from task metadata (set by PM)."
         },
         {
+          "name": "_resolve_llm_call_timeout_hint",
+          "doc": "Resolve per-call LLM timeout without using the task total budget."
+        },
+        {
           "name": "_normalize_target_files",
           "doc": "Get normalized list of target files from task."
         },
         {
+          "name": "_infer_target_files_from_scope_paths",
+          "doc": "Infer concrete target files from PM directory scopes."
+        },
+        {
+          "name": "_existing_files_for_scope",
+          "doc": "Return existing workspace files under a declared scope."
+        },
+        {
+          "name": "_is_scope_inference_candidate",
+          "doc": "Return whether an existing file is useful as an inferred target."
+        },
+        {
+          "name": "_scope_candidate_sort_key",
+          "doc": "Prefer paths whose names match task tokens, then shorter paths."
+        },
+        {
+          "name": "_synthesize_scope_target_file",
+          "doc": "Create a conservative target filename inside an empty declared scope."
+        },
+        {
+          "name": "_task_slug",
+          "doc": "Build an ASCII slug from task text for synthesized file names."
+        },
+        {
+          "name": "_task_ascii_tokens",
+          "doc": "Extract stable ASCII tokens from task fields."
+        },
+        {
+          "name": "_preferred_source_extension",
+          "doc": "Infer the most suitable source extension for new scope targets."
+        },
+        {
+          "name": "_looks_like_test_scope",
+          "doc": "Return whether a scope is intended for tests."
+        },
+        {
+          "name": "_test_filename",
+          "doc": "Return a conventional test filename for the current workspace."
+        },
+        {
+          "name": "_extract_description_target_path",
+          "doc": "Extract an explicit target path from one description line."
+        },
+        {
           "name": "_is_probable_file_path",
           "doc": "Check if string looks like a file path."
+        },
+        {
+          "name": "_is_concrete_target_file_path",
+          "doc": "Return true when a PM target path names a file, not a directory scope."
+        },
+        {
+          "name": "_normalize_scope_paths",
+          "doc": "Return directory/module scopes declared by PM without treating them as files."
+        },
+        {
+          "name": "_verification_feedback",
+          "doc": "Return previous verification diagnostics carried by the workflow retry."
+        },
+        {
+          "name": "_parse_unresolved_import_entry",
+          "doc": ""
+        },
+        {
+          "name": "_candidate_paths_for_unresolved_import",
+          "doc": ""
+        },
+        {
+          "name": "_path_under_scope",
+          "doc": ""
+        },
+        {
+          "name": "_repair_path_allowed",
+          "doc": ""
+        },
+        {
+          "name": "_unresolved_import_repair_records",
+          "doc": ""
+        },
+        {
+          "name": "_verification_repair_target_paths",
+          "doc": ""
+        },
+        {
+          "name": "_verification_repair_prompt_section",
+          "doc": ""
+        },
+        {
+          "name": "_bootstrap_target_file_content",
+          "doc": "Blocked: bootstrap target files must be produced by runtime codegen."
         },
         {
           "name": "_construction_file_plans",
@@ -496,6 +939,62 @@
         {
           "name": "_build_code_generation_rounds",
           "doc": "Build code generation rounds from task metadata."
+        },
+        {
+          "name": "_resolve_code_generation_round_chunk_size",
+          "doc": "Resolve file count per code-generation round."
+        },
+        {
+          "name": "_code_generation_round_chunk_configured",
+          "doc": "Return whether a caller explicitly configured target-file chunking."
+        },
+        {
+          "name": "_effective_code_generation_round_chunk_size",
+          "doc": "Return the chunk size for this concrete file set."
+        },
+        {
+          "name": "_is_test_like_target_file",
+          "doc": "Return whether a target path is likely to produce expensive test/spec output."
+        },
+        {
+          "name": "_generated_artifact_quality_error",
+          "doc": "Return a fail-closed quality error for generated artifact receipts."
+        },
+        {
+          "name": "_generated_artifact_paths",
+          "doc": "Extract stable workspace-relative paths from generated file receipts."
+        },
+        {
+          "name": "_resolve_workspace_file_path",
+          "doc": "Resolve a workspace-relative file path without allowing traversal."
+        },
+        {
+          "name": "_snapshot_workspace_files",
+          "doc": "Capture initial target-file signatures for over-completion detection."
+        },
+        {
+          "name": "_round_files_changed_since",
+          "doc": "Return true when every path in a round was created or changed."
+        },
+        {
+          "name": "_collect_existing_file_records",
+          "doc": "Return lightweight records for existing workspace files."
+        },
+        {
+          "name": "_code_generation_round_marker_path",
+          "doc": "Return the persisted progress marker path for one task round."
+        },
+        {
+          "name": "_workspace_file_signature",
+          "doc": "Return a stable file signature for a workspace-relative file."
+        },
+        {
+          "name": "_write_code_generation_round_marker",
+          "doc": "Persist successful round progress so process-level retries can resume."
+        },
+        {
+          "name": "_code_generation_round_marker_satisfied",
+          "doc": "Return whether a previous process already completed this round."
         },
         {
           "name": "_write_files",
@@ -543,7 +1042,7 @@
         },
         {
           "name": "_invoke_generation_response",
-          "doc": "Invoke LLM for generation response."
+          "doc": "Legacy direct-generation entry point retained only to fail closed."
         },
         {
           "name": "_fallback_code_content",
@@ -559,13 +1058,25 @@
         },
         {
           "name": "_invoke_ollama",
-          "doc": "Invoke Ollama for LLM generation."
+          "doc": "Legacy Ollama entry point retained only to fail closed."
         },
         {
           "name": "_invoke_generation_with_retries",
           "doc": "Invoke LLM generation with retries."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_workspace_fs",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/internal/worker_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_positive_timeout_seconds",
+      "description": "Parse a positive timeout value in seconds.",
+      "defined_in": "polaris/cells/director/tasking/internal/worker_executor.py"
     },
     {
       "type": "class",
@@ -589,6 +1100,36 @@
           "doc": "Remove completed worker task from internal tracking."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_safe_path_token",
+      "description": "Return a compact filename-safe token for task diagnostic artifacts.",
+      "defined_in": "polaris/cells/director/tasking/internal/worker_pool_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_process_log_path",
+      "description": "Return the per-task subprocess log path under the target workspace metadata root.",
+      "defined_in": "polaris/cells/director/tasking/internal/worker_pool_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_output_lines",
+      "description": "Extract captured stdout/stderr lines from a process snapshot.",
+      "defined_in": "polaris/cells/director/tasking/internal/worker_pool_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_task_result_from_stdout",
+      "description": "Parse the last TaskResult JSON object emitted by task_execution_runner.",
+      "defined_in": "polaris/cells/director/tasking/internal/worker_pool_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_result_from_process",
+      "description": "Convert execution broker output into the domain TaskResult contract.",
+      "defined_in": "polaris/cells/director/tasking/internal/worker_pool_service.py"
     },
     {
       "type": "class",
@@ -1198,6 +1739,18 @@
           "doc": "Test write_files skips entries without path or content."
         },
         {
+          "name": "test_write_files_blocks_agents_forbidden_path",
+          "doc": "write_files must not bypass AGENTS.md policy."
+        },
+        {
+          "name": "test_apply_response_operations_reports_fenced_policy_denial",
+          "doc": "Fenced direct writes should return policy errors instead of silent no_changes."
+        },
+        {
+          "name": "test_apply_response_operations_blocks_fenced_file_outside_allowed_scope",
+          "doc": "Director proposal apply must not write outside the round scope."
+        },
+        {
           "name": "test_collect_workspace_files_empty_list",
           "doc": "Test collect_workspace_files with empty list."
         },
@@ -1232,6 +1785,38 @@
         {
           "name": "test_apply_response_operations_no_response",
           "doc": "Test apply_response_operations with empty response."
+        },
+        {
+          "name": "test_apply_response_operations_accepts_fenced_file_block",
+          "doc": "Regression: Director proposal bridge emits ```file: path fences."
+        },
+        {
+          "name": "test_apply_response_operations_rejects_invalid_fenced_json",
+          "doc": "Invalid structured files must not be written as successful Director output."
+        },
+        {
+          "name": "test_apply_response_operations_rolls_back_invalid_json_patch",
+          "doc": "A bad JSON patch must be rejected and rolled back before task success."
+        },
+        {
+          "name": "test_apply_response_operations_rolls_back_patch_outside_allowed_scope",
+          "doc": "Protocol writes that exceed Director scope must be rolled back."
+        },
+        {
+          "name": "test_apply_response_operations_accepts_nested_markdown_fences",
+          "doc": "Regression: nested README fences must not become bogus file paths."
+        },
+        {
+          "name": "test_apply_response_operations_strips_codex_usage_footer_between_fenced_files",
+          "doc": "Regression: Codex CLI usage comments after fences are not file content."
+        },
+        {
+          "name": "test_apply_response_operations_recovers_fenced_files_after_failed_patch",
+          "doc": "Regression: one bad leading PATCH_FILE must not discard valid file blocks."
+        },
+        {
+          "name": "test_apply_response_operations_recovers_fenced_files_before_integrity_block",
+          "doc": "Fenced file blocks are valid even when a leading PATCH_FILE is malformed."
         }
       ]
     },
@@ -1696,12 +2281,72 @@
           "doc": "Test _normalize_target_files from metadata."
         },
         {
+          "name": "test_normalize_target_files_filters_directory_scopes",
+          "doc": "Directory-like target hints must not be handed to file apply as files."
+        },
+        {
           "name": "test_normalize_target_files_deduplication",
           "doc": "Test _normalize_target_files deduplicates."
         },
         {
           "name": "test_normalize_target_files_from_description",
           "doc": "Test _normalize_target_files from description."
+        },
+        {
+          "name": "test_normalize_target_files_from_labeled_description_line",
+          "doc": "Target fallback accepts an explicit labeled path line."
+        },
+        {
+          "name": "test_normalize_target_files_ignores_acceptance_prose",
+          "doc": "Acceptance prose must not be mistaken for Director target files."
+        },
+        {
+          "name": "test_normalize_target_files_infers_from_scope_paths",
+          "doc": "Scope-only PM tasks are narrowed to concrete workspace files."
+        },
+        {
+          "name": "test_normalize_target_files_keeps_test_scopes_when_no_source_scope",
+          "doc": "Test-only scope tasks can still infer test targets."
+        },
+        {
+          "name": "test_code_generation_rounds_chunk_target_files_by_default",
+          "doc": "Default codegen splits larger target-file sets into manageable rounds."
+        },
+        {
+          "name": "test_code_generation_rounds_chunk_target_files_when_configured",
+          "doc": "Large target-file sets can still be split through an explicit env var."
+        },
+        {
+          "name": "test_code_generation_rounds_allow_chunk_opt_out",
+          "doc": "A zero chunk env keeps the legacy single-round behavior available."
+        },
+        {
+          "name": "test_code_generation_rounds_chunk_test_targets_by_default",
+          "doc": "Test/spec targets keep the default chunking so full chains can converge."
+        },
+        {
+          "name": "test_code_generation_rounds_keep_explicit_chunk_for_test_targets",
+          "doc": "Explicit chunk configuration still controls test/spec targets."
+        },
+        {
+          "name": "test_code_generation_rounds_infer_concrete_files_for_scope_only_task",
+          "doc": "Scope-only module tasks get concrete targets instead of a model-decided prompt."
+        },
+        {
+          "name": "test_verification_repair_round_includes_unresolved_import_candidates",
+          "doc": "Retry rounds can repair missing modules inferred from unresolved relative imports."
+        },
+        {
+          "name": "test_round_files_changed_since_detects_prior_runtime_output",
+          "doc": "Later rounds can be skipped when an earlier runtime call already wrote them."
+        },
+        {
+          "name": "test_round_files_changed_since_does_not_count_unchanged_existing_files",
+          "doc": "Existing files only satisfy a round if they changed after the task started."
+        },
+        {
+          "name": "test_codegen_round_marker_satisfied",
+          "doc": "Persisted round markers allow process-level retries to resume."
         },
         {
           "name": "test_compact_prompt_fragment_short_text",
@@ -1715,10 +2360,123 @@
     },
     {
       "type": "class",
+      "name": "FakeCodeEngine",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "resolve_llm_timeout",
+          "doc": ""
+        },
+        {
+          "name": "resolve_task_timeout_budget",
+          "doc": ""
+        },
+        {
+          "name": "remaining_timeout",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeCodeEngine",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "resolve_llm_timeout",
+          "doc": ""
+        },
+        {
+          "name": "resolve_task_timeout_budget",
+          "doc": ""
+        },
+        {
+          "name": "remaining_timeout",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeCodeEngine",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "resolve_llm_timeout",
+          "doc": ""
+        },
+        {
+          "name": "resolve_task_timeout_budget",
+          "doc": ""
+        },
+        {
+          "name": "remaining_timeout",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeCodeEngine",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "resolve_llm_timeout",
+          "doc": ""
+        },
+        {
+          "name": "resolve_task_timeout_budget",
+          "doc": ""
+        },
+        {
+          "name": "remaining_timeout",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeCodeEngine",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
+      "methods": [
+        {
+          "name": "resolve_llm_timeout",
+          "doc": ""
+        },
+        {
+          "name": "resolve_task_timeout_budget",
+          "doc": ""
+        },
+        {
+          "name": "remaining_timeout",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestExecutionMethods",
       "description": "Tests for execution methods.",
       "defined_in": "polaris/cells/director/tasking/tests/test_worker_executor.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "test_resolve_llm_call_timeout_hint_from_metadata",
+          "doc": "Contracts may explicitly override per-call LLM timeout."
+        },
+        {
+          "name": "test_resolve_llm_call_timeout_hint_from_director_env",
+          "doc": "Director runtime env may override the platform default."
+        },
+        {
+          "name": "test_resolve_llm_call_timeout_hint_uses_runtime_codegen_default",
+          "doc": "Runtime codegen gets a larger default for slower provider-backed calls."
+        }
+      ]
     },
     {
       "type": "class",
@@ -1753,6 +2511,14 @@
         {
           "name": "test_worker_service_has_execution_broker_imports",
           "doc": "Test that worker_pool_service imports execution_broker correctly."
+        },
+        {
+          "name": "test_task_result_from_process_preserves_stdout_business_failure",
+          "doc": "A clean subprocess exit can still carry a failed Director task result."
+        },
+        {
+          "name": "test_task_result_from_process_falls_back_to_broker_failure",
+          "doc": "Missing TaskResult JSON still returns a concrete process failure."
         }
       ]
     },
@@ -1771,6 +2537,12 @@
           "doc": "Test custom configuration values."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_process_snapshot",
+      "description": "Build a minimal subprocess snapshot for result parsing tests.",
+      "defined_in": "polaris/cells/director/tasking/tests/test_worker_pool_service.py"
     },
     {
       "type": "function",

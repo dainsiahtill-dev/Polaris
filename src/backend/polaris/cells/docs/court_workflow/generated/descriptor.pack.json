@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.277578Z",
-  "source_hash": "1fe06df51f120114",
+  "generated_at": "2026-06-10T11:24:05.830058Z",
+  "source_hash": "5932f708dd97c904",
   "cell_id": "docs.court_workflow",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -315,8 +315,20 @@
     },
     {
       "type": "function",
+      "name": "_docs_apply_active_rel_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_materialize_active_docs_from_apply_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
       "name": "_sync_plan_to_runtime",
-      "description": "Copy plan.md to runtime/contracts/plan.md so PM loop",
+      "description": "Copy docs-init contracts to runtime so PM loop picks them up automatically.",
       "defined_in": "polaris/delivery/http/routers/docs.py"
     },
     {
@@ -358,7 +370,7 @@
     {
       "type": "function",
       "name": "docs_init_apply_v2",
-      "description": "",
+      "description": "Apply generated docs artifacts to the workspace.",
       "defined_in": "polaris/delivery/http/routers/docs.py"
     },
     {

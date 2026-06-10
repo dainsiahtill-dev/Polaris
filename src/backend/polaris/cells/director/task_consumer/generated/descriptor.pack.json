@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.731148Z",
-  "source_hash": "2929fc197b2477b1",
+  "generated_at": "2026-06-10T11:24:04.560233Z",
+  "source_hash": "aa8ae8bd97416818",
   "cell_id": "director.task_consumer",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -96,9 +96,27 @@
         },
         {
           "name": "_execute_task",
-          "doc": "Execute task — delegates to DirectorAgent or placeholder."
+          "doc": "Execute task through the real Director adapter and normalize evidence."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_market_route",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_coroutine_sync",
+      "description": "Run an async Director adapter call from the synchronous consumer loop.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
     },
     {
       "type": "function",
@@ -115,6 +133,48 @@
     {
       "type": "function",
       "name": "_allows_no_execution_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_normalized_paths",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_changed_files_from_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_director_changed_files",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_director_side_effects",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_director_adapter_summary",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_adapter_failure_message",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_adapter_input",
       "description": "",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
     },
@@ -140,6 +200,30 @@
     },
     {
       "type": "class",
+      "name": "FakeDirectorAdapter",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeDirectorAdapter",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestDirectorExecutionConsumerPollOnce",
       "description": "",
       "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
@@ -153,8 +237,20 @@
           "doc": "Verify director claims, executes, and advances to PENDING_QA."
         },
         {
+          "name": "test_direct_route_uses_pm_contract_without_blueprint",
+          "doc": "Direct PM->Director work should not require ChiefEngineer blueprint metadata."
+        },
+        {
           "name": "test_no_execution_evidence_requeues_pending_exec",
           "doc": "Placeholder/no-evidence execution must not advance to QA."
+        },
+        {
+          "name": "test_execute_task_delegates_to_director_adapter_for_existing_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_execute_task_requeues_failed_director_adapter",
+          "doc": ""
         },
         {
           "name": "test_successful_execution_registers_and_commits_compensation_actions",

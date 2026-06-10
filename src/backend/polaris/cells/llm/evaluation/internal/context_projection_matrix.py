@@ -593,6 +593,143 @@ def _case_adaptive_learning_effect_probe() -> dict[str, Any]:
     }
 
 
+def _run_coro_in_fresh_loop(coro: Any) -> Any:
+    """Run an async coroutine from a sync matrix case, safe under a running loop."""
+    import asyncio
+    import threading
+
+    holder: dict[str, Any] = {}
+
+    def _runner() -> None:
+        loop = asyncio.new_event_loop()
+        try:
+            holder["value"] = loop.run_until_complete(coro)
+        except BaseException as exc:  # noqa: BLE001 - surfaced to the case as a failure
+            holder["error"] = exc
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_runner)
+    thread.start()
+    thread.join()
+    if "error" in holder:
+        raise holder["error"]
+    return holder["value"]
+
+
+def _small_window_profile(max_context_tokens: int) -> Any:
+    from unittest.mock import MagicMock
+
+    profile = MagicMock()
+    profile.context_policy = MagicMock()
+    profile.context_policy.max_history_turns = 8
+    profile.context_policy.max_context_tokens = max_context_tokens
+    profile.context_policy.include_project_structure = False
+    profile.context_policy.include_task_history = False
+    profile.context_policy.compression_strategy = "truncate"
+    profile.context_domain = None
+    profile.provider_id = "matrix_provider"
+    profile.model = "matrix_model"
+    profile.role_id = "director"
+    profile.display_name = "Director"
+    return profile
+
+
+def _case_small_window_budget_enforcement() -> dict[str, Any]:
+    """ADR-0090 I4：8k 小窗口下 enforcement 预算钳制 + system prompt 预算化前插。
+
+    弱模型主战场是 8k-16k 本地窗口；本 case 确定性断言四个不变量：
+      (1) 预算 = min(角色策略, 窗口×0.85)；
+      (2) 窗口解析失败回退角色策略（不再 128k 毒化、不抛错杀 turn）；
+      (3) 角色 system prompt 由 gateway 预算化前插为首条消息，且其 token
+          预留真实压缩了本请求的有效预算；
+      (4) floor 永不把预算抬高到角色策略之上。
+    """
+    from unittest.mock import PropertyMock, patch
+
+    from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+    from polaris.kernelone.context.contracts import TurnEngineContextRequest as GatewayContextRequest
+
+    checks: list[dict[str, Any]] = []
+
+    # (1) clamp to window
+    gateway = RoleContextGateway(_small_window_profile(12000), workspace=".")
+    target_type = type(gateway._context_os)
+    with patch.object(target_type, "resolved_context_window", new_callable=PropertyMock, return_value=8192):
+        clamped = gateway._compute_enforcement_budget()
+    expected = int(8192 * 0.85)
+    checks.append(
+        {
+            "name": "budget_clamped_to_model_window",
+            "ok": clamped == expected,
+            "detail": f"clamped={clamped} expected={expected}",
+        }
+    )
+
+    # (2) resolution failure falls back to policy, never raises
+    with patch.object(
+        target_type,
+        "resolved_context_window",
+        new_callable=PropertyMock,
+        side_effect=ValueError("unknown binding"),
+    ):
+        fallback = gateway._compute_enforcement_budget()
+    checks.append(
+        {
+            "name": "resolution_failure_falls_back_to_policy",
+            "ok": fallback == 12000,
+            "detail": f"fallback={fallback}",
+        }
+    )
+
+    # (3) system prompt budgeted prepend (end-to-end build_context)
+    request = GatewayContextRequest(message="fix the bug now", history=[("user", "hi")])
+    plain = _run_coro_in_fresh_loop(gateway.build_context(request))
+    prompted = _run_coro_in_fresh_loop(gateway.build_context(request, system_prompt="ROLE PROMPT " * 120))
+    first = prompted.messages[0] if prompted.messages else {}
+    plain_budget = int(plain.metadata.get("effective_context_budget_tokens", 0) or 0)
+    prompted_budget = int(prompted.metadata.get("effective_context_budget_tokens", 0) or 0)
+    checks.append(
+        {
+            "name": "system_prompt_budgeted_prepend",
+            "ok": (
+                str(first.get("role") or "") == "system"
+                and "ROLE PROMPT" in str(first.get("content") or "")
+                and 0 < prompted_budget < plain_budget
+            ),
+            "detail": f"first_role={first.get('role')} plain_budget={plain_budget} prompted_budget={prompted_budget}",
+        }
+    )
+
+    # (4) floor never raises the budget above the role policy
+    tiny_gateway = RoleContextGateway(_small_window_profile(1000), workspace=".")
+    with patch.object(
+        type(tiny_gateway._context_os),
+        "resolved_context_window",
+        new_callable=PropertyMock,
+        return_value=1000,
+    ):
+        tiny_budget = tiny_gateway._compute_enforcement_budget()
+    checks.append(
+        {
+            "name": "floor_respects_policy_ceiling",
+            "ok": tiny_budget == 1000,
+            "detail": f"tiny_budget={tiny_budget}",
+        }
+    )
+
+    passed = all(bool(c["ok"]) for c in checks)
+    return {
+        "case": "small_window_budget_enforcement",
+        "passed": passed,
+        "checks": checks,
+        "metrics": {
+            "enforcement_budget_8k": clamped,
+            "system_prompt_reserved": int(plain_budget - prompted_budget),
+        },
+    }
+
+
 _CASES = (
     _case_control_plane_isolation,
     _case_content_level_control_plane_stripped,
@@ -607,6 +744,7 @@ _CASES = (
     _case_role_specific_assets_and_isolation,
     _case_role_signal_circuit_breaker,
     _case_adaptive_learning_effect_probe,
+    _case_small_window_budget_enforcement,
 )
 
 

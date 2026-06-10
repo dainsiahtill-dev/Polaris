@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.135994Z",
-  "source_hash": "81ae98d93d3b1b44",
+  "generated_at": "2026-06-10T11:24:14.354584Z",
+  "source_hash": "413a1d98b2ba5678",
   "cell_id": "factory.pipeline",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
@@ -153,6 +153,42 @@
           "doc": ""
         },
         {
+          "name": "_copy_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_copy_text_artifact_if_present",
+          "doc": ""
+        },
+        {
+          "name": "_read_text_artifact",
+          "doc": ""
+        },
+        {
+          "name": "_extend_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_docs_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_pm_plan_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_chief_engineer_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_director_artifacts",
+          "doc": ""
+        },
+        {
+          "name": "_mirror_quality_gate_artifacts",
+          "doc": ""
+        },
+        {
           "name": "_artifact_exists",
           "doc": ""
         },
@@ -177,7 +213,43 @@
           "doc": ""
         },
         {
+          "name": "_compact_text_for_prompt",
+          "doc": ""
+        },
+        {
+          "name": "_strip_prompt_meta_lines",
+          "doc": ""
+        },
+        {
+          "name": "_build_pm_planning_directive",
+          "doc": ""
+        },
+        {
           "name": "_build_director_task_filter",
+          "doc": ""
+        },
+        {
+          "name": "_task_string",
+          "doc": ""
+        },
+        {
+          "name": "_task_string_list",
+          "doc": ""
+        },
+        {
+          "name": "_task_id",
+          "doc": ""
+        },
+        {
+          "name": "_task_objective",
+          "doc": ""
+        },
+        {
+          "name": "_task_blueprint_context",
+          "doc": ""
+        },
+        {
+          "name": "_task_blueprint_constraints",
           "doc": ""
         },
         {
@@ -198,6 +270,38 @@
         },
         {
           "name": "_metadata_indicates_execution",
+          "doc": ""
+        },
+        {
+          "name": "_is_director_no_materialized_changes",
+          "doc": ""
+        },
+        {
+          "name": "_bool_from_context_or_env",
+          "doc": ""
+        },
+        {
+          "name": "_load_package_scripts",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_commands",
+          "doc": ""
+        },
+        {
+          "name": "_trim_command_output",
+          "doc": ""
+        },
+        {
+          "name": "_run_workspace_quality_command",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_workspace_quality_command",
+          "doc": ""
+        },
+        {
+          "name": "_qa_report_has_warning",
           "doc": ""
         },
         {
@@ -678,6 +782,18 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_run_async_from_sync",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/projection_lab.py"
     },
     {
       "type": "class",
@@ -1190,6 +1306,13 @@
       "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_http_resources.py"
     },
     {
+      "type": "class",
+      "name": "FakeRoleRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py",
+      "methods": []
+    },
+    {
       "type": "function",
       "name": "_configure_default_adapter",
       "description": "",
@@ -1204,6 +1327,12 @@
     {
       "type": "function",
       "name": "test_projection_lab_rejects_unsupported_scenario",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
+    },
+    {
+      "type": "function",
+      "name": "test_projection_lab_pm_normalization_uses_role_runtime",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_lab.py"
     },
@@ -1293,6 +1422,48 @@
     },
     {
       "type": "function",
+      "name": "_resolve_retry_stage",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_start_from_stages",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_director_iterations",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_optional_string",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_store_start_request_metadata",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_retry_start_request",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_execution_stages_for_run",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_build_roles",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -1306,6 +1477,12 @@
     {
       "type": "function",
       "name": "_build_failure",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_json_safe_metadata",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -1330,6 +1507,24 @@
     {
       "type": "function",
       "name": "_build_stage_list",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_ready_roles_for_stages",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_settings_qa_enabled",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_factory_runtime_ready",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     },
@@ -1419,6 +1614,48 @@
     },
     {
       "type": "function",
+      "name": "_extract_task_id_from_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_id_from_artifact_name",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_id_from_artifact_file",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_item_from_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_item_from_stage_ref",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_list_stage_artifacts",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_artifact_items",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_build_artifacts_response",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
@@ -1438,6 +1675,12 @@
     {
       "type": "function",
       "name": "_build_factory_audit_bundle",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_schedule_factory_run_task",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     }

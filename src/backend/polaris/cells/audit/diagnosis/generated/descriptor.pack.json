@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:44.579715Z",
-  "source_hash": "5635d0560a6afe47",
+  "generated_at": "2026-06-10T11:24:05.479946Z",
+  "source_hash": "abf845c0440acdbf",
   "cell_id": "audit.diagnosis",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",

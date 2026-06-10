@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.373584Z",
-  "source_hash": "b29bd7dac0142231",
+  "generated_at": "2026-06-10T11:24:07.115301Z",
+  "source_hash": "780b9a065bb6b6a2",
   "cell_id": "orchestration.workflow_activity",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -86,7 +86,19 @@
     },
     {
       "type": "function",
-      "name": "_run_director_execution",
+      "name": "_extract_adapter_changed_files",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_adapter_error",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_adapter_input",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/activities/director_activities.py"
     },
@@ -716,6 +728,12 @@
     },
     {
       "type": "function",
+      "name": "_director_config_for_phase",
+      "description": "Pass the scaled implementation budget to the Director adapter.",
+      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
       "name": "_task_progress_metadata",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_task_workflow.py"
@@ -741,12 +759,6 @@
     {
       "type": "function",
       "name": "_coerce_task_result",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_workflow.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_dependencies",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/director_workflow.py"
     },
@@ -807,12 +819,6 @@
     {
       "type": "function",
       "name": "_director_execution_mode",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/pm_workflow.py"
-    },
-    {
-      "type": "function",
-      "name": "_director_positive_int",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_activity/internal/workflows/pm_workflow.py"
     },

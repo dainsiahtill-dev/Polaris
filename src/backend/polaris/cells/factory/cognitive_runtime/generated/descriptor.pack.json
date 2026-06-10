@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.076133Z",
-  "source_hash": "6d311f0292466d23",
+  "generated_at": "2026-06-10T11:24:14.148459Z",
+  "source_hash": "d12fe2ce2b1fb38d",
   "cell_id": "factory.cognitive_runtime",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -136,6 +136,42 @@
     {
       "type": "function",
       "name": "_dedupe_strings",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_policy_string",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_recent_window_messages",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_awaitable_sync",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_receipt_ref_count",
+      "description": "",
+      "defined_in": "polaris/application/cognitive_runtime/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_state_first_projection_summary",
       "description": "",
       "defined_in": "polaris/application/cognitive_runtime/service.py"
     },
@@ -618,6 +654,12 @@
     },
     {
       "type": "function",
+      "name": "test_public_service_map_diff_treats_missing_target_graph_as_soft_note",
+      "description": "",
+      "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
       "name": "test_public_service_rejects_graph_catalog_path_outside_workspace",
       "description": "",
       "defined_in": "polaris/cells/factory/cognitive_runtime/tests/test_public_service.py"
@@ -721,73 +763,73 @@
     {
       "type": "function",
       "name": "v2_resolve_context",
-      "description": "",
+      "description": "Resolve runtime context for a role and query.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_lease_edit_scope",
-      "description": "",
+      "description": "Lease an edit scope for safe file modifications.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_validate_change_set",
-      "description": "",
+      "description": "Validate a change set against allowed scope and evidence.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_record_runtime_receipt",
-      "description": "",
+      "description": "Record a runtime receipt for audit.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_get_runtime_receipt",
-      "description": "",
+      "description": "Retrieve a runtime receipt by ID.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_export_handoff_pack",
-      "description": "",
+      "description": "Export a handoff pack for cross-session continuity.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_rehydrate_handoff_pack",
-      "description": "",
+      "description": "Rehydrate a handoff pack into a target session.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_map_diff_to_cells",
-      "description": "",
+      "description": "Map a file diff to affected cells in the graph catalog.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_request_projection_compile",
-      "description": "",
+      "description": "Request a projection compile for changed files and cells.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_promote_or_reject",
-      "description": "",
+      "description": "Promote or reject a change set based on gates and receipts.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_record_rollback_ledger",
-      "description": "",
+      "description": "Record a rollback ledger entry for audit.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {
       "type": "function",
       "name": "v2_get_handoff_pack",
-      "description": "",
+      "description": "Retrieve a handoff pack by ID.",
       "defined_in": "polaris/delivery/http/routers/cognitive_runtime.py"
     },
     {

@@ -852,6 +852,8 @@ class RoleContextGateway:
             record_injected_freshness,
         )
         from .role_signals import (
+            DEFAULT_PER_SIGNAL_CHAR_CAP,
+            DEFAULT_TOTAL_CHAR_BUDGET,
             RoleSignalRegistry,
             SignalBuildContext,
             allocate_role_signals,
@@ -880,14 +882,21 @@ class RoleContextGateway:
         # 把窗口让给即时工具结果。无压力时 budget_pressure=False → 不断流 → 与旧实现逐字节一致。
         _cache_key = str(request.task_id or "")
         _budget_pressure = self._estimate_signal_budget_pressure(projection, request)
+        # ADR-0090 W2.4: scale signal caps to the enforcement budget so seed
+        # signals (【项目结构】/【任务历史】) cannot eat a small model's window.
+        # ≈3 chars/token; per-signal ≈5% and total ≈15% of the enforcement
+        # budget, ceilinged at the registry defaults (large windows unchanged).
+        _signal_char_equiv = self._enforcement_budget_tokens * 3
+        _per_signal_cap = min(DEFAULT_PER_SIGNAL_CHAR_CAP, max(1000, int(_signal_char_equiv * 0.05)))
+        _total_signal_budget = min(DEFAULT_TOTAL_CHAR_BUDGET, max(3000, int(_signal_char_equiv * 0.15)))
         _signal_alloc = allocate_role_signals(
             registry=RoleSignalRegistry(),
             ctx=signal_ctx,
             receipt_store=receipt_store,
             budget_pressure=_budget_pressure,
             previous_freshness=get_previous_freshness(_cache_key),
-            per_signal_char_cap=None,
-            total_char_budget=None,
+            per_signal_char_cap=_per_signal_cap,
+            total_char_budget=_total_signal_budget,
         )
         supplemental_turns.extend(_signal_alloc.turns)
         sources.extend(_signal_alloc.sources)

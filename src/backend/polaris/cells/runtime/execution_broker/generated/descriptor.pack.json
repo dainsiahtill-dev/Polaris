@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:40.754154Z",
-  "source_hash": "d4f1788041d0809c",
+  "generated_at": "2026-06-10T11:24:14.721012Z",
+  "source_hash": "98490dd8b5aae11f",
   "cell_id": "runtime.execution_broker",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -64,6 +64,24 @@
     {
       "type": "function",
       "name": "_extract_exit_code",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_args_for_log",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_iter_result_output_lines",
+      "description": "Return captured subprocess output lines for fallback diagnostics.",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_error_for_log",
       "description": "",
       "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
     },

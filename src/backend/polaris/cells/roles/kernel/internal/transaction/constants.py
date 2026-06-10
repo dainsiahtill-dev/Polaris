@@ -12,6 +12,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     _ASYNC_TOOLS,
     _READONLY_TOOLS,
 )
+from polaris.kernelone.tool_execution.tool_categories import SCOUT_RECON_TOOLS as _SCOUT_RECON_TOOLS
 
 # ---------------------------------------------------------------------------
 # LLM 拒绝标记
@@ -110,6 +111,14 @@ SAFE_READ_BOOTSTRAP_TOOLS: frozenset[str] = frozenset(
         "search_code",
     }
 )
+
+# ---------------------------------------------------------------------------
+# 侦察工具集合（recon-required finalize gate 判定用，ADR-0091）
+# ---------------------------------------------------------------------------
+# 自动从 kernelone tool_categories 的 SSOT 派生，禁止手动维护——
+# 评测侧 unified_judge 与内核门禁必须对「什么算侦察」永久一致（ADR-0091 R4）。
+# ---------------------------------------------------------------------------
+RECON_TOOLS: frozenset[str] = _SCOUT_RECON_TOOLS
 
 # ---------------------------------------------------------------------------
 # 验证工具

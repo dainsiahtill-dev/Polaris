@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.221603Z",
-  "source_hash": "77510e26e1f0ac86",
+  "generated_at": "2026-06-10T11:24:03.886465Z",
+  "source_hash": "8396fc450b00122c",
   "cell_id": "qa.audit_verdict",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -445,6 +445,241 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "VerdictPersistence",
+      "description": "Atomic file-based persistence for QA verdict JSON documents.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/verdict_persistence.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "save",
+          "doc": "Atomically persist a verdict dictionary to disk."
+        },
+        {
+          "name": "load",
+          "doc": "Load a verdict dictionary from disk; None if missing/unreadable."
+        },
+        {
+          "name": "list_all",
+          "doc": "Return all persisted verdict IDs (sorted)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TracebackFrameV1",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FailureSignalV1",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ParseTracebackFramesCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ParseTracebackFramesResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunQaAuditCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VisualAuditFindingV1",
+      "description": "One typed QA finding derived from image evidence.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunVisualQaAuditCommandV1",
+      "description": "Run a QA visual audit over image evidence refs using a verified vision model.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "VisualQaAuditResultV1",
+      "description": "Structured result for a QA visual audit.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetQaVerdictQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QaVerdictIssuedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QaAuditResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QaAuditErrorV1",
+      "description": "Raised when `qa.audit_verdict` contract processing fails.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ClaimQaTaskCommandV1",
+      "description": "Internal contract for QA consumer claiming from task market.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QaAuditCompletedEventV1",
+      "description": "Event emitted when QA audit completes and task advances.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_image_model_capability_ref",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_async",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_finding_from_issue",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_qa_audit",
+      "description": "Run QA audit through the qa.audit_verdict public contract.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_persist_qa_verdict",
+      "description": "把一次 QA 判定持久化到磁盘（原子写）。任何失败仅记日志、不抛出。",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_latest_verdict_for_task",
+      "description": "返回该 task 最新的已持久化判定 payload；无则 None。",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_qa_verdict",
+      "description": "读取某 task 最新的已持久化 QA 判定（只读，无副作用）。",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_visual_evidence_failure",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "run_visual_qa_audit",
+      "description": "Record a typed QA visual audit request after LLM image-capability preflight.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_traceback_summary",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_signal_type",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_signal_id",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_traceback_frame_rows",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_traceback_frames",
+      "description": "Parse traceback text into a typed QA failure signal.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

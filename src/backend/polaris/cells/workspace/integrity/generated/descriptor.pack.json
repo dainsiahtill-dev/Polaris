@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:40.682754Z",
-  "source_hash": "376c01c8a53ce5bd",
+  "generated_at": "2026-06-10T11:24:04.809734Z",
+  "source_hash": "45708e3d5305ced6",
   "cell_id": "workspace.integrity",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -273,7 +273,7 @@
     {
       "type": "function",
       "name": "select_docs_target_root",
-      "description": "",
+      "description": "Return the active managed docs root for docs-init approval.",
       "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
     },
     {
@@ -641,11 +641,11 @@
       "defined_in": "polaris/cells/workspace/integrity/tests/test_workspace_service.py",
       "methods": [
         {
-          "name": "test_uses_legacy_docs_when_exists",
+          "name": "test_uses_managed_docs_when_project_docs_exists",
           "doc": ""
         },
         {
-          "name": "test_uses_workspace_docs_when_no_legacy",
+          "name": "test_uses_managed_docs_when_project_docs_missing",
           "doc": ""
         }
       ]

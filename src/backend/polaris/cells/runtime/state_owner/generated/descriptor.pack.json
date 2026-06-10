@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:40.811418Z",
-  "source_hash": "bfc647b6bcaf3699",
+  "generated_at": "2026-06-10T11:24:15.213383Z",
+  "source_hash": "a9942f446993dfe6",
   "cell_id": "runtime.state_owner",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
@@ -61,6 +61,12 @@
     },
     {
       "type": "function",
+      "name": "_write_text_utf8",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
       "name": "read_json_safe",
       "description": "Read JSON file safely, returning None on failure.",
       "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
@@ -69,6 +75,30 @@
       "type": "function",
       "name": "persist_pm_payload",
       "description": "Write PM payload to canonical runtime and run-scoped contract paths.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_clean_plan_text",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_list_plan_values",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_plan_from_pm_payload",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_runtime_plan_file",
+      "description": "",
       "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
     },
     {

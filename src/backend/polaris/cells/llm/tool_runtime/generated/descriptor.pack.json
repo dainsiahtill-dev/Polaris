@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.686262Z",
-  "source_hash": "8c06d9a258780888",
+  "generated_at": "2026-06-10T11:24:12.643201Z",
+  "source_hash": "adfa685f853cf624",
   "cell_id": "llm.tool_runtime",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -291,6 +291,12 @@
       "name": "_to_dict_copy",
       "description": "",
       "defined_in": "polaris/cells/llm/tool_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_legacy_text_tool_protocol_fails_closed",
+      "description": "",
+      "defined_in": "polaris/cells/llm/tool_runtime/tests/test_role_integrations.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

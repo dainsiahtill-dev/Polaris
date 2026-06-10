@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:45.345170Z",
-  "source_hash": "4a9ab3632c52044f",
+  "generated_at": "2026-06-10T11:24:07.351734Z",
+  "source_hash": "aa3125cac6374aed",
   "cell_id": "architect.design",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -134,6 +134,70 @@
           "doc": "Get Architect Service status."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "GenerateArchitectureDesignCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/architect/design/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryArchitectureDesignStatusV1",
+      "description": "",
+      "defined_in": "polaris/cells/architect/design/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchitectureDesignGeneratedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/architect/design/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchitectureDesignResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/architect/design/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchitectDesignErrorV1",
+      "description": "Raised when `architect.design` contract processing fails.",
+      "defined_in": "polaris/cells/architect/design/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/architect/design/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/architect/design/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_stable_design_id",
+      "description": "",
+      "defined_in": "polaris/cells/architect/design/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_architecture_design",
+      "description": "Generate a typed architecture design result for a public command.",
+      "defined_in": "polaris/cells/architect/design/public/service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

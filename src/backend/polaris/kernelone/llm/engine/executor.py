@@ -359,6 +359,14 @@ class AIExecutor:
         if budget_decision.compression_applied and budget_decision.compression is not None:
             prompt_input = budget_decision.compression.compressed_input
             request.context["token_budget"] = budget_decision.to_dict()
+        else:
+            # ADR-0090 W1.5: pass the structured message array through so chat
+            # providers can preserve real role anchoring instead of flattening
+            # the whole transcript into one user message. Skipped when budget
+            # compression rewrote the flattened input (it is then authoritative).
+            chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
+            if isinstance(chat_messages, list) and chat_messages:
+                invoke_cfg["chat_messages"] = chat_messages
 
         # Acquire semaphore for concurrency control
         semaphore = await _get_global_semaphore()

@@ -156,20 +156,23 @@ class NativeFunctionCallingParser:
                 if allowed and name not in allowed:
                     continue
 
-                    args_str = fc.get("args", "{}")
-                    if isinstance(args_str, str):
-                        arguments, _ = cls._parse_json_arguments(args_str)
-                    else:
-                        arguments = args_str if isinstance(args_str, dict) else {}
+                # ADR-0090 W1.7: this parse body was mis-indented under the
+                # whitelist `continue` and therefore unreachable — parse_gemini
+                # silently returned [] for every response.
+                args_str = fc.get("args", "{}")
+                if isinstance(args_str, str):
+                    arguments, _ = cls._parse_json_arguments(args_str)
+                else:
+                    arguments = args_str if isinstance(args_str, dict) else {}
 
-                    results.append(
-                        ParsedToolCall(
-                            id=f"gemini_{len(results)}",
-                            name=name,
-                            arguments=arguments,
-                            raw=json.dumps(fc, ensure_ascii=False),
-                        )
+                results.append(
+                    ParsedToolCall(
+                        id=f"gemini_{len(results)}",
+                        name=name,
+                        arguments=arguments,
+                        raw=json.dumps(fc, ensure_ascii=False),
                     )
+                )
 
         return results
 
@@ -524,21 +527,23 @@ class NativeFunctionCallingParser:
                 if allowed and name not in allowed:
                     continue
 
-                    args_str = fc.get("args", "{}")
-                    arguments, _ = (
-                        cls._parse_json_arguments(args_str)
-                        if isinstance(args_str, str)
-                        else (args_str if isinstance(args_str, dict) else {})
-                    )
+                # ADR-0090 W1.7: this parse body was mis-indented under the
+                # whitelist `continue` (unreachable), and the dict branch tried
+                # to tuple-unpack a plain dict — parse_vertex_ai returned [].
+                args_str = fc.get("args", "{}")
+                if isinstance(args_str, str):
+                    arguments, _ = cls._parse_json_arguments(args_str)
+                else:
+                    arguments = args_str if isinstance(args_str, dict) else {}
 
-                    results.append(
-                        ParsedToolCall(
-                            id=f"vertex_{len(results)}",
-                            name=name,
-                            arguments=arguments,
-                            raw=json.dumps(fc, ensure_ascii=False),
-                        )
+                results.append(
+                    ParsedToolCall(
+                        id=f"vertex_{len(results)}",
+                        name=name,
+                        arguments=arguments,
+                        raw=json.dumps(fc, ensure_ascii=False),
                     )
+                )
 
         return results
 

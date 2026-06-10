@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:41.100565Z",
-  "source_hash": "0621b100db58b667",
+  "generated_at": "2026-06-10T11:24:07.577268Z",
+  "source_hash": "9de3fbf444fc7102",
   "cell_id": "roles.engine",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",

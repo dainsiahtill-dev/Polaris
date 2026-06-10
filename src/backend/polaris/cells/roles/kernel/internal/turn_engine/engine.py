@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 import warnings
 from typing import TYPE_CHECKING, Any
@@ -483,9 +484,25 @@ class TurnEngine(TurnEngineCompatMixin):
             config=TransactionConfig(
                 domain="code" if role in {"director", "chief_engineer"} else "document",
                 mutation_guard_mode="strict" if role == "director" else "warn",
+                recon_required=self._resolve_recon_required(role, profile),
             ),
             llm_provider_stream=llm_provider_stream if hasattr(llm_invoker, "call_stream") else None,
         )
+
+    @staticmethod
+    def _resolve_recon_required(role: str, profile: Any) -> bool:
+        """读侧落地不变量信号（ADR-0091 R3）。
+
+        来源与 ``RoleContextGateway._recon_mode_active`` 镜像：角色 profile 的
+        ``context_policy.recon_mode``（持久档位）OR scout 角色专属的
+        ``KERNELONE_SCOUT_RECON_MODE`` 环境灰度开关。默认 False——
+        非侦察角色的事务路径逐字节不变。
+        """
+        context_policy = getattr(profile, "context_policy", None)
+        if bool(getattr(context_policy, "recon_mode", False)):
+            return True
+        env = os.getenv("KERNELONE_SCOUT_RECON_MODE", "").strip().lower()
+        return env in {"1", "true", "yes", "on"} and str(role or "").strip().lower() == "scout"
 
     def _materialize_assistant_turn(
         self,

@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.988279Z",
-  "source_hash": "29cf1cd15a9f84a6",
+  "generated_at": "2026-06-10T11:24:06.371327Z",
+  "source_hash": "9179970f8fe64fcd",
   "cell_id": "kernelone.core",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -3133,8 +3133,12 @@
       "defined_in": "polaris/kernelone/context/context_os/models_v2.py",
       "methods": [
         {
+          "name": "compress",
+          "doc": "Return a compressed projection view without mutating the snapshot log."
+        },
+        {
           "name": "to_prompt_dict",
-          "doc": "Generate LLM messages, optionally filtering control-plane messages."
+          "doc": "Return lightweight prompt-facing context without the full snapshot."
         },
         {
           "name": "to_dict",
@@ -4425,6 +4429,10 @@
       "defined_in": "polaris/kernelone/context/context_os/runtime/state.py",
       "methods": [
         {
+          "name": "resolved_context_window",
+          "doc": ""
+        },
+        {
           "name": "_rebuild_prompt_view",
           "doc": ""
         },
@@ -5622,6 +5630,10 @@
           "doc": "Exactly one token over the boundary must raise BudgetExceededError."
         },
         {
+          "name": "test_recorded_budget_validation_error_does_not_bypass_invariant",
+          "doc": "A recorded planner overrun must still fail when the projection is over window."
+        },
+        {
           "name": "test_negative_expected_tokens_passes",
           "doc": "Negative expected_next_input_tokens should pass (edge case)."
         },
@@ -6671,6 +6683,10 @@
         },
         {
           "name": "test_plan_budget_validation_error",
+          "doc": ""
+        },
+        {
+          "name": "test_plan_budget_validation_error_clamps_projection",
           "doc": ""
         }
       ]

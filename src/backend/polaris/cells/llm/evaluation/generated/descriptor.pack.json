@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.639661Z",
-  "source_hash": "be060a8bfa4d5902",
+  "generated_at": "2026-06-10T11:24:13.472558Z",
+  "source_hash": "2362641e291fd4c9",
   "cell_id": "llm.evaluation",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -265,15 +265,183 @@
     },
     {
       "type": "function",
-      "name": "format_status",
-      "description": "",
-      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_safe_scope_plan/src/app.py"
+      "name": "build_session",
+      "description": "Legacy session builder returning a bare dict (no shared DTO).",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/_deprecated/legacy_auth.py"
     },
     {
       "type": "function",
-      "name": "test_format_status_prefix",
+      "name": "mint_token",
+      "description": "Legacy, insecure token derivation kept for reference only.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/_deprecated/legacy_auth.py"
+    },
+    {
+      "type": "function",
+      "name": "login",
+      "description": "Authenticate and persist a new session, returning the shared DTO.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/api_service/handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "delete_resource",
+      "description": "Admin-only handler that consults the auth service for the shared DTO.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/api_service/handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "main",
+      "description": "Run a representative end-to-end flow over the service mesh.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/app.py"
+    },
+    {
+      "type": "function",
+      "name": "require_scope",
+      "description": "Authorize the session for ``scope`` using the shared DTO helper.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/auth_service/permissions.py"
+    },
+    {
+      "type": "function",
+      "name": "is_admin",
+      "description": "Return True when the session carries the admin write scope.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/auth_service/permissions.py"
+    },
+    {
+      "type": "function",
+      "name": "mint_token",
+      "description": "Derive a deterministic opaque token from ``user_id`` and ``secret``.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/auth_service/tokens.py"
+    },
+    {
+      "type": "function",
+      "name": "build_session",
+      "description": "Mint a token and assemble the shared ``SessionContext`` DTO.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/auth_service/tokens.py"
+    },
+    {
+      "type": "function",
+      "name": "issue_invoice",
+      "description": "Issue an invoice attributed to the session's tenant via the shared DTO.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/billing/invoices.py"
+    },
+    {
+      "type": "class",
+      "name": "SessionContext",
+      "description": "Request-scoped session data shared across all service layers.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/core/contracts.py",
+      "methods": [
+        {
+          "name": "has_scope",
+          "doc": "Return True if this session was granted ``scope``."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ServiceError",
+      "description": "Uniform error envelope returned by every service boundary.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/core/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "cache_session",
+      "description": "Cache the shared ``SessionContext`` DTO by user id.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/storage/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "peek_session",
+      "description": "Return a cached ``SessionContext`` for ``user_id`` if present.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/storage/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "save_session",
+      "description": "Persist the shared ``SessionContext`` DTO keyed by token.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/storage/database.py"
+    },
+    {
+      "type": "function",
+      "name": "load_session",
+      "description": "Load a previously persisted ``SessionContext`` by token.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_import_graph/storage/database.py"
+    },
+    {
+      "type": "function",
+      "name": "test_same_operands_different_precision_should_not_collide",
       "description": "",
-      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_safe_scope_plan/tests/test_app.py"
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/integration_test.py"
+    },
+    {
+      "type": "function",
+      "name": "_make_key",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/src/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "cached_divide",
+      "description": "Return ``numerator / denominator`` rounded to ``precision`` digits, memoized.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/src/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_cache",
+      "description": "Reset the memo. Used by tests to isolate runs.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/src/cache.py"
+    },
+    {
+      "type": "function",
+      "name": "divide",
+      "description": "Divide ``numerator`` by ``denominator`` rounded to ``precision`` digits.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/src/calculator.py"
+    },
+    {
+      "type": "function",
+      "name": "load_precision",
+      "description": "Return the configured rounding precision.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/src/config.py"
+    },
+    {
+      "type": "function",
+      "name": "test_divide_basic",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/tests/test_calculator.py"
+    },
+    {
+      "type": "function",
+      "name": "test_divide_uses_same_precision_repeatedly",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/tests/test_calculator.py"
+    },
+    {
+      "type": "function",
+      "name": "test_divide_distinct_operands",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_multi_cause_detective/tests/test_calculator.py"
+    },
+    {
+      "type": "class",
+      "name": "DataSyncTimeout",
+      "description": "Raised when a request exceeds the configured timeout.",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_outdated_api_docs/src/api.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DataSyncClient",
+      "description": "Client for the DataSync service (v2).",
+      "defined_in": "polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/scout_outdated_api_docs/src/api.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "request",
+          "doc": "Issue a request to ``path`` using the configured timeout."
+        }
+      ]
     },
     {
       "type": "function",
@@ -700,6 +868,172 @@
       "name": "_env_int",
       "description": "",
       "defined_in": "polaris/cells/llm/evaluation/internal/constants.py"
+    },
+    {
+      "type": "class",
+      "name": "_BlueprintSignal",
+      "description": "chief_engineer 专属信号（评测隔离用）。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py",
+      "methods": [
+        {
+          "name": "applies_to",
+          "doc": ""
+        },
+        {
+          "name": "priority",
+          "doc": ""
+        },
+        {
+          "name": "build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_HugePlanSignal",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py",
+      "methods": [
+        {
+          "name": "applies_to",
+          "doc": ""
+        },
+        {
+          "name": "priority",
+          "doc": ""
+        },
+        {
+          "name": "build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_signal_ctx",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_role_signal_byte_identical",
+      "description": "逐字节 + 绝对索引一致：seed-only 注入 == 旧硬编码实现。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_role_signal_cross_role_isolation",
+      "description": "跨角色隔离：QA turn 的 payload 绝不含 blueprint。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_signal_ctx_with_assets",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_role_specific_assets_and_isolation",
+      "description": "真·角色信号：CE 拿蓝图、QA 拿判定，且互不串台。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_role_signal_circuit_breaker",
+      "description": "熔断截断：超大信号 → 截断为 receipt:// 占位符，原文可取回。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_evt",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_messages_have_control_plane_leak",
+      "description": "返回泄漏证据列表（应为空）.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_control_plane_isolation",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_user_message_last",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_receipt_offloading",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_structured_findings_injection",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_content_level_control_plane_stripped",
+      "description": "非信号角色(tool)内容里的框架性控制面标记必须被剥离,但真实内容保留。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_signal_role_content_untouched",
+      "description": "信号角色(user/assistant)的内容不得被改动——即便里面出现了类似标记的字符串。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_chronological_order_and_system_first",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_empty_window_robust",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_adaptive_learning_effect_probe",
+      "description": "硬门禁：ProjectionEngine 自适应学习必须真实改变 prompt 投影。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_coro_in_fresh_loop",
+      "description": "Run an async coroutine from a sync matrix case, safe under a running loop.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_small_window_profile",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_small_window_budget_enforcement",
+      "description": "ADR-0090 I4：8k 小窗口下 enforcement 预算钳制 + system prompt 预算化前插。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/context_projection_matrix.py"
     },
     {
       "type": "class",
@@ -1212,6 +1546,24 @@
     },
     {
       "type": "function",
+      "name": "_register_scout_validators_from_builtin",
+      "description": "Bridge canonical scout validators into this module's registry.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_wrap",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
+      "name": "_validator",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
+    },
+    {
+      "type": "function",
       "name": "judge_agentic_case",
       "description": "Judge an agentic benchmark case against observed execution.",
       "defined_in": "polaris/cells/llm/evaluation/internal/deterministic_judge.py"
@@ -1280,6 +1632,12 @@
     },
     {
       "type": "function",
+      "name": "_index_write_locks",
+      "description": "Acquire write locks for all index paths in deterministic order.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
       "name": "_index_read_lock",
       "description": "Context manager for index read access with path-level locking.",
       "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
@@ -1322,6 +1680,12 @@
     },
     {
       "type": "function",
+      "name": "_load_index_from_paths_unlocked",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
       "name": "_write_index_payload",
       "description": "",
       "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
@@ -1358,6 +1722,12 @@
     },
     {
       "type": "function",
+      "name": "load_llm_test_index_candidates",
+      "description": "Load all available LLM test indexes for a workspace.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
+    },
+    {
+      "type": "function",
       "name": "reset_llm_test_index",
       "description": "Reset LLM test index to empty state.",
       "defined_in": "polaris/cells/llm/evaluation/internal/index.py"
@@ -1376,6 +1746,48 @@
     },
     {
       "type": "function",
+      "name": "_stable_interview_session_id",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_cognitive_runtime_public",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_context_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_interview_context",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_interview_context",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_compact_interview_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_interview_receipt",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
       "name": "build_interview_prompt",
       "description": "构建面试提示词",
       "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
@@ -1384,6 +1796,36 @@
       "type": "function",
       "name": "evaluate_interview_answer",
       "description": "评估面试答案",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_slug",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_report_provider_model",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_ready_bool",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_interview_verdict",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "save_interview_report",
+      "description": "Persist an interactive interview report and mirror its verdict to readiness.",
       "defined_in": "polaris/cells/llm/evaluation/internal/interview.py"
     },
     {
@@ -1483,6 +1925,42 @@
       "name": "validate_case_id",
       "description": "Validate case_id for path traversal attempts.",
       "defined_in": "polaris/cells/llm/evaluation/internal/path_validators.py"
+    },
+    {
+      "type": "function",
+      "name": "_delta_ci",
+      "description": "两组独立得分的均值差半宽（95% CI）。N<2 返回 (delta, 0)。",
+      "defined_in": "polaris/cells/llm/evaluation/internal/projection_adaptive_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_adaptive_env",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/projection_adaptive_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "readiness_max_age_seconds",
+      "description": "Return the configured readiness max age in seconds.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_freshness.py"
+    },
+    {
+      "type": "function",
+      "name": "parse_readiness_timestamp",
+      "description": "Parse an evaluation timestamp as UTC.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_freshness.py"
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_freshness.py"
+    },
+    {
+      "type": "function",
+      "name": "readiness_freshness_issue",
+      "description": "Return a readiness freshness issue code, or ``\"\"`` when acceptable.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_freshness.py"
     },
     {
       "type": "function",
@@ -1607,6 +2085,48 @@
           "doc": "保存报告到文件"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_classify_case_id",
+      "description": "Map a scout case_id to ``(level, dimension)``.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_discover_scout_cases",
+      "description": "Return ``{case_id: (level, dimension)}`` for every scout_* case on disk.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_level_filter",
+      "description": "Parse a level filter (``\"l1-l6\"``, ``\"1,3\"``, ``[1,2]``, ``\"l4\"``) -> set of ints.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_scout_case_ids",
+      "description": "Resolve which scout cases to run from explicit ids or level/dimension filters.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_aggregate_samples",
+      "description": "Aggregate per-case results across ``runs`` independent samples.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_roll_sampled",
+      "description": "Average pass-rate + median-of-medians over a group of aggregated cases.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_sampled_matrix",
+      "description": "Anti-jitter level x dimension scorecard from sample-aggregated cases.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/scout_matrix.py"
     },
     {
       "type": "class",
@@ -1743,6 +2263,84 @@
       "defined_in": "polaris/cells/llm/evaluation/internal/session_workflow_matrix.py"
     },
     {
+      "type": "class",
+      "name": "_SpeculationCollector",
+      "description": "订阅 speculation 事件，聚合本次运行窗口内的所有 per-turn 汇总.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_speculation_env",
+      "description": "临时设置 speculation 相关环境变量，退出时精确还原.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_payload",
+      "description": "工具结果的可稳定比较投影（剥离易变计时字段）.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_speculation_attributable",
+      "description": "错误信息是否可归因到 speculation 机制本身（而非模型/契约行为）.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_primary_arg",
+      "description": "取工具调用的主参数（路径/查询）作为 parity 比较键.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_command",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "function",
+      "name": "_parity_intersection",
+      "description": "比较 ON/OFF 在共同工具调用上的结果一致性（信息性，model 非确定性容忍）.",
+      "defined_in": "polaris/cells/llm/evaluation/internal/speculation_matrix.py"
+    },
+    {
+      "type": "class",
+      "name": "EmptyInterviewOutputError",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_positive_int_config",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
+      "type": "function",
+      "name": "_non_negative_int_config",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/internal/suites.py"
+    },
+    {
       "type": "function",
       "name": "run_connectivity_suite_sync",
       "description": "同步运行连接性测试套件",
@@ -1862,6 +2460,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_canonicalize_judge_arg_keys",
+      "description": "Remap declared arg-name aliases to canonical names (SSOT: ToolSpecRegistry).",
+      "defined_in": "polaris/cells/llm/evaluation/internal/tool_calling_matrix.py"
     },
     {
       "type": "function",
@@ -2874,6 +3478,10 @@
         {
           "name": "test_convert_result_with_cases",
           "doc": "Test converting result with detailed cases."
+        },
+        {
+          "name": "test_convert_result_with_legacy_results",
+          "doc": "Test converting legacy detailed results from interview suites."
         },
         {
           "name": "test_convert_timeout_result",

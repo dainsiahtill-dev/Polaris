@@ -46,6 +46,9 @@ class BlockedReason(str, Enum):
     SAFETY_CONSTRAINT = "safety_constraint"
     USER_CANCELLED = "user_cancelled"
     PHASE_TIMEOUT = "phase_timeout"
+    # ADR-0091 R1: recon_required 内核中，零侦察的 FINAL_ANSWER 被阻断（读侧
+    # 落地不变量，与 NO_WRITE_TOOL_AVAILABLE 的写侧语义对称）。
+    NO_RECON_PERFORMED = "no_recon_performed"
 
 
 class TaskCategory(str, Enum):

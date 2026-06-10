@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:45.385563Z",
-  "source_hash": "b035e5facde84f88",
+  "generated_at": "2026-06-10T11:24:12.585712Z",
+  "source_hash": "43d1f429b938ac1c",
   "cell_id": "adapters.kernelone",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",

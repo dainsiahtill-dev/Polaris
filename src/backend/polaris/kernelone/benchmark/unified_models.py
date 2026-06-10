@@ -534,6 +534,10 @@ class JudgeCheck:
         message: Human-readable explanation.
         critical: Whether this is a critical (failing blocks overall pass).
         evidence: Additional diagnostic data.
+        score: Optional graded score in [0, 1] (ADR-0090 I5). ``None`` means the
+            check is binary and scores 1.0/0.0 from ``passed``. Graded scores
+            spread quality levels for model ranking; critical pass/fail
+            semantics stay binary.
     """
 
     code: str
@@ -542,6 +546,7 @@ class JudgeCheck:
     message: str
     critical: bool = False
     evidence: dict[str, Any] = field(default_factory=dict)
+    score: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "code", _non_empty_string(self.code, "code"))
@@ -550,6 +555,15 @@ class JudgeCheck:
         object.__setattr__(self, "message", str(self.message or "").strip())
         object.__setattr__(self, "critical", bool(self.critical))
         object.__setattr__(self, "evidence", dict(self.evidence or {}))
+        if self.score is not None:
+            object.__setattr__(self, "score", max(0.0, min(1.0, float(self.score))))
+
+    @property
+    def effective_score(self) -> float:
+        """Graded score when present, else binary 1.0/0.0 from ``passed``."""
+        if self.score is not None:
+            return float(self.score)
+        return 1.0 if self.passed else 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -559,10 +573,12 @@ class JudgeCheck:
             "message": self.message,
             "critical": self.critical,
             "evidence": dict(self.evidence),
+            "score": self.score,
         }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> JudgeCheck:
+        raw_score = payload.get("score")
         return cls(
             code=payload.get("code", ""),
             category=payload.get("category", ""),
@@ -570,6 +586,7 @@ class JudgeCheck:
             message=str(payload.get("message") or ""),
             critical=bool(payload.get("critical", False)),
             evidence=dict(payload.get("evidence") or {}),
+            score=float(raw_score) if raw_score is not None else None,
         )
 
 

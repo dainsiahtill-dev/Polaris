@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.249778Z",
-  "source_hash": "e96e2241d0f421f8",
+  "generated_at": "2026-06-10T11:24:03.798102Z",
+  "source_hash": "400e68e636ea807c",
   "cell_id": "events.fact_stream",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
@@ -193,6 +193,18 @@
     {
       "type": "function",
       "name": "_env_float",
+      "description": "",
+      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
+    },
+    {
+      "type": "function",
+      "name": "_env_bool",
+      "description": "",
+      "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
+    },
+    {
+      "type": "function",
+      "name": "_nats_transport_enabled",
       "description": "",
       "defined_in": "polaris/infrastructure/log_pipeline/jetstream_publisher.py"
     },
@@ -859,6 +871,18 @@
     },
     {
       "type": "function",
+      "name": "_build_file_written_payload",
+      "description": "Build the canonical payload shared by realtime and durable event sinks.",
+      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_durable_file_edit_event",
+      "description": "Persist FILE_WRITTEN evidence for snapshot/UI fallback and audits.",
+      "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
+    },
+    {
+      "type": "function",
       "name": "broadcast_file_written",
       "description": "广播文件写入事件到前端",
       "defined_in": "polaris/kernelone/events/file_event_broadcaster.py"
@@ -1415,6 +1439,12 @@
       "defined_in": "polaris/kernelone/events/tests/test_io_events_observability.py"
     },
     {
+      "type": "function",
+      "name": "test_message_bus_sync_publish_without_loop_skips_without_warning",
+      "description": "Synchronous CLI mode without an event loop must not pollute stderr.",
+      "defined_in": "polaris/kernelone/events/tests/test_io_events_observability.py"
+    },
+    {
       "type": "class",
       "name": "TestMessageBusConcurrency",
       "description": "Tests for MessageBus high-concurrency safety.",
@@ -1562,7 +1592,20 @@
       "name": "TestUEPEventPublisher",
       "description": "Test suite for UEPEventPublisher.",
       "defined_in": "polaris/kernelone/events/tests/test_uep_publisher.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "test_disk_fallback_swallows_os_error",
+          "doc": "Journal fallback must never raise on disk errors (OSError swallowed)."
+        },
+        {
+          "name": "_boom_open",
+          "doc": ""
+        },
+        {
+          "name": "test_disk_fallback_swallows_serialization_error",
+          "doc": "Journal fallback must never raise on a non-serializable payload (TypeError)."
+        }
+      ]
     },
     {
       "type": "class",

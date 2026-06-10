@@ -1264,6 +1264,32 @@ def _build_progress_callback(*, enabled: bool) -> Any:
     return emit
 
 
+def _resolve_runtime_role_bindings() -> dict[str, dict[str, str]]:
+    """Resolve the actual role→provider/model bindings for audit persistence.
+
+    ADR-0090 W3.2: audits previously recorded only the "runtime_binding"
+    placeholder, making historical score comparisons across models impossible.
+    Failure to resolve must never break the audit — fail soft per role.
+    """
+    bindings: dict[str, dict[str, str]] = {}
+    try:
+        from polaris.kernelone.llm.runtime_config import load_role_config
+    except ImportError:
+        return bindings
+    for role_id in ("pm", "architect", "chief_engineer", "director", "qa", "scout"):
+        try:
+            config = load_role_config(role_id)
+        except (RuntimeError, ValueError, OSError):
+            continue
+        if config is None:
+            continue
+        bindings[role_id] = {
+            "provider_id": str(config.provider_id or ""),
+            "model": str(config.model or ""),
+        }
+    return bindings
+
+
 def build_agentic_eval_audit_package(
     *,
     workspace: str,
@@ -1431,6 +1457,10 @@ def build_agentic_eval_audit_package(
             "role_scope": str(scope_role or "").strip().lower() or "all",
             "provider_id": str(provider_id or "").strip() or "runtime_binding",
             "model": str(model or "").strip() or "runtime_binding",
+            # ADR-0090 W3.2: persist the RESOLVED role bindings so cross-model
+            # score comparisons are possible from the audit alone ("runtime_binding"
+            # placeholders made historical audits unattributable to a model).
+            "resolved_role_bindings": _resolve_runtime_role_bindings(),
             "transport_mode": str(report_target.get("transport_mode") or "").strip() or "stream",
         },
         "score": {

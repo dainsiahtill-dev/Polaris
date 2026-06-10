@@ -146,7 +146,14 @@ def _python_search_fallback(
         results: list[dict[str, Any]] = []
         files_scanned = 0
         truncated = False
-        for dirpath, dirnames, filenames in os.walk(root):
+        # ADR-0090: a single-FILE search path must scan that file — os.walk on a
+        # file yields nothing, silently returning zero results and misleading
+        # the agent into believing the symbol is absent.
+        if root.is_file():
+            walk_iter: Any = [(str(root.parent), [], [root.name])]
+        else:
+            walk_iter = os.walk(root)
+        for dirpath, dirnames, filenames in walk_iter:
             dirnames[:] = [d for d in dirnames if d not in _FALLBACK_SKIP_DIRS]
             for filename in filenames:
                 if files_scanned >= _FALLBACK_MAX_FILES:

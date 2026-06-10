@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:40.705216Z",
-  "source_hash": "746072e599d6ed17",
+  "generated_at": "2026-06-10T11:24:15.431386Z",
+  "source_hash": "c9f247568077ac4e",
   "cell_id": "storage.layout",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -57,6 +57,12 @@
       "type": "function",
       "name": "default_polaris_cache_base",
       "description": "Return the default Polaris system cache base path.",
+      "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_projects_root",
+      "description": "Return the projects root without double-nesting the metadata directory.",
       "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
     },
     {
@@ -121,7 +127,25 @@
     },
     {
       "type": "function",
+      "name": "_is_truthy_env",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_abs_path",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_path_exists",
+      "description": "",
+      "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_cache_env_value",
       "description": "",
       "defined_in": "polaris/cells/storage/layout/internal/settings_utils.py"
     },
@@ -447,6 +471,12 @@
     {
       "type": "function",
       "name": "_runtime_base_and_mode",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_projects_root",
       "description": "",
       "defined_in": "polaris/kernelone/storage/layout.py"
     },

@@ -82,3 +82,46 @@ def is_file_delete_tool(name: str) -> bool:
 def is_read_only_tool(name: str) -> bool:
     """Check if tool is a read-only tool."""
     return name in READ_ONLY_TOOLS
+
+
+# ---------------------------------------------------------------------------
+# Scout (探子) reconnaissance tool set — SINGLE SOURCE OF TRUTH (ADR-0091 R4)
+# ---------------------------------------------------------------------------
+# Shared by:
+#   - polaris/kernelone/benchmark/unified_judge.py (scout_min_recon scoring)
+#   - polaris/cells/roles/kernel/internal/transaction/contract_guards.py
+#     (has_successful_recon_execution — the recon-required finalize gate)
+# The judge and the kernel MUST agree on what counts as reconnaissance;
+# do not redefine this set locally. Curated (not derived from _TOOL_SPECS)
+# because it deliberately includes legacy aliases (grep/ripgrep/search_code)
+# and the scout_probe sub-agent dispatch tool.
+# ---------------------------------------------------------------------------
+SCOUT_RECON_TOOLS: frozenset[str] = frozenset(
+    {
+        "repo_tree",
+        "repo_rg",
+        "grep",
+        "ripgrep",
+        "search_code",
+        "read_file",
+        "repo_read_head",
+        "repo_read_slice",
+        "repo_read_tail",
+        "repo_read_around",
+        "repo_symbols_index",
+        "repo_map",
+        "glob",
+        "list_directory",
+        "file_exists",
+        "scout_probe",
+    }
+)
+
+
+def is_scout_recon_tool(name: str) -> bool:
+    """Check if a (raw) tool name counts as scout reconnaissance.
+
+    Normalizes case and dash/underscore so judge- and kernel-side raw names
+    (e.g. ``Repo-RG``) resolve to the same canonical membership test.
+    """
+    return name.strip().lower().replace("-", "_") in SCOUT_RECON_TOOLS

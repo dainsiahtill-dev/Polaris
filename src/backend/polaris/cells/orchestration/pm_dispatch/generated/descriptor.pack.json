@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.303760Z",
-  "source_hash": "709570b6cb546ae4",
+  "generated_at": "2026-06-10T11:24:07.290139Z",
+  "source_hash": "e00ca8274df68aaa",
   "cell_id": "orchestration.pm_dispatch",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -56,6 +56,36 @@
     },
     {
       "type": "function",
+      "name": "_classify_integration_qa_evidence",
+      "description": "Classify integration QA evidence strength for audit consumers.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_cognitive_runtime_services",
+      "description": "Lazy import for factory.cognitive_runtime public contracts.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_snapshot_evidence",
+      "description": "Extract compact, stable Context OS evidence from a resolved snapshot.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_pm_dispatch_qa_cognitive_receipt",
+      "description": "Record Cognitive Runtime evidence for PM dispatch integration QA.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_attach_pm_dispatch_qa_cognitive_receipt",
+      "description": "Attach Cognitive Runtime receipt evidence and fail closed when required.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
       "name": "_get_io_utils",
       "description": "Lazy import for events to avoid circular imports.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
@@ -76,6 +106,18 @@
       "type": "function",
       "name": "_get_traceability_safety",
       "description": "Lazy import for traceability safety helpers.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_chief_engineer_preflight_block_reason",
+      "description": "Return a non-empty reason when CE preflight must block dispatch.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_chief_engineer_blocked_director_result",
+      "description": "Build a Director-compatible blocked result for failed CE preflight.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -105,6 +147,30 @@
     {
       "type": "function",
       "name": "_extract_task_dependencies",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_bool",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_market_route",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_route_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_market_stage_for_route",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
@@ -468,6 +534,42 @@
     {
       "type": "function",
       "name": "_coerce_metadata_overrides",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_task_rows_from_payload",
+      "description": "Extract PM task rows from the persisted PM task contract payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_identity_values",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_pm_task_contract_rows",
+      "description": "Read runtime/contracts/pm_tasks.contract.json if it exists.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_pm_task_payloads",
+      "description": "Return PM task payloads matching requested Director task IDs.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_role_entry_metadata",
+      "description": "Build flattened Director role metadata from a PM task payload.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_role_entry_input",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
     },

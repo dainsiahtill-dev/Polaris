@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:40.945129Z",
-  "source_hash": "a8a9cebb3f2fb09b",
+  "generated_at": "2026-06-10T11:24:15.115445Z",
+  "source_hash": "8e44a7103800b689",
   "cell_id": "runtime.task_runtime",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -92,6 +92,10 @@
         {
           "name": "board",
           "doc": ""
+        },
+        {
+          "name": "reset_records",
+          "doc": "Clear canonical taskboard rows and execution sessions."
         },
         {
           "name": "normalize_task_id",
@@ -224,6 +228,12 @@
       ]
     },
     {
+      "type": "function",
+      "name": "reset_runtime_task_records",
+      "description": "Clear runtime taskboard state through the owning cell service.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py"
+    },
+    {
       "type": "class",
       "name": "TaskStatus",
       "description": "Task lifecycle states used by the Polaris TaskBoard.",
@@ -307,6 +317,10 @@
         {
           "name": "_save_task",
           "doc": "Atomically save a task to disk (write-to-temp + os.replace)."
+        },
+        {
+          "name": "_replace_task_file",
+          "doc": "Replace task JSON with short Windows retry for transient file locks."
         },
         {
           "name": "_load_max_id",
@@ -826,6 +840,12 @@
     {
       "type": "function",
       "name": "test_task_runtime_service_manages_task_rows",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_task_runtime_reset_records_clears_rows_sessions_and_events",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_runtime/tests/test_service.py"
     },

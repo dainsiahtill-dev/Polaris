@@ -134,6 +134,34 @@ ContextOS: 预算 = min(角色策略, 模型窗口×0.85) − system prompt 预�
 - W3.1 分数变化会改变历史可比性:audit 里同时保留 binary pass 与 graded score 两列。
 - 不切云模型掩盖本地缺陷(用户铁律);全部修复都是通用逻辑,无目标项目业务码(CLAUDE.md §8)。
 
+## 7.5 实施状态(2026-06-10 当日落地)
+
+| 项 | 状态 | 备注 |
+|----|------|------|
+| W1.1 a/b/c 空参重复执行 | ✅ 全部落地 | executor provisional 全 provider 化 + flush 启用死参数;orchestrator keyed upsert(`upsert_stream_native_tool_call`)+ `supersede_partial_tool_calls`;影子异常 `_consume_task_result` 回收;空参不投机 |
+| W1.2 解码失败反馈 | ✅ | decoder 捕获 `decode_failures` + `decode_corrective.py` 纯函数 + 流/非流双路单次 corrective re-ask;空响应先重问后挂起 |
+| W1.3 容错 JSON | ✅ | `parsers/lenient_json.py`;接线 decoder 参数解析 + 流末 flush(中流绝不修复) |
+| W1.4 标量纠偏 | ✅ | `schema_driven_normalizer._coerce_argument_types`(array/string/integer/boolean,无别名路径同样生效);旧测试 `test_paths_string_passed_through` 按新契约更新 |
+| W1.5 结构化 messages | ✅ | caller → `AIRequest.context.chat_messages` → 双 executor invoke_cfg(预算压缩时跳过)→ openai_compat `_build_chat_messages_payload`(tool→user 标记、同角色合并) |
+| W1.6 gemma 解析统一 | ✅ | tool_helpers 委托 `textual_tool_recovery`,删除并行严格正则 |
+| W1.7 parse_gemini/vertex | ✅ | dedent 修复(原永远返回 []),vertex dict 解包 bug 一并修 |
+| W1.8 续轮错误回灌 | ✅(无需改动) | 核实 `_build_continuation_prompt` 既有 `elif not success:` 分支已注入具体错误文本 |
+| W2.1 预算钳制 | ✅ | `_compute_enforcement_budget` = min(策略, 窗口×0.85),floor 不越策略,解析失败回退不抛错 |
+| W2.2 double projection | ✅ 超额 | 实际共 **7 处**(蓝图识别 4 处 + caller.py + kernel/turn_engine.py×2)全部替换为 gateway 预算化前插;全仓清零 |
+| W2.3 128k 回退毒化 | ✅ | `StateFirstContextOS(fallback_context_window=…)` 注入角色策略;spec 表 ValueError 捕获 |
+| W2.4 信号上限 | ✅ | per≈5%/total≈15% 窗口 token 字符等值,registry 默认值封顶 |
+| W2.5 8k 评测 case | ✅ | `small_window_budget_enforcement` 入矩阵;矩阵 14/14 PASS |
+| W3.1 渐变评分 | ✅ | `JudgeCheck.score` + `effective_score`;空类目权重重归一(`aggregate_overall_score`);detective 锚点 0.4/0.7/1.0、evidence 深度、map 丰富度分级;critical 语义不变 |
+| W3.2 audit 模型持久化 | ✅ | `resolved_role_bindings` 写入 AGENTIC_EVAL_AUDIT |
+
+验证记录:新增组件测试 96 个全绿;kernel cell 宽回归 1662 passed;`context_projection_matrix` 14/14 PASS(零 LLM);KernelOne release gate `--mode all` exit 0;catalog gate audit-only 通过;qwen3.6 在线复跑 django-15213:**0 次空参验证失败、0 次影子异常泄漏**(对照 diag5e 数十次),有效输出 chars 1→203。
+
+**E2E 迭代追加发现与修复(同日)**:
+- **fix2 揪出 W1.5 集成 bug**:vLLM 严格模板拒绝中段 system 消息(`System message must be at the beginning` 400)——RoleSignalPlane 补充 system turns 被原样透传。修复:`_build_chat_messages_payload` 仅保留前导 system 块,中段 system 降级为【系统提示】user turn。fix3 验证 0 次 400。
+- **fix3 取证确认 W1.1 契约保持**(无成对空参;6 次参数失败均为模型自产缺参调用),并暴露真正缺口:**mutation retry 的"升级"只加提示词,`_strict_retry_tool_definitions` 算了从未用,`attempt_tool_choice_override` 恒为 None** → qwen 四轮"必须写"重试中仍合法选择 repo_rg。
+- **W1.9(追加)API 级升级阶梯**:`resolve_retry_escalation` —— 第 3 次重试起工具集收窄为纯写(guided decoding 无法生成读调用),最后一次重试按名强制选定写工具(OpenAI `{"type":"function","function":{"name":…}}`)。提示词会被弱模型无视,API 约束不会。
+- **rg 缺失环境单文件搜索修复**:python fallback 对文件路径 `os.walk` 产出空 → 静默零结果误导 agent;现支持单文件扫描。
+
 ## 8. 治理
 
 - 分类:pattern(「模型输出默认良构」假设在多模块重复)→ Verification Card `vc-20260610-weak-model-harness-hardening.yaml`;

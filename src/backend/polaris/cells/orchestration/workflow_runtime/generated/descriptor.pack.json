@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.465021Z",
-  "source_hash": "99b2b9669608beea",
+  "generated_at": "2026-06-10T11:24:06.955264Z",
+  "source_hash": "ff8dcd3fd8e5d268",
   "cell_id": "orchestration.workflow_runtime",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -132,6 +132,120 @@
       "name": "get_workflow_method_metadata",
       "description": "获取工作流方法元数据",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/decorator_adapters.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_dict",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_rows",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_pm_contract_rows",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_identity_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_identity_tokens",
+      "description": "Return stable identity tokens for matching runtime rows to PM contracts.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_dependency_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_row_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_blocking_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_blocking_identity_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_propagate_dependency_blocks",
+      "description": "Mark pending contract tasks blocked when a dependency has failed or is blocked.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_result_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_row_matches_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_index_runtime_rows",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_director_result_from_runtime",
+      "description": "Build a global Director result from PM contract rows and TaskRuntime rows.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "persist_director_result_from_runtime",
+      "description": "Persist canonical Director result artifacts when all Director tasks are terminal.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "build_integration_qa_tasks_from_director_result",
+      "description": "Project a Director result artifact into the task schema expected by integration QA.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/director_result_artifacts.py"
     },
     {
       "type": "class",
@@ -540,6 +654,10 @@
         {
           "name": "from_mapping",
           "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
         }
       ]
     },
@@ -551,6 +669,10 @@
       "methods": [
         {
           "name": "from_mapping",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
           "doc": ""
         }
       ]
@@ -564,6 +686,10 @@
         {
           "name": "from_mapping",
           "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
         }
       ]
     },
@@ -575,6 +701,10 @@
       "methods": [
         {
           "name": "from_mapping",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
           "doc": ""
         }
       ]
@@ -1208,6 +1338,30 @@
     },
     {
       "type": "function",
+      "name": "_task_artifact_paths",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_json_object",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_terminal_result_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_record_director_terminal_resident_decision",
+      "description": "Record real Director terminal facts into resident autonomy.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
       "name": "_build_context",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
@@ -1220,7 +1374,19 @@
     },
     {
       "type": "function",
-      "name": "_run_director_execution",
+      "name": "_extract_adapter_changed_files",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_adapter_error",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_adapter_input",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/director_activities.py"
     },
@@ -1238,8 +1404,44 @@
     },
     {
       "type": "function",
+      "name": "_merge_chief_engineer_task_updates",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_flag_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_snapshot_evidence",
+      "description": "Extract compact, stable Context OS evidence from a resolved snapshot.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_record_chief_engineer_cognitive_receipt",
+      "description": "Record Cognitive Runtime evidence for the deterministic ChiefEngineer blueprint activity.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/pm_activities.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_metadata",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_flag_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_snapshot_evidence",
+      "description": "Extract compact, stable Context OS evidence from a resolved snapshot.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/qa_activities.py"
     },
     {
@@ -1416,6 +1618,12 @@
     },
     {
       "type": "function",
+      "name": "_director_config_for_phase",
+      "description": "Pass the scaled implementation budget to the Director adapter.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py"
+    },
+    {
+      "type": "function",
       "name": "_task_progress_metadata",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_task_workflow.py"
@@ -1441,12 +1649,6 @@
     {
       "type": "function",
       "name": "_coerce_task_result",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_dependencies",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/director_workflow.py"
     },
@@ -1587,6 +1789,12 @@
     },
     {
       "type": "function",
+      "name": "_activity_ok",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
+    },
+    {
+      "type": "function",
       "name": "_director_status",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
@@ -1600,12 +1808,6 @@
     {
       "type": "function",
       "name": "_director_execution_mode",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
-    },
-    {
-      "type": "function",
-      "name": "_director_positive_int",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py"
     },
@@ -1630,6 +1832,30 @@
     {
       "type": "function",
       "name": "_result_success",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/qa_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_runtime_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/qa_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_activity_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/qa_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_errors",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/qa_workflow.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_path",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/qa_workflow.py"
     },
@@ -1899,6 +2125,10 @@
         {
           "name": "_find_ready_tasks",
           "doc": "找到依赖已满足的就绪任务"
+        },
+        {
+          "name": "_persist_director_result_if_terminal",
+          "doc": "Reconcile Director-only task-runtime completion into the canonical result artifact."
         },
         {
           "name": "_categorize_error",

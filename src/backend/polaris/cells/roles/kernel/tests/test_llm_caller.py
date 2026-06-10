@@ -517,7 +517,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context):
+            async def build_context(self, _context, *, system_prompt=None):
                 return SimpleNamespace(
                     messages=[{"role": "user", "content": "hello"}],
                     token_estimate=12,
@@ -559,7 +559,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context):
+            async def build_context(self, _context, *, system_prompt=None):
                 return SimpleNamespace(
                     messages=[{"role": "user", "content": "hello"}],
                     token_estimate=12,
@@ -597,7 +597,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context):
+            async def build_context(self, _context, *, system_prompt=None):
                 return SimpleNamespace(
                     messages=[{"role": "user", "content": "hello"}],
                     token_estimate=12,
@@ -636,7 +636,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context):
+            async def build_context(self, _context, *, system_prompt=None):
                 return SimpleNamespace(
                     messages=[{"role": "user", "content": "hello"}],
                     token_estimate=12,
@@ -677,7 +677,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context):
+            async def build_context(self, _context, *, system_prompt=None):
                 return SimpleNamespace(
                     messages=[{"role": "user", "content": "hello"}],
                     token_estimate=12,
@@ -724,7 +724,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context):
+            async def build_context(self, _context, *, system_prompt=None):
                 return SimpleNamespace(
                     messages=[{"role": "user", "content": "return fenced file blocks"}],
                     token_estimate=12,
@@ -774,7 +774,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context):
+            async def build_context(self, _context, *, system_prompt=None):
                 return SimpleNamespace(
                     messages=[{"role": "user", "content": "hello"}],
                     token_estimate=12,
@@ -817,7 +817,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context):
+            async def build_context(self, _context, *, system_prompt=None):
                 return SimpleNamespace(
                     messages=[{"role": "user", "content": "hello"}],
                     token_estimate=12,
@@ -856,7 +856,7 @@ class TestPreparedRequestArchitecture:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            async def build_context(self, _context) -> NoReturn:
+            async def build_context(self, _context, *, system_prompt=None) -> NoReturn:
                 raise AssertionError("RoleContextGateway.build_context should be bypassed for prebuilt messages")
 
         monkeypatch.setattr(
@@ -1009,7 +1009,7 @@ class TestLifecycleAndCacheGuards:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            def build_context(self, _context) -> NoReturn:
+            def build_context(self, _context, *, system_prompt=None) -> NoReturn:
                 raise ValueError("context build failed")
 
         monkeypatch.setattr(
@@ -1043,7 +1043,7 @@ class TestLifecycleAndCacheGuards:
             def __init__(self, _profile, _workspace) -> None:
                 pass
 
-            def build_context(self, _context) -> NoReturn:
+            def build_context(self, _context, *, system_prompt=None) -> NoReturn:
                 raise AssertionError("build_context should not be called when preinvoke cancel is set")
 
         monkeypatch.setattr(

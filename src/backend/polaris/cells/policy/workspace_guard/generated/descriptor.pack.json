@@ -1,10 +1,178 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.268623Z",
-  "source_hash": "7eb6bd7f2fe06e02",
+  "generated_at": "2026-06-10T11:24:13.961324Z",
+  "source_hash": "55e9c503fa2c378d",
   "cell_id": "policy.workspace_guard",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "WorkspaceWriteGuardQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceWriteGuardBatchQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceArchiveWriteGuardQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceGuardDecisionV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceGuardPathDecisionV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceGuardBatchDecisionV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceGuardViolationEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceGuardError",
+      "description": "Raised when a workspace guard check cannot be completed.",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "check_workspace_write_guard",
+      "description": "Evaluate a workspace write guard query through the public contract.",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "check_workspace_write_guard_batch",
+      "description": "Evaluate multiple workspace write guard paths through one public query.",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceWriteGuardQueryV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceWriteGuardBatchQueryV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceArchiveWriteGuardQueryV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceGuardDecisionV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_allowed",
+          "doc": ""
+        },
+        {
+          "name": "test_denied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceGuardBatchDecisionV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_allowed",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceWriteGuardBatchService",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_allowed_batch_deduplicates_paths",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceGuardViolationEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestWorkspaceGuardError",
+      "description": "",
+      "defined_in": "polaris/cells/policy/workspace_guard/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_raise_and_catch",
+          "doc": ""
+        }
+      ]
+    },
     {
       "type": "function",
       "name": "_coerce_bool",

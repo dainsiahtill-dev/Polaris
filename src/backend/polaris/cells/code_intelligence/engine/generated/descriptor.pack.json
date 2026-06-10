@@ -1,10 +1,90 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:44.248969Z",
-  "source_hash": "8be0c7493c8c5d29",
+  "generated_at": "2026-06-10T11:24:04.750958Z",
+  "source_hash": "ac158896553c696f",
   "cell_id": "code_intelligence.engine",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "VerifyAstDependencyQueryV1",
+      "description": "Typed query for CE AST/symbol dependency verification.",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AstDependencyVerificationResultV1",
+      "description": "Typed result for AST/symbol dependency verification.",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CodeIntelligenceEngineErrorV1",
+      "description": "Raised when `code_intelligence.engine` public contract processing fails.",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_optional_string",
+      "description": "",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "verify_ast_dependency",
+      "description": "Verify a symbol/dependency target through the code intelligence public contract.",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_verify_ast_dependency_query_normalizes_required_fields",
+      "description": "",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_verify_ast_dependency_query_rejects_empty_symbol",
+      "description": "",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/tests/test_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "test_verify_ast_dependency_public_service_uses_typed_result",
+      "description": "",
+      "defined_in": "polaris/cells/code_intelligence/engine/public/tests/test_contracts.py"
+    },
     {
       "type": "function",
       "name": "_setup_deadlock_logging",

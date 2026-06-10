@@ -78,6 +78,7 @@ from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRunt
 from polaris.cells.roles.kernel.internal.transaction import constants as tx_constants
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     has_available_write_tool,
+    has_successful_recon_execution,
     is_mutation_contract_violation,
 )
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
@@ -2150,6 +2151,55 @@ class TurnTransactionController:
                         "blocked_reason": blocked_reason.value,
                         "blocked_detail": blocked_detail,
                         "escape_metrics": escape_result if escape_result["is_escape"] else None,
+                    },
+                    ledger=ledger,
+                )
+
+        # recon_required 内核中，零侦察的 FINAL_ANSWER —— 违反读侧落地不变量
+        # (ADR-0091 R1，与上方 must_materialize 写侧门禁对称)。block-only：
+        # 不注入第二个 TurnDecision、不注入 ToolBatch（ADR-0071 兼容）。
+        if self.config.recon_required and not has_successful_recon_execution(ledger.tool_executions):
+            # 例外：明确的拒绝响应（ADR-0091 R2，与写侧豁免一致）
+            lowered_visible = visible_content.lower()
+            is_refusal = any(marker in lowered_visible for marker in tx_constants.REFUSAL_MARKERS)
+
+            if not is_refusal:
+                blocked_reason = BlockedReason.NO_RECON_PERFORMED
+                blocked_detail = (
+                    "recon_required mode demands at least one successful reconnaissance "
+                    "tool execution (read/search) before FINAL_ANSWER, but none was recorded."
+                )
+                kind = "recon_bypass_blocked"
+                logger.warning(
+                    "recon-violation-blocked: turn_id=%s kind=%s reason=%s detail=%s",
+                    turn_id,
+                    kind,
+                    blocked_reason.value,
+                    blocked_detail,
+                )
+                ledger.mutation_obligation.mark_blocked(blocked_reason, detail=blocked_detail)
+                state_machine.transition_to(TurnState.COMPLETED)
+                ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
+                ledger.finalize()
+                self._emit_phase_event(
+                    CompletionEvent(
+                        turn_id=turn_id,
+                        status="failed",
+                        duration_ms=ledger.get_duration_ms(),
+                        llm_calls=len(ledger.llm_calls),
+                        tool_calls=0,
+                    )
+                )
+                return self._build_turn_result(
+                    turn_id=turn_id,
+                    kind=kind,
+                    visible_content=visible_content,
+                    decision=decision,
+                    batch_receipt=None,
+                    finalization={
+                        "error": kind.upper(),
+                        "blocked_reason": blocked_reason.value,
+                        "blocked_detail": blocked_detail,
                     },
                     ledger=ledger,
                 )

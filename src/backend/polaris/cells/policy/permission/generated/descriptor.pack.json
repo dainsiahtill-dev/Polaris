@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.244574Z",
-  "source_hash": "3f1a53924da02d6a",
+  "generated_at": "2026-06-10T11:24:14.030196Z",
+  "source_hash": "6428d3da31ee3c5b",
   "cell_id": "policy.permission",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -259,6 +259,246 @@
         {
           "name": "get_role_hierarchy",
           "doc": "获取角色的完整层次结构"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EvaluatePermissionCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryPermissionMatrixV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PermissionDeniedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PermissionDecisionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PermissionPolicyError",
+      "description": "Raised when `policy.permission` contract processing fails.",
+      "defined_in": "polaris/cells/policy/permission/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_async",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resource_type_from_command",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_permission",
+      "description": "Evaluate a permission command through the public policy contract.",
+      "defined_in": "polaris/cells/policy/permission/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestEvaluatePermissionCommandV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        },
+        {
+          "name": "test_with_context",
+          "doc": ""
+        },
+        {
+          "name": "test_context_is_copied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEvaluatePermissionCommandV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_role_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_whitespace_role_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_action_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_resource_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQueryPermissionMatrixV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_explicit_include_inherited",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQueryPermissionMatrixV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_role_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPermissionDeniedEventV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_construction",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPermissionDeniedEventV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_event_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_reason_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPermissionDecisionResultV1HappyPath",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_allowed",
+          "doc": ""
+        },
+        {
+          "name": "test_denied",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPermissionDecisionResultV1EdgeCases",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_empty_role_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPermissionPolicyError",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_default_values",
+          "doc": ""
+        },
+        {
+          "name": "test_custom_code_and_details",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEvaluatePermissionPublicService",
+      "description": "",
+      "defined_in": "polaris/cells/policy/permission/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_architect_boundary_validation_is_allowed_by_builtin_policy",
+          "doc": ""
+        },
+        {
+          "name": "test_pm_boundary_validation_is_denied",
+          "doc": ""
         }
       ]
     },

@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.384681Z",
+  "generated_at": "2026-06-10T11:24:06.643366Z",
   "source_hash": "c03fb3633034470d",
   "cell_id": "orchestration.workflow_engine",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",

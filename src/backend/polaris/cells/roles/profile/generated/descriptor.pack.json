@@ -1,10 +1,16 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:42.025359Z",
-  "source_hash": "f6f5640aa8f55b13",
+  "generated_at": "2026-06-10T11:24:11.458220Z",
+  "source_hash": "cde6caebdc1fe92c",
   "cell_id": "roles.profile",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "function",
+      "name": "_load_builtin_profiles_from_yaml",
+      "description": "从 core_roles.yaml(SSOT) 解析内置角色配置列表。",
+      "defined_in": "polaris/cells/roles/profile/internal/builtin_profiles.py"
+    },
     {
       "type": "class",
       "name": "RoleProfileRegistry",
@@ -443,6 +449,12 @@
     },
     {
       "type": "function",
+      "name": "get_profile",
+      "description": "Return one role profile through the public query/result contract.",
+      "defined_in": "polaris/cells/roles/profile/public/service.py"
+    },
+    {
+      "type": "function",
       "name": "reset_role_profile_registry_for_test",
       "description": "Reset the global RoleProfileRegistry for test isolation.",
       "defined_in": "polaris/cells/roles/profile/public/service.py"
@@ -766,6 +778,48 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_yaml_roles",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_profile_source_parity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_builtin_profiles_match_yaml_ssot",
+      "description": "BUILTIN_PROFILES 必须与 core_roles.yaml 的 roles 完全一致(同源)。",
+      "defined_in": "polaris/cells/roles/profile/tests/test_profile_source_parity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_builtin_and_yaml_same_role_ids",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_profile_source_parity.py"
+    },
+    {
+      "type": "function",
+      "name": "test_tool_whitelists_identical_per_role",
+      "description": "逐角色比对工具白名单——这正是历史漂移最先发生的地方。",
+      "defined_in": "polaris/cells/roles/profile/tests/test_profile_source_parity.py"
+    },
+    {
+      "type": "function",
+      "name": "_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_profile_returns_contract_result_from_registry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_public_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_get_profile_missing_role_returns_structured_contract_failure",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_public_service.py"
     },
     {
       "type": "class",
@@ -1328,6 +1382,36 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_fresh_registry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_scout_model_binding_optional.py"
+    },
+    {
+      "type": "function",
+      "name": "test_scout_binding_is_consumed_when_configured",
+      "description": "A configured scout binding enriches the scout profile's provider/model.",
+      "defined_in": "polaris/cells/roles/profile/tests/test_scout_model_binding_optional.py"
+    },
+    {
+      "type": "function",
+      "name": "test_scout_binding_is_optional_when_absent",
+      "description": "A missing scout binding must NOT raise (scout is not a CORE role).",
+      "defined_in": "polaris/cells/roles/profile/tests/test_scout_model_binding_optional.py"
+    },
+    {
+      "type": "function",
+      "name": "fake_get_role_model",
+      "description": "",
+      "defined_in": "polaris/cells/roles/profile/tests/test_scout_model_binding_optional.py"
+    },
+    {
+      "type": "function",
+      "name": "test_core_role_missing_binding_still_raises",
+      "description": "Contrast: a missing CORE-role binding still fails closed (scout differs).",
+      "defined_in": "polaris/cells/roles/profile/tests/test_scout_model_binding_optional.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

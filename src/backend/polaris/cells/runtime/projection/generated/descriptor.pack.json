@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:40.796070Z",
-  "source_hash": "6ced25d0eb49d98c",
+  "generated_at": "2026-06-10T11:24:15.364551Z",
+  "source_hash": "e5931386d956f561",
   "cell_id": "runtime.projection",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
@@ -110,7 +110,109 @@
     {
       "type": "function",
       "name": "load_interview_history_summary",
-      "description": "加载面试历史摘要（简化实现）",
+      "description": "加载交互面试历史摘要。",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_text",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_key",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_required_roles",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_lookup_role_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_role_compatible",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_index_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_status_from_index",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_role_status_matches_binding",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_status_identity_matches_binding",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_exact_provider_status_matches_binding",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_status_identity_matches_binding",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_binding_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_active_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_status_timestamp",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_iter_index_timestamps",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_latest_status_update",
+      "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
     },
     {
@@ -121,7 +223,25 @@
     },
     {
       "type": "function",
-      "name": "_runtime_supported",
+      "name": "_runtime_issue",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_readiness",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_readiness_candidate_issue",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_readiness_identity_issue",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
     },
@@ -285,6 +405,48 @@
     },
     {
       "type": "function",
+      "name": "_dedupe_text_values",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_pm_contract_path",
+      "description": "Return True for PM task contract paths emitted by runtime storage.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_root_from_pm_contract_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_candidate_runtime_roots",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_runtime_artifact_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_first_json_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_first_text_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "_state_token",
       "description": "Extract state token from payload.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
@@ -311,6 +473,48 @@
       "type": "function",
       "name": "get_workflow_director_status_sync",
       "description": "Get Director status from workflow archive (sync version).",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_enum_value",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_timestamp_sort_value",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_datetime_attr_isoformat",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_tokens_match",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_director_orchestration_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_active_orchestration_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_orchestration_task_rows",
+      "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -381,8 +585,32 @@
     },
     {
       "type": "function",
+      "name": "_workspace_readiness_projection",
+      "description": "Return docs readiness in the canonical snapshot payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
       "name": "_derive_compat_fields",
       "description": "Derive snapshot metadata fields from the current projection.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_completed_task_count",
+      "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -558,6 +786,24 @@
     },
     {
       "type": "function",
+      "name": "_settings_workspace_text",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "_active_settings_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "_settings_for_status_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "function",
       "name": "build_pm_status",
       "description": "Build PM status synchronously by running the async version in a thread.",
       "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
@@ -654,6 +900,42 @@
     },
     {
       "type": "function",
+      "name": "_iter_nested_payloads",
+      "description": "Return nested mappings with a conservative depth guard.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_has_failure_signal",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_workflow_result_artifacts",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_artifacts_prove_terminal_success",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_terminal_failure_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_terminal_success_status",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
       "name": "_snapshot_payload",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
@@ -716,6 +998,66 @@
       "type": "function",
       "name": "load_workflow_base_tasks",
       "description": "Load the canonical PM task contract used to render workflow task titles/details.",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_workflow_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_set_metadata_list_default",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_result_run_tokens",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_task_result_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_workflow_task_result",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_result_task_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_workflow_task_result",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_workflow_task_results",
+      "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/workflow_status.py"
     },
     {
@@ -827,6 +1169,32 @@
       "description": "",
       "defined_in": "polaris/delivery/http/routers/runtime.py",
       "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeFactStreamProbePayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeTraceabilityProbePayload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_merge_reset_results",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_probe_slug",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/runtime.py"
     },
     {
       "type": "function",

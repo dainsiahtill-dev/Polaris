@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:40.726722Z",
-  "source_hash": "c44c07ace553c64b",
+  "generated_at": "2026-06-10T11:24:15.170608Z",
+  "source_hash": "e1362ea5e8161668",
   "cell_id": "runtime.artifact_store",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -124,6 +124,24 @@
     {
       "type": "function",
       "name": "_read_json_dict",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_status_timestamp",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_pm_lifecycle_terminal",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
+    },
+    {
+      "type": "function",
+      "name": "_recover_orphaned_engine_state",
       "description": "",
       "defined_in": "polaris/cells/runtime/artifact_store/internal/artifacts.py"
     },

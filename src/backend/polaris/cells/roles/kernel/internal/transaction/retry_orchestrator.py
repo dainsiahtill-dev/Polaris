@@ -104,6 +104,40 @@ def resolve_retry_model_override(retry_llm_call_ordinal: int) -> str | None:
     return selected or None
 
 
+def resolve_retry_escalation(
+    *,
+    attempt_index: int,
+    max_retry_attempts: int,
+    strict_tool_definitions: list[dict] | None,
+    forced_write_tool_name: str | None,
+) -> tuple[list[dict] | None, Any | None]:
+    """ADR-0090: API-level escalation ladder for mutation-contract retries.
+
+    Prompt-level MANDATORY hints are exactly what weak models ignore (observed
+    live: qwen emitted ``repo_rg`` through four "must write" retries because the
+    write-INCLUSIVE tool set still offered read tools). Guided decoding at the
+    API level cannot be ignored:
+
+    - attempts 1-2: write-inclusive set, prompt steering only (unchanged);
+    - attempt 3+: WRITE-ONLY tool definitions — the provider can no longer
+      generate a read-tool call at all;
+    - final attempt: additionally force the selected write tool by name
+      (OpenAI-style ``{"type": "function", "function": {"name": ...}}``).
+
+    Returns ``(tool_definitions_override, tool_choice_override)`` — ``None``
+    members mean "keep the attempt's defaults".
+    """
+    if attempt_index < 2 or not strict_tool_definitions:
+        return None, None
+    tool_choice_override: Any | None = None
+    if attempt_index >= max_retry_attempts - 1 and forced_write_tool_name:
+        tool_choice_override = {
+            "type": "function",
+            "function": {"name": forced_write_tool_name},
+        }
+    return strict_tool_definitions, tool_choice_override
+
+
 def _extract_latest_assistant_message(context: list[dict]) -> str:
     """Return the most recent assistant message content (the model's own analysis).
 
@@ -1118,10 +1152,10 @@ class RetryOrchestrator:
             retry_tool_definitions,
             retry_context,
             allowed_retry_tool_names,
-            _strict_allowed_retry_tool_names,
+            strict_allowed_retry_tool_names,
             forced_write_tool_name,
             forced_tool_choice,
-            _strict_retry_tool_defs,
+            strict_retry_tool_defs,
         ) = self._build_retry_context(
             turn_id=turn_id,
             context=context,
@@ -1150,6 +1184,28 @@ class RetryOrchestrator:
                     allowed_tool_names=attempt_allowed_tool_names,
                     reason="escalation: enforce write-inclusive batch in retry scope",
                     forced_write_tool_name=None,
+                )
+
+            # ADR-0090: API-level escalation — late attempts narrow the offered
+            # tools to write-only (guided decoding cannot emit reads) and the
+            # final attempt forces the selected write tool by name. Prompt-level
+            # hints alone are exactly what weak models ignore.
+            escalated_definitions, escalated_tool_choice = resolve_retry_escalation(
+                attempt_index=attempt_index,
+                max_retry_attempts=max_retry_attempts,
+                strict_tool_definitions=strict_retry_tool_defs,
+                forced_write_tool_name=forced_write_tool_name,
+            )
+            if escalated_definitions is not None:
+                attempt_tool_definitions = escalated_definitions
+                if strict_allowed_retry_tool_names:
+                    attempt_allowed_tool_names = strict_allowed_retry_tool_names
+                attempt_tool_choice_override = escalated_tool_choice
+                logger.warning(
+                    "mutation-contract retry attempt=%s API-level escalation: tools=%s tool_choice=%s",
+                    attempt_index + 1,
+                    sorted(attempt_allowed_tool_names),
+                    escalated_tool_choice or "auto",
                 )
 
             retry_response = await self._execute_retry_batch(

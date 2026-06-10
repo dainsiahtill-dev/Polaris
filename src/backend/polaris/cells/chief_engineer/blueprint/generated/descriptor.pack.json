@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:44.420507Z",
-  "source_hash": "27e6315503f63f79",
+  "generated_at": "2026-06-10T11:24:05.645320Z",
+  "source_hash": "66a9b65b2cf22cbf",
   "cell_id": "chief_engineer.blueprint",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -154,48 +154,50 @@
         {
           "name": "stop",
           "doc": "Signal the consumer to stop after the current poll cycle."
-        },
-        {
-          "name": "_start_async_loop",
-          "doc": "Start a background daemon thread running an asyncio event loop."
-        },
-        {
-          "name": "_loop_runner",
-          "doc": ""
-        },
-        {
-          "name": "_stop_async_loop",
-          "doc": "Stop the background event loop and join the thread."
-        },
-        {
-          "name": "_run_async",
-          "doc": ""
         }
       ]
     },
     {
-      "type": "class",
-      "name": "_TaskStub",
-      "description": "Minimal task stub for DirectorPool assignment.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
+      "type": "function",
+      "name": "_blueprint_runtime_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
     },
     {
-      "type": "class",
-      "name": "_BlueprintStub",
-      "description": "Minimal blueprint stub for DirectorPool assignment.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        }
-      ]
+      "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_payload_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_fields",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_completeness",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
     },
     {
       "type": "function",
@@ -944,6 +946,96 @@
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
     },
     {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_payload_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_files_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_acceptance_from_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_contract_fields",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_completeness",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_tuple_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_latest_blueprint_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_task_blueprint",
+      "description": "Generate and persist a task-level Chief Engineer blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_blueprint_status",
+      "description": "Return the latest persisted Chief Engineer blueprint status for a task.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
       "type": "class",
       "name": "TestGenerateTaskBlueprintCommandV1HappyPath",
       "description": "",
@@ -1062,6 +1154,10 @@
           "doc": ""
         },
         {
+          "name": "test_with_blueprint_id",
+          "doc": ""
+        },
+        {
           "name": "test_failure",
           "doc": ""
         },
@@ -1107,6 +1203,22 @@
         },
         {
           "name": "test_empty_code_raises",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestChiefEngineerBlueprintPublicService",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_generate_and_query_task_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "test_query_missing_task_blueprint",
           "doc": ""
         }
       ]
@@ -1284,6 +1396,10 @@
           "doc": ""
         },
         {
+          "name": "test_uses_kernelone_runtime_blueprint_directory",
+          "doc": ""
+        },
+        {
           "name": "test_save_and_load_includes_status",
           "doc": ""
         },
@@ -1309,6 +1425,10 @@
         },
         {
           "name": "test_directory_created_lazily",
+          "doc": ""
+        },
+        {
+          "name": "test_can_skip_directory_creation_for_read_only_diagnostics",
           "doc": ""
         }
       ]
@@ -1369,16 +1489,16 @@
     },
     {
       "type": "class",
-      "name": "TestCEConsumerDirectorPoolIntegration",
+      "name": "TestCEConsumerTaskMarketHandoffIntegration",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
       "methods": [
         {
-          "name": "test_ce_consumer_acks_with_director_pool_assignment",
+          "name": "test_ce_consumer_acks_with_task_market_deferred_assignment",
           "doc": ""
         },
         {
-          "name": "test_ce_consumer_handles_director_pool_conflict",
+          "name": "test_ce_consumer_ack_does_not_submit_director_workflow",
           "doc": ""
         }
       ]
@@ -1929,6 +2049,369 @@
       "name": "test_git_stash_guard_discard_missing",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintSummary",
+      "description": "Chief Engineer blueprint summary bound to the shared contract.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintListResponse",
+      "description": "Chief Engineer blueprint list response bound to the shared contract.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintDetailResponse",
+      "description": "Chief Engineer blueprint detail response bound to the shared contract.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerGenerateBlueprintRequest",
+      "description": "Desktop request for generating a task-level Chief Engineer blueprint.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBulkBlueprintTaskRequest",
+      "description": "One task entry in a Chief Engineer bulk blueprint generation request.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBulkGenerateBlueprintRequest",
+      "description": "Bulk request for covering multiple PM/Director tasks with CE blueprints.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerTaskBlueprintResultResponse",
+      "description": "Chief Engineer command/query result with persisted blueprint context.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBulkBlueprintError",
+      "description": "Per-task failure captured during bulk blueprint generation.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBulkGenerateBlueprintResponse",
+      "description": "Bulk blueprint generation evidence for the Chief Engineer desktop.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerBlueprintDeleteResponse",
+      "description": "Deletion evidence for a persisted Chief Engineer blueprint.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerDiagnosticsWorkspaceStatus",
+      "description": "Workspace readiness section for Chief Engineer desktop diagnostics.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerDiagnosticsLLMStatus",
+      "description": "Chief Engineer role-specific LLM readiness section.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerDiagnosticsBlueprintStatus",
+      "description": "Blueprint store readiness section for Chief Engineer desktop diagnostics.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerPMTaskPlanProbe",
+      "description": "Read-only PM task plan evidence for Chief Engineer handoff diagnostics.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerDiagnosticsResponse",
+      "description": "Side-effect-free Chief Engineer desktop readiness snapshot.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_blueprint_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_json_file",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_task_plan_candidate_paths",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_task_plan_rows",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_id_from_plan_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_pm_task_plan_probe",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_task_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_dict_value",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_contract_list",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_handoff_missing_fields",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_payload_is_handoff_ready",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_payload_is_traceability_only",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_id_from_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_summary",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_settings_for_request",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_state_for_settings",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_persistence_for_request",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_payload_for_result",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_result_response",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_blueprint_for_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_reference_update",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_contract_copy_path",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_blueprint_references_to_plan_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_sync_blueprint_references_to_pm_task_plans",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_sync_blueprint_references_or_raise",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_value",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_workspace_diagnostics",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_payload",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_llm_diagnostics",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_blueprint_diagnostics",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_diagnostic_issues",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_generate_blockers",
+      "description": "Return hard blockers for Chief Engineer blueprint generation.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_handoff_blockers",
+      "description": "Return hard blockers that should disable Chief Engineer -> Director handoff.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_llm_event_stats",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "get_chief_engineer_diagnostics",
+      "description": "Return side-effect-free Chief Engineer desktop readiness diagnostics.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "list_chief_engineer_blueprints",
+      "description": "List persisted Chief Engineer blueprints for the active workspace.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_chief_engineer_blueprint",
+      "description": "Generate and persist a Chief Engineer blueprint through the cell command contract.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "bulk_generate_chief_engineer_blueprints",
+      "description": "Generate Chief Engineer blueprints for multiple tasks through the cell contract.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "get_chief_engineer_blueprint_status",
+      "description": "Return Chief Engineer blueprint status for a task through the cell query contract.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "get_chief_engineer_blueprint",
+      "description": "Load one persisted Chief Engineer blueprint by id.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "delete_chief_engineer_blueprint",
+      "description": "Delete one persisted Chief Engineer blueprint by id.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

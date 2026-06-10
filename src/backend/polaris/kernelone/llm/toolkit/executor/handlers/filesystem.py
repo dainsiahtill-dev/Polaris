@@ -932,6 +932,14 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
     Returns:
         Execution result dict
     """
+    # TEMP DIAGNOSTIC (weak-model edit compat): capture the exact incoming shape so we
+    # can see what models emit when edit_blocks fails to parse. Remove once understood.
+    logger.warning(
+        "EDIT_BLOCKS_RAW kwargs_keys=%s previews=%s",
+        sorted(kwargs.keys()),
+        {k: (str(v)[:220]) for k, v in kwargs.items()},
+    )
+
     file = kwargs.get("file") or kwargs.get("path") or kwargs.get("file_path") or kwargs.get("filepath")
     blocks_text = _normalize_block_input(
         kwargs.get("blocks") or kwargs.get("content") or kwargs.get("edits") or kwargs.get("diff")

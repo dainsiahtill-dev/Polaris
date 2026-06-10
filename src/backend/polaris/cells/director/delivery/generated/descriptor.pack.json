@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-05-06T15:27:43.334801Z",
-  "source_hash": "deca5aa5dd02b28d",
+  "generated_at": "2026-06-10T11:24:04.285794Z",
+  "source_hash": "7050a1113eb63dc7",
   "cell_id": "director.delivery",
-  "workspace": "C:\\Users\\dains\\Documents\\GitLab\\polaris\\src\\backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "function",
@@ -134,10 +134,6 @@
         {
           "name": "_get_task_service",
           "doc": ""
-        },
-        {
-          "name": "_get_cognitive_middleware",
-          "doc": "Get or create the CognitiveMiddleware instance."
         },
         {
           "name": "_session_service",
@@ -692,7 +688,7 @@
         },
         {
           "name": "_invoke_plain",
-          "doc": "普通 LLM 调用（无工具）."
+          "doc": "Fail closed: this frozen compatibility module must not invoke LLMs."
         },
         {
           "name": "_invoke_messages",
@@ -767,7 +763,7 @@
     {
       "type": "class",
       "name": "DirectorService",
-      "description": "Director 服务实现 — 通过 RoleRuntimeService facade 执行角色会话。",
+      "description": "Director delivery facade backed by the canonical adapter orchestrator.",
       "defined_in": "polaris/delivery/cli/director/director_service.py",
       "methods": [
         {
@@ -776,19 +772,19 @@
         },
         {
           "name": "_get_ready_tasks",
-          "doc": "获取就绪状态的任务"
+          "doc": "Return ready task rows through the canonical orchestrator."
         },
         {
           "name": "_normalize_task_id",
           "doc": ""
         },
         {
-          "name": "_extract_response_text",
-          "doc": "从 RoleRuntimeService 返回的 payload 中提取纯文本响应。"
+          "name": "_task_result_to_dict",
+          "doc": ""
         },
         {
-          "name": "_build_director_message",
-          "doc": "构建 Director 角色消息。"
+          "name": "_iteration_to_dict",
+          "doc": ""
         }
       ]
     },
@@ -1115,219 +1111,6 @@
           "doc": "Dispatch an event to all matching renderers."
         }
       ]
-    },
-    {
-      "type": "class",
-      "name": "WidgetUpdate",
-      "description": "Neutral rendering payload for a Textual widget.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": [
-        {
-          "name": "append",
-          "doc": ""
-        },
-        {
-          "name": "update",
-          "doc": ""
-        },
-        {
-          "name": "clear",
-          "doc": ""
-        },
-        {
-          "name": "flush",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "Renderer",
-      "description": "Protocol for stream-event renderers.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": [
-        {
-          "name": "render",
-          "doc": "Render a single projection event. Returns None to skip."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ToolProjectionRenderer",
-      "description": "Renders tool_call and tool_result events into WidgetUpdate payloads.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": [
-        {
-          "name": "render",
-          "doc": ""
-        },
-        {
-          "name": "_render_tool_call",
-          "doc": ""
-        },
-        {
-          "name": "_render_tool_result",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DiffProjectionRenderer",
-      "description": "Renders unified diff text into structured WidgetUpdate payloads.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": [
-        {
-          "name": "render",
-          "doc": ""
-        },
-        {
-          "name": "summarize_diff",
-          "doc": "Compute a single-line summary of a unified diff."
-        },
-        {
-          "name": "render_full_diff",
-          "doc": "Render a complete diff, truncated to max_lines lines."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ArtifactProjectionRenderer",
-      "description": "Renders code / markdown / diff artifacts into WidgetUpdate payloads.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": [
-        {
-          "name": "render",
-          "doc": ""
-        },
-        {
-          "name": "summarize_artifact",
-          "doc": "Return a one-line summary string for an artifact."
-        },
-        {
-          "name": "render_full_artifact",
-          "doc": "Return the full artifact content, truncated to max_lines lines."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ThinkingRenderer",
-      "description": "Renders thinking / reasoning content with noise filtering.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": [
-        {
-          "name": "render",
-          "doc": ""
-        },
-        {
-          "name": "filter_noise",
-          "doc": "Strip Offset/Region/Size/Spacing/Point tokens from thinking text."
-        },
-        {
-          "name": "render_thinking",
-          "doc": "Filter thinking text and return a preview of at most max_preview chars."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "RendererRegistry",
-      "description": "Maps event types to renderer instances.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "register",
-          "doc": "Register (or replace) a renderer for the given event type."
-        },
-        {
-          "name": "render",
-          "doc": "Dispatch a single event to the appropriate renderer."
-        },
-        {
-          "name": "render_batch",
-          "doc": "Render a batch of events (non-streaming path)."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "_PendingChunk",
-      "description": "Accumulator for throttled content/thinking chunks.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ProjectionLayer",
-      "description": "Unified projection layer between the stream bus and Textual widgets.",
-      "defined_in": "polaris/delivery/cli/director/projection.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "render",
-          "doc": "Render a single event immediately (no throttling)."
-        },
-        {
-          "name": "_maybe_flush",
-          "doc": "Flush pending chunks if throttle interval has elapsed."
-        },
-        {
-          "name": "_flush_pending",
-          "doc": "Emit a pending chunk flush and reset the accumulator."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "_extract_tool_name",
-      "description": "",
-      "defined_in": "polaris/delivery/cli/director/projection.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_file_path",
-      "description": "",
-      "defined_in": "polaris/delivery/cli/director/projection.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_error_text",
-      "description": "",
-      "defined_in": "polaris/delivery/cli/director/projection.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_success",
-      "description": "",
-      "defined_in": "polaris/delivery/cli/director/projection.py"
-    },
-    {
-      "type": "function",
-      "name": "_detail_payload",
-      "description": "",
-      "defined_in": "polaris/delivery/cli/director/projection.py"
-    },
-    {
-      "type": "function",
-      "name": "_json_pretty",
-      "description": "",
-      "defined_in": "polaris/delivery/cli/director/projection.py"
-    },
-    {
-      "type": "function",
-      "name": "create_default_projection_layer",
-      "description": "Create a ProjectionLayer with all standard renderers pre-registered.",
-      "defined_in": "polaris/delivery/cli/director/projection.py"
     },
     {
       "type": "class",
