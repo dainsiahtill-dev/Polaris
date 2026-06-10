@@ -25,7 +25,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +52,61 @@ os.environ.setdefault("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", "600")
 # otherwise kill the whole instance. Retry the SAME turn before giving up — this
 # reflects product robustness, not model-swapping cover-up.
 TURN_RETRY_MAX = 3
+# Git clone is network-bound; transient TLS/RPC failures must not abort the whole run.
+CLONE_RETRY_MAX = 3
+# Autonomous-mode clarification handling: a benchmark has no human to answer
+# questions. When the agent asks for clarification (session pauses at
+# session_waiting_human) instead of editing, auto-resume with a "proceed" nudge.
+AUTONOMOUS_NUDGE_MAX = 2
+_AUTONOMOUS_PROCEED_MSG = (
+    "[mode:materialize]\n"
+    "This is an AUTONOMOUS task — there is NO human available to answer questions, "
+    "and no further clarification will ever be provided. Proceed NOW with your best fix "
+    "using ONLY the bug report already given. Do NOT ask for clarification again. "
+    "Localize the source file with your tools (repo_rg / repo_read_slice / read_file) and "
+    "apply the edit with edit_blocks (you may use the line-range form: file + start + end + replace)."
+)
+
+_CLARIFY_SIGNALS_CJK = ("澄清", "更多信息", "请问", "请提供", "需要更多", "能否提供", "请说明", "？")
+_CLARIFY_SIGNALS_ASCII = (
+    "clarif",
+    "could you",
+    "please provide",
+    "please specify",
+    "need more",
+    "which file",
+    "can you confirm",
+    "more context",
+    "?",
+)
+
+
+def _looks_like_clarification(text: str) -> bool:
+    """Heuristic: the agent is asking the user a question rather than acting."""
+    token = (text or "").strip()
+    if not token or "ALL_TASKS_COMPLETE" in token:
+        return False
+    low = token.lower()
+    if any(sig in token for sig in _CLARIFY_SIGNALS_CJK):
+        return True
+    return any(sig in low for sig in _CLARIFY_SIGNALS_ASCII)
+
+
+def ensure_clone_with_retry(repo: str, base_commit: str, ws: Path) -> None:
+    """Clone with retries — GitHub TLS/RPC drops are transient, not fatal."""
+    last_exc: Exception | None = None
+    for attempt in range(1, CLONE_RETRY_MAX + 1):
+        try:
+            ensure_clone(repo, base_commit, ws)
+            return
+        except (RuntimeError, OSError) as exc:
+            last_exc = exc
+            print(f"[normal] clone {repo} attempt {attempt}/{CLONE_RETRY_MAX} failed: {exc}", flush=True)
+            # A partial clone leaves a junk dir that would confuse the next attempt.
+            shutil.rmtree(ws, ignore_errors=True)
+            if attempt < CLONE_RETRY_MAX:
+                time.sleep(5 * attempt)
+    raise RuntimeError(f"clone failed after {CLONE_RETRY_MAX} attempts: {last_exc}")
 
 
 def clean_model_patch(ws: Path, base_commit: str) -> str:
@@ -91,10 +148,15 @@ def _build_problem_message(problem: str) -> str:
         "workspace; use your tools to explore it.\n\n"
         "Instructions:\n"
         "- Localize the root cause yourself (repo_map / repo_rg / read_file / treesitter_*).\n"
-        "- Apply a minimal fix to the SOURCE files using edit_file / edit_blocks / apply_patch.\n"
+        "- Then ACTUALLY APPLY the fix to the SOURCE file with an edit tool "
+        "(edit_blocks / edit_file / apply_patch). You may use the line-range form of "
+        "edit_blocks: file + start + end + replace.\n"
         "- Do NOT modify, add, or delete any test files.\n"
-        "- Do NOT ask the user questions; just do the work.\n"
-        "- When the fix is complete, output exactly: ALL_TASKS_COMPLETE\n\n"
+        "- Do NOT just describe or plan the fix — you MUST emit an edit tool call that "
+        "changes the source. A plan without an applied edit is a failure.\n"
+        "- Do NOT output ALL_TASKS_COMPLETE until you have applied at least one real edit "
+        "that changes a source file. Only after the edit is applied, output exactly: "
+        "ALL_TASKS_COMPLETE\n\n"
         "ISSUE / BUG REPORT:\n"
         f"{problem.strip()}\n"
     )
@@ -117,7 +179,7 @@ def solve_normal_mode(
     problem = str(instance.get("problem_statement") or "")
 
     ws = work_dir / iid
-    ensure_clone(repo, base_commit, ws)
+    ensure_clone_with_retry(repo, base_commit, ws)
     run_git(["checkout", "-f", base_commit], cwd=ws)
 
     host = RoleConsoleHost(workspace=str(ws), role="director")
@@ -166,9 +228,25 @@ def solve_normal_mode(
     final_content = str(getattr(result, "final_content", "") or "")
     saw_error = bool(getattr(result, "saw_error", False))
     loops_run = 1
+
+    # Autonomous-clarification handling: if the agent asked for clarification (the
+    # session paused at session_waiting_human) and made no edit, there is no human
+    # to answer. Resume with a "proceed" nudge — waiting_human is a resumable PAUSE,
+    # so this does not trip the done->exploring invariant.
+    for nudge in range(1, AUTONOMOUS_NUDGE_MAX + 1):
+        if saw_error or clean_model_patch(ws, base_commit).strip():
+            break
+        if not _looks_like_clarification(final_content):
+            break
+        print(f"[normal] {iid} clarification detected -> autonomous nudge {nudge}", flush=True)
+        result = run_turn_with_retry(_AUTONOMOUS_PROCEED_MSG, f"nudge {nudge}")
+        final_content = str(getattr(result, "final_content", "") or "")
+        saw_error = bool(getattr(result, "saw_error", False))
+        loops_run += 1
+
     print(
         f"[normal] {iid} session: saw_error={saw_error} chars={len(final_content)} "
-        f"more_work={_director_output_suggests_more_work(final_content)}",
+        f"nudges={loops_run - 1} more_work={_director_output_suggests_more_work(final_content)}",
         flush=True,
     )
 
@@ -213,7 +291,13 @@ def main() -> int:
             print(f"[normal] SKIP unknown instance {iid}", flush=True)
             continue
         print(f"[normal] === solving {iid} (max_loops={args.max_loops}) ===", flush=True)
-        res = solve_normal_mode(inst, work_dir, args.max_loops)
+        try:
+            res = solve_normal_mode(inst, work_dir, args.max_loops)
+        except Exception as exc:  # noqa: BLE001 — one instance must never abort the batch
+            print(
+                f"[normal] {iid} FAILED ({type(exc).__name__}: {exc}) — recording empty patch, continuing", flush=True
+            )
+            res = {"instance_id": iid, "model_name_or_path": MODEL_NAME, "model_patch": "", "_error": str(exc)}
 
         resolved = False
         if args.score:

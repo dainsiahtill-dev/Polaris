@@ -19,6 +19,7 @@ Run via the agentic-eval CLI ONLY (never pytest):
 from __future__ import annotations
 
 import re
+import statistics
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -70,13 +71,9 @@ def _discover_scout_cases() -> dict[str, tuple[int, str]]:
 def _parse_level_filter(value: Any) -> set[int]:
     """Parse a level filter (``"l1-l6"``, ``"1,3"``, ``[1,2]``, ``"l4"``) -> set of ints."""
     levels: set[int] = set()
-    items: list[Any]
     if value is None:
         return levels
-    if isinstance(value, (list, tuple, set)):
-        items = list(value)
-    else:
-        items = [value]
+    items: list[Any] = list(value) if isinstance(value, (list, tuple, set)) else [value]
     for item in items:
         token = str(item or "").strip().lower().lstrip("l")
         if not token:
@@ -134,49 +131,91 @@ def _select_scout_case_ids(options: Mapping[str, Any], context: Mapping[str, Any
     return sorted(selected)
 
 
-def _rollup(entries: list[dict[str, Any]]) -> dict[str, Any]:
-    """Average score + pass-rate over a list of per-case result entries."""
-    n = len(entries)
+def _aggregate_samples(case_ids: list[str], runs: list[dict[str, dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    """Aggregate per-case results across ``runs`` independent samples.
+
+    Produces pass-rate / median / mean / spread + a stability class
+    (stable_pass | flaky | stable_fail) and keeps up to two failing-run digests
+    so each failure is ROOT-CAUSABLE from data (systematic vs nondeterministic).
+    """
+    agg: dict[str, dict[str, Any]] = {}
+    for case_id in case_ids:
+        observed = [run[case_id] for run in runs if case_id in run]
+        if not observed:
+            continue
+        scores = [float(o.get("score") or 0.0) for o in observed]
+        passes = [bool(o.get("passed")) for o in observed]
+        n = len(scores)
+        pass_count = sum(1 for p in passes if p)
+        pass_rate = pass_count / n
+        stability = "stable_pass" if pass_count == n else ("stable_fail" if pass_count == 0 else "flaky")
+        fail_digests = [
+            {
+                "score": round(float(o.get("score") or 0.0), 3),
+                "error": str(o.get("error") or ""),
+                "output": str(o.get("output") or "")[:240],
+            }
+            for o in observed
+            if not bool(o.get("passed"))
+        ][:2]
+        entry: dict[str, Any] = {
+            "case_id": case_id,
+            "n_runs": n,
+            "pass_count": pass_count,
+            "pass_rate": round(pass_rate, 4),
+            "median_score": round(statistics.median(scores), 4),
+            "mean_score": round(sum(scores) / n, 4),
+            "min_score": round(min(scores), 4),
+            "max_score": round(max(scores), 4),
+            "scores": [round(s, 4) for s in scores],
+            "stability": stability,
+            "fail_digests": fail_digests,
+        }
+        classified = _classify_case_id(case_id)
+        if classified is not None:
+            entry["level"], entry["dimension"] = classified
+        agg[case_id] = entry
+    return agg
+
+
+def _roll_sampled(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Average pass-rate + median-of-medians over a group of aggregated cases."""
+    n = len(items)
     if n == 0:
-        return {"n": 0, "avg_score": 0.0, "pass_rate": 0.0}
-    avg = sum(float(e.get("score") or 0.0) for e in entries) / n
-    passed = sum(1 for e in entries if bool(e.get("passed")))
-    return {"n": n, "avg_score": round(avg, 4), "pass_rate": round(passed / n, 4)}
+        return {"n": 0, "avg_pass_rate": 0.0, "median_score": 0.0}
+    return {
+        "n": n,
+        "avg_pass_rate": round(sum(i["pass_rate"] for i in items) / n, 4),
+        "median_score": round(statistics.median([i["median_score"] for i in items]), 4),
+    }
 
 
-def _build_matrix(cases: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate per-case results into a level x dimension scorecard."""
-    cells: list[dict[str, Any]] = []
+def _build_sampled_matrix(agg: dict[str, dict[str, Any]], samples: int) -> dict[str, Any]:
+    """Anti-jitter level x dimension scorecard from sample-aggregated cases."""
+    cells = list(agg.values())
     by_level: dict[int, list[dict[str, Any]]] = {}
     by_dimension: dict[str, list[dict[str, Any]]] = {}
     grid: dict[str, dict[str, list[dict[str, Any]]]] = {}
-
-    for case in cases:
-        case_id = str(case.get("id") or "")
-        classified = _classify_case_id(case_id)
-        if classified is None:
+    stability_counts = {"stable_pass": 0, "flaky": 0, "stable_fail": 0}
+    for entry in cells:
+        stability_counts[str(entry.get("stability") or "flaky")] += 1
+        level = entry.get("level")
+        dimension = entry.get("dimension")
+        if level is None or dimension is None:
             continue
-        level, dimension = classified
-        entry = {
-            "case_id": case_id,
-            "level": level,
-            "dimension": dimension,
-            "score": float(case.get("score") or 0.0),
-            "passed": bool(case.get("passed")),
-        }
-        cells.append(entry)
-        by_level.setdefault(level, []).append(entry)
-        by_dimension.setdefault(dimension, []).append(entry)
-        grid.setdefault(f"l{level}", {}).setdefault(dimension, []).append(entry)
-
+        by_level.setdefault(int(level), []).append(entry)
+        by_dimension.setdefault(str(dimension), []).append(entry)
+        grid.setdefault(f"l{level}", {}).setdefault(str(dimension), []).append(entry)
     return {
+        "samples": samples,
+        "stability_counts": stability_counts,
         "levels": sorted(by_level),
         "dimensions": sorted(by_dimension),
         "cells": cells,
-        "by_level": {f"l{level}": _rollup(entries) for level, entries in sorted(by_level.items())},
-        "by_dimension": {dim: _rollup(entries) for dim, entries in sorted(by_dimension.items())},
+        "by_level": {f"l{lvl}": _roll_sampled(items) for lvl, items in sorted(by_level.items())},
+        "by_dimension": {dim: _roll_sampled(items) for dim, items in sorted(by_dimension.items())},
         "grid": {
-            level_key: {dim: _rollup(entries) for dim, entries in dim_map.items()}
+            level_key: {dim: _roll_sampled(items) for dim, items in dim_map.items()}
             for level_key, dim_map in sorted(grid.items())
         },
     }
@@ -192,11 +231,18 @@ async def run_scout_matrix_suite(
     context: Mapping[str, Any] | None = None,
     options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run the Scout capability matrix through the agentic-eval engine.
+    """Run the Scout capability matrix through the agentic-eval engine — ONE sample.
 
     Delegates execution + multi-dimensional scoring to ``run_agentic_benchmark_suite``
-    (which uses ``UnifiedBenchmarkRunner`` + ``UnifiedJudge`` + the scout validators)
-    and augments the result with a level x dimension scorecard.
+    (``UnifiedBenchmarkRunner`` + ``UnifiedJudge`` + the scout validators) and attaches
+    a level x dimension scorecard.
+
+    ANTI-JITTER multi-sampling MUST use PROCESS ISOLATION (a fresh subprocess per
+    sample) — repeating ``run_agentic_benchmark_suite`` inside a single process tears
+    down the LLM provider after the first run, so only the first sample gets real LLM
+    responses and later samples decay to empty-output scores. Drive k samples as k
+    fresh subprocesses and aggregate the per-case results with ``_aggregate_samples`` /
+    ``_build_sampled_matrix`` (both reusable, deterministic, LLM-free).
     """
     del role  # scout matrix selects its own cases (scout + caller roles)
     ctx = dict(context or {})
@@ -207,7 +253,7 @@ async def run_scout_matrix_suite(
         return {
             "ok": False,
             "error": "no scout matrix cases matched the requested level/dimension filter",
-            "details": {"cases": [], "scout_matrix": _build_matrix([])},
+            "details": {"cases": [], "scout_matrix": _build_sampled_matrix({}, 0)},
         }
 
     # Lazy import avoids a load-time cycle (public service imports internal modules).
@@ -215,6 +261,8 @@ async def run_scout_matrix_suite(
 
     run_options = dict(opts)
     run_options["benchmark_case_ids"] = target_ids
+    run_options.pop("samples", None)
+    run_options.pop("repeats", None)
     result = await run_agentic_benchmark_suite(
         provider_cfg,
         model,
@@ -224,8 +272,20 @@ async def run_scout_matrix_suite(
         context=ctx,
         options=run_options,
     )
-
-    details = result.get("details") if isinstance(result, dict) else None
-    if isinstance(details, dict):
-        details["scout_matrix"] = _build_matrix(list(details.get("cases") or []))
-    return result
+    details = (result.get("details") if isinstance(result, dict) else None) or {}
+    case_map = {
+        str(c.get("id")): {
+            "score": c.get("score"),
+            "passed": c.get("passed"),
+            "output": c.get("output"),
+            "error": c.get("error"),
+        }
+        for c in (details.get("cases") or [])
+        if c.get("id")
+    }
+    agg = _aggregate_samples(target_ids, [case_map])
+    out_details = dict(details)
+    out_details["scout_matrix"] = _build_sampled_matrix(agg, 1)
+    out_details["samples"] = 1
+    out_details["total_cases"] = len(agg)
+    return {"ok": bool(result.get("ok")) if isinstance(result, dict) else False, "details": out_details}
