@@ -17,7 +17,11 @@ def mint_token(user_id: str, secret: str) -> str:
     return f"tok_{digest[:16]}"
 
 
-def build_session(user_id: str, secret: str, scopes: tuple[str, ...]) -> SessionContext:
+def build_session(
+    user_id: str,
+    secret: str,
+    scopes: tuple[str, ...],
+) -> SessionContext:
     """Mint a token and assemble the shared ``SessionContext`` DTO."""
     token = mint_token(user_id, secret)
     return SessionContext(user_id=user_id, token=token, scopes=scopes)

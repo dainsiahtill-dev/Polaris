@@ -4,7 +4,7 @@
   "title": "L2 Code Search: Locate and Read the Canonical build_session Signature",
   "description": "Probes locate-plus-read: there are TWO functions named build_session in the codebase. The deprecated one in _deprecated/legacy_auth.py returns a plain dict; the canonical one in auth_service/tokens.py returns the shared SessionContext DTO. The scout must find AND read the correct slice, then report the canonical signature and its return type. Naming the deprecated dict-returning version as the answer must fail.",
   "workspace_fixture": "scout_import_graph",
-  "prompt": "There is a function named 'build_session' used by the live service mesh. Find its canonical definition (the one that returns the shared SessionContext DTO, NOT the deprecated dict-returning legacy version), read that exact code slice, and report: (1) the file path of the canonical definition, and (2) its full signature including its return type. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设或上下文直接作答。",
+  "prompt": "The live service mesh has a session-builder function: after a successful credential exchange it mints a token and assembles the shared, request-scoped session DTO that callers receive. Two same-named functions exist in the codebase — a deprecated one that returns a bare dict, and the canonical one that returns the shared DTO. Locate the CANONICAL definition, read its exact code slice, and report: (1) the file path of the canonical definition, (2) the function name, (3) the DTO type it returns, and (4) its full signature including every parameter and the return type. 你必须使用工作区的只读检索工具（如 repo_rg / repo_tree / read_file）进行实际侦察，并严格基于工具返回的结果作答；禁止仅凭假设、命名猜测或上下文直接作答。",
   "tags": [
     "scout",
     "l2",
@@ -13,8 +13,7 @@
   "judge": {
     "score_threshold": 0.7,
     "required_tools": [
-      "repo_rg",
-      "repo_read_slice"
+      "repo_rg"
     ],
     "forbidden_tools": [
       "execute_command",

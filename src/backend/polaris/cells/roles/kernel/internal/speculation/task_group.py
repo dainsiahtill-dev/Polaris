@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
@@ -15,6 +16,8 @@ from polaris.cells.roles.kernel.internal.speculation.models import (
 from polaris.cells.roles.kernel.internal.speculation.salvage import SalvageGovernor
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
 
 
 class TurnScopedTaskGroup:
@@ -48,8 +51,22 @@ class TurnScopedTaskGroup:
             raise RuntimeError("TurnScopedTaskGroup is closed")
         task = asyncio.create_task(coro, name=name)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._consume_task_result)
         return task
+
+    def _consume_task_result(self, task: asyncio.Task[Any]) -> None:
+        """完成回调:清理集合并回收异常(ADR-0090 I2.3).
+
+        shadow task 失败属于预期内的投机落空;若不在此处取回异常,事件循环
+        会在 GC 时打 "Task exception was never retrieved" 噪声。
+        """
+        self._tasks.discard(task)
+        self._detached.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.debug("[TurnScopedTaskGroup] shadow task %s failed: %s", task.get_name(), exc)
 
     async def cancel_all(self, *, salvage: bool = True) -> None:
         """取消任务组中的所有任务.
@@ -102,7 +119,7 @@ class TurnScopedTaskGroup:
                 # 从任务组中剥离，允许在后台继续运行
                 self._tasks.discard(future)
                 self._detached.add(future)
-                future.add_done_callback(self._detached.discard)
+                future.add_done_callback(self._consume_task_result)
             elif decision == SalvageDecision.JOIN_AUTHORITATIVE:
                 # 保持运行，由 authoritative 路径接管
                 pass
@@ -127,8 +144,3 @@ class TurnScopedTaskGroup:
     def close(self) -> None:
         """关闭任务组，禁止再创建新任务."""
         self._closed = True
-
-    def _on_task_done(self, task: asyncio.Task[Any]) -> None:
-        """Task 完成时的内部清理回调."""
-        self._tasks.discard(task)
-        self._detached.discard(task)

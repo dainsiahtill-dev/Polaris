@@ -94,6 +94,96 @@ def stream_tool_call_signature(tool_name: str, tool_args: Mapping[str, Any] | No
         return str(payload)
 
 
+def _native_call_identity(call: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Extract (tool_name, args_dict) from a decoder-native tool call payload."""
+    function_payload = call.get("function")
+    if not isinstance(function_payload, Mapping):
+        return "", {}
+    name = str(function_payload.get("name") or "").strip()
+    arguments = function_payload.get("arguments")
+    if isinstance(arguments, Mapping):
+        return name, dict(arguments)
+    if isinstance(arguments, str):
+        try:
+            decoded = json.loads(arguments)
+        except (TypeError, ValueError):
+            return name, {}
+        return name, decoded if isinstance(decoded, dict) else {}
+    return name, {}
+
+
+def _args_strict_subset(smaller: Mapping[str, Any], larger: Mapping[str, Any]) -> bool:
+    if len(smaller) >= len(larger):
+        return False
+    return all(key in larger and larger[key] == value for key, value in smaller.items())
+
+
+def upsert_stream_native_tool_call(
+    native_tool_calls: list[dict[str, Any]],
+    call_index_by_id: dict[str, int],
+    *,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    call_id: str,
+) -> None:
+    """Insert or refine a streamed tool call in the pending native batch (ADR-0090 I2.1).
+
+    The same call_id arriving again means a progressive refinement of ONE logical
+    call (placeholder → completed arguments): the later payload replaces the slot
+    instead of coexisting with it. Calls without call_id append as before.
+    """
+    existing_index = call_index_by_id.get(call_id) if call_id else None
+    if existing_index is not None:
+        refined = build_native_tool_call_from_stream_event(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            call_id=call_id,
+            ordinal=existing_index + 1,
+        )
+        if refined:
+            native_tool_calls[existing_index] = refined
+        return
+    appended = build_native_tool_call_from_stream_event(
+        tool_name=tool_name,
+        tool_args=tool_args,
+        call_id=call_id,
+        ordinal=len(native_tool_calls) + 1,
+    )
+    if appended:
+        native_tool_calls.append(appended)
+        if call_id:
+            call_index_by_id[call_id] = len(native_tool_calls) - 1
+
+
+def supersede_partial_tool_calls(native_tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop partial duplicates of a tool call before the batch materializes (ADR-0090 I2.2).
+
+    A streamed tool call can surface twice: once as an early placeholder with
+    empty/partial arguments and once completed. Executing the placeholder wastes
+    the batch (observed: ``edit_blocks{}`` burning the mutation-contract retry).
+    A call A is superseded when another call B of the SAME tool exists whose
+    arguments strictly contain A's (including A == {}). Distinct same-tool calls
+    with non-overlapping arguments are preserved.
+    """
+    if len(native_tool_calls) < 2:
+        return native_tool_calls
+    identities = [_native_call_identity(call) for call in native_tool_calls]
+    kept: list[dict[str, Any]] = []
+    for index, call in enumerate(native_tool_calls):
+        name, args = identities[index]
+        superseded = False
+        if name:
+            for other_index, (other_name, other_args) in enumerate(identities):
+                if other_index == index or other_name != name:
+                    continue
+                if _args_strict_subset(args, other_args):
+                    superseded = True
+                    break
+        if not superseded:
+            kept.append(call)
+    return kept
+
+
 # ---------------------------------------------------------------------------
 # Delivery Resolver 关键词配置
 # ---------------------------------------------------------------------------
@@ -783,6 +873,7 @@ class StreamOrchestrator:
         emitted_thinking_parts: list[str] = []
         stream_native_tool_calls: list[dict[str, Any]] = []
         stream_tool_call_signatures: set[str] = set()
+        stream_call_index_by_id: dict[str, int] = {}
         materialized_response_seen = False
 
         async def _try_speculate_tool_call(
@@ -837,17 +928,20 @@ class StreamOrchestrator:
                         signature = stream_tool_call_signature(tool_name, tool_args, call_id)
                         if signature not in stream_tool_call_signatures:
                             stream_tool_call_signatures.add(signature)
-                            native_tool_call = build_native_tool_call_from_stream_event(
+                            upsert_stream_native_tool_call(
+                                stream_native_tool_calls,
+                                stream_call_index_by_id,
                                 tool_name=tool_name,
                                 tool_args=tool_args,
                                 call_id=call_id,
-                                ordinal=len(stream_native_tool_calls) + 1,
                             )
-                            if native_tool_call:
-                                stream_native_tool_calls.append(native_tool_call)
                         if shadow_engine is not None:
                             shadow_engine.consume_delta(f"<tool_call:{tool_name}>")
-                            await _try_speculate_tool_call(tool_name, tool_args, call_id)
+                            # ADR-0090 I2.3: empty-args placeholders are never speculated —
+                            # they either refine into a complete call or are no-arg calls
+                            # whose speculation has no value worth a shadow slot.
+                            if tool_args:
+                                await _try_speculate_tool_call(tool_name, tool_args, call_id)
                         yield ToolBatchEvent(
                             turn_id=ledger.turn_id,
                             batch_id="",
@@ -881,6 +975,7 @@ class StreamOrchestrator:
                     native_tool_calls = list(event.get("native_tool_calls") or [])
                     if not native_tool_calls and stream_native_tool_calls:
                         native_tool_calls = list(stream_native_tool_calls)
+                    native_tool_calls = supersede_partial_tool_calls(native_tool_calls)
                     raw_usage = event.get("usage")
                     response_usage = dict(raw_usage) if isinstance(raw_usage, Mapping) else {}
                     response = RawLLMResponse(
@@ -901,7 +996,7 @@ class StreamOrchestrator:
                 response = RawLLMResponse(
                     content="".join(emitted_content_parts),
                     thinking="".join(emitted_thinking_parts) if emitted_thinking_parts else None,
-                    native_tool_calls=list(stream_native_tool_calls),
+                    native_tool_calls=supersede_partial_tool_calls(list(stream_native_tool_calls)),
                     model="unknown",
                     usage={},
                 )
@@ -1380,10 +1475,9 @@ class StreamOrchestrator:
             "handoff" if _kind == "handoff_workflow" else "suspended" if _kind == "ask_user" else "success"
         )
         _finalization = result.get("finalization") or {}
-        monitoring = self.extract_monitoring_metrics(result.get("metrics", {}))
+        monitoring: dict[str, Any] = dict(self.extract_monitoring_metrics(result.get("metrics", {})))
         context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
         if context_os_audit_summary:
-            monitoring = dict(monitoring)
             monitoring["context_os_audit"] = context_os_audit_summary
         yield CompletionEvent(
             turn_id=turn_id,

@@ -1,0 +1,121 @@
+card_id: "vc-20260610-weak-model-harness-hardening"
+bug_summary: >
+  Weak-model turns are destroyed by the harness itself: streaming partial tool calls
+  (args={}) are emitted and executed alongside the completed call (burning forced-edit
+  turns), malformed native tool args are silently dropped then escalated to ASK_USER,
+  ContextOS enforcement budget ignores the model context window and the role system
+  prompt, and unified_judge binary scoring cannot measure improvements.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/kernelone/llm/engine/stream/executor.py + polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
+  method: "_accumulate_stream_tool_call / _call_llm_for_decision_stream_impl tool_call collection"
+  symptom: >
+    diag5e (django-15213, qwen3.6-27b @localhost:8189): repo_rg{}, read_file{},
+    glob{}, file_exists{}, edit_blocks{} all really executed with empty args and
+    failed; edit_blocks{} burned the mutation-contract retry; instance produced
+    an empty patch.
+
+assumptions:
+  - id: "A1"
+    statement: >
+      The empty-args emission comes from _normalize_arguments treating an empty
+      dict / "{}" as (={}, complete=True) while explicit_arguments_provisional is
+      only set for Anthropic content_block placeholders.
+    status: verified
+    evidence: "tool_accumulator.py:45-67; executor.py:236-254; no caller passes allow_provisional_empty_arguments=True (grep)"
+  - id: "A2"
+    statement: >
+      stream_orchestrator appends every tool_call event whose (tool,args,call_id)
+      signature differs, so partial+full versions of the same call both enter
+      stream_native_tool_calls and both execute.
+    status: verified
+    evidence: "stream_orchestrator.py:831-859 + diag5e tool_result failures (lines 78,211)"
+  - id: "A3"
+    statement: >
+      Malformed native tool args are dropped with bare `continue` and the model
+      never sees the parse error; all-dropped -> ASK_USER suspension.
+    status: verified
+    evidence: "turn_decision_decoder.py:191,156-166; test_decision_decoder.py:487 asserts the silent skip as spec"
+  - id: "A4"
+    statement: >
+      Gateway enforcement budget is policy.max_context_tokens only; never min()'d
+      with resolved model window; system prompt injected after enforcement by a
+      second ProjectionEngine().project pass at 4 sites.
+    status: verified
+    evidence: "context_gateway/gateway.py:421-451; turn_engine/engine.py:625,878; kernel/core.py:1166,1380; core_roles.yaml budgets (chief_engineer 12000)"
+  - id: "A5"
+    statement: >
+      unified_judge category scores are pass-ratios of binary checks and empty
+      categories score 1.0, so quality levels collapse to the same score.
+    status: verified
+    evidence: "unified_judge.py:1861-1867,1601-1608; unified_models.py:51-56; stored audits all PASS=100.0"
+
+pre_mortem:
+  failure_point: >
+    (1) Making empty-dict args provisional for all providers could suppress
+    legitimate no-arg tool calls if the end-of-stream flush does not emit them:
+    flush must pass allow_provisional_empty_arguments=True and a regression test
+    must cover repo_tree{} end-to-end. (2) Keyed upsert in stream_orchestrator
+    could merge two genuinely distinct same-tool calls if a provider reuses
+    call_ids; subset-supersede must require strict subset, never equality.
+    (3) Replacing the second project() with a plain prepend could drop cleaning
+    steps that only ran in the second pass; equivalence test compares old/new
+    outputs on the same input. (4) Budget clamp with a broken model binding must
+    fall back to the static policy value, not raise.
+  risk_zone:
+    - "polaris/kernelone/llm/engine/stream/executor.py"
+    - "polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py"
+    - "polaris/cells/roles/kernel/internal/context_gateway/gateway.py"
+    - "polaris/cells/roles/kernel/internal/turn_engine/engine.py"
+    - "polaris/cells/roles/kernel/internal/kernel/core.py"
+    - "polaris/kernelone/benchmark/unified_judge.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/llm/engine/stream/tests/test_stream_partial_tool_emission.py"
+      description: "Empty-dict args never emitted mid-stream; completed args emitted once; legit no-arg call emitted exactly once at flush"
+      expected: "One tool_call event per logical call; no args={} events for tools that later complete"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_stream_tool_call_upsert.py"
+      description: "Keyed upsert replaces partial with full; subset-supersede drops strict-subset duplicates; distinct same-tool calls preserved"
+      expected: "stream_native_tool_calls contains exactly the completed calls"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_decode_failure_feedback.py"
+      description: "Malformed native args produce parse-error feedback retry instead of silent ASK_USER; empty response triggers one re-ask"
+      expected: "Retry context quotes the JSON parse error; no session suspension on first malformed batch"
+      status: new
+    - file: "polaris/kernelone/llm/toolkit/tests/test_lenient_json.py"
+      description: "Trailing commas / single quotes / unescaped newlines / missing brace repaired; whitelist gating intact"
+      expected: "Repaired dict equals intended args; repair flag set"
+      status: new
+    - file: "polaris/cells/roles/kernel/tests/test_context_budget_clamp.py"
+      description: "Enforcement budget = min(policy, window*0.85); resolution failure falls back to policy; system prompt tokens reserved"
+      expected: "16k model with 12k role policy clamps to min; no ValueError escape"
+      status: new
+    - file: "polaris/tests/unit/kernelone/test_unified_judge_graded_scores.py"
+      description: "Graded validator scores spread across quality levels; empty categories no longer score free 1.0"
+      expected: "Better answers strictly higher overall_score; critical gate semantics unchanged"
+      status: new
+  integration_tests:
+    - description: "Offline deterministic projection matrix incl. new 8k small-window case"
+      command: "python -m polaris.delivery.cli agentic-eval --workspace . --suite context_projection_matrix"
+      status: new
+    - description: "Live weak-model smoke (qwen3.6 @8189): no empty-args validation failures; non-empty patch"
+      command: "python scripts/swebench/swebench_normal_mode.py --instance-ids django__django-15213 --max-loops 4 --score"
+      status: new
+  manual_check:
+    - "Inspect diag log of the rerun: zero 'missing required argument' from {} calls; zero 'Task exception was never retrieved'"
+
+related_adrs:
+  - "ADR-0090"
+  - "ADR-0074"
+  - "ADR-0077"
+  - "ADR-0081"
+
+sign_off:
+  completed_by: "claude-fable-5"
+  completed_at: "2026-06-10"
+  verified_by: ""
+  verified_at: ""

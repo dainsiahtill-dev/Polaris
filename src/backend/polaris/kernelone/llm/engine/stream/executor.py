@@ -198,7 +198,10 @@ class StreamExecutor:
         }
 
     def _finalize_stream_tool_call(self, accumulator: _ToolCallAccumulator) -> dict[str, Any] | None:
-        payload = self._build_stream_tool_payload(accumulator)
+        # End-of-stream flush is the ONLY emission point for legitimately
+        # empty-argument tool calls (ADR-0090 I1): mid-stream an empty dict is
+        # always a provisional placeholder awaiting argument deltas.
+        payload = self._build_stream_tool_payload(accumulator, allow_provisional_empty_arguments=True)
         if payload is None:
             return None
         signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -251,7 +254,12 @@ class StreamExecutor:
 
         if explicit_complete:
             accumulator.explicit_arguments = explicit_arguments
-            accumulator.explicit_arguments_provisional = not explicit_arguments and anthropic_placeholder
+            # ADR-0090 I1: an empty explicit-arguments dict is provisional for ALL
+            # providers, not only Anthropic content-block placeholders. OpenAI-compat
+            # servers (vLLM/qwen) open a tool call with arguments "" / {} before the
+            # argument deltas arrive; emitting that placeholder mid-stream caused the
+            # partial call to be executed alongside the completed one.
+            accumulator.explicit_arguments_provisional = not explicit_arguments
             if arguments_complete and explicit_arguments and not accumulator.arguments_buffer:
                 accumulator.arguments_buffer = json.dumps(explicit_arguments, ensure_ascii=False)
 

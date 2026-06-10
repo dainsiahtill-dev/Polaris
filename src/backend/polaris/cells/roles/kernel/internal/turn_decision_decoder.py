@@ -88,7 +88,7 @@ class TurnDecisionDecoder:
 
         # Step 0: Finalization phase — tool calls are hallucinations; discard them.
         if phase == "optional_finalize" and finalize_mode_hint == FinalizeMode.LLM_ONCE:
-            all_tools = self._extract_tool_calls(response)
+            all_tools, _ = self._extract_tool_calls(response)
             if all_tools:
                 # Model hallucinated tool calls during finalization despite tool_choice=none.
                 # Log and drop them rather than panicking or handing off.
@@ -110,10 +110,16 @@ class TurnDecisionDecoder:
 
         # Step 1: 提取所有 native 工具调用
         # 关键：thinking/content 文本都不参与执行性工具解析
-        all_tools = self._extract_tool_calls(response)
+        all_tools, decode_failures = self._extract_tool_calls(response)
 
         # Step 2: 判断是否直接回答
         if self._is_final_answer(response, all_tools):
+            direct_metadata: dict[str, Any] = {"source": "direct_answer", "model": response.model}
+            if decode_failures:
+                # ADR-0090 I3.1: the model TRIED to call tools but every call failed to
+                # parse — keep the prose answer, but surface the failures so the
+                # orchestrator can run one corrective re-ask instead of losing the turn.
+                direct_metadata["decode_failures"] = decode_failures
             return TurnDecision(
                 turn_id=turn_id,
                 kind=TurnDecisionKind.FINAL_ANSWER,
@@ -122,7 +128,7 @@ class TurnDecisionDecoder:
                 tool_batch=None,
                 finalize_mode=FinalizeMode.NONE,
                 domain=self.config.domain,
-                metadata={"source": "direct_answer", "model": response.model},
+                metadata=direct_metadata,
             )
 
         # Step 3: 构建ToolBatch
@@ -138,6 +144,13 @@ class TurnDecisionDecoder:
             if self._should_handoff_to_workflow(all_tools, response):
                 return self._create_handoff_decision(response, all_tools, turn_id, "complex_exploration")
 
+            batch_metadata: dict[str, Any] = {
+                "tool_count": len(all_tools),
+                "native_tools": len(response.native_tool_calls),
+                "model": response.model,
+            }
+            if decode_failures:
+                batch_metadata["decode_failures"] = decode_failures
             return TurnDecision(
                 turn_id=turn_id,
                 kind=TurnDecisionKind.TOOL_BATCH,
@@ -146,14 +159,18 @@ class TurnDecisionDecoder:
                 tool_batch=tool_batch,
                 finalize_mode=finalize_mode,
                 domain=self.config.domain,
-                metadata={
-                    "tool_count": len(all_tools),
-                    "native_tools": len(response.native_tool_calls),
-                    "model": response.model,
-                },
+                metadata=batch_metadata,
             )
 
         # Step 6: 无法确定意图，请求澄清
+        # ADR-0090 I3: 若模型确实尝试了工具调用但全部解析失败，标记真实根因,
+        # 让编排层先做一次 corrective re-ask 而不是直接挂起等待人类。
+        clarify_metadata: dict[str, Any] = {
+            "source": "tool_call_decode_failure" if decode_failures else "clarification_needed",
+            "raw_content_preview": response.content[:200],
+        }
+        if decode_failures:
+            clarify_metadata["decode_failures"] = decode_failures
         return TurnDecision(
             turn_id=turn_id,
             kind=TurnDecisionKind.ASK_USER,
@@ -162,7 +179,7 @@ class TurnDecisionDecoder:
             tool_batch=None,
             finalize_mode=FinalizeMode.NONE,
             domain=self.config.domain,
-            metadata={"source": "clarification_needed", "raw_content_preview": response.content[:200]},
+            metadata=clarify_metadata,
         )
 
     def _extract_tool_calls(self, response: RawLLMResponse) -> list[ToolInvocation]:

@@ -73,7 +73,7 @@ async def test_stream_executor_tool_call_event_does_not_crash_on_length_audit(mo
             return _FakeProvider()
 
     monkeypatch.setattr(
-        "polaris.kernelone.llm.engine.stream.executor.get_provider_manager",
+        "polaris.kernelone.llm.providers.get_provider_manager",
         _FakeProviderManager,
     )
     monkeypatch.setattr(
