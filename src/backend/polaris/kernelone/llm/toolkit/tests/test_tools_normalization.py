@@ -165,13 +165,14 @@ class TestSearchCodeNormalization:
         # search_code aliases to repo_rg, which has no files arg_alias, so files passes through
         assert "files" in normalized
 
-    def test_paths_string_passed_through(self) -> None:
-        """A string paths parameter is passed through as-is (repo_rg uses array)."""
+    def test_paths_string_coerced_to_array(self) -> None:
+        """A scalar string paths is coerced to a one-element array (ADR-0090).
+
+        repo_rg declares paths as array; weak models routinely send a scalar.
+        Before the coercion this passed through and died at execution time with
+        "Expected array (list), got str"."""
         normalized = normalize_tool_arguments("search_code", {"paths": "*.py"})
-        assert "paths" in normalized
-        # paths is kept as string - the repo_rg schema expects array but normalization
-        # doesn't coerce it; the handler layer validates/coerces at runtime
-        assert normalized["paths"] == "*.py"
+        assert normalized["paths"] == ["*.py"]
 
     def test_path_string_passes_through(self) -> None:
         """A string path parameter is kept as-is for repo_rg."""

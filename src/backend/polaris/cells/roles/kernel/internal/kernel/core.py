@@ -1159,12 +1159,10 @@ class RoleExecutionKernel:
             self.workspace,
             config=self._build_context_gateway_config(role, profile, request),
         )
-        context_result = await context_gateway.build_context(context_request)
-        from polaris.kernelone.context.projection_engine import ProjectionEngine
-        from polaris.kernelone.context.receipt_store import ReceiptStore
-
-        projection_dict = {"system_hint": system_prompt, "turns": list(context_result.messages)}
-        messages: list[dict[str, Any]] = ProjectionEngine().project(projection_dict, ReceiptStore())
+        # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
+        # second projection pass.
+        context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
+        messages: list[dict[str, Any]] = list(context_result.messages)
 
         tool_definitions = (
             []
@@ -1373,12 +1371,10 @@ class RoleExecutionKernel:
             self.workspace,
             config=self._build_context_gateway_config(role, profile, request),
         )
-        context_result = await context_gateway.build_context(context_request)
-        from polaris.kernelone.context.projection_engine import ProjectionEngine
-        from polaris.kernelone.context.receipt_store import ReceiptStore
-
-        projection_dict = {"system_hint": system_prompt, "turns": list(context_result.messages)}
-        messages: list[dict[str, Any]] = ProjectionEngine().project(projection_dict, ReceiptStore())
+        # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
+        # second projection pass.
+        context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
+        messages: list[dict[str, Any]] = list(context_result.messages)
 
         tool_definitions = (
             []

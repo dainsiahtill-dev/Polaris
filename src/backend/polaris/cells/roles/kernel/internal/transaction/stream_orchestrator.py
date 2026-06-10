@@ -24,6 +24,10 @@ from typing import Any, Literal, cast
 from polaris.cells.roles.kernel.internal.speculation.cancel import CancellationCoordinator
 from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScopedTaskGroup
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
+from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
+    build_corrective_context,
+    evaluate_decode_corrective,
+)
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
@@ -1214,6 +1218,49 @@ class StreamOrchestrator:
             )
             return
 
+        # ADR-0090 I3: one corrective re-ask before a degraded decode kills the
+        # turn — either every native tool call failed to parse, or the response
+        # was completely empty. The weak model gets the exact error quoted back.
+        probe_decision = self.decoder.decode(llm_response, TurnId(turn_id))
+        corrective_ask = evaluate_decode_corrective(probe_decision, llm_response)
+        if corrective_ask is not None:
+            logger.warning(
+                "decode_corrective_retry(stream): reason=%s turn_id=%s",
+                corrective_ask.reason,
+                turn_id,
+            )
+            self.emit_event(
+                TurnPhaseEvent.create(
+                    turn_id,
+                    "decode_corrective_retry",
+                    {"reason": corrective_ask.reason},
+                )
+            )
+            if self.llm_provider_stream is not None:
+                superseded_usage_raw = llm_response.get("usage", {})
+                superseded_usage = superseded_usage_raw if isinstance(superseded_usage_raw, dict) else {}
+                ledger.record_llm_call(
+                    phase="decision",
+                    model=llm_response.get("model", "unknown"),
+                    tokens_in=superseded_usage.get("prompt_tokens", 0),
+                    tokens_out=superseded_usage.get("completion_tokens", 0),
+                    metadata={"superseded_by_corrective_retry": corrective_ask.reason},
+                )
+            corrective_response: RawLLMResponse | None = None
+            async for event in _call_llm_stream(
+                build_corrective_context(context, corrective_ask),
+                tool_definitions,
+                ledger,
+                shadow_engine=shadow_engine,
+                tool_choice_override=_super_tool_choice_override,
+            ):
+                if isinstance(event, dict) and event.get("type") == "_internal_materialize":
+                    corrective_response = event.get("response")
+                    continue
+                yield event
+            if corrective_response is not None:
+                llm_response = corrective_response
+
         if self.llm_provider_stream is not None:
             raw_response_usage = llm_response.get("usage", {})
             response_usage = raw_response_usage if isinstance(raw_response_usage, dict) else {}
@@ -1247,7 +1294,9 @@ class StreamOrchestrator:
         state_machine.transition_to(TurnState.DECISION_RECEIVED)
         ledger.state_history.append(("DECISION_RECEIVED", int(time.time() * 1000)))
 
-        decision = self.decoder.decode(llm_response, TurnId(turn_id))
+        # Reuse the probe decision when no corrective retry replaced the response
+        # (decode is pure — identical input yields an identical decision).
+        decision = probe_decision if corrective_ask is None else self.decoder.decode(llm_response, TurnId(turn_id))
         ledger.record_decision(decision)
         self.emit_event(
             TurnPhaseEvent.create(

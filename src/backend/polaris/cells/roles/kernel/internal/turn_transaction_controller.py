@@ -80,6 +80,10 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     has_available_write_tool,
     is_mutation_contract_violation,
 )
+from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
+    build_corrective_context,
+    evaluate_decode_corrective,
+)
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     BlockedReason,
     DeliveryContract,
@@ -1292,12 +1296,28 @@ class TurnTransactionController:
 
         llm_response = await self._call_llm_for_decision(context, tool_definitions, ledger)
 
+        # ADR-0090 I3: one corrective re-ask before a degraded decode kills the
+        # turn (all native tool calls unparseable, or a fully empty response).
+        probe_decision = self.decoder.decode(llm_response, TurnId(turn_id))
+        corrective_ask = evaluate_decode_corrective(probe_decision, llm_response)
+        if corrective_ask is not None:
+            logger.warning(
+                "decode_corrective_retry: reason=%s turn_id=%s",
+                corrective_ask.reason,
+                turn_id,
+            )
+            llm_response = await self._call_llm_for_decision(
+                build_corrective_context(context, corrective_ask),
+                tool_definitions,
+                ledger,
+            )
+
         state_machine.transition_to(TurnState.DECISION_RECEIVED)
         ledger.state_history.append(("DECISION_RECEIVED", int(time.time() * 1000)))
         logger.debug("[DEBUG] turn_phase: turn_id=%s phase=DECISION_RECEIVED", turn_id)
 
         # === Phase 3: 解码决策 ===
-        decision = self.decoder.decode(llm_response, TurnId(turn_id))
+        decision = probe_decision if corrective_ask is None else self.decoder.decode(llm_response, TurnId(turn_id))
 
         # PROPOSE_PATCH / ANALYZE_ONLY 边界保护：过滤 write tools
         decision = self._apply_delivery_mode_filter(decision, ledger)

@@ -64,6 +64,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         provider_id: str | None = None,
         model: str | None = None,
         workspace: str | None = None,
+        fallback_context_window: int | None = None,
     ) -> None:
         self.policy = policy or StateFirstContextOSPolicy()
         self.domain_adapter = domain_adapter or get_context_domain_adapter(domain)
@@ -73,6 +74,15 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         self._model = str(model or "").strip()
         self._workspace = str(workspace or ".").strip()
         self._resolved_context_window: int | None = None
+        # ADR-0090 I4.4: caller-injected fallback (e.g. the role policy budget).
+        # Without it an unresolvable binding silently falls back to the 128k
+        # policy default, which poisons stage-1 SELECTION on small local models
+        # (selection assumes a huge window, then enforcement blind-truncates).
+        self._fallback_context_window: int | None = (
+            int(fallback_context_window)
+            if fallback_context_window is not None and int(fallback_context_window) > 0
+            else None
+        )
 
         # Initialize dialog act classifier if enabled
         self._dialog_act_classifier: DialogActClassifier | None = None
@@ -408,14 +418,26 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
             except (RuntimeError, ValueError) as e:
                 logger.debug("Could not resolve context window from catalog: %s", e)
 
-        # Fall back to hard-coded table
+        # Fall back to hard-coded table.
+        # ADR-0090 I4.1: resolution failures must degrade, never kill the turn —
+        # the spec table raises ValueError for unknown bindings.
         from polaris.kernelone.context.budget_gate import _resolve_model_window_from_spec
 
         if self._provider_id and self._model:
-            window = _resolve_model_window_from_spec(self._provider_id, self._model)
+            try:
+                window = _resolve_model_window_from_spec(self._provider_id, self._model)
+            except (RuntimeError, ValueError) as e:
+                logger.debug("Could not resolve context window from spec table: %s", e)
+                window = 0
             if window > 0:
                 self._resolved_context_window = window
                 return self._resolved_context_window
+
+        # Caller-injected fallback (role policy budget) beats the 128k default
+        # so small-window models keep relevance-aware stage-1 selection (ADR-0090 I4.4).
+        if self._fallback_context_window is not None:
+            self._resolved_context_window = self._fallback_context_window
+            return self._resolved_context_window
 
         # Final fallback to policy default (env var overridable)
         self._resolved_context_window = self.policy.context_window.model_context_window

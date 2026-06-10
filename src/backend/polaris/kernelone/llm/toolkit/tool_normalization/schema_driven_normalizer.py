@@ -17,6 +17,50 @@ if TYPE_CHECKING:
 
 __all__ = ["SchemaDrivenNormalizer", "normalize_with_schema"]
 
+# Sentinel: _coerce_scalar_value returns this when the value needs no change.
+_UNCHANGED = object()
+
+
+def _coerce_scalar_value(declared_type: str, value: Any) -> Any:
+    """Coerce an obviously-mistyped scalar into the declared schema type.
+
+    Weak models routinely send ``paths: "src/"`` where the schema declares an
+    array, ``"5"`` where an integer is expected, or a one-element list where a
+    string is expected (ADR-0090). Each rule fires only when the conversion is
+    unambiguous and lossless; everything else returns ``_UNCHANGED`` so the
+    regular validators still reject genuinely wrong shapes.
+    """
+    if declared_type == "array":
+        if isinstance(value, str) and value.strip():
+            return [value]
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return [value]
+        return _UNCHANGED
+    if declared_type == "string":
+        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
+            return value[0]
+        return _UNCHANGED
+    if declared_type == "integer":
+        if isinstance(value, bool):
+            return _UNCHANGED
+        if isinstance(value, str):
+            token = value.strip()
+            if token.lstrip("-").isdigit():
+                return int(token)
+            return _UNCHANGED
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        return _UNCHANGED
+    if declared_type == "boolean":
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if token == "true":
+                return True
+            if token == "false":
+                return False
+        return _UNCHANGED
+    return _UNCHANGED
+
 
 # 路径类参数名（需要 _normalize_workspace_alias_path）
 _PATH_CANONICAL_KEYS = frozenset(
@@ -75,7 +119,7 @@ class SchemaDrivenNormalizer:
         arg_aliases = spec.get("arg_aliases", {})
 
         if not arg_aliases:
-            return normalized  # 无别名，直接返回
+            return self._coerce_argument_types(spec, normalized)  # 无别名，仅做类型纠偏
 
         # 分类别名：路径类 vs 普通类
         path_mappings: dict[str, list[str]] = {}
@@ -124,7 +168,24 @@ class SchemaDrivenNormalizer:
         for alias in all_aliases:
             normalized.pop(alias, None)
 
-        return normalized
+        return self._coerce_argument_types(spec, normalized)
+
+    @staticmethod
+    def _coerce_argument_types(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        """Schema-aware scalar coercion (ADR-0090): str→[str] for arrays, etc."""
+        argument_specs = spec.get("arguments")
+        if not isinstance(argument_specs, list) or not argument_specs:
+            return args
+        for arg_spec in argument_specs:
+            if not isinstance(arg_spec, dict):
+                continue
+            name = str(arg_spec.get("name") or "")
+            if not name or name not in args:
+                continue
+            coerced = _coerce_scalar_value(str(arg_spec.get("type") or ""), args[name])
+            if coerced is not _UNCHANGED:
+                args[name] = coerced
+        return args
 
     def _normalize_path(self, path: str) -> str:
         """归一化路径（复用 shared helpers）。"""

@@ -182,7 +182,7 @@ class TurnDecisionDecoder:
             metadata=clarify_metadata,
         )
 
-    def _extract_tool_calls(self, response: RawLLMResponse) -> list[ToolInvocation]:
+    def _extract_tool_calls(self, response: RawLLMResponse) -> tuple[list[ToolInvocation], list[dict[str, str]]]:
         """
         提取工具调用：native-only
 
@@ -191,8 +191,11 @@ class TurnDecisionDecoder:
         - 允许同一工具同参数重复出现（例如 read -> edit -> read 验证链路）
         - 仅按 call_id 去重（用于防止流重连重放）
         - thinking / content 文本不参与执行性工具解析
+        - 解析失败的调用不再无痕丢弃 (ADR-0090 I3.1)：收集 (tool, error) 供
+          corrective retry 把确切错误反馈给模型。
         """
         tools: list[ToolInvocation] = []
+        failures: list[dict[str, str]] = []
         seen_call_ids: set[str] = set()
 
         # 解析native tool calls
@@ -205,11 +208,38 @@ class TurnDecisionDecoder:
                 if call_id:
                     seen_call_ids.add(call_id)
                 tools.append(tool)
-            except (RuntimeError, ValueError, TurnDecisionDecodeError):
-                # 记录但继续处理其他工具
+            except (RuntimeError, ValueError, TurnDecisionDecodeError) as exc:
+                tool_hint = self._native_tool_name_hint(native)
+                failures.append(
+                    {
+                        "tool": tool_hint,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                logger.warning(
+                    "native_tool_call_decode_failed: tool=%s error=%s",
+                    tool_hint or "<unknown>",
+                    exc,
+                )
                 continue
 
-        return tools
+        return tools, failures
+
+    @staticmethod
+    def _native_tool_name_hint(native: dict[str, Any]) -> str:
+        """Best-effort tool-name extraction from an unparseable native payload."""
+        function = native.get("function")
+        if isinstance(function, dict):
+            name = str(function.get("name", "") or "").strip()
+            if name:
+                return name
+        name = str(native.get("name", "") or "").strip()
+        if name:
+            return name
+        function_call = native.get("functionCall") or native.get("function_call")
+        if isinstance(function_call, dict):
+            return str(function_call.get("name", "") or "").strip()
+        return ""
 
     def _parse_native_tool(self, native: dict[str, Any]) -> ToolInvocation:
         """解析 provider 原生工具调用格式。
@@ -249,11 +279,32 @@ class TurnDecisionDecoder:
 
     @staticmethod
     def _parse_native_tool_arguments(arguments: Any) -> dict[str, Any]:
-        """Normalize provider-native tool arguments into a mapping."""
+        """Normalize provider-native tool arguments into a mapping.
+
+        Strict JSON first; on failure a bounded lenient repair runs (ADR-0090) —
+        the arguments string is complete at decode time, so repair is safe here.
+        Still-unparseable input re-raises the ORIGINAL strict error so the
+        decode-failure feedback quotes the real problem.
+        """
         if isinstance(arguments, str):
             if not arguments.strip():
                 return {}
-            parsed = json.loads(arguments)
+            try:
+                parsed = json.loads(arguments)
+            except (ValueError, json.JSONDecodeError) as strict_error:
+                from polaris.kernelone.llm.toolkit.parsers.lenient_json import (
+                    parse_lenient_json_object,
+                )
+
+                repaired, was_repaired = parse_lenient_json_object(arguments)
+                if repaired is None:
+                    raise strict_error
+                if was_repaired:
+                    logger.info(
+                        "native_tool_arguments_lenient_repair_applied: chars=%d",
+                        len(arguments),
+                    )
+                parsed = repaired
         else:
             parsed = arguments
         if not isinstance(parsed, dict):

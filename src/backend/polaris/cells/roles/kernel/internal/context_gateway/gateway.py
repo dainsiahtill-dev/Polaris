@@ -243,11 +243,15 @@ class RoleContextGateway:
         self._reasoning_stripper = ReasoningStripper()
 
         # Phase 2: Initialize StateFirstContextOS for intelligent context projection
+        # ADR-0090 I4.4: inject the role policy budget as the resolution fallback so
+        # an unresolvable provider/model binding never poisons stage-1 selection
+        # with the 128k default.
         self._context_os = StateFirstContextOS(
             domain_adapter=get_context_domain_adapter(getattr(profile, "context_domain", None) or "generic"),
             provider_id=getattr(profile, "provider_id", None) or None,
             model=getattr(profile, "model", None) or None,
             workspace=str(self.workspace),
+            fallback_context_window=int(self.policy.max_context_tokens),
         )
 
         # Initialize collaborators
@@ -257,8 +261,13 @@ class RoleContextGateway:
         # learning_key=role_id：让各角色的投影自适应权重跨 turn 按角色独立累积
         # （模块级状态存储，绕过 gateway/ProjectionEngine 每 turn 新建的清零）。
         self._projection_engine = ProjectionEngine(learning_key=str(getattr(profile, "role_id", "") or "default"))
+        # ADR-0090 I4.1: enforcement budget = min(role policy, model window × 0.85).
+        # The static role yaml budget (e.g. chief_engineer 12k) can EXCEED a small
+        # local model's window (16k qwen, 8k variants) — enforce against the
+        # tighter of the two so the provider never sees an over-window prompt.
+        self._enforcement_budget_tokens = self._compute_enforcement_budget()
         self._compression_engine = CompressionEngine(
-            max_context_tokens=self.policy.max_context_tokens,
+            max_context_tokens=self._enforcement_budget_tokens,
             compression_strategy=str(self.policy.compression_strategy or "none"),
             max_history_turns=self.policy.max_history_turns,
             token_estimator=self._token_estimator,
@@ -271,11 +280,42 @@ class RoleContextGateway:
         # PR-11: Event writer for context operations telemetry
         self._event_writer = get_event_writer()
 
-    async def build_context(self, request: ContextRequest) -> ContextResult:
+    _MODEL_WINDOW_SAFETY_RATIO = 0.85
+    _MIN_ENFORCEMENT_BUDGET_TOKENS = 1024
+
+    def _compute_enforcement_budget(self) -> int:
+        """ADR-0090 I4.1: clamp the role budget to the resolved model window."""
+        policy_budget = int(self.policy.max_context_tokens)
+        try:
+            resolved_window = int(self._context_os.resolved_context_window)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "context window resolution failed; using role policy budget %d: %s",
+                policy_budget,
+                exc,
+            )
+            return policy_budget
+        if resolved_window <= 0:
+            return policy_budget
+        clamped = min(policy_budget, int(resolved_window * self._MODEL_WINDOW_SAFETY_RATIO))
+        # The floor protects against absurdly small windows but must never RAISE
+        # the budget above the role policy.
+        floor = min(self._MIN_ENFORCEMENT_BUDGET_TOKENS, policy_budget)
+        return max(floor, clamped)
+
+    async def build_context(
+        self,
+        request: ContextRequest,
+        *,
+        system_prompt: str | None = None,
+    ) -> ContextResult:
         """构建上下文
 
         Args:
             request: 上下文请求
+            system_prompt: 角色 system prompt。提供时 (ADR-0090 I4.2/I4.3)：
+                其 token 估计计入 enforcement 预算预留，并由 gateway 直接前插为
+                首条 system 消息 —— 调用方不得再做第二次 projection 注入。
 
         Returns:
             上下文构建结果
@@ -289,7 +329,7 @@ class RoleContextGateway:
         start_time = time.monotonic()
 
         try:
-            return await self._build_context_impl(request, start_time)
+            return await self._build_context_impl(request, start_time, system_prompt=system_prompt)
         finally:
             set_trace_id("")
 
@@ -304,7 +344,12 @@ class RoleContextGateway:
         self._projection_engine.record_outcome(success=success, tokens_used=tokens_used)
         return self._projection_engine.get_adaptive_weights()
 
-    async def _build_context_impl(self, request: ContextRequest, start_time: float) -> ContextResult:
+    async def _build_context_impl(
+        self,
+        request: ContextRequest,
+        start_time: float,
+        system_prompt: str | None = None,
+    ) -> ContextResult:
         """Internal implementation of build_context with timing instrumentation."""
         sources: list[str] = []
 
@@ -322,9 +367,21 @@ class RoleContextGateway:
         strategy_override_applied = bool(strategy_override)
         recent_window_messages = self._effective_recent_window_messages(strategy_override)
         context_budget_trigger_pct = self._context_budget_trigger_pct(strategy_override)
+        # ADR-0090 I4.2: the role system prompt is part of the prompt the provider
+        # sees — reserve its tokens BEFORE enforcement instead of injecting it
+        # unbudgeted afterwards.
+        reserved_system_prompt_tokens = 0
+        if system_prompt:
+            reserved_system_prompt_tokens = self._token_estimator.estimate(
+                [{"role": "system", "content": system_prompt}]
+            )
+        enforcement_budget_tokens = max(
+            min(self._MIN_ENFORCEMENT_BUDGET_TOKENS, self._enforcement_budget_tokens),
+            self._enforcement_budget_tokens - reserved_system_prompt_tokens,
+        )
         effective_context_budget_tokens = max(
             1,
-            int(self.policy.max_context_tokens * context_budget_trigger_pct),
+            int(enforcement_budget_tokens * context_budget_trigger_pct),
         )
         if strategy_override_applied:
             sources.append("cognitive_strategy_override")
@@ -422,9 +479,7 @@ class RoleContextGateway:
             budget_plan = _projection.snapshot.budget_plan
             if budget_plan is not None and budget_plan.validation_error:
                 logger.warning("BudgetPlan validation error: %s", budget_plan.validation_error)
-                messages = self._compression_engine.emergency_truncate(
-                    messages, max_tokens=self.policy.max_context_tokens
-                )
+                messages = self._compression_engine.emergency_truncate(messages, max_tokens=enforcement_budget_tokens)
                 sources.append("budget_violation_emergency_truncate")
 
         # 6. 估算token数
@@ -439,16 +494,23 @@ class RoleContextGateway:
             "suppress_mutating_tools": self._should_suppress_mutating_tools(request),
         }
 
-        # 7. 应用统一压缩策略
-        if token_estimate > self.policy.max_context_tokens:
+        # 7. 应用统一压缩策略（预算 = min(角色策略, 模型窗口×0.85) − system prompt 预留）
+        if token_estimate > enforcement_budget_tokens:
             if state_first_mode_active and has_snapshot:
                 messages, token_estimate = self._compression_engine.emergency_truncate_with_limit(
-                    messages, self.policy.max_context_tokens
+                    messages, enforcement_budget_tokens
                 )
-                compression_applied = token_estimate <= self.policy.max_context_tokens
+                compression_applied = token_estimate <= enforcement_budget_tokens
             elif not state_first_mode_active:
                 messages, token_estimate = self._compression_engine.apply_compression(messages, token_estimate)
                 compression_applied = True
+
+        # ADR-0090 I4.3: the role system prompt is prepended HERE, post-enforcement
+        # and pre-budgeted — callers must not run a second projection to inject it.
+        if system_prompt:
+            messages.insert(0, {"role": "system", "content": system_prompt})
+            sources.append("role_system_prompt")
+            token_estimate += reserved_system_prompt_tokens
 
         emit_debug_event(
             category="context",
@@ -462,6 +524,8 @@ class RoleContextGateway:
                 "token_estimate_before": int(original_token_estimate),
                 "token_estimate_after": int(token_estimate),
                 "max_context_tokens": int(self.policy.max_context_tokens),
+                "enforcement_budget_tokens": int(enforcement_budget_tokens),
+                "reserved_system_prompt_tokens": int(reserved_system_prompt_tokens),
                 "context_budget_trigger_pct": float(context_budget_trigger_pct),
                 "effective_context_budget_tokens": int(effective_context_budget_tokens),
                 "budget_pressure_detected": bool(budget_pressure_detected),

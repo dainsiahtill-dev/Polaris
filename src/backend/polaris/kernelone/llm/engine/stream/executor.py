@@ -202,6 +202,27 @@ class StreamExecutor:
         # empty-argument tool calls (ADR-0090 I1): mid-stream an empty dict is
         # always a provisional placeholder awaiting argument deltas.
         payload = self._build_stream_tool_payload(accumulator, allow_provisional_empty_arguments=True)
+        if payload is None and accumulator.tool_name.strip() and accumulator.arguments_buffer.strip():
+            # Last resort at stream end (never mid-stream): the buffer is final,
+            # so a bounded lenient repair of almost-valid JSON is safe (ADR-0090).
+            from polaris.kernelone.llm.toolkit.parsers.lenient_json import parse_lenient_json_object
+
+            repaired, was_repaired = parse_lenient_json_object(accumulator.arguments_buffer)
+            if isinstance(repaired, dict) and repaired:
+                logger.info(
+                    "[stream-executor] lenient JSON repair recovered tool call: tool=%s chars=%d",
+                    accumulator.tool_name.strip(),
+                    len(accumulator.arguments_buffer),
+                )
+                payload = {
+                    "tool": accumulator.tool_name.strip(),
+                    "arguments": repaired,
+                    "call_id": accumulator.call_id,
+                    "provider_meta": {
+                        **dict(accumulator.provider_meta),
+                        "lenient_repair_applied": was_repaired,
+                    },
+                }
         if payload is None:
             return None
         signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)

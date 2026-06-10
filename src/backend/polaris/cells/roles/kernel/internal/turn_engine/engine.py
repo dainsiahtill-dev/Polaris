@@ -618,12 +618,11 @@ class TurnEngine(TurnEngineCompatMixin):
         )
         context_request = _controller.build_context_request()
         context_gateway = RoleContextGateway(profile, kernel.workspace)
-        context_result = await context_gateway.build_context(context_request)
-        from polaris.kernelone.context.projection_engine import ProjectionEngine
-        from polaris.kernelone.context.receipt_store import ReceiptStore
-
-        projection_dict = {"system_hint": _system_prompt, "turns": list(context_result.messages)}
-        messages: list[dict[str, Any]] = ProjectionEngine().project(projection_dict, ReceiptStore())
+        # ADR-0090 I4.3: the gateway budgets AND prepends the role system prompt —
+        # the former second ProjectionEngine().project pass (double projection,
+        # unbudgeted system prompt, throwaway ReceiptStore) is gone.
+        context_result = await context_gateway.build_context(context_request, system_prompt=_system_prompt)
+        messages: list[dict[str, Any]] = list(context_result.messages)
 
         tool_definitions = build_native_tool_schemas(profile)
 
@@ -871,12 +870,10 @@ class TurnEngine(TurnEngineCompatMixin):
         )
         context_request = _controller.build_context_request()
         context_gateway = RoleContextGateway(profile, kernel.workspace)
-        context_result = await context_gateway.build_context(context_request)
-        from polaris.kernelone.context.projection_engine import ProjectionEngine
-        from polaris.kernelone.context.receipt_store import ReceiptStore
-
-        projection_dict = {"system_hint": _system_prompt, "turns": list(context_result.messages)}
-        messages: list[dict[str, Any]] = ProjectionEngine().project(projection_dict, ReceiptStore())
+        # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
+        # second projection pass.
+        context_result = await context_gateway.build_context(context_request, system_prompt=_system_prompt)
+        messages: list[dict[str, Any]] = list(context_result.messages)
 
         tool_definitions = build_native_tool_schemas(profile)
 
