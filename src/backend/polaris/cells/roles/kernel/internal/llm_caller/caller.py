@@ -35,6 +35,7 @@ from .helpers import (
     messages_to_input,
     resolve_max_tokens,
     resolve_platform_retry_max,
+    resolve_temperature,
     resolve_timeout_seconds,
 )
 from .invoker import LLMInvoker
@@ -374,7 +375,9 @@ class LLMCaller:
             override if isinstance(override, dict) else None,
         )
         request_options: dict[str, Any] = {
-            "temperature": temperature,
+            # ADR-0090 W2.6: escalated mutation retries override temperature via
+            # the transaction-kernel channel (deterministic transcription phase).
+            "temperature": resolve_temperature(temperature, override if isinstance(override, dict) else None),
             "max_tokens": request_max_tokens,
             "timeout": request_timeout_seconds,
         }

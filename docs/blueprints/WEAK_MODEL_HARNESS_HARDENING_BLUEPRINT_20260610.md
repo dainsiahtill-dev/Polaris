@@ -165,15 +165,16 @@ ContextOS: 预算 = min(角色策略, 模型窗口×0.85) − system prompt 预�
 - **fix5 验证 W1.10 彻底奏效 + 触底到模型能力边界**:`EDIT_BLOCKS_RAW kwargs_keys=['end','file','replace','start']` —— guided decoding 现在只能产出行替换四字段,"No valid edit blocks found" **数十→0**,散文逃逸被语法层击穿。但 qwen 在 **django** 仓库里产出 `file='app.py', replace='from flask import Flask...'` —— **幻觉成 Flask 项目,定位完全失败**。对照 diag5e(修复前散文定位正确 compiler.py),剧烈 run 间跳变指向 temperature=0.92 过高 + 强制写压力下退化。**结论:链路自伤已全部清零,剩余瓶颈是 qwen3.6-27b-int4 对复杂 ORM bug 的定位/推理能力,非链路技术可解。**
 - **rg 缺失环境单文件搜索修复**:python fallback 对文件路径 `os.walk` 产出空 → 静默零结果误导 agent;现支持单文件扫描。
 
-## 7.6 已设计待实施的 next step(相位感知低温,W2.6)
+## 7.6 相位感知低温(W2.6)——✅ 已实施 2026-06-11
 
-fix5 实证 temperature=0.92 是 run 间幻觉跳变元凶(diag5e 定位对 vs fix5 幻觉 Flask)。**相位感知解码**——mutation-retry escalation 阶段注入低温(确定性采样)——是真实的 TurnEngine 解码技术增强。已确认注入管道(复用 tool_choice override 同款通道,4 处):
-1. `retry_orchestrator._execute_retry_batch` escalation 时传 `temperature_override`(低温,env 可调)→ `call_llm_for_decision_stream`
-2. `stream_orchestrator._call_llm_for_decision_stream_impl` 加 `temperature_override` 参 → `request_payload["temperature_override"]`
-3. `turn_engine/engine.py` llm_provider_stream 闭包:`request_payload["temperature_override"]` → `context_override["_transaction_kernel_temperature_override"]`(仿 :333 tool_choice 转换)
-4. `llm_caller/caller.py` 加 `resolve_temperature(temperature, override)` 读该键覆盖
+fix5 实证 temperature=0.92 是 run 间幻觉跳变元凶(diag5e 定位对 vs fix5 幻觉 Flask)。**相位感知解码**——mutation-retry escalation 阶段注入低温(确定性采样)——已全链路落地(复用 tool_choice override 同款通道):
 
-**刻意未在本轮收尾实施**:engine.py 闭包/kernel core 正被并发 agent 区域性改动,长 session 末尾叠加 4 处深改动违反"每改动必回归"门禁;且它救不了当前 case(模型能力边界),应独立专注实施 + 单测验证。同时建议用户把 director temperature 从 0.92 调低(配置层,直接见效)。
+1. `retry_orchestrator`:新增纯函数 `resolve_escalation_temperature()`(env `KERNELONE_RETRY_ESCALATION_TEMPERATURE`,默认 0.2,`off`/空/负数禁用,钳制 [0,2])与 `resolve_retry_temperature_override(attempt_index)`(attempt≥2 即 escalation 相位才生效;attempt 1-2 保持 profile 温度以保留工具选择探索性);重试主循环与 bootstrap-followup 强制写批次均接线;`_execute_retry_batch` 条件传参(override=None 时保持旧调用形状,既有 fake/caller 字节兼容)。
+2. `stream_orchestrator._call_llm_for_decision_stream_impl` 加 `temperature_override` 参 → `request_payload["temperature_override"]`(非流式回退同样透传);`turn_transaction_controller` 两个代理签名同步扩展。
+3. 闭包转换 **4 处全覆盖**(实勘比设计多 2 处):`turn_engine/engine.py` llm_provider + llm_provider_stream、`kernel/core.py` 与 `kernel/turn_engine.py` 的 `_build_context_override_with_prebuilt_messages` → `context_override["_transaction_kernel_temperature_override"]`。
+4. `llm_caller/helpers.py` 新增 `resolve_temperature(requested, override)`(0 合法=完全确定性;负/垃圾/bool 回退;>2 钳制),`caller.py` request_options 应用。
+
+验证:新测试 `test_phase_aware_temperature.py` ×25(env 矩阵/相位门/直通/默认路径字节兼容/通道映射/无泄漏);kernel 回归 1769 passed;ruff/mypy 全绿。顺带清零 3 处 HEAD 预存类型债:`kernel/turn_engine.py` `_tool_loop` 死引用对齐活体 API(`reset_tool_gateway_turn_boundary`/`_execute_single_tool`)、`kernel/core.py` prompt_layer_options 显式 kwargs、`TurnPhaseEvent` phase Literal 补 `decode_corrective_retry`(运行时已发该事件,类型滞后);`test_speculative_flags` 断言对齐 5cd27a13 的 default-enabled 现实。配置层建议依旧成立:直接调低 director 默认 temperature 可叠加受益。
 
 ## 8. 治理
 

@@ -545,6 +545,7 @@ class RoleExecutionKernel:
             prebuilt_messages: list[dict[str, Any]],
             tool_definitions: list[dict[str, Any]] | None = None,
             tool_choice: Any | None = None,
+            temperature_override: Any | None = None,
         ) -> dict[str, Any]:
             override: dict[str, Any]
             if isinstance(getattr(provider_request, "context_override", None), dict):
@@ -565,6 +566,9 @@ class RoleExecutionKernel:
                 ]
             if tool_choice is not None and not explicit_tool_disable:
                 override["_transaction_kernel_forced_tool_choice"] = tool_choice
+            # ADR-0090 W2.6: phase-aware low temperature rides the same channel.
+            if temperature_override is not None:
+                override["_transaction_kernel_temperature_override"] = temperature_override
             return override
 
         def _extract_model_override_from_request_payload(request_payload: dict[str, Any]) -> str | None:
@@ -631,6 +635,7 @@ class RoleExecutionKernel:
                         raw_messages,
                         cast("list[dict[str, Any]] | None", request_payload.get("tools")),
                         request_payload.get("tool_choice"),
+                        request_payload.get("temperature_override"),
                     ),
                 )
 
@@ -755,6 +760,7 @@ class RoleExecutionKernel:
                         raw_messages,
                         cast("list[dict[str, Any]] | None", request_payload.get("tools")),
                         request_payload.get("tool_choice"),
+                        request_payload.get("temperature_override"),
                     ),
                 )
 
@@ -2439,12 +2445,15 @@ class RoleExecutionKernel:
         prompt_layer_options = self._resolve_prompt_layer_options(context_override)
         try:
             if prompt_layer_options:
+                # Explicit kwargs (not **options) so a stray key can never bind
+                # to a positional parameter; options only ever carries these two.
                 return self._get_prompt_builder().build_system_prompt(
                     profile,
                     prompt_appendix,
                     domain=domain,
                     message=str(getattr(request, "message", "") or ""),
-                    **prompt_layer_options,
+                    include_working_memory_contract=prompt_layer_options.get("include_working_memory_contract", True),
+                    include_tool_policy=prompt_layer_options.get("include_tool_policy", True),
                 )
             return self._get_prompt_builder().build_system_prompt(
                 profile,

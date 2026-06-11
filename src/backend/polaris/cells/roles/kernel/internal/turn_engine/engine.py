@@ -332,6 +332,12 @@ class TurnEngine(TurnEngineCompatMixin):
                 ]
             if request_payload.get("tool_choice") is not None and not explicit_tool_disable:
                 context_override["_transaction_kernel_forced_tool_choice"] = request_payload.get("tool_choice")
+            # ADR-0090 W2.6: phase-aware decoding — escalated mutation retries
+            # carry a low-temperature override down the same channel.
+            if request_payload.get("temperature_override") is not None:
+                context_override["_transaction_kernel_temperature_override"] = request_payload.get(
+                    "temperature_override"
+                )
 
             context = ContextRequest(
                 message=getattr(request, "message", "") or "",
@@ -457,6 +463,12 @@ class TurnEngine(TurnEngineCompatMixin):
                 ]
             if request_payload.get("tool_choice") is not None and not explicit_tool_disable:
                 context_override["_transaction_kernel_forced_tool_choice"] = request_payload.get("tool_choice")
+            # ADR-0090 W2.6: phase-aware decoding — escalated mutation retries
+            # carry a low-temperature override down the same channel.
+            if request_payload.get("temperature_override") is not None:
+                context_override["_transaction_kernel_temperature_override"] = request_payload.get(
+                    "temperature_override"
+                )
 
             context = ContextRequest(
                 message=getattr(request, "message", "") or "",

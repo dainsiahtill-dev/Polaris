@@ -24,10 +24,12 @@ class TestParseBool:
 
 
 class TestIsSpeculativeExecutionEnabled:
-    def test_default_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_default_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Default flipped to enabled in 5cd27a13 (2026-06-04, speculation GA);
+        # explicit "0"/"off" remains the way to opt out.
         monkeypatch.delenv("ENABLE_SPECULATIVE_EXECUTION", raising=False)
         monkeypatch.delenv("KERNELONE_ENABLE_SPECULATIVE_EXECUTION", raising=False)
-        assert is_speculative_execution_enabled() is False
+        assert is_speculative_execution_enabled() is True
 
     def test_primary_env_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ENABLE_SPECULATIVE_EXECUTION", "1")

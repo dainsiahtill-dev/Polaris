@@ -18,7 +18,7 @@ from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, M
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds, timeout_seconds_or_none
 
 from .http_utils import join_url, normalize_base_url
-from .provider_helpers import get_stream_session, iter_sse_data_payloads
+from .provider_helpers import build_chat_messages_payload, get_stream_session, iter_sse_data_payloads
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -67,6 +67,14 @@ def _resolve_max_tokens(config: dict[str, Any]) -> int | None:
 
 
 def _extract_messages(prompt: str, config: dict[str, Any]) -> list[dict[str, Any]]:
+    # ADR-0090 W1.5: the caller-supplied structured array wins — real
+    # system/user/assistant anchoring for the model's chat template
+    # (same shared normalization as openai_compat).
+    chat_messages = config.get("chat_messages")
+    if isinstance(chat_messages, list) and chat_messages:
+        system_prompt = str(config.get("system_prompt") or config.get("system") or "").strip()
+        return list(build_chat_messages_payload(chat_messages, prompt, system_prompt=system_prompt or None))
+
     adapter_messages = _CONTRACT.extract_messages({"config": config})
     if adapter_messages:
         return adapter_messages

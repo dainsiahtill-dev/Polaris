@@ -397,6 +397,7 @@ class TurnEngineExecutor:
             prebuilt_messages: list[dict[str, Any]],
             tool_definitions: list[dict[str, Any]] | None = None,
             tool_choice: Any | None = None,
+            temperature_override: Any | None = None,
         ) -> dict[str, Any]:
             override: dict[str, Any]
             if isinstance(getattr(provider_request, "context_override", None), dict):
@@ -417,6 +418,9 @@ class TurnEngineExecutor:
                 ]
             if tool_choice is not None and not explicit_tool_disable:
                 override["_transaction_kernel_forced_tool_choice"] = tool_choice
+            # ADR-0090 W2.6: phase-aware low temperature rides the same channel.
+            if temperature_override is not None:
+                override["_transaction_kernel_temperature_override"] = temperature_override
             return override
 
         def _extract_model_override_from_request_payload(request_payload: dict[str, Any]) -> str | None:
@@ -482,6 +486,7 @@ class TurnEngineExecutor:
                         raw_messages,
                         cast("list[dict[str, Any]] | None", request_payload.get("tools")),
                         request_payload.get("tool_choice"),
+                        request_payload.get("temperature_override"),
                     ),
                 )
 
@@ -564,13 +569,15 @@ class TurnEngineExecutor:
                 if not normalized_turn_id:
                     return
                 cast(Any, provider_request).turn_id = normalized_turn_id
-                kernel._tool_loop.reset_tool_gateway_turn_boundary(normalized_turn_id)
+                # Stale `_tool_loop` component reference — the live kernel layout
+                # exposes these directly (mirrors core.py's provider runtime).
+                kernel.reset_tool_gateway_turn_boundary(normalized_turn_id)
 
             async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> Any:
                 kernel = kernel_weakref()
                 if kernel is None:
                     raise RuntimeError("Kernel instance no longer exists")
-                return await kernel._tool_loop.execute_single_tool(
+                return await kernel._execute_single_tool(
                     tool_name=tool_name,
                     args=arguments,
                     context={"profile": provider_profile, "request": provider_request},
@@ -602,6 +609,7 @@ class TurnEngineExecutor:
                         raw_messages,
                         cast("list[dict[str, Any]] | None", request_payload.get("tools")),
                         request_payload.get("tool_choice"),
+                        request_payload.get("temperature_override"),
                     ),
                 )
 

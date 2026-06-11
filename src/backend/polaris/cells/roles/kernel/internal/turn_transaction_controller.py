@@ -1516,6 +1516,7 @@ class TurnTransactionController:
         *,
         tool_choice_override: Any | None = None,
         model_override: str | None = None,
+        temperature_override: float | None = None,
     ) -> RawLLMResponse:
         """调用LLM获取决策
 
@@ -1539,6 +1540,8 @@ class TurnTransactionController:
                 tool_choice_override if tool_choice_override is not None else ("auto" if tool_definitions else None)
             ),
             "model_override": normalized_model_override,
+            # ADR-0090 W2.6: phase-aware low temperature for escalated retries.
+            "temperature_override": temperature_override,
         }
 
         # Phase 3.3: Check budget before making call
@@ -1591,6 +1594,7 @@ class TurnTransactionController:
         *,
         tool_choice_override: Any | None = None,
         model_override: str | None = None,
+        temperature_override: float | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """Proxy to StreamOrchestrator._call_llm_for_decision_stream_impl."""
         async for event in self._stream_orchestrator._call_llm_for_decision_stream_impl(
@@ -1600,6 +1604,7 @@ class TurnTransactionController:
             shadow_engine=shadow_engine,
             tool_choice_override=tool_choice_override,
             model_override=model_override,
+            temperature_override=temperature_override,
         ):
             yield event
 

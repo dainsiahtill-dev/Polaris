@@ -325,6 +325,7 @@ async def test_execute_turn_forces_retry_on_non_tool_decision_for_mutation(monke
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         return RawLLMResponse(content="我先总结思路", native_tool_calls=[])
 
@@ -387,6 +388,7 @@ async def test_execute_turn_passes_narrowed_tool_names_to_direct_batch_executor(
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         return RawLLMResponse(content="", native_tool_calls=[])
 
@@ -496,6 +498,7 @@ async def test_retry_tool_batch_after_contract_violation_appends_retry_contract_
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         captured["retry_context"] = ctx
         captured["retry_tool_definitions"] = list(tool_definitions)
@@ -579,6 +582,7 @@ async def test_retry_enforcement_after_invalid_batch_does_not_pin_edit_blocks(mo
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         del tool_definitions, llm_ledger, tool_choice_override, model_override
         cast(list[list[dict]], captured["retry_contexts"]).append(ctx)
@@ -673,6 +677,7 @@ async def test_retry_tool_batch_after_contract_violation_uses_stream_materializa
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         captured["retry_context"] = ctx
         captured["retry_tool_definitions"] = list(tool_definitions)
@@ -811,6 +816,7 @@ async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkey
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         nonlocal stream_calls
         stream_calls += 1
@@ -823,6 +829,7 @@ async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkey
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         nonlocal non_stream_calls
         non_stream_calls += 1
@@ -922,6 +929,7 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         captured["retry_context"] = ctx
         captured["retry_tool_definitions"] = list(tool_definitions)
@@ -1053,6 +1061,7 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         del ctx, llm_ledger, model_override
         cast(list[object], captured["tool_choice_overrides"]).append(tool_choice_override)
@@ -1207,6 +1216,7 @@ async def test_retry_known_target_requires_read_switches_to_context_bootstrap(mo
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         captured["retry_context"] = ctx
         captured["retry_tool_definitions"] = list(tool_definitions)
@@ -1681,6 +1691,7 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         yield {
             "type": "_internal_materialize",
@@ -1776,6 +1787,7 @@ async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_ex
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         yield {
             "type": "_internal_materialize",
@@ -1877,6 +1889,7 @@ async def test_execute_stream_yields_completion_after_mutation_contract_retry_re
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         """Yield _internal_materialize events directly, bypassing StreamEventHandler."""
         nonlocal call_ordinal
@@ -1964,6 +1977,7 @@ async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_
         *,
         tool_choice_override=None,
         model_override=None,
+        temperature_override=None,
     ):
         """First call: ASK_USER (no tools). Retry call: write_file."""
         nonlocal call_ordinal

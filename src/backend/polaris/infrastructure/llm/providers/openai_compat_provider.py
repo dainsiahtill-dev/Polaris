@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 from .http_utils import join_url, merge_headers, normalize_base_url, validate_base_url_for_ssrf
 from .provider_helpers import (
+    build_chat_messages_payload,
     get_stream_session,
     health_check_post,
     invoke_with_retry,
@@ -107,55 +108,9 @@ def _flatten_text(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _build_chat_messages_payload(
-    chat_messages: Any,
-    prompt: str,
-    system_prompt: str | None = None,
-) -> list[dict[str, str]]:
-    """Build the request ``messages`` array, preserving real role structure.
-
-    ADR-0090 W1.5: weak local models depend heavily on their chat template's
-    role anchoring. When the caller supplies a structured ``chat_messages``
-    array, use it (system/user/assistant pass through; tool results become
-    user turns with a marker; consecutive same-role turns merge). Otherwise
-    fall back to the legacy single-user-message flattening.
-    """
-    if not isinstance(chat_messages, list) or not chat_messages:
-        fallback: list[dict[str, str]] = [{"role": "user", "content": prompt}]
-        if system_prompt:
-            fallback.insert(0, {"role": "system", "content": str(system_prompt)})
-        return fallback
-
-    normalized: list[dict[str, str]] = []
-    seen_non_system = False
-    for item in chat_messages:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip().lower()
-        content = str(item.get("content") or "")
-        if not content.strip():
-            continue
-        if role == "tool":
-            role, content = "user", f"【工具结果】\n{content}"
-        elif role == "system":
-            # Strict chat templates (vLLM: "System message must be at the
-            # beginning") only accept a LEADING system block. Supplemental
-            # system turns injected mid-conversation (role signals, tail hints)
-            # are downgraded to marked user turns.
-            if seen_non_system:
-                role, content = "user", f"【系统提示】\n{content}"
-        elif role not in ("user", "assistant"):
-            role = "user"
-        if role != "system":
-            seen_non_system = True
-        if normalized and normalized[-1]["role"] == role:
-            normalized[-1]["content"] = f"{normalized[-1]['content']}\n\n{content}"
-        else:
-            normalized.append({"role": role, "content": content})
-
-    if not normalized:
-        normalized = [{"role": "user", "content": prompt}]
-    return normalized
+# ADR-0090 W1.5: shared with ollama_provider — single normalization SSOT.
+# Private alias preserved for existing call sites and tests.
+_build_chat_messages_payload = build_chat_messages_payload
 
 
 def _extract_delta_content_parts(content: Any) -> list[tuple[str, str]]:

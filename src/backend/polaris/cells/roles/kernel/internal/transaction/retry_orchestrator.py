@@ -169,6 +169,54 @@ def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict]) -> lis
     return narrowed
 
 
+# ADR-0090 W2.6: escalation phase boundary — attempts below this index keep the
+# profile decoding defaults (prompt steering only); attempts at/after it are the
+# "transcribe what you already decided" phase (write-only tools, forced names).
+_ESCALATION_START_ATTEMPT_INDEX = 2
+_RETRY_ESCALATION_TEMPERATURE_ENV = "KERNELONE_RETRY_ESCALATION_TEMPERATURE"
+_DEFAULT_RETRY_ESCALATION_TEMPERATURE = 0.2
+
+
+def resolve_escalation_temperature() -> float | None:
+    """ADR-0090 W2.6: deterministic sampling temperature for escalated writes.
+
+    fix5 evidence (qwen3.6-int4, django-15213): temperature=0.92 drove run-to-run
+    localization flips under forced-write pressure (correct file in diag5e vs a
+    hallucinated Flask edit in fix5). Escalated/forced attempts are transcription
+    work — "write what you already read" — not exploration, so they should sample
+    near-deterministically.
+
+    Env ``KERNELONE_RETRY_ESCALATION_TEMPERATURE``: float clamped to [0, 2];
+    ``off``/``none``/``disabled``/empty/negative disables the override (returns
+    ``None`` → profile temperature is kept). Unset → 0.2.
+    """
+    raw = os.environ.get(_RETRY_ESCALATION_TEMPERATURE_ENV)
+    if raw is None:
+        return _DEFAULT_RETRY_ESCALATION_TEMPERATURE
+    text = raw.strip().lower()
+    if text in {"", "off", "none", "disabled", "false"}:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return _DEFAULT_RETRY_ESCALATION_TEMPERATURE
+    if value < 0:
+        return None
+    return min(value, 2.0)
+
+
+def resolve_retry_temperature_override(*, attempt_index: int) -> float | None:
+    """Phase-aware decoding: low temperature only for escalated retry attempts.
+
+    Attempts 1-2 (index 0-1) keep the profile temperature — they still choose
+    tools freely and benefit from exploration. From the escalation phase on
+    (write-only set / forced tool name) the task is deterministic transcription.
+    """
+    if attempt_index < _ESCALATION_START_ATTEMPT_INDEX:
+        return None
+    return resolve_escalation_temperature()
+
+
 def resolve_retry_escalation(
     *,
     attempt_index: int,
@@ -195,7 +243,7 @@ def resolve_retry_escalation(
     Returns ``(tool_definitions_override, tool_choice_override)`` — ``None``
     members mean "keep the attempt's defaults".
     """
-    if attempt_index < 2 or not strict_tool_definitions:
+    if attempt_index < _ESCALATION_START_ATTEMPT_INDEX or not strict_tool_definitions:
         return None, None
     definitions_override = strict_tool_definitions
     tool_choice_override: Any | None = None
@@ -1222,9 +1270,15 @@ class RetryOrchestrator:
         attempt_model_override: str | None,
         stream: bool,
         shadow_engine: Any | None,
+        attempt_temperature_override: float | None = None,
     ) -> RawLLMResponse:
         """执行单个重试批次，返回 LLM 响应。"""
         retry_response: RawLLMResponse | None = None
+        # ADR-0090 W2.6: only widen the call shape when the override is active so
+        # default-path callers (and their test fakes) keep the existing signature.
+        llm_call_kwargs: dict[str, Any] = {}
+        if attempt_temperature_override is not None:
+            llm_call_kwargs["temperature_override"] = attempt_temperature_override
         stream_callable = self.call_llm_for_decision_stream
         use_stream_retry = stream and stream_callable is not None
         if use_stream_retry and stream_callable is not None:
@@ -1236,6 +1290,7 @@ class RetryOrchestrator:
                     shadow_engine=shadow_engine,
                     tool_choice_override=attempt_tool_choice_override,
                     model_override=attempt_model_override,
+                    **llm_call_kwargs,
                 ):
                     if not isinstance(retry_event, Mapping):
                         continue
@@ -1262,6 +1317,7 @@ class RetryOrchestrator:
                 ledger,
                 tool_choice_override=attempt_tool_choice_override,
                 model_override=attempt_model_override,
+                **llm_call_kwargs,
             )
         return retry_response
 
@@ -1393,6 +1449,16 @@ class RetryOrchestrator:
                     escalated_tool_choice or "auto",
                 )
 
+            # ADR-0090 W2.6: phase-aware decoding — escalated attempts transcribe
+            # an already-made decision, so they sample near-deterministically.
+            attempt_temperature_override = resolve_retry_temperature_override(attempt_index=attempt_index)
+            if attempt_temperature_override is not None:
+                logger.warning(
+                    "mutation-contract retry attempt=%s phase-aware low temperature: %s",
+                    attempt_index + 1,
+                    attempt_temperature_override,
+                )
+
             retry_response = await self._execute_retry_batch(
                 turn_id=turn_id,
                 attempt_context=attempt_context,
@@ -1402,6 +1468,7 @@ class RetryOrchestrator:
                 attempt_model_override=attempt_model_override,
                 stream=stream,
                 shadow_engine=shadow_engine,
+                attempt_temperature_override=attempt_temperature_override,
             )
             if attempt_model_override:
                 logger.warning(
@@ -1583,6 +1650,14 @@ class RetryOrchestrator:
                 followup_tool_definitions = retry_tool_definitions
                 followup_allowed_tool_names = allowed_retry_tool_names
             followup_tool_choice_override: Any | None = followup_forced_tool_choice or forced_tool_choice
+            # ADR-0090 W2.6: the bootstrap follow-up forces a write tool to
+            # transcribe freshly-read content — same deterministic phase as the
+            # escalated retries, same low-temperature treatment.
+            followup_llm_kwargs: dict[str, Any] = {}
+            if followup_tool_choice_override is not None:
+                followup_temperature_override = resolve_escalation_temperature()
+                if followup_temperature_override is not None:
+                    followup_llm_kwargs["temperature_override"] = followup_temperature_override
             max_followup_attempts = 3
             current_write_context = write_context
             current_followup_allowed_tool_names = set(followup_allowed_tool_names)
@@ -1599,6 +1674,7 @@ class RetryOrchestrator:
                             shadow_engine=shadow_engine,
                             tool_choice_override=followup_tool_choice_override,
                             model_override=followup_model_override,
+                            **followup_llm_kwargs,
                         ):
                             if not isinstance(retry_event, Mapping):
                                 continue
@@ -1621,6 +1697,7 @@ class RetryOrchestrator:
                         ledger,
                         tool_choice_override=followup_tool_choice_override,
                         model_override=followup_model_override,
+                        **followup_llm_kwargs,
                     )
                 if followup_model_override:
                     logger.warning(

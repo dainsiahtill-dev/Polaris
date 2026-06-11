@@ -1259,3 +1259,54 @@ async def invoke_stream_with_retry_and_handler(
         # Ensure session is closed when generator is cleaned up
         if session is not None:
             await _close_session_if_possible(session)
+
+
+def build_chat_messages_payload(
+    chat_messages: Any,
+    prompt: str,
+    system_prompt: str | None = None,
+) -> list[dict[str, str]]:
+    """Build a chat-completions ``messages`` array, preserving real role structure.
+
+    ADR-0090 W1.5: weak local models depend heavily on their chat template's
+    role anchoring. When the caller supplies a structured ``chat_messages``
+    array, use it (system/user/assistant pass through; tool results become
+    user turns with a marker; consecutive same-role turns merge; supplemental
+    mid-conversation system turns are downgraded to marked user turns because
+    strict templates such as vLLM's reject non-leading system messages).
+    Otherwise fall back to the legacy single-user-message flattening.
+
+    Shared by openai_compat AND ollama providers — keep provider-agnostic.
+    """
+    if not isinstance(chat_messages, list) or not chat_messages:
+        fallback: list[dict[str, str]] = [{"role": "user", "content": prompt}]
+        if system_prompt:
+            fallback.insert(0, {"role": "system", "content": str(system_prompt)})
+        return fallback
+
+    normalized: list[dict[str, str]] = []
+    seen_non_system = False
+    for item in chat_messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "")
+        if not content.strip():
+            continue
+        if role == "tool":
+            role, content = "user", f"【工具结果】\n{content}"
+        elif role == "system":
+            if seen_non_system:
+                role, content = "user", f"【系统提示】\n{content}"
+        elif role not in ("user", "assistant"):
+            role = "user"
+        if role != "system":
+            seen_non_system = True
+        if normalized and normalized[-1]["role"] == role:
+            normalized[-1]["content"] = f"{normalized[-1]['content']}\n\n{content}"
+        else:
+            normalized.append({"role": role, "content": content})
+
+    if not normalized:
+        normalized = [{"role": "user", "content": prompt}]
+    return normalized

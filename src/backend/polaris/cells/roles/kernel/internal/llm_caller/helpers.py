@@ -129,6 +129,40 @@ def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> i
     return max(1, min(value, 128_000))
 
 
+_TRANSACTION_KERNEL_TEMPERATURE_OVERRIDE_KEY = "_transaction_kernel_temperature_override"
+
+
+def _coerce_context_temperature_override(raw: Any) -> float | None:
+    """Parse a per-request temperature override from trusted runtime context."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    return min(value, 2.0)
+
+
+def resolve_temperature(requested: float, context_override: Any | None = None) -> float:
+    """Resolve sampling temperature from trusted runtime context.
+
+    ADR-0090 W2.6 (phase-aware decoding): mutation-retry escalation injects a
+    deterministic low temperature through the transaction-kernel override
+    channel (``_transaction_kernel_temperature_override``); outside that phase
+    the profile/request temperature is returned untouched. Zero is a valid
+    override (fully deterministic sampling); negatives and garbage fall back.
+    """
+    if isinstance(context_override, dict):
+        override = _coerce_context_temperature_override(
+            context_override.get(_TRANSACTION_KERNEL_TEMPERATURE_OVERRIDE_KEY)
+        )
+        if override is not None:
+            return override
+    return requested
+
+
 def resolve_platform_retry_max(profile: Any, requested: int) -> int:
     """Resolve platform retry max based on role.
 

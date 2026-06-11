@@ -21,6 +21,7 @@ class TurnPhaseEvent:
 
     事件序列:
     1. decision_requested -> decision_completed
+       (decode_corrective_retry: ADR-0090 I3 解码失败纠错重问, 介于两次 decision 之间)
     2. tool_batch_started -> tool_batch_completed (如果有工具)
     3. finalization_requested -> finalization_completed (如果finalize_mode=llm_once)
     4. workflow_handoff(async pending receipt 或显式移交)
@@ -31,6 +32,7 @@ class TurnPhaseEvent:
     phase: Literal[
         "decision_requested",
         "decision_completed",
+        "decode_corrective_retry",
         "tool_batch_started",
         "tool_batch_completed",
         "finalization_requested",
@@ -58,6 +60,7 @@ class TurnPhaseEvent:
         phase: Literal[
             "decision_requested",
             "decision_completed",
+            "decode_corrective_retry",
             "tool_batch_started",
             "tool_batch_completed",
             "finalization_requested",
