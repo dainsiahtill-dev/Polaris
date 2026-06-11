@@ -220,3 +220,63 @@ def test_must_have_survives_budget_pressure() -> None:
         previous_freshness={"verdict_history": "changed"},  # 即便 prev 相同，must-have 也不跳过
     )
     assert "verdict_history" in res.sources
+
+
+# ---------------------------------------------------------------------------
+# RepoIdentitySignal（Phase-1 B1 反幻觉 grounding）
+# ---------------------------------------------------------------------------
+
+_IDENTITY = "【仓库身份】(确定性扫描结果)\n- 主要语言: Python 96%\n- 仓库根不存在(勿假设): package.json, app.py"
+
+
+def _ctx_with_identity(role: str, *, flags: dict[str, bool] | None = None) -> SignalBuildContext:
+    return SignalBuildContext(
+        role=role,
+        phase="exploring",
+        task_id="T1",
+        policy_flags=flags if flags is not None else {"include_project_structure": True, "include_task_history": True},
+        get_project_structure=lambda: "src/\n  a.py\n  b.py",
+        get_task_history=lambda tid: f"task {tid}: 3 done / 2 open",
+        get_repo_identity=lambda: _IDENTITY,
+    )
+
+
+def test_repo_identity_injected_by_default_after_seeds() -> None:
+    """seed 级默认开启：无需 flag,身份卡紧随两个既有 seed 注入并进 sources。"""
+    res = allocate_role_signals(
+        registry=RoleSignalRegistry(), ctx=_ctx_with_identity("director"), receipt_store=ReceiptStore()
+    )
+    assert res.sources == ["project_structure", "task_history", "repo_identity"]
+    assert res.turns[2] == {"role": "system", "content": _IDENTITY, "name": "repo_identity"}
+
+
+def test_repo_identity_explicit_opt_out() -> None:
+    flags = {
+        "include_project_structure": True,
+        "include_task_history": True,
+        "include_repo_identity": False,
+    }
+    res = allocate_role_signals(
+        registry=RoleSignalRegistry(),
+        ctx=_ctx_with_identity("director", flags=flags),
+        receipt_store=ReceiptStore(),
+    )
+    assert "repo_identity" not in res.sources
+
+
+def test_repo_identity_none_accessor_keeps_baseline() -> None:
+    """缺省 accessor（None）→ 不注入,与历史 baseline 逐字节一致。"""
+    res = allocate_role_signals(registry=RoleSignalRegistry(), ctx=_ctx("director"), receipt_store=ReceiptStore())
+    assert res.sources == ["project_structure", "task_history"]
+
+
+def test_repo_identity_is_must_have_under_budget_pressure() -> None:
+    """must-have 级：预算压力下不被熔断丢弃（必要时卸载,但仍在场）。"""
+    res = allocate_role_signals(
+        registry=RoleSignalRegistry(),
+        ctx=_ctx_with_identity("director"),
+        receipt_store=ReceiptStore(),
+        budget_pressure=True,
+        previous_freshness={},
+    )
+    assert "repo_identity" in res.sources

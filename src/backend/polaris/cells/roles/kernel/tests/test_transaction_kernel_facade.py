@@ -1715,7 +1715,9 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
             "finalize_mode": "none",
         }
 
-    async def _fake_retry(*, turn_id, context, tool_definitions, state_machine, ledger, stream, shadow_engine):
+    async def _fake_retry(
+        *, turn_id, context, tool_definitions, state_machine, ledger, stream, shadow_engine, **_kwargs
+    ):
         return {
             "kind": "tool_batch_with_receipt",
             "visible_content": "已写入 高优先级任务清单.md",
@@ -2052,3 +2054,43 @@ async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_
 
     # Must have at least one tool batch event (the write_file result)
     assert len(tool_batches) >= 1
+
+
+def test_bootstrap_followup_never_forces_write_file_on_large_real_files() -> None:
+    """Phase-1 live regression (phase1smoke django-15213): a large real source
+    file containing 'NotImplemented'/'TODO:' as ordinary code must NOT trip the
+    scaffold marker — forcing write_file makes a weak model regenerate the
+    whole file and blow the LLM timeout (observed: 600s, dead session)."""
+    large_real_content = (
+        "class ExpressionWrapper:\n    # TODO: optimize\n    def __eq__(self, other):\n        return NotImplemented\n"
+    ) * 200
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {"file": "django/db/models/expressions.py", "content": large_real_content},
+            }
+        ]
+    }
+    assert bootstrap_receipt_contains_whole_file_replacement_marker(receipt) is False
+    selected = select_bootstrap_followup_write_tool_name(
+        allowed_tool_names={"read_file", "edit_blocks", "write_file", "edit_file"},
+        default_write_tool_name="edit_blocks",
+        bootstrap_receipt=receipt,
+        failed_bootstrap_files=[],
+    )
+    assert selected == "edit_blocks"
+
+
+def test_small_scaffold_with_markers_still_qualifies_for_whole_file_replacement() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {"file": "src/seed.ts", "content": "// TODO: implement\nexport {}\n"},
+            }
+        ]
+    }
+    assert bootstrap_receipt_contains_whole_file_replacement_marker(receipt) is True

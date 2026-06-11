@@ -6,6 +6,7 @@ Keep package import lightweight by lazily loading contract/service exports.
 from __future__ import annotations
 
 from importlib import import_module
+from typing import Any
 
 __all__ = [
     "AgentMessage",
@@ -221,7 +222,7 @@ _CONTRACT_EXPORTS = frozenset(
 _CONTINUATION_EXPORTS = frozenset({"ContinuationPolicy", "OrchestratorSessionState"})
 
 
-def __getattr__(name: str) -> object:
+def __getattr__(name: str) -> Any:  # PEP 562: lazy exports must type as Any, not object
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     if name in _CONTINUATION_EXPORTS:

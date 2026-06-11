@@ -266,6 +266,69 @@ class TestRetryOrchestratorBatchCountRollback:
         assert len(execute_calls) == 1
 
     @pytest.mark.asyncio
+    async def test_readonly_original_batch_bootstraps_without_retry_reask(
+        self, orchestrator: RetryOrchestrator
+    ) -> None:
+        """Wave-5: a READ-ONLY ORIGINAL violating batch must be bootstrapped AS-IS.
+
+        Discarding the model's (often correct-path) reads and re-asking makes weak
+        models emit worse calls under retry pressure — run10a live capture showed the
+        original `read_file django/core/checks/model_checks.py` replaced by
+        hallucinated `C:\\Users\\user\\Desktop\\vue-element-admin\\...` reads.
+        """
+        ledger = TurnLedger(turn_id="t-w5")
+        state_machine = TurnStateMachine(turn_id="t-w5")
+        state_machine.state = TurnState.TOOL_BATCH_EXECUTING
+
+        original_decision: dict[str, Any] = {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "call_id": "c-orig",
+                        "tool_name": "read_file",
+                        "arguments": {"file": "django/core/checks/model_checks.py"},
+                    }
+                ]
+            },
+            "metadata": {"workspace": "."},
+        }
+
+        captured_batches: list[Any] = []
+
+        async def _bootstrap(*_a: Any, **kwargs: Any) -> None:
+            captured_batches.append(kwargs.get("tool_batch"))
+            return None
+
+        orchestrator.execute_read_bootstrap_batch = _bootstrap  # type: ignore[method-assign]
+        llm_calls: list[int] = []
+
+        async def _llm(*_a: Any, **_kw: Any) -> Any:
+            llm_calls.append(1)
+            response = MagicMock()
+            response.native_tool_calls = []
+            return response
+
+        orchestrator.call_llm_for_decision = _llm  # type: ignore[method-assign]
+
+        with pytest.raises(RuntimeError, match="bootstrap read receipt missing"):
+            await orchestrator.retry_tool_batch_after_contract_violation(
+                turn_id="t-w5",
+                context=[{"role": "user", "content": "fix the E028 bug"}],
+                tool_definitions=[],
+                state_machine=state_machine,
+                ledger=ledger,
+                stream=False,
+                original_decision=original_decision,
+            )
+
+        # The ORIGINAL invocations were bootstrapped; no retry LLM re-ask happened.
+        assert len(captured_batches) == 1
+        invocations = captured_batches[0].get("invocations")
+        assert invocations[0]["arguments"]["file"] == "django/core/checks/model_checks.py"
+        assert llm_calls == []
+
+    @pytest.mark.asyncio
     async def test_stream_error_propagates_with_cause(self, orchestrator: RetryOrchestrator) -> None:
         """Stream exceptions should be wrapped and preserve the original cause."""
         ledger = TurnLedger(turn_id="t-005")

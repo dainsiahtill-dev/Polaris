@@ -450,15 +450,21 @@ class RoleConsoleHost:
         if event_type_name == "ToolBatchEvent":
             status = str(getattr(event, "status", "") or "")
             tool_name = str(getattr(event, "tool_name", "") or "")
+            call_id = str(getattr(event, "call_id", "") or "")
             arguments = getattr(event, "arguments", None) or {}
             result = getattr(event, "result", None)
             error = getattr(event, "error", None)
             if status == "started":
-                return {
-                    "type": "tool_call",
-                    "data": {"tool": tool_name, "args": dict(arguments) if isinstance(arguments, Mapping) else {}},
+                call_data: dict[str, Any] = {
+                    "tool": tool_name,
+                    "args": dict(arguments) if isinstance(arguments, Mapping) else {},
                 }
+                if call_id:
+                    call_data["call_id"] = call_id
+                return {"type": "tool_call", "data": call_data}
             payload: dict[str, Any] = {"tool": tool_name}
+            if call_id:
+                payload["call_id"] = call_id
             if result is not None:
                 payload["result"] = result
             if error:
@@ -561,6 +567,48 @@ class RoleConsoleHost:
             "before_text": before_text,
             "args": _extract_tool_args(payload),
         }
+
+    @staticmethod
+    def _stash_tool_snapshot(
+        keyed: dict[str, dict[str, Any]],
+        queue: list[dict[str, Any]],
+        payload: Mapping[str, Any],
+        snapshot: dict[str, Any],
+    ) -> None:
+        """Store a file snapshot for later claim by its tool_result.
+
+        Snapshots are claimed back by call_id; only events without one (the
+        legacy dict-event path) fall back to FIFO order.
+        """
+        call_id = str(payload.get("call_id") or "").strip()
+        if call_id:
+            keyed[call_id] = snapshot
+        else:
+            queue.append(snapshot)
+
+    @staticmethod
+    def _claim_tool_snapshot(
+        keyed: dict[str, dict[str, Any]],
+        queue: list[dict[str, Any]],
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Claim the snapshot belonging to a tool_result, never mispairing.
+
+        A mutation-contract retry can REPLACE the executed batch, so the
+        result stream is not 1:1 with the displayed tool_call stream
+        (2026-06-11 call_id forensics, run20 django-15213: a queued
+        compiler.py snapshot was popped by an unrelated repo_rg result).
+        call_id-keyed claim first; FIFO fallback only when the event has no
+        call_id AND the tool name matches; otherwise enrich nothing.
+        """
+        tool_name = str(payload.get("tool") or "").strip()
+        call_id = str(payload.get("call_id") or "").strip()
+        snapshot = keyed.pop(call_id, None) if call_id else None
+        if snapshot is None and not call_id and queue and str(queue[0].get("tool") or "") == tool_name:
+            snapshot = queue.pop(0)
+        if snapshot is not None and str(snapshot.get("tool") or "") != tool_name:
+            return None
+        return snapshot
 
     def _enrich_tool_call_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         enriched = dict(payload)
@@ -1175,7 +1223,10 @@ class RoleConsoleHost:
             response_parts: list[str] = []
             thinking_parts: list[str] = []
             assistant_saved = False
-            pending_tool_snapshots: list[dict[str, Any]] = []
+            # call_id-keyed snapshots + FIFO fallback for call_id-less events;
+            # see _claim_tool_snapshot for the mispairing forensics.
+            pending_tool_snapshots: dict[str, dict[str, Any]] = {}
+            pending_snapshot_queue: list[dict[str, Any]] = []
 
             # ── Phase 4: Session Orchestrator Integration ────────────────────────
             use_orchestrator = self._use_orchestrator(capability_profile)
@@ -1233,12 +1284,16 @@ class RoleConsoleHost:
                         normalized["data"] = self._enrich_tool_call_payload(event_payload)
                         snapshot = self._snapshot_tool_call(normalized["data"])
                         if snapshot is not None:
-                            pending_tool_snapshots.append(snapshot)
+                            self._stash_tool_snapshot(
+                                pending_tool_snapshots, pending_snapshot_queue, normalized["data"], snapshot
+                            )
                         yield normalized
                         continue
 
                     if event_type == "tool_result":
-                        snapshot = pending_tool_snapshots.pop(0) if pending_tool_snapshots else None
+                        snapshot = self._claim_tool_snapshot(
+                            pending_tool_snapshots, pending_snapshot_queue, event_payload
+                        )
                         normalized["data"] = self._enrich_tool_result_payload(event_payload, snapshot)
                         yield normalized
                         continue
@@ -1289,6 +1344,10 @@ class RoleConsoleHost:
                         }
                         response_parts.clear()
                         thinking_parts.clear()
+                        # Turn boundary: stale snapshots from replaced/never-
+                        # executed batches must not leak into the next turn.
+                        pending_tool_snapshots.clear()
+                        pending_snapshot_queue.clear()
                         continue
 
                     yield normalized
@@ -1321,12 +1380,16 @@ class RoleConsoleHost:
                         normalized["data"] = self._enrich_tool_call_payload(event_payload)
                         snapshot = self._snapshot_tool_call(normalized["data"])
                         if snapshot is not None:
-                            pending_tool_snapshots.append(snapshot)
+                            self._stash_tool_snapshot(
+                                pending_tool_snapshots, pending_snapshot_queue, normalized["data"], snapshot
+                            )
                         yield normalized
                         continue
 
                     if event_type == "tool_result":
-                        snapshot = pending_tool_snapshots.pop(0) if pending_tool_snapshots else None
+                        snapshot = self._claim_tool_snapshot(
+                            pending_tool_snapshots, pending_snapshot_queue, event_payload
+                        )
                         normalized["data"] = self._enrich_tool_result_payload(event_payload, snapshot)
                         yield normalized
                         continue
@@ -1357,6 +1420,9 @@ class RoleConsoleHost:
                                 },
                             )
                             assistant_saved = True
+                        # Turn boundary: drop unclaimed snapshots (see orchestrator branch).
+                        pending_tool_snapshots.clear()
+                        pending_snapshot_queue.clear()
                         # Build complete event data preserving model, context_budget, usage
                         complete_data = {
                             "content": assistant_text,

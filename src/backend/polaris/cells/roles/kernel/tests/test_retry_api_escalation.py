@@ -107,3 +107,57 @@ class TestResolveRetryEscalation:
 
         assert definitions == _STRICT_DEFS
         assert tool_choice is None
+
+
+class TestMutationImpliesVerification:
+    """Phase-1 A2 (run20 audit): a mutation contract implies verification access.
+
+    run20: 18/18 instances executed ZERO verification commands because
+    ``requires_verification`` keyed off message keywords ("test", "verify")
+    that a plain "fix the bug" task never contains, so execute_command was
+    excluded from the narrowed retry tool set and model-initiated test runs
+    were rejected as contract violations.
+    """
+
+    def test_write_only_set_includes_execute_command_when_verification_enabled(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+            build_forced_write_only_retry_tool_definitions,
+        )
+
+        defs = [*_STRICT_DEFS, {"type": "function", "function": {"name": "execute_command"}}]
+        narrowed = build_forced_write_only_retry_tool_definitions(
+            defs,
+            "edit_blocks",
+            include_verification_tools=True,
+        )
+        names = {d["function"]["name"] for d in narrowed}
+        assert names == {"edit_blocks", "execute_command"}
+
+    def test_benchmark_forbidden_execute_command_stays_excluded(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+            build_forced_write_only_retry_tool_definitions,
+        )
+
+        defs = [*_STRICT_DEFS, {"type": "function", "function": {"name": "execute_command"}}]
+        narrowed = build_forced_write_only_retry_tool_definitions(
+            defs,
+            "edit_blocks",
+            include_verification_tools=True,
+            forbidden_tool_names={"execute_command"},
+        )
+        names = {d["function"]["name"] for d in narrowed}
+        assert names == {"edit_blocks"}
+
+    def test_plain_fix_request_implies_verification_in_retry_path(self) -> None:
+        """The composed predicate used by retry_tool_batch_after_contract_violation:
+        a mutation-intent message without any verification keyword must still
+        grant verification access."""
+        from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
+            requires_mutation_intent,
+            requires_verification_intent,
+        )
+
+        message = "[mode:materialize]\nYou are fixing a real bug in this repository. Apply the fix."
+        assert requires_verification_intent(message) is False, "fixture must stay keyword-free"
+        assert requires_mutation_intent(message) is True
+        assert (requires_verification_intent(message) or requires_mutation_intent(message)) is True

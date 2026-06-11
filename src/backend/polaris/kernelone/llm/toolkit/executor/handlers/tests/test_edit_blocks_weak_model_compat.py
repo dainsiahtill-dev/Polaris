@@ -179,7 +179,9 @@ def test_suggest_similar_paths_ranks_by_trailing_overlap(tmp_path: Path) -> None
     ex = _nested_workspace(tmp_path)
     candidates = _suggest_similar_paths(ex, "src/django/core/checks/model_checks.py")
     assert candidates[0] == "django/core/checks/model_checks.py"
-    assert "docs/model_checks.py" in candidates
+    # Relevance gate (run20): basename-only matches no longer qualify for a
+    # multi-component request — they redirect weak models into unrelated files.
+    assert "docs/model_checks.py" not in candidates
 
 
 def test_not_found_without_candidates_keeps_exploration_advice(tmp_path: Path) -> None:
@@ -187,7 +189,48 @@ def test_not_found_without_candidates_keeps_exploration_advice(tmp_path: Path) -
     result = _handle_read_file(ex, file="totally/unknown_module_xyz.py")
     assert result.get("ok") is False
     assert "Did you mean" not in result.get("error", "")
-    assert "repo_tree" in result.get("suggestion", "")
+    assert 'repo_rg("unknown_module_xyz")' in result.get("suggestion", "")
+
+
+def test_multi_component_request_with_basename_only_matches_gets_no_redirect(tmp_path: Path) -> None:
+    """run20 regression (django-15213 shape): src/main.py must NOT be redirected
+    to a deep unrelated main.py — that suggestion became the final wrong patch."""
+    deep = tmp_path / "django" / "contrib" / "admin" / "views" / "main.py"
+    deep.parent.mkdir(parents=True)
+    deep.write_text("# admin changelist\n", encoding="utf-8")
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    result = _handle_read_file(ex, file="src/main.py")
+    assert result.get("ok") is False
+    assert "Did you mean" not in result.get("error", "")
+    assert 'repo_rg("main")' in result.get("suggestion", "")
+
+
+def test_bare_name_request_only_suggests_shallow_candidates(tmp_path: Path) -> None:
+    """run20 regression (README.md shape): a bare conventional name must not be
+    redirected into a deep unrelated subtree; a shallow real match still works."""
+    deep = tmp_path / "docs" / "theme" / "static" / "fontawesome" / "README.md"
+    deep.parent.mkdir(parents=True)
+    deep.write_text("# vendored\n", encoding="utf-8")
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    no_redirect = _handle_read_file(ex, file="README.md")
+    assert "Did you mean" not in no_redirect.get("error", "")
+
+    shallow = tmp_path / "docs" / "README.md"
+    shallow.write_text("# real docs index\n", encoding="utf-8")
+    suggested = _handle_read_file(ex, file="README.md")
+    assert "Did you mean: docs/README.md?" in suggested.get("error", "")
+    assert "fontawesome" not in suggested.get("error", "")
+
+
+def test_mistyped_directory_still_rescued_when_one_component_matches(tmp_path: Path) -> None:
+    """A genuinely-corroborated candidate (>= 1 directory component beyond the
+    basename) keeps the did-you-mean rescue path alive."""
+    target = tmp_path / "app" / "src" / "main.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("print('x')\n", encoding="utf-8")
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    result = _handle_read_file(ex, file="src/main.py")
+    assert "Did you mean: app/src/main.py?" in result.get("error", "")
 
 
 def test_edit_blocks_not_found_target_suggests_candidates(tmp_path: Path) -> None:

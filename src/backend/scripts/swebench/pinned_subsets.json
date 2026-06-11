@@ -1,0 +1,35 @@
+{
+  "schema_version": "swebench-subset/1",
+  "comment": "Version-pinned SWE-bench evaluation subsets for the weak-model capability-amplification north-star metric (docs/blueprints/WEAK_MODEL_CAPABILITY_AMPLIFICATION_BLUEPRINT_20260611.md §9). Never mutate an existing subset in place — add a new key (pinned-v2, ...) so paired runs stay comparable across time.",
+  "subsets": {
+    "pinned-v1": {
+      "created": "2026-06-11",
+      "dataset": "princeton-nlp/SWE-bench_Lite",
+      "source": "run20 baseline batch (formerly ~/Temp/swebench-work/normal/run20_instances.txt, 2026-06-10)",
+      "baseline": "qwen3.6-27b-int4 normal-mode run20: 0 resolved / 0 pure_f2p / 0 gold-file-hit over 18 scored instances (12 non-empty patches); psf__requests-1963 and pydata__xarray-3364 produced no prediction artifacts in that run",
+      "notes": "P2P network-flaky tests on this WSL2 host are shielded by pure_f2p_resolved, not excluded from the subset. Gold-solvability precheck: gold patches for the 18 scored instances evaluated successfully via the official harness during run20 scoring rounds.",
+      "instance_ids": [
+        "django__django-11630",
+        "django__django-15213",
+        "matplotlib__matplotlib-23563",
+        "sympy__sympy-12171",
+        "sympy__sympy-16792",
+        "django__django-10914",
+        "django__django-10924",
+        "django__django-11001",
+        "django__django-11019",
+        "sympy__sympy-11400",
+        "sympy__sympy-11870",
+        "sympy__sympy-11897",
+        "scikit-learn__scikit-learn-10297",
+        "scikit-learn__scikit-learn-10508",
+        "pytest-dev__pytest-11143",
+        "pytest-dev__pytest-11148",
+        "sphinx-doc__sphinx-10325",
+        "astropy__astropy-12907",
+        "psf__requests-1963",
+        "pydata__xarray-3364"
+      ]
+    }
+  }
+}

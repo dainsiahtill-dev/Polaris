@@ -82,6 +82,8 @@ class SignalBuildContext:
     # 角色专属资产访问器（只读、可缺省）。默认 None-accessor → 无数据 → 不注入。
     get_blueprint_overview: Callable[[], str | None] = _none_accessor
     get_verdict_history: Callable[[], str | None] = _none_accessor
+    # 仓库身份卡（Phase-1 B1 反幻觉 grounding）。默认 None-accessor → 不注入。
+    get_repo_identity: Callable[[], str | None] = _none_accessor
 
 
 class RoleContextSignal(Protocol):
@@ -217,10 +219,45 @@ class VerdictHistorySignal:
         )
 
 
+class RepoIdentitySignal:
+    """seed 信号：仓库身份卡（确定性反幻觉 grounding,Phase-1 B1）。
+
+    run20 实证（2026-06-11）：弱模型在任何仓库里都按其它生态的惯例猜路径
+    （README.md/src/main.py/package.json/app.py…,18 实例 560 次 not-found,
+    path_hallucination 14/18,最终 patch 甚至在 django 仓库新建 package.json）。
+    本信号注入确定性仓库事实（主语言/根标记存在与缺失/顶层布局）作为第一道
+    拦截。must-have 级：预算压力下宁可经 ReceiptStore 卸载也不静默丢弃。
+    seed 级 grounding 默认开启（``include_repo_identity``,默认 True）,
+    关闭需要显式 opt-out。
+    """
+
+    id = "repo_identity"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return bool(ctx.policy_flags.get("include_repo_identity", True))
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 2  # 紧随 project_structure(0)/task_history(1) 两个既有 seed 之后
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        identity = ctx.get_repo_identity()
+        if not identity:
+            return None
+        return SignalBlock(
+            id=self.id,
+            content=identity,
+            priority=2,
+            level=_MUST_HAVE,
+            freshness_key=_freshness_of(identity),
+            max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,
+        )
+
+
 # 默认注册表：seed（全角色）+ 角色专属（role+flag 双门控，默认 flag 关 → 不影响 baseline）。
 DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
     ProjectStructureSignal(),
     TaskHistorySignal(),
+    RepoIdentitySignal(),
     BlueprintOverviewSignal(),
     VerdictHistorySignal(),
 )

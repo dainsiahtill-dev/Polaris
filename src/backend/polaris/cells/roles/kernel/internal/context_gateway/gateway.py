@@ -869,9 +869,12 @@ class RoleContextGateway:
                 # 角色专属信号开关（默认 False；按角色 profile opt-in）。
                 "include_blueprint_overview": bool(getattr(self.policy, "include_blueprint_overview", False)),
                 "include_verdict_history": bool(getattr(self.policy, "include_verdict_history", False)),
+                # 仓库身份卡（Phase-1 B1）：seed 级反幻觉 grounding,默认开启。
+                "include_repo_identity": bool(getattr(self.policy, "include_repo_identity", True)),
             },
             get_project_structure=self._get_project_structure,
             get_task_history=self._get_task_history,
+            get_repo_identity=self._get_repo_identity,
             # blueprint_overview 只通过配置注入的数据源读取；roles.kernel 不认识
             # chief_engineer.blueprint 的业务模块。
             get_blueprint_overview=lambda: self._get_blueprint_overview(str(request.task_id or "")),
@@ -1080,6 +1083,16 @@ class RoleContextGateway:
             )
         except (RuntimeError, ValueError) as e:
             logger.warning(f"获取项目结构失败: {e}")
+            return None
+
+    def _get_repo_identity(self) -> str | None:
+        """仓库身份卡（确定性反幻觉 grounding,Phase-1 B1）。"""
+        try:
+            from .repo_identity import build_repo_identity_card
+
+            return build_repo_identity_card(str(self.workspace))
+        except (RuntimeError, ValueError, OSError) as e:
+            logger.debug(f"仓库身份卡构建失败: {e}")
             return None
 
     def _get_task_history(self, task_id: str) -> str | None:

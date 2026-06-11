@@ -967,6 +967,7 @@ class TurnTransactionController:
         ledger: TurnLedger,
         stream: bool = False,
         shadow_engine: Any | None = None,
+        original_decision: Any | None = None,
     ) -> dict:
         """Proxy to RetryOrchestrator.retry_tool_batch_after_contract_violation."""
         return await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
@@ -977,6 +978,7 @@ class TurnTransactionController:
             ledger=ledger,
             stream=stream,
             shadow_engine=shadow_engine,
+            original_decision=original_decision,
         )
 
     async def _execute_read_bootstrap_batch(
@@ -1480,6 +1482,9 @@ class TurnTransactionController:
                     ledger=ledger,
                     stream=False,
                     shadow_engine=shadow_engine,
+                    # Wave-5: bootstrap a READ-ONLY violating batch directly instead
+                    # of discarding the model's reads and re-asking.
+                    original_decision=decision,
                 )
 
         else:

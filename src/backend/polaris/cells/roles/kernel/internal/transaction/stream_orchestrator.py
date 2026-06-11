@@ -1431,6 +1431,10 @@ class StreamOrchestrator:
                         ledger=ledger,
                         stream=True,
                         shadow_engine=shadow_engine,
+                        # Wave-5: a READ-ONLY violating batch is bootstrapped directly —
+                        # discarding the model's (often correct) reads and re-asking
+                        # makes weak models emit worse, hallucinated calls.
+                        original_decision=decision,
                     )
                 batch_receipt = normalize_batch_receipt(result.get("batch_receipt"))
                 if batch_receipt:

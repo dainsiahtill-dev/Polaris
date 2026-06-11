@@ -685,3 +685,65 @@ def test_run_director_console_accepts_non_textual_backend_but_runs(
     )
 
     assert exit_code == 0
+
+
+def test_tool_snapshot_claim_is_call_id_keyed_never_fifo_mispaired() -> None:
+    """run20 forensics regression: a queued read snapshot must never be
+    claimed by an unrelated result from a REPLACED execution batch."""
+    keyed: dict[str, dict[str, Any]] = {}
+    queue: list[dict[str, Any]] = []
+    snap_read = {"tool": "repo_read_slice", "display_path": "compiler.py"}
+    DirectorConsoleHost._stash_tool_snapshot(keyed, queue, {"call_id": "c1", "tool": "repo_read_slice"}, snap_read)
+
+    claimed = DirectorConsoleHost._claim_tool_snapshot(keyed, queue, {"call_id": "c9", "tool": "repo_rg"})
+    assert claimed is None
+
+    claimed_by_owner = DirectorConsoleHost._claim_tool_snapshot(
+        keyed, queue, {"call_id": "c1", "tool": "repo_read_slice"}
+    )
+    assert claimed_by_owner is snap_read
+    assert not keyed
+
+
+def test_tool_snapshot_fifo_fallback_requires_tool_match() -> None:
+    keyed: dict[str, dict[str, Any]] = {}
+    queue: list[dict[str, Any]] = []
+    snap = {"tool": "write_file", "display_path": "demo.py"}
+    DirectorConsoleHost._stash_tool_snapshot(keyed, queue, {"tool": "write_file"}, snap)
+
+    assert DirectorConsoleHost._claim_tool_snapshot(keyed, queue, {"tool": "repo_rg"}) is None
+    assert queue, "mismatched claim must not consume the queued snapshot"
+    assert DirectorConsoleHost._claim_tool_snapshot(keyed, queue, {"tool": "write_file"}) is snap
+
+
+def test_normalize_orchestrator_tool_events_carry_call_id() -> None:
+    from polaris.cells.roles.kernel.public.turn_events import ToolBatchEvent
+
+    started = ToolBatchEvent(
+        turn_id="t",
+        batch_id="b",
+        tool_name="read_file",
+        call_id="c1",
+        status="started",
+        progress=0.0,
+        arguments={"file": "a.py"},
+    )
+    call_event = DirectorConsoleHost._normalize_orchestrator_event(started)
+    assert call_event is not None
+    assert call_event["type"] == "tool_call"
+    assert call_event["data"]["call_id"] == "c1"
+
+    finished = ToolBatchEvent(
+        turn_id="t",
+        batch_id="b",
+        tool_name="read_file",
+        call_id="c1",
+        status="success",
+        progress=1.0,
+        result={"ok": True},
+    )
+    result_event = DirectorConsoleHost._normalize_orchestrator_event(finished)
+    assert result_event is not None
+    assert result_event["type"] == "tool_result"
+    assert result_event["data"]["call_id"] == "c1"
+    assert result_event["data"]["success"] is True

@@ -70,6 +70,12 @@ _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS: tuple[str, ...] = (
     "todo:",
     "fixme:",
 )
+# Whole-file replacement is only plausible for genuinely SMALL scaffold/seed
+# content. Real-world large source files contain the markers above as ordinary
+# code ("NotImplemented" comparison protocol, "TODO:" comments), and forcing
+# write_file on them makes a weak model regenerate the entire file — observed
+# live (phase1smoke django-15213): 600s LLM timeout, dead session.
+_BOOTSTRAP_WHOLE_FILE_MAX_CHARS = 4000
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +517,15 @@ def bootstrap_receipt_contains_whole_file_replacement_marker(bootstrap_receipt: 
     The marker check is intentionally narrow. It targets deterministic seed /
     placeholder output that should be replaced wholesale by Director, while
     avoiding a blanket escalation from precise edits to full-file overwrites.
+
+    Phase-1 live fix (2026-06-11, phase1smoke django-15213): real-world large
+    source files contain these markers as ordinary code (``NotImplemented``
+    comparison protocol, ``TODO:`` comments — django expressions.py has both),
+    which silently escalated the follow-up to a forced ``write_file``
+    whole-file regeneration; a 27B-int4 model cannot regenerate an 1800-line
+    file inside the LLM timeout, so the stream hit the 600s ceiling and the
+    session died. The marker scan is therefore gated by total content size:
+    only genuinely small scaffold content qualifies.
     """
     marker_candidates: list[str] = []
     for item in list(bootstrap_receipt.get("results", []) or []):
@@ -527,8 +542,11 @@ def bootstrap_receipt_contains_whole_file_replacement_marker(bootstrap_receipt: 
                     marker_candidates.append(value)
         elif isinstance(payload, str) and payload:
             marker_candidates.append(payload)
-    combined = "\n".join(marker_candidates).lower()
-    return any(marker in combined for marker in _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS)
+    combined = "\n".join(marker_candidates)
+    if len(combined) > _BOOTSTRAP_WHOLE_FILE_MAX_CHARS:
+        return False
+    lowered = combined.lower()
+    return any(marker in lowered for marker in _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS)
 
 
 def select_bootstrap_followup_write_tool_name(
@@ -949,6 +967,18 @@ def _synthesize_deterministic_dag_service_content() -> str:
         "  }\n"
         "}\n"
     )
+
+
+def _extract_decision_invocations(decision: Any | None) -> list[Any]:
+    """Pull invocations from a TurnDecision-like object or mapping (defensive)."""
+    if decision is None:
+        return []
+    tool_batch = decision.get("tool_batch") if hasattr(decision, "get") else getattr(decision, "tool_batch", None)
+    if tool_batch is None:
+        return []
+    if isinstance(tool_batch, Mapping):
+        return list(tool_batch.get("invocations", []) or [])
+    return list(getattr(tool_batch, "invocations", []) or [])
 
 
 def merge_bootstrap_receipt_into_result(result: Any, bootstrap_receipt: Mapping[str, Any] | None) -> Any:
@@ -1385,10 +1415,20 @@ class RetryOrchestrator:
         ledger: TurnLedger,
         stream: bool,
         shadow_engine: Any | None = None,
+        original_decision: Any | None = None,
     ) -> dict:
         latest_user_request = extract_latest_user_message(context)
-        requires_verification = requires_verification_intent(latest_user_request)
         requires_mutation = requires_mutation_intent(latest_user_request)
+        # Phase-1 A2 (2026-06-11, run20 audit): a mutation contract IMPLIES the
+        # right to verify the mutation. Keying verification access off message
+        # keywords alone ("test", "verify") suppressed every model-initiated
+        # test run on tasks phrased as plain "fix the bug" — run20: 18/18
+        # instances executed ZERO verification commands, and execute_command
+        # batches during mutation retries were rejected as contract violations.
+        # The escalation ladder still terminates in a forced WRITE (the final
+        # attempt forces tool_choice by name), so admitting verification tools
+        # into the narrowed set cannot stall the write obligation.
+        requires_verification = requires_verification_intent(latest_user_request) or requires_mutation
         (
             retry_tool_definitions,
             retry_context,
@@ -1407,7 +1447,24 @@ class RetryOrchestrator:
         max_retry_attempts = getattr(self.config, "max_retry_attempts", 4)
         retry_llm_call_ordinal = 0
         candidate_bootstrap_decision: TurnDecision | None = None
+        # Phase-2 Wave-5 (2026-06-11, run10a live audit): when the ORIGINAL violating
+        # batch is itself a safe READ-ONLY batch (the model asking for evidence, e.g.
+        # read_file django/core/checks/model_checks.py — correct path!), discarding it
+        # and re-asking makes a weak model emit WORSE calls under retry pressure
+        # (observed: hallucinated vue-element-admin Windows paths). Bootstrap the
+        # ORIGINAL reads directly — never throw away the model's correct request.
+        original_bootstrap_invocations = _extract_decision_invocations(original_decision)
+        if original_bootstrap_invocations and is_safe_readonly_bootstrap_invocations(original_bootstrap_invocations):
+            logger.warning(
+                "mutation-contract violation on READ-ONLY original batch -> "
+                "bootstrapping the ORIGINAL reads (no retry re-ask): turn_id=%s tools=%s",
+                turn_id,
+                [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
+            )
+            candidate_bootstrap_decision = original_decision
         for attempt_index in range(max_retry_attempts):
+            if candidate_bootstrap_decision is not None:
+                break
             attempt_tool_definitions = retry_tool_definitions
             attempt_allowed_tool_names = allowed_retry_tool_names
             attempt_context = retry_context

@@ -58,6 +58,17 @@ def register_handlers() -> dict[str, Any]:
 # imprecise models loop on path guesses until the failure budget locks them out).
 _SUGGEST_MAX_FILES = 30000
 _SUGGEST_MAX_RESULTS = 5
+# Relevance gate (run20 forensics, 2026-06-11): a suggestion whose ONLY link
+# to the request is the basename routinely redirects weak models into editing
+# real but unrelated files — 10/18 run20 instances shipped exactly such a
+# suggested file as their final (wrong) patch. A candidate must corroborate
+# the request structurally: multi-component requests need at least one
+# directory component to match beyond the basename; bare-name requests only
+# accept shallow candidates (a bare conventional name means "the top-level
+# file", not a deep unrelated subtree). Zero relevant candidates falls back
+# to repo_rg/repo_tree exploration guidance — for a weak model, no hint beats
+# a wrong hint.
+_SUGGEST_BARE_NAME_MAX_DEPTH = 2
 
 
 def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list[str]:
@@ -107,7 +118,15 @@ def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list
         return []
 
     matches.sort()
-    return [rel_path for _neg_overlap, _depth, rel_path in matches[:_SUGGEST_MAX_RESULTS]]
+    multi_component = len(requested_parts) >= 2
+    relevant: list[str] = []
+    for neg_overlap, depth, rel_path in matches:
+        if multi_component:
+            if -neg_overlap >= 2:
+                relevant.append(rel_path)
+        elif depth <= _SUGGEST_BARE_NAME_MAX_DEPTH:
+            relevant.append(rel_path)
+    return relevant[:_SUGGEST_MAX_RESULTS]
 
 
 def _not_found_error(self: AgentAccelToolExecutor, requested: str) -> dict[str, Any]:
@@ -123,9 +142,12 @@ def _not_found_error(self: AgentAccelToolExecutor, requested: str) -> dict[str, 
         error += f". Did you mean: {joined}?"
         suggestion = f"Call the tool again with one of these EXACT existing paths: {joined}"
     else:
+        stem = str(requested).replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].strip()
+        search_hint = f'repo_rg("{stem}") or repo_tree()' if stem else "repo_tree() or repo_rg()"
         suggestion = (
-            "Use repo_tree() or repo_rg() to explore workspace structure first. "
-            "Do not assume files exist - always verify with exploration tools."
+            f"This path does not exist in the workspace. Use {search_hint} to locate "
+            "the right file first. Do not assume files exist - always verify with "
+            "exploration tools."
         )
     return {"ok": False, "error": error, "suggestion": suggestion}
 

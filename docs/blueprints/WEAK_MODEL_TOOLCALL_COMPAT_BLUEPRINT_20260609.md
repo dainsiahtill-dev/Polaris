@@ -162,3 +162,23 @@ patch 内容暴露纯任务漂移:django 实例升级 package.json 依赖版本�
 
 ## 18. 验证(Wave 4)
 新测试 ×4(异机绝对路径教学+候选、分类可恢复、工作区内绝对路径不回归、edit_blocks 路径教学);handlers+tool_execution 428 passed;ruff/mypy 绿。
+
+---
+
+# Phase 2 / Wave 5(2026-06-11):原始只读批次直通 bootstrap(决定性点火修正)
+
+## 19. run10a 审计(wave-4 生效但格局未变)
+wave-4 教学错误正常工作(幻觉路径——本轮为 Windows 风格 `C:\Users\user\Desktop\vue-element-admin\...`——均收到 did-you-mean)。但 `read_files` 仍只有 package.json,patch 漂移依旧(django 的 package.json 被重写成 vue-element-admin 模板)。事件流+turn_history 交叉验尸定位**精确机理**:
+
+- 模型 6 次以**正确路径**调用读工具(model_checks.py)→ **0 次出现在任何回执**;
+- 失败的 bootstrap 读**全是幻觉路径**;
+- 即:原始干净读批次因 implementing 期"无写工具"违例被**整体丢弃**,retry 重新问 LLM,弱模型在重试压力下吐出**更漂移**的调用,FIX-6 把**退化后的批次**送进 bootstrap——点火晚了一步。W3-B 合并机制本身工作正常(turn_history 可见 bootstrap 读+followup 写的合并回执)。
+- 另:P0-A(b) 的 dict 事件被事件持久层静默丢弃(0 bootstrap_read 落盘、0 handler 报错)——已知非致命(W3-B 是承重通道)。
+
+## 20. Wave-5 修复
+`retry_tool_batch_after_contract_violation(original_decision=...)`:入口处若**原始违例批次本身是安全只读批次**(`is_safe_readonly_bootstrap_invocations`),直接将原始决策设为 bootstrap 候选,**跳过全部 retry 重问**——模型的正确读取请求永不丢弃。接线 stream_orchestrator(TOOL_BATCH except 路径)与 turn_transaction_controller(非流 except 路径 + proxy 透传);非工具决策的 guard 路径无批次,不传。
+
+## 21. 验证(Wave 5)
+- 新测试:`test_readonly_original_batch_bootstraps_without_retry_reask`(原始调用原样进 bootstrap、零 LLM 重问);facade mock 签名加 **_kwargs。
+- kernel 全量回归 **1805 passed**;ruff/mypy 绿。
+- run10b(10 题标准集,wave-1..5 全栈)进行中;观测指标:`bootstrapping the ORIGINAL reads` 点火数、各实例 read_files 是否出现真实源码路径、patch 目标是否离开 package.json 系。

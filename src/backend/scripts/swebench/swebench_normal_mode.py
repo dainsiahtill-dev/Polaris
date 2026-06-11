@@ -41,6 +41,16 @@ from arch_b_converge import (
     run_git,
     run_harness_round,
 )
+from polaris.kernelone.benchmark.swebench_failure_taxonomy import (
+    aggregate_labels,
+    label_session,
+    read_events,
+)
+from polaris.kernelone.benchmark.swebench_metrics import (
+    SCORE_SCHEMA_VERSION,
+    aggregate_score_records,
+    build_score_record,
+)
 from polaris_solve_one import _is_test_path
 
 MODEL_NAME = "polaris-director-normal"
@@ -286,9 +296,25 @@ def solve_normal_mode(
     }
 
 
+def _load_pinned_subset(name: str) -> list[str]:
+    """Resolve a version-pinned instance list from ``pinned_subsets.json``.
+
+    Pinned subsets are the north-star measurement contract: the same ids,
+    forever, so paired runs (weak vs strong model, before vs after a harness
+    change) stay comparable. New batches get a NEW subset key, never an edit.
+    """
+    path = Path(__file__).resolve().parent / "pinned_subsets.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    subsets: dict[str, Any] = data.get("subsets", {})
+    if name not in subsets:
+        raise SystemExit(f"unknown subset {name!r}; available: {', '.join(sorted(subsets))}")
+    return [str(iid) for iid in subsets[name]["instance_ids"]]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="SWE-bench normal-mode (real Director agent) harness")
-    ap.add_argument("--instance-ids", required=True, help="comma-separated instance ids")
+    ap.add_argument("--instance-ids", help="comma-separated instance ids")
+    ap.add_argument("--subset", help="named pinned subset from pinned_subsets.json (e.g. pinned-v1)")
     ap.add_argument("--max-loops", type=int, default=4, help="max Director continuation turns")
     ap.add_argument("--work-dir", default=os.path.expanduser("~/Temp/swebench-work/normal"))
     ap.add_argument("--run-prefix", default="polaris_normal")
@@ -296,15 +322,23 @@ def main() -> int:
     ap.add_argument("--score", action="store_true", help="run the official harness on each prediction")
     args = ap.parse_args()
 
+    if bool(args.instance_ids) == bool(args.subset):
+        ap.error("exactly one of --instance-ids or --subset is required")
+    wanted = (
+        _load_pinned_subset(args.subset)
+        if args.subset
+        else [s.strip() for s in args.instance_ids.split(",") if s.strip()]
+    )
+
     from datasets import load_dataset
 
     ds = load_dataset(DATASET, split="test")
-    wanted = [s.strip() for s in args.instance_ids.split(",") if s.strip()]
     rows = {str(r["instance_id"]): dict(r) for r in ds if str(r["instance_id"]) in set(wanted)}
 
     work_dir = Path(args.work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
+    score_records: list[dict[str, Any]] = []
     resolved_count = 0
 
     for iid in wanted:
@@ -338,9 +372,38 @@ def main() -> int:
             run_id = f"{args.run_prefix}_{iid.replace('__', '_')}"
             run_harness_round(work_dir, pred_path, run_id)
             rep, _test_output = instance_report(work_dir, run_id, iid)
-            resolved = bool(rep.get("resolved"))
-            applied = bool(rep.get("patch_successfully_applied"))
-            print(f"[normal] {iid} OFFICIAL: resolved={resolved} applied={applied}", flush=True)
+            # Full deterministic score record: strict resolved + pure_f2p
+            # flakiness shield + gold-file/hunk partial credit (schema-stamped).
+            score = build_score_record(
+                instance_id=iid,
+                model_patch=str(res.get("model_patch") or ""),
+                gold_patch=str(inst.get("patch") or ""),
+                report=rep,
+            )
+            # Deterministic failure-mode labels from the session event stream
+            # (events.jsonl is pre-enrichment ground truth per the 2026-06-11
+            # call_id forensics; execution truth = tool_result + batch_receipt).
+            events: list[dict[str, Any]] = []
+            events_dir = work_dir / iid / ".polaris" / "runtime" / "events"
+            if events_dir.is_dir():
+                for events_file in sorted(events_dir.glob("*.jsonl")):
+                    events.extend(read_events(events_file))
+            taxonomy = label_session(
+                events,
+                model_patch=str(res.get("model_patch") or ""),
+                gold_patch=str(inst.get("patch") or ""),
+            )
+            score["failure_labels"] = taxonomy["labels"]
+            score["failure_counters"] = taxonomy["counters"]
+            score_records.append(score)
+            res["_score"] = score
+            resolved = score["resolved"]
+            print(
+                f"[normal] {iid} OFFICIAL: resolved={resolved} applied={score['patch_applied']} "
+                f"pure_f2p={score['pure_f2p_resolved']} gold_file_hit={score['gold_file_hit']} "
+                f"hunk_overlap={score['gold_hunk_overlap']:.2f}",
+                flush=True,
+            )
         if resolved:
             resolved_count += 1
         res["_resolved"] = resolved
@@ -360,9 +423,28 @@ def main() -> int:
             )
 
     if args.score:
-        total = len(results)
-        rate = (resolved_count / total * 100.0) if total else 0.0
-        print(f"\n[normal] ===== SCORE: {resolved_count}/{total} resolved ({rate:.1f}%) =====", flush=True)
+        agg = aggregate_score_records(score_records)
+        label_agg = aggregate_labels([{"labels": r.get("failure_labels", [])} for r in score_records])
+        scores_path = Path(f"{args.out}.scores.json")
+        scores_path.write_text(
+            json.dumps(
+                {"aggregate": agg, "failure_labels": label_agg, "records": score_records},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"[normal] failure labels: {label_agg['label_frequency']}", flush=True)
+        print(
+            f"\n[normal] ===== SCORE ({SCORE_SCHEMA_VERSION}): "
+            f"{agg['resolved']}/{agg['total']} resolved | "
+            f"pure_f2p {agg['pure_f2p_resolved']}/{agg['total']} | "
+            f"gold-file-hit {agg['gold_file_hit_rate'] * 100.0:.0f}% | "
+            f"mean hunk-overlap {agg['mean_gold_hunk_overlap']:.2f} "
+            f"(slack10 {agg['mean_gold_hunk_overlap_slack10']:.2f}) =====",
+            flush=True,
+        )
+        print(f"[normal] score records -> {scores_path}", flush=True)
     print(f"[normal] predictions -> {args.out}", flush=True)
     return 0
 
