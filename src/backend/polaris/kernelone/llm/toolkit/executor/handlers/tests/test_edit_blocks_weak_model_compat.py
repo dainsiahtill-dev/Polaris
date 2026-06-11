@@ -12,8 +12,10 @@ from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _coerce_line_no,
     _handle_edit_blocks,
+    _handle_read_file,
     _has_search_replace_markers,
     _normalize_block_input,
+    _suggest_similar_paths,
 )
 
 SAMPLE = """class HttpResponse:
@@ -123,3 +125,110 @@ def test_classic_search_replace_still_works(tmp_path: Path) -> None:
     result = _handle_edit_blocks(ex, file="response.py", blocks=blocks)
     assert result.get("ok") is True, result
     assert "return bytes(self.content)" in (tmp_path / "response.py").read_text(encoding="utf-8")
+
+
+# ----- Phase 2: prose-blocks teaching error -----
+
+
+def test_prose_blocks_returns_teaching_error(tmp_path: Path) -> None:
+    """Narration passed as 'blocks' (live-captured Qwen3.6 shape) must teach both forms."""
+    ex = _executor(tmp_path)
+    prose = "Let me first read the main entry point to understand the codebase structure, then apply a fix."
+    result = _handle_edit_blocks(ex, blocks=prose)
+    assert result.get("ok") is False
+    error = result.get("error", "")
+    assert "prose/narration" in error
+    assert "Let me first read" in error  # echoes what the model sent
+    suggestion = result.get("suggestion", "")
+    assert '"start"' in suggestion and '"replace"' in suggestion  # line-range form
+    assert "<<<< SEARCH" in suggestion and ">>>> REPLACE" in suggestion  # block form
+
+
+def test_malformed_markers_keep_generic_error(tmp_path: Path) -> None:
+    """Input WITH markers that still parses to zero blocks is not mislabeled as prose."""
+    ex = _executor(tmp_path)
+    result = _handle_edit_blocks(ex, blocks="<<<< SEARCH:response.py\nonly a search, no divider")
+    assert result.get("ok") is False
+    error = result.get("error", "")
+    assert "prose/narration" not in error
+
+
+# ----- Phase 2: did-you-mean path candidates -----
+
+
+def _nested_workspace(tmp_path: Path) -> AgentAccelToolExecutor:
+    target = tmp_path / "django" / "core" / "checks" / "model_checks.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("E028 = 'check'\n", encoding="utf-8")
+    other = tmp_path / "docs" / "model_checks.py"
+    other.parent.mkdir(parents=True)
+    other.write_text("# unrelated\n", encoding="utf-8")
+    return AgentAccelToolExecutor(workspace=str(tmp_path))
+
+
+def test_read_file_not_found_suggests_candidates(tmp_path: Path) -> None:
+    ex = _nested_workspace(tmp_path)
+    result = _handle_read_file(ex, file="src/django/core/checks/model_checks.py")
+    assert result.get("ok") is False
+    error = result.get("error", "")
+    assert "Did you mean" in error
+    assert "django/core/checks/model_checks.py" in error
+
+
+def test_suggest_similar_paths_ranks_by_trailing_overlap(tmp_path: Path) -> None:
+    ex = _nested_workspace(tmp_path)
+    candidates = _suggest_similar_paths(ex, "src/django/core/checks/model_checks.py")
+    assert candidates[0] == "django/core/checks/model_checks.py"
+    assert "docs/model_checks.py" in candidates
+
+
+def test_not_found_without_candidates_keeps_exploration_advice(tmp_path: Path) -> None:
+    ex = _nested_workspace(tmp_path)
+    result = _handle_read_file(ex, file="totally/unknown_module_xyz.py")
+    assert result.get("ok") is False
+    assert "Did you mean" not in result.get("error", "")
+    assert "repo_tree" in result.get("suggestion", "")
+
+
+def test_edit_blocks_not_found_target_suggests_candidates(tmp_path: Path) -> None:
+    ex = _nested_workspace(tmp_path)
+    blocks = "<<<< SEARCH:src/django/core/checks/model_checks.py\nE028 = 'check'\n====\nE028 = 'fixed'\n>>>> REPLACE\n"
+    result = _handle_edit_blocks(ex, file="src/django/core/checks/model_checks.py", blocks=blocks)
+    assert result.get("ok") is False
+    assert "Did you mean" in result.get("error", "")
+
+
+# ----- Wave-4: hallucinated foreign absolute paths -----
+
+
+def test_foreign_absolute_path_returns_teaching_error_with_candidates(tmp_path: Path) -> None:
+    """Live capture (Qwen3.6, run20): reads of '/Users/joey/workspace/polaris/...' on a
+    Linux host burned the failure budget and collateral-blocked correct-path reads."""
+    ex = _nested_workspace(tmp_path)
+    result = _handle_read_file(ex, file="/Users/joey/workspace/polaris/django/core/checks/model_checks.py")
+    assert result.get("ok") is False
+    error = result.get("error", "")
+    assert "WORKSPACE-RELATIVE" in error
+    assert "django/core/checks/model_checks.py" in error  # did-you-mean from basename
+
+
+def test_foreign_absolute_path_classified_recoverable() -> None:
+    from polaris.kernelone.tool_execution.error_classifier import ToolErrorClassifier
+
+    classifier = ToolErrorClassifier()
+    pattern = classifier.classify("read_file", "UNSUPPORTED_PATH_PREFIX: /Users/joey/workspace/x.py")
+    assert pattern.error_type == "not_found"  # argument-recoverable -> no tool-level budget block
+
+
+def test_absolute_path_inside_workspace_still_works(tmp_path: Path) -> None:
+    ex = _nested_workspace(tmp_path)
+    result = _handle_read_file(ex, file=str(tmp_path / "django" / "core" / "checks" / "model_checks.py"))
+    assert result.get("ok") is True, result
+
+
+def test_edit_blocks_foreign_absolute_path_teaches(tmp_path: Path) -> None:
+    ex = _nested_workspace(tmp_path)
+    blocks = "<<<< SEARCH\nE028 = 'check'\n====\nE028 = 'fixed'\n>>>> REPLACE\n"
+    result = _handle_edit_blocks(ex, file="/Users/joey/repo/django/core/checks/model_checks.py", blocks=blocks)
+    assert result.get("ok") is False
+    assert "WORKSPACE-RELATIVE" in result.get("error", "")

@@ -101,6 +101,21 @@ _EXPLORATION_ONLY_TOOLS = {
     "find",
 }
 
+# Phase-2 Wave-3 (2026-06-10): 跨回合 WorkingMemory 读内容携带。
+# 每个内回合的 LLM 上下文从零重建（system + continuation prompt），上一回合读到的
+# 文件内容必须以可转写规模携带过来，否则模型只能凭预训练记忆默写 SEARCH 文本。
+_READ_CONTENT_TOOLS = frozenset(
+    {
+        "read_file",
+        "repo_read_head",
+        "repo_read_slice",
+        "repo_read_around",
+        "repo_read_tail",
+    }
+)
+_READ_CONTENT_CARRY_MAX_CHARS = 4000  # 单文件携带上限
+_READ_CONTENT_CARRY_TOTAL_CHARS = 12000  # 工具结果总预算（旧值 3000 连一个中等函数都装不下）
+
 _PHASE_PROGRESS_ALIASES = {
     "investigating": "content_gathered",
 }
@@ -1215,7 +1230,7 @@ class RoleSessionOrchestrator:
                 result_data = item.get("result")
                 args = item.get("arguments", {})
 
-                if tool_name in {"read_file", "repo_read_head"} and success:
+                if tool_name in _READ_CONTENT_TOOLS and success:
                     path = _extract_path(args, result_data)
                     # FIX-20250421: 记录真正读取过的文件
                     if path and path not in self.state.read_files:
@@ -1231,22 +1246,33 @@ class RoleSessionOrchestrator:
                             content = str(result_data.get("content", ""))
                     elif isinstance(result_data, str):
                         content = result_data
-                    # FIX-20250422: 避免在 WorkingMemory 中显示截断标记，防止 LLM 误判为未完整读取
-                    # 对于大文件，只显示前 500 字符的预览 + 明确说明已完整读取
+                    # 行段标签：slice/around 类读取带上行号范围，便于模型精确转写
+                    range_label = ""
+                    if isinstance(args, dict):
+                        _start = args.get("start", args.get("start_line"))
+                        _end = args.get("end", args.get("end_line"))
+                        if _start is not None and _end is not None:
+                            range_label = f" 第 {_start}-{_end} 行"
+                    # Phase-2 Wave-3 (2026-06-10): 跨回合上下文从零重建，模型在下一回合
+                    # 没有任何"记忆"。旧实现只给 500 字符预览却声称"完整内容已读取,
+                    # 可直接用于修改"——对模型而言是假话，直接诱发凭预训练记忆默写
+                    # SEARCH 文本（幻觉编辑）。携带量必须达到可转写规模，且截断必须诚实。
                     content_len = len(content)
-                    if content_len > 500:
-                        preview = content[:500]
-                        # 确保预览在行边界截断
+                    if content_len > _READ_CONTENT_CARRY_MAX_CHARS:
+                        preview = content[:_READ_CONTENT_CARRY_MAX_CHARS]
                         last_newline = preview.rfind("\n")
-                        if last_newline > 400:
+                        if last_newline > int(_READ_CONTENT_CARRY_MAX_CHARS * 0.8):
                             preview = preview[:last_newline]
                         tool_result_lines.append(
-                            f"  文件 `{path}` (已完整读取 {content_len} 字符):\n"
+                            f"  文件 `{path}`{range_label} (共 {content_len} 字符，以下为前 {len(preview)} 字符):\n"
                             f"{preview}\n"
-                            f"  ... [以上为前 {len(preview)} 字符预览，完整内容已通过工具读取，可直接用于修改]"
+                            f"  ... [其余内容未包含在此。若需修改未显示区域，先用 repo_read_slice "
+                            f"读取目标行段，再进行编辑；SEARCH 文本必须逐字复制自上方内容或新的读取结果]"
                         )
                     else:
-                        tool_result_lines.append(f"  文件 `{path}` ({content_len} chars):\n{content}")
+                        tool_result_lines.append(
+                            f"  文件 `{path}`{range_label} ({content_len} chars，完整内容如下，可直接逐字复制用于编辑):\n{content}"
+                        )
                 elif tool_name == "repo_rg" and success:
                     pattern = ""
                     if isinstance(args, dict):
@@ -1283,8 +1309,10 @@ class RoleSessionOrchestrator:
                     tool_result_lines.append(f"  {tool_name} 执行失败: {item.get('error', 'unknown error')}")
 
             if tool_result_lines:
-                # FIX-20250421-P2: 限制工具结果总大小，避免 token 爆炸
-                _max_tool_result_chars: int = 3000  # 工具结果总预算
+                # Phase-2 Wave-3: 总预算从 3000 提至 12000 字符（≈3-4k tokens，
+                # 16k 窗口可承受）。3000 字符连一个中等函数都装不下，是"模型被迫
+                # 盲写"的直接原因之一。
+                _max_tool_result_chars: int = _READ_CONTENT_CARRY_TOTAL_CHARS  # 工具结果总预算
                 _current_length: int = 0
                 _filtered_lines: list[str] = []
                 for line in tool_result_lines:
@@ -1330,9 +1358,14 @@ class RoleSessionOrchestrator:
                     "禁止探索。禁止分析。禁止询问确认。"
                 )
             elif self.state.read_files:
+                # Wave-3: 不再无条件禁读——WorkingMemory 携带的内容可能不足以构造
+                # 精确编辑（截断/行段外）。精确补读一段后立刻编辑，优于盲写幻觉 SEARCH。
                 _materialize_exploring_instruction += (
-                    "你已经有可用读取上下文，下一步必须直接调用 write_file/edit_file 等写工具。"
-                    "禁止继续重复 glob/repo_rg。"
+                    "你已有读取上下文：若 WorkingMemory 中的文件内容足以构造编辑，"
+                    "本回合必须直接调用 edit_blocks/edit_file/write_file；"
+                    "若内容不足（被截断或不含目标行段），先用 repo_read_slice 精确读取目标行段，"
+                    "下一动作立即编辑。禁止 glob/repo_rg/repo_tree 等泛探索。"
+                    "SEARCH 文本必须逐字复制自读取结果，禁止凭记忆默写。"
                 )
             else:
                 _materialize_exploring_instruction += (

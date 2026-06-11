@@ -85,11 +85,16 @@ export function GeminiAPIProviderSettings({
           <label className="block text-xs text-text-muted mb-1">温度（Temperature）</label>
           <input
             type="number"
-            value={provider.temperature || 0.7}
-            onChange={(e) => handleFieldChange('temperature', parseFloat(e.target.value) || 0.7)}
+            value={provider.temperature ?? 0.7}
+            onChange={(e) => {
+              // ?? + NaN-guard (NOT `|| default`): 0 is falsy, so `0 || 0.7`
+              // silently forced 0.7 and blocked setting temperature to 0.
+              const parsed = parseFloat(e.target.value);
+              handleFieldChange('temperature', Number.isNaN(parsed) ? undefined : parsed);
+            }}
             min="0"
             max="2"
-            step="0.1"
+            step="any"
             className={cyberInputClasses}
           />
         </div>

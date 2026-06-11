@@ -53,6 +53,109 @@ def register_handlers() -> dict[str, Any]:
     }
 
 
+# Did-you-mean path suggestion bounds (weak-model ergonomics: a wrong guessed
+# path must come back with the correct candidates in the SAME error, otherwise
+# imprecise models loop on path guesses until the failure budget locks them out).
+_SUGGEST_MAX_FILES = 30000
+_SUGGEST_MAX_RESULTS = 5
+
+
+def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list[str]:
+    """Find existing workspace files whose basename matches a not-found path.
+
+    Bounded ``os.walk`` basename scan (reuses the search fallback skip-dirs).
+    Candidates are ranked by how many trailing path components they share with
+    the requested path, so a request for ``src/django/core/checks/model_checks.py``
+    ranks the real ``django/core/checks/model_checks.py`` first.
+
+    Returns:
+        Workspace-relative paths (``/`` separators), at most ``_SUGGEST_MAX_RESULTS``.
+    """
+    from polaris.kernelone.llm.toolkit.executor.handlers.search import _FALLBACK_SKIP_DIRS
+
+    normalized = str(requested).replace("\\", "/").strip().strip("/")
+    basename = normalized.rsplit("/", 1)[-1].strip().lower()
+    if not basename:
+        return []
+    requested_parts = [part.lower() for part in normalized.split("/") if part and part != "."]
+
+    matches: list[tuple[int, int, str]] = []
+    scanned = 0
+    workspace_root = self.workspace
+    try:
+        for current_root, dirnames, filenames in os.walk(workspace_root):
+            dirnames[:] = [d for d in dirnames if d not in _FALLBACK_SKIP_DIRS]
+            for filename in filenames:
+                scanned += 1
+                if scanned > _SUGGEST_MAX_FILES:
+                    raise StopIteration
+                if filename.lower() != basename:
+                    continue
+                absolute = os.path.join(current_root, filename)
+                rel_path = os.path.relpath(absolute, workspace_root).replace("\\", "/")
+                candidate_parts = [part.lower() for part in rel_path.split("/") if part]
+                # Count consecutive matching components from the end (basename inclusive).
+                overlap = 0
+                for req_part, cand_part in zip(reversed(requested_parts), reversed(candidate_parts), strict=False):
+                    if req_part != cand_part:
+                        break
+                    overlap += 1
+                matches.append((-overlap, len(candidate_parts), rel_path))
+    except StopIteration:
+        pass
+    except OSError:
+        return []
+
+    matches.sort()
+    return [rel_path for _neg_overlap, _depth, rel_path in matches[:_SUGGEST_MAX_RESULTS]]
+
+
+def _not_found_error(self: AgentAccelToolExecutor, requested: str) -> dict[str, Any]:
+    """Build a file-not-found error payload that hands the model corrected paths.
+
+    The 'Did you mean' candidates live in the error text itself so they survive
+    every downstream wrapper (failure budget, receipts, retry contexts).
+    """
+    candidates = _suggest_similar_paths(self, requested)
+    error = f"File not found: {requested}"
+    if candidates:
+        joined = ", ".join(candidates)
+        error += f". Did you mean: {joined}?"
+        suggestion = f"Call the tool again with one of these EXACT existing paths: {joined}"
+    else:
+        suggestion = (
+            "Use repo_tree() or repo_rg() to explore workspace structure first. "
+            "Do not assume files exist - always verify with exploration tools."
+        )
+    return {"ok": False, "error": error, "suggestion": suggestion}
+
+
+def _resolve_workspace_rel(self: AgentAccelToolExecutor, raw_path: str) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve a tool-supplied path to workspace-relative, with teaching errors.
+
+    Weak models hallucinate FOREIGN absolute paths (live capture, Qwen3.6:
+    ``/Users/joey/workspace/polaris/main.py`` on a Linux host) — the fs layer
+    raises ``UNSUPPORTED_PATH_PREFIX`` deep inside, which used to surface as an
+    unclassified error that burned the read failure budget and collateral-blocked
+    correct-path reads. Convert it into a did-you-mean not-found (basename scan)
+    so the model self-corrects in one step.
+
+    Returns:
+        ``(relative_path, None)`` on success, ``(None, error_payload)`` otherwise.
+    """
+    try:
+        target = resolve_workspace_path(self._kernel_fs, str(raw_path))
+        return to_workspace_relative_path(self._kernel_fs, target), None
+    except ValueError as exc:
+        payload = _not_found_error(self, str(raw_path))
+        if "UNSUPPORTED_PATH_PREFIX" in str(exc):
+            payload["error"] = (
+                f"Unsupported absolute path: {raw_path}. "
+                "Use a WORKSPACE-RELATIVE path (e.g. 'subdir/module.py'). " + str(payload["error"])
+            )
+        return None, payload
+
+
 def _write_temp_verify_rename(
     target_path: str,
     content: str,
@@ -351,7 +454,17 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
     if re.match(r"^(table|index)\s+if\s+not\s+exists\b", file_path, re.IGNORECASE):
         return {"ok": False, "error": f"Invalid file path resembles SQL statement: {file_path}"}
 
-    target = resolve_workspace_path(self._kernel_fs, file_path)
+    try:
+        target = resolve_workspace_path(self._kernel_fs, file_path)
+    except ValueError as exc:
+        if "UNSUPPORTED_PATH_PREFIX" in str(exc):
+            return {
+                "ok": False,
+                "error": (
+                    f"Unsupported absolute path: {file_path}. Use a WORKSPACE-RELATIVE path (e.g. 'subdir/module.py')."
+                ),
+            }
+        raise
     allowed_extensionless = {
         "makefile",
         "dockerfile",
@@ -514,15 +627,12 @@ def _handle_read_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     if not target_path:
         return {"ok": False, "error": "Missing file path"}
 
-    target = resolve_workspace_path(self._kernel_fs, str(target_path))
-    rel = to_workspace_relative_path(self._kernel_fs, target)
+    rel, resolve_error = _resolve_workspace_rel(self, str(target_path))
+    if rel is None:
+        return resolve_error or {"ok": False, "error": f"Invalid path: {target_path}"}
 
     if not self._kernel_fs.workspace_exists(rel) or not self._kernel_fs.workspace_is_file(rel):
-        return {
-            "ok": False,
-            "error": f"File not found: {target_path}",
-            "suggestion": "Use repo_tree() or repo_rg() to explore workspace structure first. Do not assume files exist - always verify with exploration tools.",
-        }
+        return _not_found_error(self, str(target_path))
 
     # First pass: read raw bytes for size estimation
     safe_max_bytes = max(1024, min(int(max_bytes), 2_000_000))
@@ -670,15 +780,12 @@ def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     if search is None:
         return {"ok": False, "error": "Missing search parameter"}
 
-    target = resolve_workspace_path(self._kernel_fs, file)
-    rel = to_workspace_relative_path(self._kernel_fs, target)
+    rel, resolve_error = _resolve_workspace_rel(self, file)
+    if rel is None:
+        return resolve_error or {"ok": False, "error": f"Invalid path: {file}"}
 
     if not self._kernel_fs.workspace_exists(rel):
-        return {
-            "ok": False,
-            "error": f"File not found: {file}",
-            "suggestion": "Use repo_tree() or repo_rg() to explore workspace structure first. Do not assume files exist - always verify with exploration tools.",
-        }
+        return _not_found_error(self, str(file))
     if not self._kernel_fs.workspace_is_file(rel):
         return {"ok": False, "error": f"Path is not a file: {file}"}
 
@@ -783,15 +890,12 @@ def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     if not file or not isinstance(file, str):
         return {"ok": False, "error": "Missing or invalid file path"}
 
-    target = resolve_workspace_path(self._kernel_fs, file)
-    rel = to_workspace_relative_path(self._kernel_fs, target)
+    rel, resolve_error = _resolve_workspace_rel(self, file)
+    if rel is None:
+        return resolve_error or {"ok": False, "error": f"Invalid path: {file}"}
 
     if not self._kernel_fs.workspace_exists(rel):
-        return {
-            "ok": False,
-            "error": f"File not found: {file}",
-            "suggestion": "Use repo_tree() or repo_rg() to explore workspace structure first. Do not assume files exist - always verify with exploration tools.",
-        }
+        return _not_found_error(self, str(file))
     if not self._kernel_fs.workspace_is_file(rel):
         return {"ok": False, "error": f"Path is not a file: {file}"}
 
@@ -842,10 +946,7 @@ def _has_search_replace_markers(text: str) -> bool:
     """True when the text already looks like SEARCH/REPLACE block(s)."""
     if not text:
         return False
-    for line in text.splitlines():
-        if re.match(r"^\s*<{3,}\s*(SEARCH|ORIGINAL|SOURCE)\b", line):
-            return True
-    return False
+    return any(re.match(r"^\s*<{3,}\s*(SEARCH|ORIGINAL|SOURCE)\b", line) for line in text.splitlines())
 
 
 def _coerce_line_no(value: Any) -> int | None:
@@ -872,14 +973,11 @@ def _synthesize_line_range_block(
     """
     if not file:
         return None, {"ok": False, "error": "line-range edit requires a 'file' argument."}
-    target = resolve_workspace_path(self._kernel_fs, str(file))
-    rel = to_workspace_relative_path(self._kernel_fs, target)
+    rel, resolve_error = _resolve_workspace_rel(self, str(file))
+    if rel is None:
+        return None, (resolve_error or {"ok": False, "error": f"Invalid path: {file}"})
     if not self._kernel_fs.workspace_exists(rel):
-        return None, {
-            "ok": False,
-            "error": f"File not found: {file}",
-            "suggestion": "Verify the path with repo_tree() or repo_rg() before editing.",
-        }
+        return None, _not_found_error(self, str(file))
     if not self._kernel_fs.workspace_is_file(rel):
         return None, {"ok": False, "error": f"Path is not a file: {file}"}
     try:
@@ -932,14 +1030,6 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
     Returns:
         Execution result dict
     """
-    # TEMP DIAGNOSTIC (weak-model edit compat): capture the exact incoming shape so we
-    # can see what models emit when edit_blocks fails to parse. Remove once understood.
-    logger.warning(
-        "EDIT_BLOCKS_RAW kwargs_keys=%s previews=%s",
-        sorted(kwargs.keys()),
-        {k: (str(v)[:220]) for k, v in kwargs.items()},
-    )
-
     file = kwargs.get("file") or kwargs.get("path") or kwargs.get("file_path") or kwargs.get("filepath")
     blocks_text = _normalize_block_input(
         kwargs.get("blocks") or kwargs.get("content") or kwargs.get("edits") or kwargs.get("diff")
@@ -973,7 +1063,11 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
     if not blocks_text or not isinstance(blocks_text, str):
         return {
             "ok": False,
-            "error": "Missing or invalid blocks parameter. Expected SEARCH/REPLACE formatted blocks.",
+            "error": (
+                "Missing edit payload. EASIEST: call edit_blocks with file + start + end + replace "
+                "(replace lines [start,end] with the new code). Alternatively provide SEARCH/REPLACE "
+                "formatted blocks."
+            ),
         }
 
     # Parse edit blocks (with file argument as default_filepath fallback)
@@ -988,10 +1082,35 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         }
 
     if not blocks:
+        # Weak-model teaching error: live capture (Qwen3.6, 2026-06-10) showed models
+        # passing their narration ("Let me first read the file...") as 'blocks'. Echo
+        # what was received and show BOTH complete forms — imprecise models imitate
+        # concrete examples far better than they follow format descriptions.
+        preview = " ".join(blocks_text.strip().split())[:120]
+        if not _has_search_replace_markers(blocks_text):
+            error = (
+                "edit_blocks received prose/narration instead of edit content "
+                f"(got: '{preview}'). The 'blocks' argument must contain ONLY the edit itself — "
+                "never explanations, plans, or intentions."
+            )
+        else:
+            error = "No valid edit blocks found in input"
         return {
             "ok": False,
-            "error": "No valid edit blocks found in input",
-            "suggestion": "Check your SEARCH/REPLACE format. Example:\n<<<< SEARCH:file.py\\ndef old():\\n    pass\\n====\\ndef new():\\n    return 42\\n>>>> REPLACE",
+            "error": error,
+            "suggestion": (
+                "Two accepted forms. LINE-RANGE (easiest): "
+                '{"file": "path/to/file.py", "start": <first line>, "end": <last line>, '
+                '"replace": "<the complete new code for those lines>"} — no SEARCH text needed. '
+                "SEARCH/REPLACE: pass 'blocks' exactly like:\n"
+                "<<<< SEARCH:path/to/file.py\n"
+                "<exact existing lines copied from the file>\n"
+                "====\n"
+                "<new lines>\n"
+                ">>>> REPLACE\n"
+                "If you have not read the file yet, call read_file first, then transcribe the edit. "
+                "Prose descriptions are NOT executable."
+            ),
         }
 
     # Validate blocks
@@ -1028,16 +1147,13 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
             "error": "No file path specified. Either provide 'file' argument or specify path in SEARCH header (<<<< SEARCH:path/to/file)",
         }
 
-    target = resolve_workspace_path(self._kernel_fs, str(target_file))
-    rel = to_workspace_relative_path(self._kernel_fs, target)
+    rel, resolve_error = _resolve_workspace_rel(self, str(target_file))
+    if rel is None:
+        return resolve_error or {"ok": False, "error": f"Invalid path: {target_file}"}
 
     # Check file exists
     if not self._kernel_fs.workspace_exists(rel):
-        return {
-            "ok": False,
-            "error": f"File not found: {target_file}",
-            "suggestion": "Use repo_tree() or repo_rg() to explore workspace structure first. Do not assume files exist - always verify with exploration tools.",
-        }
+        return _not_found_error(self, str(target_file))
 
     if not self._kernel_fs.workspace_is_file(rel):
         return {"ok": False, "error": f"Path is not a file: {target_file}"}
@@ -1051,8 +1167,18 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
 
     for i, block in enumerate(blocks):
         block_file = block.filepath or target_file
-        block_target = resolve_workspace_path(self._kernel_fs, block_file)
-        block_rel = to_workspace_relative_path(self._kernel_fs, block_target)
+        block_rel, block_resolve_error = _resolve_workspace_rel(self, str(block_file))
+        if block_rel is None:
+            validation_results.append(
+                {
+                    "index": i,
+                    "file": block_file,
+                    "valid": False,
+                    "error": str((block_resolve_error or {}).get("error", "Invalid path")),
+                }
+            )
+            all_valid = False
+            continue
 
         # Check file exists
         if not self._kernel_fs.workspace_exists(block_rel):
@@ -1061,7 +1187,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
                     "index": i,
                     "file": block_file,
                     "valid": False,
-                    "error": "File not found",
+                    "error": str(_not_found_error(self, str(block_file)).get("error", "File not found")),
                 }
             )
             all_valid = False
@@ -1485,18 +1611,15 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     if not file or not isinstance(file, str):
         return {"ok": False, "error": "Missing or invalid file path"}
 
-    target = resolve_workspace_path(self._kernel_fs, file)
-    rel = to_workspace_relative_path(self._kernel_fs, target)
+    rel, resolve_error = _resolve_workspace_rel(self, file)
+    if rel is None:
+        return resolve_error or {"ok": False, "error": f"Invalid path: {file}"}
     content_text = str(content) if content is not None else ""
 
     # File doesn't exist
     if not self._kernel_fs.workspace_exists(rel):
         if not create_if_missing:
-            return {
-                "ok": False,
-                "error": f"File not found: {file}",
-                "suggestion": "Use repo_tree() or repo_rg() to explore workspace structure first. Do not assume files exist - always verify with exploration tools.",
-            }
+            return _not_found_error(self, str(file))
         policy_result = _validate_director_policy_for_write(
             self,
             rel=rel,

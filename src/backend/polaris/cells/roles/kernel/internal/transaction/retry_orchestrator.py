@@ -14,6 +14,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
@@ -104,6 +105,70 @@ def resolve_retry_model_override(retry_llm_call_ordinal: int) -> str | None:
     return selected or None
 
 
+_LINE_RANGE_EDIT_BLOCKS_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "file": {
+            "type": "string",
+            "description": "Workspace-relative path of the file to edit.",
+        },
+        "start": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "First line to replace (1-based, inclusive — reuse the range you already read).",
+        },
+        "end": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Last line to replace (1-based, inclusive).",
+        },
+        "replace": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The COMPLETE new source code for lines start..end (code only, no prose).",
+        },
+    },
+    "required": ["file", "start", "end", "replace"],
+}
+
+
+def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict]) -> list[dict]:
+    """Rewrite the ``edit_blocks`` schema to the line-range-only form (ADR-0090).
+
+    Under named tool forcing, guided decoding constrains ARGUMENTS to the
+    declared JSON schema. With the full schema weak models dump prose into
+    ``blocks`` ("No valid edit blocks found" — observed live). Removing
+    ``blocks`` and requiring file/start/end/replace makes the only generable
+    output a concrete line-range replacement — the easy form the model already
+    used for ``repo_read_slice``.
+    """
+    narrowed: list[dict] = []
+    for definition in tool_definitions:
+        if not isinstance(definition, dict):
+            narrowed.append(definition)
+            continue
+        function_payload = definition.get("function")
+        name = (
+            str(function_payload.get("name") or "").strip()
+            if isinstance(function_payload, dict)
+            else str(definition.get("name") or "").strip()
+        )
+        if name != "edit_blocks":
+            narrowed.append(definition)
+            continue
+        rewritten = dict(definition)
+        rewritten_function = dict(function_payload) if isinstance(function_payload, dict) else {"name": "edit_blocks"}
+        rewritten_function["description"] = (
+            "Replace lines [start, end] of `file` with `replace` (the complete new "
+            "code for that range). Line numbers are 1-based inclusive — reuse the "
+            "exact range you already read via repo_read_slice/read_file."
+        )
+        rewritten_function["parameters"] = dict(_LINE_RANGE_EDIT_BLOCKS_PARAMETERS)
+        rewritten["function"] = rewritten_function
+        narrowed.append(rewritten)
+    return narrowed
+
+
 def resolve_retry_escalation(
     *,
     attempt_index: int,
@@ -119,23 +184,29 @@ def resolve_retry_escalation(
     API level cannot be ignored:
 
     - attempts 1-2: write-inclusive set, prompt steering only (unchanged);
-    - attempt 3+: WRITE-ONLY tool definitions — the provider can no longer
-      generate a read-tool call at all;
-    - final attempt: additionally force the selected write tool by name
-      (OpenAI-style ``{"type": "function", "function": {"name": ...}}``).
+    - attempt 3+: WRITE-ONLY tool definitions — the narrowed-set batch guard
+      rejects any read batch, and providers with strict tool grammars cannot
+      generate one;
+    - final attempt: force the selected write tool by name (OpenAI-style
+      ``{"type": "function", "function": {"name": ...}}``); when that tool is
+      ``edit_blocks``, its schema is simultaneously narrowed to the line-range
+      form so guided decoding can only produce a concrete replacement.
 
     Returns ``(tool_definitions_override, tool_choice_override)`` — ``None``
     members mean "keep the attempt's defaults".
     """
     if attempt_index < 2 or not strict_tool_definitions:
         return None, None
+    definitions_override = strict_tool_definitions
     tool_choice_override: Any | None = None
     if attempt_index >= max_retry_attempts - 1 and forced_write_tool_name:
         tool_choice_override = {
             "type": "function",
             "function": {"name": forced_write_tool_name},
         }
-    return strict_tool_definitions, tool_choice_override
+        if forced_write_tool_name == "edit_blocks":
+            definitions_override = narrow_edit_blocks_schema_to_line_range(strict_tool_definitions)
+    return definitions_override, tool_choice_override
 
 
 def _extract_latest_assistant_message(context: list[dict]) -> str:
@@ -474,6 +545,14 @@ def build_forced_write_only_retry_tool_definitions(
 # ---------------------------------------------------------------------------
 
 
+# Per-file and total budgets for REAL file content carried into the bootstrap
+# follow-up write context. The previous 1200-char JSON fragment made correct
+# SEARCH/REPLACE transcription impossible by construction — the model was forced
+# to write a file it could not see.
+_BOOTSTRAP_READ_CONTENT_MAX_CHARS = 9000
+_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS = 16000
+
+
 def build_retry_write_after_bootstrap_context(
     *,
     original_context: list[dict],
@@ -484,22 +563,44 @@ def build_retry_write_after_bootstrap_context(
     summary_lines: list[str] = []
     successful_files: list[str] = []
     failed_files: list[str] = []
+    content_chars_used = 0
     for item in list(bootstrap_receipt.get("results", []) or []):
         if not isinstance(item, Mapping):
             continue
         tool_name = str(item.get("tool_name") or "unknown").strip()
         status = str(item.get("status") or "").strip().lower()
         payload = item.get("result")
-        if isinstance(payload, Mapping):
-            try:
-                payload_text = json.dumps(dict(payload), ensure_ascii=False)
-            except (TypeError, ValueError):
-                payload_text = str(payload)
+        # Prefer the REAL file content for read receipts: the model must be able
+        # to transcribe exact lines into its write call.
+        file_content = ""
+        if status == "success" and isinstance(payload, Mapping):
+            raw_content = payload.get("content")
+            if not isinstance(raw_content, str):
+                inner = payload.get("result")
+                if isinstance(inner, Mapping):
+                    raw_content = inner.get("content")
+            if isinstance(raw_content, str) and raw_content.strip():
+                file_content = raw_content
+        if file_content and content_chars_used < _BOOTSTRAP_READ_CONTENT_TOTAL_CHARS:
+            budget = min(
+                _BOOTSTRAP_READ_CONTENT_MAX_CHARS,
+                _BOOTSTRAP_READ_CONTENT_TOTAL_CHARS - content_chars_used,
+            )
+            if len(file_content) > budget:
+                file_content = file_content[:budget] + "\n...[content truncated]"
+            content_chars_used += len(file_content)
+            payload_text = "exact file content follows:\n```\n" + file_content + "\n```"
         else:
-            payload_text = str(payload or "")
-        payload_text = payload_text.strip()
-        if len(payload_text) > 1200:
-            payload_text = payload_text[:1200] + " ...[truncated]"
+            if isinstance(payload, Mapping):
+                try:
+                    payload_text = json.dumps(dict(payload), ensure_ascii=False)
+                except (TypeError, ValueError):
+                    payload_text = str(payload)
+            else:
+                payload_text = str(payload or "")
+            payload_text = payload_text.strip()
+            if len(payload_text) > 1200:
+                payload_text = payload_text[:1200] + " ...[truncated]"
         resolved_file = ""
         if isinstance(payload, Mapping):
             resolved_file = str(payload.get("file") or payload.get("path") or "").strip()
@@ -802,12 +903,41 @@ def _synthesize_deterministic_dag_service_content() -> str:
     )
 
 
+def merge_bootstrap_receipt_into_result(result: Any, bootstrap_receipt: Mapping[str, Any] | None) -> Any:
+    """Prepend bootstrap READ receipts into the turn result's batch receipt.
+
+    The session reducer and the next-turn WorkingMemory only see
+    ``turn_result.batch_receipt`` (each inner turn's LLM context is rebuilt from
+    scratch) — without this merge the bootstrap reads are invisible to subsequent
+    turns and weak models rewrite files from pretraining memory (hallucinated
+    SEARCH text).
+    """
+    if not isinstance(result, dict) or not isinstance(bootstrap_receipt, Mapping):
+        return result
+    bootstrap_results = [item for item in list(bootstrap_receipt.get("results", []) or []) if isinstance(item, Mapping)]
+    if not bootstrap_results:
+        return result
+    existing = result.get("batch_receipt")
+    if isinstance(existing, Mapping):
+        merged = dict(existing)
+        merged["results"] = [*bootstrap_results, *list(merged.get("results", []) or [])]
+        merged["success_count"] = int(merged.get("success_count", 0) or 0) + sum(
+            1 for item in bootstrap_results if str(item.get("status") or "").strip().lower() == "success"
+        )
+        return {**result, "batch_receipt": merged}
+    if existing is None:
+        return {**result, "batch_receipt": dict(bootstrap_receipt)}
+    # Unknown receipt object shape — leave untouched rather than corrupt it.
+    return result
+
+
 def build_deterministic_bootstrap_followup_write_decision(
     *,
     turn_id: str,
     original_context: list[dict],
     bootstrap_receipt: Mapping[str, Any],
     allowed_tool_names: set[str],
+    workspace: str = ".",
 ) -> TurnDecision | None:
     if "write_file" not in allowed_tool_names:
         return None
@@ -817,8 +947,31 @@ def build_deterministic_bootstrap_followup_write_decision(
     )
     if not targets:
         return None
-    target = targets[0]
     latest_user = extract_latest_user_message(original_context)
+    # The synthesized templates are SCAFFOLDING content (package.json/tsconfig/
+    # stub modules). In repo-fix contexts they are pure poison: overwriting an
+    # existing source file destroys it, and creating files the user never named
+    # (failed-read paths leak into the candidate list) plants off-task artifacts
+    # that reinforce weak-model task drift. Only create NEW files the user
+    # explicitly named.
+    workspace_root = Path(str(workspace or ".").strip() or ".")
+    viable_targets: list[str] = []
+    for candidate_target in targets:
+        if candidate_target not in latest_user:
+            continue
+        try:
+            if (workspace_root / candidate_target).exists():
+                continue
+        except OSError:
+            continue
+        viable_targets.append(candidate_target)
+    if not viable_targets:
+        logger.warning(
+            "deterministic bootstrap write fallback skipped: no safe user-named non-existing target (candidates=%s)",
+            targets[:5],
+        )
+        return None
+    target = viable_targets[0]
     content = _synthesize_deterministic_bootstrap_write_content(target, latest_user)
     invocation = ToolInvocation(
         call_id=ToolCallId(f"{turn_id}:deterministic-write:1"),
@@ -916,7 +1069,7 @@ class RetryOrchestrator:
             raw_invocations = list(getattr(tool_batch, "invocations", []) or [])
             batch_id = getattr(tool_batch, "batch_id", BatchId(f"{turn_id}_bootstrap"))
         normalized_invocations: list[ToolInvocation] = []
-        for raw_invocation in raw_invocations:
+        for invocation_index, raw_invocation in enumerate(raw_invocations):
             if isinstance(raw_invocation, Mapping):
                 item = dict(raw_invocation)
             else:
@@ -930,6 +1083,10 @@ class RetryOrchestrator:
                 }
             if not str(item.get("tool_name") or "").strip():
                 continue
+            if not str(item.get("call_id") or "").strip():
+                # Decoder-produced invocations always carry call_id, but bootstrap
+                # batches sourced from retry decisions may not — ToolBatch requires it.
+                item["call_id"] = f"{turn_id}_bootstrap_{invocation_index}"
             if not item.get("execution_mode"):
                 item["execution_mode"] = ToolExecutionMode.READONLY_SERIAL
             if not item.get("effect_type"):
@@ -961,6 +1118,30 @@ class RetryOrchestrator:
         )
         receipts_as_dicts = normalize_batch_receipts(receipts)
         record_receipts_to_ledger(receipts_as_dicts, ledger)
+        # Bootstrap reads execute OUTSIDE execute_tool_batch, so without explicit
+        # emission their results never reach the session event stream / TruthLog —
+        # later turns then have no trace that the file was ever read, and weak
+        # models fall back to writing SEARCH text from memory (hallucination).
+        if self.emit_event is not None:
+            for receipt_dict in receipts_as_dicts:
+                if not isinstance(receipt_dict, Mapping):
+                    continue
+                for result_item in list(receipt_dict.get("results", []) or []):
+                    if not isinstance(result_item, Mapping):
+                        continue
+                    try:
+                        self.emit_event(
+                            {
+                                "type": "tool_result",
+                                "data": {
+                                    "tool": str(result_item.get("tool_name") or ""),
+                                    "result": result_item.get("result"),
+                                    "bootstrap_read": True,
+                                },
+                            }
+                        )
+                    except (RuntimeError, ValueError, TypeError) as emit_exc:
+                        logger.warning("bootstrap receipt event emission failed: %s", emit_exc)
         if not receipts_as_dicts:
             return None
         merged_receipt = merge_batch_receipts(receipts_as_dicts)
@@ -1096,12 +1277,14 @@ class RetryOrchestrator:
         write_context: list[dict],
         stream: bool,
         shadow_engine: Any | None,
+        workspace: str = ".",
     ) -> dict[str, Any] | None:
         deterministic_followup_decision = build_deterministic_bootstrap_followup_write_decision(
             turn_id=turn_id,
             original_context=original_context,
             bootstrap_receipt=bootstrap_receipt,
             allowed_tool_names=allowed_tool_names,
+            workspace=workspace,
         )
         if deterministic_followup_decision is None:
             return None
@@ -1128,7 +1311,9 @@ class RetryOrchestrator:
                 tool_batch_count=ledger.tool_batch_count,
                 ledger=ledger,
             )
-            return deterministic_result
+            # Wave-3: carry the bootstrap READ receipts in the turn's authoritative
+            # receipt so the next turn's WorkingMemory can see the file content.
+            return merge_bootstrap_receipt_into_result(deterministic_result, bootstrap_receipt)
         except RuntimeError:
             ledger.tool_batch_count = deterministic_batch_count_before
             rollback_state_after_retry_batch_failure(state_machine, ledger)
@@ -1320,10 +1505,21 @@ class RetryOrchestrator:
                         break
                 if not is_mutation_contract_violation(retry_exc):
                     raise
+                # Weak-model ignition (Phase 2, 2026-06-10): a retry attempt that emits a
+                # SAFE READ-ONLY batch (read_file/repo_rg/...) is the model asking for the
+                # evidence it needs before it can write. Punishing that with another blind
+                # retry traps models that have never seen the target file — convert it to
+                # the designed bootstrap read -> forced-write path IMMEDIATELY instead of
+                # only on the final attempt.
+                if is_safe_readonly_bootstrap_invocations(retry_invocations):
+                    logger.warning(
+                        "mutation-contract retry attempt=%s emitted read-only batch -> "
+                        "switching to bootstrap read path",
+                        attempt_index + 1,
+                    )
+                    candidate_bootstrap_decision = retry_decision
+                    break
                 if attempt_index >= max_retry_attempts - 1:
-                    if is_safe_readonly_bootstrap_invocations(retry_invocations):
-                        candidate_bootstrap_decision = retry_decision
-                        break
                     raise
                 retry_context = append_retry_enforcement_hint(
                     retry_context,
@@ -1453,6 +1649,7 @@ class RetryOrchestrator:
                         write_context=current_write_context,
                         stream=stream,
                         shadow_engine=shadow_engine,
+                        workspace=bootstrap_workspace,
                     )
                     if deterministic_result is not None:
                         return deterministic_result
@@ -1478,7 +1675,10 @@ class RetryOrchestrator:
                         tool_batch_count=ledger.tool_batch_count,
                         ledger=ledger,
                     )
-                    return followup_result
+                    # Wave-3: carry the bootstrap READ receipts in the turn's
+                    # authoritative receipt so the next turn's WorkingMemory can
+                    # see the file content (turn context is rebuilt from scratch).
+                    return merge_bootstrap_receipt_into_result(followup_result, bootstrap_receipt)
                 except RuntimeError as followup_exc:
                     # FIX-20260504: rollback batch count so failed attempts don't
                     # accumulate and cause assert_single_tool_batch to fail.
@@ -1519,6 +1719,7 @@ class RetryOrchestrator:
                                 write_context=current_write_context,
                                 stream=stream,
                                 shadow_engine=shadow_engine,
+                                workspace=bootstrap_workspace,
                             )
                             if deterministic_result is not None:
                                 return deterministic_result

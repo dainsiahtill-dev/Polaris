@@ -159,8 +159,21 @@ ContextOS: 预算 = min(角色策略, 模型窗口×0.85) − system prompt 预�
 **E2E 迭代追加发现与修复(同日)**:
 - **fix2 揪出 W1.5 集成 bug**:vLLM 严格模板拒绝中段 system 消息(`System message must be at the beginning` 400)——RoleSignalPlane 补充 system turns 被原样透传。修复:`_build_chat_messages_payload` 仅保留前导 system 块,中段 system 降级为【系统提示】user turn。fix3 验证 0 次 400。
 - **fix3 取证确认 W1.1 契约保持**(无成对空参;6 次参数失败均为模型自产缺参调用),并暴露真正缺口:**mutation retry 的"升级"只加提示词,`_strict_retry_tool_definitions` 算了从未用,`attempt_tool_choice_override` 恒为 None** → qwen 四轮"必须写"重试中仍合法选择 repo_rg。
-- **W1.9(追加)API 级升级阶梯**:`resolve_retry_escalation` —— 第 3 次重试起工具集收窄为纯写(guided decoding 无法生成读调用),最后一次重试按名强制选定写工具(OpenAI `{"type":"function","function":{"name":…}}`)。提示词会被弱模型无视,API 约束不会。
+- **W1.9(追加)API 级升级阶梯**:`resolve_retry_escalation` —— 第 3 次重试起工具集收窄为纯写,最后一次重试按名强制选定写工具(OpenAI `{"type":"function","function":{"name":…}}`)。提示词会被弱模型无视,API 约束不会。
+- **fix4 验证 W1.9 机械生效 + 揪出最后一公里**:按名强制后 qwen **每次都发 edit_blocks**(guided decoding 生效;attempt3 仅收窄工具列表对 vLLM 自由生成无约束力,批契约守卫兜底拒绝)。但 guided decoding 按 schema 生成参数——完整 schema 下 qwen 把散文塞进 `blocks` → "No valid edit blocks found"。同时 handler 报错把模型往更难的 SEARCH/REPLACE 推(误导)。
+- **W1.10(追加)强制调用 schema 收窄**:`narrow_edit_blocks_schema_to_line_range` —— 末次强制 edit_blocks 时,schema 只留 `file/start/end/replace` 全 required(去掉 `blocks`),guided decoding 在语法层面**只能**产出行替换;handler 报错改为优先推荐 line-range 易形式。
+- **fix5 验证 W1.10 彻底奏效 + 触底到模型能力边界**:`EDIT_BLOCKS_RAW kwargs_keys=['end','file','replace','start']` —— guided decoding 现在只能产出行替换四字段,"No valid edit blocks found" **数十→0**,散文逃逸被语法层击穿。但 qwen 在 **django** 仓库里产出 `file='app.py', replace='from flask import Flask...'` —— **幻觉成 Flask 项目,定位完全失败**。对照 diag5e(修复前散文定位正确 compiler.py),剧烈 run 间跳变指向 temperature=0.92 过高 + 强制写压力下退化。**结论:链路自伤已全部清零,剩余瓶颈是 qwen3.6-27b-int4 对复杂 ORM bug 的定位/推理能力,非链路技术可解。**
 - **rg 缺失环境单文件搜索修复**:python fallback 对文件路径 `os.walk` 产出空 → 静默零结果误导 agent;现支持单文件扫描。
+
+## 7.6 已设计待实施的 next step(相位感知低温,W2.6)
+
+fix5 实证 temperature=0.92 是 run 间幻觉跳变元凶(diag5e 定位对 vs fix5 幻觉 Flask)。**相位感知解码**——mutation-retry escalation 阶段注入低温(确定性采样)——是真实的 TurnEngine 解码技术增强。已确认注入管道(复用 tool_choice override 同款通道,4 处):
+1. `retry_orchestrator._execute_retry_batch` escalation 时传 `temperature_override`(低温,env 可调)→ `call_llm_for_decision_stream`
+2. `stream_orchestrator._call_llm_for_decision_stream_impl` 加 `temperature_override` 参 → `request_payload["temperature_override"]`
+3. `turn_engine/engine.py` llm_provider_stream 闭包:`request_payload["temperature_override"]` → `context_override["_transaction_kernel_temperature_override"]`(仿 :333 tool_choice 转换)
+4. `llm_caller/caller.py` 加 `resolve_temperature(temperature, override)` 读该键覆盖
+
+**刻意未在本轮收尾实施**:engine.py 闭包/kernel core 正被并发 agent 区域性改动,长 session 末尾叠加 4 处深改动违反"每改动必回归"门禁;且它救不了当前 case(模型能力边界),应独立专注实施 + 单测验证。同时建议用户把 director temperature 从 0.92 调低(配置层,直接见效)。
 
 ## 8. 治理
 

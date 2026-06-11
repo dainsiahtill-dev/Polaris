@@ -53,11 +53,15 @@ export function CodexSDKProviderSettings({
             <input
               type="number"
               value={provider.temperature ?? 0.2}
-              onChange={(e) => handleFieldChange('temperature', parseFloat(e.target.value) || 0)}
+              onChange={(e) => {
+                // NaN-guard so empty input clears to the default instead of 0.
+                const parsed = parseFloat(e.target.value);
+                handleFieldChange('temperature', Number.isNaN(parsed) ? undefined : parsed);
+              }}
               className={cyberInputClasses}
               min="0"
               max="2"
-              step="0.1"
+              step="any"
             />
           </div>
         </div>

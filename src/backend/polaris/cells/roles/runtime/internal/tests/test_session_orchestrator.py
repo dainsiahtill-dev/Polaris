@@ -41,7 +41,7 @@ class MockKernel:
         self.call_count = 0
         self.tool_runtime = AsyncMock()
 
-    async def execute_stream(self, turn_id, context, tool_definitions):
+    async def execute_stream(self, turn_id, context, tool_definitions, **kwargs):
         turn_index = self.call_count
         self.call_count += 1
         for event in self.events_per_turn[turn_index]:
@@ -1299,3 +1299,80 @@ class TestTruncateSuperModeGoal:
         result = RoleSessionOrchestrator._truncate_super_mode_goal_for_continuation(goal)
         assert len(result) <= 3100
         assert "[目标已截断]" in result
+
+
+class TestWave3ReadContentCarryOver:
+    """Phase-2 Wave-3: 跨回合 WorkingMemory 必须以可转写规模携带读内容。
+
+    背景（diag5f 实尸检）：每个内回合的 LLM 上下文从零重建；旧实现只携带 500 字符
+    预览却声称"完整内容已读取，可直接用于修改"——模型随即凭预训练记忆默写 SEARCH
+    文本（幻觉编辑）。repo_read_slice 等精确读工具甚至完全不被携带。
+    """
+
+    @pytest.fixture
+    def tmp_workspace(self):
+        ws = _make_local_workspace("orch_wave3_")
+        yield ws
+        shutil.rmtree(ws, ignore_errors=True)
+
+    def _orchestrator(self, tmp_workspace: str) -> RoleSessionOrchestrator:
+        orch = RoleSessionOrchestrator(
+            session_id="sess-wave3",
+            kernel=AsyncMock(),
+            workspace=tmp_workspace,
+        )
+        orch.state.turn_count = 1
+        return orch
+
+    def _envelope_with_read(self, tool_name: str, content: str, args: dict) -> TurnOutcomeEnvelope:
+        return TurnOutcomeEnvelope(
+            turn_result=TurnResult(
+                turn_id="t-w3",
+                kind="final_answer",
+                visible_content="",
+                decision={},
+                batch_receipt={
+                    "results": [
+                        {
+                            "tool_name": tool_name,
+                            "status": "success",
+                            "arguments": args,
+                            "result": {"file": args.get("file", ""), "content": content},
+                        }
+                    ]
+                },
+            ),
+            continuation_mode=TurnContinuationMode.AUTO_CONTINUE,
+            session_patch={},
+        )
+
+    def test_repo_read_slice_content_is_carried_with_range_label(self, tmp_workspace: str) -> None:
+        orch = self._orchestrator(tmp_workspace)
+        sentinel = "SENTINEL_LINE_AT_DEPTH_2500"
+        content = ("x" * 2500) + sentinel + ("y" * 200)
+        envelope = self._envelope_with_read(
+            "repo_read_slice", content, {"file": "django/core/checks/model_checks.py", "start": 10, "end": 80}
+        )
+        prompt = orch._build_continuation_prompt(envelope)
+        # 旧实现：repo_read_slice 完全不携带；500 字符上限会砍掉 sentinel
+        assert sentinel in prompt
+        assert "第 10-80 行" in prompt
+        assert "model_checks.py" in prompt
+
+    def test_truncation_is_honest_not_false_completeness(self, tmp_workspace: str) -> None:
+        orch = self._orchestrator(tmp_workspace)
+        content = "z" * 6000  # 超过单文件 4000 上限
+        envelope = self._envelope_with_read("read_file", content, {"file": "big.py"})
+        prompt = orch._build_continuation_prompt(envelope)
+        assert "其余内容未包含" in prompt
+        assert "repo_read_slice" in prompt  # 指导模型精确补读
+        assert "完整内容已通过工具读取" not in prompt  # 旧的虚假完整性声明
+
+    def test_small_file_carried_in_full_with_copy_instruction(self, tmp_workspace: str) -> None:
+        orch = self._orchestrator(tmp_workspace)
+        content = "def check():\n    return E028\n"
+        envelope = self._envelope_with_read("read_file", content, {"file": "checks.py"})
+        prompt = orch._build_continuation_prompt(envelope)
+        assert "def check():" in prompt
+        assert "完整内容如下" in prompt
+        assert "逐字复制" in prompt

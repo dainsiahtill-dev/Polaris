@@ -92,6 +92,57 @@ class TestFailureBudget:
         assert self.budget.get_tool_failure_count("precision_edit") == 3
         assert self.budget.get_tool_failure_count("read_file") == 2
 
+    def test_read_tool_not_found_never_tool_blocks(self) -> None:
+        """Read-side not_found failures must keep escalating, never tool-level BLOCK.
+
+        Blocking read_file after repeated wrong-path guesses permanently cripples
+        recovery (the model can never look at anything again this turn). A corrected
+        path succeeds immediately, so the failure is argument-recoverable.
+        """
+        pattern = self.classifier.classify("read_file", f"file not found: src/pkg/mod.py #{id(self)}")
+
+        results = [self.budget.record_failure(pattern) for _ in range(6)]
+
+        assert all(r.decision != FailureDecision.BLOCK for r in results)
+        assert results[-1].decision == FailureDecision.ESCALATE
+        assert results[-1].blocked is False
+        assert results[-1].suggestion is not None
+        assert "Did you mean" in results[-1].suggestion
+
+    def test_write_tool_still_blocks_at_fourth_failure(self) -> None:
+        """Write tools keep the original tool-level BLOCK (runaway editors are dangerous)."""
+        pattern = self.classifier.classify("edit_blocks", f"no matches found #{id(self)}")
+
+        for _ in range(3):
+            self.budget.record_failure(pattern)
+        result = self.budget.record_failure(pattern)
+
+        assert result.decision == FailureDecision.BLOCK
+        assert result.blocked is True
+
+    def test_recoverable_exemption_yields_to_total_budget(self) -> None:
+        """The per-turn total cap remains the final circuit breaker for runaway read loops."""
+        results = []
+        for index in range(FailureBudget.max_total_per_turn + 2):
+            pattern = self.classifier.classify("read_file", f"file not found: guess_{index}/path_{id(self)}.py")
+            results.append(self.budget.record_failure(pattern))
+
+        assert results[-1].decision == FailureDecision.BLOCK
+        assert results[-1].blocked is True
+
+    def test_block_suggestion_is_actionable(self) -> None:
+        """BLOCK suggestion must direct the model to a different action, not claim user contact."""
+        pattern = self.classifier.classify("execute_command", f"permission denied #{id(self)}")
+
+        for _ in range(3):
+            self.budget.record_failure(pattern)
+        result = self.budget.record_failure(pattern)
+
+        assert result.decision == FailureDecision.BLOCK
+        assert result.suggestion is not None
+        assert "different tool or approach" in result.suggestion
+        assert "manual intervention" not in result.suggestion
+
     def test_get_stats(self) -> None:
         """Test stats retrieval."""
         pattern = self.classifier.classify("edit", f"no matches found #{id(self)}")

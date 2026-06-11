@@ -77,6 +77,35 @@ _TOOL_NAME_CANONICAL_ALIASES = {
 }
 
 
+# Edit-tool failure signatures (verbatim substrings of executor error payloads).
+# Used to recognize "the previous edit attempt failed" from the conversation so
+# the mandated verification read can pass the CONTENT_GATHERED write gate.
+_EDIT_FAILURE_MARKERS: tuple[str, ...] = (
+    "identical search and replace",
+    "Validation failed for",
+    "No valid edit blocks",
+    "missing required argument: blocks or start",
+    "edit_blocks received prose/narration",
+    "SEARCH text exactly matches file content",
+    "Failed to parse edit blocks",
+)
+
+
+def _recent_edit_failure_in_context(context: Any, lookback: int = 8) -> bool:
+    """Whether the tail of the conversation records a failed edit attempt."""
+    try:
+        tail = list(context)[-lookback:]
+    except TypeError:
+        return False
+    for message in reversed(tail):
+        if not isinstance(message, Mapping):
+            continue
+        content = str(message.get("content") or "")
+        if any(marker in content for marker in _EDIT_FAILURE_MARKERS):
+            return True
+    return False
+
+
 def _normalize_allowed_tool_name_alias(name: str) -> str:
     normalized = str(name or "").strip().lower().replace("-", "_")
     return _TOOL_NAME_CANONICAL_ALIASES.get(normalized, normalized)
@@ -661,7 +690,29 @@ class ToolBatchExecutor:
         _is_content_gathered_phase = _current_phase == Phase.CONTENT_GATHERED
         _enable_modification_contract = getattr(self.config, "enable_modification_contract", True)
 
-        if _is_content_gathered_phase and _is_materialize and not _has_write:
+        # Phase-2 weak-model exemption (2026-06-10): after a FAILED edit attempt the
+        # mandated recovery (and the failure budget's own instruction) is to re-read
+        # the exact file content before retrying the edit. Blanket "reading is
+        # blocked" in CONTENT_GATHERED traps that recovery and forces blind edits
+        # from memory (hallucinated SEARCH text). Allow a direct-read-only batch
+        # through when the conversation shows a recent edit failure.
+        _verification_read_exemption = (
+            _is_content_gathered_phase
+            and _is_materialize
+            and not _has_write
+            and has_direct_read
+            and not _has_broad_exploration
+            and _recent_edit_failure_in_context(context)
+        )
+        if _verification_read_exemption:
+            logger.info(
+                "content_gathered verification-read exemption: allowing direct read after edit failure. "
+                "turn_id=%s tools=%s",
+                turn_id,
+                non_empty_tool_names,
+            )
+
+        if _is_content_gathered_phase and _is_materialize and not _has_write and not _verification_read_exemption:
             if _enable_modification_contract:
                 # FIX-20250422-SUPER: 传递对话上下文以检测 SUPER_MODE 标记
                 _verdict = evaluate_modification_readiness(

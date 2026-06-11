@@ -249,7 +249,7 @@ export function KimiProviderSettings({
             className={cyberInputClasses}
             min={0}
             max={1}
-            step="0.1"
+            step="any"
           />
           <p className="text-[9px] text-text-dim mt-1">影响输出随机性，值越高越随机，默认1.0</p>
         </div>

@@ -158,6 +158,30 @@ class FailureBudget:
 
         # Decision logic
         if tool_count > self.max_failures_per_tool:
+            # Argument-recoverable read-side failures (not_found/no_match) must NOT
+            # tool-level BLOCK: a corrected argument succeeds immediately, while
+            # blocking e.g. read_file permanently cripples recovery (the model can
+            # never look at anything again this turn). Keep escalating with
+            # corrective guidance; the per-turn total budget below remains the
+            # final circuit breaker for true runaway loops.
+            if self._is_argument_recoverable(pattern) and self._total_failures <= self.max_total_per_turn:
+                logger.warning(
+                    "[FailureBudget] ESCALATE (block-exempt, recoverable read failure) tool=%s "
+                    "(failures=%d, max=%d, error_type=%s)",
+                    tool_key,
+                    tool_count,
+                    self.max_failures_per_tool,
+                    pattern.error_type,
+                )
+                return FailureResult(
+                    decision=FailureDecision.ESCALATE,
+                    suggestion=self._escalate_suggestion(pattern),
+                    error_type=pattern.error_type,
+                    retryable=self._is_retryable_error_type(pattern.error_type, tool_name=tool_key),
+                    blocked=False,
+                    tool_name=tool_key,
+                    pattern_signature=pattern_key,
+                )
             logger.warning(
                 "[FailureBudget] BLOCK tool=%s (failures=%d, max=%d)", tool_key, tool_count, self.max_failures_per_tool
             )
@@ -242,6 +266,20 @@ class FailureBudget:
             pattern_signature=pattern_key,
         )
 
+    def _is_argument_recoverable(self, pattern: ToolErrorPattern) -> bool:
+        """Whether the failure is fixable by simply correcting an argument.
+
+        not_found / no_match on read-side tools mean "wrong path / wrong search
+        string" — the very next call with a corrected argument succeeds, so a
+        tool-level block would only destroy the recovery path. Write tools are
+        excluded: a runaway editor is dangerous and keeps the original block.
+        """
+        if pattern.error_type not in {"not_found", "no_match"}:
+            return False
+        from polaris.kernelone.tool_execution.constants import WRITE_TOOLS
+
+        return pattern.tool_name not in WRITE_TOOLS
+
     def _is_retryable_error_type(self, error_type: str, *, tool_name: str = "") -> bool:
         """Determine whether the error type is retryable.
 
@@ -278,9 +316,11 @@ class FailureBudget:
                 "NEVER retry with the same incorrect search string more than once."
             ),
             "not_found": (
-                f"WARNING: Tool '{pattern.tool_name}' failing with 'not found'. "
-                "MANDATORY: Use repo_tree() or glob('**/*.py') to explore workspace structure. "
-                "Verify file path is correct before retrying."
+                f"WARNING: Tool '{pattern.tool_name}' keeps failing with 'not found' — "
+                "the path you are passing does NOT exist. Do NOT retry the same guessed path. "
+                "If the error message lists 'Did you mean' candidate paths, call the tool again "
+                "with one of those EXACT paths. Otherwise locate the real path first "
+                "(repo_rg for a distinctive symbol, or repo_tree/glob when exploration is allowed)."
             ),
             "invalid_arg": (
                 f"WARNING: Tool '{pattern.tool_name}' has invalid arguments. "
@@ -322,11 +362,11 @@ class FailureBudget:
     def _block_suggestion(self, pattern: ToolErrorPattern) -> str:
         """Generate block suggestion for BLOCK decision."""
         return (
-            f"TOOL BLOCKED: '{pattern.tool_name}' has exceeded failure budget "
-            f"({self.max_failures_per_tool} failures). "
-            f"STOP attempting this tool. "
-            f"Error pattern: {pattern.error_type}. "
-            f"Informed user of persistent failure and requested manual intervention or alternative approach."
+            f"TOOL BLOCKED: '{pattern.tool_name}' has exceeded its failure budget "
+            f"({self.max_failures_per_tool} failures, error pattern: {pattern.error_type}). "
+            "Do NOT call this tool again this turn. Switch to a different tool or approach "
+            "(verify the target exists first, use any suggested candidate paths, or state "
+            "the blocker plainly in your final answer instead of retrying)."
         )
 
     def get_tool_failure_count(self, tool_name: str) -> int:

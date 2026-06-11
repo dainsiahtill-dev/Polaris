@@ -832,12 +832,17 @@ async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkey
         nonlocal decode_calls
         decode_calls += 1
         if decode_calls == 1:
+            # NOTE: a pure READ-ONLY first attempt (e.g. read_file) now ignites the
+            # bootstrap read path immediately (Phase 2 weak-model ignition, covered by
+            # test_readonly_retry_batch_ignites_bootstrap_immediately). Use a
+            # non-bootstrap-safe tool here so this test keeps pinning the blind-retry
+            # escalation property: the next attempt must NOT lock to a single tool.
             return {
                 "kind": TurnDecisionKind.TOOL_BATCH,
                 "turn_id": "turn_retry_escalation",
                 "tool_batch": {
                     "invocations": [
-                        {"tool_name": "read_file", "arguments": {"file": "README.md"}},
+                        {"tool_name": "execute_command", "arguments": {"command": "cat README.md"}},
                     ]
                 },
             }

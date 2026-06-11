@@ -426,10 +426,15 @@ class AgentAccelToolExecutor:
                         self._failure_budget.get_tool_failure_count(canonical_tool_name),
                         error_pattern.error_signature[:60],
                     )
+                    block_text = (
+                        failure_result.suggestion or f"Tool {canonical_tool_name} blocked due to repeated failures"
+                    )
                     blocked_payload = {
                         "ok": False,
-                        "error": failure_result.suggestion
-                        or f"Tool {canonical_tool_name} blocked due to repeated failures",
+                        # Keep the underlying error visible: the model needs the real
+                        # reason (e.g. not_found + candidate paths) to choose a
+                        # DIFFERENT action, not just the stop instruction.
+                        "error": f"{error_message} | {block_text}",
                         "tool": canonical_tool_name,
                         "blocked": True,
                         "failure_count": self._failure_budget.get_tool_failure_count(canonical_tool_name),
@@ -482,10 +487,11 @@ class AgentAccelToolExecutor:
                     self._failure_budget.get_tool_failure_count(canonical_tool_name),
                     error_pattern.error_signature[:60],
                 )
+                block_text = failure_result.suggestion or f"Tool {canonical_tool_name} blocked due to repeated failures"
                 return {
                     "ok": False,
-                    "error": failure_result.suggestion
-                    or f"Tool {canonical_tool_name} blocked due to repeated failures",
+                    # Keep the underlying error visible alongside the block guidance.
+                    "error": f"{e} | {block_text}",
                     "tool": canonical_tool_name,
                     "blocked": True,
                     "failure_count": self._failure_budget.get_tool_failure_count(canonical_tool_name),

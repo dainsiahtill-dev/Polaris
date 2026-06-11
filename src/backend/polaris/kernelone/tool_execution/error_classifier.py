@@ -68,6 +68,12 @@ class ToolErrorClassifier:
             "does not exist",
             "no such file",
             "not exist",
+            # Hallucinated foreign absolute paths (e.g. '/Users/<other-user>/...')
+            # raise UNSUPPORTED_PATH_PREFIX — argument-recoverable exactly like a
+            # wrong relative path, so classify with not_found (a corrected path
+            # succeeds immediately; must not burn the tool-level failure budget).
+            "unsupported_path_prefix",
+            "unsupported absolute path",
         ),
         "permission": (
             "permission",

@@ -155,12 +155,18 @@ export function OpenAICompatProviderSettings({
           <label className="block text-xs text-text-muted mb-1">温度（Temperature）</label>
           <input
             type="number"
-            value={provider.temperature || 0.2}
-            onChange={(e) => handleFieldChange('temperature', parseFloat(e.target.value) || 0.2)}
+            value={provider.temperature ?? 0.2}
+            onChange={(e) => {
+              // ?? + NaN-guard (NOT `|| default`): a temperature of 0 is falsy,
+              // so `0 || 0.2` silently forced 0.2 and made 0.1 the lowest
+              // settable value. Empty input clears back to the default.
+              const parsed = parseFloat(e.target.value);
+              handleFieldChange('temperature', Number.isNaN(parsed) ? undefined : parsed);
+            }}
             className={cyberInputClasses}
             min="0"
             max="2"
-            step="0.1"
+            step="any"
           />
         </div>
 

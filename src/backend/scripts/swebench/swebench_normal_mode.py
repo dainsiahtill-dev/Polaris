@@ -38,13 +38,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from arch_b_converge import (
     DATASET,
     ensure_clone,
-    instance_report,
     run_git,
     run_harness_round,
 )
 from polaris_solve_one import _is_test_path
 
 MODEL_NAME = "polaris-director-normal"
+
+
+def instance_report(work_dir: Path, run_id: str, instance_id: str) -> tuple[dict[str, Any], str]:
+    """Read per-instance report.json + test_output.txt for the round.
+
+    Local copy: arch_b_converge.instance_report builds the report path with ITS
+    OWN MODEL_NAME ("Polaris-V1-Lightweight"), while this harness writes
+    predictions as "polaris-director-normal" — importing it silently read a
+    nonexistent path and reported resolved=False/applied=False unconditionally.
+    """
+    base = work_dir / "logs" / "run_evaluation" / run_id / MODEL_NAME / instance_id
+    rep: dict[str, Any] = {}
+    report_path = base / "report.json"
+    if report_path.is_file():
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+        rep = data.get(instance_id, {})
+    test_output = ""
+    test_output_path = base / "test_output.txt"
+    if test_output_path.is_file():
+        test_output = test_output_path.read_text(encoding="utf-8", errors="replace")
+    return rep, test_output
+
+
 # Director role timeout headroom (local gemma can be slow on long contexts).
 os.environ.setdefault("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", "600")
 # Per-turn in-place retry budget: the director role's platform retry is 0

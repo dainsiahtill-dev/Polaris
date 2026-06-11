@@ -216,6 +216,21 @@ def _format_error(tool_name: str, description: str) -> str:
     return f"{tool_name}: {description}"
 
 
+# Per-tool teaching hints appended to missing-argument validation errors.
+# Weak models under forced tool_choice emit empty/prose arguments; the bare
+# "missing required argument" verdict gives them nothing to imitate, so the
+# next attempt fails identically. A concrete minimal form breaks that loop.
+_MISSING_ARG_HINTS: dict[str, str] = {
+    "edit_blocks": (
+        'Easiest form: {"file": "path/to/file.py", "start": <first line>, "end": <last line>, '
+        '"replace": "<complete new code for those lines>"} (1-based, inclusive). '
+        "Or pass 'blocks' as a SEARCH/REPLACE block: <<<< SEARCH:path/to/file.py\\n"
+        "<exact existing lines>\\n====\\n<new lines>\\n>>>> REPLACE. "
+        "Put ONLY edit content in the arguments — never narration."
+    ),
+}
+
+
 def _is_present(value: Any) -> bool:
     """Check if a value is considered non-empty (non-deprecated internal helper)."""
     if value is None:
@@ -264,10 +279,14 @@ def validate_tool_step(tool: str, args: dict[str, Any] | None) -> tuple[bool, st
             group_values = group if isinstance(group, (list, tuple)) else [group]
             if not any(_is_present(normalized.get(str(key))) for key in group_values):
                 required_text = " or ".join(str(key) for key in group_values)
+                message = f"missing required argument: {required_text}"
+                hint = _MISSING_ARG_HINTS.get(canonical_tool)
+                if hint:
+                    message = f"{message}. {hint}"
                 return (
                     False,
                     ERROR_REQUIRED_MISSING,
-                    _format_error(canonical_tool, f"missing required argument: {required_text}"),
+                    _format_error(canonical_tool, message),
                 )
 
     # Validate tool-specific constraints (background_run timeout)

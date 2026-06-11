@@ -210,6 +210,62 @@ class TestRetryOrchestratorBatchCountRollback:
         assert ledger.tool_batch_count == 1
 
     @pytest.mark.asyncio
+    async def test_readonly_retry_batch_ignites_bootstrap_immediately(self, orchestrator: RetryOrchestrator) -> None:
+        """A failed retry attempt that emitted ONLY safe read tools must switch to the
+        bootstrap read path on that very attempt (not just on the final one).
+
+        Weak models respond to "you must write" by first asking to read the target
+        file — that is correct recovery behavior, and burning the remaining retries
+        on it traps models that have never seen the file content.
+        """
+        ledger = TurnLedger(turn_id="t-readonly-bootstrap")
+        state_machine = TurnStateMachine(turn_id="t-readonly-bootstrap")
+        state_machine.state = TurnState.TOOL_BATCH_EXECUTING
+
+        execute_calls: list[int] = []
+
+        async def _violating_execute(*_a: Any, **_kw: Any) -> Any:
+            execute_calls.append(1)
+            raise RuntimeError("single_batch_contract_violation: retry batch used tools outside narrowed set")
+
+        orchestrator.execute_tool_batch = _violating_execute  # type: ignore[method-assign]
+
+        mock_decision: dict[str, Any] = {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "tool_batch": {"invocations": [{"tool": "read_file", "arguments": {"file": "django/core/checks.py"}}]},
+            "metadata": {"workspace": "."},
+        }
+        orchestrator.decoder.decode = MagicMock(return_value=mock_decision)  # type: ignore[method-assign]
+
+        mock_response = MagicMock()
+        mock_response.native_tool_calls = []
+        orchestrator.call_llm_for_decision = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
+
+        # Entering the bootstrap path is observable via execute_read_bootstrap_batch;
+        # returning None there makes the orchestrator fail fast with a distinct error.
+        bootstrap_calls: list[str] = []
+
+        async def _bootstrap(*_a: Any, **kwargs: Any) -> None:
+            bootstrap_calls.append(str(kwargs.get("turn_id")))
+            return None
+
+        orchestrator.execute_read_bootstrap_batch = _bootstrap  # type: ignore[method-assign]
+
+        with pytest.raises(RuntimeError, match="bootstrap read receipt missing"):
+            await orchestrator.retry_tool_batch_after_contract_violation(
+                turn_id="t-readonly-bootstrap",
+                context=[{"role": "user", "content": "fix the bug in checks.py"}],
+                tool_definitions=[],
+                state_machine=state_machine,
+                ledger=ledger,
+                stream=False,
+            )
+
+        # Bootstrap must have been entered after the FIRST failed read-only attempt.
+        assert bootstrap_calls == ["t-readonly-bootstrap"]
+        assert len(execute_calls) == 1
+
+    @pytest.mark.asyncio
     async def test_stream_error_propagates_with_cause(self, orchestrator: RetryOrchestrator) -> None:
         """Stream exceptions should be wrapped and preserve the original cause."""
         ledger = TurnLedger(turn_id="t-005")
@@ -238,8 +294,13 @@ class TestRetryOrchestratorBatchCountRollback:
     async def test_bootstrap_followup_uses_deterministic_write_when_model_repeats_no_write(
         self,
         orchestrator: RetryOrchestrator,
+        tmp_path: Path,
     ) -> None:
-        """Weak local models may keep emitting execute_command after bootstrap; use write_file fallback."""
+        """Weak local models may keep emitting execute_command after bootstrap; use write_file fallback.
+
+        Uses an isolated workspace: the deterministic fallback only fires for
+        user-named targets that do NOT already exist (P0-B de-fang, 2026-06-10).
+        """
         orchestrator.config.max_retry_attempts = 1
         ledger = TurnLedger(turn_id="t-006")
         state_machine = TurnStateMachine(turn_id="t-006")
@@ -259,7 +320,7 @@ class TestRetryOrchestratorBatchCountRollback:
                     }
                 ]
             },
-            "metadata": {"workspace": "."},
+            "metadata": {"workspace": str(tmp_path)},
         }
         no_write_decision: dict[str, Any] = {
             "kind": TurnDecisionKind.TOOL_BATCH,

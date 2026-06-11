@@ -453,6 +453,24 @@ class TestContractsValidationIntegration:
         is_valid, _error_code, _error_msg = validate_tool_step("repo_rg", {"query": "test"})
         assert is_valid
 
+    def test_validate_edit_blocks_missing_args_includes_teaching_hint(self) -> None:
+        """edit_blocks 缺参错误必须附带可照抄的最简形式示例。
+
+        强制 tool_choice 下弱模型发空参时,裸 "missing required argument" 无法
+        引导下一次纠正;教学提示给出 line-range 与 SEARCH/REPLACE 两种完整形式。
+        """
+        is_valid, _error_code, error_msg = validate_tool_step("edit_blocks", {})
+        assert not is_valid
+        assert "missing required argument" in error_msg
+        assert "Easiest form" in error_msg
+        assert '"start"' in error_msg and '"replace"' in error_msg
+        assert "SEARCH" in error_msg
+
+        # Tools without a registered hint keep the bare message
+        is_valid, _error_code, error_msg = validate_tool_step("repo_rg", {})
+        assert not is_valid
+        assert "Easiest form" not in error_msg
+
     def test_validate_repo_read_slice_required_params(self) -> None:
         """repo_read_slice 必需参数验证测试。
 
