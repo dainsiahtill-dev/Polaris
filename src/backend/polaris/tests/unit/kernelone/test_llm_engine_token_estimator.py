@@ -27,7 +27,7 @@ class TestTokenEstimatorEstimate:
     def test_code_content_type(self) -> None:
         text = "a" * 100
         result = TokenEstimator.estimate(text, content_type="code")
-        assert result == 34  # 100 / 3
+        assert result == 33  # floor(100 / 3) — estimate truncates, never rounds up
 
     def test_cjk_content_type(self) -> None:
         text = "a" * 100
@@ -119,13 +119,13 @@ class TestTokenEstimatorGetStats:
         assert stats["code_ratio"] == 0
 
     def test_mixed_content(self) -> None:
-        text = "abc中{def}"
+        text = "abc中{def}"  # 9 chars: a b c 中 { d e f }
         stats = TokenEstimator.get_stats(text)
-        assert stats["char_count"] == 10
+        assert stats["char_count"] == 9
         assert stats["cjk_count"] == 1
         assert stats["code_indicators"] == 2  # { and }
-        assert stats["cjk_ratio"] == 0.1
-        assert stats["code_ratio"] == 0.2
+        assert stats["cjk_ratio"] == round(1 / 9, 4)
+        assert stats["code_ratio"] == round(2 / 9, 4)
         assert "estimate_general" in stats
         assert "estimate_code" in stats
         assert "estimate_cjk" in stats

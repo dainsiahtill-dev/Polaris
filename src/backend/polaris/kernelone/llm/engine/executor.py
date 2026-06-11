@@ -37,7 +37,7 @@ from .contracts import (
 )
 from .model_catalog import ModelCatalog
 from .normalizer import ResponseNormalizer
-from .prompt_budget import TokenBudgetManager
+from .prompt_budget import TokenBudgetManager, compress_chat_messages_to_budget
 from .resilience import ResilienceManager, RetryConfig, TimeoutConfig
 
 if TYPE_CHECKING:
@@ -356,17 +356,25 @@ class AIExecutor:
             )
 
         prompt_input = request.input
+        # ADR-0090 W1.5: pass the structured message array through so chat
+        # providers can preserve real role anchoring instead of flattening
+        # the whole transcript into one user message.
+        chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
         if budget_decision.compression_applied and budget_decision.compression is not None:
             prompt_input = budget_decision.compression.compressed_input
             request.context["token_budget"] = budget_decision.to_dict()
-        else:
-            # ADR-0090 W1.5: pass the structured message array through so chat
-            # providers can preserve real role anchoring instead of flattening
-            # the whole transcript into one user message. Skipped when budget
-            # compression rewrote the flattened input (it is then authoritative).
-            chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
+            # ADR-0090 W1.5b: under budget pressure, compress the structured
+            # array to the same budget instead of silently flattening — weak
+            # models need role anchoring most exactly when context is largest.
             if isinstance(chat_messages, list) and chat_messages:
-                invoke_cfg["chat_messages"] = chat_messages
+                budgeted_chat_messages = compress_chat_messages_to_budget(
+                    chat_messages,
+                    budget_decision.allowed_prompt_tokens,
+                )
+                if budgeted_chat_messages:
+                    invoke_cfg["chat_messages"] = budgeted_chat_messages
+        elif isinstance(chat_messages, list) and chat_messages:
+            invoke_cfg["chat_messages"] = chat_messages
 
         # Acquire semaphore for concurrency control
         semaphore = await _get_global_semaphore()

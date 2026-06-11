@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from polaris.cells.roles.runtime.internal.skill_loader import (
     RoleSkillManager,
     Skill,
@@ -11,6 +12,17 @@ from polaris.cells.roles.runtime.internal.skill_loader import (
     create_role_skill_manager,
     create_skill_loader,
 )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate the working directory.
+
+    ``SkillLoader()`` (no skills_dir) delegates to ``KernelSkillLoader(".")`` —
+    without isolation the "empty" assertions read whatever skills the REAL
+    repo checkout happens to contain.
+    """
+    monkeypatch.chdir(tmp_path)
 
 
 class TestSkill:

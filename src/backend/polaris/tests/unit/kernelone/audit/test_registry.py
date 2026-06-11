@@ -7,8 +7,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from polaris.kernelone.audit import registry as audit_registry
 from polaris.kernelone.audit.registry import (
-    _store_cache,
     create_audit_store,
     get_audit_store,
     has_audit_store_factory,
@@ -17,10 +17,20 @@ from polaris.kernelone.audit.registry import (
 
 
 class TestRegistry:
+    def setup_method(self) -> None:
+        self._reset_registry()
+
     def teardown_method(self) -> None:
-        global _store_factory, _store_cache
-        _store_factory = None
-        _store_cache.clear()
+        self._reset_registry()
+
+    @staticmethod
+    def _reset_registry() -> None:
+        # Reset the REGISTRY module's globals. (The old version declared
+        # `global _store_factory` inside this test module, which rebinds a
+        # test-module name and leaves the real registry untouched — the
+        # factory then leaked across tests/modules.)
+        audit_registry._store_factory = None
+        audit_registry._store_cache.clear()
 
     def test_has_factory_false_initially(self) -> None:
         assert has_audit_store_factory() is False

@@ -19,6 +19,7 @@ from polaris.kernelone.llm.engine.contracts import (
     AIRequest,
     AIResponse,
     ErrorCategory,
+    StreamEventType,
     TaskType,
 )
 from polaris.kernelone.llm.engine.executor import (
@@ -381,8 +382,10 @@ class TestAIExecutorInvokeStream:
             events.append(event)
 
         assert len(events) >= 1
-        error_events = [e for e in events if e.get("event_type") == "error"]
+        # invoke_stream yields AIStreamEvent dataclasses (not dicts).
+        error_events = [e for e in events if e.type == StreamEventType.ERROR]
         assert len(error_events) >= 1
+        assert error_events[0].error
 
 
 class TestAIExecutorWithRepair:

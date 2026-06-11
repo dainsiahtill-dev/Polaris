@@ -573,4 +573,135 @@ class TokenBudgetManager:
         return "ok"
 
 
-__all__ = ["CompressionRouter", "TokenBudgetManager", "TokenEstimator"]
+__all__ = [
+    "CompressionRouter",
+    "TokenBudgetManager",
+    "TokenEstimator",
+    "compress_chat_messages_to_budget",
+]
+
+
+# ---------------------------------------------------------------------------
+# ADR-0090 W1.5b: structure-preserving budget compression for chat_messages
+# ---------------------------------------------------------------------------
+
+_MESSAGE_TOKEN_OVERHEAD = 8
+_COMPRESSION_MARKER_RESERVE_TOKENS = 64
+_LEAD_SYSTEM_BUDGET_RATIO = 0.5
+
+
+def _estimate_message_tokens(content: str, content_type: str) -> int:
+    return TokenEstimator.estimate(content, content_type=content_type) + _MESSAGE_TOKEN_OVERHEAD
+
+
+def _trim_content_to_tokens(content: str, target_tokens: int) -> str:
+    """Head+tail trim mirroring CompressionRouter._hard_trim's char heuristic."""
+    if target_tokens <= 0:
+        return ""
+    max_chars = max(64, int(target_tokens * 4))
+    if len(content) <= max_chars:
+        return content
+    marker = "\n\n[... compressed to fit model limit ...]\n\n"
+    usable = max(16, max_chars - len(marker))
+    head_chars = int(usable * 0.7)
+    tail_chars = usable - head_chars
+    return content[:head_chars] + marker + content[-tail_chars:]
+
+
+def compress_chat_messages_to_budget(
+    chat_messages: list[dict[str, object]] | None,
+    allowed_prompt_tokens: int,
+    *,
+    content_type: str = "general",
+) -> list[dict[str, str]] | None:
+    """Compress the W1.5 structured message array to the prompt budget.
+
+    Before this existed, budget compression rewrote only the FLATTENED input and
+    silently dropped ``chat_messages`` — so weak local models lost their chat
+    template's role anchoring at exactly the moment the context was largest.
+
+    Deterministic strategy (no LLM):
+    1. Always keep the leading system block (merged + trimmed to at most half
+       the budget when oversized) and the FINAL turn (latest intent).
+    2. Walk earlier turns from the tail backwards, keeping whole turns while
+       they fit; the first non-fitting turn drops it and everything earlier.
+    3. Replace the dropped span with one marked user turn so the model knows
+       context was elided.
+    4. An oversized final turn is head+tail trimmed rather than dropped.
+
+    Returns ``None`` when even the minimal skeleton cannot fit — the caller
+    then keeps the legacy flattened-compressed-input behavior.
+    """
+    if allowed_prompt_tokens <= 0 or not isinstance(chat_messages, list):
+        return None
+    normalized: list[dict[str, str]] = []
+    for item in chat_messages:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "")
+        if not content.strip():
+            continue
+        role = str(item.get("role") or "").strip().lower() or "user"
+        normalized.append({"role": role, "content": content})
+    if not normalized:
+        return None
+
+    lead_end = 0
+    while lead_end < len(normalized) and normalized[lead_end]["role"] == "system":
+        lead_end += 1
+    lead = normalized[:lead_end]
+    body = normalized[lead_end:]
+
+    budget = int(allowed_prompt_tokens)
+    lead_tokens = sum(_estimate_message_tokens(m["content"], content_type) for m in lead)
+    lead_cap = max(1, int(budget * _LEAD_SYSTEM_BUDGET_RATIO))
+    if lead and lead_tokens > lead_cap:
+        merged = "\n\n".join(m["content"] for m in lead)
+        trimmed = _trim_content_to_tokens(merged, max(1, lead_cap - _MESSAGE_TOKEN_OVERHEAD))
+        if not trimmed:
+            return None
+        lead = [{"role": "system", "content": trimmed}]
+        lead_tokens = _estimate_message_tokens(trimmed, content_type)
+
+    if not body:
+        return lead if lead and lead_tokens <= budget else None
+
+    final = body[-1]
+    middle = body[:-1]
+    remaining = budget - lead_tokens - _COMPRESSION_MARKER_RESERVE_TOKENS
+    if remaining <= 0:
+        return None
+
+    final_tokens = _estimate_message_tokens(final["content"], content_type)
+    if final_tokens > remaining:
+        trimmed_final = _trim_content_to_tokens(final["content"], max(1, remaining - _MESSAGE_TOKEN_OVERHEAD))
+        if not trimmed_final:
+            return None
+        final = {"role": final["role"], "content": trimmed_final}
+        final_tokens = _estimate_message_tokens(trimmed_final, content_type)
+        if final_tokens > remaining:
+            return None
+
+    fill = remaining - final_tokens
+    kept_reversed: list[dict[str, str]] = []
+    for message in reversed(middle):
+        message_tokens = _estimate_message_tokens(message["content"], content_type)
+        if message_tokens > fill:
+            break
+        kept_reversed.append(message)
+        fill -= message_tokens
+    dropped = len(middle) - len(kept_reversed)
+
+    result: list[dict[str, str]] = [*lead]
+    if dropped > 0:
+        result.append(
+            {
+                "role": "user",
+                "content": (
+                    f"【上下文已压缩】为适配模型窗口，省略了 {dropped} 条较早的对话消息；以下保留最近的关键消息。"
+                ),
+            }
+        )
+    result.extend(reversed(kept_reversed))
+    result.append(final)
+    return result

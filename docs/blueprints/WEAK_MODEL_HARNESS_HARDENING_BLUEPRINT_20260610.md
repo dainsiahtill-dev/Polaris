@@ -176,6 +176,13 @@ fix5 实证 temperature=0.92 是 run 间幻觉跳变元凶(diag5e 定位对 vs f
 
 验证:新测试 `test_phase_aware_temperature.py` ×25(env 矩阵/相位门/直通/默认路径字节兼容/通道映射/无泄漏);kernel 回归 1769 passed;ruff/mypy 全绿。顺带清零 3 处 HEAD 预存类型债:`kernel/turn_engine.py` `_tool_loop` 死引用对齐活体 API(`reset_tool_gateway_turn_boundary`/`_execute_single_tool`)、`kernel/core.py` prompt_layer_options 显式 kwargs、`TurnPhaseEvent` phase Literal 补 `decode_corrective_retry`(运行时已发该事件,类型滞后);`test_speculative_flags` 断言对齐 5cd27a13 的 default-enabled 现实。配置层建议依旧成立:直接调低 director 默认 temperature 可叠加受益。
 
+## 7.7 W1.5 远端风险闭环(2026-06-11)
+
+原「剩余风险」两项已实施:
+
+- **ollama provider 接通 chat_messages**:`_build_chat_messages_payload` 提升为共享 SSOT `provider_helpers.build_chat_messages_payload`(openai_compat 以私名别名保留既有调用点/测试导入);`ollama_provider._extract_messages` 优先消费 `config["chat_messages"]`(与 adapter `messages` 键无冲突,后者语义保留)。测试 `test_ollama_chat_messages.py` ×8 + 共享实现 parity 断言。
+- **W1.5b 预算压缩路径结构保持**:原行为=压缩触发即丢弃结构化数组、回退单 user 展平(恰在上下文最大、弱模型最需要角色锚定时)。新增 `prompt_budget.compress_chat_messages_to_budget`(确定性零 LLM:前导 system 块保留+超额时合并修剪至预算 50%、末条意图轮保留+超额 head/tail 修剪、中段从尾部回填整轮、丢弃段以【上下文已压缩】标记轮替代、骨架装不下返回 None 走旧展平回退);双 executor(流式/非流式)在 `compression_applied` 分支按 `allowed_prompt_tokens` 生成预算内结构化数组。测试 `test_chat_messages_budget_compression.py` ×8(全输出≤预算不变量、recency 保持、标记、骨架不可行回退)。
+
 ## 8. 治理
 
 - 分类:pattern(「模型输出默认良构」假设在多模块重复)→ Verification Card `vc-20260610-weak-model-harness-hardening.yaml`;

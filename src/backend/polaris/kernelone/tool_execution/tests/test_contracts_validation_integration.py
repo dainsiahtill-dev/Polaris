@@ -471,6 +471,18 @@ class TestContractsValidationIntegration:
         assert not is_valid
         assert "Easiest form" not in error_msg
 
+    def test_validate_scout_probe_missing_query_includes_teaching_hint(self) -> None:
+        """scout_probe 缺 query 错误必须附带可照抄示例。
+
+        实测(caller_director 评测):director 首个 scout_probe 调用偶发空参,
+        裸错误导致委派侦察被白白烧掉;教学提示让下一次调用可直接模仿。
+        """
+        is_valid, _error_code, error_msg = validate_tool_step("scout_probe", {})
+        assert not is_valid
+        assert "missing required argument" in error_msg
+        assert '"query"' in error_msg
+        assert "WHAT to find" in error_msg
+
     def test_validate_repo_read_slice_required_params(self) -> None:
         """repo_read_slice 必需参数验证测试。
 

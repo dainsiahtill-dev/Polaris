@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from polaris.kernelone.fs.types import FileWriteReceipt
 
 
@@ -32,7 +33,7 @@ class TestFileWriteReceipt:
             absolute_path="/workspace/tmp/test.json",
             bytes_written=128,
         )
-        with AttributeError:
+        with pytest.raises(AttributeError):
             receipt.bytes_written = 256  # type: ignore[misc]
 
     def test_slots(self) -> None:

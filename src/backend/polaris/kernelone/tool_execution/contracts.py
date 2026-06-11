@@ -228,6 +228,14 @@ _MISSING_ARG_HINTS: dict[str, str] = {
         "<exact existing lines>\\n====\\n<new lines>\\n>>>> REPLACE. "
         "Put ONLY edit content in the arguments — never narration."
     ),
+    # Observed live (caller_director eval): the first scout_probe call sometimes
+    # arrives with no arguments at all. Show a copyable example so the next
+    # attempt self-corrects instead of burning the recon delegation.
+    "scout_probe": (
+        'Pass the reconnaissance question as a string: {"query": "where is the retry '
+        'escalation ladder implemented?", "mode": "locate"}. Describe WHAT to find '
+        "in natural language — the scout sub-agent chooses the read tools itself."
+    ),
 }
 
 

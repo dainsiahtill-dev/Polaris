@@ -36,7 +36,12 @@ async def test_text_stream_tool_call_is_promoted_to_structured_event() -> None:
     }
 
 
-def test_finalize_skips_anthropic_placeholder_without_json_delta() -> None:
+def test_finalize_emits_anthropic_placeholder_at_flush_for_downstream_correction() -> None:
+    """ADR-0090 W1.1: mid-stream the empty-args call stays provisional (not
+    emitted), but the END-of-stream flush emits it instead of silently
+    dropping it — the consumption contract (supersede_partial_tool_calls +
+    argument validation + corrective re-ask) owns the recovery. Silent drops
+    looked like "the model did nothing" and burned forced-write turns."""
     executor = StreamExecutor(workspace=".")
     pending: dict[str, object] = {}
 
@@ -54,10 +59,15 @@ def test_finalize_skips_anthropic_placeholder_without_json_delta() -> None:
         provider_type="anthropic_compat",
     )
 
+    # Mid-stream: provisional placeholders are withheld.
     assert emitted is None
     accumulator = next(iter(pending.values()))
     finalized = executor._finalize_stream_tool_call(accumulator)  # type: ignore[arg-type]
-    assert finalized is None
+    # Flush: the call surfaces (empty args) for downstream validation/repair.
+    assert finalized is not None
+    assert finalized["tool"] == "read_file"
+    assert finalized["arguments"] == {}
+    assert finalized["call_id"] == "toolu_1"
 
 
 def test_openai_empty_arguments_are_not_treated_as_anthropic_placeholders() -> None:

@@ -63,6 +63,12 @@ def map_error_to_category(error: Exception) -> tuple[Enum, bool, str | None]:
     error_str = str(error).lower()
 
     # 平台层可重试错误
+    # NOTE: gateway timeout MUST be checked before the generic timeout branch —
+    # "gateway timeout" contains "timeout", so the old ordering made
+    # GATEWAY_TIMEOUT unreachable for its canonical inputs.
+    if any(kw in error_str for kw in ["504", "gateway timeout"]):
+        return PlatformRetryCategory.GATEWAY_TIMEOUT, True, "网关超时，请稍后重试"
+
     if any(kw in error_str for kw in ["timeout", "timed out", "deadline exceeded"]):
         return PlatformRetryCategory.TIMEOUT, True, "请求超时，请稍后重试"
 
@@ -74,9 +80,6 @@ def map_error_to_category(error: Exception) -> tuple[Enum, bool, str | None]:
 
     if any(kw in error_str for kw in ["503", "service unavailable", "service temporarily unavailable"]):
         return PlatformRetryCategory.SERVICE_UNAVAILABLE, True, "服务暂时不可用，请稍后重试"
-
-    if any(kw in error_str for kw in ["504", "gateway timeout"]):
-        return PlatformRetryCategory.GATEWAY_TIMEOUT, True, "网关超时，请稍后重试"
 
     # 内核层可修复错误
     if any(kw in error_str for kw in ["parse", "json decode", "json.decoder", "expecting value"]):

@@ -11,10 +11,11 @@
 | A2 | **CTEngineMiddleware**（认知推理中间件）注册函数从不被调 | `create_and_register_ct_middleware()` 仅出现在 docstring；`_global_ct_middleware` 恒为 None | 在 bootstrap/init 注册（但受 A 类认知开关默认关影响，见 B1）|
 | A3 | **公开 Command/Query 契约无公开 service 实现** | 见下表 | 补 public service handler，或明确这些契约非公开入口 |
 
-### A3 明细（公开契约声明了但无 public/service.py 处理）
-- `qa/audit_verdict`：`ClaimQaTaskCommandV1` —— **全仓无任何消费方**（连内部都没有）。
-- `director/planning`：`PlanDirectorTaskCommandV1`、`GetDirectorStatusQueryV1` —— **无 public/service.py**。
-- `director/tasking`：`CreateTaskCommandV1`、`CancelTaskCommandV1`、`TaskStatusQueryV1`、`TaskResultQueryV1` —— **无 public/service.py**。
+### A3 明细（公开契约声明了但无 public/service.py 处理）——✅ 已闭环 2026-06-11（G4 同款接线）
+- `qa/audit_verdict`：`ClaimQaTaskCommandV1` → `public/service.py::claim_qa_task`（task market 定向认领，`ClaimTaskWorkItemCommandV1` 原生支持 task_id；与轮询 QAConsumer 同一市场服务/同一 stage）。
+- `director/planning`：→ `public/service.py`：`plan_director_task`（走 `DirectorAgent.handle_message` 的 PM TASK 同款入口）、`get_director_status`（RiskRegistry+QualityTracker 真实持久数据）。**坑**：roles.runtime.public 的 lazy `__getattr__` 解析 AgentMessage/MessageType 到 internal.agent_runtime_base，而 public/contracts.py 导出的是 kernelone shared_contracts 同名异类——跨类 enum 比较静默 False；必须从 `public.service` 导入。
+- `director/tasking`：→ `public/service.py`：`create_task`/`cancel_task`/`query_task_status`/`query_task_result`（per-workspace 单例 TaskService + `reset_task_services()` 测试钩子；运行时自建实例不受影响）。
+- 测试：3 个 cell 共 19 个契约 handler 测试全绿。
 
 **重要澄清（避免误判）**：director/tasking、director/planning 的 `internal/` 有**丰富实现**
 （`worker_executor`、`task_execution_runner`、`director_logic`、`code_generation_engine`、

@@ -50,7 +50,27 @@ class TestValidateBeforeApply:
         assert "no_valid_operations" in result.errors
 
     def test_validate_response_with_operations(self) -> None:
-        """Test validation with response containing operations."""
+        """Test validation with a response carrying a real file operation."""
+        from polaris.cells.director.tasking.internal.patch_apply_engine import (
+            validate_before_apply,
+        )
+
+        response = """Here is the code:
+
+```file: src/hello.py
+def hello():
+    print("Hello")
+```
+
+Done."""
+        result = validate_before_apply(response, {})
+        # A fenced block with an explicit file target is a valid operation.
+        assert len(result.errors) == 0
+
+    def test_validate_bare_fence_without_file_target_is_rejected(self) -> None:
+        """A bare ```python fence names no file — applying it would require
+        guessing a target (the wave-3 task-drift attractor), so the engine
+        must report no_valid_operations instead of inventing one."""
         from polaris.cells.director.tasking.internal.patch_apply_engine import (
             validate_before_apply,
         )
@@ -64,8 +84,7 @@ def hello():
 
 Done."""
         result = validate_before_apply(response, {})
-        # Empty errors means validation passed (parsed something)
-        assert len(result.errors) == 0
+        assert "no_valid_operations" in result.errors
 
     def test_validate_unclosed_patch_file(self) -> None:
         """Test validation detects unclosed PATCH_FILE block."""

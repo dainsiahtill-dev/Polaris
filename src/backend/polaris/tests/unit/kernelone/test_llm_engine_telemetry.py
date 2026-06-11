@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 from polaris.kernelone.llm.engine.telemetry import (
     MetricsAggregator,
@@ -210,20 +209,22 @@ class TestTelemetryCollector:
         assert events_file.exists()
 
     def test_persist_event_failure_does_not_break(self, tmp_path: Path) -> None:
-        events_file = tmp_path / "events.jsonl"
+        # Park the events file under a "directory" that is actually a FILE —
+        # mkdir/open inside the persist path then genuinely fails. (The old
+        # version tried patch.object(Path, "parent"), which Path forbids.)
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("occupied", encoding="utf-8")
+        events_file = blocker / "events.jsonl"
         collector = TelemetryCollector(enabled=True, events_file=events_file)
-        # Make parent a file so mkdir fails
-        events_file.parent.mkdir(parents=True, exist_ok=True)
-        # This shouldn't happen in practice, but test resilience
-        with patch.object(events_file, "parent", tmp_path / "not_a_dir"):
-            event = TelemetryEvent(
-                event_id="e1",
-                event_type="test",
-                timestamp="2026-04-24T10:00:00Z",
-                trace_id="t1",
-            )
-            # Should not raise
-            collector.emit(event)
+        event = TelemetryEvent(
+            event_id="e1",
+            event_type="test",
+            timestamp="2026-04-24T10:00:00Z",
+            trace_id="t1",
+        )
+        # Should not raise despite the unwritable destination
+        collector.emit(event)
+        assert not events_file.exists()
 
 
 class TestMetricsAggregator:

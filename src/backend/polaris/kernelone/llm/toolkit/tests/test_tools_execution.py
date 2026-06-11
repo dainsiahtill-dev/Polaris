@@ -593,12 +593,16 @@ class TestDirectorWritePolicyGate:
         (workspace / "package.json").write_text(json.dumps(before, ensure_ascii=False), encoding="utf-8")
 
         executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        # python3, not bare `python`: the executable allowlist contains both,
+        # but a bare `python` binary does not exist on all hosts (pyenv
+        # global=system ships only python3) — the test's point is the
+        # REDIRECT-to-package.json policy diff, not interpreter naming.
         emit_script = workspace / "emit_package.py"
         emit_script.write_text(
             f"import json\npayload = {after!r}\nprint(json.dumps(payload, ensure_ascii=False))\n",
             encoding="utf-8",
         )
-        command = "python emit_package.py > package.json"
+        command = "python3 emit_package.py > package.json"
         result = executor.execute("execute_command", {"command": command})
 
         assert result["ok"] is True

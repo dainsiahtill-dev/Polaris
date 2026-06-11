@@ -31,7 +31,10 @@ class SQLiteConnectOptions:
     detect_types: int = 0
     uri: bool = False
     row_factory: str | SQLiteRowFactory | None = "row"
-    pragmas: dict[str, str | int | float | bool] = field(default_factory=dict)
+    # hash=False: a dict field would make the frozen dataclass unhashable,
+    # breaking the documented immutable/hashable contract (options are usable
+    # as cache keys). Equality still includes pragmas; only __hash__ skips it.
+    pragmas: dict[str, str | int | float | bool] = field(default_factory=dict, hash=False)
 
 
 @dataclass(frozen=True)

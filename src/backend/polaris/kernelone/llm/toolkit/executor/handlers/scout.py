@@ -55,7 +55,15 @@ def _handle_scout_probe(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str
     query = kwargs.get("query") or kwargs.get("q")
     query_str = str(query or "").strip()
     if not query_str:
-        return {"ok": False, "error": "Missing required parameter: query"}
+        return {
+            "ok": False,
+            "error": (
+                "Missing required parameter: query. Pass the reconnaissance "
+                'question as a string, e.g. {"query": "where is the session '
+                'budget enforced?", "mode": "locate"} — describe WHAT to find; '
+                "the scout chooses the read tools itself."
+            ),
+        }
 
     mode = str(kwargs.get("mode") or "locate").strip() or "locate"
     workspace = str(self.workspace)

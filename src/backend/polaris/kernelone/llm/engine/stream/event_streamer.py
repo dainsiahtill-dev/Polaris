@@ -107,6 +107,14 @@ class EventStreamer:
 
     async def subscribe(self, channel: str = "*") -> AsyncGenerator[bytes, None]:
         """Subscribe to one channel ('*' subscribes all channels)."""
+        # Async-generator bodies run lazily (first __anext__), so a subscriber
+        # created before close() may only REGISTER after the None sentinels
+        # were already delivered — it would then await a queue nothing feeds,
+        # forever. The check-and-register below has no await between them, so
+        # it is atomic within the event loop: either we see _closed and exit,
+        # or we register in time for close() to deliver our sentinel.
+        if self._closed:
+            return
         queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=self._max_queue_size)
         self._subscribers.setdefault(channel, []).append(queue)
         try:

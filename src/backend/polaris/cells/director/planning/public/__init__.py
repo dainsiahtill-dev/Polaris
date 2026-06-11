@@ -17,6 +17,12 @@ from polaris.cells.director.planning.public.contracts import (
     GetDirectorStatusQueryV1,
     PlanDirectorTaskCommandV1,
 )
+from polaris.cells.director.planning.public.service import (
+    get_director_status,
+    get_planning_agent,
+    plan_director_task,
+    reset_planning_agents,
+)
 
 __all__ = [
     "DirectorPlanningError",
@@ -26,7 +32,11 @@ __all__ = [
     "compact_pm_payload",
     "extract_defect_ticket",
     "extract_required_evidence",
+    "get_director_status",
+    "get_planning_agent",
     "parse_acceptance",
+    "plan_director_task",
+    "reset_planning_agents",
     "validate_defect_ticket",
     "validate_files_to_edit",
     "write_gate_check",

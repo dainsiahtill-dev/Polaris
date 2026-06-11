@@ -72,6 +72,14 @@ from polaris.cells.director.tasking.public.contracts import (
     TaskStatusQueryV1,
     TaskStatusResultV1,
 )
+from polaris.cells.director.tasking.public.service import (
+    cancel_task,
+    create_task,
+    get_task_service,
+    query_task_result,
+    query_task_status,
+    reset_task_services,
+)
 
 __all__ = [
     "CODE_WRITING_FORBIDDEN_WARNING",
@@ -114,7 +122,9 @@ __all__ = [
     "apply_all_operations",
     "apply_operation",
     "apply_operations_strict",
+    "cancel_task",
     "check_mode",
+    "create_task",
     "generate_bootstrap_with_llm",
     "generate_fallback_code_content",
     "generate_phase_aware_fallback_content",
@@ -122,6 +132,7 @@ __all__ = [
     "get_generic_bootstrap_files",
     "get_intelligent_bootstrap_files",
     "get_python_bootstrap_files",
+    "get_task_service",
     "get_typescript_bootstrap_files",
     "is_any_missing",
     "is_pure_create",
@@ -129,5 +140,8 @@ __all__ = [
     "parse_delete_operations",
     "parse_full_file_blocks",
     "parse_search_replace_blocks",
+    "query_task_result",
+    "query_task_status",
+    "reset_task_services",
     "validate_before_apply",
 ]

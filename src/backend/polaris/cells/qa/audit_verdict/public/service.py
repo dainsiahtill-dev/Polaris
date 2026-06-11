@@ -17,6 +17,7 @@ from polaris.cells.qa.audit_verdict.internal.qa_consumer import QAConsumer
 from polaris.cells.qa.audit_verdict.internal.qa_service import AuditResult, QAConfig, QAService
 from polaris.cells.qa.audit_verdict.internal.quality_service import QualityService, get_quality_service
 from polaris.cells.qa.audit_verdict.public.contracts import (
+    ClaimQaTaskCommandV1,
     FailureSignalV1,
     GetQaVerdictQueryV1,
     ParseTracebackFramesCommandV1,
@@ -28,6 +29,11 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     VisualAuditFindingV1,
     VisualQaAuditResultV1,
 )
+from polaris.cells.runtime.task_market.public.contracts import (
+    ClaimTaskWorkItemCommandV1,
+    TaskWorkItemResultV1,
+)
+from polaris.cells.runtime.task_market.public.service import get_task_market_service
 
 logger = logging.getLogger(__name__)
 
@@ -379,9 +385,33 @@ __all__ = [
     "TracebackFrameV1",
     "VisualAuditFindingV1",
     "VisualQaAuditResultV1",
+    "claim_qa_task",
     "get_quality_service",
     "get_review_gate",
     "parse_traceback_frames",
     "run_qa_audit",
     "run_visual_qa_audit",
 ]
+
+
+def claim_qa_task(command: ClaimQaTaskCommandV1) -> TaskWorkItemResultV1:
+    """Handle ClaimQaTaskCommandV1 → targeted claim from the task market.
+
+    G4-pattern wiring: this contract was declared but had no consumer — the QA
+    polling consumer (`QAConsumer._claim_and_process_one`) claims the next
+    available ``pending_qa`` item directly from the market. This handler is the
+    contract-driven variant: it claims the SPECIFIC task named by the command
+    (the market supports targeted claims via ``task_id``) for the given worker,
+    using the exact same market service and stage. The returned lease is then
+    processed/acknowledged by the caller, mirroring the consumer flow.
+    """
+    market = get_task_market_service()
+    return market.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=command.workspace,
+            stage="pending_qa",
+            worker_id=command.worker_id,
+            worker_role="qa",
+            task_id=command.task_id,
+        )
+    )

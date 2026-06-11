@@ -65,12 +65,17 @@ class TestNormalizeFailureRunId:
 
 class TestResolveFailureHopsOutputPath:
     def test_returns_path(self, tmp_path: Path) -> None:
+        resolved = tmp_path / "runtime" / "artifacts" / "runs" / "run-123" / "failure_hops.json"
         with patch(
             "polaris.kernelone.audit.evidence_paths.resolve_runtime_path",
-            return_value=str(tmp_path / "out.json"),
-        ):
+            return_value=str(resolved),
+        ) as mocked:
             path = resolve_failure_hops_output_path(str(tmp_path), "run-123")
             assert "failure_hops.json" in path
+            # The canonical run-scoped relative path is what the resolver was
+            # asked for — the function's own contribution, not the mock's.
+            relative_arg = mocked.call_args.args[1]
+            assert relative_arg == "runtime/artifacts/runs/run-123/failure_hops.json"
 
 
 class TestEnsureRuntimeScopedDirectory:

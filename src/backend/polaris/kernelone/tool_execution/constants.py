@@ -102,7 +102,10 @@ ALLOWED_EXECUTION_COMMANDS: frozenset[str] = frozenset(
         "rm",
         "rm -f",
         "rmdir",
-        # Python tools
+        # Python tools (python3 mirrors python: many Linux hosts ship ONLY
+        # python3 — pyenv global=system has no bare `python` — and models
+        # routinely emit `python3 ...`; blocking it here while the executor
+        # allowlist accepts it was an inconsistent two-layer policy)
         "python",
         "python -m mypy",
         "python -m pytest",
@@ -110,6 +113,12 @@ ALLOWED_EXECUTION_COMMANDS: frozenset[str] = frozenset(
         "python -m ruff",
         "python -m ruff check",
         "python -m ruff format",
+        "python3",
+        "python3 -m mypy",
+        "python3 -m pytest",
+        "python3 -m ruff",
+        "python3 -m ruff check",
+        "python3 -m ruff format",
         # npm scripts
         "npm run test",
         "npm run build",

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -136,7 +137,10 @@ class TelemetryCollector:
             self.events_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.events_file, "a", encoding="utf-8") as f:
                 f.write(event.to_json_line())
-        except (RuntimeError, ValueError) as e:
+        except (OSError, RuntimeError, ValueError) as e:
+            # OSError matters most: telemetry persistence sits on the LLM
+            # invoke path — a full disk / blocked directory must degrade to a
+            # warning, never crash the call it was observing.
             logger.warning("Failed to persist telemetry event: %s", e)
 
     def record_invoke_start(
@@ -387,12 +391,19 @@ class MetricsAggregator:
         sorted_latencies = sorted(self._latencies)
         n = len(sorted_latencies)
 
+        def _nearest_rank(quantile: float) -> int:
+            # Standard nearest-rank percentile: ceil(q*n)-1, clamped. The old
+            # int(n*q) indexing was off by one (p95 of 1..100 returned 96) and
+            # could index past the end for q close to 1.
+            index = math.ceil(quantile * n) - 1
+            return sorted_latencies[min(n - 1, max(0, index))]
+
         return {
             "total_requests": self._total_requests,
             "success_rate": self._successful_requests / self._total_requests if self._total_requests > 0 else 0.0,
             "avg_latency_ms": sum(self._latencies) // n,
-            "p95_latency_ms": sorted_latencies[int(n * 0.95)],
-            "p99_latency_ms": sorted_latencies[int(n * 0.99)],
+            "p95_latency_ms": _nearest_rank(0.95),
+            "p99_latency_ms": _nearest_rank(0.99),
             "avg_tokens": sum(self._token_counts) // len(self._token_counts) if self._token_counts else 0,
             "error_breakdown": dict(self._error_counts),
         }

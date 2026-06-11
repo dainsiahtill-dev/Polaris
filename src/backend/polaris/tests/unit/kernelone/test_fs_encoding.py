@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
 from polaris.kernelone.fs.encoding import build_utf8_env, enforce_utf8
 
 
 class TestBuildUtf8Env:
-    """Tests for build_utf8_env."""
+    """Tests for build_utf8_env.
+
+    The builder uses ``setdefault`` — it fills MISSING locale vars but
+    respects whatever the host already exports (e.g. WSL's ``LANG=C.UTF-8``),
+    so the "sets X" tests must clear the var first to be hermetic.
+    """
 
     def test_sets_pythonutf8(self) -> None:
         env = build_utf8_env()
@@ -16,13 +22,20 @@ class TestBuildUtf8Env:
         env = build_utf8_env()
         assert env.get("PYTHONIOENCODING") == "utf-8"
 
-    def test_sets_lang(self) -> None:
+    def test_sets_lang_when_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("LANG", raising=False)
         env = build_utf8_env()
         assert env.get("LANG") == "en_US.UTF-8"
 
-    def test_sets_lc_all(self) -> None:
+    def test_sets_lc_all_when_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("LC_ALL", raising=False)
         env = build_utf8_env()
         assert env.get("LC_ALL") == "en_US.UTF-8"
+
+    def test_respects_existing_utf8_locale(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LANG", "C.UTF-8")
+        env = build_utf8_env()
+        assert env.get("LANG") == "C.UTF-8"
 
     def test_extra_env_vars_merged(self) -> None:
         env = build_utf8_env(extra={"MY_VAR": "my_value"})
