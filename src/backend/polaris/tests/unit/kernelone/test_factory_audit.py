@@ -94,3 +94,120 @@ class TestAuditRecord:
         assert agg["all_checks_passed"] == 1
         assert agg["by_level"]["L1"]["passed"] == 1
         assert agg["by_level"]["L2"]["passed"] == 0
+
+
+def test_js_syntax_accepts_inline_script_single_file_html(tmp_path) -> None:
+    """L2-10 r4: a complete single-file HTML app (inline <script>) must not
+    fail js_syntax just because no standalone .js exists."""
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "index.html").write_text(
+        "<!DOCTYPE html>\n<html><body>\n"
+        "<textarea id='editor'></textarea>\n"
+        "<script>\nconst e = document.getElementById('editor');\nconsole.log(e);\n</script>\n"
+        "</body></html>\n",
+        encoding="utf-8",
+    )
+    results = run_checks(str(tmp_path), ["js_syntax"])
+    assert results[0]["ok"] is True
+    assert "inline <script>" in results[0]["detail"]
+
+
+def test_js_syntax_still_fails_without_any_script(tmp_path) -> None:
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "index.html").write_text(
+        "<!DOCTYPE html>\n<html><body><p>static only</p></body></html>\n",
+        encoding="utf-8",
+    )
+    results = run_checks(str(tmp_path), ["js_syntax"])
+    assert results[0]["ok"] is False
+
+
+def test_js_syntax_empty_inline_script_not_enough(tmp_path) -> None:
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "index.html").write_text(
+        "<html><body><script></script></body></html>\n",
+        encoding="utf-8",
+    )
+    results = run_checks(str(tmp_path), ["js_syntax"])
+    assert results[0]["ok"] is False
+
+
+def test_runnable_any_accepts_web_shape(tmp_path) -> None:
+    """L2-11 r1: shape-neutral briefs may be delivered as web apps."""
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "index.html").write_text(
+        "<html><body><script>console.log('ok');</script></body></html>\n",
+        encoding="utf-8",
+    )
+    results = run_checks(str(tmp_path), ["runnable_any"])
+    assert results[0]["ok"] is True
+    assert "web shape" in results[0]["detail"]
+
+
+def test_runnable_any_accepts_python_shape(tmp_path) -> None:
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    results = run_checks(str(tmp_path), ["runnable_any"])
+    assert results[0]["ok"] is True
+    assert "python shape" in results[0]["detail"]
+
+
+def test_runnable_any_fails_when_neither_shape(tmp_path) -> None:
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "notes.md").write_text("# doc only\n", encoding="utf-8")
+    results = run_checks(str(tmp_path), ["runnable_any"])
+    assert results[0]["ok"] is False
+
+
+def test_runnable_any_broken_python_falls_through_to_web(tmp_path) -> None:
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "bad.py").write_text("def f(:\n", encoding="utf-8")
+    (tmp_path / "index.html").write_text(
+        "<html><body><script>console.log('ok');</script></body></html>\n",
+        encoding="utf-8",
+    )
+    results = run_checks(str(tmp_path), ["runnable_any"])
+    assert results[0]["ok"] is True
+    assert "web shape" in results[0]["detail"]
+
+
+def test_content_any_detects_hollow_scaffold(tmp_path) -> None:
+    """L2-12 r1: a 43-line empty game loop passed every structural check while
+    containing zero game features."""
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "game.js").write_text(
+        "(function(){ function gameLoop(){} function init(){} })();\n",
+        encoding="utf-8",
+    )
+    results = run_checks(str(tmp_path), ["content_any:paddle|ball|brick"])
+    assert results[0]["ok"] is False
+    assert "not found" in results[0]["detail"]
+
+
+def test_content_any_passes_on_real_feature(tmp_path) -> None:
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "game.js").write_text(
+        "const paddle = { x: 0, w: 80 };\nconst bricks = [];\n",
+        encoding="utf-8",
+    )
+    results = run_checks(str(tmp_path), ["content_any:paddle|ball|brick"])
+    assert results[0]["ok"] is True
+    assert "game.js" in results[0]["detail"]
+
+
+def test_content_any_bad_pattern_fails_closed(tmp_path) -> None:
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    (tmp_path / "a.js").write_text("x\n", encoding="utf-8")
+    results = run_checks(str(tmp_path), ["content_any:[unclosed"])
+    assert results[0]["ok"] is False
+    assert "bad pattern" in results[0]["detail"]

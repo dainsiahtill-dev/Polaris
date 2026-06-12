@@ -990,6 +990,20 @@ async def _execute_standard_llm_flow(
                 primary_llm_summary=primary_llm_summary,
             )
 
+    if not all_affected_files and not can_accept_existing_scope:
+        acceptance_verify_satisfied, acceptance_verify_evidence = _evaluate_acceptance_verify_exists(
+            task=task,
+            workspace_full=str(getattr(adapter, "workspace", "") or ""),
+            write_tool_evidence=write_tool_evidence,
+        )
+        if acceptance_verify_satisfied:
+            # Acceptance exemption: the contract's own machine checks pass and
+            # the Director has successful write receipts — route through the
+            # verified-existing-scope success path instead of a pseudo-failure.
+            can_accept_existing_scope = True
+            existing_contract_evidence = dict(existing_contract_evidence)
+            existing_contract_evidence["acceptance_verify_exists"] = acceptance_verify_evidence
+
     if (
         not all_affected_files
         and not can_accept_existing_scope
@@ -1253,9 +1267,28 @@ async def _execute_standard_llm_flow(
         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
         workspace_name=workspace_name,
     )
-    for repair_attempt in range(1, 3):
+    # Progress-aware repair budget: the base budget is 2 attempts, but while
+    # an attempt makes measurable progress on EITHER dimension — fewer missing
+    # declared targets OR fewer quality errors overall — the loop keeps going
+    # (hard cap 5). Live factory-bench L2-11 r1: missing-count convergence
+    # (3→2→1) was cut one file short by the fixed budget. L2-11 r6: an attempt
+    # repaired the truncated index.html (errors 2→1, real progress) but the
+    # missing-only metric (1→1) still cut the loop before diff.test.html.
+    _adapter_workspace = str(getattr(adapter, "workspace", "") or "")
+    prev_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
+    prev_error_count = len(artifact_quality_errors)
+    for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
         if not artifact_quality_errors:
             break
+        current_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
+        current_error_count = len(artifact_quality_errors)
+        if repair_attempt > _QUALITY_REPAIR_BASE_ATTEMPTS:
+            missing_progress = 0 < current_missing_count < prev_missing_count
+            error_progress = 0 < current_error_count < prev_error_count
+            if not (missing_progress or error_progress):
+                break
+        prev_missing_count = current_missing_count
+        prev_error_count = current_error_count
         deterministic_quality_tool_results, deterministic_quality_summary = (
             _apply_deterministic_materialization_quality_repairs(
                 adapter,
@@ -1431,6 +1464,9 @@ async def _execute_standard_llm_flow(
             "artifacts": [],
             "materialization_mode": materialization_mode,
             "artifact_quality_errors": artifact_quality_errors[:20],
+            # Forensic trail: without this, a repair attempt that died before
+            # its LLM call is indistinguishable from one that never ran.
+            "quality_repair_attempts": quality_repair_attempts,
         }
 
     semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
@@ -1690,6 +1726,77 @@ def _is_recoverable_no_write_mutation_contract_error_text(text: str) -> bool:
     return any(hint in token for hint in recoverable_hints)
 
 
+_ACCEPTANCE_VERIFY_EXISTS_RE = re.compile(r"^verify\s+(?P<path>\S+)\s+exists$", re.IGNORECASE)
+
+
+def _evaluate_acceptance_verify_exists(
+    *,
+    task: dict[str, Any],
+    workspace_full: str,
+    write_tool_evidence: bool,
+) -> tuple[bool, dict[str, Any]]:
+    """Evaluate the PM contract's machine-checkable ``verify <path> exists`` assertions.
+
+    The PM task quality gate emits acceptance criteria in this canonical form
+    (task_quality_gate ``f"verify {scope_path} exists"``). When the Director
+    produced no NEW diff but every such assertion already holds — e.g. a
+    rewrite with identical content — failing with
+    ``director_no_materialized_changes`` punishes a satisfied contract.
+    Strictly gated: requires at least one assertion, ALL assertions passing,
+    successful write-tool evidence (the model demonstrably did the work), and
+    a real workspace. Path existence is case-insensitive, consistent with
+    declared-target matching.
+    """
+    evidence: dict[str, Any] = {"checked": 0, "passed": [], "missing": []}
+    if not write_tool_evidence or not workspace_full:
+        return False, evidence
+    criteria: list[str] = []
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    for record in (task, metadata):
+        if not isinstance(record, dict):
+            continue
+        for key in ("acceptance_criteria", "acceptance"):
+            value = record.get(key)
+            if isinstance(value, list):
+                criteria.extend(str(item or "").strip() for item in value)
+            elif isinstance(value, str):
+                criteria.append(value.strip())
+    root = Path(workspace_full)
+    if not root.is_dir():
+        return False, evidence
+    for criterion in criteria:
+        match = _ACCEPTANCE_VERIFY_EXISTS_RE.match(criterion)
+        if not match:
+            continue
+        evidence["checked"] += 1
+        rel = _normalize_declared_task_path(match.group("path"))
+        if rel and _workspace_path_exists_case_insensitive(root, rel):
+            evidence["passed"].append(rel)
+        else:
+            evidence["missing"].append(rel or match.group("path"))
+    satisfied = evidence["checked"] > 0 and not evidence["missing"]
+    return satisfied, evidence
+
+
+def _workspace_path_exists_case_insensitive(root: Path, rel_path: str) -> bool:
+    """Check workspace-relative existence, tolerating path-case drift."""
+    candidate = root / rel_path
+    if candidate.exists():
+        return True
+    current = root
+    for part in rel_path.split("/"):
+        if not current.is_dir():
+            return False
+        matched = next(
+            (entry for entry in current.iterdir() if entry.name.casefold() == part.casefold()),
+            None,
+        )
+        if matched is None:
+            return False
+        current = matched
+    return True
+
+
 def _filter_diff_to_task_declared_paths(
     *,
     task: dict[str, Any],
@@ -1745,9 +1852,16 @@ def _path_matches_declared_candidate(path: str, candidate: str) -> bool:
         return False
     if any(ch in candidate for ch in ("*", "?")):
         return _glob_path_matches(path, candidate)
-    if path == candidate:
+    # Declared-intent matching is case-insensitive: PM contracts routinely
+    # declare "readme.md" while the materialized file is "README.md". A
+    # case-sensitive comparison filtered the task's only real output from the
+    # diff and produced a director_no_materialized_changes pseudo-failure
+    # (live factory-bench L2-09 PM-0001-2, 2026-06-12).
+    path_folded = path.casefold()
+    candidate_folded = candidate.casefold()
+    if path_folded == candidate_folded:
         return True
-    return path.startswith(f"{candidate}/")
+    return path_folded.startswith(f"{candidate_folded}/")
 
 
 async def _attach_director_file_event_bus(adapter: Any) -> None:
@@ -4698,10 +4812,15 @@ async def _run_materialization_quality_repair_retry(
     if not artifact_quality_errors:
         return [], {"attempted": False, "reason": "no_artifact_quality_errors"}
 
+    missing_target_files = _missing_declared_target_files(
+        task,
+        str(getattr(adapter, "workspace", "") or ""),
+    )
     repair_message = _build_materialization_quality_repair_message(
         original_message=original_message,
         artifact_quality_errors=artifact_quality_errors,
         changed_files=changed_files,
+        missing_target_files=missing_target_files,
     )
     repair_context = {
         **dict(context or {}),
@@ -4745,9 +4864,37 @@ async def _run_materialization_quality_repair_retry(
             "attempt": repair_attempt,
             "tool_results": len(repair_tool_results),
             "write_tool_evidence": has_successful_write_tool(repair_tool_results),
+            "missing_target_files": missing_target_files[:12],
         }
     )
     return repair_tool_results, summary
+
+
+_QUALITY_REPAIR_BASE_ATTEMPTS = 2
+_QUALITY_REPAIR_ATTEMPT_HARD_CAP = 5
+
+
+def _missing_declared_target_files(task: dict[str, Any], workspace_full: str) -> list[str]:
+    """Machine-derive the declared target files absent from the workspace.
+
+    Deterministic ground truth for repair targeting: the task contract names
+    the files, the filesystem says which exist (case-insensitive, consistent
+    with declared-path matching).
+    """
+    workspace = str(workspace_full or "").strip()
+    if not workspace:
+        return []
+    root = Path(workspace)
+    if not root.is_dir():
+        return []
+    missing: list[str] = []
+    for candidate in _extract_task_target_path_candidates(task):
+        rel = _normalize_declared_task_path(candidate)
+        if not rel or any(ch in rel for ch in ("*", "?")):
+            continue
+        if not _workspace_path_exists_case_insensitive(root, rel):
+            missing.append(rel)
+    return missing
 
 
 def _build_materialization_quality_repair_message(
@@ -4755,18 +4902,57 @@ def _build_materialization_quality_repair_message(
     original_message: str,
     artifact_quality_errors: list[str],
     changed_files: list[str],
+    missing_target_files: list[str] | None = None,
 ) -> str:
     error_lines = "\n".join(f"- {item}" for item in artifact_quality_errors[:12])
-    changed_line = ", ".join(changed_files[:40]) or "(none)"
+    # Already-written files are reported as a COUNT, not paths: every
+    # path-shaped token in this message seeds the retry target extractor
+    # (extract_target_files_from_message), and naming the files that already
+    # exist steered a weak model into rewriting src/main.js instead of
+    # creating the missing src/styles.css (live factory-bench L2-10 r3).
+    changed_line = f"{len(changed_files)} file(s) were already written and must NOT be rewritten."
+    missing_block = ""
+    if missing_target_files:
+        missing_lines = "\n".join(f"- {item}" for item in missing_target_files[:12])
+        missing_block = (
+            f"MISSING TARGET FILES — create these exact paths NOW, one write_file call per path:\n{missing_lines}\n"
+        )
+    syntax_block = ""
+    truncation_signatures = ("unexpected end of input", "truncated/incomplete html", "was never closed")
+    if any(
+        any(signature in str(item).lower() for signature in truncation_signatures) for item in artifact_quality_errors
+    ):
+        # Rewrites at the same output limit truncate at the same place forever
+        # (live factory-bench L2-11 r6: index.html rewritten three times, all
+        # truncated). Only appending the remainder converges.
+        syntax_block = (
+            "TRUNCATED FILE DIRECTIVE: a file below was CUT OFF by the output "
+            "limit. Do NOT rewrite it. read_file its tail, then call "
+            "append_to_file with ONLY the missing remainder, continuing "
+            "exactly after the current end of the file.\n"
+        )
+    elif any("syntax error" in str(item).lower() for item in artifact_quality_errors):
+        # Whole-file rewrite at escalation-low temperature deterministically
+        # reproduces the same slip (live factory-bench L2-11 r2: the repair
+        # rewrote typing.js with the identical `endTime: null;` bug). A narrow
+        # line edit forces attention on the quoted line instead.
+        syntax_block = (
+            "SYNTAX REPAIR DIRECTIVE: a quoted line below is syntactically broken. "
+            "Apply ONE narrow edit_blocks search/replace containing ONLY that line "
+            "(and its corrected form). Do NOT rewrite the whole file — a full "
+            "rewrite reproduces the same mistake.\n"
+        )
     return (
         f"{original_message}\n\n"
         "MATERIALIZATION QUALITY REPAIR MODE:\n"
         "The previous write reached the workspace but failed Polaris artifact quality gates.\n"
+        f"{missing_block}"
+        f"{syntax_block}"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"
         "If package.json has an npm test script, it must run a real local test/check and must not contain "
         "`no test specified`, structural-only success output, TODO, placeholder, stub, or audit seed text.\n"
-        f"Changed files from the failed attempt: {changed_line}\n"
+        f"{changed_line}\n"
         "Quality errors:\n"
         f"{error_lines}\n"
         "Return tool calls only for the minimal files needed to make the task materially complete."
@@ -5301,6 +5487,11 @@ def _path_candidate_exists_in_file_set(candidate: str, current_files: set[str]) 
 
 
 def _glob_path_matches(path: str, pattern: str) -> bool:
+    # fnmatch.fnmatch is only case-insensitive on case-insensitive platforms;
+    # declared-intent matching must be case-insensitive everywhere (see
+    # _path_matches_declared_candidate).
+    path = path.casefold()
+    pattern = pattern.casefold()
     if fnmatch.fnmatch(path, pattern):
         return True
     if "/**/" not in pattern:

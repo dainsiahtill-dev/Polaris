@@ -117,3 +117,155 @@ class TestCEConsumerTaskMarketHandoffIntegration:
         mock_adr_store.compile.assert_called_once_with("bp-task-99")
         mock_svc.fail_task_stage.assert_not_called()
         mock_svc.acknowledge_task_stage.assert_called_once()
+
+
+class TestCEConsumerStepFission:
+    """Three-tier E1: CE fissions a PM task into leaf step tasks on the market."""
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.ADRStore")
+    def test_fission_publishes_leaf_steps_and_marks_parent(
+        self,
+        mock_adr_store_cls: MagicMock,
+        mock_run_preflight: MagicMock,
+        mock_get_svc: MagicMock,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_CE_STEP_FISSION", "1")
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "PM-9"
+        claim_result.lease_token = "lease-9"
+        claim_result.payload = {
+            "title": "实现打砖块",
+            "workspace": str(tmp_path),
+            "run_id": "run-1",
+            "target_files": ["index.html", "game.js"],
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        ack = MagicMock()
+        ack.ok = True
+        ack.status = "pending_exec"
+        mock_svc.acknowledge_task_stage.return_value = ack
+        mock_run_preflight.return_value = {"blueprint_id": "bp-PM-9"}
+        mock_adr_store_cls.return_value = MagicMock()
+
+        steps = [
+            {
+                "step_id": "PM-9-S1",
+                "parent_pm_task": "PM-9",
+                "target_file": "index.html",
+                "est_lines": 30,
+                "signatures": ["<canvas id=game>"],
+                "interface_names": ["#game"],
+                "verify": "verify ./index.html exists",
+                "depends_on": [],
+                "title": "结构壳",
+            },
+            {
+                "step_id": "PM-9-S2",
+                "parent_pm_task": "PM-9",
+                "target_file": "game.js",
+                "est_lines": 100,
+                "signatures": ["function gameLoop()"],
+                "interface_names": ["#game"],
+                "verify": "node --check game.js",
+                "depends_on": ["PM-9-S1"],
+                "title": "游戏循环",
+            },
+        ]
+        consumer = CEConsumer(workspace=str(tmp_path), worker_id="w1")
+        with patch.object(CEConsumer, "_run_step_fission", return_value=(steps, [])):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is True
+        assert results[0]["fission_step_count"] == 2
+        assert mock_svc.publish_work_item.call_count == 2
+        first_cmd = mock_svc.publish_work_item.call_args_list[0][0][0]
+        assert first_cmd.stage == "pending_exec"
+        assert first_cmd.parent_task_id == "PM-9"
+        assert first_cmd.is_leaf is True
+        second_cmd = mock_svc.publish_work_item.call_args_list[1][0][0]
+        assert second_cmd.depends_on == ("PM-9-S1",)
+        ack_meta = mock_svc.acknowledge_task_stage.call_args[0][0].metadata
+        assert ack_meta["is_leaf"] is False
+        assert ack_meta["fission_step_count"] == 2
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.ADRStore")
+    def test_gate_failure_circuit_breaks_to_requeue(
+        self,
+        mock_adr_store_cls: MagicMock,
+        mock_run_preflight: MagicMock,
+        mock_get_svc: MagicMock,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_CE_STEP_FISSION", "1")
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "PM-9"
+        claim_result.lease_token = "lease-9"
+        claim_result.payload = {"title": "t", "workspace": str(tmp_path)}
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_run_preflight.return_value = {"blueprint_id": "bp-PM-9"}
+        mock_adr_store_cls.return_value = MagicMock()
+
+        consumer = CEConsumer(workspace=str(tmp_path), worker_id="w1")
+        with patch.object(CEConsumer, "_run_step_fission", return_value=([], ["PM-9: no steps"])):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == "CE_step_gate_failed"
+        mock_svc.publish_work_item.assert_not_called()
+        fail_cmd = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_cmd.error_code == "CE_step_gate_failed"
+        assert fail_cmd.requeue_stage == "pending_design"
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.ADRStore")
+    def test_flag_off_keeps_legacy_advance(
+        self,
+        mock_adr_store_cls: MagicMock,
+        mock_run_preflight: MagicMock,
+        mock_get_svc: MagicMock,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        monkeypatch.delenv("KERNELONE_CE_STEP_FISSION", raising=False)
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "PM-9"
+        claim_result.lease_token = "lease-9"
+        claim_result.payload = {"title": "t", "workspace": str(tmp_path)}
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        ack = MagicMock()
+        ack.ok = True
+        ack.status = "pending_exec"
+        mock_svc.acknowledge_task_stage.return_value = ack
+        mock_run_preflight.return_value = {"blueprint_id": "bp-PM-9"}
+        mock_adr_store_cls.return_value = MagicMock()
+
+        consumer = CEConsumer(workspace=str(tmp_path), worker_id="w1")
+        results = consumer.poll_once()
+
+        assert results[0]["ok"] is True
+        assert results[0]["fission_step_count"] == 0
+        mock_svc.publish_work_item.assert_not_called()

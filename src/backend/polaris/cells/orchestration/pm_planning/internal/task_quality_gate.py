@@ -750,6 +750,45 @@ def _is_workspace_bound_concrete_path(candidate: Any, workspace_full: Any) -> bo
     return _is_concrete_pm_scope_path(relative)
 
 
+def _is_directory_scope_evidenced(candidate: Any, concrete_paths: list[str], workspace_full: Any) -> bool:
+    """Accept a bare directory token when evidence shows it is a real dir.
+
+    ``_PM_SCOPE_ROOTS`` is a fixed convention list (src/app/docs/...), so any
+    legitimate project layout outside it — ``vendor``, ``assets``, ``public`` —
+    used to be rejected as "outside workspace" (live factory-bench L2-10:
+    scope ``vendor`` next to target ``vendor/marked.min.js`` failed planning
+    three times and skipped the Director). Evidence beats enumeration: the
+    token counts as a directory scope when a sibling concrete path in the SAME
+    task lives under it, or the directory already exists in the workspace.
+    """
+    raw = _strip_wrapping_quotes(str(candidate or "").strip()).replace("\\", "/")
+    if not raw or raw.startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", raw):
+        return False
+    if _PM_NON_PATH_TEXT_RE.search(raw):
+        return False
+    token = raw
+    while token.startswith("./"):
+        token = token[2:]
+    token = re.sub(r"/+", "/", token.strip("/"))
+    if not token or any(part in {".", "..", "*", "**"} for part in token.split("/")):
+        return False
+    prefix_folded = f"{token.casefold()}/"
+    for path in concrete_paths:
+        normalized = str(path or "").replace("\\", "/").casefold()
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        if normalized.startswith(prefix_folded):
+            return True
+    workspace = str(workspace_full or "").strip()
+    if workspace:
+        try:
+            if (Path(workspace) / token).is_dir():
+                return True
+        except OSError:
+            return False
+    return False
+
+
 def _coerce_pm_path_to_workspace_relative(candidate: Any, workspace_full: Any) -> tuple[str, str]:
     """Coerce an LLM-provided PM path into a workspace-relative path.
 
@@ -853,6 +892,90 @@ def _replace_external_roots_in_text(value: Any, stripped_roots: set[str]) -> Any
     if isinstance(value, dict):
         return {key: _replace_external_roots_in_text(item, stripped_roots) for key, item in value.items()}
     return value
+
+
+_VENDORED_MINIFIED_ASSET_RE = re.compile(r"(?:^|/)[\w.-]+\.min\.(?:js|css)$", re.IGNORECASE)
+
+
+def _strip_unfulfillable_vendored_targets_in_place(tasks: list[dict[str, Any]]) -> int:
+    """Remove third-party minified asset paths from write-target fields.
+
+    An offline Director cannot materialize a real vendored library — the only
+    possible "fulfillment" of a ``lib/marked.min.js`` target is a hallucinated
+    fake, and declared-target verification then fails the whole task even when
+    the delivered product is a working self-contained implementation (live
+    factory-bench L2-10 r6: QA passed the workspace, the task died on the
+    missing vendored file). Strips such targets, drops acceptance lines that
+    re-demand them, and steers the contract toward a self-contained build.
+    """
+    changed = 0
+    note = "不要落盘第三方压缩库文件；改为自包含实现(内联/手写解析)或运行时 CDN 引用。"
+    for task in tasks:
+        stripped: list[str] = []
+        for field in ("target_files", "scope_paths", "context_files"):
+            original = [str(item) for item in (task.get(field) or []) if str(item).strip()]
+            kept = [item for item in original if not _VENDORED_MINIFIED_ASSET_RE.search(item.replace("\\", "/"))]
+            if len(kept) != len(original):
+                stripped.extend(item for item in original if item not in kept)
+                task[field] = kept
+        if not stripped:
+            continue
+        changed += 1
+        unique_assets = sorted(set(stripped))
+        description = str(task.get("description") or "").strip()
+        if note not in description:
+            task["description"] = (
+                description
+                + ("\n" if description else "")
+                + f"[quality-gate] 已移除不可离线物化的第三方资产目标: {', '.join(unique_assets[:4])}。{note}"
+            )
+        for acc_field in ("acceptance", "acceptance_criteria"):
+            rows = task.get(acc_field)
+            if isinstance(rows, list):
+                filtered = [row for row in rows if not any(asset in str(row) for asset in unique_assets)]
+                if len(filtered) != len(rows):
+                    task[acc_field] = filtered
+    return changed
+
+
+_INTERACTIVE_APP_HINT_RE = re.compile(r"实时|交互|游戏|动态|单文件|interactive|game|realtime|app\b", re.IGNORECASE)
+
+
+def _steer_single_file_ui_tasks_in_place(tasks: list[dict[str, Any]]) -> int:
+    """Split single-HTML interactive-app tasks into a modular file contract.
+
+    Output-budget physics: a local Director cannot emit a complete >6-7KB
+    single file inside its output ceiling — every whole-file write truncates
+    at the same place, and a ~10K-token mega-write costs ~9 minutes of wall
+    clock before failing (live factory-bench L2-11 r6/r7, where the PM even
+    declared "单文件打字测试器"). Steering the contract to index.html +
+    style.css + app.js keeps every write small enough to converge.
+    """
+    changed = 0
+    for task in tasks:
+        targets = [str(item).strip() for item in (task.get("target_files") or []) if str(item).strip()]
+        html_targets = [item for item in targets if item.lower().endswith((".html", ".htm"))]
+        code_targets = [item for item in targets if item.lower().endswith((".js", ".css", ".py", ".ts"))]
+        if len(html_targets) != 1 or code_targets:
+            continue
+        text_blob = " ".join(str(task.get(key) or "") for key in ("title", "goal", "description"))
+        if not _INTERACTIVE_APP_HINT_RE.search(text_blob):
+            continue
+        task["target_files"] = [*targets, "style.css", "app.js"]
+        scope = [str(item).strip() for item in (task.get("scope_paths") or []) if str(item).strip()]
+        for extra in ("style.css", "app.js"):
+            if extra not in scope:
+                scope.append(extra)
+        task["scope_paths"] = scope
+        note = (
+            "[quality-gate] 禁止单文件大产物：HTML 只保留结构，样式写入 style.css、"
+            "逻辑写入 app.js（每个文件 ≤150 行）。单文件大写入会被输出预算截断且无法收敛。"
+        )
+        description = str(task.get("description") or "").strip()
+        if note not in description:
+            task["description"] = description + ("\n" if description else "") + note
+        changed += 1
+    return changed
 
 
 def _sanitize_pm_task_paths_in_place(tasks: list[dict[str, Any]], workspace_full: str) -> int:
@@ -2014,6 +2137,14 @@ def evaluate_pm_task_quality(
             path for path in task_paths if _is_workspace_bound_concrete_path(path, effective_workspace)
         ]
         invalid_scope_paths = [path for path in task_paths if path not in concrete_workspace_paths]
+        evidenced_directory_paths = [
+            path
+            for path in invalid_scope_paths
+            if _is_directory_scope_evidenced(path, concrete_workspace_paths, effective_workspace)
+        ]
+        if evidenced_directory_paths:
+            concrete_workspace_paths.extend(evidenced_directory_paths)
+            invalid_scope_paths = [path for path in invalid_scope_paths if path not in evidenced_directory_paths]
         if not task_paths:
             critical_issues.append(f"{task_id}: task requires explicit scope")
         elif not concrete_workspace_paths:
@@ -2060,7 +2191,12 @@ def evaluate_pm_task_quality(
                     f"{task_id}: assignee {assigned_to or assigned_key} requires executable command or file evidence in acceptance"
                 )
             concrete_task_paths = [path for path in task_paths if _is_concrete_pm_scope_path(path)]
-            non_path_entries = [path for path in task_paths if path not in concrete_task_paths]
+            non_path_entries = [
+                path
+                for path in task_paths
+                if path not in concrete_task_paths
+                and not _is_directory_scope_evidenced(path, concrete_task_paths, effective_workspace)
+            ]
             if task_paths and not concrete_task_paths:
                 critical_issues.append(f"{task_id}: assignee {assigned_to} requires concrete relative scope paths")
             elif non_path_entries:
@@ -2208,6 +2344,8 @@ def autofix_pm_contract_for_quality(
         "game_policy_tasks_removed": 0,
         "paths_normalized": 0,
         "seed_residue_cleanup_tasks_added": 0,
+        "vendored_targets_stripped": 0,
+        "single_file_ui_tasks_steered": 0,
     }
     if not tasks:
         return stats
@@ -2215,6 +2353,8 @@ def autofix_pm_contract_for_quality(
     verify_command = detect_integration_verify_command(workspace_full)
     normalized_tasks = [task for task in tasks if isinstance(task, dict)]
     stats["paths_normalized"] += _sanitize_pm_task_paths_in_place(normalized_tasks, workspace_full)
+    stats["vendored_targets_stripped"] += _strip_unfulfillable_vendored_targets_in_place(normalized_tasks)
+    stats["single_file_ui_tasks_steered"] += _steer_single_file_ui_tasks_in_place(normalized_tasks)
     if _attach_workspace_game_context_if_needed(normalized, normalized_tasks, workspace_full):
         stats["game_context_attached"] += 1
     is_card3d_contract = _is_card3d_pm_contract(normalized, normalized_tasks)

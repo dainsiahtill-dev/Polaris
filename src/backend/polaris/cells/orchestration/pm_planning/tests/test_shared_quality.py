@@ -260,7 +260,15 @@ class TestDetectIntegrationVerifyCommand:
         result = detect_integration_verify_command(str(tmp_path))
         assert "cargo test" in result
 
-    def test_fallback_compileall(self, monkeypatch, tmp_path) -> None:
+    def test_fallback_workspace_check_without_python(self, monkeypatch, tmp_path) -> None:
+        """Empty/non-Python workspaces get the deterministic workspace check —
+        compileall over zero .py files passes vacuously (L2-11 r4)."""
+        result = detect_integration_verify_command(str(tmp_path))
+        assert shlex.split(result)[0] == sys.executable
+        assert "polaris.kernelone.quality.workspace_check" in result
+
+    def test_fallback_compileall_with_python_sources(self, monkeypatch, tmp_path) -> None:
+        (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
         result = detect_integration_verify_command(str(tmp_path))
         assert shlex.split(result)[0] == sys.executable
         assert "compileall" in result

@@ -259,9 +259,15 @@ def ensure_pm_backend_available(backend_kind: str) -> None:
 
 def _run_async_from_sync(coro: Coroutine[Any, Any, T]) -> T:
     """Run an async role-runtime call from the synchronous PM CLI path."""
+    # Probe-then-run OUTSIDE the except block: asyncio.run inside `except
+    # RuntimeError` chains the benign "no running event loop" probe miss into
+    # every real error's traceback as a fake root cause (__context__).
+    has_running_loop = True
     try:
         asyncio.get_running_loop()
     except RuntimeError:
+        has_running_loop = False
+    if not has_running_loop:
         return asyncio.run(coro)
 
     result_box: dict[str, T] = {}
@@ -327,6 +333,7 @@ def _invoke_generic_role_runtime(
     *,
     backend_kind: str = "generic",
     args: argparse.Namespace | None = None,
+    validate_output: bool = True,
 ) -> str:
     """Invoke the PM backend through roles.runtime.
 
@@ -371,6 +378,11 @@ def _invoke_generic_role_runtime(
         "runtime_fallback_used": False,
         "fallback_policy": "fail_closed",
         "requested_backend": requested_backend,
+        # Free-text invocations (AGENTS.md drafts) must skip the PM JSON
+        # contract validator: the role-level check force-parses any fenced
+        # block as JSON, so a ```markdown draft fails twice and burns the
+        # retry budget before falling back (factory-bench L2-10 live).
+        "validate_output": validate_output,
     }
     if provider_policy:
         context.update(provider_policy)
@@ -504,6 +516,8 @@ def invoke_pm_backend(
     backend_kind: str,
     args: argparse.Namespace,
     usage_ctx: UsageContext | None,
+    *,
+    validate_output: bool = True,
 ) -> str:
     """Invoke the PM backend with the given prompt."""
     started_at = time.time()
@@ -526,6 +540,7 @@ def invoke_pm_backend(
             usage_ctx=usage_ctx,
             backend_kind=resolved_backend,
             args=args,
+            validate_output=validate_output,
         )
         if state.ollama_full:
             write_text_atomic(state.ollama_full, output or "")

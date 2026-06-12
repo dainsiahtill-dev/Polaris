@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import py_compile
 import re
+import shutil
+import subprocess
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 _ARTIFACT_QUALITY_SKIP_DIRS = {
     ".git",
@@ -122,6 +126,99 @@ _PYTHON_PACKAGE_MANIFEST_DEPENDENCIES = {
 }
 
 
+def _check_html_completeness(absolute_path: str) -> dict[str, Any]:
+    """Detect structurally truncated HTML.
+
+    An output-budget-truncated write produces a file that simply STOPS —
+    missing ``</html>`` / unbalanced ``<script>`` tags (live factory-bench
+    L2-11 r4: typing_test.html ended mid-function at line 198, no closing
+    tags, and nothing in the chain noticed). Not a validator — only the
+    truncation signature is checked.
+    """
+    with open(absolute_path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    lowered = text.lower()
+    problems: list[str] = []
+    if "<html" in lowered and "</html>" not in lowered:
+        problems.append("missing </html> closing tag")
+    open_scripts = len(re.findall(r"<script\b", lowered))
+    close_scripts = lowered.count("</script>")
+    if open_scripts > close_scripts:
+        problems.append(f"{open_scripts - close_scripts} unclosed <script> tag(s)")
+    if problems:
+        return {"ok": False, "error": "truncated/incomplete HTML: " + "; ".join(problems)}
+    return {"ok": True}
+
+
+def _compress_node_syntax_error(raw_output: str, absolute_path: str) -> str:
+    """Reduce `node --check` output to its actionable core.
+
+    Keeps "<file>:<line>", the offending code line, the caret, and the
+    SyntaxError message; drops the node stack frames and replaces the absolute
+    path with the file name. A weak model repairing from this text needs the
+    quoted line for a narrow edit_blocks match — the "at wrapSafe (node:...)"
+    frames and absolute paths are pure distraction (live factory-bench L2-11
+    r2: the repair turn failed an edit_blocks match against the noisy form).
+    """
+    text = str(raw_output or "").strip()
+    if not text:
+        return "syntax error"
+    file_name = os.path.basename(absolute_path)
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("at ") or stripped.startswith("Node.js v"):
+            continue
+        lines.append(line.replace(absolute_path, file_name))
+        if stripped.startswith(("SyntaxError", "Error")) and len(lines) > 1:
+            break
+    return "\n".join(lines).strip() or text[:200]
+
+
+def check_source_file_syntax(absolute_path: str) -> dict[str, Any] | None:
+    """Best-effort syntax validation for a materialized source file.
+
+    Returns ``{'ok': False, 'error': ...}`` on syntax failure, ``{'ok': True}``
+    on pass, ``None`` when no checker applies (unknown extension or checker
+    tool unavailable). Single source of truth shared by the post-write tool
+    diagnostic (A5) and the materialization artifact-quality scan, so a
+    syntax-broken artifact that survives the turn deterministically enters the
+    repair ladder (live factory-bench L2-10 r5: ``gfm: true;`` in app.js had
+    its write-time diagnostic ignored and nothing downstream re-checked).
+    """
+    suffix = os.path.splitext(absolute_path)[1].lower()
+    try:
+        if suffix == ".py":
+            try:
+                py_compile.compile(absolute_path, doraise=True)
+                return {"ok": True}
+            except py_compile.PyCompileError as exc:
+                message = str(exc.msg or exc).strip().splitlines()[-1]
+                return {"ok": False, "error": message}
+        if suffix in (".js", ".mjs", ".cjs"):
+            node = shutil.which("node")
+            if not node:
+                return None
+            proc = subprocess.run(
+                [node, "--check", absolute_path], capture_output=True, text=True, timeout=20, check=False
+            )
+            if proc.returncode == 0:
+                return {"ok": True}
+            detail = _compress_node_syntax_error(proc.stderr or proc.stdout, absolute_path)
+            return {"ok": False, "error": detail[:400]}
+        if suffix == ".json":
+            with open(absolute_path, encoding="utf-8") as fh:
+                json.load(fh)
+            return {"ok": True}
+        if suffix in (".html", ".htm"):
+            return _check_html_completeness(absolute_path)
+    except (OSError, UnicodeDecodeError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": f"syntax check could not run: {exc}"}
+    except ValueError as exc:  # json.JSONDecodeError
+        return {"ok": False, "error": f"invalid JSON: {exc}"}
+    return None
+
+
 def scan_workspace_artifact_quality(
     workspace_full: str,
     *,
@@ -217,6 +314,11 @@ def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str
         return []
 
     errors: list[str] = []
+    syntax = check_source_file_syntax(str(full_path))
+    if syntax is not None and syntax.get("ok") is False:
+        errors.append(
+            f"Artifact quality scan failed: syntax error in {relative_path}: {str(syntax.get('error'))[:200]}"
+        )
     if os.path.basename(relative_path).lower() == "package.json":
         errors.extend(_scan_package_manifest(root_full, text, relative_path))
     errors.extend(_scan_typescript_imports(root_full, full_path, text, relative_path))

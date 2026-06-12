@@ -15,10 +15,16 @@ from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight im
     PreflightContext,
     run_pre_dispatch_chief_engineer_ctx,
 )
+from polaris.cells.chief_engineer.blueprint.internal.step_contract import (
+    build_blueprint_tasks_contract,
+    normalize_construction_step,
+    validate_construction_steps,
+)
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
+    PublishTaskWorkItemCommandV1,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
 
@@ -311,13 +317,63 @@ class CEConsumer:
                     },
                 )
 
+            fission_published = 0
+            if self._step_fission_enabled():
+                steps, gate_errors = self._run_step_fission(task_id, payload, blueprint_id=blueprint_id)
+                if gate_errors:
+                    # CE-stage circuit breaker: junk steps never reach the market.
+                    self._svc.fail_task_stage(
+                        FailTaskStageCommandV1(
+                            workspace=self._workspace,
+                            task_id=task_id,
+                            lease_token=lease_token,
+                            error_code="CE_step_gate_failed",
+                            error_message="; ".join(gate_errors[:6]),
+                            requeue_stage="pending_design",
+                        )
+                    )
+                    return {"task_id": task_id, "ok": False, "reason": "CE_step_gate_failed"}
+                steps_contract = build_blueprint_tasks_contract(
+                    parent_pm_task=task_id,
+                    blueprint_id=blueprint_id,
+                    blueprint_path=blueprint_path,
+                    steps=steps,
+                )
+                from polaris.kernelone.fs.text_ops import write_json_atomic
+                from polaris.kernelone.storage.io_paths import resolve_artifact_path
+
+                write_json_atomic(
+                    resolve_artifact_path(
+                        self._workspace,
+                        str(payload.get("cache_root", "")),
+                        "runtime/contracts/ce_blueprint_tasks.contract.json",
+                    ),
+                    steps_contract,
+                )
+                fission_published = self._publish_step_tasks(
+                    task_id,
+                    payload,
+                    steps,
+                    blueprint_id=blueprint_id,
+                    blueprint_path=blueprint_path,
+                )
+                ack_payload["construction_steps"] = steps
+                ack_payload["fission_step_count"] = fission_published
+                # The parent becomes a non-leaf supervision row; Director
+                # workers must claim only leaf steps (I2: leaf-only claim gate).
+                ack_payload["is_leaf"] = False
+
             ack = self._svc.acknowledge_task_stage(
                 AcknowledgeTaskStageCommandV1(
                     workspace=self._workspace,
                     task_id=task_id,
                     lease_token=lease_token,
                     next_stage="pending_exec",
-                    summary=f"Blueprint {ack_payload['blueprint_id']} ready for Director",
+                    summary=(
+                        f"Blueprint {ack_payload['blueprint_id']} fissioned into {fission_published} step task(s)"
+                        if fission_published
+                        else f"Blueprint {ack_payload['blueprint_id']} ready for Director"
+                    ),
                     metadata=ack_payload,
                 )
             )
@@ -325,6 +381,7 @@ class CEConsumer:
                 "task_id": task_id,
                 "ok": bool(ack.ok),
                 "status": str(ack.status or ""),
+                "fission_step_count": fission_published,
             }
 
         except Exception as exc:
@@ -344,6 +401,133 @@ class CEConsumer:
                 "ok": False,
                 "reason": str(exc),
             }
+
+    @staticmethod
+    def _step_fission_enabled() -> bool:
+        """Three-tier fission flag (migration default OFF; I3 comparison flips it)."""
+        return os.environ.get("KERNELONE_CE_STEP_FISSION", "0").strip().lower() in {"1", "true", "on", "yes"}
+
+    def _run_step_fission(
+        self,
+        task_id: str,
+        payload: dict[str, Any],
+        *,
+        blueprint_id: str,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Ask the CE role (cloud model) to fission one PM task into steps.
+
+        Returns (steps, gate_errors). Steps are normalized; gate_errors non-empty
+        means the CE-stage circuit breaker fired (junk steps never reach the
+        market — a malformed step burns ~10min of local Director wall clock).
+        """
+        import asyncio
+        import json as _json
+
+        from polaris.cells.llm.dialogue.internal.role_dialogue import generate_role_response
+        from polaris.kernelone.config import get_settings
+
+        contract = _contract_fields(payload)
+        task_brief = {
+            "task_id": task_id,
+            "title": str(payload.get("title") or ""),
+            "goal": str(payload.get("goal") or payload.get("description") or ""),
+            "target_files": _string_list(payload.get("target_files")),
+            "acceptance_criteria": list(contract["acceptance_criteria"]),
+        }
+        message = (
+            "按「弱执行者蓝图纪律」把下面这个任务裂变为 construction_steps。\n"
+            '只输出 JSON: {"construction_steps": [{"step_id", "target_file"(单文件), '
+            '"est_lines"(整数,≤120), "signatures"(函数/类签名清单), '
+            '"interface_names"(跨文件接口统一定名), "verify"(机器可执行判据), '
+            '"depends_on"(step_id 列表), "title"}]}。\n'
+            f"任务契约:\n{_json.dumps(task_brief, ensure_ascii=False)}"
+        )
+
+        def _invoke(extra: str = "") -> dict[str, Any]:
+            has_loop = True
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                has_loop = False
+            coro = generate_role_response(
+                workspace=self._workspace,
+                settings=get_settings(),
+                role="chief_engineer",
+                message=message + extra,
+            )
+            if not has_loop:
+                return asyncio.run(coro)
+            raise RuntimeError("ce_step_fission_inside_event_loop_unsupported")
+
+        def _extract_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
+            text = str(result.get("content") or result.get("response") or "")
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end <= start:
+                return []
+            try:
+                data = _json.loads(text[start : end + 1])
+            except _json.JSONDecodeError:
+                return []
+            raw_steps = data.get("construction_steps") if isinstance(data, dict) else None
+            if not isinstance(raw_steps, list):
+                return []
+            return [
+                normalize_construction_step(item, parent_pm_task=task_id, index=i) for i, item in enumerate(raw_steps)
+            ]
+
+        steps = _extract_steps(_invoke())
+        errors = validate_construction_steps(steps, parent_pm_task=task_id)
+        if errors:
+            # One corrective re-ask with the gate errors quoted (same teaching
+            # contract the Director-side ladders use).
+            retry_extra = "\n上次输出未过质量门,逐条修正后重新输出完整 JSON:\n- " + "\n- ".join(errors[:8])
+            steps = _extract_steps(_invoke(retry_extra))
+            errors = validate_construction_steps(steps, parent_pm_task=task_id)
+        return steps, errors
+
+    def _publish_step_tasks(
+        self,
+        task_id: str,
+        payload: dict[str, Any],
+        steps: list[dict[str, Any]],
+        *,
+        blueprint_id: str,
+        blueprint_path: str,
+    ) -> int:
+        """E1 fan-out: publish each construction step as a leaf pending_exec item."""
+        published = 0
+        run_id = str(payload.get("run_id", ""))
+        for step in steps:
+            step_payload = {
+                **{k: payload.get(k) for k in ("workspace", "run_id", "run_dir", "cache_root") if payload.get(k)},
+                "title": step.get("title") or f"{payload.get('title', task_id)} · {step['step_id']}",
+                "target_files": [step["target_file"]],
+                "scope_paths": [step["target_file"]],
+                "construction_step": step,
+                "blueprint_id": blueprint_id,
+                "blueprint_path": blueprint_path,
+                "route": "chief_blueprint_required",
+                "acceptance_criteria": [step["verify"]] if step.get("verify") else [],
+            }
+            self._svc.publish_work_item(
+                PublishTaskWorkItemCommandV1(
+                    workspace=self._workspace,
+                    trace_id=f"fission-{task_id}",
+                    run_id=run_id,
+                    task_id=str(step["step_id"]),
+                    stage="pending_exec",
+                    source_role="chief_engineer",
+                    payload=step_payload,
+                    parent_task_id=task_id,
+                    root_task_id=str(payload.get("root_task_id") or task_id),
+                    is_leaf=True,
+                    depends_on=tuple(step.get("depends_on") or ()),
+                    metadata={"blueprint_id": blueprint_id, "fission": "ce-blueprint-tasks/1"},
+                )
+            )
+            published += 1
+        return published
 
     def _run_ce_preflight(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Run CE preflight and return blueprint result dict.

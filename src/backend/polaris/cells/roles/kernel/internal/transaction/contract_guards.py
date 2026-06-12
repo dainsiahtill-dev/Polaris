@@ -608,6 +608,11 @@ _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS: tuple[str, ...] = (
     "prose/narration",
     "identical search and replace",
     "No valid edit blocks",
+    # PreWriteGuard syntax block: the write carried correctable content and a
+    # teaching suggestion — without a retry re-ask the turn ends on the single
+    # blocked write and dies as no_materialized_changes (live factory-bench
+    # L2-11 r3: main.py IndentationError blocked once, never retried).
+    "Code syntax validation failed",
 )
 
 

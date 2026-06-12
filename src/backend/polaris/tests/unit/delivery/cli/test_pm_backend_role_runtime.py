@@ -60,3 +60,46 @@ def test_pm_backend_propagates_timeout_to_session_runtime(
     assert command.context["llm_call_timeout_seconds"] == 300
     assert command.context["request_timeout_seconds"] == 300
     assert command.context["timeout_seconds"] == 300
+
+
+def test_pm_backend_validate_output_flag_threads_to_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L2-10 regression: AGENTS.md free-text drafts must disable the PM JSON
+    contract validator (which force-parses any fenced block as JSON)."""
+    captured: dict[str, ExecuteRoleSessionCommandV1] = {}
+
+    def _create_service() -> _FakeRoleRuntimeService:
+        return _FakeRoleRuntimeService(captured)
+
+    monkeypatch.setattr(pm_backend, "_create_role_runtime_service", _create_service)
+
+    pm_backend._invoke_generic_role_runtime(
+        _pm_state(tmp_path, timeout=60),
+        "draft an AGENTS.md",
+        None,
+        validate_output=False,
+    )
+    command = captured["command"]
+    assert command.metadata["validate_output"] is False
+
+
+def test_pm_backend_validates_output_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, ExecuteRoleSessionCommandV1] = {}
+
+    def _create_service() -> _FakeRoleRuntimeService:
+        return _FakeRoleRuntimeService(captured)
+
+    monkeypatch.setattr(pm_backend, "_create_role_runtime_service", _create_service)
+
+    pm_backend._invoke_generic_role_runtime(
+        _pm_state(tmp_path, timeout=60),
+        "plan tasks",
+        None,
+    )
+    command = captured["command"]
+    assert command.metadata["validate_output"] is True

@@ -1266,6 +1266,14 @@ class ToolBatchExecutor:
         if requires_mutation:
             _shape_guard_receipt = _merge_batch_receipts(receipts_as_dicts)
             if _shape_guard_receipt and batch_write_results_all_failed_on_argument_shape(_shape_guard_receipt):
+                # This batch produced ZERO effects (every write failed on
+                # argument shape), so it must not consume the single-batch
+                # budget: the escalation retry executes a REPLACEMENT batch,
+                # and with the void batch still counted the guard sees two
+                # ToolBatches and kills the turn mid-escalation (live
+                # factory-bench L2-11 r5: KernelGuardError right after a
+                # missing-required-argument write_file).
+                ledger.tool_batch_count = max(0, int(ledger.tool_batch_count or 0) - 1)
                 raise RuntimeError(
                     "single_batch_contract_violation: mutation write batch failed on argument shape "
                     "(prose/no-op/missing-args in write tool arguments) — escalating to forced-write retry"

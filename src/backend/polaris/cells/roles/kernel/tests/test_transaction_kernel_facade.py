@@ -2130,6 +2130,28 @@ class TestWriteArgumentShapeFailureGuard:
         )
         assert batch_write_results_all_failed_on_argument_shape(receipt) is True
 
+    def test_pre_write_syntax_block_triggers(self) -> None:
+        """L2-11 r3 live regression: a single PreWriteGuard-blocked write
+        (IndentationError) ended the turn as no_materialized_changes because
+        the syntax-block error text was not an escalation anchor."""
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [
+                (
+                    "write_file",
+                    "error",
+                    {
+                        "ok": False,
+                        "error": "Code syntax validation failed:\nmain.py:138: IndentationError: unexpected indent",
+                    },
+                ),
+            ]
+        )
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
     def test_any_successful_write_disarms(self) -> None:
         from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
             batch_write_results_all_failed_on_argument_shape,
@@ -2171,3 +2193,28 @@ class TestWriteArgumentShapeFailureGuard:
         )
 
         assert batch_write_results_all_failed_on_argument_shape({"results": []}) is False
+
+
+class TestVoidBatchDoesNotConsumeBudget:
+    """L2-11 r5 live regression: the A8a escalation's replacement batch became
+    ToolBatch #2 because the void (all-writes-shape-failed, zero-effect)
+    original batch still counted — KernelGuardError killed the turn
+    mid-escalation."""
+
+    def test_a8a_raise_rolls_back_batch_count(self) -> None:
+        import re
+        from pathlib import Path
+
+        source = Path("polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py").read_text(
+            encoding="utf-8"
+        )
+        block = re.search(
+            r"if _shape_guard_receipt and batch_write_results_all_failed_on_argument_shape\(_shape_guard_receipt\):"
+            r"(?P<body>.*?)raise RuntimeError",
+            source,
+            re.DOTALL,
+        )
+        assert block is not None, "A8a escalation block not found"
+        assert "ledger.tool_batch_count = max(0," in block.group("body"), (
+            "void batch must release the single-batch budget before escalation"
+        )

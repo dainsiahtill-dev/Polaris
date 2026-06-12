@@ -660,7 +660,9 @@ def test_workflow_dispatch_preserves_nested_failure_when_tasks_and_qa_pass(tmp_p
     )
 
     assert outcome["used"] is True
-    assert outcome["exit_code"] == 1
+    # Graded exit: nested domain failure stays fail-closed (nonzero), and with
+    # one completed task it is encoded as 4 (director_partial), not flattened 1.
+    assert outcome["exit_code"] == 4
     director_result = json.loads((tmp_path / "director.result.json").read_text(encoding="utf-8"))
     assert director_result["status"] == "failed"
     assert director_result["successes"] == 1
@@ -820,3 +822,69 @@ def test_workflow_dispatch_projects_nested_director_failure_result(tmp_path, mon
     qa_result = outcome["integration_qa_result"]
     assert qa_result["ran"] is False
     assert qa_result["reason"] == "director_failures_present"
+
+
+# ---------------------------------------------------------------------------
+# Graded exit codes (chain-summary/1) — FB-2
+# ---------------------------------------------------------------------------
+
+
+def test_grade_director_exit_partial_progress_is_4():
+    mod = _load_orchestration_engine()
+    assert mod.grade_director_exit_code("failed", completed_count=2) == 4
+    assert mod.grade_director_exit_code("blocked", completed_count=1) == 4
+
+
+def test_grade_director_exit_zero_success_is_1():
+    mod = _load_orchestration_engine()
+    assert mod.grade_director_exit_code("failed", completed_count=0) == 1
+    assert mod.grade_director_exit_code("blocked", completed_count=0) == 1
+
+
+def test_grade_director_exit_success_states_untouched():
+    mod = _load_orchestration_engine()
+    assert mod.grade_director_exit_code("success", completed_count=3) == 0
+    assert mod.grade_director_exit_code("running", completed_count=0) == 0
+
+
+def test_grade_qa_exit_after_full_director_success_is_5():
+    mod = _load_orchestration_engine()
+    assert mod.grade_qa_exit_code("success", current_exit_code=0) == 5
+
+
+def test_grade_qa_exit_preserves_graded_director_code():
+    """QA 失败分支不得把 4(部分进展)压扁回 1。"""
+    mod = _load_orchestration_engine()
+    assert mod.grade_qa_exit_code("failed", current_exit_code=4) == 4
+    assert mod.grade_qa_exit_code("failed", current_exit_code=1) == 1
+    assert mod.grade_qa_exit_code("failed", current_exit_code=0) == 1
+
+
+def test_build_chain_summary_partial_director():
+    mod = _load_orchestration_engine()
+    summary = mod.build_chain_summary(
+        workflow_exit_code=4,
+        director_result={"status": "failed", "total": 3, "successes": 2, "failures": 1, "blocked": 0},
+        integration_qa_result={"ran": True, "passed": True, "reason": "integration_qa_passed"},
+        qa_passed=True,
+        qa_reason="integration_qa_passed",
+        generated_at="2026-06-12 00:00:00",
+    )
+    assert summary["schema_version"] == "chain-summary/1"
+    assert summary["exit_class"] == "director_partial"
+    assert summary["director"]["successes"] == 2
+    assert summary["integration_qa"] == {"ran": True, "passed": True, "reason": "integration_qa_passed"}
+
+
+def test_build_chain_summary_exit_classes():
+    mod = _load_orchestration_engine()
+    for code, expected in ((0, "clean"), (4, "director_partial"), (5, "qa_failed"), (1, "hard_failed")):
+        summary = mod.build_chain_summary(
+            workflow_exit_code=code,
+            director_result={},
+            integration_qa_result=None,
+            qa_passed=False,
+            qa_reason="",
+            generated_at="2026-06-12 00:00:00",
+        )
+        assert summary["exit_class"] == expected, code

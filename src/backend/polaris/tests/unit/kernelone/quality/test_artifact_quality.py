@@ -478,3 +478,121 @@ export function cardHelper3(value: number): number { return value + 3; }
 
     assert errors
     assert any("generic payload/index store scaffold" in error for error in errors)
+
+
+class TestSourceSyntaxInQualityScan:
+    """L2-10 r5 regression: `gfm: true;` (a `;` for `,` in an object literal)
+    survived the turn because the write-time diagnostic was advisory and the
+    artifact-quality scan never re-checked syntax. A syntax-broken artifact is
+    now a materialization quality error and enters the repair ladder."""
+
+    def test_js_syntax_error_is_quality_error(self, tmp_path) -> None:
+        from polaris.kernelone.quality import scan_workspace_artifact_quality
+
+        (tmp_path / "app.js").write_text(
+            "marked.setOptions({\n  breaks: true,\n  gfm: true;\n});\n",
+            encoding="utf-8",
+        )
+        errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["app.js"])
+        assert any("syntax error in app.js" in e for e in errors), errors
+
+    def test_clean_js_passes(self, tmp_path) -> None:
+        from polaris.kernelone.quality import scan_workspace_artifact_quality
+
+        (tmp_path / "app.js").write_text(
+            "const editor = document.getElementById('editor');\n"
+            "editor.addEventListener('input', () => console.log(editor.value));\n",
+            encoding="utf-8",
+        )
+        errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["app.js"])
+        assert not any("syntax error" in e for e in errors), errors
+
+    def test_broken_python_is_quality_error(self, tmp_path) -> None:
+        from polaris.kernelone.quality import scan_workspace_artifact_quality
+
+        (tmp_path / "main.py").write_text("def add(a, b:\n    return a + b\n", encoding="utf-8")
+        errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["main.py"])
+        assert any("syntax error in main.py" in e for e in errors), errors
+
+    def test_broken_package_manifest_is_quality_error(self, tmp_path) -> None:
+        """Only package.json among JSON files enters the scan (data .json files
+        are intentionally out of scope; the write-time A5 check covers them)."""
+        from polaris.kernelone.quality import scan_workspace_artifact_quality
+
+        (tmp_path / "package.json").write_text('{"name": "app",}\n', encoding="utf-8")
+        errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+        assert any("syntax error in package.json" in e for e in errors), errors
+
+    def test_check_source_file_syntax_unknown_extension_none(self, tmp_path) -> None:
+        from polaris.kernelone.quality import check_source_file_syntax
+
+        target = tmp_path / "notes.md"
+        target.write_text("# notes\n", encoding="utf-8")
+        assert check_source_file_syntax(str(target)) is None
+
+
+class TestHtmlCompleteness:
+    """L2-11 r4: an output-budget-truncated HTML (no closing tags) sailed
+    through every gate; truncation signature is now a syntax-class defect."""
+
+    def test_truncated_html_flagged(self, tmp_path) -> None:
+        from polaris.kernelone.quality import check_source_file_syntax
+
+        target = tmp_path / "app.html"
+        target.write_text("<html><body><script>\nvar diff = [];\n", encoding="utf-8")
+        result = check_source_file_syntax(str(target))
+        assert result is not None and result["ok"] is False
+        assert "missing </html>" in result["error"]
+        assert "unclosed <script>" in result["error"]
+
+    def test_complete_html_passes(self, tmp_path) -> None:
+        from polaris.kernelone.quality import check_source_file_syntax
+
+        target = tmp_path / "ok.html"
+        target.write_text(
+            "<html><body><script>var x=1;</script></body></html>\n",
+            encoding="utf-8",
+        )
+        assert check_source_file_syntax(str(target)) == {"ok": True}
+
+    def test_fragment_without_html_tag_passes(self, tmp_path) -> None:
+        from polaris.kernelone.quality import check_source_file_syntax
+
+        target = tmp_path / "fragment.html"
+        target.write_text("<div>partial include</div>\n", encoding="utf-8")
+        assert check_source_file_syntax(str(target)) == {"ok": True}
+
+    def test_truncated_html_enters_quality_scan(self, tmp_path) -> None:
+        from polaris.kernelone.quality import scan_workspace_artifact_quality
+
+        (tmp_path / "index.html").write_text("<html><script>\nlet a=1;\n", encoding="utf-8")
+        errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["index.html"])
+        assert any("syntax error in index.html" in e and "truncated" in e for e in errors), errors
+
+
+class TestWorkspaceCheckCli:
+    def test_fails_on_defective_workspace(self, tmp_path) -> None:
+        from polaris.kernelone.quality.workspace_check import main, run_workspace_check
+
+        (tmp_path / "typing_test.html").write_text("<html><script>\nvar x=1;\n", encoding="utf-8")
+        checked, failures = run_workspace_check(str(tmp_path))
+        assert checked == 1
+        assert failures and "typing_test.html" in failures[0]
+        assert main(["--workspace", str(tmp_path)]) == 1
+
+    def test_passes_on_clean_workspace(self, tmp_path) -> None:
+        from polaris.kernelone.quality.workspace_check import main
+
+        (tmp_path / "index.html").write_text(
+            "<html><body><script>console.log('ok');</script></body></html>\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.js").write_text("console.log('ok');\n", encoding="utf-8")
+        assert main(["--workspace", str(tmp_path)]) == 0
+
+    def test_empty_workspace_passes_vacuously_but_honestly(self, tmp_path) -> None:
+        from polaris.kernelone.quality.workspace_check import run_workspace_check
+
+        checked, failures = run_workspace_check(str(tmp_path))
+        assert checked == 0
+        assert failures == []

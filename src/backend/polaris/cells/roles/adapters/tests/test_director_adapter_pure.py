@@ -2809,21 +2809,28 @@ export function summary() {
 
         async def _contract_exception_after_write(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
+            # Built via json.dumps: the previous hand-escaped literal was
+            # INVALID JSON (trailing backslash escape) and only survived
+            # because nothing syntax-checked artifacts until the
+            # check_source_file_syntax quality gate landed.
             (tmp_path / "package.json").write_text(
-                "{\n"
-                '  "name": "polaris-engine",\n'
-                '  "version": "1.0.0",\n'
-                '  "private": true,\n'
-                '  "scripts": {\n'
-                '    "build": "tsc",\n'
-                '    "test": "node -e \\"JSON.parse(require('
-                "'fs').readFileSync('package.json', 'utf8')); console.log('package ok')\\"
-                "\n"
-                "  },\n"
-                '  "devDependencies": {\n'
-                '    "typescript": "^5.0.0"\n'
-                "  }\n"
-                "}\n",
+                json.dumps(
+                    {
+                        "name": "polaris-engine",
+                        "version": "1.0.0",
+                        "private": True,
+                        "scripts": {
+                            "build": "tsc",
+                            "test": (
+                                "node -e \"JSON.parse(require('fs').readFileSync('package.json', 'utf8'));"
+                                " console.log('package ok')\""
+                            ),
+                        },
+                        "devDependencies": {"typescript": "^5.0.0"},
+                    },
+                    indent=2,
+                )
+                + "\n",
                 encoding="utf-8",
             )
             raise RuntimeError(
@@ -4239,3 +4246,280 @@ def test_scaffold_synthesis_default_off(monkeypatch) -> None:
     assert _synthesize_declared_target_file_content("readme.md") == ""
     assert _synthesize_declared_target_file_content("package.json") == ""
     assert _synthesize_declared_target_file_content("src/models/tenant.model.ts") == ""
+
+
+class TestDeclaredPathCaseInsensitiveMatching:
+    """L2-09 PM-0001-2 regression: PM declared "readme.md", Director wrote
+    "README.md"; the case-sensitive declared-path filter dropped the task's
+    only real output and produced director_no_materialized_changes."""
+
+    def test_filter_keeps_case_mismatched_target(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _filter_diff_to_task_declared_paths,
+        )
+
+        new_files, modified_files = _filter_diff_to_task_declared_paths(
+            task={"target_files": ["readme.md"]},
+            new_files=["README.md"],
+            modified_files=[],
+        )
+        assert new_files == ["README.md"]
+        assert modified_files == []
+
+    def test_filter_keeps_exact_case_target(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _filter_diff_to_task_declared_paths,
+        )
+
+        new_files, _ = _filter_diff_to_task_declared_paths(
+            task={"target_files": ["src/App.tsx"]},
+            new_files=["src/App.tsx", "src/unrelated.ts"],
+            modified_files=[],
+        )
+        assert new_files == ["src/App.tsx"]
+
+    def test_filter_still_excludes_unrelated_files(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _filter_diff_to_task_declared_paths,
+        )
+
+        new_files, modified_files = _filter_diff_to_task_declared_paths(
+            task={"target_files": ["readme.md"]},
+            new_files=["game.js"],
+            modified_files=["index.html"],
+        )
+        assert new_files == []
+        assert modified_files == []
+
+    def test_directory_candidate_matches_case_insensitively(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _path_matches_declared_candidate,
+        )
+
+        assert _path_matches_declared_candidate("Docs/Guide.md", "docs")
+        assert _path_matches_declared_candidate("src/app.PY", "src/app.py")
+        assert not _path_matches_declared_candidate("other/file.md", "docs")
+
+    def test_glob_candidate_matches_case_insensitively(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _glob_path_matches,
+        )
+
+        assert _glob_path_matches("README.md", "readme.*")
+        assert _glob_path_matches("src/Views/Home.vue", "src/**/home.vue")
+
+
+class TestAcceptanceVerifyExistsExemption:
+    """L2-09 class: identical-rewrite / case-variant writes produce an empty
+    diff; when the PM contract's own `verify <path> exists` machine checks all
+    pass AND write receipts exist, the task is satisfied, not failed."""
+
+    @staticmethod
+    def _evaluate(task: dict, workspace: Any, write_tool_evidence: bool = True) -> tuple[bool, dict]:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _evaluate_acceptance_verify_exists,
+        )
+
+        return _evaluate_acceptance_verify_exists(
+            task=task,
+            workspace_full=str(workspace),
+            write_tool_evidence=write_tool_evidence,
+        )
+
+    def test_all_assertions_pass(self, tmp_path) -> None:
+        (tmp_path / "README.md").write_text("# hi\n", encoding="utf-8")
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ["包含运行说明", "verify ./readme.md exists"]},
+            tmp_path,
+        )
+        assert satisfied is True
+        assert evidence == {"checked": 1, "passed": ["readme.md"], "missing": []}
+
+    def test_missing_path_not_exempted(self, tmp_path) -> None:
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ["verify ./readme.md exists"]},
+            tmp_path,
+        )
+        assert satisfied is False
+        assert evidence["missing"] == ["readme.md"]
+
+    def test_no_machine_assertions_no_exemption(self, tmp_path) -> None:
+        (tmp_path / "README.md").write_text("# hi\n", encoding="utf-8")
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ["README.md 存在于工作区根"]},
+            tmp_path,
+        )
+        assert satisfied is False
+        assert evidence["checked"] == 0
+
+    def test_requires_write_tool_evidence(self, tmp_path) -> None:
+        (tmp_path / "README.md").write_text("# hi\n", encoding="utf-8")
+        satisfied, _ = self._evaluate(
+            {"acceptance_criteria": ["verify ./readme.md exists"]},
+            tmp_path,
+            write_tool_evidence=False,
+        )
+        assert satisfied is False
+
+    def test_nested_path_case_insensitive(self, tmp_path) -> None:
+        (tmp_path / "Docs").mkdir()
+        (tmp_path / "Docs" / "Guide.md").write_text("g\n", encoding="utf-8")
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ["verify docs/guide.md exists"]},
+            tmp_path,
+        )
+        assert satisfied is True
+        assert evidence["passed"] == ["docs/guide.md"]
+
+    def test_one_missing_among_many_blocks_exemption(self, tmp_path) -> None:
+        (tmp_path / "a.md").write_text("a\n", encoding="utf-8")
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ["verify a.md exists", "verify b.md exists"]},
+            tmp_path,
+        )
+        assert satisfied is False
+        assert evidence["passed"] == ["a.md"]
+        assert evidence["missing"] == ["b.md"]
+
+
+class TestQualityRepairMissingTargetContract:
+    """L2-10 r3 regression: the repair turn rewrote src/main.js (already
+    present) instead of creating the missing src/styles.css — the repair
+    message itself seeded the wrong target by listing changed files as paths."""
+
+    def test_missing_declared_targets_derived_from_workspace(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_declared_target_files,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.js").write_text("x\n", encoding="utf-8")
+        (tmp_path / "index.html").write_text("<html></html>\n", encoding="utf-8")
+        task = {"target_files": ["index.html", "src/main.js", "src/styles.css", "package.json"]}
+        missing = _missing_declared_target_files(task, str(tmp_path))
+        assert missing == ["src/styles.css", "package.json"]
+
+    def test_missing_targets_case_insensitive(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_declared_target_files,
+        )
+
+        (tmp_path / "README.md").write_text("r\n", encoding="utf-8")
+        task = {"target_files": ["readme.md"]}
+        assert _missing_declared_target_files(task, str(tmp_path)) == []
+
+    def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            extract_target_files_from_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="实现 Markdown 预览器核心文件",
+            artifact_quality_errors=["Artifact quality scan failed: declared target file missing 'src/styles.css'"],
+            changed_files=["index.html", "package.json", "src/main.js"],
+            missing_target_files=["src/styles.css"],
+        )
+        assert "MISSING TARGET FILES" in message
+        assert "src/styles.css" in message
+        # Changed files appear only as a count — path-shaped tokens seed the
+        # retry target extractor with wrong targets.
+        assert "src/main.js" not in message
+        assert "3 file(s) were already written" in message
+        extracted = extract_target_files_from_message(message)
+        assert "src/styles.css" in extracted
+        assert "src/main.js" not in extracted
+
+    def test_repair_message_without_missing_block_when_none(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="task",
+            artifact_quality_errors=["some error"],
+            changed_files=[],
+            missing_target_files=[],
+        )
+        assert "MISSING TARGET FILES" not in message
+        assert "0 file(s) were already written" in message
+
+
+class TestSyntaxRepairDirective:
+    """L2-11 r2: the repair turn REWROTE typing.js whole-file and reproduced
+    the identical `endTime: null;` slip at escalation-low temperature; only a
+    narrow line edit breaks the determinism loop."""
+
+    def test_syntax_error_adds_narrow_edit_directive(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="实现打字测试器",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: syntax error in typing.js: typing.js:9\n"
+                "    endTime: null;\n                 ^\n\nSyntaxError: Unexpected token ';'"
+            ],
+            changed_files=["typing.js"],
+            missing_target_files=[],
+        )
+        assert "SYNTAX REPAIR DIRECTIVE" in message
+        assert "Do NOT rewrite the whole file" in message
+        assert "edit_blocks" in message
+
+    def test_no_directive_without_syntax_errors(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="task",
+            artifact_quality_errors=["declared target file missing 'readme.md'"],
+            changed_files=[],
+            missing_target_files=["readme.md"],
+        )
+        assert "SYNTAX REPAIR DIRECTIVE" not in message
+
+
+class TestTruncatedFileDirective:
+    """L2-11 r6: index.html was whole-file-rewritten three times and every
+    copy was output-limit-truncated; only append converges."""
+
+    def test_truncation_error_gets_append_directive(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="构建打字测试器",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: syntax error in index.html: "
+                "truncated/incomplete HTML: missing </html> closing tag; 1 unclosed <script> tag(s)"
+            ],
+            changed_files=["index.html"],
+            missing_target_files=[],
+        )
+        assert "TRUNCATED FILE DIRECTIVE" in message
+        assert "append_to_file" in message
+        assert "Do NOT rewrite" in message
+        assert "SYNTAX REPAIR DIRECTIVE" not in message
+
+    def test_plain_syntax_error_keeps_narrow_edit_directive(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="task",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: syntax error in app.js: app.js:9\n"
+                "    gfm: true;\n^\nSyntaxError: Unexpected token ';'"
+            ],
+            changed_files=["app.js"],
+            missing_target_files=[],
+        )
+        assert "SYNTAX REPAIR DIRECTIVE" in message
+        assert "TRUNCATED FILE DIRECTIVE" not in message

@@ -420,22 +420,48 @@ class CompressionEngine:
             return f"【会话连续性摘要】\n{summary_text}"
         return ""
 
+    _EMERGENCY_USER_CONTENT_FLOOR_CHARS = 400
+
     def emergency_truncate(self, messages: list[dict[str, Any]], max_tokens: int) -> list[dict[str, Any]]:
         """Emergency truncation when budget is violated.
 
         Keeps system messages, truncates history to fit within max_tokens.
         This is a last-resort safety net when StateFirstContextOS projection
         still exceeds token limits.
+
+        The FINAL user turn carries the current instruction and is never
+        dropped: silently removing it leaves a system-only prompt, the
+        delivery-contract resolver then sees no user intent and defaults the
+        turn to ANALYZE_ONLY, and every write the model attempts is filtered
+        (live factory-bench L2-10: the materialization-quality repair turn
+        announced the fix but its write_file was dropped). When even an empty
+        history cannot fit, the instruction is content-truncated instead.
         """
         system_msgs = [m for m in messages if m.get("role") == "system"]
         history = [m for m in messages if m.get("role") != "system"]
 
-        total = self._token_estimator.estimate(system_msgs + history)
+        final_user: dict[str, Any] | None = None
+        for index in range(len(history) - 1, -1, -1):
+            if str(history[index].get("role") or "").strip().lower() == "user":
+                final_user = history.pop(index)
+                break
+
+        def _assemble() -> list[dict[str, Any]]:
+            return system_msgs + history + ([final_user] if final_user is not None else [])
+
+        total = self._token_estimator.estimate(_assemble())
         while total > max_tokens and history:
             history.pop(0)
-            total = self._token_estimator.estimate(system_msgs + history)
+            total = self._token_estimator.estimate(_assemble())
 
-        return system_msgs + history
+        if final_user is not None and total > max_tokens:
+            content = str(final_user.get("content") or "")
+            while total > max_tokens and len(content) > self._EMERGENCY_USER_CONTENT_FLOOR_CHARS:
+                content = content[: max(self._EMERGENCY_USER_CONTENT_FLOOR_CHARS, len(content) // 2)]
+                final_user = {**final_user, "content": content + "\n...[EMERGENCY_TRUNCATED]"}
+                total = self._token_estimator.estimate(_assemble())
+
+        return _assemble()
 
     def emergency_truncate_with_limit(
         self, messages: list[dict[str, Any]], max_tokens: int

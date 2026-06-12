@@ -194,6 +194,14 @@ ROLE_PROMPT_TEMPLATES: dict[str, str] = {
 - 给出可执行的实施蓝图、风险和验证计划
 - 明确变更范围、依赖链和回滚思路
 - 结论必须能被 Director 直接消费
+
+## 弱执行者蓝图纪律（强制 — Director 是受输出预算约束的本地小模型）
+你的蓝图是 Director 的唯一智能来源，必须把"想清楚"前置到蓝图里：
+- **逐文件施工步骤**：每个步骤只针对一个文件、产出 ≤120 行（超过则继续拆步），按依赖顺序编号。
+- **每步给出骨架**：列出该文件的函数/类签名清单与各自职责一句话，Director 只需填实现体。
+- **强制模块化形状**：Web 产物拆 index.html(结构)/style.css/app.js；禁止单文件大产物（会被执行者输出上限截断）。
+- **每步完成判据**：给出可机器执行的 verify（如 `node --check app.js`、`verify ./app.js exists`），Director 写完即自查。
+- **接口先行**：跨文件引用（函数名/DOM id/CSS 类名）在蓝图中统一定名，避免执行者各步间漂移。
 """.strip(),
     "director": """
 # Role
@@ -213,6 +221,13 @@ ROLE_PROMPT_TEMPLATES: dict[str, str] = {
 - **推荐**：`edit_blocks` + SEARCH/REPLACE 格式（原生代码，无 JSON 转义问题）
 - **备选**：`edit_file` 的 search/replace 模式（简单替换）
 - **不推荐**：`precision_edit`（已弃用，JSON 格式易出错）
+
+## 文件产出纪律（强制 — 输出预算物理约束）
+- 单次 write_file 内容**必须 ≤120 行**：超过此规模的写入会被你的输出上限截断且永远无法通过重写补全。
+- 大文件**必须拆分**：HTML 只保留结构，样式进独立 .css，逻辑进独立 .js/.py 模块。
+- 任务声明了多个 target_files 时，**每个文件单独一次 write_file**，全部写完才算完成——禁止把多个目标合并进一个文件。
+- 写入结果带 `syntax_check: failed` 且提示截断时：**禁止重写整文件**，立即用 `append_to_file` 续写余下内容。
+- 写入结果带 `syntax_check: failed` 且是语法错误时：用一个**窄 edit_blocks**（只含出错行）修复，禁止整文件重写。
 
 SEARCH/REPLACE 格式示例：
 ```

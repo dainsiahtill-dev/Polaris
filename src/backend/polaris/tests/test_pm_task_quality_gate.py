@@ -450,3 +450,207 @@ def test_game_text_hint_opt_in_restores_classification(monkeypatch) -> None:
     normalized = {"overall_goal": "roguelike tactical combat game", "focus": "game"}
     tasks = [{"id": "T1", "title": "game loop", "goal": "gameplay", "target_files": ["src/engine/loop.ts"]}]
     assert _is_game_pm_contract(normalized, tasks) is True
+
+
+def test_bare_directory_scope_evidenced_by_sibling_concrete_path() -> None:
+    """L2-10 live regression: scope `vendor` next to target
+    `vendor/marked.min.js` was flagged "scope paths must stay inside
+    workspace", failing planning three times and skipping the Director.
+    Evidence beats the _PM_SCOPE_ROOTS convention list."""
+    payload = {
+        "tasks": [
+            {
+                "id": "PM-0001-1",
+                "title": "实现 Markdown 预览器核心文件",
+                "goal": "实现左输入右预览的实时渲染页面并接入本地 marked 解析",
+                "assigned_to": "Director",
+                "scope_paths": ["vendor"],
+                "target_files": ["index.html", "styles.css", "app.js", "vendor/marked.min.js"],
+                "acceptance_criteria": ["verify ./index.html exists", "node --check app.js passes"],
+                "execution_checklist": ["写 index.html", "写 app.js", "落 vendor/marked.min.js"],
+            }
+        ]
+    }
+    report = evaluate_pm_task_quality(payload, docs_stage={})
+    issues = "\n".join(report.get("critical_issues") or [])
+    assert "scope paths must stay inside workspace" not in issues
+    warnings_text = "\n".join(report.get("warnings") or [])
+    assert "non-path scope entries ignored (vendor)" not in warnings_text
+
+
+def test_bare_directory_scope_evidenced_by_existing_workspace_dir(tmp_path) -> None:
+    (tmp_path / "assets").mkdir()
+    payload = {
+        "workspace": str(tmp_path),
+        "tasks": [
+            {
+                "id": "PM-0002-1",
+                "title": "整理静态资源引用路径",
+                "goal": "把页面引用的图片与样式统一收纳进 assets 目录结构",
+                "assigned_to": "Director",
+                "scope_paths": ["assets"],
+                "target_files": ["index.html"],
+                "acceptance_criteria": ["verify ./index.html exists"],
+                "execution_checklist": ["更新引用"],
+            }
+        ],
+    }
+    report = evaluate_pm_task_quality(payload, docs_stage={}, workspace_full=str(tmp_path))
+    issues = "\n".join(report.get("critical_issues") or [])
+    assert "scope paths must stay inside workspace" not in issues
+
+
+def test_unevidenced_prose_scope_still_rejected() -> None:
+    payload = {
+        "tasks": [
+            {
+                "id": "PM-0003-1",
+                "title": "实现核心模块并保证可运行",
+                "goal": "交付完整可运行的核心功能模块与配套验证",
+                "assigned_to": "Director",
+                "scope_paths": ["整体目录规划"],
+                "target_files": [],
+                "acceptance_criteria": ["verify ./index.html exists"],
+                "execution_checklist": ["实现"],
+            }
+        ]
+    }
+    report = evaluate_pm_task_quality(payload, docs_stage={})
+    issues = "\n".join(report.get("critical_issues") or [])
+    assert "concrete workspace-bound scope paths" in issues or "scope" in issues.lower()
+    assert report["ok"] is False
+
+
+def test_unevidenced_bare_word_scope_still_rejected(tmp_path) -> None:
+    """A bare English token with no sibling path and no existing dir stays invalid."""
+    payload = {
+        "workspace": str(tmp_path),
+        "tasks": [
+            {
+                "id": "PM-0004-1",
+                "title": "实现杂项功能集合模块",
+                "goal": "交付杂项功能集合并完成可运行验证与文档",
+                "assigned_to": "Director",
+                "scope_paths": ["misc"],
+                "target_files": ["index.html"],
+                "acceptance_criteria": ["verify ./index.html exists"],
+                "execution_checklist": ["实现"],
+            }
+        ],
+    }
+    report = evaluate_pm_task_quality(payload, docs_stage={}, workspace_full=str(tmp_path))
+    issues = "\n".join(report.get("critical_issues") or [])
+    assert "scope paths must stay inside workspace (misc)" in issues
+
+
+def test_vendored_minified_targets_stripped_from_contract() -> None:
+    """L2-10 r6 live regression: PM declared lib/marked.min.js as a Director
+    write target; the offline chain can only hallucinate a fake vendored
+    library, and declared-target verification failed a task whose actual
+    product passed QA."""
+    from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+        autofix_pm_contract_for_quality,
+    )
+
+    payload = {
+        "tasks": [
+            {
+                "id": "PM-0001-2",
+                "title": "集成 Markdown 解析库并实现实时预览",
+                "goal": "接入解析库并完成左右分栏实时渲染",
+                "assigned_to": "Director",
+                "target_files": ["app.js", "index.html", "lib/marked.min.js", "styles.css"],
+                "scope_paths": ["app.js", "index.html", "lib/marked.min.js", "styles.css"],
+                "acceptance_criteria": [
+                    "verify ./app.js exists",
+                    "lib/marked.min.js 存在且被 index.html 引用",
+                    "输入 Markdown 后右侧实时渲染",
+                ],
+                "execution_checklist": ["接入解析", "实时渲染"],
+            }
+        ]
+    }
+    stats = autofix_pm_contract_for_quality(payload, workspace_full=".")
+    assert stats["vendored_targets_stripped"] == 1
+    task = payload["tasks"][0]
+    assert "lib/marked.min.js" not in task["target_files"]
+    assert "lib/marked.min.js" not in task["scope_paths"]
+    assert task["target_files"] == ["app.js", "index.html", "styles.css"]
+    # acceptance line demanding the vendored file is dropped; others survive
+    assert all("marked.min.js" not in row for row in task["acceptance_criteria"])
+    assert "verify ./app.js exists" in task["acceptance_criteria"]
+    assert "自包含实现" in task["description"]
+
+
+def test_non_minified_targets_untouched() -> None:
+    from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+        _strip_unfulfillable_vendored_targets_in_place,
+    )
+
+    task = {
+        "target_files": ["src/app.js", "minutes.md", "lib/parser.js"],
+        "scope_paths": ["src"],
+    }
+    assert _strip_unfulfillable_vendored_targets_in_place([task]) == 0
+    assert task["target_files"] == ["src/app.js", "minutes.md", "lib/parser.js"]
+
+
+def test_single_file_interactive_app_steered_to_modular_split() -> None:
+    """L2-11 r6/r7: a local Director cannot converge a >6-7KB single-file app
+    (every whole-file write truncates at the output ceiling; one mega-write
+    costs ~9 minutes). The gate splits the contract into modular files."""
+    from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+        autofix_pm_contract_for_quality,
+    )
+
+    payload = {
+        "tasks": [
+            {
+                "id": "PM-0001-1",
+                "title": "实现 index.html 单文件打字测试器（实时 WPM）",
+                "goal": "单文件交付实时打字测试",
+                "assigned_to": "Director",
+                "target_files": ["index.html"],
+                "scope_paths": ["index.html"],
+                "acceptance_criteria": ["verify ./index.html exists"],
+                "execution_checklist": ["实现"],
+            }
+        ]
+    }
+    stats = autofix_pm_contract_for_quality(payload, workspace_full=".")
+    assert stats["single_file_ui_tasks_steered"] == 1
+    task = payload["tasks"][0]
+    assert task["target_files"] == ["index.html", "style.css", "app.js"]
+    assert "style.css" in task["scope_paths"] and "app.js" in task["scope_paths"]
+    assert "禁止单文件大产物" in task["description"]
+
+
+def test_static_single_html_not_steered() -> None:
+    from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+        _steer_single_file_ui_tasks_in_place,
+    )
+
+    task = {
+        "title": "静态致谢页面",
+        "goal": "输出一页致谢名单",
+        "description": "纯静态内容",
+        "target_files": ["thanks.html"],
+        "scope_paths": ["thanks.html"],
+    }
+    assert _steer_single_file_ui_tasks_in_place([task]) == 0
+    assert task["target_files"] == ["thanks.html"]
+
+
+def test_already_modular_task_not_steered() -> None:
+    from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+        _steer_single_file_ui_tasks_in_place,
+    )
+
+    task = {
+        "title": "实现实时打字测试器",
+        "goal": "实时 WPM",
+        "description": "",
+        "target_files": ["index.html", "app.js", "style.css"],
+        "scope_paths": ["index.html", "app.js", "style.css"],
+    }
+    assert _steer_single_file_ui_tasks_in_place([task]) == 0

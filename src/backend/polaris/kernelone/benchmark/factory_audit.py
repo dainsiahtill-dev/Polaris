@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import py_compile
+import re
 import shutil
 import subprocess
 from typing import Any
@@ -108,6 +109,23 @@ def _check_html(workspace: str) -> tuple[bool, str]:
 def _check_js_syntax(workspace: str) -> tuple[bool, str]:
     js_files = [p for p in _iter_files(workspace, ".js") if not p.endswith(".min.js")]
     if not js_files:
+        # Single-file HTML apps with inline <script> are a legitimate
+        # implementation shape (live L2-10 r4: a complete one-file Markdown
+        # previewer); judge the inline script presence instead of failing.
+        for html_path in _iter_files(workspace, ".html"):
+            try:
+                with open(html_path, encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+            except OSError:
+                continue
+            inline_match = re.search(
+                r"<script\b[^>]*>(?P<body>.*?)</script>",
+                content,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if inline_match and inline_match.group("body").strip():
+                rel = os.path.relpath(html_path, workspace)
+                return True, f"no standalone .js; inline <script> present in {rel}"
         return False, "no .js files found"
     node = shutil.which("node")
     if not node:
@@ -137,6 +155,48 @@ def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
             ok, detail = _check_html(workspace)
         elif kind == "js_syntax":
             ok, detail = _check_js_syntax(workspace)
+        elif kind == "runnable_any":
+            # Shape-neutral runnability: briefs like "typing tester with live
+            # highlighting" are legitimately delivered as either a Python
+            # program or a web app (live L2-11 r1: PM chose web, the fixture
+            # demanded py_compile). Pass when either shape is fully runnable.
+            py_ok, py_detail = _check_py_compile(workspace)
+            if py_ok:
+                ok, detail = True, f"python shape: {py_detail}"
+            else:
+                html_ok, html_detail = _check_html(workspace)
+                js_ok, js_detail = _check_js_syntax(workspace)
+                if html_ok and js_ok:
+                    ok, detail = True, f"web shape: {html_detail}; {js_detail}"
+                else:
+                    ok = False
+                    detail = f"no runnable shape: py({py_detail}); web({html_detail}; {js_detail})"
+        elif kind.startswith("content_any:"):
+            # Feature probe: at least one code file must mention the pattern.
+            # Catches hollow-scaffold deliveries that are syntactically perfect
+            # but feature-free (live L2-12 r1: a 43-line empty game loop passed
+            # html/js_syntax/min_files while containing zero paddle/ball/brick).
+            pattern_text = kind.split(":", 1)[1]
+            try:
+                probe = re.compile(pattern_text, re.IGNORECASE)
+            except re.error as exc:
+                results.append({"check": kind, "ok": False, "detail": f"bad pattern: {exc}"})
+                continue
+            matched_file = ""
+            for rel in inventory["code_files"]:
+                try:
+                    with open(os.path.join(workspace, rel), encoding="utf-8", errors="replace") as fh:
+                        if probe.search(fh.read()):
+                            matched_file = rel
+                            break
+                except OSError:
+                    continue
+            ok = bool(matched_file)
+            detail = (
+                f"feature pattern {pattern_text!r} found in {matched_file}"
+                if ok
+                else f"feature pattern {pattern_text!r} not found in any code file"
+            )
         elif kind.startswith("min_files:"):
             try:
                 minimum = int(kind.split(":", 1)[1])

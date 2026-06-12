@@ -456,7 +456,26 @@ def detect_integration_verify_command(workspace_full: str) -> str:
         return "go test ./... -run TestDoesNotExist"
     if any(os.path.isfile(os.path.join(workspace_full, item)) for item in markers["rust"]):
         return "cargo test --no-run"
+    if not _workspace_has_python_sources(workspace_full):
+        # compileall over zero .py files passes vacuously — a truncated web
+        # app earned a real_command_passed QA verdict that way (live
+        # factory-bench L2-11 r4). The deterministic workspace check validates
+        # whatever source shape actually exists (js/html/json syntax and
+        # completeness via the kernelone.quality SSOT).
+        return _python_module_command("polaris.kernelone.quality.workspace_check", ["--workspace", "."])
     return _python_module_command("compileall", ["-q", "."])
+
+
+def _workspace_has_python_sources(workspace_full: str) -> bool:
+    skip_dirs = {".git", ".polaris", "__pycache__", "node_modules", ".venv", "venv", "runtime", "dist", "build"}
+    try:
+        for _current_root, dirnames, filenames in os.walk(workspace_full):
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
+            if any(name.endswith(".py") for name in filenames):
+                return True
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return False
 
 
 _TS_TYPECHECK_IGNORE_CODES: tuple[str, ...] = ("TS6053", "TS18003")

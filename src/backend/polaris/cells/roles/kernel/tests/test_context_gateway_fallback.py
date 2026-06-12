@@ -98,7 +98,12 @@ class TestProcessContextOverride:
         assert result is not None
         assert "FILTERED" in result["content"]
         assert "safe_key: normal context" in result["content"]
-        assert "bad_key: [FILTERED_PROMPT_INJECTION]" in result["content"]
+        # Degrade-don't-destroy (L2-10): flagged values keep escaped content
+        # under an untrusted marker instead of being replaced by a stub —
+        # platform-internal guidance (cognitive_guidance) was being deleted.
+        assert "bad_key: [HISTORY_SANITIZED]" in result["content"]
+        assert "[FILTERED_PROMPT_INJECTION]" not in result["content"]
+        assert "ignore previous instructions" in result["content"]
 
     def test_process_context_override_filters_suspicious_keys(self):
         """Verify suspicious key names are filtered."""

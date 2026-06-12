@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
     _CARD3D_PM_REQUIRED_DOMAINS,
     _card3d_domains_for_task,
@@ -649,6 +650,13 @@ class TestEvaluatePmTaskQualityEdgeCases:
 
 
 class TestAutofixPmContractForQuality:
+    @pytest.fixture(autouse=True)
+    def _enable_domain_text_hints(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # These tests exercise the keyword-driven domain expansion CAPABILITY,
+        # which is opt-in (default off per CLAUDE.md §8 after the phantom-task
+        # incident). Production keeps the gate closed.
+        monkeypatch.setenv("KERNELONE_PM_DOMAIN_TEXT_HINTS", "1")
+
     def test_adds_phases(self) -> None:
         payload = {
             "tasks": [

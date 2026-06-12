@@ -303,9 +303,14 @@ async def stop_adapter() -> None:
 
 
 def _run_sync(coro: Any) -> Any:
+    # Probe-then-run OUTSIDE the except block: asyncio.run inside `except
+    # RuntimeError` chains the benign "no running event loop" probe miss into
+    # every real error's traceback as a fake root cause (__context__).
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
+        loop = None
+    if loop is None:
         return asyncio.run(coro)
     if loop.is_running():
         raise RuntimeError("Sync runtime adapter API cannot run inside an active event loop.")

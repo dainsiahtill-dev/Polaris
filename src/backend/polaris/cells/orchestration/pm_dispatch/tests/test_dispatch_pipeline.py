@@ -786,6 +786,42 @@ class TestApplyPostDispatchSkipReason:
         )
         assert stop is False
 
+    def test_partial_evidence_failed_with_done_runs_qa(self) -> None:
+        """failed>0 但 done>0 → 不再硬跳过:QA 在已完成范围上运行(部分证据模式)。"""
+        result: dict = {"enabled": True}
+        stop = _apply_post_dispatch_skip_reason(
+            result=result,
+            status_summary={"total": 3, "done": 2, "failed": 1},
+            tasks=[],
+            docs_stage_payload={},
+        )
+        assert stop is False
+        assert result["scope"] == "partial_completed_tasks"
+        assert result["scope_detail"] == {"done": 2, "failed": 1, "blocked": 0}
+        assert "reason" not in result  # QA execution will set the terminal reason
+
+    def test_partial_evidence_blocked_with_done_runs_qa(self) -> None:
+        result: dict = {"enabled": True}
+        stop = _apply_post_dispatch_skip_reason(
+            result=result,
+            status_summary={"total": 2, "done": 1, "blocked": 1},
+            tasks=[],
+            docs_stage_payload={},
+        )
+        assert stop is False
+        assert result["scope"] == "partial_completed_tasks"
+
+    def test_zero_done_with_failures_still_skips(self) -> None:
+        result: dict = {"enabled": True}
+        stop = _apply_post_dispatch_skip_reason(
+            result=result,
+            status_summary={"total": 2, "failed": 2, "done": 0},
+            tasks=[],
+            docs_stage_payload={},
+        )
+        assert stop is True
+        assert result["reason"] == "director_failures_present"
+
 
 # ---------------------------------------------------------------------------
 # _build_post_dispatch_integration_qa_result

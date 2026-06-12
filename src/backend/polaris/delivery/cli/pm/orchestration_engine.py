@@ -503,6 +503,61 @@ def _resolve_orchestration_runtime(args: argparse.Namespace) -> str:
     return runtime if runtime in _ORCHESTRATION_RUNTIME_OPTIONS else _ORCHESTRATION_RUNTIME_DEFAULT
 
 
+def grade_director_exit_code(director_status: str, completed_count: int) -> int:
+    """Graded fail-closed exit for the Director phase.
+
+    0 = director not failed; 4 = partial progress (>=1 task succeeded but
+    failures/blocked present, integration QA evidence may be partial);
+    1 = zero-success hard failure. Codes 2 (stop condition) and 3
+    (manual/AGENTS confirmation) are reserved by run_once; any nonzero
+    value still trips --stop-on-failure.
+    """
+    if director_status in {"failed", "blocked"}:
+        return 4 if completed_count > 0 else 1
+    return 0
+
+
+def grade_qa_exit_code(director_status: str, current_exit_code: int) -> int:
+    """Exit grade once integration QA reports failure.
+
+    5 = Director fully succeeded but QA failed; otherwise preserve the graded
+    Director exit (4/1) instead of flattening everything back to 1.
+    """
+    return 5 if director_status == "success" else (current_exit_code or 1)
+
+
+def build_chain_summary(
+    *,
+    workflow_exit_code: int,
+    director_result: dict[str, Any],
+    integration_qa_result: Any,
+    qa_passed: bool,
+    qa_reason: str,
+    generated_at: str,
+) -> dict[str, Any]:
+    """Machine-readable chain outcome (schema chain-summary/1) for runners."""
+    exit_class_by_code = {0: "clean", 4: "director_partial", 5: "qa_failed"}
+    return {
+        "schema_version": "chain-summary/1",
+        "exit_code": int(workflow_exit_code),
+        "exit_class": exit_class_by_code.get(int(workflow_exit_code), "hard_failed"),
+        "planning_ok": True,
+        "director": {
+            "status": str(director_result.get("status") or ""),
+            "total": int(director_result.get("total") or 0),
+            "successes": int(director_result.get("successes") or 0),
+            "failures": int(director_result.get("failures") or 0),
+            "blocked": int(director_result.get("blocked") or 0),
+        },
+        "integration_qa": {
+            "ran": bool(isinstance(integration_qa_result, dict) and integration_qa_result.get("ran") is True),
+            "passed": bool(qa_passed),
+            "reason": qa_reason,
+        },
+        "generated_at": generated_at,
+    }
+
+
 def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
     """Run PM iteration once - Main entry point.
 
@@ -2090,11 +2145,10 @@ def _run_dispatch_pipeline_with_workflow(
         director_status = "failed"
 
     if director_status in {"failed", "blocked"}:
-        # Graded fail-closed exit: 4 = partial director progress (>=1 task
-        # succeeded, QA will be skipped), 1 = zero-success hard failure.
-        # Codes 2 (stop condition) and 3 (manual/AGENTS confirmation) are
-        # reserved by run_once; any nonzero value still trips stop_on_failure.
-        workflow_exit_code = 4 if int(workflow_summary.get("completed", 0) or 0) > 0 else 1
+        workflow_exit_code = grade_director_exit_code(
+            director_status,
+            int(workflow_summary.get("completed", 0) or 0),
+        )
 
     summary_text = "Director workflow scheduled in Workflow"
     if director_status == "success":
@@ -2255,9 +2309,7 @@ def _run_dispatch_pipeline_with_workflow(
     if isinstance(integration_qa_result, dict) and (
         integration_qa_result.get("passed") is False or qa_reason in qa_failure_reasons
     ):
-        # 5 = director fully succeeded but integration QA failed; otherwise
-        # keep the graded director exit (4/1) instead of flattening to 1.
-        workflow_exit_code = 5 if director_status == "success" else (workflow_exit_code or 1)
+        workflow_exit_code = grade_qa_exit_code(director_status, workflow_exit_code)
         engine.update_role_status(
             "QA",
             status="failed",
@@ -2342,26 +2394,14 @@ def _run_dispatch_pipeline_with_workflow(
 
     # Machine-readable chain outcome for external runners/auditors. Written
     # after QA + reconciliation so every field is terminal-state truth.
-    exit_class_by_code = {0: "clean", 4: "director_partial", 5: "qa_failed"}
-    chain_summary = {
-        "schema_version": "chain-summary/1",
-        "exit_code": int(workflow_exit_code),
-        "exit_class": exit_class_by_code.get(int(workflow_exit_code), "hard_failed"),
-        "planning_ok": True,
-        "director": {
-            "status": str(director_result.get("status") or ""),
-            "total": int(director_result.get("total") or 0),
-            "successes": int(director_result.get("successes") or 0),
-            "failures": int(director_result.get("failures") or 0),
-            "blocked": int(director_result.get("blocked") or 0),
-        },
-        "integration_qa": {
-            "ran": bool(isinstance(integration_qa_result, dict) and integration_qa_result.get("ran") is True),
-            "passed": bool(qa_passed),
-            "reason": qa_reason,
-        },
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
+    chain_summary = build_chain_summary(
+        workflow_exit_code=workflow_exit_code,
+        director_result=director_result,
+        integration_qa_result=integration_qa_result,
+        qa_passed=qa_passed,
+        qa_reason=qa_reason,
+        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
     write_json_atomic(
         resolve_artifact_path(workspace_full, cache_root_full, "runtime/results/chain_summary.json"),
         chain_summary,

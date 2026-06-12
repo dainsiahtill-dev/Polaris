@@ -1233,6 +1233,24 @@ class TurnTransactionController:
 
         # === Phase 1b: 解析交付契约 ===
         latest_user_request = extract_latest_user_message(context)
+        if not latest_user_request and context:
+            # A user-turn-free context resolves to the ANALYZE_ONLY default and
+            # silently neuters mutation turns (write tools filtered). The
+            # projection layer must always preserve the current instruction
+            # (see CompressionEngine.emergency_truncate); flag loudly if not.
+            logger.warning(
+                "delivery-contract-no-user-turn: turn_id=%s context_roles=%s — "
+                "defaulting to ANALYZE_ONLY with no user intent available",
+                turn_id,
+                [str(m.get("role") or "") for m in context if isinstance(m, Mapping)][:12],
+            )
+            ledger.anomaly_flags.append(
+                {
+                    "type": "DELIVERY_CONTRACT_NO_USER_TURN",
+                    "turn_id": turn_id,
+                    "message_count": len(context),
+                }
+            )
         delivery_contract = await self._resolve_delivery_mode_hybrid(latest_user_request)
 
         # 多轮对话保护：如果最新消息丢失 mutation 意图（如"继续""开始吧"），

@@ -163,13 +163,14 @@ def read_chain_results(runtime_dir: Path | None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         pass
     qa_path = runtime_dir / "results" / "integration_qa.result.json"
-    try:
-        qa = json.loads(qa_path.read_text(encoding="utf-8"))
-        summary["qa_ran"] = bool(qa.get("ran"))
-        summary["qa_passed"] = bool(qa.get("passed"))
-        summary["qa_reason"] = str(qa.get("reason") or qa.get("skip_reason") or "")
-    except (OSError, json.JSONDecodeError):
-        pass
+    if summary["qa_ran"] is None:
+        try:
+            qa = json.loads(qa_path.read_text(encoding="utf-8"))
+            summary["qa_ran"] = bool(qa.get("ran"))
+            summary["qa_passed"] = bool(qa.get("passed"))
+            summary["qa_reason"] = str(qa.get("reason") or qa.get("skip_reason") or "")
+        except (OSError, json.JSONDecodeError):
+            pass
     contract_path = runtime_dir / "contracts" / "pm_tasks.contract.json"
     try:
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
@@ -177,14 +178,34 @@ def read_chain_results(runtime_dir: Path | None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         summary["contract_goal"] = ""
     director_path = runtime_dir / "results" / "director.result.json"
-    try:
-        director = json.loads(director_path.read_text(encoding="utf-8"))
-        summary["director"] = {
-            key: director.get(key) for key in ("total", "successes", "failures", "blocked") if key in director
-        }
-    except (OSError, json.JSONDecodeError):
-        pass
+    if not summary["director"]:
+        try:
+            director = json.loads(director_path.read_text(encoding="utf-8"))
+            summary["director"] = {
+                key: director.get(key) for key in ("total", "successes", "failures", "blocked") if key in director
+            }
+        except (OSError, json.JSONDecodeError):
+            pass
     return summary
+
+
+_EXIT_CLASS_BY_CODE = {0: "clean", 4: "director_partial", 5: "qa_failed"}
+
+
+def grade_chain_state(chain_results: dict[str, Any], exit_code: Any) -> str:
+    """Three-state chain verdict: clean / partial / fail.
+
+    Prefers the chain's own exit_class (chain-summary/1); falls back to the
+    graded exit code for pre-summary runs.
+    """
+    exit_class = str(chain_results.get("exit_class") or "")
+    if not exit_class and isinstance(exit_code, int):
+        exit_class = _EXIT_CLASS_BY_CODE.get(exit_code, "hard_failed")
+    if exit_class == "clean":
+        return "clean"
+    if exit_class in {"director_partial", "qa_failed"}:
+        return "partial"
+    return "fail"
 
 
 def build_requirements_doc(project: dict[str, Any]) -> str:
@@ -350,12 +371,18 @@ def main() -> int:
             score = brief_goal_overlap(str(other.get("brief") or ""), contract_goal)
             if score > best_other:
                 best_other, best_other_id = score, str(other["id"])
-        record["wrong_product_suspect"] = bool(contract_goal and best_other > own_overlap + 0.1)
+        # Absolute floor besides the relative margin: an English goal vs a
+        # Chinese own-brief scores 0.0, and any latin-bearing OTHER brief
+        # (e.g. "Docker/Cgroups") wins the relative test on noise alone —
+        # live false positive: L2-12's correct brick-breaker goal flagged as
+        # ~L8-45 (container engine) at best_other≈0.1.
+        record["wrong_product_suspect"] = bool(contract_goal and best_other > max(0.18, own_overlap + 0.1))
         record["wrong_product_match"] = best_other_id if record["wrong_product_suspect"] else ""
+        record["chain_state"] = grade_chain_state(record["chain_results"], chain.get("exit_code"))
         records.append(record)
         status = "PASS" if record["all_checks_passed"] else "FAIL"
         print(
-            f"[factory-bench] {pid} {status}: files={record['code_file_count']} "
+            f"[factory-bench] {pid} {status}: chain={record['chain_state']} files={record['code_file_count']} "
             f"plan={record['has_plan_doc']} blueprint={record['has_blueprint_doc']} "
             f"verdict={record['has_qa_verdict']} qa_ran={record['chain_results']['qa_ran']} "
             f"qa_passed={record['chain_results']['qa_passed']} director={record['chain_results']['director']} "

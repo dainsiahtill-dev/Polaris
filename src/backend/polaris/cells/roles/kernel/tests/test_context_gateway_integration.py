@@ -485,3 +485,74 @@ class TestMessagesFromProjection:
         assert len(run_card_msgs) == 1
         assert "Test goal" in run_card_msgs[0]["content"]
         assert "Open loops: 2" in run_card_msgs[0]["content"]
+
+
+class TestEmergencyTruncatePreservesInstruction:
+    """L2-10 regression: emergency_truncate dropped the FINAL user turn, the
+    delivery contract defaulted to ANALYZE_ONLY, and the repair turn's
+    write_file was silently filtered."""
+
+    @staticmethod
+    def _engine() -> object:
+        from polaris.cells.roles.kernel.internal.context_gateway.compression_engine import (
+            CompressionEngine,
+        )
+        from polaris.cells.roles.kernel.internal.context_gateway.token_estimator import (
+            TokenEstimator,
+        )
+
+        return CompressionEngine(
+            max_context_tokens=128000,
+            compression_strategy="recent",
+            max_history_turns=20,
+            token_estimator=TokenEstimator(),
+            continuity_strategy=None,
+            profile=None,
+            workspace=None,
+            reasoning_stripper=None,
+        )
+
+    def test_final_user_turn_survives_truncation(self):
+        engine = self._engine()
+        messages = [
+            {"role": "system", "content": "role prompt"},
+            *[{"role": "assistant", "content": "x" * 400} for _ in range(30)],
+            {"role": "user", "content": "实现 app.js 与 style.css 并落盘"},
+        ]
+        result = engine.emergency_truncate(messages, max_tokens=300)
+        roles = [m["role"] for m in result]
+        assert "user" in roles, f"final user turn must survive, got roles={roles}"
+        assert result[-1]["role"] == "user"
+        assert "app.js" in result[-1]["content"]
+
+    def test_oversized_instruction_content_truncated_not_dropped(self):
+        engine = self._engine()
+        messages = [
+            {"role": "system", "content": "role prompt"},
+            {"role": "user", "content": "修复任务: " + "y" * 50000},
+        ]
+        result = engine.emergency_truncate(messages, max_tokens=200)
+        users = [m for m in result if m["role"] == "user"]
+        assert len(users) == 1
+        assert "EMERGENCY_TRUNCATED" in users[0]["content"]
+        assert users[0]["content"].startswith("修复任务:")
+
+    def test_history_still_dropped_first(self):
+        engine = self._engine()
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "assistant", "content": "old " * 200},
+            {"role": "user", "content": "current instruction"},
+        ]
+        result = engine.emergency_truncate(messages, max_tokens=60)
+        roles = [m["role"] for m in result]
+        assert roles == ["system", "user"]
+
+    def test_no_user_turn_behaves_as_before(self):
+        engine = self._engine()
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "assistant", "content": "a " * 500},
+        ]
+        result = engine.emergency_truncate(messages, max_tokens=50)
+        assert all(m["role"] != "user" for m in result)

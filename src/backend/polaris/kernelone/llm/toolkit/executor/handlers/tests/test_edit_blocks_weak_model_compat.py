@@ -488,3 +488,24 @@ def test_write_file_unknown_extension_no_check(tmp_path: Path) -> None:
     result = _handle_write_file(ex, file="notes.md", content="# hello\n")
     assert result.get("ok") is True
     assert "syntax_check" not in result
+
+
+def test_write_file_truncated_html_suggests_append(tmp_path: Path) -> None:
+    """L2-11 r6: rewrites at the same output limit truncate at the same place
+    forever — the post-write suggestion must steer to append_to_file."""
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    truncated = "<html>\n<body>\n<script>\nconst editor = 1;\n"
+    result = _handle_write_file(ex, file="index.html", content=truncated)
+    assert result.get("ok") is True
+    assert result.get("syntax_check") == "failed"
+    assert "append_to_file" in result.get("suggestion", "")
+    assert "do NOT rewrite" in result.get("suggestion", "")
+
+
+def test_write_file_plain_js_error_keeps_narrow_edit_suggestion(tmp_path: Path) -> None:
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    bad_js = "const head = {\n  x: 1,\n  y: 2;\n};\n"
+    result = _handle_write_file(ex, file="game.js", content=bad_js)
+    assert result.get("syntax_check") == "failed"
+    assert "edit_blocks" in result.get("suggestion", "")
+    assert "append_to_file" not in result.get("suggestion", "")

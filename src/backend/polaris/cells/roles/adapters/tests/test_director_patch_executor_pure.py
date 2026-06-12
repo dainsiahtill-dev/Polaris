@@ -341,3 +341,79 @@ class TestValidateRelativePatchPath:
         error = DirectorPatchExecutor._validate_relative_patch_path("../outside.ts")
         assert error is not None
         assert "Unsafe patch path" in error
+
+    def test_html_placeholder_attribute_is_not_low_quality(self, tmp_path: Any) -> None:
+        """L2-10 r4 live regression: a real Markdown editor's <textarea
+        placeholder="..."> was killed by the bare-word \\bplaceholder\\b match.
+        Attribute/property usage is legitimate input-UI code."""
+        target = tmp_path / "index.html"
+        target.write_text(
+            "<!DOCTYPE html>\n<html>\n<body>\n"
+            '<textarea id="editor" placeholder="在此输入 Markdown 内容..."></textarea>\n'
+            '<div id="preview"></div>\n'
+            "<script>\n"
+            "const editor = document.getElementById('editor');\n"
+            "editor.addEventListener('input', () => render(editor.value));\n"
+            "function render(markdown) { /* parse markdown to html */ }\n"
+            "</script>\n</body>\n</html>\n",
+            encoding="utf-8",
+        )
+        executor = DirectorPatchExecutor(str(tmp_path))
+
+        error = executor.validate_generated_output(
+            {
+                "subject": "实现 Markdown 实时预览器主应用(index.html)",
+                "description": "左侧输入右侧实时渲染 markdown editor preview",
+                "metadata": {"target_files": ["index.html"]},
+            },
+            ["index.html"],
+        )
+
+        assert error is None
+
+    def test_prose_placeholder_scaffold_still_rejected(self, tmp_path: Any) -> None:
+        target = tmp_path / "index.html"
+        target.write_text(
+            "<!DOCTYPE html>\n<html><body>\n"
+            "<!-- This file is a placeholder for the markdown editor implementation -->\n"
+            "<div>markdown editor preview coming soon</div>\n"
+            "</body></html>\n",
+            encoding="utf-8",
+        )
+        executor = DirectorPatchExecutor(str(tmp_path))
+
+        error = executor.validate_generated_output(
+            {
+                "subject": "实现 Markdown 实时预览器主应用(index.html)",
+                "description": "markdown editor preview",
+                "metadata": {"target_files": ["index.html"]},
+            },
+            ["index.html"],
+        )
+
+        assert error is not None
+        assert "placeholder" in error
+
+    def test_css_placeholder_pseudo_element_is_not_low_quality(self, tmp_path: Any) -> None:
+        """L2-10 r5 live regression: a real .editor::placeholder CSS rule was
+        killed by the same bare-word match after the attribute fix."""
+        target = tmp_path / "style.css"
+        target.write_text(
+            ".editor { width: 50%; font-family: monospace; }\n"
+            ".editor::placeholder { color: #888; }\n"
+            ".editor:placeholder-shown { border-color: #ccc; }\n"
+            ".preview { width: 50%; overflow-y: auto; }\n",
+            encoding="utf-8",
+        )
+        executor = DirectorPatchExecutor(str(tmp_path))
+
+        error = executor.validate_generated_output(
+            {
+                "subject": "Bootstrap Markdown previewer styles (style.css)",
+                "description": "editor preview styles css",
+                "metadata": {"target_files": ["style.css"]},
+            },
+            ["style.css"],
+        )
+
+        assert error is None

@@ -161,7 +161,9 @@ def maybe_generate_agents_draft(
             draft_timeout,
         )
 
-        output = invoke_pm_backend(role_state, prompt, backend, args, usage_ctx=None)
+        # Free-text draft: the PM JSON contract validator would force-parse the
+        # ```markdown fence as JSON and burn the retry budget (L2-10 live).
+        output = invoke_pm_backend(role_state, prompt, backend, args, usage_ctx=None, validate_output=False)
 
         content = strip_ansi(output).strip()
         if not content or _is_failed_draft(content) or not is_usable_agents_content(content):

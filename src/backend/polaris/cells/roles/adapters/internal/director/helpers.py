@@ -101,7 +101,14 @@ def _seq_resolve_str(
 _LOW_QUALITY_PATTERNS = (
     re.compile(r"(?m)^\s*(?://|#|/\*|\*|<!--)\s*(?:TODO|FIXME|TBD)\b", re.IGNORECASE),
     re.compile(r"(?m)^\s*(?:TODO|FIXME|TBD)\b(?::|\s*$)", re.IGNORECASE),
-    re.compile(r"\bplaceholder\b", re.IGNORECASE),
+    # "placeholder" as a CODE TOKEN is legitimate input-UI code: the HTML
+    # attribute (placeholder="..."), object key (placeholder: ...), CSS
+    # pseudo-element (::placeholder) / pseudo-class (:placeholder-shown),
+    # property access (el.placeholder), quoted id ('placeholder'), and
+    # data-placeholder. Only PROSE-style scaffold talk is low quality (live
+    # factory-bench L2-10 r4 killed a real <textarea placeholder="...">, r5
+    # killed a real .editor::placeholder rule).
+    re.compile(r"(?<![.:'\"-])\bplaceholder\b(?!\s*[=:])(?![-'\"])", re.IGNORECASE),
     re.compile(r"\bNotImplemented(?:Error|Exception)?\b", re.IGNORECASE),
     re.compile(r"\bstub\b", re.IGNORECASE),
 )

@@ -491,7 +491,7 @@ def _build_revision_context(
         or f"workspace::{workspace_full}"
     )
     plan_id = str(normalized_payload.get("plan_id") or default_plan_id).strip()
-    task_projection = [
+    task_projection: list[dict[str, Any]] = [
         {
             "id": str(task.get("id") or "").strip(),
             "title": str(task.get("title") or "").strip(),
@@ -1015,7 +1015,7 @@ def _mainline_publish_dispatch_tasks_to_task_market(
         task_route = _task_market_route_for_task(task)
         task_stage = _task_market_stage_for_route(task_route)
         blueprint_required = task_route == _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
-        payload = {
+        payload: dict[str, Any] = {
             "source_pm_task_id": task_id,
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
             "goal": str(task.get("goal") or task.get("title") or "").strip(),
@@ -1161,7 +1161,7 @@ def _shadow_publish_dispatch_tasks_to_task_market(
             continue
         trace_id = str(task.get("trace_id") or run_id).strip() or run_id
         task_route = _TASK_ROUTE_DIRECT_TO_DIRECTOR
-        payload = {
+        payload: dict[str, Any] = {
             "source_pm_task_id": task_id,
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
             "goal": str(task.get("goal") or task.get("title") or "").strip(),
@@ -2276,6 +2276,20 @@ def _apply_post_dispatch_skip_reason(
         )
         return True
     if int(status_summary.get("failed") or 0) > 0 or int(status_summary.get("blocked") or 0) > 0:
+        done_count = int(status_summary.get("done") or 0)
+        if done_count > 0:
+            # Partial-evidence mode: at least one task completed, so run QA on
+            # the workspace as delivered instead of skipping evidence-free.
+            # Fail-closed is unchanged — the graded exit code still reflects
+            # the Director failures — but a real verdict artifact now exists,
+            # and falsely-failed tasks keep the reconciliation channel alive.
+            result["scope"] = "partial_completed_tasks"
+            result["scope_detail"] = {
+                "done": done_count,
+                "failed": int(status_summary.get("failed") or 0),
+                "blocked": int(status_summary.get("blocked") or 0),
+            }
+            return False
         result["reason"] = "director_failures_present"
         result["passed"] = False
         result["summary"] = "Integration QA cannot run because Director produced failed or blocked tasks."

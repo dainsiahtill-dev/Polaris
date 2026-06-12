@@ -101,6 +101,7 @@ def test_run_pm_planning_iteration_prefers_real_card3d_retry_over_autofix_bulk(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("KERNELONE_PM_DOMAIN_TEXT_HINTS", "1")  # opt-in domain expansion capability
     calls: list[str] = []
 
     def _real_card3d_payload() -> dict[str, Any]:
@@ -231,6 +232,7 @@ def test_run_pm_planning_iteration_accepts_card3d_domain_autofix_as_degraded_fal
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("KERNELONE_PM_DOMAIN_TEXT_HINTS", "1")  # opt-in domain expansion capability
     calls: list[str] = []
 
     class _FakePmInvokePort:
@@ -346,3 +348,27 @@ def test_cell_pm_invoke_port_builds_codex_env_without_di(monkeypatch) -> None:
     assert env["KERNELONE_CODEX_SANDBOX"] == "workspace-write"
     assert env["KERNELONE_CODEX_SKIP_GIT_CHECK"] == "1"
     assert env["KERNELONE_CODEX_COLOR"] == "never"
+
+
+def test_verify_fallback_uses_workspace_check_without_python(tmp_path) -> None:
+    """L2-11 r4: compileall over zero .py files passes vacuously — a truncated
+    web app earned real_command_passed. Pure-web workspaces get the
+    deterministic kernelone.quality workspace check instead."""
+    from polaris.cells.orchestration.pm_planning.internal.shared_quality import (
+        detect_integration_verify_command,
+    )
+
+    (tmp_path / "index.html").write_text("<html></html>\n", encoding="utf-8")
+    command = detect_integration_verify_command(str(tmp_path))
+    assert "polaris.kernelone.quality.workspace_check" in command
+    assert "compileall" not in command
+
+
+def test_verify_fallback_keeps_compileall_with_python(tmp_path) -> None:
+    from polaris.cells.orchestration.pm_planning.internal.shared_quality import (
+        detect_integration_verify_command,
+    )
+
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    command = detect_integration_verify_command(str(tmp_path))
+    assert "compileall" in command

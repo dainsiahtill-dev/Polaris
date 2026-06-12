@@ -746,8 +746,16 @@ class RoleContextGateway:
             # Detect prompt injection patterns
             if self._config.detect_prompt_injection:
                 if SecuritySanitizer.looks_like_prompt_injection(str_value):
+                    # Degrade, don't destroy: platform-internal payloads
+                    # (cognitive_guidance, session_turn_events) routinely
+                    # contain instruction-like text and were being replaced
+                    # wholesale with a [FILTERED] stub, deleting the model's
+                    # own strategy guidance every turn (factory-bench L2-10
+                    # live). Same neutralization contract as history content:
+                    # escape + mark untrusted, keep the information.
                     has_injection = True
-                    filtered_items.append(f"{key}: [FILTERED_PROMPT_INJECTION]")
+                    neutralized = SecuritySanitizer.sanitize_history_content(str_value, detect_injection=True)
+                    filtered_items.append(f"{key}: {neutralized}")
                     logger.warning("Prompt injection detected in context_override key: %s", key)
                     continue
 

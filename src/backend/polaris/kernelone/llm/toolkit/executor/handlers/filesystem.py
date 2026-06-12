@@ -50,42 +50,11 @@ logger = logging.getLogger(__name__)
 
 
 def _syntax_check_file(absolute_path: str) -> dict[str, Any] | None:
-    """Return {'ok': False, 'error': ...} on syntax failure, {'ok': True} on
-    pass, None when no checker applies (unknown extension / tool missing)."""
-    import json as _json
-    import py_compile as _py_compile
-    import shutil as _shutil
-    import subprocess as _subprocess
+    """Delegate to the kernelone.quality single source of truth (shared with
+    the materialization artifact-quality scan)."""
+    from polaris.kernelone.quality import check_source_file_syntax
 
-    suffix = os.path.splitext(absolute_path)[1].lower()
-    try:
-        if suffix == ".py":
-            try:
-                _py_compile.compile(absolute_path, doraise=True)
-                return {"ok": True}
-            except _py_compile.PyCompileError as exc:
-                message = str(exc.msg or exc).strip().splitlines()[-1]
-                return {"ok": False, "error": message}
-        if suffix in (".js", ".mjs", ".cjs"):
-            node = _shutil.which("node")
-            if not node:
-                return None
-            proc = _subprocess.run(
-                [node, "--check", absolute_path], capture_output=True, text=True, timeout=20, check=False
-            )
-            if proc.returncode == 0:
-                return {"ok": True}
-            detail = (proc.stderr or proc.stdout).strip()
-            return {"ok": False, "error": detail[:400]}
-        if suffix == ".json":
-            with open(absolute_path, encoding="utf-8") as fh:
-                _json.load(fh)
-            return {"ok": True}
-    except (OSError, UnicodeDecodeError, _subprocess.TimeoutExpired) as exc:
-        return {"ok": False, "error": f"syntax check could not run: {exc}"}
-    except ValueError as exc:  # json.JSONDecodeError
-        return {"ok": False, "error": f"invalid JSON: {exc}"}
-    return None
+    return check_source_file_syntax(absolute_path)
 
 
 def attach_post_write_syntax_check(result: dict[str, Any], absolute_path: str) -> dict[str, Any]:
@@ -99,13 +68,36 @@ def attach_post_write_syntax_check(result: dict[str, Any], absolute_path: str) -
         result["syntax_check"] = "passed"
         return result
     result["syntax_check"] = "failed"
-    result["syntax_error"] = check.get("error", "")
-    result["suggestion"] = (
-        "The file was written BUT it has a syntax error — fix it now with a "
-        "narrow edit_blocks line-range edit before doing anything else: "
-        f"{check.get('error', '')}"
-    )
+    error_text = str(check.get("error", ""))
+    result["syntax_error"] = error_text
+    if _looks_like_output_truncation(error_text):
+        # The write was cut by the model's own output-token limit — a rewrite
+        # at the same limit truncates at the same place forever (live
+        # factory-bench L2-11 r6: index.html rewritten three times, 6.8-7.8KB,
+        # every copy truncated). Only appending the remainder converges.
+        result["suggestion"] = (
+            "The file was CUT OFF by the output limit — do NOT rewrite it. "
+            "Call append_to_file with ONLY the remaining content, continuing "
+            f"exactly after the file's current end: {error_text}"
+        )
+    else:
+        result["suggestion"] = (
+            "The file was written BUT it has a syntax error — fix it now with a "
+            "narrow edit_blocks line-range edit before doing anything else: "
+            f"{error_text}"
+        )
     return result
+
+
+def _looks_like_output_truncation(error_text: str) -> bool:
+    """Truncation signatures from the kernelone.quality SSOT checker."""
+    lowered = str(error_text or "").lower()
+    return (
+        "unexpected end of input" in lowered
+        or "truncated/incomplete html" in lowered
+        or "was never closed" in lowered
+        or "unexpected eof" in lowered
+    )
 
 
 def register_handlers() -> dict[str, Any]:
