@@ -27,7 +27,13 @@ class TokenEstimator:
 
     # 启发式参数
     CHARS_PER_TOKEN = 4
-    CJK_CHARS_PER_TOKEN = 2  # 中日韩字符通常占用更多 token
+    # Calibrated 2 -> 1 (2026-06-12, factory-bench live failure): modern BPE
+    # tokenizers (qwen/deepseek/cl100k) encode one CJK char as ~1 token, not
+    # 0.5. The old divisor under-estimated Chinese prompts by ~2x, letting an
+    # 8k-token prompt slip past the budget gate as "4k" and explode at the
+    # server as prompt+max_tokens > max_model_len (vLLM VLLMValidationError).
+    # Over-estimating errs safe: earlier compression, never a 400.
+    CJK_CHARS_PER_TOKEN = 1
     CODE_CHARS_PER_TOKEN = 3  # 代码通常字符/token 比较低
 
     @classmethod

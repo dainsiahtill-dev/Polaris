@@ -370,6 +370,7 @@ class TokenBudgetManager:
         *,
         content_type: str = "general",
         compression_history: list[str] | None = None,
+        overhead_tokens: int = 0,
     ) -> TokenBudgetDecision:
         """执行预算检查，必要时触发压缩。
 
@@ -396,6 +397,7 @@ class TokenBudgetManager:
                 requested_output_tokens,
                 already_compressed=True,
                 content_type=content_type,
+                overhead_tokens=overhead_tokens,
             )
 
         return self._enforce_with_budget(
@@ -407,6 +409,7 @@ class TokenBudgetManager:
             role=role,
             content_type=content_type,
             compression_history=compression_history or [],
+            overhead_tokens=overhead_tokens,
         )
 
     def _enforce_with_budget(
@@ -419,6 +422,7 @@ class TokenBudgetManager:
         role: str | None = None,
         content_type: str = "general",
         compression_history: list[str] | None = None,
+        overhead_tokens: int = 0,
     ) -> TokenBudgetDecision:
         """内部预算执行逻辑。"""
 
@@ -434,8 +438,9 @@ class TokenBudgetManager:
         preferred_safety_margin = max(2048, int(max_context_tokens * 0.05))
         max_safe_margin = max(0, max_context_tokens - reserve_output_tokens - self.min_prompt_budget_tokens)
         safety_margin_tokens = min(preferred_safety_margin, max_safe_margin)
-        hard_available = max_context_tokens - reserve_output_tokens - safety_margin_tokens
-        allowed_prompt_tokens = max(1, min(hard_available, max_context_tokens - reserve_output_tokens))
+        overhead = max(0, int(overhead_tokens))
+        hard_available = max_context_tokens - reserve_output_tokens - safety_margin_tokens - overhead
+        allowed_prompt_tokens = max(1, min(hard_available, max_context_tokens - reserve_output_tokens - overhead))
 
         # 2. 估算当前输入
         tokenizer_hint = model_spec.tokenizer if model_spec.tokenizer != "char_estimate" else None
@@ -452,6 +457,7 @@ class TokenBudgetManager:
                 requested_prompt_tokens=requested_prompt_tokens,
                 reserved_output_tokens=reserve_output_tokens,
                 safety_margin_tokens=safety_margin_tokens,
+                overhead_tokens=overhead,
                 compression_applied=False,
             )
 
@@ -467,6 +473,7 @@ class TokenBudgetManager:
                 requested_prompt_tokens=requested_prompt_tokens,
                 reserved_output_tokens=reserve_output_tokens,
                 safety_margin_tokens=safety_margin_tokens,
+                overhead_tokens=overhead,
                 compression_applied=True,
                 compression=CompressionResult(
                     compressed_input=hard_trimmed,
@@ -505,6 +512,7 @@ class TokenBudgetManager:
                 requested_prompt_tokens=requested_prompt_tokens,
                 reserved_output_tokens=reserve_output_tokens,
                 safety_margin_tokens=safety_margin_tokens,
+                overhead_tokens=overhead,
                 compression_applied=True,
                 compression=compression_result,
                 error=(
@@ -521,6 +529,7 @@ class TokenBudgetManager:
             requested_prompt_tokens=requested_prompt_tokens,
             reserved_output_tokens=reserve_output_tokens,
             safety_margin_tokens=safety_margin_tokens,
+            overhead_tokens=overhead,
             compression_applied=True,
             compression=compression_result,
         )

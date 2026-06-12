@@ -6,6 +6,7 @@ Do NOT import this module from outside the engine package.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -169,6 +170,82 @@ def provider_type_policy_error(provider_type: str, options: dict[str, Any]) -> s
     if resolved_type in blocked_types:
         return f"provider_type_blocked:{resolved_type}"
     return ""
+
+
+def estimate_payload_overhead_tokens(invoke_cfg: dict[str, Any], chat_messages: Any) -> int:
+    """Estimate request overhead the prompt text does NOT contain (W1.5c-1).
+
+    The server's chat template renders ``tools`` JSON into the prompt
+    (qwen-class: a <tools> block with every schema) and wraps each message in
+    ChatML markers — none of which client-side prompt estimation ever counted.
+    Live failure (factory-bench 2026-06-12): a director call with 17 tool
+    schemas (~16k JSON chars ≈ 4-5.3k true tokens) sailed past the budget
+    gate and died server-side at prompt+output > max_model_len. Dense JSON is
+    estimated as code (≈3 chars/token) to stay on the safe (high) side.
+    """
+    overhead = 32  # generation-prompt suffix + misc template constants
+    tools = invoke_cfg.get("tools")
+    if isinstance(tools, list) and tools:
+        try:
+            tools_json = json.dumps(tools, ensure_ascii=False)
+        except (TypeError, ValueError):
+            tools_json = str(tools)
+        from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
+
+        overhead += TokenEstimator.estimate(tools_json, content_type="code") + 96
+    if isinstance(chat_messages, list):
+        overhead += 4 * len(chat_messages)
+    return overhead
+
+
+def clamp_output_tokens_to_window(
+    invoke_cfg: dict[str, Any],
+    model_spec: Any,
+    prompt_text: str,
+    *,
+    overhead_tokens: int = 0,
+    logger_prefix: str = "[executor]",
+) -> None:
+    """Joint prompt+output window clamp (belt for token-estimation error).
+
+    Live failure (factory-bench 2026-06-12): an under-estimated CJK prompt
+    slipped past the budget gate and the server rejected the request outright
+    (vLLM: prompt 8193 + max_tokens 8192 > max_model_len 16384), killing the
+    whole planning run. The budget gate compresses the PROMPT; this clamp
+    guarantees the OUTPUT request never overdrafts whatever window remains.
+    """
+    try:
+        requested = int(invoke_cfg.get("max_tokens") or 0)
+    except (TypeError, ValueError):
+        return
+    window = int(getattr(model_spec, "max_context_tokens", 0) or 0)
+    if requested <= 0 or window <= 0:
+        return
+    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
+
+    # The EFFECTIVE payload is the structured chat_messages array when present
+    # (W1.5) — measuring only prompt_text under-counts the request and the
+    # clamp never fires (live: planning sent ~8k-token messages while
+    # prompt_text estimated far smaller).
+    chat_messages = invoke_cfg.get("chat_messages")
+    if isinstance(chat_messages, list) and chat_messages:
+        effective_text = "\n".join(str(m.get("content") or "") for m in chat_messages if isinstance(m, dict))
+    else:
+        effective_text = prompt_text or ""
+    prompt_tokens = TokenEstimator.estimate(effective_text)
+    headroom = window - prompt_tokens - max(0, int(overhead_tokens)) - 64
+    if headroom >= requested:
+        return
+    clamped = max(256, headroom)
+    logging.getLogger(__name__).warning(
+        "%s output budget clamped to window: prompt~%s + requested %s > window %s -> max_tokens=%s",
+        logger_prefix,
+        prompt_tokens,
+        requested,
+        window,
+        clamped,
+    )
+    invoke_cfg["max_tokens"] = clamped
 
 
 def resolve_requested_output_tokens(

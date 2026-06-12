@@ -424,3 +424,29 @@ def test_pm_quality_retry_prefers_real_tasks_over_autofix_bulk() -> None:
         )
         is True
     )
+
+
+def test_game_text_hint_alone_does_not_inject_phantom_tasks(monkeypatch) -> None:
+    """§8 regression (factory-bench L1-03): the word 游戏/game in a 2-task CLI
+    project must NOT classify it as a game contract and inject domain tasks."""
+    monkeypatch.delenv("KERNELONE_PM_DOMAIN_TEXT_HINTS", raising=False)
+    from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+        _is_game_pm_contract,
+    )
+
+    normalized = {"overall_goal": "实现命令行猜数字游戏", "focus": "CLI game"}
+    tasks = [
+        {"id": "PM-0001-1", "title": "实现猜数字游戏", "goal": "CLI 游戏主循环", "target_files": ["game.py"]},
+    ]
+    assert _is_game_pm_contract(normalized, tasks) is False
+
+
+def test_game_text_hint_opt_in_restores_classification(monkeypatch) -> None:
+    monkeypatch.setenv("KERNELONE_PM_DOMAIN_TEXT_HINTS", "1")
+    from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
+        _is_game_pm_contract,
+    )
+
+    normalized = {"overall_goal": "roguelike tactical combat game", "focus": "game"}
+    tasks = [{"id": "T1", "title": "game loop", "goal": "gameplay", "target_files": ["src/engine/loop.ts"]}]
+    assert _is_game_pm_contract(normalized, tasks) is True

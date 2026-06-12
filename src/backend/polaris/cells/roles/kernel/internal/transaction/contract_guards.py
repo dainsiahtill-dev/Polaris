@@ -601,6 +601,48 @@ def is_mutation_contract_violation(exc: Exception) -> bool:
     return "single_batch_contract_violation" in str(exc)
 
 
+# Polaris 自有教学错误锚点（平台字符串,非目标项目内容）:写工具参数"形状"失败
+# —— 散文塞进 blocks / SEARCH==REPLACE 空操作 / 缺必填参数 / 无有效编辑块。
+_WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS: tuple[str, ...] = (
+    "Parameter validation failed",
+    "prose/narration",
+    "identical search and replace",
+    "No valid edit blocks",
+)
+
+
+def batch_write_results_all_failed_on_argument_shape(batch_receipt: Mapping[str, Any]) -> bool:
+    """判定:批内出现过写调用,且全部因参数形状失败(无一成功)。
+
+    Phase-1 A8a(2026-06-11, phase1smoke4 实证):弱模型自愿发 edit_blocks 却把
+    散文塞进参数/发空操作,单 session 6 连败;而 W1.10 强制收窄阶梯只挂在
+    "无写调用"违约上,从未触发。本谓词让这种批次走同一升级阶梯——其后段
+    按名强制 + line-range schema 收窄已被实证可被 guided decoding 满足
+    (fix5:散文逃逸 数十→0)。
+
+    严格条件防误伤:任一写调用成功 → False;任一写调用因非形状原因失败
+    (如 stale-edit、目标漂移——各有专属守卫)→ False;批内无写调用 → False。
+    """
+    results = batch_receipt.get("results") or []
+    write_seen = False
+    for item in results:
+        if not isinstance(item, Mapping):
+            continue
+        tool_name = str(item.get("tool_name") or "").strip()
+        if tool_name not in WRITE_TOOLS:
+            continue
+        write_seen = True
+        status = str(item.get("status") or "").strip().lower()
+        payload = item.get("result")
+        payload_ok = payload.get("ok") if isinstance(payload, Mapping) else None
+        if status == "success" and payload_ok is not False:
+            return False
+        error_text = str(payload.get("error") or "") if isinstance(payload, Mapping) else ""
+        if not any(anchor in error_text for anchor in _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS):
+            return False
+    return write_seen
+
+
 def has_successful_recon_execution(tool_executions: list[dict[str, Any]]) -> bool:
     """判定 ledger 工具执行记录中是否存在至少一次成功的侦察工具执行。
 

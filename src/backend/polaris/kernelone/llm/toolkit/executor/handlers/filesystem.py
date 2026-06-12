@@ -6,6 +6,7 @@ Handles file operations: read_file, write_file, edit_file, search_replace, appen
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -36,6 +37,75 @@ if TYPE_CHECKING:
     _KernelFileSystem = KernelFileSystem
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Post-write syntax gate (Phase-1 A5, factory-bench L2-09 live evidence:
+# 167 lines of working snake-game JS killed by one `;` where a `,` belonged —
+# object literal at game.js:54. Zero-LLM checkers run AFTER a successful
+# write; the diagnostic rides back in the tool RESULT so the model fixes it
+# next turn. Writes are never blocked (progressive drafts stay legal) and
+# checker selection is extension-driven — no project-specific logic (§8).
+# ---------------------------------------------------------------------------
+
+
+def _syntax_check_file(absolute_path: str) -> dict[str, Any] | None:
+    """Return {'ok': False, 'error': ...} on syntax failure, {'ok': True} on
+    pass, None when no checker applies (unknown extension / tool missing)."""
+    import json as _json
+    import py_compile as _py_compile
+    import shutil as _shutil
+    import subprocess as _subprocess
+
+    suffix = os.path.splitext(absolute_path)[1].lower()
+    try:
+        if suffix == ".py":
+            try:
+                _py_compile.compile(absolute_path, doraise=True)
+                return {"ok": True}
+            except _py_compile.PyCompileError as exc:
+                message = str(exc.msg or exc).strip().splitlines()[-1]
+                return {"ok": False, "error": message}
+        if suffix in (".js", ".mjs", ".cjs"):
+            node = _shutil.which("node")
+            if not node:
+                return None
+            proc = _subprocess.run(
+                [node, "--check", absolute_path], capture_output=True, text=True, timeout=20, check=False
+            )
+            if proc.returncode == 0:
+                return {"ok": True}
+            detail = (proc.stderr or proc.stdout).strip()
+            return {"ok": False, "error": detail[:400]}
+        if suffix == ".json":
+            with open(absolute_path, encoding="utf-8") as fh:
+                _json.load(fh)
+            return {"ok": True}
+    except (OSError, UnicodeDecodeError, _subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": f"syntax check could not run: {exc}"}
+    except ValueError as exc:  # json.JSONDecodeError
+        return {"ok": False, "error": f"invalid JSON: {exc}"}
+    return None
+
+
+def attach_post_write_syntax_check(result: dict[str, Any], absolute_path: str) -> dict[str, Any]:
+    """Attach syntax diagnostics to a SUCCESSFUL write/edit result."""
+    if not result.get("ok"):
+        return result
+    check = _syntax_check_file(absolute_path)
+    if check is None:
+        return result
+    if check.get("ok"):
+        result["syntax_check"] = "passed"
+        return result
+    result["syntax_check"] = "failed"
+    result["syntax_error"] = check.get("error", "")
+    result["suggestion"] = (
+        "The file was written BUT it has a syntax error — fix it now with a "
+        "narrow edit_blocks line-range edit before doing anything else: "
+        f"{check.get('error', '')}"
+    )
+    return result
 
 
 def register_handlers() -> dict[str, Any]:
@@ -69,6 +139,30 @@ _SUGGEST_MAX_RESULTS = 5
 # to repo_rg/repo_tree exploration guidance — for a weak model, no hint beats
 # a wrong hint.
 _SUGGEST_BARE_NAME_MAX_DEPTH = 2
+
+# Destructive-shrink gate (Phase-1 A4 slice; run20 539→32-line overwrite,
+# phase1smoke5 live: 1403 lines of django expressions.py replaced by 17).
+# A bug fix is a NARROW edit; deleting a large block and writing back a
+# fraction of it guts real files while still "applying" cleanly. Thresholds
+# mirror the failure labeler's destructive_overwrite definition so the gate
+# and the metric agree. fail-closed: the model gets a retryable teaching
+# error telling it to narrow the range.
+_DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES = 100
+_DESTRUCTIVE_SHRINK_MAX_ADD_RATIO = 0.4
+
+
+def _destructive_shrink_error(target: str, removed_lines: int, added_lines: int, *, tool_hint: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": (
+            f"Destructive shrink rejected: this edit would replace {removed_lines} lines of "
+            f"{target} with only {added_lines} line(s). Large deletions disguised as edits "
+            "destroy working code."
+        ),
+        "suggestion": tool_hint,
+        "error_type": "destructive_shrink",
+        "retryable": True,
+    }
 
 
 def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list[str]:
@@ -527,6 +621,23 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
                 old_content = ""
         except OSError:
             old_content = ""
+        old_lines = old_content.count("\n") + (1 if old_content and not old_content.endswith("\n") else 0)
+        new_text = str(content or "")
+        new_lines = new_text.count("\n") + (1 if new_text and not new_text.endswith("\n") else 0)
+        if (
+            old_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
+            and new_lines <= old_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
+        ):
+            return _destructive_shrink_error(
+                file_path,
+                old_lines,
+                new_lines,
+                tool_hint=(
+                    "write_file replaces the WHOLE file. To change part of an existing file use "
+                    "edit_blocks (line-range form: file + start + end + replace) so untouched "
+                    "code is preserved."
+                ),
+            )
 
     normalized = normalize_patch_like_write_content(
         rel,
@@ -614,6 +725,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
     if normalized.normalized_patch_like:
         result["normalized_patch_like_write"] = True
 
+    result = attach_post_write_syntax_check(result, str(target))
     return _attach_director_policy_evidence(result, policy_result.get("director_policy"))
 
 
@@ -1034,8 +1146,92 @@ def _synthesize_line_range_block(
     # Preserve the trailing-newline shape of the replaced slice.
     if search_text.endswith("\n") and not repl.endswith("\n"):
         repl = repl + "\n"
+    removed_lines = end_no - start_no + 1
+    added_lines = len(repl.splitlines())
+    if (
+        removed_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
+        and added_lines <= removed_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
+    ):
+        return None, _destructive_shrink_error(
+            f"{file}[{start_no}:{end_no}]",
+            removed_lines,
+            added_lines,
+            tool_hint=(
+                "Narrow start/end to ONLY the lines you are actually changing (a bug fix is "
+                "usually < 30 lines) and keep all surrounding code intact. Make several small "
+                "line-range edits if multiple spots need changes."
+            ),
+        )
     block = f"<<<< SEARCH:{file}\n{search_text}====\n{repl}>>>> REPLACE\n"
     return block, None
+
+
+_JSON_EDIT_FILE_KEYS = ("file", "path", "file_path", "filepath")
+_JSON_EDIT_REPLACE_KEYS = ("replace", "new_text", "new_content", "replacement", "code", "content")
+
+
+def _synthesize_blocks_from_json_payload(
+    self: AgentAccelToolExecutor,
+    blocks_text: str,
+    default_file: str | None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Recognize a JSON-encoded line-range edit (list or object) inside ``blocks``.
+
+    Live capture (phase1smoke6, qwen3.6): the model emitted a fully-correct
+    STRUCTURED edit as JSON inside the blocks argument —
+    ``[{"start_line":1019,"end_line":1020,"file":"django/db/models/expressions.py",
+    "replace":"..."}]`` — and the prose guard rejected it. Punishing structure
+    is link-level self-harm: normalize it into synthesized SEARCH/REPLACE blocks
+    through the SAME line-range path (shrink gate included).
+
+    Returns ``(blocks, None)`` on success, ``(None, error)`` when the payload is
+    line-range-shaped but invalid, and ``(None, None)`` when the payload is not
+    JSON-edit shaped at all (caller falls through to the normal parser).
+    """
+    candidate = blocks_text.strip()
+    # Live shape #4 (factory-bench L1-05): a leading YAML-ish label before the
+    # JSON — 'blocks: [ {"path": ..., "start": 1, ...} ]'. Strip one leading
+    # `word:` tag when JSON follows so the structured intent is recognized.
+    label_match = re.match(r"^[A-Za-z_]{1,16}\s*:\s*(?=[\[{])", candidate)
+    if label_match:
+        candidate = candidate[label_match.end() :].strip()
+    if not candidate or candidate[0] not in "[{":
+        return None, None
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None, None
+    items: list[Any] = parsed if isinstance(parsed, list) else [parsed]
+    if not items:
+        return None, None
+    synthesized: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            return None, None
+        start = item.get("start", item.get("start_line"))
+        end = item.get("end", item.get("end_line"))
+        if start is None or end is None:
+            # Nested-parameter-name shape (factory-bench L1-01 live capture):
+            # [{"blocks": "<payload>"}] — the model wrapped the ARGUMENT NAME
+            # inside the JSON. Unwrap single-item payloads and let the caller
+            # re-enter the normal pipeline (marker parse / prose guard).
+            inner = item.get("blocks")
+            if len(items) == 1 and isinstance(inner, str) and inner.strip():
+                return None, {"__unwrap_blocks__": inner, "__unwrap_file__": item.get("file") or default_file}
+            return None, None
+        item_file = next(
+            (str(item[key]) for key in _JSON_EDIT_FILE_KEYS if item.get(key)),
+            None,
+        ) or (str(default_file) if default_file else None)
+        replacement = next(
+            (item[key] for key in _JSON_EDIT_REPLACE_KEYS if item.get(key) is not None),
+            None,
+        )
+        block, err = _synthesize_line_range_block(self, item_file, start, end, replacement)
+        if err is not None:
+            return None, err
+        synthesized.append(block or "")
+    return "".join(synthesized), None
 
 
 def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
@@ -1053,9 +1249,8 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         Execution result dict
     """
     file = kwargs.get("file") or kwargs.get("path") or kwargs.get("file_path") or kwargs.get("filepath")
-    blocks_text = _normalize_block_input(
-        kwargs.get("blocks") or kwargs.get("content") or kwargs.get("edits") or kwargs.get("diff")
-    )
+    raw_blocks_value = kwargs.get("blocks") or kwargs.get("content") or kwargs.get("edits") or kwargs.get("diff")
+    blocks_text = _normalize_block_input(raw_blocks_value)
 
     # Weak-model line-range affordance: when start/end line numbers are supplied and the
     # payload is not already a SEARCH/REPLACE block, synthesize one from the exact file
@@ -1081,6 +1276,25 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         if err is not None:
             return err
         blocks_text = synth or ""
+    elif blocks_text and not _has_search_replace_markers(blocks_text):
+        # JSON-in-blocks affordance: a structured line-range edit hiding inside
+        # the blocks argument is normalized, not rejected as prose. Parse the
+        # RAW value first — _normalize_block_input's escape repair corrupts
+        # valid JSON (the \n inside quoted strings must stay escaped).
+        json_blocks: str | None = None
+        json_err: dict[str, Any] | None = None
+        if isinstance(raw_blocks_value, str):
+            json_blocks, json_err = _synthesize_blocks_from_json_payload(self, raw_blocks_value, default_file=file)
+        if json_blocks is None and json_err is None:
+            json_blocks, json_err = _synthesize_blocks_from_json_payload(self, blocks_text, default_file=file)
+        if json_err is not None and "__unwrap_blocks__" in json_err:
+            blocks_text = _normalize_block_input(json_err["__unwrap_blocks__"])
+            file = json_err.get("__unwrap_file__") or file
+            json_err = None
+        if json_err is not None:
+            return json_err
+        if json_blocks is not None:
+            blocks_text = json_blocks
 
     if not blocks_text or not isinstance(blocks_text, str):
         return {
@@ -1109,6 +1323,48 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         # what was received and show BOTH complete forms — imprecise models imitate
         # concrete examples far better than they follow format descriptions.
         preview = " ".join(blocks_text.strip().split())[:120]
+        target_missing = False
+        if file:
+            rel_probe, _probe_err = _resolve_workspace_rel(self, str(file))
+            target_missing = rel_probe is not None and not self._kernel_fs.workspace_exists(rel_probe)
+        if target_missing:
+            # Factory-bench live capture: models try to CREATE new files through
+            # edit_blocks by stuffing whole-file code into 'blocks'. There is
+            # nothing to search/replace in a nonexistent file — teach the right
+            # tool instead of sending them to read_file.
+            error = f"edit_blocks cannot create new files ({file} does not exist). Use write_file to create it."
+            return {
+                "ok": False,
+                "error": error,
+                "suggestion": (
+                    f'Call write_file with the COMPLETE file content: {{"file": "{file}", '
+                    '"content": "<the full source code>"}}. edit_blocks is only for '
+                    "modifying lines of EXISTING files."
+                ),
+                "error_type": "new_file_via_edit_blocks",
+                "retryable": True,
+            }
+        # Filename-plus-fenced-content shape (factory-bench L1-01 README task):
+        # blocks = "README.md ```markdown <full file>```" — unambiguous
+        # whole-file-write intent through the wrong tool. Teach write_file with
+        # the exact filename instead of the generic prose lecture.
+        stripped_lines = [line.strip() for line in blocks_text.strip().splitlines() if line.strip()]
+        leading_name = stripped_lines[0].split()[0].strip("*`'\"") if stripped_lines else ""
+        looks_like_filename = bool(re.fullmatch(r"[\w./-]+\.[A-Za-z0-9]{1,8}", leading_name))
+        if looks_like_filename and "```" in blocks_text:
+            return {
+                "ok": False,
+                "error": (
+                    f"edit_blocks received a filename plus full file content for {leading_name}. "
+                    "That is a whole-file write, not an edit."
+                ),
+                "suggestion": (
+                    f'Call write_file instead: {{"file": "{leading_name}", '
+                    '"content": "<the full file content WITHOUT the ``` fence>"}}.'
+                ),
+                "error_type": "whole_file_via_edit_blocks",
+                "retryable": True,
+            }
         if not _has_search_replace_markers(blocks_text):
             error = (
                 "edit_blocks received prose/narration instead of edit content "

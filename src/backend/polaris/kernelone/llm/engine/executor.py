@@ -19,7 +19,9 @@ from .._timeout_config import get_invoke_timeout, get_max_concurrency
 from ..providers import get_provider_manager
 from ._executor_base import (
     build_invoke_config,
+    clamp_output_tokens_to_window,
     classify_error,
+    estimate_payload_overhead_tokens,
     get_provider_config,
     provider_type_policy_error,
     resolve_provider_model,
@@ -342,12 +344,19 @@ class AIExecutor:
         if requested_output_tokens > 0:
             invoke_cfg["max_tokens"] = requested_output_tokens
 
+        # W1.5c: the chat template renders tools + message wrappers into the
+        # prompt server-side; account for them as a budget deduction so
+        # compression targets reflect the REAL window left for prompt text.
+        early_chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
+        payload_overhead = estimate_payload_overhead_tokens(invoke_cfg, early_chat_messages)
+
         budget_decision = self.token_budget.enforce(
             request.input,
             model_spec,
             requested_output_tokens=requested_output_tokens,
             workspace=self.workspace,
             role=request.role,
+            overhead_tokens=payload_overhead,
         )
         if not budget_decision.allowed:
             return AIResponse.failure(
@@ -375,6 +384,14 @@ class AIExecutor:
                     invoke_cfg["chat_messages"] = budgeted_chat_messages
         elif isinstance(chat_messages, list) and chat_messages:
             invoke_cfg["chat_messages"] = chat_messages
+
+        clamp_output_tokens_to_window(
+            invoke_cfg,
+            model_spec,
+            prompt_input if isinstance(prompt_input, str) else str(prompt_input),
+            overhead_tokens=payload_overhead,
+            logger_prefix="[executor]",
+        )
 
         # Acquire semaphore for concurrency control
         semaphore = await _get_global_semaphore()

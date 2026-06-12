@@ -2094,3 +2094,80 @@ def test_small_scaffold_with_markers_still_qualifies_for_whole_file_replacement(
         ]
     }
     assert bootstrap_receipt_contains_whole_file_replacement_marker(receipt) is True
+
+
+class TestWriteArgumentShapeFailureGuard:
+    """Phase-1 A8a: malformed-write batches must escalate through the retry ladder."""
+
+    @staticmethod
+    def _receipt(items: list[tuple[str, str, dict]]) -> dict:
+        return {
+            "results": [
+                {"call_id": f"c{i}", "tool_name": tool, "status": status, "result": result}
+                for i, (tool, status, result) in enumerate(items)
+            ]
+        }
+
+    def test_all_writes_failed_on_shape_triggers(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [
+                ("read_file", "success", {"ok": True, "content": "x"}),
+                (
+                    "edit_blocks",
+                    "error",
+                    {"ok": False, "error": "edit_blocks received prose/narration instead of edit content"},
+                ),
+                (
+                    "edit_blocks",
+                    "error",
+                    {"ok": False, "error": "All 1 edit block(s) had identical search and replace text (no-op)."},
+                ),
+            ]
+        )
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
+    def test_any_successful_write_disarms(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [
+                (
+                    "edit_blocks",
+                    "error",
+                    {"ok": False, "error": "Parameter validation failed: edit_blocks: missing required argument"},
+                ),
+                ("write_file", "success", {"ok": True, "bytes_written": 10}),
+            ]
+        )
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is False
+
+    def test_non_shape_write_failure_is_owned_by_other_guards(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [("edit_blocks", "error", {"ok": False, "error": "stale_edit: target not read in this session"})]
+        )
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is False
+
+    def test_read_only_batch_never_triggers(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt([("read_file", "error", {"ok": False, "error": "File not found: x.py"})])
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is False
+
+    def test_empty_receipt_never_triggers(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        assert batch_write_results_all_failed_on_argument_shape({"results": []}) is False

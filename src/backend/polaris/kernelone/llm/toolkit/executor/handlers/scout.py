@@ -84,10 +84,21 @@ def _handle_scout_probe(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str
         logger.warning("scout_probe failed: %s", exc)
         return {"ok": False, "error": f"scout_probe failed: {type(exc).__name__}: {exc}"}
 
+    findings = [finding.to_dict() for finding in report.findings]
+    # Phase-2 A7: pin confirmed localizations so the RoleSignalPlane re-injects
+    # them every turn — one-shot tool results get forgotten under retry
+    # pressure (run10a: gold compiler.py recalled, then abandoned).
+    try:
+        from polaris.kernelone.context.scout_anchor_store import record_scout_anchors
+
+        record_scout_anchors(workspace, query_str, findings)
+    except Exception as exc:  # noqa: BLE001 - anchor persistence is fail-soft
+        logger.debug("scout anchor persistence skipped: %s", exc)
+
     return {
         "ok": True,
         "stdout": report.summary,
-        "findings": [finding.to_dict() for finding in report.findings],
+        "findings": findings,
         "content_hash": report.content_hash,
         "coverage": report.coverage,
         "confidence": report.confidence,

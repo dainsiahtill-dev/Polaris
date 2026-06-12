@@ -280,3 +280,31 @@ def test_repo_identity_is_must_have_under_budget_pressure() -> None:
         previous_freshness={},
     )
     assert "repo_identity" in res.sources
+
+
+# ---------------------------------------------------------------------------
+# ScoutAnchorsSignal（Phase-2 A7 定位持久化）
+# ---------------------------------------------------------------------------
+
+_ANCHORS = "【侦察锚点】(scout 已确认的真实定位)\n- django/db/models/sql/compiler.py:465 置信度 0.85"
+
+
+def test_scout_anchors_injected_by_default_as_must_have() -> None:
+    ctx = SignalBuildContext(
+        role="director",
+        phase="exploring",
+        task_id="T1",
+        policy_flags={"include_project_structure": True, "include_task_history": True},
+        get_project_structure=lambda: "src/\n  a.py",
+        get_task_history=lambda tid: "t",
+        get_scout_anchors=lambda: _ANCHORS,
+    )
+    res = allocate_role_signals(registry=RoleSignalRegistry(), ctx=ctx, receipt_store=ReceiptStore())
+    assert "scout_anchors" in res.sources
+    anchor_turn = next(t for t in res.turns if t["name"] == "scout_anchors")
+    assert anchor_turn["content"] == _ANCHORS
+
+
+def test_scout_anchors_none_accessor_keeps_baseline() -> None:
+    res = allocate_role_signals(registry=RoleSignalRegistry(), ctx=_ctx("director"), receipt_store=ReceiptStore())
+    assert "scout_anchors" not in res.sources

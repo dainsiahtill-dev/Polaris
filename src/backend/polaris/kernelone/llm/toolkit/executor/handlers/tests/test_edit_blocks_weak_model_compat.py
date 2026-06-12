@@ -13,6 +13,7 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _coerce_line_no,
     _handle_edit_blocks,
     _handle_read_file,
+    _handle_write_file,
     _has_search_replace_markers,
     _normalize_block_input,
     _suggest_similar_paths,
@@ -275,3 +276,215 @@ def test_edit_blocks_foreign_absolute_path_teaches(tmp_path: Path) -> None:
     result = _handle_edit_blocks(ex, file="/Users/joey/repo/django/core/checks/model_checks.py", blocks=blocks)
     assert result.get("ok") is False
     assert "WORKSPACE-RELATIVE" in result.get("error", "")
+
+
+# ----- Phase-1 A4 slice: destructive-shrink gate -----
+
+
+def _big_file_workspace(tmp_path: Path, lines: int = 300) -> AgentAccelToolExecutor:
+    target = tmp_path / "pkg" / "big_module.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("".join(f"line_{i} = {i}\n" for i in range(lines)), encoding="utf-8")
+    return AgentAccelToolExecutor(workspace=str(tmp_path))
+
+
+def test_line_range_destructive_shrink_rejected(tmp_path: Path) -> None:
+    """phase1smoke5 regression: 1403 lines replaced by 17 must be refused."""
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_edit_blocks(ex, file="pkg/big_module.py", start=1, end=250, replace="fixed = True\n")
+    assert result.get("ok") is False
+    assert result.get("error_type") == "destructive_shrink"
+    assert result.get("retryable") is True
+    assert "Narrow start/end" in result.get("suggestion", "")
+
+
+def test_narrow_line_range_edit_still_works(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_edit_blocks(
+        ex, file="pkg/big_module.py", start=10, end=12, replace="line_10 = 100\nline_11 = 110\nline_12 = 120\n"
+    )
+    assert result.get("ok") is True
+
+
+def test_large_range_with_proportional_replacement_allowed(tmp_path: Path) -> None:
+    """A genuine large refactor (similar size in/out) is not a shrink."""
+    ex = _big_file_workspace(tmp_path)
+    replacement = "".join(f"new_line_{i} = {i}\n" for i in range(120))
+    result = _handle_edit_blocks(ex, file="pkg/big_module.py", start=1, end=150, replace=replacement)
+    assert result.get("ok") is True
+
+
+def test_write_file_overwrite_shrink_rejected(tmp_path: Path) -> None:
+    """run20 regression: 539-line file overwritten by 32 lines must be refused."""
+    ex = _big_file_workspace(tmp_path, lines=539)
+    result = _handle_write_file(ex, file="pkg/big_module.py", content="tiny = 1\n" * 32)
+    assert result.get("ok") is False
+    assert result.get("error_type") == "destructive_shrink"
+    assert "edit_blocks" in result.get("suggestion", "")
+
+
+def test_write_file_new_file_unaffected(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_write_file(ex, file="pkg/fresh.py", content="x = 1\n")
+    assert result.get("ok") is True
+
+
+def test_write_file_small_existing_file_overwrite_allowed(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path, lines=20)
+    result = _handle_write_file(ex, file="pkg/big_module.py", content="rewritten = True\n")
+    assert result.get("ok") is True
+
+
+# ----- Phase-1 W1.11: JSON-in-blocks normalization (phase1smoke6 live capture) -----
+
+
+def test_json_array_line_range_inside_blocks_applies(tmp_path: Path) -> None:
+    """The exact phase1smoke6 shape: a structured JSON edit inside `blocks`
+    must be normalized and applied, not rejected as prose."""
+    ex = _big_file_workspace(tmp_path, lines=30)
+    payload = (
+        '[{"start_line": 5, "end_line": 6, "file": "pkg/big_module.py", "replace": "line_4 = 400\\nline_5 = 500\\n"}]'
+    )
+    result = _handle_edit_blocks(ex, blocks=payload)
+    assert result.get("ok") is True, result
+    content = (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
+    assert "line_4 = 400" in content
+
+
+def test_json_object_uses_top_level_file_fallback(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path, lines=30)
+    payload = '{"start": 3, "end": 3, "replace": "patched = True\\n"}'
+    result = _handle_edit_blocks(ex, file="pkg/big_module.py", blocks=payload)
+    assert result.get("ok") is True, result
+    assert "patched = True" in (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
+
+
+def test_json_multi_edit_array_applies_all(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path, lines=40)
+    payload = (
+        '[{"start_line": 2, "end_line": 2, "file": "pkg/big_module.py", "replace": "first = 1\\n"},'
+        ' {"start_line": 30, "end_line": 30, "file": "pkg/big_module.py", "replace": "second = 2\\n"}]'
+    )
+    result = _handle_edit_blocks(ex, blocks=payload)
+    assert result.get("ok") is True, result
+    content = (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
+    assert "first = 1" in content and "second = 2" in content
+
+
+def test_json_edit_inherits_destructive_shrink_gate(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path, lines=300)
+    payload = '[{"start_line": 1, "end_line": 250, "file": "pkg/big_module.py", "replace": "gutted = True\\n"}]'
+    result = _handle_edit_blocks(ex, blocks=payload)
+    assert result.get("ok") is False
+    assert result.get("error_type") == "destructive_shrink"
+
+
+def test_non_edit_json_still_falls_through_to_prose_guard(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path, lines=10)
+    result = _handle_edit_blocks(ex, file="pkg/big_module.py", blocks='{"plan": "I will fix the bug"}')
+    assert result.get("ok") is False
+    assert result.get("error_type") != "destructive_shrink"
+
+
+def test_prose_in_blocks_still_rejected(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path, lines=10)
+    result = _handle_edit_blocks(
+        ex, file="pkg/big_module.py", blocks="Adding the missing method to the class to fix the bug"
+    )
+    assert result.get("ok") is False
+    assert "prose/narration" in result.get("error", "")
+
+
+# ----- Factory-bench L1-01 live captures: nested blocks + new-file misuse -----
+
+
+def test_nested_blocks_json_with_markers_unwraps_and_applies(tmp_path: Path) -> None:
+    """[{"blocks": "<SEARCH/REPLACE payload>"}] must unwrap, not hit the prose guard."""
+    ex = _big_file_workspace(tmp_path, lines=10)
+    payload = '[{"blocks": "<<<< SEARCH:pkg/big_module.py\\nline_3 = 3\\n====\\nline_3 = 333\\n>>>> REPLACE\\n"}]'
+    result = _handle_edit_blocks(ex, blocks=payload)
+    assert result.get("ok") is True, result
+    assert "line_3 = 333" in (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
+
+
+def test_new_file_via_edit_blocks_teaches_write_file(tmp_path: Path) -> None:
+    """The L1-01 chain shape: whole-file code stuffed into blocks for a file
+    that does not exist must teach write_file, not read_file."""
+    ex = _big_file_workspace(tmp_path, lines=5)
+    result = _handle_edit_blocks(
+        ex,
+        file="calculator.py",
+        blocks='[{"blocks": "import sys\\nimport re\\ndef validate_input(expression):\\n    return expression\\n"}]',
+    )
+    assert result.get("ok") is False
+    assert result.get("error_type") == "new_file_via_edit_blocks"
+    assert "write_file" in result.get("error", "")
+    assert result.get("retryable") is True
+
+
+def test_prose_on_existing_file_keeps_prose_guard(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path, lines=5)
+    result = _handle_edit_blocks(ex, file="pkg/big_module.py", blocks="I plan to refactor this module")
+    assert result.get("ok") is False
+    assert "prose/narration" in result.get("error", "")
+
+
+def test_filename_plus_fence_teaches_write_file(tmp_path: Path) -> None:
+    """factory-bench README capture: 'README.md ```markdown ...```' in blocks."""
+    ex = _big_file_workspace(tmp_path, lines=5)
+    (tmp_path / "README.md").write_text("# old\n", encoding="utf-8")
+    result = _handle_edit_blocks(
+        ex, blocks="README.md\n```markdown\n# CLI Calculator\n运行: python calculator.py\n```\n"
+    )
+    assert result.get("ok") is False
+    assert result.get("error_type") == "whole_file_via_edit_blocks"
+    assert '"file": "README.md"' in result.get("suggestion", "")
+
+
+def test_yaml_label_prefixed_json_blocks_applies(tmp_path: Path) -> None:
+    """L1-05 live shape #4: 'blocks: [{"path": ..., "start": ...}]'."""
+    ex = _big_file_workspace(tmp_path, lines=20)
+    payload = 'blocks: [ { "path": "pkg/big_module.py", "start": 2, "end": 2, "replace": "fixed = 2\\n" } ]'
+    result = _handle_edit_blocks(ex, blocks=payload)
+    assert result.get("ok") is True, result
+    assert "fixed = 2" in (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
+
+
+# ----- Phase-1 A5: post-write syntax gate -----
+
+
+def test_write_file_attaches_js_syntax_diagnostic(tmp_path: Path) -> None:
+    """L2-09 live regression: a `;` where `,` belongs in an object literal
+    must come back as a syntax diagnostic on the SUCCESSFUL write result."""
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    bad_js = "const head = {\n  x: 1,\n  y: 2;\n};\n"
+    result = _handle_write_file(ex, file="game.js", content=bad_js)
+    assert result.get("ok") is True  # the write itself lands
+    assert result.get("syntax_check") == "failed"
+    assert "game.js" in str(result.get("syntax_error", "")) or "Unexpected" in str(result.get("syntax_error", ""))
+    assert "fix it now" in result.get("suggestion", "")
+
+
+def test_write_file_clean_python_passes_syntax(tmp_path: Path) -> None:
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    result = _handle_write_file(ex, file="calc.py", content="def add(a, b):\n    return a + b\n")
+    assert result.get("ok") is True
+    assert result.get("syntax_check") == "passed"
+
+
+def test_write_file_broken_python_blocked_by_pre_write_guard(tmp_path: Path) -> None:
+    """Division of labor: .py is blocked BEFORE the write by PreWriteGuard
+    (ok=False + validation_errors); the post-write gate covers languages the
+    pre-write guard does not parse (.js — the L2-09 vector)."""
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    result = _handle_write_file(ex, file="bad.py", content="def add(a, b:\n    return\n")
+    assert result.get("ok") is False
+    assert result.get("validation_errors")
+    assert not (tmp_path / "bad.py").exists()
+
+
+def test_write_file_unknown_extension_no_check(tmp_path: Path) -> None:
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    result = _handle_write_file(ex, file="notes.md", content="# hello\n")
+    assert result.get("ok") is True
+    assert "syntax_check" not in result

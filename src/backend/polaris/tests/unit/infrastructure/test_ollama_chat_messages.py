@@ -91,3 +91,90 @@ class TestSharedBuilderParity:
         )
 
         assert _build_chat_messages_payload is build_chat_messages_payload
+
+
+class TestUserTurnGuarantee:
+    """factory-bench 2026-06-12 live regression: an all-system chat_messages
+    array must never reach a strict chat template without a user turn
+    (vLLM qwen3: 400 'No user query found in messages')."""
+
+    def test_all_system_array_gets_prompt_appended_as_user(self) -> None:
+        from polaris.infrastructure.llm.providers.provider_helpers import build_chat_messages_payload
+
+        messages = build_chat_messages_payload(
+            [{"role": "system", "content": "你是项目经理。"}],
+            "生成 AGENTS.md",
+        )
+        assert messages[0]["role"] == "system"
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"] == "生成 AGENTS.md"
+
+    def test_all_system_with_empty_prompt_gets_placeholder_user(self) -> None:
+        from polaris.infrastructure.llm.providers.provider_helpers import build_chat_messages_payload
+
+        messages = build_chat_messages_payload(
+            [{"role": "system", "content": "instructions"}],
+            "",
+        )
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"] == "(continue)"
+
+    def test_empty_user_content_stripped_then_guarded(self) -> None:
+        from polaris.infrastructure.llm.providers.provider_helpers import build_chat_messages_payload
+
+        messages = build_chat_messages_payload(
+            [{"role": "system", "content": "sys"}, {"role": "user", "content": "   "}],
+            "real question",
+        )
+        roles = [m["role"] for m in messages]
+        assert "user" in roles
+
+    def test_normal_conversation_unchanged(self) -> None:
+        from polaris.infrastructure.llm.providers.provider_helpers import build_chat_messages_payload
+
+        messages = build_chat_messages_payload(
+            [{"role": "system", "content": "s"}, {"role": "user", "content": "q"}],
+            "q",
+        )
+        assert [m["role"] for m in messages] == ["system", "user"]
+        assert messages[-1]["content"] == "q"
+
+
+class TestContextOverflowSelfHeal:
+    """factory-bench 2026-06-12: server-truth self-heal for prompt+output>window 400s."""
+
+    _BODY = (
+        '{"error":{"message":"This model\'s maximum context length is 16384 tokens. '
+        "However, you requested 8192 output tokens and your prompt contains at least 8193 input tokens, "
+        'for a total of at least 16385 tokens.","type":"BadRequestError","code":400}}'
+    )
+
+    def test_shrinks_to_server_reported_headroom(self) -> None:
+        from polaris.infrastructure.llm.providers.provider_helpers import (
+            shrink_max_tokens_for_context_overflow,
+        )
+
+        payload = {"max_tokens": 8192}
+        assert shrink_max_tokens_for_context_overflow(payload, self._BODY) is True
+        assert payload["max_tokens"] == 16384 - 8193 - 16
+
+    def test_non_overflow_body_untouched(self) -> None:
+        from polaris.infrastructure.llm.providers.provider_helpers import (
+            shrink_max_tokens_for_context_overflow,
+        )
+
+        payload = {"max_tokens": 8192}
+        assert shrink_max_tokens_for_context_overflow(payload, '{"error":"No user query"}') is False
+        assert payload["max_tokens"] == 8192
+
+    def test_no_headroom_left_returns_false(self) -> None:
+        from polaris.infrastructure.llm.providers.provider_helpers import (
+            shrink_max_tokens_for_context_overflow,
+        )
+
+        body = (
+            '"maximum context length is 16384 tokens. However, you requested 100 output tokens '
+            'and your prompt contains at least 16380 input tokens"'
+        )
+        payload = {"max_tokens": 100}
+        assert shrink_max_tokens_for_context_overflow(payload, body) is False

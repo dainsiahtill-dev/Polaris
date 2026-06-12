@@ -20,6 +20,7 @@ from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteTo
 from polaris.cells.roles.kernel.internal.speculative_flags import is_adoption_audit_enabled
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    batch_write_results_all_failed_on_argument_shape,
     extract_invocation_tool_name,
     extract_target_file_from_invocation_args,
     extract_target_files_from_message,
@@ -1253,6 +1254,22 @@ class ToolBatchExecutor:
                 f"trigger_reason={breaker_snapshot.trigger_reason} "
                 f"triggered_dimension={breaker_snapshot.triggered_dimension or 'none'}"
             )
+
+        # Phase-1 A8a (2026-06-11, phase1smoke4): when a mutation-required batch
+        # contains write invocations that ALL failed on argument shape (prose in
+        # blocks / SEARCH==REPLACE no-op / missing args), escalate through the
+        # SAME mutation-contract retry ladder — its later attempts force the
+        # write tool by name and narrow edit_blocks to the line-range schema,
+        # which guided decoding satisfies (fix5: prose escapes dozens -> 0).
+        # Without this trigger the ladder only fires on no-write batches, so a
+        # model that volunteers malformed writes burns every turn unescalated.
+        if requires_mutation:
+            _shape_guard_receipt = _merge_batch_receipts(receipts_as_dicts)
+            if _shape_guard_receipt and batch_write_results_all_failed_on_argument_shape(_shape_guard_receipt):
+                raise RuntimeError(
+                    "single_batch_contract_violation: mutation write batch failed on argument shape "
+                    "(prose/no-op/missing-args in write tool arguments) — escalating to forced-write retry"
+                )
 
         # === Phase 4b: 执行完成 ===
         state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTED)

@@ -684,6 +684,11 @@ class CellPmInvokePort:
             from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
             runtime_timeout = state_timeout if state_timeout > 0 else 360
+            # Sized for the cloud planners PM is normally bound to (MiniMax-M3,
+            # 1M context). Small-window local models are protected generically:
+            # the engine output clamp and the provider context-overflow
+            # self-heal (2026-06-12) shrink max_tokens to the window instead of
+            # dying on a 400.
             pm_planning_max_tokens = 16_000
             provider_policy = self._provider_policy_for_backend(resolved_backend)
             role_context: dict[str, Any] = {

@@ -4376,7 +4376,27 @@ def _synthesize_tenant_model_contract_content() -> str:
     )
 
 
+def _scaffold_synthesis_enabled() -> bool:
+    """Opt-in gate for declared-target placeholder synthesis (CLAUDE.md §8 fix).
+
+    Factory-bench live evidence (2026-06-12): this synthesizer wrote a
+    hardcoded "TypeScript project scaffold" README into a Python calculator
+    project (then the adapter's own semantic-quality gate correctly killed
+    it -> director_materialization_semantic_quality_failed), and its template
+    table embeds one specific historical project's contracts
+    (task.model.ts/tenant.model.ts/taskgraph, multi-tenant field
+    assumptions). Fabricated placeholder content masks the REAL failure
+    (the edit tool chain broke) with a fake success that downstream gates
+    must then shoot down. Default is fail-closed honesty: no synthesis, the
+    task fails carrying its true root cause. Historical eval suites that
+    depend on the templates can opt in explicitly.
+    """
+    return os.environ.get("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", "0").strip().lower() in {"1", "true", "on", "yes"}
+
+
 def _synthesize_declared_target_file_content(relative_path: str, *, node_test_runner: str = "") -> str:
+    if not _scaffold_synthesis_enabled():
+        return ""
     normalized = str(relative_path or "").strip().replace("\\", "/")
     if not normalized:
         return ""

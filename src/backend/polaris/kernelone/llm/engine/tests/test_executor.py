@@ -507,3 +507,68 @@ class TestExecutorEntry:
         entry = _ExecutorEntry(executor=mock_executor, ref_count=5)
 
         assert entry.ref_count == 5
+
+
+class TestOutputWindowClamp:
+    """Joint prompt+output clamp (factory-bench 2026-06-12 live regression)."""
+
+    def test_overdraft_clamped_to_headroom(self) -> None:
+        from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
+
+        class _Spec:
+            max_context_tokens = 16384
+
+        cfg = {"max_tokens": 8192}
+        prompt = "中" * 9000  # ~9000 tokens under calibrated CJK estimation
+        clamp_output_tokens_to_window(cfg, _Spec(), prompt)
+        assert cfg["max_tokens"] < 8192
+        assert cfg["max_tokens"] == 16384 - 9000 - 64
+
+    def test_fits_unchanged(self) -> None:
+        from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
+
+        class _Spec:
+            max_context_tokens = 16384
+
+        cfg = {"max_tokens": 4000}
+        clamp_output_tokens_to_window(cfg, _Spec(), "short prompt")
+        assert cfg["max_tokens"] == 4000
+
+    def test_floor_protects_minimum_output(self) -> None:
+        from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
+
+        class _Spec:
+            max_context_tokens = 1000
+
+        cfg = {"max_tokens": 800}
+        clamp_output_tokens_to_window(cfg, _Spec(), "中" * 990)
+        assert cfg["max_tokens"] == 256
+
+    def test_no_window_no_clamp(self) -> None:
+        from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
+
+        class _Spec:
+            max_context_tokens = 0
+
+        cfg = {"max_tokens": 8192}
+        clamp_output_tokens_to_window(cfg, _Spec(), "中" * 9000)
+        assert cfg["max_tokens"] == 8192
+
+
+def test_clamp_measures_chat_messages_payload() -> None:
+    """W1.5 path: the structured array IS the payload; prompt_text alone
+    under-counts and the clamp never fires (factory-bench r5 live)."""
+    from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
+
+    class _Spec:
+        max_context_tokens = 16384
+
+    cfg = {
+        "max_tokens": 8192,
+        "chat_messages": [
+            {"role": "system", "content": "中" * 4000},
+            {"role": "user", "content": "中" * 5000},
+        ],
+    }
+    clamp_output_tokens_to_window(cfg, _Spec(), "short latest message")
+    assert cfg["max_tokens"] == 16384 - 9001 - 64

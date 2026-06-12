@@ -6,6 +6,7 @@ Unified streaming engine providing LLM streaming invocation capability.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -25,6 +26,8 @@ from ...providers.base_provider import THINKING_PREFIX
 from ...providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
 from .._executor_base import (
     build_invoke_config,
+    clamp_output_tokens_to_window,
+    estimate_payload_overhead_tokens,
     get_provider_config,
     provider_type_policy_error,
     resolve_provider_model,
@@ -393,12 +396,16 @@ class StreamExecutor:
         if requested_output_tokens > 0:
             invoke_cfg["max_tokens"] = requested_output_tokens
 
+        early_chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
+        payload_overhead = estimate_payload_overhead_tokens(invoke_cfg, early_chat_messages)
+
         budget_decision = self.token_budget.enforce(
             request.input,
             model_spec,
             requested_output_tokens=requested_output_tokens,
             workspace=self.workspace,
             role=request.role,
+            overhead_tokens=payload_overhead,
         )
         if not budget_decision.allowed:
             yield AIStreamEvent.error_event(budget_decision.error or "Prompt exceeds model context budget")
@@ -425,6 +432,14 @@ class StreamExecutor:
         elif isinstance(chat_messages, list) and chat_messages:
             invoke_cfg["chat_messages"] = chat_messages
 
+        clamp_output_tokens_to_window(
+            invoke_cfg,
+            model_spec,
+            prompt_input if isinstance(prompt_input, str) else str(prompt_input),
+            overhead_tokens=payload_overhead,
+            logger_prefix="[stream-executor]",
+        )
+
         collected_output = ""
         collected_reasoning = ""
         chunk_count = 0
@@ -438,16 +453,26 @@ class StreamExecutor:
             if elapsed > stream_overall_timeout:
                 raise asyncio.TimeoutError(f"Stream overall timeout after {stream_overall_timeout}s")
 
+        # Zombie-stream hardening (factory-bench L1 live capture, 2026-06-12):
+        # raising out of the `async for` (overall-timeout, caller errors)
+        # ABANDONS the provider's async generator — its aiohttp response never
+        # exits the `async with`, the connection stays open, and vLLM keeps
+        # generating to a socket nobody reads. Each zombie halves the shared
+        # decode throughput, cascading later calls into timeouts/empty output.
+        # Explicit aclose() on every exit throws GeneratorExit through the
+        # yield points so the provider unwinds and the server aborts.
+        upstream_stream: Any | None = None
         try:
             if _provider_supports_structured_stream(provider_instance):
-                async for event in self._invoke_structured_stream(
+                upstream_stream = self._invoke_structured_stream(
                     provider_instance=provider_instance,
                     provider_type=provider_type,
                     prompt_input=prompt_input,
                     model=model,
                     invoke_cfg=invoke_cfg,
                     trace_id=trace_id,
-                ):
+                )
+                async for event in upstream_stream:
                     _check_overall_timeout()
                     chunk_count += 1
                     if event.type == StreamEventType.CHUNK and event.chunk:
@@ -479,13 +504,14 @@ class StreamExecutor:
                             )
                     yield event
             else:
-                async for event in self._invoke_text_stream(
+                upstream_stream = self._invoke_text_stream(
                     provider_instance=provider_instance,
                     prompt_input=prompt_input,
                     model=model,
                     invoke_cfg=invoke_cfg,
                     trace_id=trace_id,
-                ):
+                )
+                async for event in upstream_stream:
                     _check_overall_timeout()
                     chunk_count += 1
                     if event.type == StreamEventType.CHUNK and event.chunk:
@@ -540,6 +566,14 @@ class StreamExecutor:
                     )
             yield AIStreamEvent.error_event(str(exc))
             return
+        finally:
+            # Close the upstream generator on EVERY exit (normal, timeout,
+            # error, or GeneratorExit from our own consumer) so the provider's
+            # HTTP response unwinds and the server aborts generation instead
+            # of feeding a zombie.
+            if upstream_stream is not None:
+                with contextlib.suppress(Exception):
+                    await upstream_stream.aclose()
 
         # Compatibility recovery for models/servers without native function-calling
         # (e.g. Gemma served by llama.cpp): the provider returned NO native tool

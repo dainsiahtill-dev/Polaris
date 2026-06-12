@@ -32,18 +32,19 @@ class TestTokenEstimatorEstimate:
     def test_cjk_content_type(self) -> None:
         text = "a" * 100
         result = TokenEstimator.estimate(text, content_type="cjk")
-        assert result == 50  # 100 / 2
+        assert result == 100  # CJK calibrated to 1 char/token
 
     def test_cjk_ratio_above_threshold(self) -> None:
         text = "中" * 40 + "a" * 60
         result = TokenEstimator.estimate(text)
-        assert result == 50  # 100 / 2 due to cjk_ratio > 0.3
+        # CJK calibrated to 1 char/token (2026-06-12): 100 chars / 1
+        assert result == 100
 
     def test_cjk_ratio_mixed(self) -> None:
         text = "中" * 10 + "a" * 90
         result = TokenEstimator.estimate(text)
-        # 0.05 < cjk_ratio=0.1 < 0.3, weighted average
-        expected_chars_per_token = 0.1 * 2 + 0.9 * 4
+        # 0.05 < cjk_ratio=0.1 < 0.3, weighted average (CJK=1 char/token)
+        expected_chars_per_token = 0.1 * 1 + 0.9 * 4
         expected = max(1, int(100 / expected_chars_per_token))
         assert result == expected
 

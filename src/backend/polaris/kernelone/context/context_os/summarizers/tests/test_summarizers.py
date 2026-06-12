@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 from polaris.kernelone.context.context_os.summarizers import (
     SLMSummarizer,
@@ -525,9 +527,13 @@ def multiply_numbers(a, b):
 # =============================================================================
 
 
+_HAS_SUMY = importlib.util.find_spec("sumy") is not None
+
+
 class TestSumySummarizer:
     """Tests for SumySummarizer - ADR-0067 Tier 2."""
 
+    @pytest.mark.skipif(not _HAS_SUMY, reason="sumy not installed")
     def test_sumy_is_available(self):
         """SumySummarizer should report availability based on sumy installation."""
         summarizer = SumySummarizer()
@@ -540,6 +546,7 @@ class TestSumySummarizer:
         result = summarizer.summarize(short_text, max_tokens=100)
         assert result == short_text
 
+    @pytest.mark.skipif(not _HAS_SUMY, reason="sumy not installed")
     def test_sumy_summarizes_long_log(self, sample_log):
         """SumySummarizer should summarize long log content."""
         summarizer = SumySummarizer()
@@ -549,6 +556,7 @@ class TestSumySummarizer:
         # But should preserve error information
         assert "ERROR" in result or "error" in result.lower()
 
+    @pytest.mark.skipif(not _HAS_SUMY, reason="sumy not installed")
     def test_sumy_summarizes_dialogue(self, sample_dialogue):
         """SumySummarizer should summarize dialogue content."""
         summarizer = SumySummarizer()
@@ -626,9 +634,10 @@ class TestTieredSummarizer:
         """TieredSummarizer should report available strategies."""
         summarizer = TieredSummarizer()
         available = summarizer.get_available_strategies()
-        # EXTRACTIVE and TRUNCATION should always be available (sumy is installed)
-        assert SummaryStrategy.EXTRACTIVE in available
+        # TRUNCATION is the dependency-free emergency tier — ALWAYS available.
         assert SummaryStrategy.TRUNCATION in available
+        if _HAS_SUMY:
+            assert SummaryStrategy.EXTRACTIVE in available
 
     def test_tiered_fallback_stats(self, sample_log):
         """TieredSummarizer should track fallback statistics."""
@@ -757,3 +766,26 @@ Assistant: No, Marseille is larger by area, but Paris is the most populous.
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestTruncationTierAlwaysPresent:
+    """Factory-bench live regression (2026-06-11): the Tier-3 emergency net
+    must actually exist — an SLM outage alone must never escalate into a
+    fatal SummarizationError that kills a planning run."""
+
+    def test_get_summarizer_returns_truncation(self) -> None:
+        from polaris.kernelone.context.context_os.summarizers.contracts import SummaryStrategy
+        from polaris.kernelone.context.context_os.summarizers.tiered import TieredSummarizer
+
+        tiered = TieredSummarizer()
+        summarizer = tiered._get_summarizer(SummaryStrategy.TRUNCATION)
+        assert summarizer is not None
+
+    def test_dialogue_summarize_survives_all_llm_tiers_down(self) -> None:
+        from polaris.kernelone.context.context_os.summarizers.tiered import TieredSummarizer
+
+        tiered = TieredSummarizer()
+        long_dialogue = "用户: 请实现猜数字游戏。\n助手: 好的,我会创建 game.py。\n" * 400
+        result = tiered.summarize(long_dialogue, max_tokens=200, content_type="dialogue")
+        assert result
+        assert len(result) < len(long_dialogue)

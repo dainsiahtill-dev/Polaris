@@ -2090,7 +2090,11 @@ def _run_dispatch_pipeline_with_workflow(
         director_status = "failed"
 
     if director_status in {"failed", "blocked"}:
-        workflow_exit_code = 1
+        # Graded fail-closed exit: 4 = partial director progress (>=1 task
+        # succeeded, QA will be skipped), 1 = zero-success hard failure.
+        # Codes 2 (stop condition) and 3 (manual/AGENTS confirmation) are
+        # reserved by run_once; any nonzero value still trips stop_on_failure.
+        workflow_exit_code = 4 if int(workflow_summary.get("completed", 0) or 0) > 0 else 1
 
     summary_text = "Director workflow scheduled in Workflow"
     if director_status == "success":
@@ -2251,7 +2255,9 @@ def _run_dispatch_pipeline_with_workflow(
     if isinstance(integration_qa_result, dict) and (
         integration_qa_result.get("passed") is False or qa_reason in qa_failure_reasons
     ):
-        workflow_exit_code = 1
+        # 5 = director fully succeeded but integration QA failed; otherwise
+        # keep the graded director exit (4/1) instead of flattening to 1.
+        workflow_exit_code = 5 if director_status == "success" else (workflow_exit_code or 1)
         engine.update_role_status(
             "QA",
             status="failed",
@@ -2333,6 +2339,35 @@ def _run_dispatch_pipeline_with_workflow(
         "runtime/results/director.result.json",
     )
     write_json_atomic(runtime_director_result, director_result)
+
+    # Machine-readable chain outcome for external runners/auditors. Written
+    # after QA + reconciliation so every field is terminal-state truth.
+    exit_class_by_code = {0: "clean", 4: "director_partial", 5: "qa_failed"}
+    chain_summary = {
+        "schema_version": "chain-summary/1",
+        "exit_code": int(workflow_exit_code),
+        "exit_class": exit_class_by_code.get(int(workflow_exit_code), "hard_failed"),
+        "planning_ok": True,
+        "director": {
+            "status": str(director_result.get("status") or ""),
+            "total": int(director_result.get("total") or 0),
+            "successes": int(director_result.get("successes") or 0),
+            "failures": int(director_result.get("failures") or 0),
+            "blocked": int(director_result.get("blocked") or 0),
+        },
+        "integration_qa": {
+            "ran": bool(isinstance(integration_qa_result, dict) and integration_qa_result.get("ran") is True),
+            "passed": bool(qa_passed),
+            "reason": qa_reason,
+        },
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    write_json_atomic(
+        resolve_artifact_path(workspace_full, cache_root_full, "runtime/results/chain_summary.json"),
+        chain_summary,
+    )
+    with contextlib.suppress(OSError):
+        write_json_atomic(os.path.join(run_dir, "results", "chain_summary.json"), chain_summary)
 
     final_qa_status = qa_reason or ("integration_qa_passed" if qa_passed else "integration_qa_not_run")
     final_workflow_status = "completed" if workflow_exit_code == 0 else "failed"

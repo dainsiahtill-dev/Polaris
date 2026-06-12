@@ -115,6 +115,10 @@ class TokenBudgetDecision:
     compression_applied: bool = False
     compression: CompressionResult | None = None
     error: str | None = None
+    # W1.5c: request overhead (tools schema rendered by the chat template,
+    # per-message wrappers) accounted as a budget deduction. Additive field —
+    # 0 preserves the pre-W1.5c contract byte-for-byte.
+    overhead_tokens: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -122,6 +126,7 @@ class TokenBudgetDecision:
             "max_context_tokens": self.max_context_tokens,
             "allowed_prompt_tokens": self.allowed_prompt_tokens,
             "requested_prompt_tokens": self.requested_prompt_tokens,
+            "overhead_tokens": self.overhead_tokens,
             "reserved_output_tokens": self.reserved_output_tokens,
             "safety_margin_tokens": self.safety_margin_tokens,
             "compression_applied": self.compression_applied,

@@ -1183,6 +1183,20 @@ def _has_card3d_text_hints(text: str) -> bool:
     return stack_hits >= 2 and _CARD3D_PM_CORE_HINT_RE.search(text) is not None
 
 
+def _domain_text_hints_enabled() -> bool:
+    """Opt-in gate for KEYWORD-driven domain task injection (CLAUDE.md §8 fix).
+
+    Factory-bench live failure (2026-06-12, L1-03 guess-number CLI): a bare
+    text hit on "游戏/game" injected 12 roguelike-TypeScript phantom tasks
+    (PM-AUTO-ENGINE/WORLD/COMBAT..., targets like src/engine/game-loop.ts)
+    into a 2-task Python project; all 12 failed and poisoned the whole chain
+    (exit=1, integration QA skipped). Text hints alone are project-blind —
+    they now require explicit opt-in; PATH evidence (the workspace actually
+    containing game-domain directories) remains authoritative either way.
+    """
+    return os.environ.get("KERNELONE_PM_DOMAIN_TEXT_HINTS", "0").strip().lower() in {"1", "true", "on", "yes"}
+
+
 def _is_card3d_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
     text_parts = [
         _normalize_text(normalized.get("overall_goal")),
@@ -1204,7 +1218,7 @@ def _is_card3d_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool
         coverage_paths.extend(_collect_task_scope_paths(task))
 
     combined_text = " ".join(part for part in text_parts if part)
-    if _has_card3d_text_hints(combined_text):
+    if _has_card3d_text_hints(combined_text) and _domain_text_hints_enabled():
         return True
 
     normalized_paths = {_normalize_path(path) for path in coverage_paths if _normalize_path(path)}
@@ -1239,7 +1253,7 @@ def _is_game_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
         coverage_paths.extend(_collect_task_scope_paths(task))
 
     combined_text = " ".join(part for part in text_parts if part)
-    if _GAME_PM_HINT_RE.search(combined_text):
+    if _GAME_PM_HINT_RE.search(combined_text) and _domain_text_hints_enabled():
         return True
 
     normalized_paths = {_normalize_path(path) for path in coverage_paths if _normalize_path(path)}

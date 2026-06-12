@@ -69,17 +69,26 @@ def _timeout_seconds(config: dict[str, Any], default: int) -> int:
     return normalize_timeout_seconds(config.get("timeout"), default=default)
 
 
+# Never omit max_tokens: when the request leaves it unset, vLLM defaults the
+# output budget to "whatever window remains" and its default-vs-validation
+# accounting disagrees by a few template-suffix tokens — every large-prompt
+# request then 400s at exactly window+1 (factory-bench L1-05 live: three
+# identical input+output=16385 rejections, immune to client-side healing
+# because each caller retry rebuilt the payload without max_tokens again).
+_DEFAULT_MAX_TOKENS = 4096
+
+
 def _resolve_max_tokens(config: dict[str, Any]) -> int | None:
     value = config.get("max_tokens")
     if value is None:
         value = config.get("max_output_tokens")
     if value is None:
-        return None
+        return _DEFAULT_MAX_TOKENS
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        return None
-    return parsed if parsed > 0 else None
+        return _DEFAULT_MAX_TOKENS
+    return parsed if parsed > 0 else _DEFAULT_MAX_TOKENS
 
 
 def _flatten_text(value: Any) -> list[str]:

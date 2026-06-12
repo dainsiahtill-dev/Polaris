@@ -348,6 +348,15 @@ def _invoke_generic_role_runtime(
     context: dict[str, Any] = {
         "source": "pm_cli_backend",
         "backend": requested_backend,
+        # Text-generation invocations (AGENTS.md drafts, reports) must not
+        # offer tools: reasoning planners (MiniMax-M3) answer tool-bearing
+        # requests WITH tool_calls, the text collector sees empty visible
+        # output, and the call dies (factory-bench L2-08 live:
+        # finish_reason=tool_calls, thinking only). Same forced-none contract
+        # the planning pipeline already uses.
+        "_transaction_kernel_forced_tool_definitions": [],
+        "_transaction_kernel_forced_tool_choice": "none",
+        "disable_internal_tool_rounds": True,
     }
     if role_timeout_seconds is not None:
         context["llm_call_timeout_seconds"] = role_timeout_seconds

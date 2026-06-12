@@ -446,6 +446,13 @@ class TestBuildDirectorMessage:
 
 
 class TestDirectorFailureClosure:
+    @pytest.fixture(autouse=True)
+    def _enable_scaffold_synthesis(self, monkeypatch):
+        # Synthesis became opt-in (CLAUDE.md §8 fix, 2026-06-12): these tests
+        # cover the legacy capability, so they enable it explicitly. Default-
+        # off behavior is covered by test_scaffold_synthesis_default_off.
+        monkeypatch.setenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", "1")
+
     """Runtime failures must fail the claimed task instead of leaving it running."""
 
     def test_finalize_claimed_execution_reports_terminal_transition_failure(self) -> None:
@@ -4219,3 +4226,16 @@ class TestDirectorExecutionBackendPure:
         meta = req.to_task_metadata()
         assert meta["execution_backend"] == "projection_generate"
         assert meta["projection"]["scenario_id"] == "s1"
+
+
+def test_scaffold_synthesis_default_off(monkeypatch) -> None:
+    """§8 regression: without explicit opt-in, no placeholder content is
+    fabricated — a Python calculator must never receive a TypeScript scaffold."""
+    monkeypatch.delenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", raising=False)
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _synthesize_declared_target_file_content,
+    )
+
+    assert _synthesize_declared_target_file_content("readme.md") == ""
+    assert _synthesize_declared_target_file_content("package.json") == ""
+    assert _synthesize_declared_target_file_content("src/models/tenant.model.ts") == ""

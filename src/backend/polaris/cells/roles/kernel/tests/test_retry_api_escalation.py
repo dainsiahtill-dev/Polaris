@@ -131,7 +131,8 @@ class TestMutationImpliesVerification:
             include_verification_tools=True,
         )
         names = {d["function"]["name"] for d in narrowed}
-        assert names == {"edit_blocks", "execute_command"}
+        # write_file rides along since the new-file deadlock fix (2026-06-12).
+        assert names == {"edit_blocks", "write_file", "execute_command"}
 
     def test_benchmark_forbidden_execute_command_stays_excluded(self) -> None:
         from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
@@ -146,7 +147,7 @@ class TestMutationImpliesVerification:
             forbidden_tool_names={"execute_command"},
         )
         names = {d["function"]["name"] for d in narrowed}
-        assert names == {"edit_blocks"}
+        assert names == {"edit_blocks", "write_file"}
 
     def test_plain_fix_request_implies_verification_in_retry_path(self) -> None:
         """The composed predicate used by retry_tool_batch_after_contract_violation:
@@ -161,3 +162,72 @@ class TestMutationImpliesVerification:
         assert requires_verification_intent(message) is False, "fixture must stay keyword-free"
         assert requires_mutation_intent(message) is True
         assert (requires_verification_intent(message) or requires_mutation_intent(message)) is True
+
+
+def test_forced_edit_blocks_set_includes_write_file_companion() -> None:
+    """factory-bench live deadlock: teaching error says 'use write_file' for
+    new files, so the narrowed escalation set must actually offer it."""
+    from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+        build_forced_write_only_retry_tool_definitions,
+    )
+
+    defs = [*_STRICT_DEFS, {"type": "function", "function": {"name": "execute_command"}}]
+    narrowed = build_forced_write_only_retry_tool_definitions(defs, "edit_blocks", include_verification_tools=True)
+    names = {d["function"]["name"] for d in narrowed}
+    assert names == {"edit_blocks", "write_file", "execute_command"}
+
+
+class TestExistenceAwareForcedTool:
+    """L1-05 round-6 regression: creation tasks must force write_file, not
+    lock guided decoding onto edit_blocks (which cannot create files)."""
+
+    _DEFS = [
+        {"type": "function", "function": {"name": "edit_blocks"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+
+    def test_missing_targets_force_write_file(self, tmp_path) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+            select_retry_forced_write_tool_name,
+        )
+
+        selected = select_retry_forced_write_tool_name(
+            self._DEFS, workspace=str(tmp_path), target_files=("index.html", "script.js")
+        )
+        assert selected == "write_file"
+
+    def test_existing_target_keeps_edit_blocks(self, tmp_path) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+            select_retry_forced_write_tool_name,
+        )
+
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        selected = select_retry_forced_write_tool_name(self._DEFS, workspace=str(tmp_path), target_files=("main.py",))
+        assert selected == "edit_blocks"
+
+    def test_no_target_info_keeps_legacy_order(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+            select_retry_forced_write_tool_name,
+        )
+
+        assert select_retry_forced_write_tool_name(self._DEFS) == "edit_blocks"
+
+
+def test_partially_missing_targets_force_write_file(tmp_path) -> None:
+    """Round-7 regression: one created file must not lock the remaining
+    missing targets back onto edit_blocks (any-missing => creation mode)."""
+    from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+        select_retry_forced_write_tool_name,
+    )
+
+    defs = [
+        {"type": "function", "function": {"name": "edit_blocks"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+    (tmp_path / "quotes.json").write_text("[]", encoding="utf-8")
+    selected = select_retry_forced_write_tool_name(
+        defs,
+        workspace=str(tmp_path),
+        target_files=("quotes.json", "index.html", "script.js"),
+    )
+    assert selected == "write_file"

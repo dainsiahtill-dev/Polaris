@@ -23,6 +23,7 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     build_context_target_bootstrap_decision,
     build_stale_edit_bootstrap_decision,
     extract_invocation_tool_name,
+    extract_target_files_from_message,
     is_mutation_contract_violation,
     is_safe_readonly_bootstrap_invocations,
     is_stale_edit_contract_violation,
@@ -487,13 +488,56 @@ def build_retry_tool_definitions_for_mutation(
     return [item for item in tool_definitions if extract_tool_name_from_definition(item) not in _forbidden]
 
 
-def select_retry_forced_write_tool_name(tool_definitions: list[dict]) -> str | None:
+def select_retry_forced_write_tool_name(
+    tool_definitions: list[dict],
+    *,
+    workspace: str = "",
+    target_files: tuple[str, ...] | list[str] = (),
+) -> str | None:
     # Prefer tools that are robust when the retry context is incomplete. The
     # retry path is entered after a failed/non-mutating first attempt, so forcing
     # precision_edit first is brittle: it requires exact pre-read search text and
     # commonly degenerates into guessed no-match replacements. Whole-file and
     # block-edit tools are safer general recovery choices; append remains last
     # because it can leave stale placeholder code in place.
+    #
+    # Target-existence awareness (factory-bench L1-05 round 6, 2026-06-12):
+    # the final escalation forces the tool BY NAME via tool_choice — guided
+    # decoding then physically cannot emit anything else. Forcing edit_blocks
+    # for a CREATION task (no target exists yet) locks weak models into the
+    # "edit_blocks cannot create new files → use write_file" teaching loop
+    # forever. When every known target is missing, write_file leads.
+    creation_mode = False
+    if workspace and target_files:
+        try:
+            # ANY missing target flips to creation mode (round-7 live: the
+            # model created quotes.json first, then the remaining three
+            # missing files were locked back onto edit_blocks by an
+            # all-missing check). write_file handles existing files too —
+            # the destructive-shrink gate guards against gutting them.
+            creation_mode = any(
+                not os.path.exists(os.path.join(workspace, str(target).strip()))
+                for target in target_files
+                if str(target).strip()
+            )
+        except OSError:
+            creation_mode = False
+    if creation_mode:
+        priority_order = (
+            "write_file",
+            "create_file",
+            "edit_blocks",
+            "edit_file",
+            "search_replace",
+            "repo_apply_diff",
+            "precision_edit",
+            "append_to_file",
+        )
+        available = extract_allowed_tool_names_from_definitions(tool_definitions)
+        for tool_name in priority_order:
+            if tool_name in available:
+                return tool_name
+        return None
     priority_order = (
         "edit_blocks",
         "write_file",
@@ -589,6 +633,15 @@ def build_forced_write_only_retry_tool_definitions(
     companion_tool_names: set[str] = {forced_write_tool_name}
     if forced_write_tool_name in {"repo_apply_diff"}:
         companion_tool_names.update({"read_file", "repo_read_head"})
+    if forced_write_tool_name == "edit_blocks":
+        # New-file deadlock fix (factory-bench L1-03/L1-02 live, 2026-06-12):
+        # edit_blocks cannot create files and its teaching error tells the
+        # model to use write_file — but the narrowed set used to exclude it,
+        # locking weak models onto an impossible tool until the circuit
+        # breaker killed the task. Offer write_file alongside; the final
+        # attempt's named tool_choice still forces edit_blocks for existing-
+        # file edits, and the batch contract guard still requires a write.
+        companion_tool_names.add("write_file")
     if include_verification_tools and "execute_command" not in _forbidden:
         companion_tool_names.add("execute_command")
     narrowed: list[dict] = []
@@ -1253,7 +1306,12 @@ class RetryOrchestrator:
             forbidden_tool_names=_forbidden,
         )
         allowed_retry_tool_names = extract_allowed_tool_names_from_definitions(retry_tool_definitions)
-        forced_write_tool_name = select_retry_forced_write_tool_name(retry_tool_definitions)
+        _latest_request = extract_latest_user_message(context)
+        forced_write_tool_name = select_retry_forced_write_tool_name(
+            retry_tool_definitions,
+            workspace=str(getattr(self.config, "workspace", "") or os.environ.get("KERNELONE_WORKSPACE", "") or "."),
+            target_files=tuple(extract_target_files_from_message(_latest_request)),
+        )
         _strict_retry_tool_definitions = build_forced_write_only_retry_tool_definitions(
             retry_tool_definitions,
             forced_write_tool_name,

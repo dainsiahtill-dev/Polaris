@@ -270,5 +270,33 @@ Phase 5 学习与算力治理(严格 gated,先解决评测记忆隔离)
 | 在线冒烟 #1(django-15213) | ✅ 完成取证 | **护栏生效实锤**:0 幻觉路径/0 did-you-mean(对照 run20 同实例满谱)、strict 集含 execute_command(A2 通道开通)、模型轨迹首次健康(scout→rg→read_slice×11 真实定位,read 了 expressions.py 正确邻域);标签从 run20 的 5 个降到 3 个(suggestion_induced_misedit/path_hallucination/destructive_overwrite 全消失)。仍 empty_patch:暴露新链路自伤(下行) |
 | **P1-fix 大文件 whole-file 误判超时弹**(冒烟揪出) | ✅ | 根因:`_BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS` 含 "todo:"/"notimplemented",真实大源文件(django expressions.py)必然含这些词 → bootstrap follow-up 强制 edit_blocks→write_file 整文件再生成 → 27B-int4 600s LLM 超时 → "did not materialize response" RuntimeError 炸穿 session。修复:标记扫描加 `_BOOTSTRAP_WHOLE_FILE_MAX_CHARS=4000` 尺寸门(真脚手架才小);+2 回归测试;kernel 1699 passed |
 | **vLLM 并发饱和取证**(冒烟 #1-#3 超时的主根因,最终版) | ✅ 已定性,待用户仲裁 | 共享 GPU 上存在**另一个活跃 agent session** 在跑 run10a/run10b 批次(我方 17:30 清场后它 17:31 自动续跑 pred_resume.jsonl)→ decode 21tok/s 被瓜分 → 大 prompt 调用必撞 600s 超时级联。prefill 实测 906 tok/s 正常(排除);abort 机制正常(排除僵尸为主因);客户端 CLOSE-WAIT/agen 未 aclose 泄漏实锤但列加固项。**三次冒烟的 session 死亡均为争抢伪影;护栏内容级证据不受影响**。结论:单 GPU 多 session 并发评测不可行,「负载互斥」必须升级为跨 session 协调(用户仲裁 GPU 归属),平台侧远期可做 vLLM 信号量/锁文件 |
-| A4 evidence-bound 写门 | ⬜ | tool_batch_executor.py:955-983 单 owner;先出强制写死锁仲裁表;注:冒烟显示盲写簇已被 B1+A3 压制,优先级让位于定位协议 |
+| 在线冒烟 #4(独占 GPU,干净读数) | ✅ | session 首次完整走完(saw_error=False);失败标签 run20 的 5 类→**2 类**(empty_patch+no_verification);幻觉/诱导/契约违约全为 0;模型自愿发写工具。**剩余唯一卡点**:edit_blocks 散文/空操作 6 连败(mutguard=0 → W1.10 强制收窄从未触发,它只挂在"无写批次"违约上) |
+| **A8a 形状失败升级触发**(冒烟 #4 直接论据) | ✅ | `contract_guards.batch_write_results_all_failed_on_argument_shape`(严格谓词:有写调用+全部因形状锚点失败+无一成功;stale-edit 等非形状失败不触发防守卫重叠)+ executor 断路器旁后执行 raise(同款先例)→ 进既有 retry 阶梯(末段按名强制+line-range schema guided decoding)。+5 测试;kernel 1704 passed;冒烟 #5 验证中 |
+| 在线冒烟 #5(A8a 生效验证) | ✅ 突破+新门论据 | **第一次产出可应用 patch**(applied=True,空 patch 时代结束),且模型自愿编辑 expressions.py(ExpressionWrapper 真实所在,语义邻域正确);但 patch=17 行换 1403 行的破坏性收缩(line-range 大范围重写) |
+| **A4a 破坏性收缩门**(冒烟 #5 直接论据) | ✅ | `filesystem.py`:line-range(removed=end-start+1 vs replacement 行数)与 write_file(旧文件行数 vs 新内容行数)双路 fail-closed:removed≥100 且 added≤40%→教学拒绝(error_type=destructive_shrink,retryable,引导窄化范围);阈值与打标器 destructive_overwrite 一致(门与度量同义);+6 测试;toolkit 416+kernel 1704 全绿 |
+| **W1.11 JSON-in-blocks 规范化**(冒烟 #6 实锤) | ✅ | 模型把结构完整的 line-range JSON(`[{"start_line":1019,"end_line":1020,"file":"...","replace":"..."}]`)塞进 blocks 参数,被 prose 守卫误杀——"想对的执行被废掉"新形态。修复:`_synthesize_blocks_from_json_payload`(raw 值优先解析——`_normalize_block_input` 的反转义会损坏合法 JSON;start_line/end_line 别名;多元素数组;file 顶层回退;经同一 line-range 路径=收缩门自动继承);+6 测试;toolkit 422+kernel 1704 全绿 |
+| **在线冒烟 #7(七件护栏全开,Phase 1 收官读数)** | ✅ 质变 | **单行精确 patch**(expressions.py:997 elif conditional→else,1 行换 1 行,applied=True);同实例演化链:run20 破坏性错误 patch→#4 空 patch→#5 1403 行破坏→#7 单行手术刀。剩余标签 3 个,真实能力缺口只剩:**文件级定位差一步**(模型在 expressions.py 概念正确,gold 在 fields/__init__.py)+**无验证**(模型不自发跑测试)。下一阶段=A7/B2 定位协议+A6 测试环,正是 Phase 2/3 设计内容 |
+| A4 evidence-bound 写门(read-receipt 部分) | ⬜ | tool_batch_executor.py:955-983 单 owner;收缩比部分已由 A4a 在 handler 层落地(行数学精确处) |
+
+### Phase 2(2026-06-11 启动)
+
+| 项 | 状态 | 落点 |
+|----|------|------|
+| A7 scout 锚点持久化 | ✅ | `kernelone/context/scout_anchor_store.py`(workspace/.polaris/runtime/scout_anchors.json;按 path 去重保最高置信;cap 8;置信≥0.2;损坏文件 fail-soft)+ scout handler 探测后写入(fail-soft)+`ScoutAnchorsSignal`(must-have,priority 3,默认开启)+gateway accessor。治「金锚点即得即忘」(run10a 实证)。+10 测试;kernel 1704+toolkit 422 全绿;冒烟 #8 验证中 |
+| A6 测试反馈环 | ⬜ | 模型仍 0 自发验证;harness 强制写后验证 batch + 失败回灌(脚本轨实证 +10pts) |
+| B2 受约束定位 | ⬜ | 文件级定位差最后一步的根治(RepoIntelligenceFacade 候选+选择题化) |
+
+### Phase 2.5 工厂实战矩阵(2026-06-11 晚,用户指令:50 项目 L1-L8 全链路实跑+审计驱动改进)
+
+| 项 | 状态 | 内容 |
+|----|------|------|
+| 基建 | ✅ | `scripts/factory_bench/projects_v1.json`(50 项目 L1-L8×软件/网页/游戏)+`kernelone/benchmark/factory_audit.py`(确定性审计:py_compile/html/js_syntax/min_files+产物收集,`factory-audit/1`,8 测试)+`run_factory_bench.py`(pm CLI 全链 runner,串行=GPU 互斥,--max-failed 早停) |
+| 链路入口(侦察) | ✅ | `pm --workspace WS --iterations 1 --run-director --requirements-path ABS --director-workflow-execution-mode serial --timeout 1800`=PM→CE→Director→QA 进程内全链;Architect 文档仅 HTTP /v2/factory/runs;--director-iterations=死旋钮 |
+| **L1-01 PASS(run #3)** | ✅ | 176 行 calculator.py **功能验证 100%**(优先级 14/括号 20/除零/括号不匹配/非法字符/quit 全过)——全程本地 27B qwen。run #1→#3 修复链:①全局配置角色绑定混杂(pm/CE/qa=MiniMax 云空响应!)→全角色本地 qwen 专用配置;②无 git→runner git init;③PM planning 360s 超时(云延迟假设)→--timeout 1800 |
+| 实战驱动的链路修复 | ✅ | W1.11b 嵌套参数名解包(`[{"blocks":"<payload>"}]`)+新文件误用 edit_blocks→教学 write_file(`new_file_via_edit_blocks`);W1.11c 文件名+fence 全文形态→教学 write_file(`whole_file_via_edit_blocks`);各+测试,toolkit 全绿 |
+| L1-01 残余 | 📝 | README 任务死于 edit_blocks 3 连败断路器(W1.11c 对症,下批验证);chain_exit=1 尾部噪声;blueprint/verdict 产物缺失待 CE/QA 阶段审计;bootstrap 占位 readme 写着"TypeScript scaffold"(模板与项目无关,PM 文档管线待修) |
+| **ContextOS 摘要层三重修复**(批次#1 三连快败揪出) | ✅ | ①`tiered._get_summarizer` 无 TRUNCATION 分支——ADR-0067 Tier-3"绝对安全网"从未在场,SLM 不可用+sumy 缺库 → SummarizationError 炸死整条 planning 链;②force_strategy 剥安全网→强制时追加 TRUNCATION;③安全网产物被质量验证否决仍致命→last_resort 返回。套件 7 预存红测全救活(66 passed+3 sumy skip)。杀伤面:任何 SLM/sumy 不可用环境的所有链路 |
+| L1 批次#2 | ✅ 出分 | L1-03(猜数字 Python) PASS;Web 三项目(02/04/05)FAIL——Python 项目通,Web 项目零产出 |
+| **流遗弃僵尸修复**(Web 失败取证揪出) | ✅ | 超时在 async-for 体内 raise → 遗弃 provider 异步生成器 → aiohttp 连接不关 → vLLM 对无人读的 socket 继续生成 → **自产僵尸吃一半解码吞吐**(实测 7.7tok/s=21÷~3) → 级联超时/空响应(RAW_RESPONSE output_length=0)。修复:`engine/stream/executor.py` 双消费点改为显式持有 generator + finally aclose(GeneratorExit 穿透到 provider async-with 关闭连接);engine 100+kernel 1704 全绿。CLOSE-WAIT 泄漏挂账项就此关闭 |
+| L1-02 复跑(僵尸修复验证) | ⏳ | 运行中 |
 | A5 写后语法门 / 批替换静默丢弃修复 | ⬜ | 后者为 P0-2 取证新弹点(模型请求被替换批吞掉无回应) |

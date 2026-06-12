@@ -138,7 +138,11 @@ class MiniMaxProvider(BaseProvider):
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": float(config.get("temperature") or 0.7),
-            "max_tokens": _resolve_max_tokens(config, 2048),
+            # 8192, not 2048: MiniMax-M3 is a reasoning model whose <think>
+            # block shares the output budget (live 2026-06-12: thinking_chars
+            # =2643 exhausted the 2048 default, visible output empty, planning
+            # call dead). The pre-reasoning default starved every call.
+            "max_tokens": _resolve_max_tokens(config, 8192),
             "stream": bool(stream),
         }
 
@@ -374,6 +378,7 @@ class MiniMaxProvider(BaseProvider):
             usage = estimate_usage(prompt, "")
             return InvokeResult(ok=False, output="", latency_ms=0, usage=usage, error="API key is required")
 
+        thinking_budget_healed = False
         payload = self._build_request_payload(
             prompt,
             model,
@@ -664,12 +669,52 @@ class MiniMaxProvider(BaseProvider):
                                                 thinking=None,
                                             )
 
+                        thinking_chars = len(thinking or "")
+                        current_budget = int(payload.get("max_tokens") or 0)
+                        last_finish_reason = ""
+                        for chunk in reversed(full_response):
+                            if isinstance(chunk, dict):
+                                for choice in chunk.get("choices") or []:
+                                    fr = choice.get("finish_reason")
+                                    if fr:
+                                        last_finish_reason = str(fr)
+                                        break
+                            if last_finish_reason:
+                                break
+                        if (
+                            thinking_chars > 0
+                            and not thinking_budget_healed
+                            and current_budget > 0
+                            and last_finish_reason != "stop"
+                        ):
+                            # Reasoning exhausted the output budget — doubling
+                            # helps only finish_reason=length; "stop" means the
+                            # model chose not to answer (needs corrective
+                            # re-ask upstream, not more budget).
+                            thinking_budget_healed = True
+                            payload["max_tokens"] = min(current_budget * 2, 32768)
+                            logger.warning(
+                                "MiniMax empty-visible-output self-heal: thinking_chars=%s budget %s -> %s",
+                                thinking_chars,
+                                current_budget,
+                                payload["max_tokens"],
+                            )
+                            continue
                         return InvokeResult(
                             ok=False,
                             output="",
                             latency_ms=latency_ms,
                             usage=estimate_usage(prompt, ""),
-                            error="Empty streaming response from MiniMax API",
+                            error=(
+                                "Empty visible output from MiniMax stream "
+                                f"(thinking_chars={thinking_chars}, chunks={len(full_response)}, "
+                                f"finish_reason={last_finish_reason or 'unknown'})"
+                                + (
+                                    " — reasoning exhausted max_tokens even after budget doubling"
+                                    if thinking_chars > 0
+                                    else ""
+                                )
+                            ),
                         )
 
                 try:

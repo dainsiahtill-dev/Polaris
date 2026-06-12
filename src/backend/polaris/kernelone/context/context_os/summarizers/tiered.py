@@ -183,6 +183,25 @@ class TieredSummarizer:
             # TODO: 实现 TransformersSummarizer
             pass
 
+        elif strategy == SummaryStrategy.TRUNCATION:
+            # Tier-3 emergency net (ADR-0067). Factory-bench live failure
+            # (2026-06-11, L1-02/03/04): the chain lists TRUNCATION as the
+            # final fallback but this initializer had NO branch for it, so the
+            # "absolute safety net" silently resolved to None and a mere SLM
+            # outage (ollama down) escalated into a fatal SummarizationError
+            # that killed entire PM planning runs. Truncation has no external
+            # dependencies — it must ALWAYS be constructible.
+            try:
+                from polaris.kernelone.context.context_os.summarizers.extractive import (
+                    TruncationSummarizer,
+                )
+
+                summarizer = TruncationSummarizer()
+                self._summarizers[strategy] = summarizer
+                return summarizer
+            except ImportError as e:  # pragma: no cover - stdlib-only import
+                logger.debug("TruncationSummarizer not available (%s): %s", type(e).__name__, e)
+
         elif strategy == SummaryStrategy.ORCHESTRATED:
             try:
                 from polaris.kernelone.context.context_os.summarizers.semantic import (
@@ -266,9 +285,19 @@ class TieredSummarizer:
             return content
 
         # 确定策略链
-        strategies = [force_strategy] if force_strategy else STRATEGY_CHAIN.get(content_type, STRATEGY_CHAIN["default"])
+        # ADR-0067: TRUNCATION is the ABSOLUTE safety net — forcing a strategy
+        # narrows the chain but must never strip the emergency tier (live
+        # failure mode: forced EXTRACTIVE with sumy missing escalated to a
+        # fatal SummarizationError).
+        if force_strategy and force_strategy != SummaryStrategy.TRUNCATION:
+            strategies = [force_strategy, SummaryStrategy.TRUNCATION]
+        elif force_strategy:
+            strategies = [force_strategy]
+        else:
+            strategies = STRATEGY_CHAIN.get(content_type, STRATEGY_CHAIN["default"])
 
         last_error = None
+        last_resort: str | None = None
         current_content = content
         current_max_tokens = max_tokens
 
@@ -319,6 +348,12 @@ class TieredSummarizer:
                     else:
                         logger.debug(f"Summarization validation failed for {strategy.name}")
                         self._fallback_stats[strategy] += 1
+                        if strategy == SummaryStrategy.TRUNCATION and result:
+                            # The emergency tier produced SOMETHING; keep it as
+                            # the last resort so quality rejection (e.g. lost
+                            # error keywords) degrades the summary instead of
+                            # killing the caller's whole run.
+                            last_resort = result
 
                 except (RuntimeError, ValueError, SummarizationError) as e:
                     logger.debug(f"Summarizer {strategy.name} failed: {e}")
@@ -326,7 +361,13 @@ class TieredSummarizer:
                     last_error = e
                     continue
 
-        # 所有策略都失败
+        # 所有策略都失败 — 但绝对安全网的产物优于杀死调用方整条链
+        if last_resort is not None:
+            logger.warning(
+                "All summarization strategies failed validation; returning last-resort truncation (last error: %s)",
+                last_error,
+            )
+            return last_resort
         raise SummarizationError(
             f"All summarization strategies failed. Last error: {last_error}",
             strategy=None,

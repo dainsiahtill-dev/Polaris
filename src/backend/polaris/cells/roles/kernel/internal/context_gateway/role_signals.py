@@ -84,6 +84,8 @@ class SignalBuildContext:
     get_verdict_history: Callable[[], str | None] = _none_accessor
     # 仓库身份卡（Phase-1 B1 反幻觉 grounding）。默认 None-accessor → 不注入。
     get_repo_identity: Callable[[], str | None] = _none_accessor
+    # 侦察锚点卡（Phase-2 A7 定位持久化）。默认 None-accessor → 不注入。
+    get_scout_anchors: Callable[[], str | None] = _none_accessor
 
 
 class RoleContextSignal(Protocol):
@@ -253,11 +255,45 @@ class RepoIdentitySignal:
         )
 
 
+class ScoutAnchorsSignal:
+    """seed 信号：侦察锚点卡（Phase-2 A7 定位持久化）。
+
+    run10a/run20 实证：scout_probe 召回金文件后,findings 作为一次性工具结果
+    在 mutation 压力下即刻被遗忘,主代理漂回幻觉路径。本信号把已确认定位
+    (经 scout_anchor_store 持久化)每回合重新注入。must-have 级:定位锚点
+    是编辑正确性的根,预算压力下宁可卸载也不丢弃。默认开启
+    (``include_scout_anchors``,默认 True;无锚点文件时 accessor 返回 None
+    → 不注入,baseline 不变)。
+    """
+
+    id = "scout_anchors"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return bool(ctx.policy_flags.get("include_scout_anchors", True))
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 3  # 紧随 repo_identity(2)
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        anchors = ctx.get_scout_anchors()
+        if not anchors:
+            return None
+        return SignalBlock(
+            id=self.id,
+            content=anchors,
+            priority=3,
+            level=_MUST_HAVE,
+            freshness_key=_freshness_of(anchors),
+            max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,
+        )
+
+
 # 默认注册表：seed（全角色）+ 角色专属（role+flag 双门控，默认 flag 关 → 不影响 baseline）。
 DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
     ProjectStructureSignal(),
     TaskHistorySignal(),
     RepoIdentitySignal(),
+    ScoutAnchorsSignal(),
     BlueprintOverviewSignal(),
     VerdictHistorySignal(),
 )
