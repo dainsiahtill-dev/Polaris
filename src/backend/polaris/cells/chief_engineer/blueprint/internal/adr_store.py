@@ -152,8 +152,12 @@ class ADRStore:
             for a in data.get("adrs", [])
         ]
         return BlueprintBase(
-            blueprint_id=str(data["blueprint_id"]),
-            version=int(data["version"]),
+            # Tolerate foreign/legacy blueprint files sharing the storage key
+            # (the structural chief_engineer.blueprint.json predates ADRStore
+            # and has no version field) — fail-open to v1 instead of crashing
+            # the whole preflight.
+            blueprint_id=str(data.get("blueprint_id") or data.get("run_id") or "legacy"),
+            version=int(data.get("version", 1)),
             base_schema=dict(data.get("base_schema", {})),
             adrs=adr_list,
             status=str(data.get("status", "draft")),

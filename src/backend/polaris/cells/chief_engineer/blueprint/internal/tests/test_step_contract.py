@@ -75,6 +75,124 @@ class TestGate:
         errors = validate_construction_steps([_step(), _step()], parent_pm_task="PM-1")
         assert any("duplicate step_id" in e for e in errors)
 
+    def test_dependency_cycle_blocked(self) -> None:
+        """A 2-cycle passes the unknown-ref and self-dep checks but would
+        deadlock the market readiness gate forever — must be refused here."""
+        steps = [
+            _step(step_id="PM-1-S1", depends_on=["PM-1-S2"]),
+            _step(step_id="PM-1-S2", target_file="b.js", depends_on=["PM-1-S1"]),
+        ]
+        errors = validate_construction_steps(steps, parent_pm_task="PM-1")
+        assert any("cycle" in e for e in errors)
+
+    def test_three_node_dependency_cycle_blocked(self) -> None:
+        steps = [
+            _step(step_id="PM-1-S1", depends_on=["PM-1-S3"]),
+            _step(step_id="PM-1-S2", target_file="b.js", depends_on=["PM-1-S1"]),
+            _step(step_id="PM-1-S3", target_file="c.js", depends_on=["PM-1-S2"]),
+        ]
+        errors = validate_construction_steps(steps, parent_pm_task="PM-1")
+        assert any("cycle" in e for e in errors)
+
+    def test_list_verify_joined_into_one_command(self) -> None:
+        """Cloud models drift between string and array verify shapes — a
+        bare str() turns the array into Python-repr garbage that bash can
+        never pass (live I3-r10 poisoned every QA check of the run)."""
+        step = normalize_construction_step(
+            {
+                "step_id": "S1",
+                "target_file": "index.html",
+                "verify": ["test -f ./index.html", "grep -q 'id=\"gameCanvas\"' ./index.html"],
+            },
+            parent_pm_task="PM-1",
+            index=0,
+        )
+        assert step["verify"] == "test -f ./index.html && grep -q 'id=\"gameCanvas\"' ./index.html"
+
+    def test_empty_list_verify_blocked_by_gate(self) -> None:
+        step = normalize_construction_step(
+            {"step_id": "S1", "target_file": "readme.md", "est_lines": 30, "verify": []},
+            parent_pm_task="PM-1",
+            index=0,
+        )
+        errors = validate_construction_steps([step], parent_pm_task="PM-1")
+        assert any("machine-executable verify" in e for e in errors)
+
+    def test_diamond_dependency_dag_passes(self) -> None:
+        steps = [
+            _step(step_id="PM-1-S1"),
+            _step(step_id="PM-1-S2", target_file="b.js", depends_on=["PM-1-S1"]),
+            _step(step_id="PM-1-S3", target_file="c.js", depends_on=["PM-1-S1"]),
+            _step(step_id="PM-1-S4", target_file="d.js", depends_on=["PM-1-S2", "PM-1-S3"]),
+        ]
+        assert validate_construction_steps(steps, parent_pm_task="PM-1") == []
+
+
+class TestRefinements:
+    def test_bare_step_id_namespaced_under_parent(self) -> None:
+        step = normalize_construction_step({"step_id": "S1", "target_file": "a.js"}, parent_pm_task="PM-7", index=0)
+        assert step["step_id"] == "PM-7-S1"
+
+    def test_prefixed_step_id_untouched(self) -> None:
+        step = normalize_construction_step(
+            {"step_id": "PM-7-S2", "target_file": "a.js"}, parent_pm_task="PM-7", index=1
+        )
+        assert step["step_id"] == "PM-7-S2"
+
+    def test_bare_depends_on_namespaced_under_parent(self) -> None:
+        step = normalize_construction_step(
+            {"step_id": "S2", "target_file": "a.js", "depends_on": ["S1"]}, parent_pm_task="PM-7", index=1
+        )
+        assert step["depends_on"] == ["PM-7-S1"]
+
+    def test_prefixed_depends_on_untouched(self) -> None:
+        step = normalize_construction_step(
+            {"step_id": "S2", "target_file": "a.js", "depends_on": ["PM-7-S1"]}, parent_pm_task="PM-7", index=1
+        )
+        assert step["depends_on"] == ["PM-7-S1"]
+
+    def test_bare_id_fission_with_dependency_chain_passes_gate(self) -> None:
+        """Regression (live I3-r8): a fully-bare model fission (step_id S1..S4,
+        depends_on referencing bare siblings) must normalize consistently and
+        pass the gate instead of dying on manufactured 'unknown step' errors."""
+        raw = [
+            {"step_id": "S1", "target_file": "index.html", "est_lines": 30, "verify": "test -f index.html"},
+            {
+                "step_id": "S2",
+                "target_file": "main.js",
+                "est_lines": 110,
+                "signatures": ["function loadLevel(n)"],
+                "verify": "node --check main.js",
+                "depends_on": ["S1"],
+            },
+            {
+                "step_id": "S3",
+                "target_file": "readme.md",
+                "est_lines": 40,
+                "verify": "test -f readme.md",
+                "depends_on": ["S2"],
+            },
+        ]
+        steps = [normalize_construction_step(item, parent_pm_task="PM-0001-2", index=i) for i, item in enumerate(raw)]
+        assert validate_construction_steps(steps, parent_pm_task="PM-0001-2") == []
+        assert steps[1]["depends_on"] == ["PM-0001-2-S1"]
+        assert steps[2]["depends_on"] == ["PM-0001-2-S2"]
+
+    def test_doc_step_passes_without_signatures(self) -> None:
+        steps = [_step(step_id="PM-1-S1", target_file="readme.md", signatures=[], verify="verify ./readme.md exists")]
+        assert validate_construction_steps(steps, parent_pm_task="PM-1") == []
+
+    def test_css_step_passes_without_signatures(self) -> None:
+        steps = [_step(step_id="PM-1-S1", target_file="style.css", signatures=[])]
+        assert validate_construction_steps(steps, parent_pm_task="PM-1") == []
+
+    def test_code_step_still_requires_signatures(self) -> None:
+        errors = validate_construction_steps(
+            [_step(signatures=[])],
+            parent_pm_task="PM-1",
+        )
+        assert any("signatures skeleton" in e for e in errors)
+
 
 def test_contract_assembly() -> None:
     steps = [_step()]

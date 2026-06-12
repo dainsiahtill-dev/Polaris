@@ -269,3 +269,58 @@ class TestCEConsumerStepFission:
         assert results[0]["ok"] is True
         assert results[0]["fission_step_count"] == 0
         mock_svc.publish_work_item.assert_not_called()
+
+
+class TestFissionExtraction:
+    """I3-r6: cloud output shape drifts (think wrappers, fences, prose)."""
+
+    def test_think_wrapped_fenced_json(self, monkeypatch) -> None:
+        from unittest.mock import MagicMock, patch as _patch
+
+        payload_text = (
+            "<think>让我想想拆分方案...</think>\n"
+            "好的，以下是拆分:\n```json\n"
+            '{"construction_steps": [{"step_id": "S1", "target_file": "game.js", '
+            '"est_lines": 80, "signatures": ["function loop()"], "verify": "node --check game.js"}]}\n'
+            "```\n完毕。"
+        )
+
+        async def fake_response(**kwargs):
+            return {"content": payload_text}
+
+        with _patch(
+            "polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service",
+            return_value=MagicMock(),
+        ):
+            consumer = CEConsumer(workspace="/tmp", worker_id="w1")
+        import polaris.cells.llm.dialogue.internal.role_dialogue as rd
+
+        monkeypatch.setattr(rd, "generate_role_response", fake_response)
+        steps, errors = consumer._run_step_fission("PM-9", {"title": "t"}, blueprint_id="bp")
+        assert errors == []
+        assert steps[0]["step_id"] == "PM-9-S1"
+        assert steps[0]["target_file"] == "game.js"
+
+    def test_prose_with_inline_object(self, monkeypatch) -> None:
+        from unittest.mock import MagicMock, patch as _patch
+
+        payload_text = (
+            'Note {"irrelevant": 1} first. Real answer: '
+            '{"construction_steps": [{"step_id": "S1", "target_file": "readme.md", '
+            '"est_lines": 20, "verify": "verify ./readme.md exists"}]}'
+        )
+
+        async def fake_response(**kwargs):
+            return {"content": payload_text}
+
+        with _patch(
+            "polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service",
+            return_value=MagicMock(),
+        ):
+            consumer = CEConsumer(workspace="/tmp", worker_id="w1")
+        import polaris.cells.llm.dialogue.internal.role_dialogue as rd
+
+        monkeypatch.setattr(rd, "generate_role_response", fake_response)
+        steps, errors = consumer._run_step_fission("PM-9", {"title": "t"}, blueprint_id="bp")
+        assert errors == []
+        assert steps[0]["step_id"] == "PM-9-S1"

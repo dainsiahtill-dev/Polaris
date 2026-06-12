@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import threading
 from typing import Any
 
@@ -293,6 +294,44 @@ class QAConsumer:
         """Signal the consumer to stop after the current cycle."""
         self._stop_event.set()
 
+    def _run_step_verify(self, payload: dict[str, Any]) -> str:
+        """Run a construction step's machine verify in the workspace.
+
+        Returns '' when there is no step verify or it passes; otherwise a
+        teaching failure message for the requeue. The verify command comes
+        from the CE blueprint contract (ce-blueprint-tasks/1) and is the
+        step's acceptance ground truth by design.
+        """
+        step = payload.get("construction_step")
+        if not isinstance(step, dict):
+            return ""
+        raw_verify = step.get("verify")
+        if isinstance(raw_verify, (list, tuple)):
+            # Defensive mirror of the contract normalizer: a clause array
+            # stringified naively becomes Python-repr garbage that bash can
+            # never pass (live I3-r10).
+            verify = " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
+        else:
+            verify = str(raw_verify or "").strip()
+        if not verify:
+            return ""
+        try:
+            proc = subprocess.run(
+                verify,
+                shell=True,
+                cwd=self._workspace,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"step verify could not run: {exc} :: {verify!r}"
+        if proc.returncode == 0:
+            return ""
+        output_tail = ((proc.stdout or "") + (proc.stderr or ""))[-400:]
+        return f"step verify failed (exit {proc.returncode}): {verify!r} :: {output_tail}".strip()
+
     def _claim_and_process_one(self) -> dict[str, Any] | None:
         """Attempt to claim one PENDING_QA task and process it.
 
@@ -316,6 +355,30 @@ class QAConsumer:
 
         try:
             payload: dict[str, Any] = dict(claim.payload) if claim.payload else {}
+
+            # Fission steps carry a machine-executable verify — run it FIRST.
+            # The generic audit is blind to the step contract (live I3-r9: a
+            # step whose verify starts with `test -f ./readme.md` passed QA
+            # with score 10 while readme.md did not exist). A verify failure
+            # requeues to pending_exec so the Director can correct course.
+            verify_failure = self._run_step_verify(payload)
+            if verify_failure:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="QA_step_verify_failed",
+                        error_message=verify_failure,
+                        requeue_stage="pending_exec",
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "verdict": "FAIL",
+                    "reason": "step_verify_failed",
+                }
 
             # Run QA audit
             audit_result = self._run_qa_audit(task_id, payload)

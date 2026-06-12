@@ -26,6 +26,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
     ResolveHumanReviewCommandV1,
     SubmitChangeOrderCommandV1,
     TaskMarketError,
+    TaskWorkItemResultV1,
 )
 from polaris.cells.runtime.task_market.public.service import TaskMarketService
 
@@ -855,6 +856,98 @@ def test_reconcile_parent_dead_letter_when_child_dead_letter(tmp_path: Path) -> 
     status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
     by_id = {row["task_id"]: row for row in status.items}
     assert by_id["epic-dlq"]["status"] == "dead_letter"
+    # The parent is a REAL dead-letter: stage set and DLQ entry recorded
+    # (a bare status write left it invisible to DLQ list/replay).
+    assert by_id["epic-dlq"]["stage"] == "dead_letter"
+    dlq_entries = {entry["task_id"]: entry for entry in get_store(str(workspace)).load_dead_letters(limit=50)}
+    assert dlq_entries["epic-dlq"]["error_code"] == "child_terminal_failure"
+
+    # Idempotent: a second reconcile must not re-dead-letter the parent.
+    again = service.reconcile_parent_statuses(str(workspace))
+    assert again["updated"] == 0
+
+
+def test_reconcile_parent_dead_letter_with_mixed_resolved_children(tmp_path: Path) -> None:
+    """dead_letter precedence over resolved in the parent merge: one dead
+    child poisons the cluster even when siblings finished."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-parent-mixed",
+            run_id="run-parent-mixed",
+            task_id="epic-mixed",
+            stage="pending_exec",
+            source_role="pm",
+            payload={"title": "Parent epic"},
+            is_leaf=False,
+        )
+    )
+    for child_id in ("child-ok", "child-dead"):
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id=f"trace-{child_id}",
+                run_id="run-parent-mixed",
+                task_id=child_id,
+                stage="pending_exec",
+                source_role="pm",
+                payload={"title": child_id},
+                parent_task_id="epic-mixed",
+                root_task_id="epic-mixed",
+                max_attempts=1,
+            )
+        )
+    # Resolve child-ok through ack; dead-letter child-dead through fail.
+    ok_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            task_id="child-ok",
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="child-ok",
+            lease_token=ok_claim.lease_token,
+            terminal_status="resolved",
+            summary="done",
+            metadata={},
+        )
+    )
+    dead_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            task_id="child-dead",
+        )
+    )
+    service.fail_task_stage(
+        FailTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="child-dead",
+            lease_token=dead_claim.lease_token,
+            error_code="exec_failed",
+            error_message="fatal",
+        )
+    )
+
+    reconcile = service.reconcile_parent_statuses(str(workspace))
+    assert reconcile["updated"] == 1
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+    by_id = {row["task_id"]: row for row in status.items}
+    assert by_id["epic-mixed"]["status"] == "dead_letter"
+    assert by_id["child-ok"]["status"] == "resolved"
+    # No compensation from reconcile: the resolved sibling is untouched.
+    assert "saga_compensation" not in (by_id["child-ok"].get("metadata") or {})
 
 
 def test_reconcile_parent_in_execution_when_child_exec_queue_present(tmp_path: Path) -> None:
@@ -1513,3 +1606,520 @@ def test_query_consumer_loop_status_for_unknown_workspace(tmp_path: Path) -> Non
     status = service.query_consumer_loop_status("/nonexistent")
     assert status["started"] is False
     assert status["is_running"] is False
+
+
+class TestExecClaimReadinessGate:
+    """Three-tier fission (I2): queue-scan claims at pending_exec must skip
+    non-leaf supervision rows and dependency-unready steps."""
+
+    @staticmethod
+    def _publish(
+        service: TaskMarketService,
+        workspace: Path,
+        task_id: str,
+        *,
+        is_leaf: bool = True,
+        depends_on: tuple[str, ...] = (),
+        parent: str = "",
+    ) -> None:
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id=f"tr-{task_id}",
+                run_id="run-gate",
+                task_id=task_id,
+                stage="pending_exec",
+                source_role="chief_engineer",
+                payload={"title": task_id},
+                is_leaf=is_leaf,
+                depends_on=tuple(depends_on),
+                parent_task_id=parent,
+            )
+        )
+
+    @staticmethod
+    def _scan_claim(service: TaskMarketService, workspace: Path) -> TaskWorkItemResultV1:
+        return service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_exec",
+                worker_id="dw-1",
+                worker_role="director",
+            )
+        )
+
+    def test_non_leaf_parent_skipped_on_scan(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "parent", is_leaf=False)
+        self._publish(service, workspace, "step-1", parent="parent")
+        claim = self._scan_claim(service, workspace)
+        assert claim.ok is True
+        assert claim.task_id == "step-1"
+
+    def test_dependency_unready_blocks_scan_claim(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        first = self._scan_claim(service, workspace)
+        assert first.task_id == "step-1"
+        # step-1 leased (in progress) — step-2 must NOT be claimable.
+        second = self._scan_claim(service, workspace)
+        assert second.ok is False
+        # advance step-1 to QA → dependency satisfied → step-2 claimable.
+        service.acknowledge_task_stage(
+            AcknowledgeTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-1",
+                lease_token=first.lease_token,
+                next_stage="pending_qa",
+                summary="done",
+                metadata={},
+            )
+        )
+        third = self._scan_claim(service, workspace)
+        assert third.ok is True
+        assert third.task_id == "step-2"
+
+    def test_orphan_dependency_blocks(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-x", depends_on=("ghost",))
+        claim = self._scan_claim(service, workspace)
+        assert claim.ok is False
+
+    def test_ack_metadata_demotes_parent_to_non_leaf(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "pm-task", is_leaf=True)
+        claim = self._scan_claim(service, workspace)
+        assert claim.task_id == "pm-task"
+        service.acknowledge_task_stage(
+            AcknowledgeTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="pm-task",
+                lease_token=claim.lease_token,
+                next_stage="pending_exec",
+                summary="fissioned",
+                metadata={"is_leaf": False, "fission_step_count": 2},
+            )
+        )
+        again = self._scan_claim(service, workspace)
+        assert again.ok is False  # demoted parent is a supervision row now
+
+
+class TestDependencyTerminalCascade:
+    """Dependents of a terminally-failed dependency must cascade into the
+    DLQ at claim time instead of stranding as permanently-unclaimable
+    ``pending_exec`` rows (live I3-r7)."""
+
+    _publish = staticmethod(TestExecClaimReadinessGate._publish)
+    _scan_claim = staticmethod(TestExecClaimReadinessGate._scan_claim)
+
+    @staticmethod
+    def _claim_targeted(service: TaskMarketService, workspace: Path, task_id: str) -> TaskWorkItemResultV1:
+        return service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_exec",
+                worker_id="dw-1",
+                worker_role="director",
+                task_id=task_id,
+            )
+        )
+
+    def _dead_letter(self, service: TaskMarketService, workspace: Path, task_id: str) -> None:
+        claim = self._claim_targeted(service, workspace, task_id)
+        assert claim.ok is True
+        failed = service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id=task_id,
+                lease_token=claim.lease_token,
+                error_code="exec_failed",
+                error_message="fatal",
+                to_dead_letter=True,
+            )
+        )
+        assert failed.status == "dead_letter"
+
+    def test_dead_lettered_dependency_cascades_dependent_to_dlq(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        self._dead_letter(service, workspace, "step-1")
+
+        claim = self._scan_claim(service, workspace)
+        assert claim.ok is False
+        assert claim.reason == "no_claimable_work_item"
+
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        assert by_id["step-2"]["status"] == "dead_letter"
+        assert by_id["step-2"]["stage"] == "dead_letter"
+        dlq_entries = {entry["task_id"]: entry for entry in get_store(str(workspace)).load_dead_letters(limit=50)}
+        assert dlq_entries["step-2"]["error_code"] == "dependency_terminal_failure"
+        assert "step-1" in dlq_entries["step-2"]["reason"]
+
+    def test_rejected_dependency_cascades_dependent(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        claim = self._claim_targeted(service, workspace, "step-1")
+        # No requeue stage and attempts < max ⇒ terminal "rejected".
+        failed = service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-1",
+                lease_token=claim.lease_token,
+                error_code="exec_failed",
+                error_message="unrecoverable",
+            )
+        )
+        assert failed.status == "rejected"
+
+        scan = self._scan_claim(service, workspace)
+        assert scan.ok is False
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        assert by_id["step-2"]["status"] == "dead_letter"
+
+    def test_cascade_is_transitive_across_dependency_chain(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        self._publish(service, workspace, "step-3", depends_on=("step-2",))
+        self._dead_letter(service, workspace, "step-1")
+
+        scan = self._scan_claim(service, workspace)
+        assert scan.ok is False
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        assert by_id["step-2"]["status"] == "dead_letter"
+        assert by_id["step-3"]["status"] == "dead_letter"
+        # The single sweep emitted one cascade DLQ entry per dependent.
+        dlq_entries = [
+            entry
+            for entry in get_store(str(workspace)).load_dead_letters(limit=50)
+            if entry["error_code"] == "dependency_terminal_failure"
+        ]
+        assert {entry["task_id"] for entry in dlq_entries} == {"step-2", "step-3"}
+
+    def test_failed_requeued_dependency_does_not_cascade(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        claim = self._claim_targeted(service, workspace, "step-1")
+        service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-1",
+                lease_token=claim.lease_token,
+                error_code="exec_failed",
+                error_message="transient",
+                requeue_stage="pending_exec",
+            )
+        )
+        # step-1 recovered into the queue: step-2 blocked but NOT cascaded,
+        # and step-1 itself is claimable again.
+        scan = self._scan_claim(service, workspace)
+        assert scan.ok is True
+        assert scan.task_id == "step-1"
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        assert by_id["step-2"]["status"] == "pending_exec"
+
+    def test_in_flight_dependent_not_swept(self, tmp_path: Path) -> None:
+        """A claimed step keeps stage pending_exec with status in_execution —
+        the sweep must never yank its live lease even when its dependency
+        fails terminally at QA after the (legal) claim."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-a")
+        self._publish(service, workspace, "step-b", depends_on=("step-a",))
+        a_claim = self._scan_claim(service, workspace)
+        assert a_claim.task_id == "step-a"
+        service.acknowledge_task_stage(
+            AcknowledgeTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-a",
+                lease_token=a_claim.lease_token,
+                next_stage="pending_qa",
+                summary="done",
+                metadata={},
+            )
+        )
+        # Dep at QA passes the readiness gate: B is legally claimed.
+        b_claim = self._scan_claim(service, workspace)
+        assert b_claim.task_id == "step-b"
+        # QA terminally fails A while B is mid-execution.
+        qa_claim = service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_qa",
+                worker_id="qa-1",
+                worker_role="qa",
+                task_id="step-a",
+            )
+        )
+        service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-a",
+                lease_token=qa_claim.lease_token,
+                error_code="qa_failed",
+                error_message="fatal",
+                to_dead_letter=True,
+            )
+        )
+        # The next queue-scan sweeps nothing: B is in-flight, not queued.
+        scan = self._scan_claim(service, workspace)
+        assert scan.ok is False
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        assert by_id["step-b"]["status"] == "in_execution"
+        # B's lease survived: the executing worker can still acknowledge.
+        ack = service.acknowledge_task_stage(
+            AcknowledgeTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-b",
+                lease_token=b_claim.lease_token,
+                next_stage="pending_qa",
+                summary="done",
+                metadata={},
+            )
+        )
+        assert ack.ok is True
+
+    @pytest.mark.parametrize("error_origin", ["public_contract", "internal"])
+    def test_receipt_failure_skips_item_without_poisoning_claims(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_origin: str
+    ) -> None:
+        """A required-receipt failure on one cascade candidate must not abort
+        the sweep, wedge the claim, or leave the item half-dead. Both
+        TaskMarketError classes (same name, different modules) must be
+        absorbed: the service raises the public-contract one, internal
+        collaborators raise internal.errors'."""
+        from polaris.cells.runtime.task_market.internal.errors import (
+            TaskMarketError as InternalTaskMarketError,
+        )
+
+        error_type: type[Exception] = TaskMarketError if error_origin == "public_contract" else InternalTaskMarketError
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        self._publish(service, workspace, "step-free")
+        self._dead_letter(service, workspace, "step-1")
+
+        original = TaskMarketService._record_cognitive_runtime_lifecycle_receipt
+
+        def poisoned(self_: TaskMarketService, **kwargs: Any) -> dict[str, Any]:
+            if kwargs.get("event_type") == "dependency_terminal_cascade":
+                raise error_type("receipt backend down")
+            return original(self_, **kwargs)
+
+        monkeypatch.setattr(TaskMarketService, "_record_cognitive_runtime_lifecycle_receipt", poisoned)
+        scan = self._scan_claim(service, workspace)
+        assert scan.ok is True
+        assert scan.task_id == "step-free"
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        # Skipped cleanly: still queued, no partial dead-letter state.
+        assert by_id["step-2"]["status"] == "pending_exec"
+
+    def test_replay_unblocks_cascaded_dependent(self, tmp_path: Path) -> None:
+        from polaris.cells.runtime.task_market.public import dlq_api
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "step-1")
+        self._publish(service, workspace, "step-2", depends_on=("step-1",))
+        self._dead_letter(service, workspace, "step-1")
+        scan = self._scan_claim(service, workspace)
+        assert scan.ok is False  # cascade swept step-2
+
+        # Recovery loop: replay both, finish the dependency, claim the
+        # dependent.
+        assert dlq_api.replay_dlq_item(workspace=str(workspace), task_id="step-1", target_stage="pending_exec")["ok"]
+        assert dlq_api.replay_dlq_item(workspace=str(workspace), task_id="step-2", target_stage="pending_exec")["ok"]
+        first = self._scan_claim(service, workspace)
+        assert first.task_id == "step-1"
+        service.acknowledge_task_stage(
+            AcknowledgeTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="step-1",
+                lease_token=first.lease_token,
+                next_stage="pending_qa",
+                summary="done",
+                metadata={},
+            )
+        )
+        second = self._scan_claim(service, workspace)
+        assert second.ok is True
+        assert second.task_id == "step-2"
+
+
+def test_json_store_dead_letter_append_is_idempotent_by_task_id(tmp_path: Path) -> None:
+    """A retried dead-letter (replayed cascade sweep) must replace, not
+    duplicate — duplicates eventually evict unrelated entries past the
+    10k window (matches the SQLite backend's INSERT OR REPLACE)."""
+    from polaris.cells.runtime.task_market.internal.store import TaskMarketJSONStore
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    store = TaskMarketJSONStore(str(workspace))
+    store.append_dead_letter({"task_id": "T-1", "reason": "first", "error_code": "x"})
+    store.append_dead_letter({"task_id": "T-2", "reason": "other", "error_code": "x"})
+    store.append_dead_letter({"task_id": "T-1", "reason": "second", "error_code": "x"})
+    entries = store.load_dead_letters(limit=50)
+    by_id = {str(entry["task_id"]): entry for entry in entries}
+    assert len(entries) == 2
+    assert by_id["T-1"]["reason"] == "second"
+    assert by_id["T-2"]["reason"] == "other"
+
+
+def test_stage_advance_resets_attempt_budget(tmp_path: Path) -> None:
+    """Live I3-r9: a step that succeeded on its final exec attempt was
+    retry-exhausted-killed by the QA queue claim before QA ever judged it.
+    Each stage advance opens a fresh attempt budget."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-budget",
+            run_id="run-budget",
+            task_id="step-budget",
+            stage="pending_exec",
+            source_role="chief_engineer",
+            payload={"title": "step"},
+            max_attempts=2,
+        )
+    )
+
+    def _claim() -> Any:
+        return service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_exec",
+                worker_id="dw-1",
+                worker_role="director",
+            )
+        )
+
+    first = _claim()
+    service.fail_task_stage(
+        FailTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="step-budget",
+            lease_token=first.lease_token,
+            error_code="exec_failed",
+            error_message="transient",
+            requeue_stage="pending_exec",
+        )
+    )
+    second = _claim()
+    assert second.ok is True  # attempts now == max_attempts (2)
+    ack = service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="step-budget",
+            lease_token=second.lease_token,
+            next_stage="pending_qa",
+            summary="succeeded on final exec attempt",
+            metadata={},
+        )
+    )
+    assert ack.ok is True
+
+    qa_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_qa",
+            worker_id="qa-1",
+            worker_role="qa",
+        )
+    )
+    # Pre-fix this dead-lettered with reason retry_exhausted_on_claim.
+    assert qa_claim.ok is True
+    assert qa_claim.task_id == "step-budget"
+
+
+def test_requeue_carries_failure_teaching_and_advance_clears_it(tmp_path: Path) -> None:
+    """Live I3-r10: claim results expose payload (not last_error), so a
+    requeued item's worker retried blind. The failure summary must ride the
+    payload and be retired on the next successful stage advance."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-teach",
+            run_id="run-teach",
+            task_id="step-teach",
+            stage="pending_exec",
+            source_role="chief_engineer",
+            payload={"title": "step"},
+        )
+    )
+
+    def _claim() -> Any:
+        return service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_exec",
+                worker_id="dw-1",
+                worker_role="director",
+            )
+        )
+
+    first = _claim()
+    service.fail_task_stage(
+        FailTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="step-teach",
+            lease_token=first.lease_token,
+            error_code="QA_step_verify_failed",
+            error_message="step verify failed (exit 1): grep -q 'id=\"levelDisplay\"'",
+            requeue_stage="pending_exec",
+        )
+    )
+    second = _claim()
+    teaching = second.payload.get("last_failure")
+    assert isinstance(teaching, dict)
+    assert teaching["error_code"] == "QA_step_verify_failed"
+    assert "levelDisplay" in teaching["error_message"]
+
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="step-teach",
+            lease_token=second.lease_token,
+            next_stage="pending_qa",
+            summary="fixed",
+            metadata={},
+        )
+    )
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
+    row = {item["task_id"]: item for item in status.items}["step-teach"]
+    assert "last_failure" not in (row.get("payload") or {})

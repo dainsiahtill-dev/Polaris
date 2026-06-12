@@ -193,6 +193,125 @@ class TestDirectorExecutionConsumerPollOnce:
         assert fail_call.metadata["target_files"] == ["src/main.py"]
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_step_target_not_in_changed_files_requeues(self, mock_get_svc: MagicMock) -> None:
+        """A fission step that changed OTHER files but not its declared
+        target_file must not advance to QA (live I3-r9: the readme.md step
+        wrote index.html and sailed through)."""
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "PM-1-S1"
+        claim_result.lease_token = "lease-step"
+        claim_result.payload = {
+            "blueprint_id": "bp-001",
+            "construction_step": {
+                "step_id": "PM-1-S1",
+                "target_file": "readme.md",
+                "verify": "test -f ./readme.md",
+            },
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+        with patch.object(
+            consumer,
+            "_execute_task",
+            return_value={"changed_files": ["index.html"], "duration": 1, "side_effects": []},
+        ):
+            results = consumer.poll_once()
+
+        assert len(results) == 1
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == "step_target_missing"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "EXEC_TARGET_MISSING"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert "readme.md" in fail_call.error_message
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execute_task_forwards_bounce_teaching_to_adapter_context(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        """A requeued step's last_failure must reach the adapter context —
+        blind retries make no changes and die (live I3-r10)."""
+        mock_get_svc.return_value = MagicMock()
+        seen_context: dict[str, Any] = {}
+
+        class FakeDirectorAdapter:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, Any],
+                context: dict[str, Any],
+            ) -> dict[str, Any]:
+                seen_context.update(context)
+                return {"success": True, "task_id": task_id, "tool_results": []}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.create_role_adapter",
+            lambda role_id, workspace: FakeDirectorAdapter(workspace),
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        consumer._execute_task(
+            "PM-1-S1",
+            {
+                "title": "step",
+                "construction_step": {"step_id": "PM-1-S1", "target_file": "index.html"},
+                "last_failure": {
+                    "error_code": "QA_step_verify_failed",
+                    "error_message": "step verify failed: grep -q levelDisplay",
+                },
+            },
+            "lease-teach",
+        )
+        assert seen_context["construction_step"]["target_file"] == "index.html"
+        assert seen_context["last_failure"]["error_code"] == "QA_step_verify_failed"
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_step_target_covered_advances_to_qa(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "PM-1-S2"
+        claim_result.lease_token = "lease-step2"
+        claim_result.payload = {
+            "blueprint_id": "bp-001",
+            "construction_step": {"step_id": "PM-1-S2", "target_file": "style.css"},
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="pending_qa")
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+        with patch.object(
+            consumer,
+            "_execute_task",
+            return_value={"changed_files": ["./style.css"], "duration": 1, "side_effects": []},
+        ):
+            results = consumer.poll_once()
+
+        assert len(results) == 1
+        assert results[0]["ok"] is True
+        mock_svc.fail_task_stage.assert_not_called()
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execute_task_delegates_to_director_adapter_for_existing_workspace(
         self,
         mock_get_svc: MagicMock,

@@ -174,6 +174,25 @@ def _allows_no_execution_evidence(payload: dict[str, Any]) -> bool:
     return False
 
 
+def _step_target_file(payload: dict[str, Any]) -> str:
+    """Declared single target of a CE construction step ('' for non-steps)."""
+    step = payload.get("construction_step")
+    if not isinstance(step, dict):
+        return ""
+    return str(step.get("target_file") or "").strip().replace("\\", "/").lstrip("./")
+
+
+def _changed_files_cover_target(target_file: str, changed_files: list[str]) -> bool:
+    target = target_file.strip().replace("\\", "/").lstrip("./")
+    if not target:
+        return True
+    for raw in changed_files:
+        candidate = str(raw).strip().replace("\\", "/").lstrip("./")
+        if candidate == target or candidate.endswith(f"/{target}"):
+            return True
+    return False
+
+
 def _append_normalized_paths(paths: list[str], raw: Any) -> None:
     for value in _normalize_string_list(raw):
         normalized = value.replace("\\", "/")
@@ -514,6 +533,28 @@ class DirectorExecutionConsumer:
                     blueprint_id=blueprint_id,
                     payload=payload,
                 )
+            # Step contract: a fission step declares exactly one target_file.
+            # "Any change" is not evidence the STEP was done — a weak model
+            # can write a different file entirely and sail through (live
+            # I3-r9: the readme.md step wrote index.html, acked clean, and
+            # QA passed it). Requeue with a teaching error so the retry
+            # ladder can correct course.
+            step_target = _step_target_file(payload)
+            if step_target and not _changed_files_cover_target(step_target, changed_files):
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="EXEC_TARGET_MISSING",
+                        error_message=(
+                            f"step requires changes to '{step_target}' but changed_files={changed_files}. "
+                            f"Write ONLY the declared target_file for this step."
+                        ),
+                        requeue_stage="pending_exec",
+                    )
+                )
+                return {"task_id": task_id, "ok": False, "reason": "step_target_missing"}
             registered_actions = self._register_compensation_actions(
                 task_id=task_id,
                 lease_token=lease_token,
@@ -723,6 +764,19 @@ class DirectorExecutionConsumer:
                 "route": _normalize_task_market_route(payload),
             },
         }
+        # Three-tier fission (I2): a CE-fissioned leaf step carries its
+        # construction_step blueprint card; the context gateway injects it as
+        # the Director's bounded "local god view" (BlueprintStepsSignal).
+        construction_step = payload.get("construction_step")
+        if isinstance(construction_step, dict) and construction_step:
+            context["construction_step"] = construction_step
+        # Bounce teaching: a requeued step carries the previous failure
+        # (QA verify output, target-miss directive). Without it the retry
+        # is blind — the file looks complete, the model makes no changes,
+        # and the step dies no_materialized_changes (live I3-r10).
+        last_failure = payload.get("last_failure")
+        if isinstance(last_failure, dict) and str(last_failure.get("error_message") or "").strip():
+            context["last_failure"] = last_failure
         adapter_result = _run_coroutine_sync(
             adapter.execute(task_id=task_id, input_data=adapter_input, context=context)
         )

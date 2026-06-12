@@ -86,6 +86,8 @@ class SignalBuildContext:
     get_repo_identity: Callable[[], str | None] = _none_accessor
     # 侦察锚点卡（Phase-2 A7 定位持久化）。默认 None-accessor → 不注入。
     get_scout_anchors: Callable[[], str | None] = _none_accessor
+    # 三层裂变(I2): 当前 construction_step 的有界蓝图智能(签名/接口/verify)。
+    get_blueprint_step: Callable[[], str | None] = _none_accessor
 
 
 class RoleContextSignal(Protocol):
@@ -188,6 +190,38 @@ class BlueprintOverviewSignal:
             level=_NICE_TO_HAVE,
             freshness_key=_freshness_of(overview),
             max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,  # 蓝图可能很大 → 超限自动卸载
+        )
+
+
+class BlueprintStepsSignal:
+    """Director 专属：当前 construction_step 的蓝图智能（三层裂变 I2）。
+
+    role-bound（仅 director）+ default-ON + must-have：弱执行者的"局部上帝视角"
+    —— 签名骨架/接口定名/verify 判据。注入物必须有界（签名+接口+清单，禁全文，
+    16k 窗口实证 W1.5c 后可用提示仅 ~5-6k tokens）。数据经 ``get_blueprint_step``
+    访问器获取（缺省 None → 不注入，未裂变任务零影响）。
+    """
+
+    id = "blueprint_step"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return ctx.role == "director" and bool(ctx.policy_flags.get("include_blueprint_step", True))
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 4
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        step_card = ctx.get_blueprint_step()
+        if not step_card:
+            return None
+        content = f"【施工步骤蓝图】\n{step_card}"
+        return SignalBlock(
+            id=self.id,
+            content=content,
+            priority=4,
+            level=_MUST_HAVE,
+            freshness_key=_freshness_of(step_card),
+            max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,
         )
 
 
@@ -295,6 +329,7 @@ DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
     RepoIdentitySignal(),
     ScoutAnchorsSignal(),
     BlueprintOverviewSignal(),
+    BlueprintStepsSignal(),
     VerdictHistorySignal(),
 )
 

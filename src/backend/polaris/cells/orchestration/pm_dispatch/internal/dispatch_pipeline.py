@@ -526,7 +526,11 @@ def _build_revision_context(
     }
 
 
-def _extract_task_dependencies(task: dict[str, Any]) -> tuple[str, ...]:
+def _extract_task_dependencies(
+    task: dict[str, Any],
+    *,
+    known_task_ids: set[str] | None = None,
+) -> tuple[str, ...]:
     raw_depends_on = task.get("depends_on")
     if isinstance(raw_depends_on, list):
         source = raw_depends_on
@@ -538,7 +542,19 @@ def _extract_task_dependencies(task: dict[str, Any]) -> tuple[str, ...]:
     for item in normalized:
         if item not in deduped:
             deduped.append(item)
-    return tuple(deduped)
+    if known_task_ids is None:
+        return tuple(deduped)
+    # Planner dependency lists are unvalidated free text: a ref to a task id
+    # that is not in this plan can never resolve on the market, and the exec
+    # readiness gate would strand the task as permanently unclaimable.
+    dropped = [item for item in deduped if item not in known_task_ids]
+    if dropped:
+        logger.warning(
+            "task %s: dropping depends_on refs to unknown plan tasks %s",
+            str(task.get("id") or "").strip(),
+            dropped,
+        )
+    return tuple(item for item in deduped if item in known_task_ids)
 
 
 _TASK_ROUTE_DIRECT_TO_DIRECTOR = "direct_to_director"
@@ -743,6 +759,7 @@ def _run_inline_task_market_consumers(
     run_id: str,
     iteration: int,
     published_task_ids: tuple[str, ...],
+    analysis_runner: Any | None = None,
 ) -> dict[str, Any]:
     """Run one bounded PM->CE->Director->QA cycle for mainline-full mode."""
     rollout_mode = _resolve_task_market_rollout_mode()
@@ -798,6 +815,7 @@ def _run_inline_task_market_consumers(
     try:
         ce_consumer = ce_consumer_type(
             workspace=workspace_full,
+            analysis_runner=analysis_runner,
             worker_id=f"pm_inline_ce_{worker_suffix}",
             visibility_timeout_seconds=design_timeout,
             poll_interval=0.05,
@@ -858,12 +876,7 @@ def _run_inline_task_market_consumers(
             break
 
     published_ids = tuple(dict.fromkeys(task_id for task_id in published_task_ids if task_id))
-    unresolved_ids = [task_id for task_id in published_ids if task_id not in terminal_status_by_task]
-    rejected_ids = [
-        task_id
-        for task_id, task_status in terminal_status_by_task.items()
-        if task_status in {"rejected", "dead_letter"}
-    ]
+    published_id_set = set(published_ids)
     reconciliation_result: dict[str, Any] = {"ok": False, "reason": "not_available"}
     try:
         _, get_task_market_service = _get_task_market_services()
@@ -874,8 +887,43 @@ def _run_inline_task_market_consumers(
                 reconciliation_result = {"ok": True, **raw_result}
             else:
                 reconciliation_result = {"ok": True, "result": raw_result}
+        # Fold post-reconcile market state into the terminal map: a
+        # director-side dead-letter never reaches QA, and parents change
+        # status only at reconcile — computing the report from qa_cycle
+        # observations alone misfiled dead fission clusters as "unresolved"
+        # instead of "rejected". Scope strictly to this dispatch's lineage
+        # (published ids + their fission descendants): the market store is
+        # workspace-persistent, and an unscoped fold would let one
+        # historical dead-letter row fail every later run forever.
+        if hasattr(task_market_service, "query_status"):
+            from polaris.cells.runtime.task_market.public.contracts import (
+                QueryTaskMarketStatusV1,
+            )
+
+            status_result = task_market_service.query_status(
+                QueryTaskMarketStatusV1(workspace=workspace_full, limit=10_000)
+            )
+            for row in status_result.items:
+                row_task_id = str(row.get("task_id") or "").strip()
+                row_status = str(row.get("status") or "").strip().lower()
+                row_lineage = {
+                    row_task_id,
+                    str(row.get("root_task_id") or "").strip(),
+                    str(row.get("parent_task_id") or "").strip(),
+                }
+                if not (row_lineage & published_id_set):
+                    continue
+                if row_task_id and row_status in {"resolved", "rejected", "dead_letter"}:
+                    terminal_status_by_task[row_task_id] = row_status
     except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
         reconciliation_result = {"ok": False, "reason": "reconcile_error", "error": str(exc)}
+
+    unresolved_ids = [task_id for task_id in published_ids if task_id not in terminal_status_by_task]
+    rejected_ids = [
+        task_id
+        for task_id, task_status in terminal_status_by_task.items()
+        if task_status in {"rejected", "dead_letter"}
+    ]
 
     has_worker_failure = any(
         not bool(result.get("ok", False))
@@ -1005,6 +1053,8 @@ def _mainline_publish_dispatch_tasks_to_task_market(
         docs_stage=docs_stage,
     )
 
+    plan_task_ids = {str(entry.get("id") or "").strip() for entry in tasks if isinstance(entry, dict)}
+    plan_task_ids.discard("")
     for task in tasks:
         if not isinstance(task, dict):
             continue
@@ -1067,7 +1117,7 @@ def _mainline_publish_dispatch_tasks_to_task_market(
                 root_task_id=str(task.get("root_task_id") or task_id).strip() or task_id,
                 parent_task_id=str(task.get("parent_task_id") or task.get("parent_id") or "").strip(),
                 is_leaf=bool(task.get("is_leaf", True)),
-                depends_on=_extract_task_dependencies(task),
+                depends_on=_extract_task_dependencies(task, known_task_ids=plan_task_ids),
                 requirement_digest=revision_context["requirement_digest"],
                 constraint_digest=revision_context["constraint_digest"],
                 change_policy=str(task.get("change_policy") or "strict").strip().lower() or "strict",
@@ -1153,6 +1203,8 @@ def _shadow_publish_dispatch_tasks_to_task_market(
         docs_stage=docs_stage,
     )
 
+    plan_task_ids = {str(entry.get("id") or "").strip() for entry in tasks if isinstance(entry, dict)}
+    plan_task_ids.discard("")
     for task in tasks:
         if not isinstance(task, dict):
             continue
@@ -1205,7 +1257,7 @@ def _shadow_publish_dispatch_tasks_to_task_market(
                 root_task_id=str(task.get("root_task_id") or task_id).strip() or task_id,
                 parent_task_id=str(task.get("parent_task_id") or task.get("parent_id") or "").strip(),
                 is_leaf=bool(task.get("is_leaf", True)),
-                depends_on=_extract_task_dependencies(task),
+                depends_on=_extract_task_dependencies(task, known_task_ids=plan_task_ids),
                 requirement_digest=revision_context["requirement_digest"],
                 constraint_digest=revision_context["constraint_digest"],
                 change_policy=str(task.get("change_policy") or "strict").strip().lower() or "strict",
@@ -1594,6 +1646,7 @@ def run_dispatch_pipeline(
                 if isinstance(task, dict) and str(task.get("id") or "").strip()
             )
             inline_result = _run_inline_task_market_consumers(
+                analysis_runner=getattr(args, "analysis_runner", None),
                 workspace_full=workspace_full,
                 run_id=run_id,
                 iteration=iteration,
@@ -1722,6 +1775,9 @@ def run_chief_engineer_preflight(
         tasks=tasks,
         run_events=run_events,
         dialogue_full=dialogue_full,
+        # Layering: cells never import delivery; the analysis runner rides in
+        # on args (driver/host injects e.g. run_chief_engineer_analysis).
+        analysis_runner=getattr(args, "analysis_runner", None),
     )
 
 

@@ -42,6 +42,7 @@ from .consumer_loop import ConsumerLoopManager
 from .dlq import DLQManager
 from .errors import (
     StaleLeaseTokenError,
+    TaskMarketError as InternalTaskMarketError,
     TaskNotClaimableError,
     TaskNotFoundError,
 )
@@ -65,6 +66,10 @@ _IN_PROGRESS_STATUSES = {"in_design", "in_execution", "in_qa"}
 _EXECUTION_STATUS_SET = {"pending_exec", "in_execution"}
 _QA_STATUS_SET = {"pending_qa", "in_qa"}
 _DESIGN_STATUS_SET = {"pending_design", "in_design"}
+# Statuses a depends_on dependency can never recover from (subset of
+# models.TERMINAL_STATUSES minus "resolved"): dependents must cascade,
+# not strand.
+_DEPENDENCY_TERMINAL_FAILURE_STATUSES = frozenset({"rejected", "dead_letter"})
 _COGNITIVE_REQUIRED_KEYS = (
     "cognitive_runtime_required",
     "task_market_cognitive_runtime_required",
@@ -536,6 +541,29 @@ class TaskMarketService:
             store = self._get_store(command.workspace)
             items = store.load_items()
 
+            # Queue-scan claims first sweep terminally-stranded dependents
+            # into the DLQ (targeted claims are supervision paths and must
+            # see the market as-is). A sweep failure must never poison the
+            # claim itself: discard partial in-memory mutations and claim on
+            # pristine state — the idempotent DLQ append lets the next sweep
+            # redo the work consistently.
+            if not command.task_id:
+                try:
+                    cascade_transitions, cascade_outbox = self._cascade_dead_letter_dependents(
+                        store=store,
+                        items=items,
+                        worker_id=command.worker_id,
+                    )
+                    if cascade_transitions:
+                        store.save_items_and_outbox_atomic(
+                            items=items,
+                            transitions=cascade_transitions,
+                            outbox_records=cascade_outbox,
+                        )
+                except (TaskMarketError, InternalTaskMarketError, OSError) as exc:
+                    logger.warning("dependency cascade sweep failed; claiming on pristine state: %s", exc)
+                    items = store.load_items()
+
             # Select a candidate.
             selected = self._select_claim_candidate(
                 items=items,
@@ -556,6 +584,10 @@ class TaskMarketService:
 
             # Check retry exhaustion.
             if selected.attempts >= selected.max_attempts:
+                # Capture before move_to_dead_letter mutates the item — the
+                # audit trail otherwise records dead_letter→dead_letter
+                # (live I3-r9 forensics).
+                exhausted_from_status = selected.status
                 dlq = DLQManager(store)
                 dlq.move_to_dead_letter(
                     item=selected,
@@ -565,7 +597,7 @@ class TaskMarketService:
                 )
                 transition = {
                     "task_id": selected.task_id,
-                    "from_status": selected.status,
+                    "from_status": exhausted_from_status,
                     "to_status": "dead_letter",
                     "event_type": "dead_lettered",
                     "worker_id": command.worker_id,
@@ -591,7 +623,7 @@ class TaskMarketService:
                 lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
                     item=selected,
                     event_type="retry_exhausted_on_claim",
-                    from_status=transition["from_status"],
+                    from_status=str(transition["from_status"]),
                     to_status="dead_letter",
                     worker_id=command.worker_id,
                     metadata={
@@ -775,6 +807,12 @@ class TaskMarketService:
             if command.next_stage is not None:
                 item.stage = command.next_stage
                 item.status = command.next_stage
+                # A stage advance opens a fresh attempt budget: attempts
+                # burned at the previous stage must not be charged to the
+                # next one (live I3-r9: a step that succeeded on exec
+                # attempt 3/3 was retry-exhausted-killed by the QA queue
+                # claim before QA ever judged it).
+                item.attempts = 0
             else:
                 terminal_status = str(command.terminal_status or "resolved").strip().lower()
                 if terminal_status not in TERMINAL_STATUSES:
@@ -788,10 +826,18 @@ class TaskMarketService:
             item.metadata = dict(item.metadata)
             item.metadata["last_summary"] = command.summary
             item.metadata["last_ack_metadata"] = dict(command.metadata)
+            # Three-tier fission: when CE fissions a task into leaf steps it
+            # demotes the parent to a supervision row; the market record must
+            # reflect that so the exec claim gate can skip it.
+            if dict(command.metadata).get("is_leaf") is False:
+                item.is_leaf = False
 
             # Merge ack metadata into item.payload so downstream consumers (Director, QA)
             # can access fields generated by upstream workers (CE sets blueprint_id, guardrails, etc.).
             item.payload = {**dict(item.payload), **dict(command.metadata)}
+            # A successful advance retires the failure teaching — stale
+            # bounce reasons must not leak into the next stage's context.
+            item.payload.pop("last_failure", None)
 
             # Clear lease.
             lm.clear_lease(item)
@@ -895,6 +941,18 @@ class TaskMarketService:
                 "error_message": command.error_message,
                 "metadata": dict(command.metadata),
                 "occurred_at": now_iso(),
+            }
+            # Teach the next attempt: a requeued/replayed item's worker must
+            # see WHY the last attempt failed — claim results expose payload,
+            # not last_error (live I3-r10: QA verify bounces retried blind,
+            # made no changes, and died no_materialized_changes).
+            item.payload = {
+                **dict(item.payload),
+                "last_failure": {
+                    "error_code": command.error_code,
+                    "error_message": str(command.error_message or "")[:600],
+                    "occurred_at": str(item.last_error["occurred_at"]),
+                },
             }
 
             # Determine disposition.
@@ -1925,14 +1983,28 @@ class TaskMarketService:
 
                 previous_status = parent.status
                 previous_stage = parent.stage
-                parent.status = expected_status
-                if expected_stage:
-                    parent.stage = expected_stage
-                LeaseManager(store).clear_lease(parent)
-                parent.version += 1
-                parent.updated_at = now_iso()
-                parent.metadata = dict(parent.metadata)
                 child_status_counts = dict(Counter(child.status for child in children))
+                if expected_status == "dead_letter":
+                    # A terminally-failed child makes the parent a real
+                    # dead-letter: stage + status + DLQ store entry,
+                    # consistent with every other dead-letter path (a bare
+                    # status write left the parent DLQ-invisible). No saga
+                    # compensation here — parent-failure compensation stays
+                    # exclusively in fail_task_stage.
+                    DLQManager(store).move_to_dead_letter(
+                        item=parent,
+                        reason="child_dead_lettered",
+                        error_code="child_terminal_failure",
+                        metadata={"child_status_counts": child_status_counts},
+                    )
+                else:
+                    parent.status = expected_status
+                    if expected_stage:
+                        parent.stage = expected_stage
+                    LeaseManager(store).clear_lease(parent)
+                    parent.version += 1
+                    parent.updated_at = now_iso()
+                parent.metadata = dict(parent.metadata)
                 parent.metadata["reconciled_from_children_at"] = parent.updated_at
                 parent.metadata["reconciled_child_status_counts"] = child_status_counts
                 parent.metadata["reconciled_expected_status"] = expected_status
@@ -2686,6 +2758,159 @@ class TaskMarketService:
         )
         return {"item": item, "review": review}
 
+    def _cascade_dead_letter_dependents(
+        self,
+        *,
+        store: Any,
+        items: dict[str, TaskWorkItemRecord],
+        worker_id: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Dead-letter ``pending_exec`` steps whose dependency terminally failed.
+
+        The readiness gate blocks dependents of a failed-and-requeued
+        dependency until it recovers; a *terminally* failed dependency
+        (rejected/dead_letter) can never recover, so its dependents would
+        otherwise strand as permanently-unclaimable ``pending_exec`` rows —
+        never claimed, never escalated, invisible to the DLQ (live I3-r7).
+        Cascade them into the DLQ with a distinct error code so the whole
+        cluster is visible and bulk-replayable after the dependency is fixed.
+
+        Deliberately bypasses ``fail_task_stage``: a cascaded dependent never
+        executed, so there is nothing to compensate — and skipping saga
+        compensation breaks any cascade→compensate recursion by construction.
+        The sweep iterates to a fixpoint so a dependency chain collapses in
+        one pass; dead-letter is absorbing, so termination is guaranteed.
+        """
+        transitions: list[dict[str, Any]] = []
+        outbox_records: list[dict[str, Any]] = []
+        dlq = DLQManager(store)
+        changed = True
+        while changed:
+            changed = False
+            for item in list(items.values()):
+                # status check excludes claimed in-flight rows: a leased step
+                # keeps stage "pending_exec" with status "in_execution", and
+                # killing it would wipe a live lease mid-execution (its dep
+                # may fail terminally at QA after the dependent was legally
+                # claimed). Only queued, unleased rows cascade.
+                if item.stage != "pending_exec" or item.status != "pending_exec" or not item.is_leaf:
+                    continue
+                dead_dep_id = ""
+                dead_dep_status = ""
+                for dep_id in item.depends_on or []:
+                    dep = items.get(str(dep_id))
+                    if dep is not None and dep.status in _DEPENDENCY_TERMINAL_FAILURE_STATUSES:
+                        dead_dep_id = dep.task_id
+                        dead_dep_status = dep.status
+                        break
+                if not dead_dep_id:
+                    continue
+                from_status = item.status
+                reason = f"dependency_terminal:{dead_dep_id}:{dead_dep_status}"
+                # Receipt FIRST: a required-receipt failure must skip this
+                # item before any durable side effect — otherwise one
+                # poisoned item aborts every queue-scan claim at every
+                # stage, and the workspace wedges with no self-heal path.
+                try:
+                    lifecycle_evidence = self._record_cognitive_runtime_lifecycle_receipt(
+                        item=item,
+                        event_type="dependency_terminal_cascade",
+                        from_status=from_status,
+                        to_status="dead_letter",
+                        worker_id=worker_id,
+                        metadata={
+                            "reason": reason,
+                            "dependency_task_id": dead_dep_id,
+                            "dependency_status": dead_dep_status,
+                        },
+                    )
+                except (TaskMarketError, InternalTaskMarketError) as exc:
+                    # Both classes: the service raises the public-contract
+                    # TaskMarketError, internal collaborators (store/DLQ)
+                    # raise internal.errors.TaskMarketError — same name,
+                    # different classes.
+                    logger.warning(
+                        "dependency cascade skipped %s (lifecycle receipt failed): %s",
+                        item.task_id,
+                        exc,
+                    )
+                    continue
+                dlq.move_to_dead_letter(
+                    item=item,
+                    reason=reason,
+                    error_code="dependency_terminal_failure",
+                    metadata={
+                        "dependency_task_id": dead_dep_id,
+                        "dependency_status": dead_dep_status,
+                    },
+                )
+                transition = {
+                    "task_id": item.task_id,
+                    "from_status": from_status,
+                    "to_status": "dead_letter",
+                    "event_type": "dead_lettered",
+                    "worker_id": worker_id,
+                    "lease_token": "",
+                    "version": item.version,
+                    "metadata": {
+                        "trace_id": item.trace_id,
+                        "reason": reason,
+                        "dependency_task_id": dead_dep_id,
+                        "dependency_status": dead_dep_status,
+                    },
+                }
+                outbox = self._build_outbox_record(
+                    workspace=item.workspace,
+                    event_type="task_market.work_item_dead_lettered",
+                    run_id=item.run_id,
+                    task_id=item.task_id,
+                    payload={
+                        "trace_id": item.trace_id,
+                        "reason": reason,
+                        "dependency_task_id": dead_dep_id,
+                        "dependency_status": dead_dep_status,
+                    },
+                )
+                self._attach_lifecycle_evidence(
+                    item=item,
+                    transition=transition,
+                    outbox_record=outbox,
+                    evidence=lifecycle_evidence,
+                )
+                items[item.task_id] = item
+                transitions.append(transition)
+                outbox_records.append(outbox)
+                changed = True
+        return transitions, outbox_records
+
+    @staticmethod
+    def _exec_claim_ready(item: TaskWorkItemRecord, items: dict[str, TaskWorkItemRecord]) -> bool:
+        """Execution-stage readiness gate (three-tier fission).
+
+        At ``pending_exec``: (a) non-leaf supervision rows (a CE-fissioned
+        parent) are never handed to Director workers; (b) a step is claimable
+        only when every ``depends_on`` step has left the exec queue — resolved
+        or advanced to QA. A failed-and-requeued dependency therefore blocks
+        its dependents (fail-closed); orphan references block too (the
+        depends_on validator reports them). Terminally-failed dependencies
+        are not merely blocked: ``_cascade_dead_letter_dependents`` sweeps
+        their dependents into the DLQ at claim time.
+        """
+        if item.stage != "pending_exec":
+            return True
+        if not item.is_leaf:
+            return False
+        for dep_id in item.depends_on or []:
+            dep = items.get(str(dep_id))
+            if dep is None:
+                return False
+            if dep.status == "resolved":
+                continue
+            if dep.stage in ("pending_qa", "in_qa"):
+                continue
+            return False
+        return True
+
     def _select_claim_candidate(
         self,
         *,
@@ -2695,12 +2920,20 @@ class TaskMarketService:
         at_epoch: float,
     ) -> TaskWorkItemRecord | None:
         if task_id_filter:
+            # Targeted claims (explicit task_id) bypass the exec readiness
+            # gate: saga supervision legitimately claims non-leaf parents to
+            # fail/compensate them. The gate protects queue-scan claims —
+            # the Director worker pull path.
             item = items.get(task_id_filter)
             if item is None:
                 return None
             return item if item.is_claimable(stage, at_epoch=at_epoch) else None
 
-        candidates = [item for item in items.values() if item.is_claimable(stage, at_epoch=at_epoch)]
+        candidates = [
+            item
+            for item in items.values()
+            if item.is_claimable(stage, at_epoch=at_epoch) and self._exec_claim_ready(item, items)
+        ]
         if not candidates:
             return None
 

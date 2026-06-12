@@ -385,6 +385,87 @@ def test_run_inline_task_market_consumers_mainline_full_success(monkeypatch) -> 
     assert result["terminal_status_by_task"]["T01"] == "resolved"
 
 
+def test_run_inline_task_market_consumers_terminal_fold_is_lineage_scoped(monkeypatch, tmp_path) -> None:
+    """The market store is workspace-persistent: a dead-letter row left by a
+    PREVIOUS run must not fold into this run's terminal report and flip it
+    to failed (it would stay failed forever)."""
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-full")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    from polaris.cells.runtime.task_market.public.contracts import (
+        ClaimTaskWorkItemCommandV1,
+        FailTaskStageCommandV1,
+        PublishTaskWorkItemCommandV1,
+    )
+    from polaris.cells.runtime.task_market.public.service import get_task_market_service
+
+    service = get_task_market_service()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-old",
+            run_id="run-OLD",
+            task_id="OLD-1",
+            stage="pending_exec",
+            source_role="PM",
+            payload={"title": "stale task from a previous run"},
+        )
+    )
+    old_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="dw-old",
+            worker_role="director",
+            task_id="OLD-1",
+        )
+    )
+    service.fail_task_stage(
+        FailTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="OLD-1",
+            lease_token=old_claim.lease_token,
+            error_code="exec_failed",
+            error_message="fatal",
+            to_dead_letter=True,
+        )
+    )
+
+    class _IdleConsumer:
+        def __init__(self, **_kwargs) -> None:
+            self._called = False
+
+        def poll_once(self) -> list[dict[str, object]]:
+            return []
+
+    class _ResolvingQAConsumer:
+        def __init__(self, **_kwargs) -> None:
+            self._called = False
+
+        def poll_once(self) -> list[dict[str, object]]:
+            if self._called:
+                return []
+            self._called = True
+            return [{"task_id": "T-NEW", "ok": True, "status": "resolved"}]
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_consumers",
+        lambda: (_IdleConsumer, _IdleConsumer, _ResolvingQAConsumer),
+    )
+
+    result = _run_inline_task_market_consumers(
+        workspace_full=str(workspace),
+        run_id="run-NEW",
+        iteration=1,
+        published_task_ids=("T-NEW",),
+    )
+    assert result["rejected_task_ids"] == ()
+    assert result["unresolved_task_ids"] == ()
+    assert result["ok"] is True
+    assert "OLD-1" not in result["terminal_status_by_task"]
+
+
 def test_run_dispatch_pipeline_mainline_full_skips_engine_dispatch(monkeypatch) -> None:
     monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-full")
 

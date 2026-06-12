@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
     PM_SPIN_GUARD_STATUS,
     NoopShangshulingPort,

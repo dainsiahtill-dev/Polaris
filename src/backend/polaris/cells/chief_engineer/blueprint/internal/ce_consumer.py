@@ -163,6 +163,7 @@ class CEConsumer:
         self,
         workspace: str,
         worker_id: str = "ce_worker",
+        analysis_runner: Any | None = None,
         visibility_timeout_seconds: int = 900,
         poll_interval: float = 5.0,
         enable_director_pool: bool = True,
@@ -174,6 +175,8 @@ class CEConsumer:
         if not self._worker_id:
             raise ValueError("worker_id must be a non-empty string")
         self._visibility_timeout = int(visibility_timeout_seconds)
+        # Injected by the host/driver layer (cells never import delivery).
+        self._analysis_runner = analysis_runner
         self._poll_interval = float(poll_interval)
         self._stop_event = threading.Event()
         self._svc = get_task_market_service()
@@ -423,8 +426,8 @@ class CEConsumer:
         import asyncio
         import json as _json
 
+        from polaris.bootstrap.config import get_settings
         from polaris.cells.llm.dialogue.internal.role_dialogue import generate_role_response
-        from polaris.kernelone.config import get_settings
 
         contract = _contract_fields(payload)
         task_brief = {
@@ -454,30 +457,61 @@ class CEConsumer:
                 settings=get_settings(),
                 role="chief_engineer",
                 message=message + extra,
+                # Pure text-generation contract (same as the PM planning path):
+                # reasoning planners answer tool-bearing requests WITH
+                # tool_calls and the visible text collector sees nothing.
+                context={
+                    "_transaction_kernel_forced_tool_definitions": [],
+                    "_transaction_kernel_forced_tool_choice": "none",
+                    "disable_internal_tool_rounds": True,
+                    "llm_call_timeout_seconds": 300,
+                    "request_timeout_seconds": 300,
+                    "timeout_seconds": 300,
+                },
+                # The fission JSON is its own contract (step gate below);
+                # the CE blueprint checklist would zero-score it.
+                validate_output=False,
             )
             if not has_loop:
                 return asyncio.run(coro)
             raise RuntimeError("ce_step_fission_inside_event_loop_unsupported")
 
+        last_raw_head = {"text": ""}
+
         def _extract_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
+            import re as _re
+
             text = str(result.get("content") or result.get("response") or "")
-            start = text.find("{")
-            end = text.rfind("}")
-            if start < 0 or end <= start:
-                return []
-            try:
-                data = _json.loads(text[start : end + 1])
-            except _json.JSONDecodeError:
-                return []
-            raw_steps = data.get("construction_steps") if isinstance(data, dict) else None
-            if not isinstance(raw_steps, list):
-                return []
-            return [
-                normalize_construction_step(item, parent_pm_task=task_id, index=i) for i, item in enumerate(raw_steps)
-            ]
+            last_raw_head["text"] = " ".join(text.split())[:200]
+            # Reasoning wrappers and fences drift run-to-run (live I3-r6: the
+            # same model that emitted clean JSON in r5 returned think-wrapped
+            # fenced output). Strip thinking, prefer fenced JSON, then scan
+            # every balanced object via raw_decode until one carries steps.
+            text = _re.sub(r"<think>.*?</think>", " ", text, flags=_re.DOTALL | _re.IGNORECASE)
+            fenced = _re.findall(r"```(?:json)?\s*(.*?)```", text, flags=_re.DOTALL)
+            decoder = _json.JSONDecoder()
+            for blob in [*fenced, text]:
+                position = blob.find("{")
+                while position != -1:
+                    try:
+                        data, _end = decoder.raw_decode(blob[position:])
+                    except _json.JSONDecodeError:
+                        position = blob.find("{", position + 1)
+                        continue
+                    raw_steps = data.get("construction_steps") if isinstance(data, dict) else None
+                    if isinstance(raw_steps, list) and raw_steps:
+                        return [
+                            normalize_construction_step(item, parent_pm_task=task_id, index=i)
+                            for i, item in enumerate(raw_steps)
+                        ]
+                    position = blob.find("{", position + 1)
+            return []
 
         steps = _extract_steps(_invoke())
         errors = validate_construction_steps(steps, parent_pm_task=task_id)
+        if errors and not steps:
+            head = last_raw_head["text"] or "(empty model output)"
+            errors = [f"{errors[0]} (raw head: {head})"]
         if errors:
             # One corrective re-ask with the gate errors quoted (same teaching
             # contract the Director-side ladders use).
@@ -570,7 +604,7 @@ class CEConsumer:
             run_events=events_path,
             dialogue_full=dialogue_path,
             args=None,
-            analysis_runner=None,
+            analysis_runner=self._analysis_runner,
             event_emitter=None,
         )
 

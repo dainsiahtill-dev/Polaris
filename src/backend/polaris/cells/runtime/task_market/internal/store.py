@@ -171,8 +171,16 @@ class TaskMarketJSONStore:
         write_json_atomic(str(self._items_path), payload)
 
     def append_dead_letter(self, payload: dict[str, object]) -> None:
-        entries = self.load_dead_letters(limit=10_000)
-        entries.append(dict(payload))
+        record = dict(payload)
+        # Replace-by-task_id, matching the SQLite backend's INSERT OR
+        # REPLACE: a retried dead-letter (e.g. a cascade sweep replayed
+        # after an aborted batch save) must not append duplicates that
+        # eventually evict unrelated entries past the 10k window.
+        task_id = record.get("task_id")
+        entries = [
+            entry for entry in self.load_dead_letters(limit=10_000) if not (task_id and entry.get("task_id") == task_id)
+        ]
+        entries.append(record)
         data = {"schema_version": 1, "items": entries}
         self._root.mkdir(parents=True, exist_ok=True)
         write_json_atomic(str(self._dead_letters_path), data)

@@ -66,7 +66,9 @@ async def _authoritative(runtime: ToolBatchRuntime, call_id: str, path: str) -> 
     await runtime.execute_batch(ToolBatch(batch_id=BatchId("auth"), parallel_readonly=[_invocation(call_id, path)]))
 
 
-async def _measure(spec_on: bool, w_ms: int, d_ms: int, path: str, monkeypatch: pytest.MonkeyPatch) -> tuple[float, str]:
+async def _measure(
+    spec_on: bool, w_ms: int, d_ms: int, path: str, monkeypatch: pytest.MonkeyPatch
+) -> tuple[float, str]:
     monkeypatch.setenv("SPECULATION_EVAL_READ_DELAY_MS", str(d_ms))
     monkeypatch.setenv("SPECULATION_EVAL_READ_TIMEOUT_MS", str(max(60000, d_ms * 4)))
     runtime, engine, _ = _build(spec_on)
@@ -94,7 +96,9 @@ async def test_net_benefit_window_ge_delay_adopts_and_hides_delay(monkeypatch: p
     assert on_action == "adopt"
     net = off_dur - on_dur
     # 宽松下界：至少隐藏了 min(W,D) 的 40%（抗负载抖动），且 ON 明显快于 OFF。
-    assert net > 0.4 * min(w, d), f"net={net:.1f}ms expected > {0.4 * min(w, d):.1f}ms (on={on_dur:.1f} off={off_dur:.1f})"
+    assert net > 0.4 * min(w, d), (
+        f"net={net:.1f}ms expected > {0.4 * min(w, d):.1f}ms (on={on_dur:.1f} off={off_dur:.1f})"
+    )
 
 
 @pytest.mark.asyncio

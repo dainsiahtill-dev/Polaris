@@ -881,6 +881,8 @@ class RoleContextGateway:
                 "include_repo_identity": bool(getattr(self.policy, "include_repo_identity", True)),
                 # 侦察锚点卡（Phase-2 A7）：scout 定位持久化,默认开启。
                 "include_scout_anchors": bool(getattr(self.policy, "include_scout_anchors", True)),
+                # 施工步骤蓝图（三层裂变 I2）：弱执行者局部上帝视角,默认开启。
+                "include_blueprint_step": bool(getattr(self.policy, "include_blueprint_step", True)),
             },
             get_project_structure=self._get_project_structure,
             get_task_history=self._get_task_history,
@@ -891,6 +893,7 @@ class RoleContextGateway:
             get_blueprint_overview=lambda: self._get_blueprint_overview(str(request.task_id or "")),
             # verdict_history 同样只走配置注入的数据源，避免 kernel 反向依赖 QA owner Cell。
             get_verdict_history=lambda: self._get_verdict_history(str(request.task_id or "")),
+            get_blueprint_step=lambda: self._get_blueprint_step(request),
         )
         # 跨 turn freshness 记忆（按 task_id）：压力下断流"自上次注入未变化"的 nice-to-have，
         # 把窗口让给即时工具结果。无压力时 budget_pressure=False → 不断流 → 与旧实现逐字节一致。
@@ -1105,6 +1108,47 @@ class RoleContextGateway:
         except (RuntimeError, ValueError, OSError) as e:
             logger.debug(f"仓库身份卡构建失败: {e}")
             return None
+
+    @staticmethod
+    def _get_blueprint_step(request: Any) -> str | None:
+        """施工步骤卡（三层裂变 I2）：从请求上下文读取 construction_step。
+
+        有界注入：签名骨架 + 接口定名 + verify 判据 + 行数预算。严禁全文
+        （16k 窗口实证 W1.5c 后可用提示仅 ~5-6k tokens）。数据由 director
+        消费路径放入 context_override（市场 leaf 步任务的 payload 字段）。
+        """
+        context_override = getattr(request, "context_override", None)
+        if not isinstance(context_override, dict):
+            return None
+        step = context_override.get("construction_step")
+        if not isinstance(step, dict):
+            return None
+        lines: list[str] = []
+        step_id = str(step.get("step_id") or "").strip()
+        target_file = str(step.get("target_file") or "").strip()
+        if step_id or target_file:
+            est = step.get("est_lines")
+            lines.append(f"step {step_id}: {target_file}" + (f" (≤{est}行)" if est else ""))
+        signatures = [str(s).strip() for s in (step.get("signatures") or []) if str(s).strip()]
+        if signatures:
+            lines.append("signatures: " + "; ".join(signatures[:12]))
+        interfaces = [str(s).strip() for s in (step.get("interface_names") or []) if str(s).strip()]
+        if interfaces:
+            lines.append("interfaces: " + ", ".join(interfaces[:16]))
+        verify = str(step.get("verify") or "").strip()
+        if verify:
+            lines.append(f"verify: {verify}")
+        depends = [str(s).strip() for s in (step.get("depends_on") or []) if str(s).strip()]
+        if depends:
+            lines.append("depends_on(已完成): " + ", ".join(depends[:8]))
+        failure = context_override.get("last_failure")
+        if isinstance(failure, dict):
+            failure_message = str(failure.get("error_message") or "").strip()
+            failure_code = str(failure.get("error_code") or "").strip()
+            if failure_message or failure_code:
+                lines.append(f"上次尝试失败({failure_code}): {failure_message[:240]}")
+                lines.append("必须先修正失败原因，再写目标文件并产生实际变更；不要原样重写。")
+        return "\n".join(lines) or None
 
     def _get_scout_anchors(self) -> str | None:
         """侦察锚点卡（Phase-2 A7 定位持久化）。"""

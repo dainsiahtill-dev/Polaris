@@ -173,6 +173,19 @@ class TestExtractTaskDependencies:
         result = dispatch_pipeline._extract_task_dependencies(task)
         assert result == ("T-1", "T-2")
 
+    def test_unknown_refs_dropped_with_known_set(self) -> None:
+        """A planner ref to a task id outside the plan can never resolve on
+        the market — kept, it would strand the task at the exec readiness
+        gate as permanently unclaimable."""
+        task = {"id": "T-2", "depends_on": ["T-1", "GHOST", "T-3"]}
+        result = dispatch_pipeline._extract_task_dependencies(task, known_task_ids={"T-1", "T-2", "T-3"})
+        assert result == ("T-1", "T-3")
+
+    def test_no_filtering_without_known_set(self) -> None:
+        task = {"depends_on": ["T-1", "GHOST"]}
+        result = dispatch_pipeline._extract_task_dependencies(task)
+        assert result == ("T-1", "GHOST")
+
 
 class TestReadPositiveIntEnv:
     """Tests for _read_positive_int_env function."""

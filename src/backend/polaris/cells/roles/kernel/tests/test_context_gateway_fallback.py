@@ -510,3 +510,44 @@ class TestIntegration:
         override_msgs = [m for m in result.messages if m.get("name") == "context_override"]
         assert len(override_msgs) >= 1
         assert "safe_key: normal context" in override_msgs[0]["content"]
+
+
+class TestBlueprintStepCardRendering:
+    """施工步骤卡渲染（_get_blueprint_step 静态方法,有界注入）。"""
+
+    @staticmethod
+    def _render(context_override: dict) -> str | None:
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.kernel.internal.context_gateway.gateway import RoleContextGateway
+
+        return RoleContextGateway._get_blueprint_step(SimpleNamespace(context_override=context_override))
+
+    def test_step_card_includes_bounce_teaching(self) -> None:
+        """反弹教学(live I3-r10): QA verify 失败原因必须进重试上下文,
+        否则模型盲重试零变更死于 no_materialized_changes。"""
+        card = self._render(
+            {
+                "construction_step": {
+                    "step_id": "PM-1-S1",
+                    "target_file": "index.html",
+                    "est_lines": 30,
+                    "verify": "grep -q 'id=\"levelDisplay\"' ./index.html",
+                },
+                "last_failure": {
+                    "error_code": "QA_step_verify_failed",
+                    "error_message": "step verify failed (exit 1): grep -q 'id=\"levelDisplay\"'",
+                },
+            }
+        )
+        assert card is not None
+        assert "上次尝试失败(QA_step_verify_failed)" in card
+        assert "levelDisplay" in card
+        assert "不要原样重写" in card
+
+    def test_step_card_without_failure_has_no_teaching_line(self) -> None:
+        card = self._render(
+            {"construction_step": {"step_id": "PM-1-S1", "target_file": "a.md", "verify": "test -f a.md"}}
+        )
+        assert card is not None
+        assert "上次尝试失败" not in card
