@@ -205,3 +205,34 @@ def test_contract_assembly() -> None:
     assert contract["schema_version"] == CE_BLUEPRINT_TASKS_SCHEMA_VERSION
     assert contract["parent_task_id"] == "PM-1"
     assert contract["step_count"] == 1
+
+
+class TestTargetFileShape:
+    """对抗复核 D-fix: 非单文件相对路径的 target_file 会被执行侧 enum 钉靶拒绝,
+    必须在 CE 门拦下交给 corrective re-ask, 而不是烧掉一次 Director 尝试。"""
+
+    def test_glob_target_is_refused(self) -> None:
+        errors = validate_construction_steps(
+            [_step(target_file="src/*.js")],
+            parent_pm_task="PM-1",
+        )
+        assert any("single relative file path" in e for e in errors)
+
+    def test_comma_list_target_is_refused(self) -> None:
+        errors = validate_construction_steps(
+            [_step(target_file="a.js, b.js")],
+            parent_pm_task="PM-1",
+        )
+        assert any("single relative file path" in e for e in errors)
+
+    def test_absolute_and_escaping_targets_are_refused(self) -> None:
+        for target in ("/etc/passwd", "~/x.js", "../outside.js"):
+            errors = validate_construction_steps(
+                [_step(target_file=target)],
+                parent_pm_task="PM-1",
+            )
+            assert any("stay inside the workspace" in e for e in errors), target
+
+    def test_clean_subdir_target_passes(self) -> None:
+        steps = [_step(target_file="src/game/main.js")]
+        assert validate_construction_steps(steps, parent_pm_task="PM-1") == []

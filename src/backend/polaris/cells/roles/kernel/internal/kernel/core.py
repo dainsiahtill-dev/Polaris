@@ -1152,7 +1152,11 @@ class RoleExecutionKernel:
         response_schema: type | None,
     ) -> RoleTurnResult:
         """Execute a single turn via TransactionKernel and map to RoleTurnResult."""
-        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+            build_native_tool_schemas,
+            extract_declared_step_target_files,
+            pin_write_tool_file_param_to_targets,
+        )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
 
         tk = self._create_transaction_kernel(role, profile, request)
@@ -1180,6 +1184,13 @@ class RoleExecutionKernel:
             context_result=context_result,
             tool_definitions=tool_definitions,
         )
+        # Fix-11 (live I3-r9/r12): a fission step is single-file by contract —
+        # pin write tools' file-param enum to the declared target. Strict guided
+        # decoding (named tool forcing) makes a wrong-file write ungenerable;
+        # schema-advisory providers still see the strongest possible signal.
+        declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
+        if declared_step_targets:
+            tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
 
         try:
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
@@ -1356,7 +1367,11 @@ class RoleExecutionKernel:
         uep_publisher: UEPEventPublisher,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream execution via TransactionKernel (compatibility shim)."""
-        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+            build_native_tool_schemas,
+            extract_declared_step_target_files,
+            pin_write_tool_file_param_to_targets,
+        )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
         from polaris.cells.roles.kernel.public.turn_events import (
             CompletionEvent,
@@ -1392,6 +1407,13 @@ class RoleExecutionKernel:
             context_result=context_result,
             tool_definitions=tool_definitions,
         )
+        # Fix-11 (live I3-r9/r12): a fission step is single-file by contract —
+        # pin write tools' file-param enum to the declared target. Strict guided
+        # decoding (named tool forcing) makes a wrong-file write ungenerable;
+        # schema-advisory providers still see the strongest possible signal.
+        declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
+        if declared_step_targets:
+            tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
 
         accumulated_content: list[str] = []
         accumulated_thinking: list[str] = []

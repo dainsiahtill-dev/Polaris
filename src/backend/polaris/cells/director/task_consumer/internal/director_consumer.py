@@ -262,11 +262,24 @@ def _compact_director_adapter_summary(adapter_result: dict[str, Any]) -> dict[st
 
 
 def _adapter_failure_message(adapter_result: dict[str, Any]) -> str:
+    base = ""
     for key in ("error", "error_code", "root_cause_hint", "failure_stage"):
         value = str(adapter_result.get(key) or "").strip()
         if value:
-            return value
-    return "director_adapter_execution_failed"
+            base = value
+            break
+    if not base:
+        base = "director_adapter_execution_failed"
+    # Generic markers like director_materialization_quality_failed teach the
+    # next claimant nothing (live I3-r12) — carry the first concrete quality
+    # error so the bounce teaching names the actual failing check.
+    quality_errors = adapter_result.get("artifact_quality_errors")
+    if isinstance(quality_errors, (list, tuple)):
+        for entry in quality_errors:
+            detail = str(entry or "").strip()
+            if detail:
+                return f"{base}: {detail[:400]}"
+    return base
 
 
 def _build_director_adapter_input(task_id: str, payload: dict[str, Any], lease_token: str) -> dict[str, Any]:

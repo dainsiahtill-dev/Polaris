@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -950,6 +951,7 @@ async def _execute_standard_llm_flow(
             task=task,
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
             workspace_name=workspace_name,
+            context=context,
         )
         deterministic_quality_tool_results, deterministic_quality_summary = (
             _apply_deterministic_materialization_quality_repairs(
@@ -1266,7 +1268,9 @@ async def _execute_standard_llm_flow(
         task=task,
         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
         workspace_name=workspace_name,
+        context=context,
     )
+    artifact_quality_errors += _collect_step_verify_errors(adapter, context)
     # Progress-aware repair budget: the base budget is 2 attempts, but while
     # an attempt makes measurable progress on EITHER dimension — fewer missing
     # declared targets OR fewer quality errors overall — the loop keeps going
@@ -1316,7 +1320,9 @@ async def _execute_standard_llm_flow(
                 task=task,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
                 workspace_name=workspace_name,
+                context=context,
             )
+            artifact_quality_errors += _collect_step_verify_errors(adapter, context)
             if not artifact_quality_errors:
                 break
         repair_tool_results, quality_repair_summary = await _run_materialization_quality_repair_retry(
@@ -1351,7 +1357,9 @@ async def _execute_standard_llm_flow(
                 task=task,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
                 workspace_name=workspace_name,
+                context=context,
             )
+            artifact_quality_errors += _collect_step_verify_errors(adapter, context)
             if artifact_quality_errors:
                 deterministic_quality_tool_results, deterministic_quality_summary = (
                     _apply_deterministic_materialization_quality_repairs(
@@ -1380,7 +1388,9 @@ async def _execute_standard_llm_flow(
                         task=task,
                         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
                         workspace_name=workspace_name,
+                        context=context,
                     )
+                    artifact_quality_errors += _collect_step_verify_errors(adapter, context)
                     if not artifact_quality_errors:
                         break
     if artifact_quality_errors:
@@ -2385,18 +2395,147 @@ def _apply_deterministic_typescript_reexport_repair(
     return []
 
 
+_STATE_CARRYING_CLAUSE_RE = re.compile(r"^(?:cd|export|unset|umask|set)\b|^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
+    """Best-effort clause-level diagnosis for a failed step verify.
+
+    The full command stays the pass/fail ground truth; this only sharpens the
+    teaching message (live I3-r12: S2 passed 7/8 clauses but the model only saw
+    a 400-char command + exit 1 and could not tell WHICH check failed).
+    Clauses are re-run individually in fresh shells, so diagnosis is abandoned
+    whenever that could name a wrong clause: quoted text cut by the " && "
+    split (sh -n guard), top-level ``||`` regrouping, or state-carrying
+    clauses (cd/export/VAR=…) whose effects do not reach their successors in
+    a fresh shell — adversarial review reproduced a wrong-clause verdict for
+    exactly that shape, and a wrong teaching is worse than none.
+    """
+    if " || " in verify:
+        return ""
+    clauses = [part.strip() for part in verify.split(" && ") if part.strip()]
+    if len(clauses) < 2 or len(clauses) > 12:
+        return ""
+    for clause in clauses:
+        if _STATE_CARRYING_CLAUSE_RE.match(clause):
+            return ""
+        try:
+            syntax = subprocess.run(
+                ["/bin/sh", "-n", "-c", clause],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if syntax.returncode != 0:
+            return ""
+    for index, clause in enumerate(clauses, start=1):
+        try:
+            proc = subprocess.run(
+                clause,
+                shell=True,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if proc.returncode != 0:
+            return f"failing clause [{index}/{len(clauses)}]: {clause}"
+    return ""
+
+
+def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) -> list[str]:
+    """写后即查（三层裂变 DO 层自查）: run the construction step's machine
+    verify inside the execution turn so the repair ladder sees the failure
+    while the feedback loop is still seconds long — the exec→QA→bounce→exec
+    market round trip costs ~3 cycles (~30min) per blind retry (live I3-r11).
+    """
+    if not isinstance(context, dict):
+        return []
+    step = context.get("construction_step")
+    if not isinstance(step, dict):
+        return []
+    raw_verify = step.get("verify")
+    if isinstance(raw_verify, (list, tuple)):
+        verify = " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
+    else:
+        verify = str(raw_verify or "").strip()
+    if not verify:
+        return []
+    workspace = str(getattr(adapter, "workspace", "") or "")
+    if not workspace or not os.path.isdir(workspace):
+        return []
+    try:
+        proc = subprocess.run(
+            verify,
+            shell=True,
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [f"step verify could not run: {exc} :: {verify!r}"]
+    if proc.returncode == 0:
+        return []
+    output_tail = ((proc.stdout or "") + (proc.stderr or ""))[-300:]
+    clause_detail = _first_failing_verify_clause(verify, cwd=workspace)
+    # The actionable clause goes FIRST: downstream teaching channels truncate
+    # (fail_task_stage 600 chars, blueprint step card 240) and a long verify
+    # command would push the diagnosis off the visible end.
+    if clause_detail:
+        return [
+            f"step verify failed (exit {proc.returncode}) | {clause_detail} | full: {verify} :: {output_tail}".strip()
+        ]
+    return [f"step verify failed (exit {proc.returncode}): {verify} :: {output_tail}".strip()]
+
+
+def _single_file_step_target(source: Any) -> str:
+    """Pin-eligibility mirror of roles.kernel ``extract_declared_step_target_files``:
+    a single clean relative path, or "" when the turn is not a pinned step turn.
+    """
+    if not isinstance(source, dict):
+        return ""
+    step = source.get("construction_step")
+    if not isinstance(step, dict):
+        return ""
+    target = str(step.get("target_file") or "").strip()
+    if not target:
+        return ""
+    if any(ch in target for ch in ("*", "?", "[", "]", ",", " ", "\t", "\n", "\\")):
+        return ""
+    if target.startswith("/") or target.startswith("~") or ".." in target.split("/"):
+        return ""
+    return target.removeprefix("./")
+
+
 def _collect_materialization_quality_errors(
     adapter: Any,
     *,
     task: dict[str, Any],
     all_affected_files: list[str],
     workspace_name: str,
+    context: dict[str, Any] | None = None,
 ) -> list[str]:
     workspace_full = str(getattr(adapter, "workspace", "") or "")
-    quality_scan_paths = _materialization_quality_scan_paths_with_package_manifest(
-        workspace_full=workspace_full,
-        affected_files=all_affected_files,
-    )
+    step_target = _single_file_step_target(context) or _single_file_step_target(task)
+    if step_target:
+        # Adversarial-review C-fix: a pinned single-file step turn is judged
+        # only on the file it owns. Scanning package.json or other affected
+        # files would demand repairs the enum-pinned write tools cannot
+        # perform — a bounce loop that can never converge; junk in other
+        # files belongs to the steps that own them.
+        quality_scan_paths = [step_target]
+    else:
+        quality_scan_paths = _materialization_quality_scan_paths_with_package_manifest(
+            workspace_full=workspace_full,
+            affected_files=all_affected_files,
+        )
     errors = scan_workspace_artifact_quality(
         workspace_full,
         relative_paths=quality_scan_paths,

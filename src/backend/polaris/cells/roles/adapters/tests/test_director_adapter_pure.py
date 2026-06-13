@@ -4523,3 +4523,168 @@ class TestTruncatedFileDirective:
         )
         assert "SYNTAX REPAIR DIRECTIVE" in message
         assert "TRUNCATED FILE DIRECTIVE" not in message
+
+
+class TestCollectStepVerifyErrors:
+    """写后即查（Fix-9, live I3-r11）: step verify 必须在执行轮内跑进修复梯,
+    而不是等 exec→QA→bounce→exec 的市场往返(~30min/圈盲猜)。"""
+
+    @staticmethod
+    def _collect(context: Any, workspace: str) -> list[str]:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _collect_step_verify_errors,
+        )
+
+        return _collect_step_verify_errors(SimpleNamespace(workspace=workspace), context)
+
+    def test_non_step_context_is_noop(self, tmp_path: Any) -> None:
+        assert self._collect({}, str(tmp_path)) == []
+        assert self._collect(None, str(tmp_path)) == []
+        assert self._collect({"construction_step": {"target_file": "a.md"}}, str(tmp_path)) == []
+
+    def test_passing_verify_returns_no_errors(self, tmp_path: Any) -> None:
+        (tmp_path / "index.html").write_text('<canvas id="game-canvas"></canvas>', encoding="utf-8")
+        context = {"construction_step": {"verify": "test -f ./index.html && grep -q 'id=\"game-canvas\"' ./index.html"}}
+        assert self._collect(context, str(tmp_path)) == []
+
+    def test_failing_verify_yields_repairable_error(self, tmp_path: Any) -> None:
+        (tmp_path / "index.html").write_text('<canvas id="gameCanvas"></canvas>', encoding="utf-8")
+        context = {"construction_step": {"verify": "grep -q 'id=\"game-canvas\"' ./index.html"}}
+        errors = self._collect(context, str(tmp_path))
+        assert len(errors) == 1
+        assert "step verify failed" in errors[0]
+        assert "game-canvas" in errors[0]
+
+    def test_list_verify_joined(self, tmp_path: Any) -> None:
+        (tmp_path / "a.md").write_text("x", encoding="utf-8")
+        context = {"construction_step": {"verify": ["test -f ./a.md", "grep -q x ./a.md"]}}
+        assert self._collect(context, str(tmp_path)) == []
+
+    def test_failure_names_first_failing_clause(self, tmp_path: Any) -> None:
+        """Fix-10 (live I3-r12): S2 passed 7/8 clauses but teaching carried only
+        the whole command + exit 1 — the model could not tell WHICH check failed."""
+        (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")
+        context = {
+            "construction_step": {
+                "verify": (
+                    "test -f ./style.css && grep -q '#game' ./style.css && [ \"$(wc -l < ./style.css)\" -le 120 ]"
+                )
+            }
+        }
+        errors = self._collect(context, str(tmp_path))
+        assert len(errors) == 1
+        assert "failing clause [3/3]:" in errors[0]
+        assert "wc -l" in errors[0].split("failing clause", 1)[1]
+
+    def test_single_clause_failure_has_no_clause_suffix(self, tmp_path: Any) -> None:
+        context = {"construction_step": {"verify": "test -f ./missing.md"}}
+        errors = self._collect(context, str(tmp_path))
+        assert len(errors) == 1
+        assert "failing clause" not in errors[0]
+
+    def test_quoted_and_inside_pattern_aborts_clause_diagnosis(self, tmp_path: Any) -> None:
+        """Splitting on ' && ' cuts through the quoted pattern; the sh -n guard
+        must abandon diagnosis instead of naming a bogus clause."""
+        (tmp_path / "a.txt").write_text("plain\n", encoding="utf-8")
+        context = {"construction_step": {"verify": "grep -q 'a && b' ./a.txt && test -f ./a.txt"}}
+        errors = self._collect(context, str(tmp_path))
+        assert len(errors) == 1
+        assert "step verify failed" in errors[0]
+        assert "failing clause" not in errors[0]
+
+    def test_state_carrying_chain_aborts_clause_diagnosis(self, tmp_path: Any) -> None:
+        """Adversarial review (live repro): a cd/VAR= clause passes sh -n but its
+        successors re-run in a fresh shell against the wrong cwd/env — naming
+        a wrong clause actively misleads the next attempt."""
+        sub = tmp_path / "src"
+        sub.mkdir()
+        (sub / "app.js").write_text("bar\n", encoding="utf-8")
+        for verify in (
+            "cd src && test -f app.js && grep -q foo app.js",
+            'X=1 && [ "$X" = 1 ] && test -f missing.txt',
+            "export V=2 && test -f missing.txt",
+        ):
+            errors = self._collect({"construction_step": {"verify": verify}}, str(tmp_path))
+            assert len(errors) == 1, verify
+            assert "failing clause" not in errors[0], verify
+
+    def test_top_level_or_chain_aborts_clause_diagnosis(self, tmp_path: Any) -> None:
+        context = {"construction_step": {"verify": "test -f ./a.txt && grep -q x ./a.txt || test -f ./b.txt"}}
+        errors = self._collect(context, str(tmp_path))
+        assert len(errors) == 1
+        assert "failing clause" not in errors[0]
+
+    def test_clause_detail_precedes_full_command_in_message(self, tmp_path: Any) -> None:
+        """Teaching channels truncate (step card 240 chars) — the actionable
+        clause must come before the potentially long full command."""
+        (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")
+        verify = 'test -f ./style.css && [ "$(wc -l < ./style.css)" -le 120 ]'
+        errors = self._collect({"construction_step": {"verify": verify}}, str(tmp_path))
+        assert len(errors) == 1
+        assert errors[0].index("failing clause") < errors[0].index("full:")
+
+
+class TestSingleFileStepTarget:
+    """对抗复核 C-fix: 钉靶步轮的质量门只裁决该步拥有的文件 — package.json 等
+    其他文件的旧垃圾会要求被钉死的写工具做不到的修复, 反弹环永不收敛。"""
+
+    @staticmethod
+    def _target(source: Any) -> str:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _single_file_step_target,
+        )
+
+        return _single_file_step_target(source)
+
+    def test_clean_step_target_is_extracted(self) -> None:
+        assert self._target({"construction_step": {"target_file": "./style.css"}}) == "style.css"
+
+    def test_malformed_targets_are_refused(self) -> None:
+        for target in ("src/*.js", "a.js, b.js", "/etc/passwd", "../x.js"):
+            assert self._target({"construction_step": {"target_file": target}}) == "", target
+
+    def test_non_step_sources_are_refused(self) -> None:
+        assert self._target(None) == ""
+        assert self._target({}) == ""
+        assert self._target({"construction_step": {}}) == ""
+
+    def test_quality_scan_is_scoped_to_step_target(self, tmp_path: Any, monkeypatch: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director import execute_method
+
+        seen: dict[str, Any] = {}
+
+        def _capture(workspace: str, relative_paths: list[str] | None = None) -> list[str]:
+            seen["paths"] = list(relative_paths or [])
+            return []
+
+        monkeypatch.setattr(execute_method, "scan_workspace_artifact_quality", _capture)
+        adapter = SimpleNamespace(workspace=str(tmp_path))
+        context = {"construction_step": {"target_file": "style.css"}}
+        execute_method._collect_materialization_quality_errors(
+            adapter,
+            task={"task_id": "PM-1-S2"},
+            all_affected_files=["style.css", "main.js", "package.json"],
+            workspace_name="ws",
+            context=context,
+        )
+        assert seen["paths"] == ["style.css"]
+
+    def test_non_step_turn_keeps_full_scan_scope(self, tmp_path: Any, monkeypatch: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director import execute_method
+
+        seen: dict[str, Any] = {}
+
+        def _capture(workspace: str, relative_paths: list[str] | None = None) -> list[str]:
+            seen["paths"] = list(relative_paths or [])
+            return []
+
+        monkeypatch.setattr(execute_method, "scan_workspace_artifact_quality", _capture)
+        adapter = SimpleNamespace(workspace=str(tmp_path))
+        execute_method._collect_materialization_quality_errors(
+            adapter,
+            task={"task_id": "T-1"},
+            all_affected_files=["a.js", "b.js"],
+            workspace_name="ws",
+            context={"run_id": "r"},
+        )
+        assert set(seen["paths"]) >= {"a.js", "b.js"}

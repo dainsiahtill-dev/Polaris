@@ -83,6 +83,74 @@ context → 蓝图步骤卡渲染「上次尝试失败(代码): 消息 + 不要�
   串行模式从未达到的语法干净多文件工件——三层分解的「智能上移、执行下沉」假设在 L2-12 上成立。
 - **代价**：墙钟 6× 于串行（失败步重试 + 串行轮询）。降低路径：durable 模式 worker 池并发（设计已有）、
   失败步教学性 re-ask（W 队列）、步粒度再校准。
-- **r11（运行中，八修齐上）**：在 r10 已验证的市场机制之上，verify 形态归一消除契约投毒、
-  反弹教学使 QA→exec 重试闭环可收敛（含接口定名漂移的纠偏通道）。
-  判定标准不变：步级成功率 ≥5/7 且零假阳性 resolved。
+- **r11（八修）**：1/9 真 resolved（PM-0001-2-S1 经真实 verify 执行后 QA PASS——Fix-7 生效）；
+  反弹教学链全程贯通（教学卡在 Director prompt 渲染 7 次，含完整 verify 命令）。
+  残余结构性根因：**反馈环太长**——exec→QA→bounce→exec 一圈 ~3 个市场周期（~30min），
+  27B 每圈只有一次盲猜机会，接口定名（合同 `id="game-canvas"` vs 模型习惯 camelCase）纠不过来。
+- **Fix-9（写后即查——蓝图 §2 原设计终于接线）**：`construction_step.verify` 接入 Director 执行轮内的
+  质量修复梯（`_collect_step_verify_errors` 进 4 个质量错误采集点）——verify 失败在**秒级**反馈给修复轮，
+  复用进度感知预算/修复指令全套既有机制；残错走 `director_materialization_quality_failed` 市场兜底。
+- **r12（运行中，九修齐上）**：判定标准不变：步级成功率 ≥5/7 且零假阳性 resolved。
+  中段法医（S2 死信链）实锤新层根因并当日落地 **Fix-10/11**：
+  - **r12 现场证据**：S2（style.css）**7/8 个 verify 子句全过，只差 `wc -l ≤ 120`**（写超 158 行），
+    但执行轮教学只给整条 400 字符命令 + exit 1，市场反弹教学只有泛化标记
+    `director_materialization_quality_failed`——模型修齐了 7 个选择器检查却不知道要删行，
+    第 3 次尝试零 diff 重写 → EXEC_NO_EVIDENCE 死信，S3/S4 级联清扫（机制正确，零搁浅）。
+  - **Fix-10（子句级 verify 诊断，三落点）**：失败时逐子句二分定位，教学消息**前置**
+    `failing clause [k/n]: …`（步骤卡 240 字截断保护）；市场反弹消息携带第一条具体质量错误。
+    诊断只增锐教学、整条命令仍是判定真相；引号切坏（sh -n 门）/状态承载子句（cd/VAR=）/顶层 `||`
+    一律放弃诊断——对抗复核实证「点名错误子句」比不教更糟。
+  - **Fix-11（target_file enum 钉靶）**：把步契约 target_file（含 `./` 变体）钉进 5 个写工具
+    `file`/`path`/`filepath`/`file_path` 参数的 enum，接线在 6 个 schema 构建点——严格集/强制集
+    是构建集的名字过滤子集，故全逃逸梯贯穿、**首次尝试即生效**（r9-S1 假阳性正是首试写错文件）。
+    W1.10 行替换收窄改为保留源 file enum（组合性）。CE 门同步验形 target_file
+    （glob/逗号表/绝对路径 → corrective re-ask），执行侧对畸形目标拒钉（安全降级）。
+    已知残口：edit_blocks 的 blocks 字符串内嵌 `:filepath`、`execute_command`/`repo_apply_diff`
+    不受 enum 约束——由步靶证据门 + QA verify 兜底。
+  - 对抗复核（12 agents，3 lens + 逐发现反驳验证）抓 5 实锤全修、2 主张被反驳组否决；
+    回归 2675 + 1731 全绿。
+
+## 7. r12 终局（九修）：3/8 真 resolved、零假阳性 + 第十二修
+
+**r12 数字**（forensics）：8 步（4+4 裂变，CE 门零误杀），**3/8 resolved（37.5%）、零假阳性**，
+墙钟 5699s（exec 段 5636s），9 attempts / 4 requeues 被市场吸收，7 死信
+（2 根因 + 3 依赖级联 + 2 父归并，级联/归并/lineage 报告全部正确开火）。
+三个 resolved 步（1-S1 index.html / 2-S1 重启版 index.html / 2-S4 readme）全部**首试一次过 +
+QA verify 真实裁决**——轮内写后即查（Fix-9）下，契约干净的步不再需要市场重试。
+
+**两个根因死信，各自实锤一个已修/新修缺陷**：
+
+1. **1-S2（style.css）**：7/8 verify 子句全过、只差 `wc -l ≤ 120`（写到 158 行），教学盲 →
+   第 3 次零 diff 重写 EXEC_NO_EVIDENCE。——**Fix-10 的活体动机**（子句级教学会直接点名删行）。
+2. **2-S2（main.js LEVELS）**：第 3 次尝试死于
+   `Prompt exceeds model context window even after compression. requested=9349, allowed=4659, compressed=4978`
+   ——反弹教学+修复轮上下文累积膨胀，压缩后**仅差 319 token** 仍被整轮 raise RuntimeError。
+   法医揭出 `prompt_budget._enforce_with_budget` 的**不对称缺陷**：already_compressed 分支超额时
+   hard-trim 降级放行，首轮压缩分支超额时却 allowed=False 硬拒。
+   **Fix-12**：首轮压缩不足时对压缩产物 hard-trim 降级放行（strategy 加 `+hard_trim`、
+   quality_flag=degraded）——degraded prompt 严格优于必败的整轮失败。77 测试绿。
+
+**r13（十二修：九修 + Fix-10 子句教学 + Fix-11 enum 钉靶 + Fix-12 预算 fail-open）**：
+判定标准不变：步级成功率 ≥5/7（8 步制 ≥6/8）且零假阳性 resolved。
+
+## 8. r13 终局（十二修）：创建模式 4/4 全绿、编辑模式 0/5——失败面收敛为单一行为模式
+
+**r13 数字**：9 步（4+5 裂变），**4/9 resolved、零假阳性，墙钟 3152s**（r12 5699s 近乎减半，
+对串行基线从 6× 降到 ~2.9×）。7 attempts / 2 requeues，CE 门零误杀。
+
+**决定性分裂**：
+- **任务 1（创建模式）4/4 全部首试一次过 + QA PASS——含两个历史死点**
+  （style-sheet = r11/r12 的 wc-l 死点；game-core = r9/r12 的 main.js 死点）。
+  **父任务首次完整 resolved（4/4 子步全绿 reconciled）**。r12 的两类根因死亡
+  （教学盲、预算硬炸）在十二修下零复发。工件：index.html 40 行 + style.css 224 行 +
+  main.js **354 行 node --check 干净** + readme 62 行。
+- **任务 2（编辑模式）0/5**：2-S1（向已完成的 main.js 追加 LEVELS）三次尝试
+  全部零物化变更（EXEC_NO_EVIDENCE×3——模型读到完整 main.js 判定「已完成」
+  拒绝动笔），S2–S5 级联清扫。**三次重试零新信息**——理论报告法则 4
+  （零新信息重试 ≈ 纯浪费）迄今最纯净的活体标本。
+
+**结论**：十二修把「创建模式」做到了 100% 首试通过率；残余失败面收敛为单一
+行为模式 = **弱模型的编辑回避**（edit-reluctance）。对策已在理论报告工程预测中排队：
+T2 残差教学的**前摄变体**（领取时即在步骤卡渲染「当前盘上 verify 失败的子句清单」，
+把"编辑既有文件"转译为"补齐这些缺失项"）、信息门控重试 + 多样性阶梯
+（attempt-3 强制换执行形态）、pending_ce_revision 降率出口。

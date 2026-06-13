@@ -73,6 +73,21 @@ def normalize_construction_step(raw: Any, *, parent_pm_task: str, index: int) ->
     }
 
 
+def _target_file_shape_error(target_file: str) -> str:
+    """Reject targets that are not a single clean relative path.
+
+    A glob, comma list, or absolute path passing this gate would (a) burn a
+    Director attempt on an unwritable contract and (b) be refused by the
+    executor-side enum pinning, leaving the step permanently unguided —
+    malformed targets must be fixed by the CE corrective re-ask instead.
+    """
+    if any(ch in target_file for ch in ("*", "?", "[", "]", ",", " ", "\t", "\n")):
+        return f"target_file {target_file!r} must be a single relative file path (no globs/lists)"
+    if target_file.startswith(("/", "~")) or ".." in target_file.split("/"):
+        return f"target_file {target_file!r} must stay inside the workspace (relative, no '..')"
+    return ""
+
+
 def validate_construction_steps(
     steps: list[dict[str, Any]],
     *,
@@ -98,8 +113,13 @@ def validate_construction_steps(
         elif step_id in seen_ids:
             errors.append(f"{label}: duplicate step_id")
         seen_ids.add(step_id)
-        if not str(step.get("target_file") or "").strip():
+        target_file = str(step.get("target_file") or "").strip()
+        if not target_file:
             errors.append(f"{label}: step requires exactly one target_file")
+        else:
+            shape_error = _target_file_shape_error(target_file)
+            if shape_error:
+                errors.append(f"{label}: {shape_error}")
         est_lines = int(step.get("est_lines") or 0)
         if est_lines <= 0:
             errors.append(f"{label}: est_lines must be a positive estimate")

@@ -170,7 +170,22 @@ def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict]) -> lis
             "code for that range). Line numbers are 1-based inclusive — reuse the "
             "exact range you already read via repo_read_slice/read_file."
         )
-        rewritten_function["parameters"] = dict(_LINE_RANGE_EDIT_BLOCKS_PARAMETERS)
+        narrowed_parameters = dict(_LINE_RANGE_EDIT_BLOCKS_PARAMETERS)
+        # Fix-11 composability: a step-pinned `file` enum (single-target fission
+        # step) must survive the wholesale line-range rewrite — losing it at the
+        # most-forced attempt would reopen the wrong-file escape exactly when
+        # guided decoding is strictest.
+        source_parameters = function_payload.get("parameters") if isinstance(function_payload, dict) else None
+        source_properties = source_parameters.get("properties") if isinstance(source_parameters, dict) else None
+        source_file_schema = source_properties.get("file") if isinstance(source_properties, dict) else None
+        if isinstance(source_file_schema, dict) and isinstance(source_file_schema.get("enum"), list):
+            narrowed_properties = dict(narrowed_parameters["properties"])
+            narrowed_properties["file"] = {
+                **narrowed_properties["file"],
+                "enum": list(source_file_schema["enum"]),
+            }
+            narrowed_parameters["properties"] = narrowed_properties
+        rewritten_function["parameters"] = narrowed_parameters
         rewritten["function"] = rewritten_function
         narrowed.append(rewritten)
     return narrowed

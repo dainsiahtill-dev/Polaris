@@ -609,7 +609,11 @@ class TurnEngine(TurnEngineCompatMixin):
         response_model: type | None = None,
     ) -> RoleTurnResult:
         """非流式执行主入口 — 委托给 TransactionKernel。"""
-        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+            build_native_tool_schemas,
+            extract_declared_step_target_files,
+            pin_write_tool_file_param_to_targets,
+        )
         from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
 
@@ -654,6 +658,13 @@ class TurnEngine(TurnEngineCompatMixin):
         messages: list[dict[str, Any]] = list(context_result.messages)
 
         tool_definitions = build_native_tool_schemas(profile)
+        # Fix-11 (live I3-r9/r12): a fission step is single-file by contract —
+        # pin write tools' file-param enum to the declared target. Strict guided
+        # decoding (named tool forcing) makes a wrong-file write ungenerable;
+        # schema-advisory providers still see the strongest possible signal.
+        declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
+        if declared_step_targets:
+            tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
 
         tk = self._create_transaction_kernel(role, profile, request)
         turn_id = str(request.run_id or uuid.uuid4().hex[:12])
@@ -857,7 +868,11 @@ class TurnEngine(TurnEngineCompatMixin):
         response_model: type | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """流式执行主入口 — 委托给 TransactionKernel.execute_stream()。"""
-        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+            build_native_tool_schemas,
+            extract_declared_step_target_files,
+            pin_write_tool_file_param_to_targets,
+        )
         from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
         from polaris.cells.roles.kernel.public.turn_events import (
@@ -905,6 +920,13 @@ class TurnEngine(TurnEngineCompatMixin):
         messages: list[dict[str, Any]] = list(context_result.messages)
 
         tool_definitions = build_native_tool_schemas(profile)
+        # Fix-11 (live I3-r9/r12): a fission step is single-file by contract —
+        # pin write tools' file-param enum to the declared target. Strict guided
+        # decoding (named tool forcing) makes a wrong-file write ungenerable;
+        # schema-advisory providers still see the strongest possible signal.
+        declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
+        if declared_step_targets:
+            tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
 
         tk = self._create_transaction_kernel(role, profile, request)
         turn_id = str(request.run_id or stream_run_id or uuid.uuid4().hex[:12])

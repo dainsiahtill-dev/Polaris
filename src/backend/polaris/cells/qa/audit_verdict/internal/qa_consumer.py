@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import threading
 from typing import Any
@@ -228,6 +229,59 @@ def _extract_fallback_audit_files(payload: dict[str, Any]) -> list[str]:
     return _collect_payload_paths(payload, ("target_files", "scope_paths", "scope"))
 
 
+_STATE_CARRYING_CLAUSE_RE = re.compile(r"^(?:cd|export|unset|umask|set)\b|^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
+    """Best-effort clause-level diagnosis for a failed step verify.
+
+    Defensive mirror of the director adapter's diagnosis (live I3-r12: a step
+    passed 7/8 verify clauses but the bounce teaching only carried the whole
+    command + exit 1, so the executor could not tell WHICH check failed).
+    The full command stays the pass/fail ground truth. Clauses are re-run
+    individually in fresh shells, so diagnosis is abandoned whenever that
+    could name a wrong clause: quoted text cut by the " && " split (sh -n
+    guard), top-level ``||`` regrouping, or state-carrying clauses
+    (cd/export/VAR=…) whose effects do not reach their successors in a fresh
+    shell — a wrong teaching is worse than none.
+    """
+    if " || " in verify:
+        return ""
+    clauses = [part.strip() for part in verify.split(" && ") if part.strip()]
+    if len(clauses) < 2 or len(clauses) > 12:
+        return ""
+    for clause in clauses:
+        if _STATE_CARRYING_CLAUSE_RE.match(clause):
+            return ""
+        try:
+            syntax = subprocess.run(
+                ["/bin/sh", "-n", "-c", clause],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if syntax.returncode != 0:
+            return ""
+    for index, clause in enumerate(clauses, start=1):
+        try:
+            proc = subprocess.run(
+                clause,
+                shell=True,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if proc.returncode != 0:
+            return f"failing clause [{index}/{len(clauses)}]: {clause}"
+    return ""
+
+
 class QAConsumer:
     """QA consumer for PENDING_QA tasks.
 
@@ -330,6 +384,12 @@ class QAConsumer:
         if proc.returncode == 0:
             return ""
         output_tail = ((proc.stdout or "") + (proc.stderr or ""))[-400:]
+        clause_detail = _first_failing_verify_clause(verify, cwd=self._workspace)
+        # The actionable clause goes FIRST: downstream teaching channels
+        # truncate (fail_task_stage 600 chars, blueprint step card 240) and a
+        # long verify command would push the diagnosis off the visible end.
+        if clause_detail:
+            return f"step verify failed (exit {proc.returncode}) | {clause_detail} | full: {verify!r} :: {output_tail}".strip()
         return f"step verify failed (exit {proc.returncode}): {verify!r} :: {output_tail}".strip()
 
     def _claim_and_process_one(self) -> dict[str, Any] | None:

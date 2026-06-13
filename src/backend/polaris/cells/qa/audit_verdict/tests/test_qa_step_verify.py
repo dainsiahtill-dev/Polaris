@@ -43,6 +43,53 @@ class TestRunStepVerify:
         assert "step verify failed" in failure
         assert "absent.md" in failure
 
+    def test_failure_names_first_failing_clause(self, tmp_path: Path) -> None:
+        """Fix-10 (live I3-r12): the bounce teaching must name WHICH clause
+        failed — a 7/8-pass step is indistinguishable from a 0/8 one otherwise."""
+        (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")
+        consumer = self._consumer(tmp_path)
+        payload = {
+            "construction_step": {
+                "verify": (
+                    "test -f ./style.css && grep -q '#game' ./style.css && [ \"$(wc -l < ./style.css)\" -le 120 ]"
+                )
+            }
+        }
+        failure = consumer._run_step_verify(payload)
+        assert "failing clause [3/3]:" in failure
+        assert "wc -l" in failure.split("failing clause", 1)[1]
+
+    def test_quoted_and_inside_pattern_aborts_clause_diagnosis(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("plain\n", encoding="utf-8")
+        consumer = self._consumer(tmp_path)
+        payload = {"construction_step": {"verify": "grep -q 'a && b' ./a.txt && test -f ./a.txt"}}
+        failure = consumer._run_step_verify(payload)
+        assert "step verify failed" in failure
+        assert "failing clause" not in failure
+
+    def test_state_carrying_chain_aborts_clause_diagnosis(self, tmp_path: Path) -> None:
+        """Adversarial review (live repro): cd/VAR= clauses re-run in fresh
+        shells against the wrong cwd/env — a wrong clause verdict misleads."""
+        sub = tmp_path / "src"
+        sub.mkdir()
+        (sub / "app.js").write_text("bar\n", encoding="utf-8")
+        consumer = self._consumer(tmp_path)
+        for verify in (
+            "cd src && test -f app.js && grep -q foo app.js",
+            'X=1 && [ "$X" = 1 ] && test -f missing.txt',
+            "test -f ./a.txt && grep -q x ./a.txt || test -f ./b.txt",
+        ):
+            failure = consumer._run_step_verify({"construction_step": {"verify": verify}})
+            assert "step verify failed" in failure, verify
+            assert "failing clause" not in failure, verify
+
+    def test_clause_detail_precedes_full_command_in_message(self, tmp_path: Path) -> None:
+        (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")
+        consumer = self._consumer(tmp_path)
+        verify = 'test -f ./style.css && [ "$(wc -l < ./style.css)" -le 120 ]'
+        failure = consumer._run_step_verify({"construction_step": {"verify": verify}})
+        assert failure.index("failing clause") < failure.index("full:")
+
 
 def test_failing_step_verify_requeues_to_pending_exec(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"

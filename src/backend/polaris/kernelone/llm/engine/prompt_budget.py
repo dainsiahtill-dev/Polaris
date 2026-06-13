@@ -503,10 +503,25 @@ class TokenBudgetManager:
         if compression_result.quality_flag != "degraded":
             compression_result.quality_flag = self._quality_from_ratio(compression_result.drop_ratio)
 
-        # 6. 压缩后仍超？拒绝
+        # 6. 压缩后仍超？硬截断兜底放行（对齐 step 4 的 already_compressed 分支）。
+        # 旧行为是 allowed=False → 上游 core.py 把整轮 raise RuntimeError——
+        # live I3-r12: 修复轮反弹教学累积后压缩仅差 319 token, 整轮被烧、
+        # 步预算耗尽死信。degraded prompt 严格优于必败的整轮失败。
         if compressed_tokens > allowed_prompt_tokens:
+            hard_trimmed = self._hard_trim(compressed_text, allowed_prompt_tokens)
+            hard_trimmed_tokens = TokenEstimator.estimate(hard_trimmed, content_type=content_type)
+            compression_result.compressed_input = hard_trimmed
+            compression_result.compressed_tokens = hard_trimmed_tokens
+            compression_result.strategy = f"{compression_result.strategy}+hard_trim"
+            compression_result.quality_flag = "degraded"
+            compression_result.drop_ratio = self._drop_ratio(requested_prompt_tokens, hard_trimmed_tokens)
+            compression_result.notes = [
+                *list(compression_result.notes or []),
+                "compressed output still exceeded budget",
+                "applied hard trim fallback",
+            ]
             return TokenBudgetDecision(
-                allowed=False,
+                allowed=True,
                 max_context_tokens=max_context_tokens,
                 allowed_prompt_tokens=allowed_prompt_tokens,
                 requested_prompt_tokens=requested_prompt_tokens,
@@ -515,11 +530,6 @@ class TokenBudgetManager:
                 overhead_tokens=overhead,
                 compression_applied=True,
                 compression=compression_result,
-                error=(
-                    f"Prompt exceeds model context window even after compression. "
-                    f"requested={requested_prompt_tokens}, allowed={allowed_prompt_tokens}, "
-                    f"compressed={compressed_tokens}"
-                ),
             )
 
         return TokenBudgetDecision(

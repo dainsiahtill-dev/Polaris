@@ -774,3 +774,43 @@ class TestDirectorExecutionConsumerRunStop:
 
         assert poll_count >= 4
         assert not thread.is_alive()
+
+
+class TestAdapterFailureMessage:
+    """Fix-10 (live I3-r12): the market bounce carried only the generic
+    director_materialization_quality_failed marker — the next claimant learned
+    nothing. The message must name the first concrete quality error."""
+
+    @staticmethod
+    def _message(adapter_result: dict[str, Any]) -> str:
+        from polaris.cells.director.task_consumer.internal.director_consumer import (
+            _adapter_failure_message,
+        )
+
+        return _adapter_failure_message(adapter_result)
+
+    def test_carries_first_quality_error_detail(self) -> None:
+        message = self._message(
+            {
+                "error": "director_materialization_quality_failed",
+                "artifact_quality_errors": [
+                    'step verify failed (exit 1): ... | failing clause [3/3]: [ "$(wc -l < ./style.css)" -le 120 ]',
+                    "second error",
+                ],
+            }
+        )
+        assert message.startswith("director_materialization_quality_failed: ")
+        assert "failing clause [3/3]" in message
+
+    def test_detail_is_truncated(self) -> None:
+        message = self._message(
+            {"error": "director_materialization_quality_failed", "artifact_quality_errors": ["x" * 1000]}
+        )
+        assert len(message) <= len("director_materialization_quality_failed: ") + 400
+
+    def test_without_quality_errors_keeps_marker_only(self) -> None:
+        assert self._message({"error": "boom"}) == "boom"
+        assert self._message({"artifact_quality_errors": []}) == "director_adapter_execution_failed"
+
+    def test_blank_quality_entries_are_skipped(self) -> None:
+        assert self._message({"error": "boom", "artifact_quality_errors": ["", None]}) == "boom"

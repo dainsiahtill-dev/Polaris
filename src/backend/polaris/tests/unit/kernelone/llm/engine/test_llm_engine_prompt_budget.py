@@ -287,3 +287,35 @@ class TestTokenBudgetManagerQualityFromRatio:
         mgr = TokenBudgetManager()
         assert mgr._quality_from_ratio(0.8) == "degraded"
         assert mgr._quality_from_ratio(1.0) == "degraded"
+
+
+class TestCompressionInsufficientHardTrimFallback:
+    """Live I3-r12: 修复轮反弹教学累积后, 压缩距预算仅差 319 token, 旧的
+    allowed=False 让上游把整轮 raise RuntimeError——步预算被烧尽死信。
+    压缩不够时必须对齐 already_compressed 分支: 硬截断 degraded 放行。"""
+
+    def test_insufficient_compression_hard_trims_and_allows(self, monkeypatch) -> None:
+        def _ineffective(self, text, allowed_tokens, *, content_type="general", compression_history=None):
+            return text, CompressionResult(
+                compressed_input=text,
+                original_tokens=0,
+                compressed_tokens=0,
+                strategy="noop",
+                quality_flag="ok",
+            )
+
+        monkeypatch.setattr(CompressionRouter, "route_and_compress", _ineffective)
+        mgr = TokenBudgetManager()
+        spec = ModelSpec(
+            provider_id="test", provider_type="test", model="test", max_context_tokens=512, max_output_tokens=128
+        )
+        decision = mgr.enforce("word " * 4000, spec)
+
+        assert decision.allowed is True
+        assert decision.error is None
+        assert decision.compression_applied is True
+        assert decision.compression is not None
+        assert decision.compression.strategy.endswith("+hard_trim")
+        assert decision.compression.quality_flag == "degraded"
+        assert decision.compression.compressed_tokens <= decision.allowed_prompt_tokens
+        assert "applied hard trim fallback" in (decision.compression.notes or [])
