@@ -551,3 +551,64 @@ class TestBlueprintStepCardRendering:
         )
         assert card is not None
         assert "上次尝试失败" not in card
+
+
+class TestPunchListCardRendering:
+    """Fix-13 缺陷清单渲染: 改建式步骤的施工单携带现状勘察 ——
+    live I3-r13 编辑模式 0/5: 没有清单, 模型见完整文件即拒绝动笔。"""
+
+    @staticmethod
+    def _render(context_override: dict) -> str | None:
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.kernel.internal.context_gateway.gateway import RoleContextGateway
+
+        return RoleContextGateway._get_blueprint_step(SimpleNamespace(context_override=context_override))
+
+    def test_failing_clauses_render_as_numbered_punch_list(self) -> None:
+        card = self._render(
+            {
+                "construction_step": {"step_id": "PM-1-S1", "target_file": "main.js"},
+                "pre_state_verify": {
+                    "exit_code": 1,
+                    "total_clauses": 4,
+                    "failing_clauses": [
+                        "grep -q 'const LEVELS' ./main.js",
+                        "grep -q 'function loadLevel' ./main.js",
+                    ],
+                },
+            }
+        )
+        assert card is not None
+        assert "缺陷清单" in card
+        assert "缺 2/4 项" in card
+        assert "缺1: grep -q 'const LEVELS' ./main.js" in card
+        assert "缺2: grep -q 'function loadLevel' ./main.js" in card
+        assert "文件已存在不等于任务完成" in card
+
+    def test_whole_failure_without_clause_list_still_demands_changes(self) -> None:
+        card = self._render(
+            {
+                "construction_step": {"step_id": "PM-1-S1", "target_file": "main.js"},
+                "pre_state_verify": {"exit_code": 1, "total_clauses": 2, "failing_clauses": []},
+            }
+        )
+        assert card is not None
+        assert "验收判据当前未通过" in card
+        assert "不产生变更将被拒收" in card
+
+    def test_passing_pre_state_warns_against_noop(self) -> None:
+        card = self._render(
+            {
+                "construction_step": {"step_id": "PM-1-S1", "target_file": "main.js"},
+                "pre_state_verify": {"exit_code": 0, "total_clauses": 2, "failing_clauses": []},
+            }
+        )
+        assert card is not None
+        assert "已通过" in card
+        assert "不产生任何文件变更将被拒收" in card
+
+    def test_card_without_pre_state_is_unchanged(self) -> None:
+        card = self._render({"construction_step": {"step_id": "PM-1-S1", "target_file": "main.js"}})
+        assert card is not None
+        assert "现状勘察" not in card

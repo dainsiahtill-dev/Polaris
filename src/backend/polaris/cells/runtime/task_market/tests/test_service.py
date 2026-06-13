@@ -1713,6 +1713,92 @@ class TestExecClaimReadinessGate:
         assert again.ok is False  # demoted parent is a supervision row now
 
 
+class TestDesignClaimOrderingGate:
+    """组合律 (live I3-r14): a pending_design parent that depends_on another
+    parent must not fission until the producer parent has left design, so the
+    interface ledger is populated before the consumer reads it."""
+
+    @staticmethod
+    def _publish_design(
+        service: TaskMarketService,
+        workspace: Path,
+        task_id: str,
+        *,
+        depends_on: tuple[str, ...] = (),
+    ) -> None:
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id=f"tr-{task_id}",
+                run_id="run-design",
+                task_id=task_id,
+                stage="pending_design",
+                source_role="pm",
+                payload={"title": task_id},
+                is_leaf=True,
+                depends_on=tuple(depends_on),
+            )
+        )
+
+    @staticmethod
+    def _claim_design(service: TaskMarketService, workspace: Path) -> TaskWorkItemResultV1:
+        return service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_design",
+                worker_id="ce-1",
+                worker_role="chief_engineer",
+            )
+        )
+
+    def test_consumer_parent_waits_for_producer_to_leave_design(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish_design(service, workspace, "PM-1")
+        self._publish_design(service, workspace, "PM-2", depends_on=("PM-1",))
+        # Producer must be claimed first; consumer is gated while PM-1 is in design.
+        first = self._claim_design(service, workspace)
+        assert first.task_id == "PM-1"
+        blocked = self._claim_design(service, workspace)
+        assert blocked.ok is False
+        # PM-1 fissions (advances to pending_exec) → PM-2 becomes claimable.
+        service.acknowledge_task_stage(
+            AcknowledgeTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="PM-1",
+                lease_token=first.lease_token,
+                next_stage="pending_exec",
+                summary="fissioned",
+                metadata={"is_leaf": False, "fission_step_count": 2},
+            )
+        )
+        third = self._claim_design(service, workspace)
+        assert third.ok is True
+        assert third.task_id == "PM-2"
+
+    def test_independent_parents_not_blocked(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish_design(service, workspace, "PM-A")
+        self._publish_design(service, workspace, "PM-B")
+        first = self._claim_design(service, workspace)
+        assert first.ok is True
+        second = self._claim_design(service, workspace)
+        assert second.ok is True
+        assert {first.task_id, second.task_id} == {"PM-A", "PM-B"}
+
+    def test_orphan_design_dependency_does_not_block(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish_design(service, workspace, "PM-X", depends_on=("ghost",))
+        claim = self._claim_design(service, workspace)
+        assert claim.ok is True
+        assert claim.task_id == "PM-X"
+
+
 class TestDependencyTerminalCascade:
     """Dependents of a terminally-failed dependency must cascade into the
     DLQ at claim time instead of stranding as permanently-unclaimable

@@ -1141,6 +1141,26 @@ class RoleContextGateway:
         depends = [str(s).strip() for s in (step.get("depends_on") or []) if str(s).strip()]
         if depends:
             lines.append("depends_on(已完成): " + ", ".join(depends[:8]))
+        # Fix-13 缺陷清单（punch list）：改建式步骤的现状勘察。没有它，
+        # 弱执行者读到看似完整的目标文件会判定"已完成"拒绝动笔
+        # （live I3-r13: 编辑模式 0/5，三次重试全零 diff）。
+        pre_state = context_override.get("pre_state_verify")
+        if isinstance(pre_state, dict):
+            failing = [str(c).strip() for c in (pre_state.get("failing_clauses") or []) if str(c).strip()]
+            total = pre_state.get("total_clauses")
+            if pre_state.get("exit_code") == 0:
+                lines.append(
+                    "现状勘察: 验收判据当前已通过（可能由前置步骤满足）。仍须按本步合同产生实际改进；不产生任何文件变更将被拒收。"
+                )
+            elif failing:
+                lines.append(
+                    f"现状勘察(缺陷清单): 目标文件当前未通过验收，缺 {len(failing)}/{total} 项。你的任务就是补齐下列各项:"
+                )
+                for index, clause in enumerate(failing[:8], 1):
+                    lines.append(f"  缺{index}: {clause[:160]}")
+                lines.append("文件已存在不等于任务完成；必须实际修改文件使上述各项全部通过。")
+            else:
+                lines.append("现状勘察: 验收判据当前未通过。必须实际修改目标文件使 verify 通过；不产生变更将被拒收。")
         failure = context_override.get("last_failure")
         if isinstance(failure, dict):
             failure_message = str(failure.get("error_message") or "").strip()

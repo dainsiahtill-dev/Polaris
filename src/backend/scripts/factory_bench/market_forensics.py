@@ -28,13 +28,132 @@ def _parse_ts(value: str) -> datetime | None:
         return None
 
 
+def _step_verify(payload_raw: Any) -> str:
+    """Pull the machine verify out of a leaf step's market payload."""
+    from polaris.kernelone.quality.step_verify import normalize_step_verify
+
+    try:
+        payload = json.loads(payload_raw) if isinstance(payload_raw, str) else (payload_raw or {})
+    except (TypeError, ValueError):
+        return ""
+    step = payload.get("construction_step") if isinstance(payload, dict) else None
+    if isinstance(step, dict) and step.get("verify"):
+        return normalize_step_verify(step.get("verify"))
+    acceptance = payload.get("acceptance_criteria") if isinstance(payload, dict) else None
+    if isinstance(acceptance, list) and acceptance:
+        return normalize_step_verify(acceptance[0])
+    return ""
+
+
+_SYNTAX_CHECKERS: dict[tuple[str, ...], list[str]] = {
+    (".js", ".mjs", ".cjs"): ["node", "--check"],
+    (".py",): [sys.executable, "-m", "py_compile"],
+}
+
+
+def _syntax_check(workspace_full: str, target_files: set[str]) -> dict[str, dict[str, Any]]:
+    """Generic, language-agnostic runnability gate: a grep-based step verify
+    passes even when the code does not parse (live I3-r15: main.js satisfied
+    every grep clause but `node --check` failed on a stray ';'). Run the
+    language's own syntax checker on each code file when the tool is available.
+    """
+    import shutil
+    import subprocess
+
+    results: dict[str, dict[str, Any]] = {}
+    for tf in sorted(target_files):
+        path = os.path.join(workspace_full, tf)
+        if not os.path.isfile(path):
+            continue
+        ext = os.path.splitext(tf)[1].lower()
+        cmd = next((list(base) for exts, base in _SYNTAX_CHECKERS.items() if ext in exts), None)
+        if cmd is None:
+            continue
+        tool = cmd[0]
+        if tool != sys.executable and shutil.which(tool) is None:
+            results[tf] = {"checked": False, "reason": f"{tool} unavailable"}
+            continue
+        try:
+            proc = subprocess.run([*cmd, path], capture_output=True, text=True, timeout=20, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            results[tf] = {"checked": False, "reason": str(exc)}
+            continue
+        ok = proc.returncode == 0
+        results[tf] = {"checked": True, "ok": ok, "error": "" if ok else (proc.stderr or proc.stdout)[:200]}
+    return results
+
+
+def replay_runnable(items: list[dict[str, Any]], workspace_full: str) -> dict[str, Any]:
+    """可运行率 (clause-coherence): re-run every leaf step's verify against the
+    FINAL workspace.
+
+    A step's own per-file verify passing at acceptance time does not mean the
+    product runs — a later step can clobber an earlier step's markers (live
+    I3-r14: enhancement index.html overwrote the base id="game" markers, so the
+    base step's verify no longer holds and the canvas lookup in main.js breaks).
+    Re-running the UNION of all step verifies against the final state catches
+    that generically: the product is coherent iff every step still passes, and a
+    file targeted by multiple steps where not all pass is an interface conflict.
+    """
+    from polaris.kernelone.quality.step_verify import run_step_verify
+
+    rows: list[dict[str, Any]] = []
+    by_file: dict[str, list[bool]] = {}
+    for item in items:
+        if not str(item.get("parent_task_id") or ""):
+            continue
+        verify = _step_verify(item.get("payload"))
+        if not verify:
+            continue
+        outcome = run_step_verify(verify, cwd=workspace_full)
+        passes = outcome is not None and outcome[0] == 0
+        target = str(
+            (json.loads(item["payload"]) if isinstance(item.get("payload"), str) else {}).get("scope_paths") or ""
+        )
+        # prefer the construction_step target_file for the conflict grouping
+        try:
+            payload = json.loads(item["payload"]) if isinstance(item.get("payload"), str) else {}
+            tf = (payload.get("construction_step") or {}).get("target_file") or ""
+        except (TypeError, ValueError):
+            tf = ""
+        tf = tf or target
+        rows.append(
+            {
+                "step_id": item.get("task_id"),
+                "target_file": tf,
+                "status": item.get("status"),
+                "verify_passes_vs_final": passes,
+            }
+        )
+        if tf:
+            by_file.setdefault(tf, []).append(passes)
+    total = len(rows)
+    passing = sum(1 for r in rows if r["verify_passes_vs_final"])
+    conflicts = {f: v for f, v in by_file.items() if len(v) > 1 and not all(v)}
+    syntax = _syntax_check(workspace_full, set(by_file))
+    syntax_failures = sorted(f for f, r in syntax.items() if r.get("checked") and not r.get("ok"))
+    return {
+        "steps": rows,
+        "coherent_steps": passing,
+        "total_steps_with_verify": total,
+        "runnable_rate": round(passing / total, 3) if total else None,
+        # Runnable demands BOTH: every step's markers survive in the final state
+        # AND every code file actually parses. A grep-pass with broken syntax is
+        # not a running product.
+        "product_coherent": total > 0 and passing == total and not syntax_failures,
+        "interface_conflict_files": sorted(conflicts),
+        "syntax": syntax,
+        "syntax_failures": syntax_failures,
+    }
+
+
 def _span_seconds(timestamps: list[datetime]) -> float:
     if len(timestamps) < 2:
         return 0.0
     return (max(timestamps) - min(timestamps)).total_seconds()
 
 
-def collect_forensics(db_path: str) -> dict[str, Any]:
+def collect_forensics(db_path: str, workspace_full: str = "") -> dict[str, Any]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     items = [dict(row) for row in conn.execute("SELECT * FROM work_items ORDER BY task_id")]
@@ -105,10 +224,13 @@ def collect_forensics(db_path: str) -> dict[str, Any]:
         if t
     ]
 
+    runnable = replay_runnable(items, workspace_full) if workspace_full else {}
+
     return {
         "db_path": db_path,
         "parents": parent_rows,
         "steps": step_rows,
+        "runnable": runnable,
         "summary": {
             "parent_count": len(parents),
             "parents_resolved": sum(1 for p in parent_rows if p["status"] == "resolved"),
@@ -121,6 +243,8 @@ def collect_forensics(db_path: str) -> dict[str, Any]:
             "dead_letter_count": len(dead_letters),
             "wall_seconds_total": round(_span_seconds(all_ts), 1),
             "wall_seconds_exec_phase": round(_span_seconds(first_exec_ts), 1),
+            "runnable_rate": runnable.get("runnable_rate"),
+            "product_coherent": runnable.get("product_coherent"),
         },
         "dead_letters": [
             {"task_id": d.get("task_id"), "reason": str(d.get("reason") or d.get("last_error") or "")[:160]}
@@ -150,7 +274,7 @@ def main() -> int:
         print(f"[forensics] no market db at {db_path}", file=sys.stderr)
         return 2
 
-    report = collect_forensics(db_path)
+    report = collect_forensics(db_path, workspace_full)
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -174,6 +298,26 @@ def main() -> int:
         f"CE gate requeues={summary['total_gate_requeues']}"
     )
     print(f"[forensics] wall total={summary['wall_seconds_total']}s exec-phase={summary['wall_seconds_exec_phase']}s")
+    runnable = report.get("runnable") or {}
+    if runnable:
+        print(
+            "[forensics] 可运行率(verify vs final workspace)="
+            f"{runnable['coherent_steps']}/{runnable['total_steps_with_verify']} "
+            f"(rate={runnable['runnable_rate']}) product_coherent={runnable['product_coherent']}"
+        )
+        if runnable.get("interface_conflict_files"):
+            print(
+                f"[forensics] INTERFACE CONFLICTS (same file, steps disagree): {runnable['interface_conflict_files']}"
+            )
+        for sf in runnable.get("syntax_failures") or []:
+            err = (runnable.get("syntax", {}).get(sf, {}).get("error") or "").replace("\n", " ")[:120]
+            print(f"[forensics] SYNTAX FAIL {sf}: {err}")
+        for srow in runnable["steps"]:
+            if not srow["verify_passes_vs_final"]:
+                print(
+                    f"    DRIFT {srow['step_id']} ({srow['target_file']}): status={srow['status']} "
+                    f"but verify FAILS against final workspace"
+                )
     for parent in report["parents"]:
         print(
             f"  parent {parent['task_id']}: status={parent['status']} fanout={parent['fission_fanout']} "

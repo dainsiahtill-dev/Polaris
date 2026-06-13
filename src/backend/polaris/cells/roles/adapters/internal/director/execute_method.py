@@ -2395,57 +2395,13 @@ def _apply_deterministic_typescript_reexport_repair(
     return []
 
 
-_STATE_CARRYING_CLAUSE_RE = re.compile(r"^(?:cd|export|unset|umask|set)\b|^[A-Za-z_][A-Za-z0-9_]*=")
-
-
 def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
-    """Best-effort clause-level diagnosis for a failed step verify.
+    """Clause-level teaching diagnosis — delegates to the KernelOne toolkit
+    (single source of truth for the three verify touchpoints; includes the
+    T2 measured-vs-required residual for machine-measurable clauses)."""
+    from polaris.kernelone.quality.step_verify import first_failing_verify_clause
 
-    The full command stays the pass/fail ground truth; this only sharpens the
-    teaching message (live I3-r12: S2 passed 7/8 clauses but the model only saw
-    a 400-char command + exit 1 and could not tell WHICH check failed).
-    Clauses are re-run individually in fresh shells, so diagnosis is abandoned
-    whenever that could name a wrong clause: quoted text cut by the " && "
-    split (sh -n guard), top-level ``||`` regrouping, or state-carrying
-    clauses (cd/export/VAR=…) whose effects do not reach their successors in
-    a fresh shell — adversarial review reproduced a wrong-clause verdict for
-    exactly that shape, and a wrong teaching is worse than none.
-    """
-    if " || " in verify:
-        return ""
-    clauses = [part.strip() for part in verify.split(" && ") if part.strip()]
-    if len(clauses) < 2 or len(clauses) > 12:
-        return ""
-    for clause in clauses:
-        if _STATE_CARRYING_CLAUSE_RE.match(clause):
-            return ""
-        try:
-            syntax = subprocess.run(
-                ["/bin/sh", "-n", "-c", clause],
-                capture_output=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return ""
-        if syntax.returncode != 0:
-            return ""
-    for index, clause in enumerate(clauses, start=1):
-        try:
-            proc = subprocess.run(
-                clause,
-                shell=True,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return ""
-        if proc.returncode != 0:
-            return f"failing clause [{index}/{len(clauses)}]: {clause}"
-    return ""
+    return first_failing_verify_clause(verify, cwd=cwd)
 
 
 def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) -> list[str]:
@@ -2459,11 +2415,9 @@ def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) ->
     step = context.get("construction_step")
     if not isinstance(step, dict):
         return []
-    raw_verify = step.get("verify")
-    if isinstance(raw_verify, (list, tuple)):
-        verify = " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
-    else:
-        verify = str(raw_verify or "").strip()
+    from polaris.kernelone.quality.step_verify import normalize_step_verify
+
+    verify = normalize_step_verify(step.get("verify"))
     if not verify:
         return []
     workspace = str(getattr(adapter, "workspace", "") or "")
@@ -5071,15 +5025,24 @@ def _build_materialization_quality_repair_message(
             "exactly after the current end of the file.\n"
         )
     elif any("syntax error" in str(item).lower() for item in artifact_quality_errors):
-        # Whole-file rewrite at escalation-low temperature deterministically
-        # reproduces the same slip (live factory-bench L2-11 r2: the repair
-        # rewrote typing.js with the identical `endTime: null;` bug). A narrow
-        # line edit forces attention on the quoted line instead.
+        # The narrow-edit-only directive (added L2-11 r2, where a full rewrite
+        # reproduced the `endTime: null;` slip) backfired on weak local models:
+        # live I3-r15, qwen could not form edit_blocks at all (121x "missing
+        # blocks or start") and was simultaneously forbidden the write_file
+        # rewrite it CAN do — leaving no usable repair path, so main.js
+        # dead-lettered. Give the laborer an executable path: a targeted rewrite
+        # changing ONLY the quoted line, with edit_blocks as a copy-verbatim
+        # alternative. Naming the common slip (object-literal ';' -> ',') keeps
+        # attention on the line rather than regenerating the whole file.
         syntax_block = (
-            "SYNTAX REPAIR DIRECTIVE: a quoted line below is syntactically broken. "
-            "Apply ONE narrow edit_blocks search/replace containing ONLY that line "
-            "(and its corrected form). Do NOT rewrite the whole file — a full "
-            "rewrite reproduces the same mistake.\n"
+            "SYNTAX REPAIR DIRECTIVE: a quoted line below (see Quality errors) is syntactically "
+            "broken — most often an object-literal property ending in ';' that must be ',', or an "
+            "unclosed '{'. Fix ONLY that line, keeping every other line byte-for-byte identical.\n"
+            "  • Easiest reliable path: call write_file with the full file content, changed at that "
+            "ONE line only.\n"
+            "  • Or, surgically: edit_blocks with a SEARCH/REPLACE block whose SEARCH is the broken "
+            "line copied VERBATIM and REPLACE is the corrected line.\n"
+            "Do not change any other line; do not regenerate unrelated code.\n"
         )
     return (
         f"{original_message}\n\n"

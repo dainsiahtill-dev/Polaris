@@ -4448,11 +4448,13 @@ class TestQualityRepairMissingTargetContract:
 
 
 class TestSyntaxRepairDirective:
-    """L2-11 r2: the repair turn REWROTE typing.js whole-file and reproduced
-    the identical `endTime: null;` slip at escalation-low temperature; only a
-    narrow line edit breaks the determinism loop."""
+    """I3-r15: the narrow-edit-ONLY directive (added L2-11 r2 to break the
+    whole-file rewrite slip) backfired on weak local models — qwen could not
+    form edit_blocks at all (121x "missing blocks or start") and was also
+    forbidden the write_file rewrite it CAN do, leaving no usable repair path.
+    The directive must give the laborer an executable path."""
 
-    def test_syntax_error_adds_narrow_edit_directive(self) -> None:
+    def test_syntax_error_gives_executable_repair_path(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
         )
@@ -4467,8 +4469,13 @@ class TestSyntaxRepairDirective:
             missing_target_files=[],
         )
         assert "SYNTAX REPAIR DIRECTIVE" in message
-        assert "Do NOT rewrite the whole file" in message
+        # The trap is gone: write_file rewrite of the one line is offered as the
+        # easiest reliable path, with edit_blocks as a copy-verbatim alternative.
+        assert "Do NOT rewrite the whole file" not in message
+        assert "write_file" in message
         assert "edit_blocks" in message
+        # Still constrains the change to the one broken line.
+        assert "byte-for-byte" in message
 
     def test_no_directive_without_syntax_errors(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

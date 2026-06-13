@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import subprocess
 import threading
 from typing import Any
@@ -229,57 +228,12 @@ def _extract_fallback_audit_files(payload: dict[str, Any]) -> list[str]:
     return _collect_payload_paths(payload, ("target_files", "scope_paths", "scope"))
 
 
-_STATE_CARRYING_CLAUSE_RE = re.compile(r"^(?:cd|export|unset|umask|set)\b|^[A-Za-z_][A-Za-z0-9_]*=")
-
-
 def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
-    """Best-effort clause-level diagnosis for a failed step verify.
+    """Clause-level teaching diagnosis — delegates to the KernelOne toolkit
+    (single source of truth for the three verify touchpoints)."""
+    from polaris.kernelone.quality.step_verify import first_failing_verify_clause
 
-    Defensive mirror of the director adapter's diagnosis (live I3-r12: a step
-    passed 7/8 verify clauses but the bounce teaching only carried the whole
-    command + exit 1, so the executor could not tell WHICH check failed).
-    The full command stays the pass/fail ground truth. Clauses are re-run
-    individually in fresh shells, so diagnosis is abandoned whenever that
-    could name a wrong clause: quoted text cut by the " && " split (sh -n
-    guard), top-level ``||`` regrouping, or state-carrying clauses
-    (cd/export/VAR=…) whose effects do not reach their successors in a fresh
-    shell — a wrong teaching is worse than none.
-    """
-    if " || " in verify:
-        return ""
-    clauses = [part.strip() for part in verify.split(" && ") if part.strip()]
-    if len(clauses) < 2 or len(clauses) > 12:
-        return ""
-    for clause in clauses:
-        if _STATE_CARRYING_CLAUSE_RE.match(clause):
-            return ""
-        try:
-            syntax = subprocess.run(
-                ["/bin/sh", "-n", "-c", clause],
-                capture_output=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return ""
-        if syntax.returncode != 0:
-            return ""
-    for index, clause in enumerate(clauses, start=1):
-        try:
-            proc = subprocess.run(
-                clause,
-                shell=True,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return ""
-        if proc.returncode != 0:
-            return f"failing clause [{index}/{len(clauses)}]: {clause}"
-    return ""
+    return first_failing_verify_clause(verify, cwd=cwd)
 
 
 class QAConsumer:
@@ -359,14 +313,9 @@ class QAConsumer:
         step = payload.get("construction_step")
         if not isinstance(step, dict):
             return ""
-        raw_verify = step.get("verify")
-        if isinstance(raw_verify, (list, tuple)):
-            # Defensive mirror of the contract normalizer: a clause array
-            # stringified naively becomes Python-repr garbage that bash can
-            # never pass (live I3-r10).
-            verify = " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
-        else:
-            verify = str(raw_verify or "").strip()
+        from polaris.kernelone.quality.step_verify import normalize_step_verify
+
+        verify = normalize_step_verify(step.get("verify"))
         if not verify:
             return ""
         try:

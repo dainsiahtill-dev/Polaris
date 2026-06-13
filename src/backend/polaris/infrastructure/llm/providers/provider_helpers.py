@@ -317,7 +317,12 @@ class CircuitBreaker:
 
     def __init__(self, *, failure_threshold: int = 5, recovery_timeout_seconds: float = 60.0) -> None:
         self.failure_threshold = max(1, int(failure_threshold))
-        self.recovery_timeout_seconds = max(1.0, float(recovery_timeout_seconds))
+        # 0.0 is a coherent config — "immediately eligible for one half-open
+        # trial" (the breaker still enforces single-trial recovery and reopens
+        # on a half-open failure). The floor only guards against negatives; an
+        # over-aggressive 1.0 floor silently defeated a 0-second recovery and
+        # its state-machine tests. No production caller passes < 60.0.
+        self.recovery_timeout_seconds = max(0.0, float(recovery_timeout_seconds))
         self._lock = threading.RLock()
         self._failure_count = 0
         self._state = "closed"  # closed | open | half_open

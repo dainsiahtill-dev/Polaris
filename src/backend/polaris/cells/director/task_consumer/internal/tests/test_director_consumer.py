@@ -814,3 +814,111 @@ class TestAdapterFailureMessage:
 
     def test_blank_quality_entries_are_skipped(self) -> None:
         assert self._message({"error": "boom", "artifact_quality_errors": ["", None]}) == "boom"
+
+
+class TestPreStatePunchList:
+    """Fix-13 缺陷清单(punch list): 改建式步骤的施工单必须携带现状勘察 ——
+    live I3-r13 编辑模式 0/5: 模型读到看似完整的目标文件拒绝动笔, 三试零 diff。"""
+
+    @staticmethod
+    def _punch(step: dict[str, Any], cwd: str) -> dict[str, Any] | None:
+        from polaris.cells.director.task_consumer.internal.director_consumer import (
+            _pre_state_punch_list,
+        )
+
+        return _pre_state_punch_list(step, cwd=cwd)
+
+    def test_no_verify_returns_none(self, tmp_path: Any) -> None:
+        assert self._punch({"target_file": "a.md"}, str(tmp_path)) is None
+
+    def test_passing_pre_state_reports_exit_zero(self, tmp_path: Any) -> None:
+        (tmp_path / "main.js").write_text("const LEVELS = []\n", encoding="utf-8")
+        step = {"verify": "test -f ./main.js && grep -q 'const LEVELS' ./main.js"}
+        result = self._punch(step, str(tmp_path))
+        assert result == {"exit_code": 0, "failing_clauses": [], "total_clauses": 2}
+
+    def test_failing_clauses_are_listed(self, tmp_path: Any) -> None:
+        (tmp_path / "main.js").write_text("function draw() {}\n", encoding="utf-8")
+        step = {
+            "verify": (
+                "test -f ./main.js && grep -q 'const LEVELS' ./main.js"
+                " && grep -q 'function loadLevel' ./main.js && grep -q 'function draw' ./main.js"
+            )
+        }
+        result = self._punch(step, str(tmp_path))
+        assert result is not None
+        assert result["exit_code"] != 0
+        assert result["total_clauses"] == 4
+        assert result["failing_clauses"] == [
+            "grep -q 'const LEVELS' ./main.js",
+            "grep -q 'function loadLevel' ./main.js",
+        ]
+
+    def test_state_carrying_chain_reports_whole_failure_only(self, tmp_path: Any) -> None:
+        step = {"verify": "cd src && test -f app.js"}
+        result = self._punch(step, str(tmp_path))
+        assert result is not None
+        assert result["exit_code"] != 0
+        assert result["failing_clauses"] == []
+
+    def test_top_level_or_reports_whole_failure_only(self, tmp_path: Any) -> None:
+        step = {"verify": "test -f ./a.md && grep -q x ./a.md || test -f ./b.md"}
+        result = self._punch(step, str(tmp_path))
+        assert result is not None
+        assert result["failing_clauses"] == []
+
+    def test_list_verify_is_joined(self, tmp_path: Any) -> None:
+        step = {"verify": ["test -f ./a.md", "grep -q x ./a.md"]}
+        result = self._punch(step, str(tmp_path))
+        assert result is not None
+        assert result["exit_code"] != 0
+        assert result["total_clauses"] == 2
+
+
+class TestPunchListWiring:
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execute_task_attaches_pre_state_verify_to_context(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+        (tmp_path / "main.js").write_text("function draw() {}\n", encoding="utf-8")
+        seen_context: dict[str, Any] = {}
+
+        class FakeDirectorAdapter:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, Any],
+                context: dict[str, Any],
+            ) -> dict[str, Any]:
+                seen_context.update(context)
+                return {"success": True, "task_id": task_id, "tool_results": []}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.create_role_adapter",
+            lambda role_id, workspace: FakeDirectorAdapter(workspace),
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        consumer._execute_task(
+            "PM-1-S1",
+            {
+                "title": "edit step",
+                "construction_step": {
+                    "step_id": "PM-1-S1",
+                    "target_file": "main.js",
+                    "verify": "test -f ./main.js && grep -q 'const LEVELS' ./main.js",
+                },
+            },
+            "lease-punch",
+        )
+        pre_state = seen_context["pre_state_verify"]
+        assert pre_state["exit_code"] != 0
+        assert pre_state["failing_clauses"] == ["grep -q 'const LEVELS' ./main.js"]

@@ -154,3 +154,130 @@ QA verify 真实裁决**——轮内写后即查（Fix-9）下，契约干净的
 T2 残差教学的**前摄变体**（领取时即在步骤卡渲染「当前盘上 verify 失败的子句清单」，
 把"编辑既有文件"转译为"补齐这些缺失项"）、信息门控重试 + 多样性阶梯
 （attempt-3 强制换执行形态）、pending_ce_revision 降率出口。
+
+## 9. r14 终局（十三修：+Fix-13 现状勘察缺陷清单）——揭出比执行更深的根因：跨父接口漂移
+
+**r14 数字**：9 步（4+5→实际 4+3 裂变），**4/7 resolved（1-S2/1-S3/1-S4/2-S1）、墙钟约 5.4k s**。
+Fix-13 缺陷清单**直接命中编辑回避**：2-S1（r13 的编辑死点，向已有 index.html 注入新元素）
+**首试一次过**——领取时的「现状勘察(缺陷清单)」把"编辑既有文件"成功转译为"补齐缺失项"。
+
+**但 r14 揭出一个比执行层更深、且会让"resolved 计数高估真实成功"的根因——跨父/跨文件接口漂移。**
+
+L2-12 的 PM 分解是**正确**的：一个打砖块游戏拆成「基座任务 PM-0001-1（建 index/style/main/readme）」
++「增强任务 PM-0001-2（加关卡/重启/补文档，depends_on 基座）」——这正是增量开发的常态，
+两任务**合理地共享文件**。缺陷在 **CE 裁变层**：两个父任务被**独立裁变**，各自为同一 DOM 元素
+**发明互相冲突的接口标识**：
+
+- 1-S1 给画布定名 `id="game"`；2-S1 给同一画布定名 `id="gameCanvas"`。
+- 1-S3 的 main.js 调 `getElementById('game')`。
+
+归档工件实锤（`L2-12_runs/r14/artifacts`）：
+- index.html 终态是 2-S1 的 `gameCanvas/restartBtn`，1-S1 的 `game/score/lives/message` **全被覆盖消失**
+  → 2-S1 的编辑**整文件重写**清掉了 1-S1 的标记 → 1-S1 的 QA verify（`grep id="game"`）在验收时失败
+  → 反弹回 exec → 文件已存在但"内容不对" → 编辑回避 → `EXEC_NO_EVIDENCE` 死信。
+- main.js 仍调 `getElementById('game')`，而 index.html 只暴露 `id="gameCanvas"` → **画布查找返回 null
+  → 游戏开局即死**。**即便 3/4 步 "resolved"，产物根本跑不起来。**
+
+每个步都过了**自己的** `grep`，但**没有任何步校验文件之间的接口**——本地单文件 verify 对跨文件
+接口漂移**结构性失明**。这是理论报告**组合律**（assume-guarantee）最具体的活体标本，也直接证明
+当前 "resolved 步计数" 高估了真实可运行性。
+
+CE 漂移之严重在 RAW_RESPONSE 里可见：**同一父任务的不同重试间**，CE 都在 `id="game"` 与
+`id="gameCanvas"` 之间反复横跳——无冻结契约时，名字本质上是每次裁变随机的。
+另一时序事实：`PM-0001-2` 在 `PM-0001-1` **之前**被领取裁变（设计阶段领取无视父级 depends_on，
+就绪门只在 pending_exec 开火）——即便有账本也会被乱序读取。
+
+**对策（本批 F1–F3，蓝图 `CROSS_FILE_INTERFACE_COHERENCE_BLUEPRINT_20260613.md`）**：
+- **F1 设计阶段父级排序门**：consumer 父在 producer 父离开设计阶段前不可领取裁变（生产者先冻结接口）。
+- **F2 跨父接口账本**：CE 裁变后把每文件已声明的 `interface_names/signatures` 落账
+  （`runtime/contracts/interface_ledger.json`，先到先得冻结）；后续父裁变前读账本并注入
+  「这些文件已定名，必须复用，严禁重命名」的冻结契约。语言无关（只搬 CE 自己声明的标识符字符串）。
+- **F3 子句诊断上限 12→24**：r14 的 1-S3 背 15 条机器义务，旧上限下静默丢失子句级教学。
+
+**待验**：r15（同输入 L2-12，验证根因是否闭合：index.html 标识符是否一致、产物是否可跑）
++ L2-11（留出泛化，其两父**不共享文件**=对该修复"无害"且检验整链能否完成未见项目）。
+
+
+## 10. r15 终局（F1/F2/F3 已上线）——跨父接口闭合，但暴露更深一层：弱执行者被组织架构反向卡死
+
+**r15 数字**：步成功率 **2/7 (0.286)**（r14 的 4/7 倒退）、**可运行率 3/7 (0.429)、product_coherent=False**、
+墙钟 5824s、dead_letters=7。market_forensics 现自动产出四项（步成功率/可运行率/墙钟/根因）
+并内建 `node --check / py_compile` 语法门，使「可运行率」不再被 grep 蒙混。
+
+**确认的胜利（F1/F2 真实闭合 r14 根因）**：CE 账本把画布统一为 `gameCanvas`，跨父不再 game/gameCanvas
+分裂；main.js `getElementById('gameCanvas')` 与 index.html `id="gameCanvas"` 一致。r14 的开局即死消失。
+
+**但原始计数倒退，根因是弱执行者（本地 qwen）执行力 + 一个放大器，全部定位**：
+
+1. **edit_blocks 形参畸形 121 次**（`missing required argument: blocks or start`）——弱模型会说“改这个文件”
+   却给不出“改哪里”（无 start 行号、无 SEARCH 锚）。归一化器已能修多种形状，但模型连定位都不给。
+2. **弱模型写出坏 JS**（`speed: 4;` / `lives: MAX_LIVES;`——对象字面量用 `;` 当 `,`；以及未闭合 `{`）→
+   `node --check` 失败 → 质量门（正确地）拒收。
+3. **语法修复指令把弱模型反向卡死**（本轮最关键）：指令逼模型用 edit_blocks 做窄编辑（它形不出），
+   同时**禁止** write_file 整写（它唯一会的）——无可执行修复路径，main.js 直接死信。这是
+   「组织架构主动妨碍农民工」的活体标本。
+4. **CE 裁出过约束线性 DAG**（S2←S3←S4，多为伪依赖：style.css 不依赖 index.html、main.js 不依赖 style.css）
+   → 根步 index.html 一死，S3/S4 **未执行即被级联清扫**。r14 同形但根步存活掩盖了脆性；r15 根步死 → 全垮。
+
+**本轮已修（质量门全绿）**：
+- **语法修复解卡**（`execute_method._build_materialization_quality_repair_message`）：去掉“禁止整写”陷阱，
+  改为给出可执行路径——优先 write_file 只改坏行、edit_blocks 作为复制原行的备选，仍约束“只改坏行 byte-for-byte”。
+- **CE 依赖最小化**（`ce_consumer` 裁变提示）：depends_on 仅在本步代码确实引用他步 interface_names 时填写，
+  独立文件留空，避免单步失败级联拖垮父任务。
+- **可运行率语法门**（`market_forensics.replay_runnable`）：通用 node--check/py_compile，product_coherent
+  现要求“所有步 verify 对终态仍过 + 所有代码文件能解析”。
+
+**仍待治（下一层，留作下一修复轮）**：edit_blocks 定位缺失的弱模型补全（从质量门已知坏行号反推锚点）；
+对象字面量 `;`→`,` 类机械错的确定性自愈；编辑模式（向既有文件追加）的物化稳健性。
+
+**待验**：r16（同输入，验证语法解卡 + DAG 最小化是否提升 product_coherent / 步成功率）。
+
+
+## 11. r16 终局（r15 三修已上线）——结构层全闭，触底到弱执行者「空输出墙」
+
+**r16 数字**：步成功率 **1/7 (0.143)**（仅 style.css 一步 resolved）、**可运行率 2/7 (0.286)、product_coherent=False**、
+墙钟 **8051s（134min，本系列最慢）**、dead_letters=7。
+
+**结构层修复全部确认生效**（非回归）：
+- CE 依赖最小化 → 本轮 DAG 明显变平（多数 step dep=[]）；
+- **独立步在级联中存活**：PM-0001-2-step-3 在 step-1 死后仍进 pending_qa（r15 的线性链会连坐清扫它）；
+- 语法解卡 → index.html 一次写满 3757b（r15 截断 591b 消失）。
+
+**触底的根因 = 弱执行者「空输出墙」（本系列最深一层，task #27）**：
+本地 qwen3.6-27b-int4 在难步上反复返回 `output_length=0`（空可见输出）→ 无 provider 级自愈
+→ mutation-contract 重试再得空 → `director_no_materialized_changes` 死信。**直接探针实锤根因**：
+qwen3.6 是**推理型模型**，`POST /v1/chat/completions` 返回 `content:null` 且文本落在 `reasoning` 字段、
+`finish_reason:length`——**推理吃光 token 预算，可见 content 为空**。这与 MiniMax 的空输出同源,
+但「空可见输出自愈（预算翻倍）」目前**只在 minimax_provider 内**（minimax_provider.py:690-713），
+openai_compat/本地路径**没有**等价自愈，也未必抽取 reasoning。叠加 16k 窗口下难步 prompt 膨胀
+（`Token budget exceeded after compression`），难步几乎必空。
+
+**串行墙钟实锤并发价值**：单 Director worker 把整整 ~134min 几乎全耗在一个难步（反复空输出重试）上，
+**独立的 S1/S2 全程 att 0/3 未被领取**——双后端并发本可让它们并行完成（见 §12 并发实测）。
+
+**收敛叙事**：r14=蓝图接口层（已修）→ r15=过约束 DAG/语法陷阱（已修）→ r16=弱执行者原始执行力
+（空输出墙）。组织/架构层已尽力把活拆好、契约理顺、修复路径打通；**剩下的是农民工的手在最难的活上
+直接交白卷**，且组织对「交白卷」无兜底——这正是下一修复轮（task #27）的靶心：本地推理模型空输出自愈
++ 16k 难步上下文预算 +（降率律）难步再裂变。需借真机 qwen 验证，不冒进塞热路径。
+
+**待验**：L2-11 留出泛化（检验结构修复是否泛化 + 空输出墙是否普遍）；并发实测见 §12。
+
+
+## 12. 并发实测（Director 双后端：本机 + 局域网 qwen3.6-27b）
+
+**LLM 层直测**（2026-06-13，r16 跑完后本机空闲，max_tokens=150 中等请求）：
+- 单请求时延：本机 localhost:8189 = 21.3s；局域网 192.168.10.166:8189 = 17.2s（局域网机更快）。
+- **串行** 2 请求（仅本机，现状）：43.4s。
+- **并行** 2 请求（本机 + 局域网，conc=2）：20.4s ≈ max(单时延)。
+- **加速比 = 2.12x**（双后端的近理想 2x；并行墙钟≈较慢单后端时延，证明真并行无串行化）。
+
+**机制已被单测证明**：worker 池经市场租约领取**互异**叶步、各 worker 经 contextvars override 路由到
+各自后端（穿透 asyncio.run + asyncio.to_thread）、`_exec_claim_ready` 保 DAG 序。
+
+**全链可兑现度**：市场链的端到端加速取决于**同时可并行的独立步数量**。r15 的 DAG 最小化已让 CE 产出
+更平的 DAG（多数 dep=[]）→ 存在独立步 → r16 那种「单 worker 困在一个难步 134min、两独立步全程闲置」
+的串行墙会被显著缓解（独立步并行落到第二后端）。**但并发只解速度,不解 §11 的空输出正确性墙**
+（task #27）——并行让失败更快发生,不会把失败变成功。
+
+**配置已激活**：`roles.director.provider_pool=[local, lan]`、`concurrency=2`（两者均 qwen3.6-27b-int4,
+角色绑定铁律不变;备份 llm_config.json.bak.pre-multibackend）。下一步 r17 全链双后端实测端到端墙钟。

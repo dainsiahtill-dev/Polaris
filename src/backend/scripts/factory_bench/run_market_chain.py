@@ -22,6 +22,37 @@ import sys
 from pathlib import Path
 
 
+def _archive_run(workspace_full: str, cache_root_full: str, *, run_id: str, label: str) -> None:
+    """Post-run forensic archive: market db + product artifacts.
+
+    --fresh-market/--fresh-workspace wipe the previous run's evidence at the
+    NEXT launch, which made replay audits (vacuous-verify scan, dangling
+    interface references, clause-pass stratification) impossible across runs
+    — live: r13's artifacts were destroyed by r14's launch. Archiving at run
+    end keeps the evidence without changing run semantics.
+    """
+    import shutil
+    import time as _time
+
+    from polaris.kernelone.storage.io_paths import resolve_artifact_path
+
+    stamp = label.strip() or _time.strftime("%Y%m%d-%H%M%S")
+    archive_dir = Path(workspace_full).parent / f"{Path(workspace_full).name}_runs" / stamp
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        market_dir = resolve_artifact_path(workspace_full, cache_root_full, "runtime/task_market")
+        if os.path.isdir(market_dir):
+            shutil.copytree(market_dir, archive_dir / "task_market", dirs_exist_ok=True)
+        artifacts_dir = archive_dir / "artifacts"
+        artifacts_dir.mkdir(exist_ok=True)
+        for entry in sorted(Path(workspace_full).iterdir()):
+            if entry.is_file() and entry.suffix.lower() in {".html", ".js", ".css", ".md", ".json", ".py"}:
+                shutil.copy2(entry, artifacts_dir / entry.name)
+        print(f"[market-chain] archived run evidence -> {archive_dir} (run_id={run_id})", flush=True)
+    except OSError as exc:
+        print(f"[market-chain] archive failed (non-fatal): {exc}", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Polaris task-market chain driver (I3)")
     parser.add_argument("--workspace", required=True)
@@ -34,6 +65,11 @@ def main() -> int:
         "--fresh-market",
         action="store_true",
         help="wipe runtime/task_market before dispatch (stale dead-letter state from prior broken runs poisons claims)",
+    )
+    parser.add_argument(
+        "--archive-label",
+        default="",
+        help="label for the post-run archive directory (default: run timestamp)",
     )
     args = parser.parse_args()
 
@@ -65,6 +101,15 @@ def main() -> int:
 
         market_dir = resolve_artifact_path(workspace_full, cache_root_full, "runtime/task_market")
         shutil.rmtree(market_dir, ignore_errors=True)
+        # The cross-parent interface ledger is market-run state: a stale ledger
+        # from a prior run would inject frozen identifiers into this run's CE
+        # fission and defeat a clean re-test.
+        ledger_path = resolve_artifact_path(workspace_full, cache_root_full, "runtime/contracts/interface_ledger.json")
+        try:
+            os.remove(ledger_path)
+            print(f"[market-chain] fresh market: removed stale ledger {ledger_path}", flush=True)
+        except OSError:
+            pass
         print(f"[market-chain] fresh market: wiped {market_dir}", flush=True)
 
     contract_path = resolve_artifact_path(workspace_full, cache_root_full, "runtime/contracts/pm_tasks.contract.json")
@@ -127,6 +172,7 @@ def main() -> int:
         "task_market": outcome.get("task_market") or outcome.get("inline_task_market"),
     }
     print("[market-chain] outcome: " + json.dumps(summary, ensure_ascii=False, default=str), flush=True)
+    _archive_run(workspace_full, cache_root_full, run_id=run_id, label=args.archive_label)
     qa = outcome.get("integration_qa_result")
     if isinstance(qa, dict):
         print(

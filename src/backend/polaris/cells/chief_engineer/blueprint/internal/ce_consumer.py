@@ -27,6 +27,11 @@ from polaris.cells.runtime.task_market.public.contracts import (
     PublishTaskWorkItemCommandV1,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
+from polaris.kernelone.quality.interface_ledger import (
+    read_declared_interfaces,
+    record_declared_interfaces,
+    render_assume_contract,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +341,9 @@ class CEConsumer:
                         )
                     )
                     return {"task_id": task_id, "ok": False, "reason": "CE_step_gate_failed"}
+                # Freeze this parent's declared interfaces so sibling parents
+                # that share a file reuse the exact names (组合律 ledger).
+                record_declared_interfaces(self._workspace, str(payload.get("cache_root", "")), steps)
                 steps_contract = build_blueprint_tasks_contract(
                     parent_pm_task=task_id,
                     blueprint_id=blueprint_id,
@@ -443,8 +451,29 @@ class CEConsumer:
             '"est_lines"(整数,≤120), "signatures"(函数/类签名清单), '
             '"interface_names"(跨文件接口统一定名), "verify"(机器可执行判据), '
             '"depends_on"(step_id 列表), "title"}]}。\n'
+            # 组合律 + 经济律 (live I3-r15): a strict linear chain (S2←S3←S4)
+            # makes the whole parent only as strong as its weakest step — one
+            # weak-executor failure cascade-kills every later step. depends_on
+            # must be MINIMAL: list a step ONLY when this step's code literally
+            # references another step's interface_names (e.g. main.js uses
+            # index.html's element ids → depends_on that step). Independent files
+            # (a stylesheet, a standalone README) keep depends_on EMPTY so they
+            # fission as parallel, independently-recoverable work.
+            "depends_on 必须最小化:仅当本步代码确实引用另一步声明的 interface_names 才填写;"
+            "样式表/独立文档等不引用他文件符号的步骤,depends_on 留空,避免单步失败拖垮整个父任务。\n"
             f"任务契约:\n{_json.dumps(task_brief, ensure_ascii=False)}"
         )
+
+        # 组合律: a sibling parent that already fissioned a shared file froze its
+        # public identifiers in the ledger. Inject them so this parent reuses the
+        # exact names instead of inventing colliding ones (live I3-r14: id=game
+        # vs id=gameCanvas shipped a non-running product).
+        declared = read_declared_interfaces(
+            self._workspace,
+            str(payload.get("cache_root", "")),
+            list(task_brief["target_files"]),
+        )
+        message = message + render_assume_contract(declared)
 
         def _invoke(extra: str = "") -> dict[str, Any]:
             has_loop = True

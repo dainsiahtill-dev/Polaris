@@ -2911,6 +2911,32 @@ class TaskMarketService:
             return False
         return True
 
+    @staticmethod
+    def _design_claim_ready(item: TaskWorkItemRecord, items: dict[str, TaskWorkItemRecord]) -> bool:
+        """Design-stage ordering gate (组合律 / cross-parent interface coherence).
+
+        A ``pending_design`` parent that ``depends_on`` another parent must not
+        fission until that producer parent has left design (advanced to
+        ``pending_exec`` or terminal). Otherwise an enhancement parent can
+        fission *before* the base parent and invent colliding interface
+        identifiers for a shared file — live I3-r14 shipped a non-running
+        product because ``index.html`` was named ``id="game"`` by one parent and
+        ``id="gameCanvas"`` by a sibling. Ordering producers first lets the
+        interface ledger be populated before the consumer reads it.
+
+        Orphan deps (not in the market) and terminal deps do not block — only a
+        producer still actively in design holds the consumer back (no hang).
+        """
+        if item.stage != "pending_design":
+            return True
+        for dep_id in item.depends_on or []:
+            dep = items.get(str(dep_id))
+            if dep is None:
+                continue
+            if dep.stage in ("pending_design", "in_design"):
+                return False
+        return True
+
     def _select_claim_candidate(
         self,
         *,
@@ -2932,7 +2958,9 @@ class TaskMarketService:
         candidates = [
             item
             for item in items.values()
-            if item.is_claimable(stage, at_epoch=at_epoch) and self._exec_claim_ready(item, items)
+            if item.is_claimable(stage, at_epoch=at_epoch)
+            and self._exec_claim_ready(item, items)
+            and self._design_claim_ready(item, items)
         ]
         if not candidates:
             return None

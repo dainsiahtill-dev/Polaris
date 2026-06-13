@@ -753,6 +753,91 @@ def _read_bool_env(name: str, *, default: bool = False) -> bool:
     return default
 
 
+def _build_director_worker_pool(
+    director_consumer_type: type,
+    *,
+    workspace_full: str,
+    worker_suffix: str,
+    exec_timeout: int,
+    enable_safe_parallel: bool,
+) -> list[tuple[Any, str]]:
+    """Build N Director worker consumers, each bound to a pool backend endpoint.
+
+    Returns an empty list when the Director role requests no concurrency (<=1) or
+    has no multi-endpoint pool — the caller then uses the single inline consumer
+    (zero behaviour change for current single-backend configs).
+    """
+    try:
+        from polaris.kernelone.llm.runtime_config import get_role_concurrency, get_role_provider_pool
+
+        concurrency = get_role_concurrency("director")
+        pool = get_role_provider_pool("director")
+    except (ImportError, RuntimeError, ValueError) as exc:
+        logger.debug("director worker pool resolution failed, using single consumer: %s", exc)
+        return []
+    if concurrency <= 1 or len(pool) < 1:
+        return []
+    workers: list[tuple[Any, str]] = []
+    for idx in range(concurrency):
+        provider_id = pool[idx % len(pool)]
+        consumer = director_consumer_type(
+            workspace=workspace_full,
+            worker_id=f"pm_inline_director_{worker_suffix}_w{idx}",
+            visibility_timeout_seconds=exec_timeout,
+            poll_interval=0.05,
+            enable_safe_parallel=enable_safe_parallel,
+        )
+        workers.append((consumer, provider_id))
+    logger.info(
+        "director multi-backend concurrency: %d workers over %d endpoint(s) %s",
+        concurrency,
+        len(pool),
+        list(pool),
+    )
+    return workers
+
+
+def _drive_director_workers(workers: list[tuple[Any, str]]) -> list[dict[str, Any]]:
+    """Run each Director worker's poll loop concurrently, bound to its endpoint.
+
+    The market's per-step leasing guarantees workers claim DISTINCT leaf steps,
+    and ``_exec_claim_ready`` guarantees a step waits for its ``depends_on`` — so
+    parallelism is realised across INDEPENDENT steps while DAG order is kept. Each
+    worker sets a thread-local provider override so its LLM calls route to the
+    assigned backend.
+    """
+    import threading
+
+    from polaris.kernelone.llm.runtime_config import clear_role_provider_override, set_role_provider_override
+
+    results: list[list[dict[str, Any]]] = [[] for _ in workers]
+    errors: list[BaseException] = []
+
+    def _run(index: int, consumer: Any, provider_id: str) -> None:
+        set_role_provider_override("director", provider_id)
+        try:
+            results[index] = consumer.poll_once()
+        except Exception as exc:  # noqa: BLE001 — surfaced to the caller's loop guard (re-raised below)
+            errors.append(exc)
+        finally:
+            clear_role_provider_override("director")
+
+    threads = [
+        threading.Thread(target=_run, args=(i, consumer, pid), name=f"director-w{i}", daemon=True)
+        for i, (consumer, pid) in enumerate(workers)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    if errors:
+        raise errors[0]
+    merged: list[dict[str, Any]] = []
+    for batch in results:
+        merged.extend(batch)
+    return merged
+
+
 def _run_inline_task_market_consumers(
     *,
     workspace_full: str,
@@ -833,6 +918,13 @@ def _run_inline_task_market_consumers(
             visibility_timeout_seconds=qa_timeout,
             poll_interval=0.05,
         )
+        director_workers = _build_director_worker_pool(
+            director_consumer_type,
+            workspace_full=workspace_full,
+            worker_suffix=worker_suffix,
+            exec_timeout=exec_timeout,
+            enable_safe_parallel=enable_safe_parallel,
+        )
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         return {
             "enabled": True,
@@ -853,7 +945,9 @@ def _run_inline_task_market_consumers(
         cycles_ran = cycle_index + 1
         try:
             ce_cycle = ce_consumer.poll_once()
-            director_cycle = director_consumer.poll_once()
+            director_cycle = (
+                _drive_director_workers(director_workers) if director_workers else director_consumer.poll_once()
+            )
             qa_cycle = qa_consumer.poll_once()
         except Exception as exc:
             loop_error = str(exc)

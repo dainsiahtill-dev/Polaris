@@ -93,8 +93,13 @@ class TestBuildBackoffSeconds:
 
 class TestIsRetryableNetworkError:
     def test_client_connector_error(self):
-        exc = Exception("Connection failed")
-        exc.__class__.__name__ = "ClientConnectorError"
+        # The matcher keys on type(exc).__name__, so simulate aiohttp's
+        # ClientConnectorError with a real subclass of that name (mutating
+        # Exception.__name__ is illegal on a built-in type under Python 3.12).
+        class ClientConnectorError(Exception):
+            pass
+
+        exc = ClientConnectorError("Connection failed")
         assert _is_retryable_network_error(exc) is True
 
     def test_connection_reset_error(self):

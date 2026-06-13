@@ -282,6 +282,23 @@ def _adapter_failure_message(adapter_result: dict[str, Any]) -> str:
     return base
 
 
+def _pre_state_punch_list(step: dict[str, Any], *, cwd: str) -> dict[str, Any] | None:
+    """施工现状勘察（缺陷清单 / punch list, Fix-13）。
+
+    改建式步骤（目标文件已被前置步骤写出）的施工单若只说"确保有 X"，
+    弱执行者读到看似完整的文件会判定"已完成"拒绝动笔——live I3-r13:
+    编辑模式 0/5，三次重试全零 diff。领取时跑一次本步 verify，把失败
+    子句（含 T2 实测残差）列成清单随施工单下发："缺这几样，补齐"。
+    核心逻辑委托 KernelOne 工具链（三个 verify 触点的单一事实源）。
+    """
+    from polaris.kernelone.quality.step_verify import collect_failing_clauses, normalize_step_verify
+
+    verify = normalize_step_verify(step.get("verify"))
+    if not verify:
+        return None
+    return collect_failing_clauses(verify, cwd=cwd)
+
+
 def _build_director_adapter_input(task_id: str, payload: dict[str, Any], lease_token: str) -> dict[str, Any]:
     metadata_raw = payload.get("metadata")
     metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
@@ -783,6 +800,11 @@ class DirectorExecutionConsumer:
         construction_step = payload.get("construction_step")
         if isinstance(construction_step, dict) and construction_step:
             context["construction_step"] = construction_step
+            # Fix-13 缺陷清单: 改建式步骤必须携带现状勘察, 否则弱执行者
+            # 读到看似完整的目标文件会拒绝动笔 (live I3-r13 编辑模式 0/5)。
+            punch_list = _pre_state_punch_list(construction_step, cwd=str(workspace_path))
+            if punch_list is not None:
+                context["pre_state_verify"] = punch_list
         # Bounce teaching: a requeued step carries the previous failure
         # (QA verify output, target-miss directive). Without it the retry
         # is blind — the file looks complete, the model makes no changes,
