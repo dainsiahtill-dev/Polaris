@@ -74,6 +74,20 @@ class TestBlueprintStepCard:
         assert card is not None
         assert "只写空桩" not in card
 
+    def test_fill_scope_directive_rendered(self):
+        card = self._card(
+            {
+                "construction_step": {
+                    "step_id": "S-fill1",
+                    "target_file": "main.js",
+                    "signatures": ["function update()"],
+                    "fill_scope_only": True,
+                }
+            }
+        )
+        assert card is not None
+        assert "只实现被分配的函数" in card and "edit_blocks" in card and "整文件重写" in card
+
 
 class TestProcessContextOverride:
     """Test _process_context_override method."""

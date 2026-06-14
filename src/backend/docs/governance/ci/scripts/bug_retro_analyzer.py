@@ -52,7 +52,7 @@ EMPTY = "░"
 
 def bar_graph(count: int, max_count: int, width: int = 10) -> str:
     """Render a text bar graph."""
-    filled = max(1, int(round(count / max_count * width))) if max_count > 0 else 0
+    filled = max(1, round(count / max_count * width)) if max_count > 0 else 0
     return BAR * filled + EMPTY * (width - filled)
 
 
@@ -61,7 +61,7 @@ def load_yaml(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f)
-    except Exception:
+    except (OSError, yaml.YAMLError):
         return None
 
 
@@ -298,7 +298,6 @@ def section_coaching(
     # 2. Assumption quality
     unverified = assumptions["status_counts"].get("unverified", 0)
     verified_false = assumptions["status_counts"].get("verified_false", 0)
-    verified_true = assumptions["status_counts"].get("verified_true", 0)
 
     if unverified > 0:
         recs.append(

@@ -503,8 +503,8 @@ class CEConsumer:
         import asyncio
         import json as _json
 
-        from polaris.bootstrap.config import get_settings
-        from polaris.cells.llm.dialogue.internal.role_dialogue import generate_role_response
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
         contract = _contract_fields(payload)
         task_brief = {
@@ -560,32 +560,55 @@ class CEConsumer:
                 asyncio.get_running_loop()
             except RuntimeError:
                 has_loop = False
-            coro = generate_role_response(
-                workspace=self._workspace,
-                settings=get_settings(),
+            context = {
+                "_transaction_kernel_forced_tool_definitions": [],
+                "_transaction_kernel_forced_tool_choice": "none",
+                "disable_internal_tool_rounds": True,
+                "llm_call_timeout_seconds": 300,
+                "request_timeout_seconds": 300,
+                "timeout_seconds": 300,
+                # Reasoning-sized output budget so the fission JSON survives
+                # the model's thinking burn (I3-r17); clamped to the model's
+                # max_output_tokens by the engine.
+                "llm_max_tokens": _ce_fission_max_output_tokens(),
+            }
+            command = ExecuteRoleSessionCommandV1(
                 role="chief_engineer",
-                message=message + extra,
-                # Pure text-generation contract (same as the PM planning path):
-                # reasoning planners answer tool-bearing requests WITH
-                # tool_calls and the visible text collector sees nothing.
-                context={
-                    "_transaction_kernel_forced_tool_definitions": [],
-                    "_transaction_kernel_forced_tool_choice": "none",
-                    "disable_internal_tool_rounds": True,
-                    "llm_call_timeout_seconds": 300,
-                    "request_timeout_seconds": 300,
-                    "timeout_seconds": 300,
-                    # Reasoning-sized output budget so the fission JSON survives
-                    # the model's thinking burn (I3-r17); clamped to the model's
-                    # max_output_tokens by the engine.
-                    "llm_max_tokens": _ce_fission_max_output_tokens(),
+                session_id=f"chief_engineer-fission-{task_id}",
+                workspace=self._workspace,
+                user_message=message + extra,
+                run_id=str(payload.get("run_id") or "") or None,
+                task_id=task_id,
+                context=context,
+                metadata={
+                    "source": "chief_engineer.blueprint.ce_consumer",
+                    "role_runtime_required": True,
+                    "cognitive_runtime_required": True,
+                    "context_os_expected": True,
+                    "validate_output": False,
                 },
-                # The fission JSON is its own contract (step gate below);
-                # the CE blueprint checklist would zero-score it.
-                validate_output=False,
+                stream=False,
+                host_kind="chief_engineer_blueprint",
+                timeout_seconds=300,
             )
+            runtime = RoleRuntimeService()
+            coro = runtime.execute_role_session(command)
             if not has_loop:
-                return asyncio.run(coro)
+                result = asyncio.run(coro)
+                output = str(getattr(result, "output", "") or "")
+                return {
+                    "success": bool(getattr(result, "ok", False)),
+                    "response": output,
+                    "content": output,
+                    "thinking": getattr(result, "thinking", None),
+                    "role": str(getattr(result, "role", "chief_engineer") or "chief_engineer"),
+                    "metadata": dict(getattr(result, "metadata", {}) or {}),
+                    "execution_stats": dict(getattr(result, "usage", {}) or {}),
+                    "tool_calls": list(getattr(result, "tool_calls", ()) or ()),
+                    "artifacts": list(getattr(result, "artifacts", ()) or ()),
+                    "error": str(getattr(result, "error_message", "") or getattr(result, "error_code", "") or ""),
+                    "raw_response": result,
+                }
             raise RuntimeError("ce_step_fission_inside_event_loop_unsupported")
 
         last_raw_head = {"text": ""}

@@ -18,6 +18,7 @@ cells:
   - runtime.projection
   - workspace.integrity
   - roles.kernel
+  - factory.cognitive_runtime
 exit_cells:
   - context.engine
   - llm.dialogue
@@ -53,6 +54,12 @@ relations:
     to: kernelone.core
     type: depends_on
     contract: ContextOS.StateFirstContextOS
+  # ContextOS final-request receipts are persisted through Cognitive Runtime so
+  # projections remain auditable/replayable across role boundaries.
+  - from: roles.kernel
+    to: factory.cognitive_runtime
+    type: calls
+    contract: RecordRuntimeReceiptCommandV1
   # Exploration policy is consumed by working-set assembler through kernelone.core.
   - from: context.engine
     to: kernelone.core

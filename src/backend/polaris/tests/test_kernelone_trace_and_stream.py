@@ -33,6 +33,7 @@ class _DummyBudgetManager:
         requested_output_tokens: int,
         workspace: str | None,
         role: str,
+        overhead_tokens: int = 0,
     ) -> TokenBudgetDecision:
         del prompt_input, model_spec, requested_output_tokens, workspace, role
         return TokenBudgetDecision(
@@ -42,6 +43,7 @@ class _DummyBudgetManager:
             requested_prompt_tokens=32,
             reserved_output_tokens=256,
             safety_margin_tokens=128,
+            overhead_tokens=overhead_tokens,
         )
 
 

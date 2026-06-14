@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from polaris.kernelone.context.receipt_store import ReceiptStore
 
 logger = logging.getLogger(__name__)
+
+_RECEIPT_REF_SAFE_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 @dataclass
@@ -209,6 +212,14 @@ class ProjectionEngine:
         return {key: value for key, value in raw.items() if key not in self._TURN_BLOCKED_KEYS}
 
     @staticmethod
+    def _sanitize_receipt_ref(ref: Any) -> str:
+        ref_text = str(ref or "").strip()
+        if not ref_text:
+            return ""
+        safe_ref = _RECEIPT_REF_SAFE_CHARS.sub("_", ref_text).strip("_")
+        return safe_ref[:128]
+
+    @staticmethod
     def _clean_turn_content(role: str, content: str) -> str:
         """对非信号角色(tool/system)内容剥离框架性控制面标记。
 
@@ -230,14 +241,15 @@ class ProjectionEngine:
 
         receipt_refs = turn.get("receipt_refs")
         if isinstance(receipt_refs, (list, tuple)) and receipt_store is not None:
-            snippets: list[str] = []
+            safe_refs: list[str] = []
             for ref in receipt_refs:
-                receipt_content = receipt_store.get(str(ref))
-                if receipt_content is not None:
-                    snippets.append(f"[Receipt {ref}]: {receipt_content[:500]}")
-            if snippets:
-                result["content"] = content + "\n\n" + "\n".join(snippets)
-                result["receipt_refs"] = [str(ref) for ref in receipt_refs]
+                ref_text = self._sanitize_receipt_ref(ref)
+                if ref_text:
+                    safe_refs.append(ref_text)
+            if safe_refs:
+                refs_text = "\n".join(f"[receipt_ref:{ref}]" for ref in safe_refs)
+                result["content"] = content + "\n\n" + refs_text
+                result["receipt_refs"] = safe_refs
 
         metadata = self._sanitize_metadata(turn.get("metadata"))
         if metadata:
@@ -431,10 +443,10 @@ class ProjectionEngine:
 
             role = str(getattr(event, "role", "user") or "user")
             content = self._clean_turn_content(role, str(getattr(event, "content", "") or ""))
-            event_id = str(getattr(event, "event_id", "") or f"idx_{index}")
+            event_id = self._sanitize_receipt_ref(getattr(event, "event_id", "")) or f"idx_{index}"
 
             if route == "archive":
-                artifact_id = str(getattr(event, "artifact_id", "") or event_id)
+                artifact_id = self._sanitize_receipt_ref(getattr(event, "artifact_id", "")) or event_id
                 is_recent = int(getattr(event, "sequence", 0)) >= latest_sequence - 3
                 content = content if is_recent else f"[Artifact stored: {artifact_id}]"
 

@@ -90,12 +90,13 @@ Landing:
 
 ### Slice E: Diagnostics And Replay
 
-Observed gap: `ProjectionReport` exists but runtime currently discards it; `run_contextos_replay.py` does not exist.
+Observed gap: `ProjectionReport` exists but runtime currently discards it; replay should use the canonical
+`polaris.delivery.cli.tools.contextos_replay` entrypoint instead of a separate governance script.
 
 Landing:
 
 - Add read-only diagnostics sections for ContextOS, projection, receipts, replay, and dormant modules.
-- Add deterministic `run_contextos_replay.py` governance CLI.
+- Use the deterministic `polaris.delivery.cli.tools.contextos_replay` CLI for replay verification.
 - Keep benchmark scoring out of pytest; use CLI gates for matrices.
 
 ## 4. Dormant Module Governance
@@ -127,7 +128,8 @@ LC_ALL=C.UTF-8 ruff check src/backend/polaris src/backend/docs/governance/ci/scr
 LC_ALL=C.UTF-8 ruff format src/backend/polaris src/backend/docs/governance/ci/scripts
 LC_ALL=C.UTF-8 PYTHONPATH=src/backend mypy <touched-python-files>
 LC_ALL=C.UTF-8 PYTHONPATH=src/backend python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
-LC_ALL=C.UTF-8 PYTHONPATH=src/backend python docs/governance/ci/scripts/run_contextos_replay.py --workspace . --report runtime/contextos_replay_report.json
+LC_ALL=C.UTF-8 PYTHONPATH=src/backend python -m polaris.delivery.cli.tools.contextos_replay \
+  --workspace . --messages-json '{"messages":[{"role":"user","content":"ContextOS replay gate","sequence":"0"}]}'
 ```
 
 ## 6. Open Risks

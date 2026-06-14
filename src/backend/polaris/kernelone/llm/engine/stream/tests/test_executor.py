@@ -14,7 +14,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.kernelone.llm.engine.contracts import AIRequest, ModelSpec, TaskType, TokenBudgetDecision
+from polaris.kernelone.llm.engine.contracts import (
+    AIRequest,
+    CompressionResult,
+    ModelSpec,
+    TaskType,
+    TokenBudgetDecision,
+)
 from polaris.kernelone.llm.engine.stream import (
     StreamExecutor,
     _normalize_arguments,
@@ -271,6 +277,210 @@ class TestStreamExecutorInvokeStreamErrors:
         serialized_receipt = json.dumps(receipts[0], ensure_ascii=False, sort_keys=True)
         assert "SECRET STREAM PROMPT" not in serialized_receipt
         assert "SECRET STREAM SYSTEM" not in serialized_receipt
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_final_request_receipt_redacts_compression_payload(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        receipts: list[dict[str, Any]] = []
+
+        class _CompressingBudgetManager:
+            def enforce(
+                self,
+                prompt_input: str,
+                model_spec: ModelSpec,
+                *,
+                requested_output_tokens: int,
+                workspace: str | None,
+                role: str,
+                overhead_tokens: int = 0,
+            ) -> TokenBudgetDecision:
+                del prompt_input, model_spec, requested_output_tokens, workspace, role
+                return TokenBudgetDecision(
+                    allowed=True,
+                    max_context_tokens=4096,
+                    allowed_prompt_tokens=1024,
+                    requested_prompt_tokens=4096,
+                    reserved_output_tokens=512,
+                    safety_margin_tokens=128,
+                    compression_applied=True,
+                    compression=CompressionResult(
+                        compressed_input="SECRET STREAM COMPRESSED /home/alice sk-stream-secret",
+                        original_tokens=4096,
+                        compressed_tokens=900,
+                        strategy="hard_trim",
+                        quality_flag="degraded",
+                        drop_ratio=0.78,
+                    ),
+                    overhead_tokens=overhead_tokens,
+                )
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                yield "ok"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+
+        executor = StreamExecutor(
+            workspace=str(tmp_path),
+            model_catalog=_ModelCatalog(),
+            token_budget=_CompressingBudgetManager(),
+            final_request_receipt_sink=receipts.append,
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                AIRequest(
+                    task_type=TaskType.GENERATION,
+                    role="director",
+                    provider_id="fake-provider",
+                    model="fake-model",
+                    input="SECRET STREAM INPUT",
+                    options={"max_tokens": 512},
+                    context={"turn_id": "turn-stream-compressed"},
+                )
+            )
+        ]
+
+        assert any(event.type.value == "complete" for event in events)
+        assert len(receipts) == 1
+        serialized_receipt = json.dumps(receipts[0], ensure_ascii=False, sort_keys=True)
+        complete_events = [event for event in events if event.type.value == "complete"]
+        serialized_complete = json.dumps(
+            [event.to_dict() for event in complete_events],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        assert "compressed_input" not in serialized_receipt
+        assert "compressed_input" not in serialized_complete
+        assert "SECRET STREAM COMPRESSED" not in serialized_receipt
+        assert "SECRET STREAM COMPRESSED" not in serialized_complete
+        assert "sk-stream-secret" not in serialized_receipt
+        assert "sk-stream-secret" not in serialized_complete
+        assert "/home/alice" not in serialized_receipt
+        assert "/home/alice" not in serialized_complete
+        assert receipts[0]["payload"]["token_budget"]["compression"]["compressed_text_sha256"]
+
+    @pytest.mark.asyncio
+    async def test_required_final_request_receipt_missing_sink_yields_error_before_provider(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        provider_calls: list[str] = []
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del model, config
+                provider_calls.append(prompt)
+                yield "should not run"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+
+        executor = StreamExecutor(
+            workspace=str(tmp_path),
+            model_catalog=_ModelCatalog(),
+            token_budget=_BudgetManager(),
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                AIRequest(
+                    task_type=TaskType.GENERATION,
+                    role="director",
+                    provider_id="fake-provider",
+                    model="fake-model",
+                    input="must record receipt",
+                    options={"max_tokens": 128},
+                    context={"context_os_expected": True},
+                )
+            )
+        ]
+
+        assert [event.type.value for event in events] == ["error"]
+        assert "final request receipt sink required" in str(events[0].error)
+        assert provider_calls == []
+
+    @pytest.mark.asyncio
+    async def test_complete_event_omits_full_output_and_reasoning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                yield {
+                    "type": "reasoning_chunk",
+                    "reasoning": "SECRET STREAM REASONING /home/alice sk-stream-reasoning",
+                }
+                yield "SECRET STREAM OUTPUT /home/alice sk-stream-output"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+
+        executor = StreamExecutor(
+            workspace=str(tmp_path),
+            model_catalog=_ModelCatalog(),
+            token_budget=_BudgetManager(),
+            final_request_receipt_sink=lambda _receipt: None,
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                AIRequest(
+                    task_type=TaskType.GENERATION,
+                    role="director",
+                    provider_id="fake-provider",
+                    model="fake-model",
+                    input="prompt",
+                    options={"max_tokens": 128},
+                    context={"turn_id": "turn-complete-redaction"},
+                )
+            )
+        ]
+
+        complete_events = [event for event in events if event.type.value == "complete"]
+        assert len(complete_events) == 1
+        serialized_complete = json.dumps(complete_events[0].to_dict(), ensure_ascii=False, sort_keys=True)
+        assert "output_sha256" in serialized_complete
+        assert "reasoning_sha256" in serialized_complete
+        assert "SECRET STREAM OUTPUT" not in serialized_complete
+        assert "SECRET STREAM REASONING" not in serialized_complete
+        assert "sk-stream" not in serialized_complete
+        assert "/home/alice" not in serialized_complete
 
     @pytest.mark.asyncio
     async def test_invoke_stream_compresses_chat_messages_without_flat_prompt_compression(

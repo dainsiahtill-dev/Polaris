@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from pathlib import Path
 from threading import Lock
@@ -34,14 +36,39 @@ def get_contextos_diagnostics(workspace: str | None) -> dict[str, Any]:
         return {
             "state": "no_projection",
             "ok": True,
-            "details": {"workspace": workspace_key, "last_projection_report": None},
+            "details": {
+                "workspace": workspace_key,
+                "last_projection_report": None,
+                "projection_report_digest": "",
+                "receipt_refs": [],
+                "receipt_ref_count": 0,
+                "replay_command": "python -m polaris.delivery.cli.tools.contextos_replay --workspace <workspace>",
+                "replay_ready": False,
+            },
             "evidence": [],
         }
+    receipt_refs = _collect_receipt_refs(report)
+    projection_digest = _stable_digest(report)
+    latest_projection_id = str(report.get("projection_id") or "").strip()
+    latest_run_id = str(report.get("run_id") or "").strip()
+    latest_turn_id = str(report.get("turn_id") or "").strip()
+    replay_ready = bool(projection_digest and latest_projection_id and latest_run_id and latest_turn_id)
     return {
         "state": "available",
         "ok": True,
-        "details": {"workspace": workspace_key, "last_projection_report": report},
-        "evidence": ["ContextOS ProjectionReport"],
+        "details": {
+            "workspace": workspace_key,
+            "last_projection_report": report,
+            "projection_report_digest": projection_digest,
+            "latest_projection_id": latest_projection_id,
+            "latest_run_id": latest_run_id,
+            "latest_turn_id": latest_turn_id,
+            "receipt_refs": receipt_refs,
+            "receipt_ref_count": len(receipt_refs),
+            "replay_command": f"python -m polaris.delivery.cli.tools.contextos_replay --workspace {workspace_key}",
+            "replay_ready": replay_ready,
+        },
+        "evidence": ["ContextOS ProjectionReport", "contextos_replay CLI"],
     }
 
 
@@ -60,6 +87,36 @@ def _workspace_key(workspace: str | None) -> str:
         return str(Path(token).expanduser().resolve())
     except (OSError, RuntimeError, ValueError):
         return token
+
+
+def _stable_digest(payload: dict[str, Any]) -> str:
+    try:
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    except (TypeError, ValueError):
+        encoded = repr(payload).encode("utf-8", errors="replace")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _collect_receipt_refs(payload: Any) -> list[str]:
+    refs: set[str] = set()
+    canonical_keys = {"receipt_refs", "runtime_receipt_refs", "cognitive_runtime_receipt_ids"}
+
+    def _visit(value: Any, *, canonical: bool = False) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                _visit(child, canonical=canonical or key in canonical_keys)
+            return
+        if isinstance(value, (list, tuple, set)):
+            for child in value:
+                _visit(child, canonical=canonical)
+            return
+        if canonical and isinstance(value, str):
+            token = value.strip()
+            if token:
+                refs.add(token)
+
+    _visit(payload)
+    return sorted(refs)
 
 
 __all__ = [

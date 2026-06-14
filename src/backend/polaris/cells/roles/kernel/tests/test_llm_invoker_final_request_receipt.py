@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from polaris.cells.factory.cognitive_runtime.public import RecordRuntimeReceiptCommandV1
 from polaris.cells.roles.kernel.internal.llm_caller import invoker as invoker_module
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
@@ -81,3 +82,29 @@ def test_final_request_sink_runtime_shape_error_does_not_raise(
             "trace_refs": ("trace-1",),
         }
     )
+
+
+def test_final_request_sink_required_mode_raises_on_runtime_shape_error(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        invoker_module,
+        "_get_cognitive_runtime_receipt_deps",
+        lambda: (RecordRuntimeReceiptCommandV1, lambda: object()),
+    )
+
+    invoker = LLMInvoker(workspace=str(tmp_path))
+    with pytest.raises(RuntimeError, match="required mode"):
+        invoker._record_final_request_receipt(
+            {
+                "receipt_type": "contextos.final_request",
+                "payload": {
+                    "trace_id": "trace-1",
+                    "run_id": "run-1",
+                    "cognitive_runtime_required": True,
+                    "context_os_expected": True,
+                },
+                "trace_refs": ("trace-1",),
+            }
+        )

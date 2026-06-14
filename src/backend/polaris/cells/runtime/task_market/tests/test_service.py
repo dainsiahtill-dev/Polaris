@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from polaris.cells.runtime.task_market.internal.errors import StaleLeaseTokenError
+from polaris.cells.runtime.task_market.internal.errors import FSMTransitionError, StaleLeaseTokenError
 from polaris.cells.runtime.task_market.internal.store import get_store
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
@@ -56,6 +56,43 @@ class _FakeCognitiveRuntimeService:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _RecordingStore:
+    def __init__(self, delegate: Any) -> None:
+        self._delegate = delegate
+        self.atomic_expected_versions: list[dict[str, int]] = []
+        self.atomic_transitions: list[list[dict[str, Any]]] = []
+        self.atomic_outbox_records: list[list[dict[str, Any]]] = []
+        self.atomic_dead_letter_records: list[list[dict[str, Any]]] = []
+        self.atomic_human_review_records: list[list[dict[str, Any]]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    def save_items_and_outbox_atomic(
+        self,
+        *,
+        items: dict[str, Any],
+        transitions: list[dict[str, Any]],
+        outbox_records: list[dict[str, Any]],
+        expected_versions: dict[str, int] | None = None,
+        dead_letter_records: list[dict[str, Any]] | None = None,
+        human_review_records: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.atomic_expected_versions.append(dict(expected_versions or {}))
+        self.atomic_transitions.append([dict(row) for row in transitions])
+        self.atomic_outbox_records.append([dict(row) for row in outbox_records])
+        self.atomic_dead_letter_records.append([dict(row) for row in dead_letter_records or []])
+        self.atomic_human_review_records.append([dict(row) for row in human_review_records or []])
+        self._delegate.save_items_and_outbox_atomic(
+            items=items,
+            transitions=transitions,
+            outbox_records=outbox_records,
+            expected_versions=expected_versions,
+            dead_letter_records=dead_letter_records,
+            human_review_records=human_review_records,
+        )
 
 
 def test_publish_claim_ack_flow(tmp_path: Path) -> None:
@@ -111,6 +148,290 @@ def test_publish_claim_ack_flow(tmp_path: Path) -> None:
     )
     assert acknowledged.ok is True
     assert acknowledged.status == "pending_qa"
+
+
+def test_hot_mutation_paths_pass_expected_versions_to_atomic_store(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+    recording_store = _RecordingStore(get_store(str(workspace)))
+    service._get_store = lambda _workspace: recording_store
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-cas-service",
+            run_id="run-cas-service",
+            task_id="task-cas-service",
+            stage="pending_exec",
+            source_role="pm",
+            payload={"title": "Implement API"},
+        )
+    )
+    recording_store.atomic_expected_versions.clear()
+
+    claimed = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+    assert claimed.ok is True
+
+    renewed = service.renew_task_lease(
+        RenewTaskLeaseCommandV1(
+            workspace=str(workspace),
+            task_id="task-cas-service",
+            lease_token=claimed.lease_token,
+            visibility_timeout_seconds=60,
+        )
+    )
+    assert renewed.ok is True
+
+    acknowledged = service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="task-cas-service",
+            lease_token=claimed.lease_token,
+            next_stage="pending_qa",
+            summary="Execution complete",
+        )
+    )
+    assert acknowledged.ok is True
+    assert recording_store.atomic_expected_versions == [
+        {"task-cas-service": 1},
+        {"task-cas-service": 2},
+        {"task-cas-service": 3},
+    ]
+
+
+def test_human_review_state_and_review_record_share_atomic_write(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+    recording_store = _RecordingStore(get_store(str(workspace)))
+    service._get_store = lambda _workspace: recording_store
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-hitl-atomic",
+            run_id="run-hitl-atomic",
+            task_id="task-hitl-atomic",
+            stage="pending_exec",
+            source_role="pm",
+            payload={"title": "Needs review"},
+        )
+    )
+    recording_store.atomic_expected_versions.clear()
+    recording_store.atomic_transitions.clear()
+    recording_store.atomic_outbox_records.clear()
+    recording_store.atomic_human_review_records.clear()
+
+    requested = service.request_human_review(
+        RequestHumanReviewCommandV1(
+            workspace=str(workspace),
+            task_id="task-hitl-atomic",
+            reason="needs human review",
+            requested_by="director",
+        )
+    )
+
+    assert requested.ok is True
+    assert recording_store.atomic_expected_versions[-1] == {"task-hitl-atomic": 1}
+    assert recording_store.atomic_human_review_records[-1][0]["task_id"] == "task-hitl-atomic"
+    assert recording_store.atomic_transitions[-1][0]["event_type"] == "human_review_requested"
+    assert recording_store.atomic_outbox_records[-1][0]["event_type"] == "task_market.human_review_requested"
+
+    recording_store.atomic_expected_versions.clear()
+    recording_store.atomic_transitions.clear()
+    recording_store.atomic_outbox_records.clear()
+    recording_store.atomic_human_review_records.clear()
+
+    resolved = service.resolve_human_review(
+        ResolveHumanReviewCommandV1(
+            workspace=str(workspace),
+            task_id="task-hitl-atomic",
+            resolution="requeue_exec",
+            resolved_by="director",
+        )
+    )
+
+    assert resolved.ok is True
+    assert recording_store.atomic_expected_versions[-1] == {"task-hitl-atomic": 2}
+    assert recording_store.atomic_human_review_records[-1][0]["status"] == "resolved"
+    assert recording_store.atomic_transitions[-1][0]["event_type"] == "human_review_resolved"
+    assert recording_store.atomic_outbox_records[-1][0]["event_type"] == "task_market.human_review_resolved"
+
+
+def test_dead_letter_record_shares_atomic_write_with_item_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+    recording_store = _RecordingStore(get_store(str(workspace)))
+    service._get_store = lambda _workspace: recording_store
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-dlq-atomic",
+            run_id="run-dlq-atomic",
+            task_id="task-dlq-atomic",
+            stage="pending_exec",
+            source_role="pm",
+            payload={"title": "Dead letter me"},
+        )
+    )
+    recording_store.atomic_expected_versions.clear()
+    recording_store.atomic_dead_letter_records.clear()
+
+    result = service.move_task_to_dead_letter(
+        MoveTaskToDeadLetterCommandV1(
+            workspace=str(workspace),
+            task_id="task-dlq-atomic",
+            reason="manual quarantine",
+            error_code="manual_quarantine",
+        )
+    )
+
+    assert result.status == "dead_letter"
+    assert recording_store.atomic_expected_versions[-1] == {"task-dlq-atomic": 1}
+    assert recording_store.atomic_dead_letter_records[-1][0]["task_id"] == "task-dlq-atomic"
+
+
+def test_leaf_execution_ack_to_pending_exec_is_rejected(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-leaf-ack",
+            run_id="run-leaf-ack",
+            task_id="task-leaf-ack",
+            stage="pending_exec",
+            source_role="pm",
+            payload={"title": "Leaf task"},
+        )
+    )
+    claimed = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+
+    with pytest.raises(TaskMarketError):
+        service.acknowledge_task_stage(
+            AcknowledgeTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="task-leaf-ack",
+                lease_token=claimed.lease_token,
+                next_stage="pending_exec",
+                summary="try to silently requeue",
+            )
+        )
+
+
+def test_ack_rejects_illegal_fsm_transition_without_persisting(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-fsm",
+            run_id="run-fsm",
+            task_id="task-fsm",
+            stage="pending_exec",
+            source_role="pm",
+            payload={"title": "Implement API"},
+        )
+    )
+    claimed = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+    assert claimed.ok is True
+
+    with pytest.raises(FSMTransitionError):
+        service.acknowledge_task_stage(
+            AcknowledgeTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="task-fsm",
+                lease_token=str(claimed.lease_token),
+                summary="should not go back to design",
+                next_stage="pending_design",
+            )
+        )
+
+    stored = get_store(str(workspace)).load_items()["task-fsm"]
+    assert stored.status == "in_execution"
+    assert stored.stage == "pending_exec"
+
+
+def test_qa_ack_waiting_human_from_in_qa_creates_review(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-hitl",
+            run_id="run-hitl",
+            task_id="task-hitl",
+            stage="pending_qa",
+            source_role="director",
+            payload={"title": "Review work"},
+        )
+    )
+    claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_qa",
+            worker_id="qa-1",
+            worker_role="qa",
+            visibility_timeout_seconds=60,
+        )
+    )
+    assert claim.ok is True
+    assert claim.status == "in_qa"
+
+    acknowledged = service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="task-hitl",
+            lease_token=claim.lease_token,
+            next_stage="waiting_human",
+            summary="Needs human review",
+        )
+    )
+
+    assert acknowledged.ok is True
+    assert acknowledged.status == "waiting_human"
+    reviews = service.query_pending_human_reviews(
+        QueryPendingHumanReviewsV1(
+            workspace=str(workspace),
+            limit=10,
+        )
+    )
+    assert len(reviews) == 1
+    assert reviews[0]["task_id"] == "task-hitl"
+    assert reviews[0]["status"] == "waiting"
 
 
 def test_publish_claim_ack_records_cognitive_runtime_lifecycle_receipts(

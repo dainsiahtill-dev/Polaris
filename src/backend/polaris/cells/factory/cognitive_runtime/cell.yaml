@@ -66,9 +66,12 @@ verification:
   - polaris/delivery/http/routers/test_cognitive_runtime_router.py
   - polaris/infrastructure/cognitive_runtime/tests/test_sqlite_store.py
   gaps:
-  - This cell is intentionally not wired into the production orchestration mainline
-    yet.
-  - Runtime authority remains shadow-wired; production orchestration does not yet
-    enforce Cognitive Runtime decisions as hard gates.
+  - Cognitive Runtime is now hot-path wired for LLM final-request receipts,
+    runtime.task_market lifecycle receipts, and pm_dispatch QA verification
+    receipts; remaining work is to make all required ContextOS receipt failures
+    hard gates instead of fail-soft telemetry.
+  - Runtime authority is selectively fail-closed where callers pass
+    cognitive_runtime_required/context_os_expected, but broader orchestration
+    promotion gates still need uniform required-mode enforcement.
   smoke_commands: []
 generated_artifacts: []

@@ -39,6 +39,8 @@ class RuntimeDiagnosticsResponse(BaseModel):
     websocket: RuntimeDiagnosticSection
     rate_limit: RuntimeDiagnosticSection
     context_os: RuntimeDiagnosticSection
+    runtime_receipts: RuntimeDiagnosticSection
+    context_os_replay: RuntimeDiagnosticSection
     dormant_modules: RuntimeDiagnosticSection
 
 
@@ -164,6 +166,54 @@ def _context_os_section(workspace: str) -> RuntimeDiagnosticSection:
     )
 
 
+def _runtime_receipts_section(workspace: str) -> RuntimeDiagnosticSection:
+    diagnostics = get_contextos_diagnostics(workspace)
+    details_raw = diagnostics.get("details")
+    details: dict[str, Any] = details_raw if isinstance(details_raw, dict) else {}
+    receipt_refs_raw = details.get("receipt_refs")
+    receipt_refs: list[Any] = receipt_refs_raw if isinstance(receipt_refs_raw, list) else []
+    receipt_ref_count_raw = details.get("receipt_ref_count")
+    try:
+        reported_count = int(receipt_ref_count_raw) if receipt_ref_count_raw is not None else len(receipt_refs)
+    except (TypeError, ValueError):
+        reported_count = len(receipt_refs)
+    receipt_ref_count = len(receipt_refs)
+    count_mismatch = reported_count != receipt_ref_count
+    state = "inconsistent" if count_mismatch else ("observed" if receipt_ref_count > 0 else "not_observed")
+    return RuntimeDiagnosticSection(
+        state=state,
+        ok=not count_mismatch,
+        details={
+            "receipt_ref_count": receipt_ref_count,
+            "reported_receipt_ref_count": reported_count,
+            "receipt_refs": [str(ref) for ref in receipt_refs],
+            "latest_projection_id": str(details.get("latest_projection_id") or ""),
+        },
+        evidence=["ContextOS ProjectionReport receipt refs"],
+    )
+
+
+def _context_os_replay_section(workspace: str) -> RuntimeDiagnosticSection:
+    diagnostics = get_contextos_diagnostics(workspace)
+    details = diagnostics.get("details") if isinstance(diagnostics.get("details"), dict) else {}
+    replay_ready = bool(details.get("replay_ready"))
+    diagnostics_ok = diagnostics.get("ok")
+    ok = bool(diagnostics_ok) and replay_ready if diagnostics_ok is not None else replay_ready
+    diagnostics_state = str(diagnostics.get("state") or "unknown")
+    return RuntimeDiagnosticSection(
+        state="ready" if replay_ready else ("no_projection" if diagnostics_state == "no_projection" else "not_ready"),
+        ok=ok,
+        details={
+            "projection_report_digest": str(details.get("projection_report_digest") or ""),
+            "latest_projection_id": str(details.get("latest_projection_id") or ""),
+            "latest_run_id": str(details.get("latest_run_id") or ""),
+            "latest_turn_id": str(details.get("latest_turn_id") or ""),
+            "replay_command": str(details.get("replay_command") or ""),
+        },
+        evidence=["polaris.delivery.cli.tools.contextos_replay"],
+    )
+
+
 def _dormant_modules_section() -> RuntimeDiagnosticSection:
     diagnostics = get_contextos_module_classification_diagnostics()
     details = diagnostics.get("details") if isinstance(diagnostics.get("details"), dict) else {}
@@ -198,6 +248,8 @@ async def get_runtime_diagnostics(request: Request) -> RuntimeDiagnosticsRespons
         websocket=_websocket_section(request),
         rate_limit=_rate_limit_section(),
         context_os=_context_os_section(workspace),
+        runtime_receipts=_runtime_receipts_section(workspace),
+        context_os_replay=_context_os_replay_section(workspace),
         dormant_modules=_dormant_modules_section(),
     )
 

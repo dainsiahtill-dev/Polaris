@@ -24,13 +24,16 @@ from ._executor_base import (
     build_final_request_observability_fields,
     build_final_request_trace_refs,
     build_invoke_config,
+    build_safe_token_budget_payload,
     clamp_output_tokens_to_window,
     classify_error,
+    coerce_required_flag,
     estimate_payload_overhead_tokens,
     get_provider_config,
     provider_type_policy_error,
     resolve_provider_model,
     resolve_requested_output_tokens,
+    safe_observability_payload,
 )
 from .contracts import (
     AIRequest,
@@ -373,6 +376,7 @@ class AIExecutor:
                 error=budget_decision.error or "Prompt exceeds model context budget",
                 category=ErrorCategory.INVALID_RESPONSE,
             )
+        safe_token_budget = build_safe_token_budget_payload(budget_decision)
 
         prompt_input = request.input
         # ADR-0090 W1.5: pass the structured message array through so chat
@@ -381,7 +385,7 @@ class AIExecutor:
         chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
         if budget_decision.compression_applied and budget_decision.compression is not None:
             prompt_input = budget_decision.compression.compressed_input
-            request.context["token_budget"] = budget_decision.to_dict()
+            request.context["token_budget"] = safe_token_budget
 
         # W1.5d (I3-r27): the structured ``chat_messages`` array is the REAL prompt
         # sent to a chat provider — the flattened ``request.input`` string is only a
@@ -478,7 +482,7 @@ class AIExecutor:
                 raw=self._build_raw_payload(
                     raw=result.raw,
                     model_spec=model_spec,
-                    budget=budget_decision.to_dict(),
+                    budget=safe_token_budget,
                 ),
             )
         else:
@@ -542,11 +546,15 @@ class AIExecutor:
         chat_messages_after: list[Any] | None,
         clamp_prompt_text: str,
     ) -> None:
+        context = request.context if isinstance(request.context, dict) else {}
+        receipt_required = coerce_required_flag(context.get("cognitive_runtime_required")) or coerce_required_flag(
+            context.get("context_os_expected")
+        )
         sink = self.final_request_receipt_sink
         if sink is None:
+            if receipt_required:
+                raise RuntimeError("final request receipt sink required but unavailable")
             return
-
-        context = request.context if isinstance(request.context, dict) else {}
         tools = invoke_cfg.get("tools")
         tool_count = len(tools) if isinstance(tools, list) else 0
         chat_count_before = len(chat_messages_before) if isinstance(chat_messages_before, list) else 0
@@ -557,7 +565,7 @@ class AIExecutor:
         input_sha256 = self._sha256_text(prompt_input)
         effective_prompt_sha256 = self._sha256_text(clamp_prompt_text)
         tool_schema_sha256 = self._sha256_json(tools) if tool_count else ""
-        token_budget = budget_decision.to_dict() if hasattr(budget_decision, "to_dict") else {}
+        token_budget = build_safe_token_budget_payload(budget_decision)
         observability_fields = build_final_request_observability_fields(
             context=context,
             trace_id=trace_id,
@@ -577,6 +585,8 @@ class AIExecutor:
                 "run_id": self._non_empty_str(context.get("run_id")),
                 "task_id": self._non_empty_str(context.get("task_id")),
                 "session_id": self._non_empty_str(context.get("session_id")),
+                "cognitive_runtime_required": coerce_required_flag(context.get("cognitive_runtime_required")),
+                "context_os_expected": coerce_required_flag(context.get("context_os_expected")),
                 **observability_fields,
                 "role": request.role,
                 "task_type": request.task_type.value,
@@ -606,8 +616,10 @@ class AIExecutor:
         }
         try:
             sink(receipt)
-        except Exception as exc:  # noqa: BLE001 - audit sink must not block provider invocation
+        except Exception as exc:
             logger.warning("[executor] final request receipt sink failed: %s", exc)
+            if receipt_required:
+                raise
 
     @staticmethod
     def _normalize_chat_messages_for_receipt(value: Any) -> list[dict[str, str]]:
@@ -647,6 +659,8 @@ class AIExecutor:
     @staticmethod
     def _non_empty_str(value: Any) -> str | None:
         text = str(value or "").strip()
+        safe_text = safe_observability_payload(text)
+        text = str(safe_text or "").strip()
         return text or None
 
     def _build_raw_payload(
@@ -656,7 +670,8 @@ class AIExecutor:
         model_spec: ModelSpec,
         budget: dict[str, Any],
     ) -> dict[str, Any]:
-        payload = raw if isinstance(raw, dict) else {}
+        safe_raw = safe_observability_payload(raw)
+        payload = dict(safe_raw) if isinstance(safe_raw, dict) else {}
         if "model_spec" not in payload:
             payload["model_spec"] = model_spec.to_dict()
         payload["token_budget"] = budget

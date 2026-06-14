@@ -138,8 +138,18 @@ async def test_runtime_diagnostics_exposes_nats_ws_and_rate_limit(client: AsyncC
             return_value={
                 "state": "available",
                 "ok": True,
-                "details": {"last_projection_report": {"projection_id": "proj-1"}},
-                "evidence": ["ContextOS ProjectionReport"],
+                "details": {
+                    "last_projection_report": {"projection_id": "proj-1"},
+                    "latest_projection_id": "proj-1",
+                    "latest_run_id": "run-1",
+                    "latest_turn_id": "turn-1",
+                    "projection_report_digest": "a" * 64,
+                    "receipt_refs": ["runtime_receipt:receipt-1"],
+                    "receipt_ref_count": 1,
+                    "replay_ready": True,
+                    "replay_command": "python -m polaris.delivery.cli.tools.contextos_replay --workspace .",
+                },
+                "evidence": ["ContextOS ProjectionReport", "contextos_replay CLI"],
             },
         ),
     ):
@@ -157,6 +167,12 @@ async def test_runtime_diagnostics_exposes_nats_ws_and_rate_limit(client: AsyncC
     assert data["rate_limit"]["details"]["store"]["clients"][0]["client_key_hash"] == "abc123"
     assert data["context_os"]["state"] == "available"
     assert data["context_os"]["details"]["last_projection_report"]["projection_id"] == "proj-1"
+    assert data["runtime_receipts"]["state"] == "observed"
+    assert data["runtime_receipts"]["details"]["receipt_ref_count"] == 1
+    assert data["context_os_replay"]["state"] == "ready"
+    assert data["context_os_replay"]["details"]["projection_report_digest"] == "a" * 64
+    assert data["context_os_replay"]["details"]["latest_run_id"] == "run-1"
+    assert data["context_os_replay"]["details"]["latest_turn_id"] == "turn-1"
     assert data["dormant_modules"]["state"] == "classified"
     assert data["dormant_modules"]["details"]["dormant_count"] >= 4
 

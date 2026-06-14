@@ -19,26 +19,37 @@ import logging
 import os
 from typing import Any
 
+from polaris.kernelone.fs import KernelFileSystem
+from polaris.kernelone.fs.registry import get_default_adapter
+
 logger = logging.getLogger(__name__)
 
-_ANCHOR_RELPATH = os.path.join(".polaris", "runtime", "scout_anchors.json")
+_ANCHOR_LOGICAL_PATH = "runtime/scout_anchors.json"
+_LEGACY_ANCHOR_RELPATH = os.path.join(".polaris", "runtime", "scout_anchors.json")
 _MAX_ANCHORS = 8
 _MIN_CONFIDENCE = 0.2
 _MAX_CARD_CHARS = 900
 
 
 def _anchor_path(workspace: str) -> str:
-    return os.path.join(workspace, _ANCHOR_RELPATH)
+    return os.path.join(workspace, _LEGACY_ANCHOR_RELPATH)
+
+
+def _kernel_fs(workspace: str) -> KernelFileSystem:
+    return KernelFileSystem(workspace, get_default_adapter())
 
 
 def load_scout_anchors(workspace: str) -> list[dict[str, Any]]:
     """Load persisted anchors; missing/corrupt files load as empty (fail-soft)."""
-    path = _anchor_path(workspace)
     try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return []
+        data = _kernel_fs(workspace).read_json(_ANCHOR_LOGICAL_PATH)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        path = _anchor_path(workspace)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return []
     anchors = data.get("anchors") if isinstance(data, dict) else None
     return [a for a in anchors or [] if isinstance(a, dict) and a.get("path")]
 
@@ -79,12 +90,14 @@ def record_scout_anchors(workspace: str, query: str, findings: list[dict[str, An
             by_path[path] = anchor
     merged = sorted(by_path.values(), key=lambda a: -float(a.get("confidence") or 0.0))[:_MAX_ANCHORS]
 
-    target = _anchor_path(workspace)
     try:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as fh:
-            json.dump({"anchors": merged}, fh, ensure_ascii=False, indent=1)
-    except OSError as exc:
+        _kernel_fs(workspace).write_json_atomic(
+            _ANCHOR_LOGICAL_PATH,
+            {"anchors": merged},
+            ensure_ascii=False,
+            indent=1,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.debug("scout anchor persistence failed (fail-soft): %s", exc)
     return len(merged)
 

@@ -30,12 +30,15 @@ from .._executor_base import (
     build_final_request_observability_fields,
     build_final_request_trace_refs,
     build_invoke_config,
+    build_safe_token_budget_payload,
     clamp_output_tokens_to_window,
+    coerce_required_flag,
     estimate_payload_overhead_tokens,
     get_provider_config,
     provider_type_policy_error,
     resolve_provider_model,
     resolve_requested_output_tokens,
+    safe_observability_payload,
 )
 from ..contracts import (
     AIRequest,
@@ -178,11 +181,15 @@ class StreamExecutor:
         chat_messages_after: list[Any] | None,
         clamp_prompt_text: str,
     ) -> None:
+        context = request.context if isinstance(request.context, dict) else {}
+        receipt_required = coerce_required_flag(context.get("cognitive_runtime_required")) or coerce_required_flag(
+            context.get("context_os_expected")
+        )
         sink = self.final_request_receipt_sink
         if sink is None:
+            if receipt_required:
+                raise RuntimeError("final request receipt sink required but unavailable")
             return
-
-        context = request.context if isinstance(request.context, dict) else {}
         tools = invoke_cfg.get("tools")
         tool_count = len(tools) if isinstance(tools, list) else 0
         chat_count_before = len(chat_messages_before) if isinstance(chat_messages_before, list) else 0
@@ -193,7 +200,7 @@ class StreamExecutor:
         input_sha256 = self._sha256_text(prompt_input)
         effective_prompt_sha256 = self._sha256_text(clamp_prompt_text)
         tool_schema_sha256 = self._sha256_json(tools) if tool_count else ""
-        token_budget = budget_decision.to_dict() if hasattr(budget_decision, "to_dict") else {}
+        token_budget = build_safe_token_budget_payload(budget_decision)
         observability_fields = build_final_request_observability_fields(
             context=context,
             trace_id=trace_id,
@@ -214,6 +221,8 @@ class StreamExecutor:
                 "run_id": self._non_empty_str(context.get("run_id")),
                 "task_id": self._non_empty_str(context.get("task_id")),
                 "session_id": self._non_empty_str(context.get("session_id")),
+                "cognitive_runtime_required": coerce_required_flag(context.get("cognitive_runtime_required")),
+                "context_os_expected": coerce_required_flag(context.get("context_os_expected")),
                 **observability_fields,
                 "role": request.role,
                 "task_type": request.task_type.value,
@@ -243,8 +252,10 @@ class StreamExecutor:
         }
         try:
             sink(receipt)
-        except Exception as exc:  # noqa: BLE001 - audit sink must not block provider invocation
+        except Exception as exc:
             logger.warning("[stream-executor] final request receipt sink failed: %s", exc)
+            if receipt_required:
+                raise
 
     @staticmethod
     def _normalize_chat_messages_for_receipt(value: Any) -> list[dict[str, str]]:
@@ -274,6 +285,8 @@ class StreamExecutor:
     @staticmethod
     def _non_empty_str(value: Any) -> str:
         text = str(value or "").strip()
+        safe_text = safe_observability_payload(text)
+        text = str(safe_text or "").strip()
         return text
 
     @staticmethod
@@ -537,6 +550,7 @@ class StreamExecutor:
         if not budget_decision.allowed:
             yield AIStreamEvent.error_event(budget_decision.error or "Prompt exceeds model context budget")
             return
+        safe_token_budget = build_safe_token_budget_payload(budget_decision)
 
         prompt_input = request.input
         clamp_prompt_text = prompt_input if isinstance(prompt_input, str) else str(prompt_input)
@@ -547,7 +561,7 @@ class StreamExecutor:
         if budget_decision.compression_applied and budget_decision.compression is not None:
             prompt_input = budget_decision.compression.compressed_input
             clamp_prompt_text = prompt_input if isinstance(prompt_input, str) else str(prompt_input)
-            request.context["token_budget"] = budget_decision.to_dict()
+            request.context["token_budget"] = safe_token_budget
 
         # ADR-0090 W1.5b/d: always budget the structured array independently
         # from the flattened prompt so provider-bound chat messages cannot
@@ -571,20 +585,24 @@ class StreamExecutor:
             overhead_tokens=payload_overhead,
             logger_prefix="[stream-executor]",
         )
-        self._record_final_request_receipt(
-            request=request,
-            trace_id=trace_id,
-            model_spec=model_spec,
-            invoke_cfg=invoke_cfg,
-            budget_decision=budget_decision,
-            requested_output_tokens=requested_output_tokens,
-            max_tokens_before_clamp=max_tokens_before_clamp,
-            payload_overhead=payload_overhead,
-            prompt_input=prompt_input,
-            chat_messages_before=chat_messages,
-            chat_messages_after=effective_chat_messages,
-            clamp_prompt_text=clamp_prompt_text,
-        )
+        try:
+            self._record_final_request_receipt(
+                request=request,
+                trace_id=trace_id,
+                model_spec=model_spec,
+                invoke_cfg=invoke_cfg,
+                budget_decision=budget_decision,
+                requested_output_tokens=requested_output_tokens,
+                max_tokens_before_clamp=max_tokens_before_clamp,
+                payload_overhead=payload_overhead,
+                prompt_input=prompt_input,
+                chat_messages_before=chat_messages,
+                chat_messages_after=effective_chat_messages,
+                clamp_prompt_text=clamp_prompt_text,
+            )
+        except RuntimeError as exc:
+            yield AIStreamEvent.error_event(str(exc))
+            return
 
         collected_output = ""
         collected_reasoning = ""
@@ -772,13 +790,16 @@ class StreamExecutor:
 
         yield AIStreamEvent.complete(
             {
-                "output": collected_output,
-                "reasoning": collected_reasoning,
-                "tool_calls": emitted_tool_calls,
-                "structured": structured,
+                "output_sha256": self._sha256_text(collected_output),
+                "output_chars": len(collected_output),
+                "reasoning_sha256": self._sha256_text(collected_reasoning),
+                "reasoning_chars": len(collected_reasoning),
+                "tool_call_count": len(emitted_tool_calls),
+                "tool_calls": safe_observability_payload(emitted_tool_calls),
+                "structured": safe_observability_payload(structured),
                 "latency_ms": latency_ms,
                 "model_spec": model_spec.to_dict(),
-                "token_budget": budget_decision.to_dict(),
+                "token_budget": safe_token_budget,
             }
         )
 

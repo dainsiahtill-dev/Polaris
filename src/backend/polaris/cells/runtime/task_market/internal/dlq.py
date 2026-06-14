@@ -31,7 +31,9 @@ class DLQManager:
         reason: str,
         error_code: str,
         metadata: dict[str, Any],
-    ) -> None:
+        *,
+        persist: bool = True,
+    ) -> dict[str, Any]:
         """Move a work item into the dead-letter state.
 
         This updates the item in-place and appends a DLQ record to the
@@ -60,7 +62,9 @@ class DLQManager:
             "metadata": dict(metadata),
             "dead_lettered_at": now_iso(),
         }
-        self._store.append_dead_letter(dlq_entry)
+        if persist:
+            self._store.append_dead_letter(dlq_entry)
+        return dlq_entry
 
     def load_dlq_items(
         self,
@@ -101,6 +105,7 @@ class DLQManager:
                 details={"task_id": task_id, "status": item.status},
             )
 
+        previous_version = int(item.version)
         # Reset attempts so it can be retried.
         item.attempts = 0
         item.stage = target_stage
@@ -115,8 +120,12 @@ class DLQManager:
         item.version += 1
         item.updated_at = now_iso()
 
-        items[item.task_id] = item
-        self._store.save_items(items)
+        self._store.save_items_and_outbox_atomic(
+            items={item.task_id: item},
+            transitions=[],
+            outbox_records=[],
+            expected_versions={item.task_id: previous_version},
+        )
 
         return item
 

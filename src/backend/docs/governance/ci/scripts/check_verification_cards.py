@@ -36,7 +36,7 @@ ADR_DIR = REPO_ROOT / "docs" / "governance" / "decisions"
 
 
 class ValidationError:
-    def __init__(self, card_id: str, field: str, message: str):
+    def __init__(self, card_id: str, field: str, message: str) -> None:
         self.card_id = card_id
         self.field = field
         self.message = message
@@ -50,7 +50,7 @@ def load_yaml(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f)
-    except Exception:
+    except (OSError, yaml.YAMLError):
         return None
 
 

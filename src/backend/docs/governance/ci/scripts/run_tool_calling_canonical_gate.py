@@ -25,9 +25,9 @@ def _non_empty(value: Any) -> str:
 def _get_polaris_imports():
     """Lazy import of polaris modules after sys.path is set up."""
     # Ensure polaris is on the import path when running as a standalone script.
-    _BACKEND_ROOT = Path(__file__).resolve().parents[4]
-    if str(_BACKEND_ROOT) not in sys.path:
-        sys.path.insert(0, str(_BACKEND_ROOT))
+    backend_root = Path(__file__).resolve().parents[4]
+    if str(backend_root) not in sys.path:
+        sys.path.insert(0, str(backend_root))
 
     from polaris.kernelone.llm.toolkit.tool_normalization import (
         normalize_tool_name,
@@ -100,7 +100,7 @@ def _detect_cross_tool_mapping_issues(
     """
     issues = []
 
-    for index, (raw_tool, observed_tool) in enumerate(zip(raw_tools, observed_tools)):
+    for index, (raw_tool, observed_tool) in enumerate(zip(raw_tools, observed_tools, strict=False)):
         if _is_cross_tool_mapping(raw_tool, observed_tool, normalize_tool_name_func, canonical_tools):
             issues.append(
                 GateIssue(
@@ -130,7 +130,7 @@ def _mapping_dict(value: Any) -> dict[str, Any]:
 
 def _tuple_of_strings(value: Any) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
-        return tuple()
+        return ()
     output: list[str] = []
     for item in value:
         token = _non_empty(item)
@@ -363,10 +363,7 @@ def main() -> int:
             print("[warning] no TOOL_CALLING_MATRIX_REPORT.json found under workspace; running with empty case set")
             input_report = None
 
-    if input_report is None:
-        payload = {"cases": []}
-    else:
-        payload = _load_json(input_report)
+    payload = {"cases": []} if input_report is None else _load_json(input_report)
 
     all_cases = list(payload.get("cases") or [])
     target_cases: list[dict[str, Any]] = []

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Tool Normalization 同步门禁")
     parser.add_argument("--workspace", default=".", help="仓库根目录")
     parser.add_argument("--mode", default="sync-check", choices=["sync-check", "generate"])
@@ -68,7 +68,7 @@ def main():
         try:
             from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 
-            test_args = {alias: f"test_{alias}" for alias in aliases.keys()}
+            test_args = {alias: f"test_{alias}" for alias in aliases}
             result = normalize_tool_arguments(tool_name, test_args)
             for alias, canonical in aliases.items():
                 if alias == canonical:
@@ -76,7 +76,7 @@ def main():
                 # 检查是否 alias 被消费（不在 result 中）
                 if alias in result:
                     issues.append(f"  {tool_name}: alias '{alias}' not consumed (still in result)")
-        except Exception as e:
+        except (ImportError, RuntimeError, ValueError) as e:
             issues.append(f"  {tool_name}: normalizer raised {e}")
 
     if issues:

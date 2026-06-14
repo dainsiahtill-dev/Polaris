@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.storage import resolve_runtime_path
 
+from .errors import StaleWriteConflictError
 from .models import TaskWorkItemRecord
 
 if TYPE_CHECKING:
@@ -114,6 +115,9 @@ class TaskMarketStoreProtocol(Protocol):
         items: dict[str, TaskWorkItemRecord],
         transitions: list[dict[str, Any]],
         outbox_records: list[dict[str, Any]],
+        expected_versions: dict[str, int] | None = None,
+        dead_letter_records: list[dict[str, Any]] | None = None,
+        human_review_records: list[dict[str, Any]] | None = None,
     ) -> None: ...
 
 
@@ -403,9 +407,29 @@ class TaskMarketJSONStore:
         items: dict[str, TaskWorkItemRecord],
         transitions: list[dict[str, Any]],
         outbox_records: list[dict[str, Any]],
+        expected_versions: dict[str, int] | None = None,
+        dead_letter_records: list[dict[str, Any]] | None = None,
+        human_review_records: list[dict[str, Any]] | None = None,
     ) -> None:
         """Best-effort atomic write for JSON backend (falls back to sequential writes)."""
-        self.save_items(items)
+        current_items = self.load_items()
+        for task_id, expected_version in dict(expected_versions or {}).items():
+            current = current_items.get(task_id)
+            actual_version = int(current.version if current is not None else 0)
+            if actual_version != int(expected_version):
+                raise StaleWriteConflictError(
+                    f"Stale write for task {task_id}: expected version {expected_version}, got {actual_version}",
+                    task_id=task_id,
+                    expected_version=int(expected_version),
+                    actual_version=actual_version,
+                )
+        merged_items = dict(current_items)
+        merged_items.update(items)
+        self.save_items(merged_items)
+        for rec in dead_letter_records or []:
+            self.append_dead_letter(rec)
+        for rec in human_review_records or []:
+            self.upsert_human_review_request(rec)
         for t in transitions:
             self.append_transition(
                 task_id=t["task_id"],

@@ -207,10 +207,7 @@ def _has_explicit_file_list(note: str) -> bool:
     ]
     explicit_module_count = sum(1 for p in module_patterns if re.search(p, note, re.IGNORECASE))
     # If we have multiple explicit module names, consider it explicit
-    if explicit_module_count >= 2:
-        return True
-
-    return False
+    return explicit_module_count >= 2
 
 
 def _is_vague_directory_claim(note: str) -> bool:
@@ -226,12 +223,7 @@ def _is_vague_directory_claim(note: str) -> bool:
     if _has_explicit_file_list(note):
         return False
 
-    # Check for vague patterns
-    for pattern in VAGUE_DIRECTORY_PATTERNS:
-        if pattern.search(note):
-            return True
-
-    return False
+    return any(pattern.search(note) for pattern in VAGUE_DIRECTORY_PATTERNS)
 
 
 def _check_directory_coverage_granularity(
@@ -249,14 +241,12 @@ def _check_directory_coverage_granularity(
 
     for unit in units:
         for ref in unit.source_refs:
-            if ref.kind in directory_kinds:
-                if _is_vague_directory_claim(ref.note):
-                    violations.append(
-                        f"Unit '{unit.id}': Directory '{ref.path}' lacks explicit file list. "
-                        f'Note: "{ref.note[:80]}..."'
-                        if len(ref.note) > 80
-                        else f"Unit '{unit.id}': Directory '{ref.path}' lacks explicit file list. Note: \"{ref.note}\""
-                    )
+            if ref.kind in directory_kinds and _is_vague_directory_claim(ref.note):
+                violations.append(
+                    f"Unit '{unit.id}': Directory '{ref.path}' lacks explicit file list. Note: \"{ref.note[:80]}...\""
+                    if len(ref.note) > 80
+                    else f"Unit '{unit.id}': Directory '{ref.path}' lacks explicit file list. Note: \"{ref.note}\""
+                )
 
     return violations
 

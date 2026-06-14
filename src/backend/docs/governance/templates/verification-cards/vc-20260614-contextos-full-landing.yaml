@@ -117,8 +117,8 @@ verification_plan:
     - description: "ContextOS replay gate"
       command: >
         LC_ALL=C.UTF-8 PYTHONPATH=src/backend python
-        src/backend/docs/governance/ci/scripts/run_contextos_replay.py
-        --workspace . --report runtime/contextos_replay_report.json
+        -m polaris.delivery.cli.tools.contextos_replay
+        --workspace . --messages-json '{"messages":[{"role":"user","content":"ContextOS replay gate","sequence":"0"}]}'
       status: planned
 
 related_adrs:

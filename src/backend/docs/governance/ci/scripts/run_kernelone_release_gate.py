@@ -134,11 +134,29 @@ def _discover_suite_paths() -> list[str]:
     candidates.extend(sorted((BACKEND_ROOT / "polaris" / "tests").glob("test_kernelone_*.py")))
     candidates.extend(sorted((BACKEND_ROOT / "polaris" / "tests" / "architecture").glob("test_kernelone_*.py")))
     candidates.append(BACKEND_ROOT / "polaris" / "tests" / "architecture" / "test_polaris_kernel_fs_guard.py")
+    candidates.extend(
+        BACKEND_ROOT / rel_path
+        for rel_path in (
+            "polaris/kernelone/context/tests/test_context_os_prompt_safety.py",
+            "polaris/kernelone/context/tests/test_context_os_pipeline.py",
+            "polaris/kernelone/llm/engine/tests/test_final_request_receipt.py",
+            "polaris/kernelone/llm/engine/stream/tests/test_executor.py",
+            "polaris/cells/runtime/task_market/tests/test_fsm.py",
+            "polaris/cells/runtime/task_market/tests/test_service.py",
+            "polaris/cells/runtime/task_market/tests/test_store_sqlite.py",
+            "polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py",
+        )
+    )
 
     suite_paths: list[str] = []
+    seen: set[str] = set()
     for path in candidates:
         if path.exists():
-            suite_paths.append(path.relative_to(BACKEND_ROOT).as_posix())
+            relative_path = path.relative_to(BACKEND_ROOT).as_posix()
+            if relative_path in seen:
+                continue
+            seen.add(relative_path)
+            suite_paths.append(relative_path)
     if not suite_paths:
         raise RuntimeError("KernelOne release suite is empty; no test files discovered.")
     return suite_paths

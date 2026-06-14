@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from polaris.kernelone.llm.engine.contracts import (
     AIRequest,
+    CompressionResult,
     ModelSpec,
     TaskType,
     TokenBudgetDecision,
@@ -164,6 +165,265 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
     serialized_receipt = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
     assert "SECRET PROMPT TEXT" not in serialized_receipt
     assert "SECRET SYSTEM TEXT" not in serialized_receipt
+
+
+@pytest.mark.asyncio
+async def test_final_request_receipt_redacts_compression_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    receipts: list[dict[str, Any]] = []
+
+    class _Provider:
+        def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            del prompt, model, config
+            return InvokeResult(
+                ok=True,
+                output="ok",
+                latency_ms=1,
+                usage=Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                raw={"provider": "fake"},
+            )
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            assert provider_type == "fake"
+            return _Provider()
+
+    class _CompressingBudgetManager:
+        def enforce(
+            self,
+            prompt_input: str,
+            model_spec: ModelSpec,
+            *,
+            requested_output_tokens: int,
+            workspace: str | None,
+            role: str,
+            overhead_tokens: int = 0,
+        ) -> TokenBudgetDecision:
+            del prompt_input, model_spec, requested_output_tokens, workspace, role
+            return TokenBudgetDecision(
+                allowed=True,
+                max_context_tokens=4096,
+                allowed_prompt_tokens=1024,
+                requested_prompt_tokens=4096,
+                reserved_output_tokens=512,
+                safety_margin_tokens=128,
+                compression_applied=True,
+                compression=CompressionResult(
+                    compressed_input="SECRET COMPRESSED PROMPT /home/alice sk-live-secret",
+                    original_tokens=4096,
+                    compressed_tokens=900,
+                    strategy="hard_trim",
+                    quality_flag="degraded",
+                    drop_ratio=0.78,
+                    notes=["contains secret preview"],
+                ),
+                overhead_tokens=overhead_tokens,
+            )
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.executor.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=_ModelCatalog(),
+        token_budget=_CompressingBudgetManager(),
+        final_request_receipt_sink=receipts.append,
+    )
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+    response = await executor.invoke(
+        AIRequest(
+            task_type=TaskType.GENERATION,
+            role="director",
+            provider_id="fake-provider",
+            model="fake-model",
+            input="SECRET INPUT",
+            options={"max_tokens": 512},
+            context={"turn_id": "turn-compressed", "context_projection_id": "projection-compressed"},
+        )
+    )
+
+    assert response.ok is True
+    assert len(receipts) == 1
+    serialized_receipt = json.dumps(receipts[0], ensure_ascii=False, sort_keys=True)
+    serialized_response = json.dumps(response.to_dict(), ensure_ascii=False, sort_keys=True)
+    assert "compressed_input" not in serialized_receipt
+    assert "compressed_input" not in serialized_response
+    assert "SECRET COMPRESSED PROMPT" not in serialized_receipt
+    assert "SECRET COMPRESSED PROMPT" not in serialized_response
+    assert "sk-live-secret" not in serialized_receipt
+    assert "sk-live-secret" not in serialized_response
+    assert "/home/alice" not in serialized_receipt
+    assert "/home/alice" not in serialized_response
+    assert "contains secret preview" not in serialized_response
+    assert receipts[0]["payload"]["token_budget"]["compression"]["compressed_tokens"] == 900
+    assert receipts[0]["payload"]["token_budget"]["compression"]["compressed_text_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_required_final_request_receipt_sink_failure_blocks_invoke(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _Provider:
+        def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            del prompt, model, config
+            return InvokeResult(ok=True, output="should not run", latency_ms=1)
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            assert provider_type == "fake"
+            return _Provider()
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.executor.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    def _failing_sink(_receipt: dict[str, Any]) -> None:
+        raise RuntimeError("receipt store unavailable")
+
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=_ModelCatalog(),
+        token_budget=_BudgetManager(),
+        final_request_receipt_sink=_failing_sink,
+    )
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+    response = await executor.invoke(
+        AIRequest(
+            task_type=TaskType.GENERATION,
+            role="director",
+            provider_id="fake-provider",
+            model="fake-model",
+            input="must record receipt",
+            options={"max_tokens": 128},
+            context={
+                "turn_id": "turn-required",
+                "context_os_expected": True,
+                "cognitive_runtime_required": True,
+            },
+        )
+    )
+
+    assert response.ok is False
+    assert "receipt store unavailable" in str(response.error)
+
+
+@pytest.mark.asyncio
+async def test_required_final_request_receipt_missing_sink_blocks_invoke(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider_calls: list[str] = []
+
+    class _Provider:
+        def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            del model, config
+            provider_calls.append(prompt)
+            return InvokeResult(ok=True, output="should not run", latency_ms=1)
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            assert provider_type == "fake"
+            return _Provider()
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.executor.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=_ModelCatalog(),
+        token_budget=_BudgetManager(),
+    )
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+    response = await executor.invoke(
+        AIRequest(
+            task_type=TaskType.GENERATION,
+            role="director",
+            provider_id="fake-provider",
+            model="fake-model",
+            input="must record receipt",
+            options={"max_tokens": 128},
+            context={"context_os_expected": True},
+        )
+    )
+
+    assert response.ok is False
+    assert "final request receipt sink required" in str(response.error)
+    assert provider_calls == []
+
+
+@pytest.mark.asyncio
+async def test_provider_raw_payload_is_recursively_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _Provider:
+        def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            del prompt, model, config
+            return InvokeResult(
+                ok=True,
+                output="ok",
+                latency_ms=1,
+                usage=Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                raw={
+                    "provider": "fake",
+                    "compressed_input": "SECRET RAW PROMPT /home/alice sk-raw-secret",
+                    "nested": {
+                        "notes": ["SECRET RAW NOTE /home/alice sk-raw-note"],
+                        "safe": "kept",
+                    },
+                    "path_hint": "/home/alice sk-raw-path",
+                },
+            )
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            assert provider_type == "fake"
+            return _Provider()
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.executor.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=_ModelCatalog(),
+        token_budget=_BudgetManager(),
+    )
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+    response = await executor.invoke(
+        AIRequest(
+            task_type=TaskType.GENERATION,
+            role="director",
+            provider_id="fake-provider",
+            model="fake-model",
+            input="prompt",
+            options={"max_tokens": 128},
+            context={"context_os_expected": "false"},
+        )
+    )
+
+    assert response.ok is True
+    serialized_response = json.dumps(response.to_dict(), ensure_ascii=False, sort_keys=True)
+    assert "compressed_input" not in serialized_response
+    assert "SECRET RAW PROMPT" not in serialized_response
+    assert "SECRET RAW NOTE" not in serialized_response
+    assert "sk-raw" not in serialized_response
+    assert "/home/alice" not in serialized_response
+    assert response.raw["provider"] == "fake"
+    assert response.raw["nested"]["safe"] == "kept"
 
 
 @pytest.mark.asyncio

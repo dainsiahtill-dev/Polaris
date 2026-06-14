@@ -56,7 +56,7 @@ def load_yaml(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f)
-    except Exception:
+    except (OSError, yaml.YAMLError):
         return None
 
 
@@ -68,7 +68,7 @@ def extract_front_matter(text: str) -> tuple[dict[str, str], str]:
             fm = yaml.safe_load(match.group(1))
             body = text[match.end() :]
             return (fm or {}, body)
-        except Exception as e:
+        except yaml.YAMLError as e:
             logger.debug("Failed to parse front matter: %s", e)
     return ({}, text)
 
@@ -101,9 +101,8 @@ def check_adr_quality(adr_path: Path) -> dict[str, Any]:
     cons_match = re.search(r"## (?:后果|Consequences)[:\s]*\n(.*?)(?=\n## |\Z)", body, re.DOTALL | re.IGNORECASE)
     if cons_match:
         cons_text = cons_match.group(1).strip()
-        if "收益" not in cons_text and "收益" not in body and "收益" not in body:
-            if len(cons_text) < 50:
-                warnings.append("'## 后果' section too short — should detail both gains and technical debt")
+        if "收益" not in cons_text and "收益" not in body and len(cons_text) < 50:
+            warnings.append("'## 后果' section too short — should detail both gains and technical debt")
 
     # Extract ADR ID from filename
     adr_id = adr_path.stem.upper().replace("-", "-")

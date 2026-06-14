@@ -18,6 +18,7 @@ class TestDLQManager:
         store = MagicMock()
         store.load_items.return_value = {}
         store.save_items.return_value = None
+        store.save_items_and_outbox_atomic.return_value = None
         store.append_dead_letter.return_value = None
         return store
 
@@ -109,6 +110,10 @@ class TestDLQManager:
         assert replayed.attempts == 0
         assert replayed.stage == "pending_exec"
         assert replayed.status == "pending_exec"
+        mock_store.save_items.assert_not_called()
+        mock_store.save_items_and_outbox_atomic.assert_called_once()
+        assert mock_store.save_items_and_outbox_atomic.call_args.kwargs["items"] == {"task-dlq": item}
+        assert mock_store.save_items_and_outbox_atomic.call_args.kwargs["expected_versions"] == {"task-dlq": 3}
 
     def test_replay_item_raises_if_not_dead_letter(
         self, dlq: DLQManager, item: TaskWorkItemRecord, mock_store: MagicMock

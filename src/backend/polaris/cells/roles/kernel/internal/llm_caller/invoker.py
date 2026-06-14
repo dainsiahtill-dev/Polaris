@@ -23,6 +23,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.engine import AIExecutor
+from polaris.kernelone.llm.engine._executor_base import coerce_required_flag
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 from ..llm_cache import get_global_llm_cache
@@ -161,6 +162,9 @@ class LLMInvoker:
             return
         raw_payload = receipt.get("payload")
         payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        receipt_required = coerce_required_flag(payload.get("cognitive_runtime_required")) or coerce_required_flag(
+            payload.get("context_os_expected")
+        )
         receipt_type = str(receipt.get("receipt_type") or "contextos.final_request").strip()
         if not receipt_type:
             receipt_type = "contextos.final_request"
@@ -185,14 +189,16 @@ class LLMInvoker:
                     },
                 )
             )
-        except Exception as exc:  # noqa: BLE001 - ContextOS receipt storage is fail-soft telemetry
+        except Exception as exc:
             logger.warning("[LLMInvoker] contextos final request receipt failed: %s", exc)
+            if receipt_required:
+                raise RuntimeError("contextos final request receipt failed in required mode") from exc
             return
         if not bool(getattr(result, "ok", False)):
-            logger.warning(
-                "[LLMInvoker] contextos final request receipt rejected: %s",
-                getattr(result, "error_message", "") or getattr(result, "error_code", ""),
-            )
+            message = str(getattr(result, "error_message", "") or getattr(result, "error_code", "") or "").strip()
+            logger.warning("[LLMInvoker] contextos final request receipt rejected: %s", message)
+            if receipt_required:
+                raise RuntimeError(message or "contextos final request receipt rejected in required mode")
 
     @staticmethod
     def _normalize_trace_refs(raw_refs: Any, fallback_trace_id: Any = None) -> tuple[str, ...]:

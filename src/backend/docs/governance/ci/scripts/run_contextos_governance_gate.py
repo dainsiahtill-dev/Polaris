@@ -49,10 +49,7 @@ def _class_has_method(tree: ast.AST, class_name: str, method_name: str) -> bool:
     cls_node = _find_class_in_ast(tree, class_name)
     if cls_node is None:
         return False
-    for item in cls_node.body:
-        if isinstance(item, ast.FunctionDef) and item.name == method_name:
-            return True
-    return False
+    return any(isinstance(item, ast.FunctionDef) and item.name == method_name for item in cls_node.body)
 
 
 def _ensure_pytest_available() -> bool:
@@ -152,7 +149,7 @@ def _check_provider_formatter() -> CheckResult:
     if provider_formatter_file.exists():
         try:
             source = provider_formatter_file.read_text(encoding="utf-8")
-        except Exception as exc:
+        except OSError as exc:
             return CheckResult(
                 name="ProviderFormatter",
                 passed=False,
@@ -164,7 +161,7 @@ def _check_provider_formatter() -> CheckResult:
             if "provider" in py_file.name.lower():
                 try:
                     source = py_file.read_text(encoding="utf-8")
-                except Exception as exc:
+                except OSError as exc:
                     return CheckResult(
                         name="ProviderFormatter",
                         passed=False,
@@ -237,7 +234,7 @@ def _check_episode_card() -> CheckResult:
 
     try:
         source = module_path.read_text(encoding="utf-8")
-    except Exception as exc:
+    except OSError as exc:
         return CheckResult(
             name="EpisodeCard",
             passed=False,

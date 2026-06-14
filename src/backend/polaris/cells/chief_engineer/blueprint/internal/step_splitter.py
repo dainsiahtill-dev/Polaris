@@ -203,6 +203,11 @@ def _split_one(step: dict[str, Any], *, parent_pm_task: str) -> list[dict[str, A
                 "depends_on": [prev_id],  # linear chain: serializes same-file edits
                 "edit_on_prior": True,
                 "edit_on_prior_owner": skeleton_id,
+                # The gateway renders a hard "implement ONLY your assigned functions via
+                # edit_blocks, code-only, no whole-file rewrite" directive. Without it the
+                # weak model tries to implement the whole file at once and either truncates
+                # or stuffs prose into edit_blocks (live r31: fill1 dead-lettered).
+                "fill_scope_only": True,
                 "title": (f"{title} · fill {index}/{total}" if title else f"fill {index}/{total}"),
             }
         )

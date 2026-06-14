@@ -30,9 +30,10 @@ class TestProjectionPurity:
         )
 
         user_msg = messages[1]
-        assert "[Receipt ref_large]:" in user_msg["content"]
-        assert large_output[:500] in user_msg["content"]
-        assert len(user_msg["content"]) < len(large_output) + 100
+        assert "[receipt_ref:ref_large]" in user_msg["content"]
+        assert large_output[:500] not in user_msg["content"]
+        assert user_msg["receipt_refs"] == ["ref_large"]
+        assert len(user_msg["content"]) < 100
 
     def test_system_warning_does_not_appear_in_projection(self) -> None:
         engine = ProjectionEngine()
@@ -122,7 +123,8 @@ class TestProjectionPurity:
             ReceiptStore(),
         )
 
-        assert messages[1]["content"] == "do it"
+        assert messages[1]["content"] == "do it\n\n[receipt_ref:missing_ref]"
+        assert messages[1]["receipt_refs"] == ["missing_ref"]
 
     def test_projection_engine_is_readonly(self) -> None:
         engine = ProjectionEngine()

@@ -47,7 +47,7 @@ from .errors import (
     TaskNotFoundError,
 )
 from .fsm import PRIORITY_WEIGHT, get_fsm
-from .human_review import HumanReviewManager, get_next_escalation_role
+from .human_review import RESOLUTION_TO_STAGE, HumanReviewManager, get_next_escalation_role
 from .lease_manager import LeaseManager
 from .metrics import get_task_market_metrics
 from .models import (
@@ -206,6 +206,29 @@ class TaskMarketService:
     def _get_store(self, workspace: str) -> Any:
         """Return the appropriate store backend (lazy)."""
         return get_store(workspace)
+
+    @staticmethod
+    def _atomic_save_changed_items(
+        *,
+        store: Any,
+        items: dict[str, TaskWorkItemRecord],
+        transitions: list[dict[str, Any]],
+        outbox_records: list[dict[str, Any]],
+        expected_versions: dict[str, int],
+        dead_letter_records: list[dict[str, Any]] | None = None,
+        human_review_records: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Persist only rows whose read-version baseline is known."""
+        expected = {str(task_id): int(version) for task_id, version in expected_versions.items()}
+        changed_items = {task_id: items[task_id] for task_id in expected if task_id in items}
+        store.save_items_and_outbox_atomic(
+            items=changed_items,
+            transitions=transitions,
+            outbox_records=outbox_records,
+            expected_versions=expected,
+            dead_letter_records=dead_letter_records or [],
+            human_review_records=human_review_records or [],
+        )
 
     @staticmethod
     def _coerce_optional_bool(value: Any) -> bool | None:
@@ -407,6 +430,7 @@ class TaskMarketService:
             item = items.get(command.task_id)
 
             if item is None:
+                expected_versions = {command.task_id: 0}
                 item = TaskWorkItemRecord(
                     task_id=command.task_id,
                     trace_id=command.trace_id,
@@ -434,6 +458,7 @@ class TaskMarketService:
                     max_attempts=max(1, int(command.max_attempts)),
                 )
             else:
+                expected_versions = {item.task_id: int(item.version)}
                 item.trace_id = command.trace_id
                 item.run_id = command.run_id
                 item.workspace = command.workspace
@@ -520,10 +545,12 @@ class TaskMarketService:
             )
             items[item.task_id] = item
 
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox_record],
+                expected_versions=expected_versions,
             )
 
             self._observe(
@@ -549,16 +576,24 @@ class TaskMarketService:
             # redo the work consistently.
             if not command.task_id:
                 try:
-                    cascade_transitions, cascade_outbox = self._cascade_dead_letter_dependents(
+                    (
+                        cascade_transitions,
+                        cascade_outbox,
+                        cascade_expected_versions,
+                        cascade_dead_letters,
+                    ) = self._cascade_dead_letter_dependents(
                         store=store,
                         items=items,
                         worker_id=command.worker_id,
                     )
                     if cascade_transitions:
-                        store.save_items_and_outbox_atomic(
+                        self._atomic_save_changed_items(
+                            store=store,
                             items=items,
                             transitions=cascade_transitions,
                             outbox_records=cascade_outbox,
+                            expected_versions=cascade_expected_versions,
+                            dead_letter_records=cascade_dead_letters,
                         )
                 except (TaskMarketError, InternalTaskMarketError, OSError) as exc:
                     logger.warning("dependency cascade sweep failed; claiming on pristine state: %s", exc)
@@ -588,12 +623,14 @@ class TaskMarketService:
                 # audit trail otherwise records dead_letter→dead_letter
                 # (live I3-r9 forensics).
                 exhausted_from_status = selected.status
+                selected_expected_version = int(selected.version)
                 dlq = DLQManager(store)
-                dlq.move_to_dead_letter(
+                dead_letter_record = dlq.move_to_dead_letter(
                     item=selected,
                     reason="retry_exhausted_on_claim",
                     error_code="retry_exhausted",
                     metadata={"worker_id": command.worker_id, "worker_role": command.worker_role},
+                    persist=False,
                 )
                 transition = {
                     "task_id": selected.task_id,
@@ -639,16 +676,20 @@ class TaskMarketService:
                     evidence=lifecycle_evidence,
                 )
                 items[selected.task_id] = selected
-                store.save_items_and_outbox_atomic(
+                self._atomic_save_changed_items(
+                    store=store,
                     items=items,
                     transitions=[transition],
                     outbox_records=[outbox],
+                    expected_versions={selected.task_id: selected_expected_version},
+                    dead_letter_records=[dead_letter_record],
                 )
                 return self._result_from_item(selected, ok=False, reason="retry_exhausted_on_claim")
 
             # Grant lease via LeaseManager.
             lm = LeaseManager(store)
             from_status = selected.status
+            selected_expected_version = int(selected.version)
             try:
                 lease_token, expires_at = lm.grant_lease(
                     item=selected,
@@ -716,10 +757,12 @@ class TaskMarketService:
                 evidence=lifecycle_evidence,
             )
             items[selected.task_id] = selected
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox],
+                expected_versions={selected.task_id: selected_expected_version},
             )
 
             self._observe("claim", (time.monotonic() - t0) * 1000.0, stage=command.stage, task_id=selected.task_id)
@@ -743,6 +786,7 @@ class TaskMarketService:
                 )
 
             lm = LeaseManager(store)
+            previous_version = int(item.version)
             try:
                 ok, expires_at = lm.renew_lease(
                     item=item,
@@ -772,10 +816,12 @@ class TaskMarketService:
                         "lease_expires_at": expires_at,
                     },
                 )
-                store.save_items_and_outbox_atomic(
+                self._atomic_save_changed_items(
+                    store=store,
                     items=items,
                     transitions=[],
                     outbox_records=[outbox],
+                    expected_versions={item.task_id: previous_version},
                 )
 
             self._observe("renew_lease", (time.monotonic() - t0) * 1000.0, task_id=command.task_id)
@@ -802,9 +848,23 @@ class TaskMarketService:
             lm.validate_token(item, command.lease_token)
 
             previous_status = item.status
+            previous_version = int(item.version)
+            ack_metadata = dict(command.metadata)
 
             # Determine next status.
             if command.next_stage is not None:
+                self._fsm.validate_transition(item, "ack", next_stage=command.next_stage)
+                next_is_leaf = False if ack_metadata.get("is_leaf") is False else item.is_leaf
+                if previous_status == "in_execution" and command.next_stage == "pending_exec" and next_is_leaf:
+                    raise TaskMarketError(
+                        "Leaf execution work items cannot acknowledge directly back to pending_exec; use fail/requeue",
+                        code="leaf_execution_ack_requeue_forbidden",
+                        details={
+                            "task_id": item.task_id,
+                            "from_status": previous_status,
+                            "next_stage": command.next_stage,
+                        },
+                    )
                 item.stage = command.next_stage
                 item.status = command.next_stage
                 # A stage advance opens a fresh attempt budget: attempts
@@ -821,15 +881,16 @@ class TaskMarketService:
                         code="unsupported_terminal_status",
                         details={"task_id": item.task_id, "status": terminal_status},
                     )
+                self._fsm.validate_transition(item, "ack", terminal_status=terminal_status)
                 item.status = terminal_status
 
             item.metadata = dict(item.metadata)
             item.metadata["last_summary"] = command.summary
-            item.metadata["last_ack_metadata"] = dict(command.metadata)
+            item.metadata["last_ack_metadata"] = ack_metadata
             # Three-tier fission: when CE fissions a task into leaf steps it
             # demotes the parent to a supervision row; the market record must
             # reflect that so the exec claim gate can skip it.
-            if dict(command.metadata).get("is_leaf") is False:
+            if ack_metadata.get("is_leaf") is False:
                 item.is_leaf = False
 
             # Merge ack metadata into item.payload so downstream consumers (Director, QA)
@@ -897,10 +958,12 @@ class TaskMarketService:
             )
             items[item.task_id] = item
 
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox],
+                expected_versions={item.task_id: previous_version},
             )
 
             if command.next_stage == "waiting_human":
@@ -935,6 +998,7 @@ class TaskMarketService:
             lm.validate_token(item, command.lease_token)
 
             previous_status = item.status
+            previous_version = int(item.version)
 
             item.last_error = {
                 "error_code": command.error_code,
@@ -970,15 +1034,18 @@ class TaskMarketService:
 
             # Determine disposition.
             move_to_dead_letter = bool(command.to_dead_letter) or item.attempts >= item.max_attempts
+            dead_letter_records: list[dict[str, Any]] = []
 
             if move_to_dead_letter:
                 dlq = DLQManager(store)
-                dlq.move_to_dead_letter(
+                dead_letter_record = dlq.move_to_dead_letter(
                     item=item,
                     reason=command.error_message,
                     error_code=command.error_code,
                     metadata=dict(command.metadata),
+                    persist=False,
                 )
+                dead_letter_records.append(dead_letter_record)
                 reason = "dead_lettered"
                 event_type = "task_market.work_item_dead_lettered"
                 lm.clear_lease(item)
@@ -1051,14 +1118,19 @@ class TaskMarketService:
             )
             items[item.task_id] = item
 
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox],
+                expected_versions={item.task_id: previous_version},
+                dead_letter_records=dead_letter_records,
             )
 
             # Saga compensation only on terminal failure paths (not requeue).
             if command.requeue_stage is None:
+                saga_expected_version = int(item.version)
+                saga_expected_versions = {item.task_id: saga_expected_version}
                 task_compensation_summary = self._compensate_task_no_lock(
                     workspace=command.workspace,
                     store=store,
@@ -1067,8 +1139,12 @@ class TaskMarketService:
                     reason=f"task_failed:{command.error_code}",
                     initiator="fail_task_stage",
                 )
+                saga_transitions = self._collect_compensation_transitions(task_compensation_summary)
+                saga_outbox_records = self._collect_compensation_outbox(task_compensation_summary)
                 item.metadata = dict(item.metadata)
-                item.metadata["saga_task_compensation"] = task_compensation_summary
+                item.metadata["saga_task_compensation"] = self._strip_compensation_side_effects(
+                    task_compensation_summary
+                )
 
                 parent_compensation_summary: dict[str, Any] | None = None
                 if not item.is_leaf:
@@ -1079,7 +1155,18 @@ class TaskMarketService:
                         parent_task_id=item.task_id,
                         reason=f"parent_failed:{command.error_code}",
                     )
-                    item.metadata["saga_child_compensation"] = parent_compensation_summary
+                    child_expected_versions_raw = parent_compensation_summary.get("expected_versions")
+                    if isinstance(child_expected_versions_raw, dict):
+                        saga_expected_versions.update(
+                            {str(task_id): int(version) for task_id, version in child_expected_versions_raw.items()}
+                        )
+                    saga_transitions.extend(self._collect_compensation_transitions(parent_compensation_summary))
+                    saga_outbox_records.extend(self._collect_compensation_outbox(parent_compensation_summary))
+                    item.metadata["saga_child_compensation"] = {
+                        key: value
+                        for key, value in parent_compensation_summary.items()
+                        if key != "expected_versions" and key not in {"_transitions", "_outbox_records"}
+                    }
 
                 item.version += 1
                 item.updated_at = now_iso()
@@ -1120,10 +1207,12 @@ class TaskMarketService:
                     },
                 )
 
-                store.save_items_and_outbox_atomic(
+                self._atomic_save_changed_items(
+                    store=store,
                     items=items,
-                    transitions=[saga_transition],
-                    outbox_records=[saga_outbox],
+                    transitions=[*saga_transitions, saga_transition],
+                    outbox_records=[*saga_outbox_records, saga_outbox],
+                    expected_versions=saga_expected_versions,
                 )
 
             # Route to HITL/Tri-Council when failure is terminal or requires manual handling.
@@ -1184,6 +1273,7 @@ class TaskMarketService:
                 return self._result_from_item(item, ok=False, reason="active_lease")
 
             previous_status = item.status
+            previous_version = int(item.version)
             item.stage = command.target_stage
             item.status = command.target_stage
             lm.clear_lease(item)
@@ -1248,10 +1338,12 @@ class TaskMarketService:
             )
             items[item.task_id] = item
 
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox],
+                expected_versions={item.task_id: previous_version},
             )
 
             self._observe("requeue", (time.monotonic() - t0) * 1000.0, stage=command.target_stage, task_id=item.task_id)
@@ -1267,12 +1359,14 @@ class TaskMarketService:
             item = self._require_item(items, command.task_id)
 
             previous_status = item.status
+            previous_version = int(item.version)
             dlq = DLQManager(store)
-            dlq.move_to_dead_letter(
+            dead_letter_record = dlq.move_to_dead_letter(
                 item=item,
                 reason=command.reason,
                 error_code=str(command.error_code or "").strip(),
                 metadata=dict(command.metadata),
+                persist=False,
             )
             items[item.task_id] = item
 
@@ -1321,10 +1415,13 @@ class TaskMarketService:
             )
             items[item.task_id] = item
 
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox],
+                expected_versions={item.task_id: previous_version},
+                dead_letter_records=[dead_letter_record],
             )
 
             self._observe("dead_letter", (time.monotonic() - t0) * 1000.0, task_id=item.task_id)
@@ -1340,35 +1437,24 @@ class TaskMarketService:
             item = self._require_item(items, command.task_id)
             previous_status = item.status
             previous_stage = item.stage
-
-            review = HumanReviewManager(store).create_review_request(
-                task_id=command.task_id,
-                trace_id=command.trace_id or item.trace_id,
-                workspace=command.workspace,
-                reason=command.reason,
-                escalation_policy=command.escalation_policy,
-                requested_by=command.requested_by,
-            )
-
-            items = store.load_items()
-            item = self._require_item(items, command.task_id)
-            store.append_transition(
-                task_id=item.task_id,
-                from_status=previous_status,
-                to_status=item.status,
-                event_type="human_review_requested",
-                worker_id=command.requested_by,
-                lease_token="",
-                version=item.version,
-                metadata={
+            next_role = get_next_escalation_role("director") or ""
+            transition = {
+                "task_id": item.task_id,
+                "from_status": previous_status,
+                "to_status": "waiting_human",
+                "event_type": "human_review_requested",
+                "worker_id": command.requested_by,
+                "lease_token": "",
+                "version": int(item.version) + 1,
+                "metadata": {
                     "trace_id": item.trace_id,
                     "reason": command.reason,
                     "from_stage": previous_stage,
-                    "to_stage": item.stage,
-                    "escalation_policy": review.get("escalation_policy", "tri_council"),
+                    "to_stage": "waiting_human",
+                    "escalation_policy": command.escalation_policy,
                 },
-            )
-            self._emit_fact(
+            }
+            outbox = self._build_outbox_record(
                 workspace=command.workspace,
                 event_type="task_market.human_review_requested",
                 run_id=item.run_id,
@@ -1377,12 +1463,26 @@ class TaskMarketService:
                     "trace_id": item.trace_id,
                     "reason": command.reason,
                     "from_stage": previous_stage,
-                    "to_stage": item.stage,
+                    "to_stage": "waiting_human",
                     "requested_by": command.requested_by,
-                    "escalation_policy": review.get("escalation_policy", "tri_council"),
-                    "next_role": review.get("next_role", ""),
+                    "escalation_policy": command.escalation_policy,
+                    "next_role": next_role,
                 },
             )
+
+            review = HumanReviewManager(store).create_review_request(
+                task_id=command.task_id,
+                trace_id=command.trace_id or item.trace_id,
+                workspace=command.workspace,
+                reason=command.reason,
+                escalation_policy=command.escalation_policy,
+                requested_by=command.requested_by,
+                transitions=[transition],
+                outbox_records=[outbox],
+            )
+
+            items = store.load_items()
+            item = self._require_item(items, command.task_id)
             self._observe(
                 "human_review_request", (time.monotonic() - t0) * 1000.0, task_id=item.task_id, trace_id=item.trace_id
             )
@@ -1411,34 +1511,38 @@ class TaskMarketService:
             item = self._require_item(items, command.task_id)
             previous_status = item.status
             previous_stage = item.stage
+            resolution = str(command.resolution or "").strip().lower()
+            target_stage = RESOLUTION_TO_STAGE.get(resolution, "")
+            waiting_snapshot = item.metadata.get("waiting_human_snapshot", {})
+            if not isinstance(waiting_snapshot, dict):
+                waiting_snapshot = {}
+            if resolution == "shadow_continue":
+                planned_stage = str(waiting_snapshot.get("previous_stage") or previous_stage).strip().lower()
+                planned_status = str(waiting_snapshot.get("previous_status") or planned_stage).strip().lower()
+            elif target_stage:
+                planned_stage = target_stage
+                planned_status = target_stage
+            else:
+                planned_stage = item.stage
+                planned_status = item.status
 
-            review = HumanReviewManager(store).resolve_review(
-                task_id=command.task_id,
-                resolution=command.resolution,
-                resolved_by=command.resolved_by,
-                note=command.note,
-                workspace=command.workspace,
-            )
-
-            items = store.load_items()
-            item = self._require_item(items, command.task_id)
-            store.append_transition(
-                task_id=item.task_id,
-                from_status=previous_status,
-                to_status=item.status,
-                event_type="human_review_resolved",
-                worker_id=command.resolved_by,
-                lease_token="",
-                version=item.version,
-                metadata={
+            transition = {
+                "task_id": item.task_id,
+                "from_status": previous_status,
+                "to_status": planned_status,
+                "event_type": "human_review_resolved",
+                "worker_id": command.resolved_by,
+                "lease_token": "",
+                "version": int(item.version) + 1,
+                "metadata": {
                     "trace_id": item.trace_id,
                     "resolution": command.resolution,
                     "note": command.note,
                     "from_stage": previous_stage,
-                    "to_stage": item.stage,
+                    "to_stage": planned_stage,
                 },
-            )
-            self._emit_fact(
+            }
+            outbox = self._build_outbox_record(
                 workspace=command.workspace,
                 event_type="task_market.human_review_resolved",
                 run_id=item.run_id,
@@ -1448,10 +1552,23 @@ class TaskMarketService:
                     "resolution": command.resolution,
                     "resolved_by": command.resolved_by,
                     "from_stage": previous_stage,
-                    "to_stage": item.stage,
-                    "final_status": review.get("final_status", item.status),
+                    "to_stage": planned_stage,
+                    "final_status": planned_status,
                 },
             )
+
+            review = HumanReviewManager(store).resolve_review(
+                task_id=command.task_id,
+                resolution=command.resolution,
+                resolved_by=command.resolved_by,
+                note=command.note,
+                workspace=command.workspace,
+                transitions=[transition],
+                outbox_records=[outbox],
+            )
+
+            items = store.load_items()
+            item = self._require_item(items, command.task_id)
             self._observe(
                 "human_review_resolve", (time.monotonic() - t0) * 1000.0, task_id=item.task_id, trace_id=item.trace_id
             )
@@ -1491,6 +1608,7 @@ class TaskMarketService:
             store = self._get_store(workspace_token)
             items = store.load_items()
             item = self._require_item(items, task_id)
+            previous_version = int(item.version)
             review = HumanReviewManager(store).advance_escalation_role(workspace=workspace_token, task_id=task_id)
             item.metadata = dict(item.metadata)
             item.metadata["human_review_current_role"] = review.get("current_role", "")
@@ -1526,10 +1644,12 @@ class TaskMarketService:
                     "next_role": review.get("next_role", ""),
                 },
             )
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox],
+                expected_versions={item.task_id: previous_version},
             )
             return {
                 "ok": True,
@@ -1720,8 +1840,10 @@ class TaskMarketService:
             affected_task_ids: list[str] = []
             current_time = now_iso()
             change_transitions: list[dict[str, Any]] = []
+            expected_versions: dict[str, int] = {}
 
             for item in candidates:
+                previous_version = int(item.version)
                 impact = self._apply_change_order_impact(
                     item=item,
                     to_revision_id=command.to_revision_id,
@@ -1730,6 +1852,7 @@ class TaskMarketService:
                 )
                 impact_counts[impact] = impact_counts.get(impact, 0) + 1
                 if impact != "unaffected":
+                    expected_versions[item.task_id] = previous_version
                     affected_task_ids.append(item.task_id)
                     items[item.task_id] = item
                     change_transitions.append(
@@ -1765,10 +1888,12 @@ class TaskMarketService:
                 },
             )
 
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=change_transitions,
                 outbox_records=[outbox],
+                expected_versions=expected_versions,
             )
 
             # Ensure target revision exists in registry.
@@ -1845,6 +1970,7 @@ class TaskMarketService:
             items = store.load_items()
             item = self._require_item(items, task_id)
             LeaseManager(store).validate_token(item, lease_token)
+            previous_version = int(item.version)
             action_model = CompensationAction.from_mapping(action)
             metadata = dict(item.metadata)
             state = SagaCompensator().register_action(metadata, action_model)
@@ -1878,10 +2004,12 @@ class TaskMarketService:
                     "target": action_model.target,
                 },
             )
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox],
+                expected_versions={item.task_id: previous_version},
             )
             return {
                 "ok": True,
@@ -1905,6 +2033,7 @@ class TaskMarketService:
             items = store.load_items()
             item = self._require_item(items, task_id)
             LeaseManager(store).validate_token(item, lease_token)
+            previous_version = int(item.version)
             metadata = dict(item.metadata)
             state = SagaCompensator().commit(metadata)
             item.metadata = metadata
@@ -1936,10 +2065,12 @@ class TaskMarketService:
                     "actions": len(state.get("actions", [])),
                 },
             )
-            store.save_items_and_outbox_atomic(
+            self._atomic_save_changed_items(
+                store=store,
                 items=items,
                 transitions=[transition],
                 outbox_records=[outbox],
+                expected_versions={item.task_id: previous_version},
             )
             return {
                 "ok": True,
@@ -1964,6 +2095,7 @@ class TaskMarketService:
             store = self._get_store(workspace_token)
             items = store.load_items()
             item = self._require_item(items, task_id)
+            previous_version = int(item.version)
             summary = self._compensate_task_no_lock(
                 workspace=workspace_token,
                 store=store,
@@ -1972,8 +2104,15 @@ class TaskMarketService:
                 reason=reason,
                 initiator=initiator,
             )
-            store.save_items(items)
-            return summary
+            if bool(summary.get("changed", False)):
+                self._atomic_save_changed_items(
+                    store=store,
+                    items=items,
+                    transitions=self._collect_compensation_transitions(summary),
+                    outbox_records=self._collect_compensation_outbox(summary),
+                    expected_versions={item.task_id: previous_version},
+                )
+            return self._strip_compensation_side_effects(summary)
 
     # ---- Reconciliation ----------------------------------------------------
 
@@ -2002,6 +2141,8 @@ class TaskMarketService:
             updated_parent_ids: list[str] = []
             reconciliation_transitions: list[dict[str, Any]] = []
             reconciliation_outbox: list[dict[str, Any]] = []
+            reconciliation_dead_letters: list[dict[str, Any]] = []
+            expected_versions: dict[str, int] = {}
             scanned = 0
             for parent in parent_items:
                 scanned += 1
@@ -2015,6 +2156,7 @@ class TaskMarketService:
 
                 previous_status = parent.status
                 previous_stage = parent.stage
+                expected_versions[parent.task_id] = int(parent.version)
                 child_status_counts = dict(Counter(child.status for child in children))
                 if expected_status == "dead_letter":
                     # A terminally-failed child makes the parent a real
@@ -2023,12 +2165,14 @@ class TaskMarketService:
                     # status write left the parent DLQ-invisible). No saga
                     # compensation here — parent-failure compensation stays
                     # exclusively in fail_task_stage.
-                    DLQManager(store).move_to_dead_letter(
+                    dead_letter_record = DLQManager(store).move_to_dead_letter(
                         item=parent,
                         reason="child_dead_lettered",
                         error_code="child_terminal_failure",
                         metadata={"child_status_counts": child_status_counts},
+                        persist=False,
                     )
+                    reconciliation_dead_letters.append(dead_letter_record)
                 else:
                     parent.status = expected_status
                     if expected_stage:
@@ -2081,10 +2225,13 @@ class TaskMarketService:
                 )
 
             if updated_parent_ids:
-                store.save_items_and_outbox_atomic(
+                self._atomic_save_changed_items(
+                    store=store,
                     items=items,
                     transitions=reconciliation_transitions,
                     outbox_records=reconciliation_outbox,
+                    expected_versions=expected_versions,
+                    dead_letter_records=reconciliation_dead_letters,
                 )
 
             self._observe("reconcile", (time.monotonic() - t0) * 1000.0)
@@ -2226,6 +2373,7 @@ class TaskMarketService:
             requeued_ids: list[str] = []
             requeue_transitions: list[dict[str, Any]] = []
             requeue_outbox: list[dict[str, Any]] = []
+            expected_versions: dict[str, int] = {}
 
             for plan_key, plan_items in items_by_plan.items():
                 latest = latest_revision_by_plan.get(plan_key, "")
@@ -2244,6 +2392,7 @@ class TaskMarketService:
 
                     previous_status = item.status
                     previous_stage = item.stage
+                    previous_version = int(item.version)
 
                     # Requeue to pending_design.
                     item.stage = "pending_design"
@@ -2260,6 +2409,7 @@ class TaskMarketService:
 
                     items[item.task_id] = item
                     requeued_ids.append(item.task_id)
+                    expected_versions[item.task_id] = previous_version
 
                     requeue_transitions.append(
                         {
@@ -2296,10 +2446,12 @@ class TaskMarketService:
                     )
 
             if requeued_ids:
-                store.save_items_and_outbox_atomic(
+                self._atomic_save_changed_items(
+                    store=store,
                     items=items,
                     transitions=requeue_transitions,
                     outbox_records=requeue_outbox,
+                    expected_versions=expected_versions,
                 )
 
             self._observe("drift_requeue", (time.monotonic() - t0) * 1000.0)
@@ -2575,6 +2727,20 @@ class TaskMarketService:
             return "retained_waiting_human"
         return "unaffected"
 
+    @staticmethod
+    def _strip_compensation_side_effects(summary: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in summary.items() if key not in {"_transitions", "_outbox_records"}}
+
+    @staticmethod
+    def _collect_compensation_transitions(summary: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = summary.get("_transitions")
+        return [dict(item) for item in raw if isinstance(item, dict)] if isinstance(raw, (list, tuple)) else []
+
+    @staticmethod
+    def _collect_compensation_outbox(summary: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = summary.get("_outbox_records")
+        return [dict(item) for item in raw if isinstance(item, dict)] if isinstance(raw, (list, tuple)) else []
+
     def _apply_change_order_impact(
         self,
         *,
@@ -2665,21 +2831,21 @@ class TaskMarketService:
         item.version += 1
         item.updated_at = now_iso()
         items[item.task_id] = item
-        store.append_transition(
-            task_id=item.task_id,
-            from_status=item.status,
-            to_status=item.status,
-            event_type="saga_compensated",
-            worker_id=initiator,
-            lease_token=item.lease_token,
-            version=item.version,
-            metadata={
+        transition = {
+            "task_id": item.task_id,
+            "from_status": item.status,
+            "to_status": item.status,
+            "event_type": "saga_compensated",
+            "worker_id": initiator,
+            "lease_token": item.lease_token,
+            "version": item.version,
+            "metadata": {
                 "trace_id": item.trace_id,
                 "reason": reason,
                 "requires_manual_intervention": bool(summary.get("requires_manual_intervention", False)),
             },
-        )
-        self._emit_fact(
+        }
+        outbox = self._build_outbox_record(
             workspace=workspace,
             event_type="task_market.saga_compensated",
             run_id=item.run_id,
@@ -2693,6 +2859,8 @@ class TaskMarketService:
         return {
             "task_id": item.task_id,
             **summary,
+            "_transitions": (transition,),
+            "_outbox_records": (outbox,),
         }
 
     def _compensate_children_for_parent_failure(
@@ -2711,8 +2879,12 @@ class TaskMarketService:
             if child.parent_task_id == parent_task_id and child.status in affected_statuses
         ]
         summaries: list[dict[str, Any]] = []
+        expected_versions: dict[str, int] = {}
+        transitions: list[dict[str, Any]] = []
+        outbox_records: list[dict[str, Any]] = []
         requires_manual = False
         for child in child_items:
+            previous_version = int(child.version)
             summary = self._compensate_task_no_lock(
                 workspace=workspace,
                 store=store,
@@ -2721,13 +2893,20 @@ class TaskMarketService:
                 reason=reason,
                 initiator="parent_failure",
             )
-            summaries.append(summary)
+            transitions.extend(self._collect_compensation_transitions(summary))
+            outbox_records.extend(self._collect_compensation_outbox(summary))
+            summaries.append(self._strip_compensation_side_effects(summary))
+            if bool(summary.get("changed", False)):
+                expected_versions[child.task_id] = previous_version
             if bool(summary.get("requires_manual_intervention", False)):
                 requires_manual = True
         return {
             "parent_task_id": parent_task_id,
             "child_count": len(child_items),
             "compensation_summaries": tuple(summaries),
+            "expected_versions": expected_versions,
+            "_transitions": tuple(transitions),
+            "_outbox_records": tuple(outbox_records),
             "requires_manual_intervention": requires_manual,
         }
 
@@ -2745,38 +2924,25 @@ class TaskMarketService:
         previous_version = item.version
         previous_status = item.status
         previous_stage = item.stage
-
-        review = HumanReviewManager(store).create_review_request(
-            task_id=task_id,
-            trace_id=item.trace_id,
-            workspace=workspace,
-            reason=reason,
-            escalation_policy="tri_council",
-            requested_by=requested_by,
-        )
-
-        items = store.load_items()
-        item = self._require_item(items, task_id)
-        if item.version == previous_version and item.status == previous_status and item.stage == previous_stage:
-            return {"item": item, "review": review}
-        store.append_transition(
-            task_id=item.task_id,
-            from_status=previous_status,
-            to_status=item.status,
-            event_type="human_review_requested",
-            worker_id=requested_by,
-            lease_token="",
-            version=item.version,
-            metadata={
+        next_role = get_next_escalation_role("director") or ""
+        transition = {
+            "task_id": item.task_id,
+            "from_status": previous_status,
+            "to_status": "waiting_human",
+            "event_type": "human_review_requested",
+            "worker_id": requested_by,
+            "lease_token": "",
+            "version": int(item.version) + 1,
+            "metadata": {
                 "trace_id": item.trace_id,
                 "reason": reason,
                 "from_stage": previous_stage,
-                "to_stage": item.stage,
-                "escalation_policy": review.get("escalation_policy", "tri_council"),
-                "next_role": review.get("next_role", get_next_escalation_role("director") or ""),
+                "to_stage": "waiting_human",
+                "escalation_policy": "tri_council",
+                "next_role": next_role,
             },
-        )
-        self._emit_fact(
+        }
+        outbox = self._build_outbox_record(
             workspace=workspace,
             event_type="task_market.human_review_requested",
             run_id=item.run_id,
@@ -2786,11 +2952,27 @@ class TaskMarketService:
                 "reason": reason,
                 "requested_by": requested_by,
                 "from_stage": previous_stage,
-                "to_stage": item.stage,
-                "escalation_policy": review.get("escalation_policy", "tri_council"),
-                "next_role": review.get("next_role", get_next_escalation_role("director") or ""),
+                "to_stage": "waiting_human",
+                "escalation_policy": "tri_council",
+                "next_role": next_role,
             },
         )
+
+        review = HumanReviewManager(store).create_review_request(
+            task_id=task_id,
+            trace_id=item.trace_id,
+            workspace=workspace,
+            reason=reason,
+            escalation_policy="tri_council",
+            requested_by=requested_by,
+            transitions=[transition],
+            outbox_records=[outbox],
+        )
+
+        items = store.load_items()
+        item = self._require_item(items, task_id)
+        if item.version == previous_version and item.status == previous_status and item.stage == previous_stage:
+            return {"item": item, "review": review}
         return {"item": item, "review": review}
 
     def _cascade_dead_letter_dependents(
@@ -2799,7 +2981,7 @@ class TaskMarketService:
         store: Any,
         items: dict[str, TaskWorkItemRecord],
         worker_id: str,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int], list[dict[str, Any]]]:
         """Dead-letter ``pending_exec`` steps whose dependency terminally failed.
 
         The readiness gate blocks dependents of a failed-and-requeued
@@ -2818,6 +3000,8 @@ class TaskMarketService:
         """
         transitions: list[dict[str, Any]] = []
         outbox_records: list[dict[str, Any]] = []
+        expected_versions: dict[str, int] = {}
+        dead_letter_records: list[dict[str, Any]] = []
         dlq = DLQManager(store)
         changed = True
         while changed:
@@ -2841,6 +3025,7 @@ class TaskMarketService:
                 if not dead_dep_id:
                     continue
                 from_status = item.status
+                expected_version = int(item.version)
                 reason = f"dependency_terminal:{dead_dep_id}:{dead_dep_status}"
                 # Receipt FIRST: a required-receipt failure must skip this
                 # item before any durable side effect — otherwise one
@@ -2870,7 +3055,7 @@ class TaskMarketService:
                         exc,
                     )
                     continue
-                dlq.move_to_dead_letter(
+                dead_letter_record = dlq.move_to_dead_letter(
                     item=item,
                     reason=reason,
                     error_code="dependency_terminal_failure",
@@ -2878,6 +3063,7 @@ class TaskMarketService:
                         "dependency_task_id": dead_dep_id,
                         "dependency_status": dead_dep_status,
                     },
+                    persist=False,
                 )
                 transition = {
                     "task_id": item.task_id,
@@ -2915,8 +3101,10 @@ class TaskMarketService:
                 items[item.task_id] = item
                 transitions.append(transition)
                 outbox_records.append(outbox)
+                expected_versions[item.task_id] = expected_version
+                dead_letter_records.append(dead_letter_record)
                 changed = True
-        return transitions, outbox_records
+        return transitions, outbox_records, expected_versions, dead_letter_records
 
     @staticmethod
     def _exec_claim_ready(item: TaskWorkItemRecord, items: dict[str, TaskWorkItemRecord]) -> bool:

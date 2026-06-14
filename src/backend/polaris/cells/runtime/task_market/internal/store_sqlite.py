@@ -15,6 +15,7 @@ from typing import Any
 
 from polaris.kernelone.storage import resolve_runtime_path
 
+from .errors import StaleWriteConflictError
 from .models import TaskWorkItemRecord, now_iso
 
 # ---------------------------------------------------------------------------
@@ -797,15 +798,33 @@ class TaskMarketSQLiteStore:
         items: dict[str, TaskWorkItemRecord],
         transitions: list[dict[str, Any]],
         outbox_records: list[dict[str, Any]],
+        expected_versions: dict[str, int] | None = None,
+        dead_letter_records: list[dict[str, Any]] | None = None,
+        human_review_records: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Atomically persist items, transitions, and outbox messages in one transaction.
+        """Atomically persist items, audits, reviews, and outbox messages in one transaction.
 
-        This guarantees that state changes and their corresponding outbox entries
+        This guarantees that state changes and their corresponding side effects
         are committed together, satisfying the outbox_atomic fitness rule.
         """
         conn = self._get_conn()
         conn.execute("BEGIN IMMEDIATE")
         try:
+            for task_id, expected_version in dict(expected_versions or {}).items():
+                cursor = conn.execute(
+                    "SELECT version FROM work_items WHERE workspace = ? AND task_id = ?",
+                    (self._workspace, str(task_id)),
+                )
+                row = cursor.fetchone()
+                actual_version = int(row["version"]) if row is not None else 0
+                if actual_version != int(expected_version):
+                    raise StaleWriteConflictError(
+                        f"Stale write for task {task_id}: expected version {expected_version}, got {actual_version}",
+                        task_id=str(task_id),
+                        expected_version=int(expected_version),
+                        actual_version=actual_version,
+                    )
+
             # 1. Upsert items.
             for item in items.values():
                 conn.execute(
@@ -878,7 +897,13 @@ class TaskMarketSQLiteStore:
                     ),
                 )
 
-            # 3. Append outbox records.
+            # 3. Upsert dead-letter and human-review side effects.
+            for record in dead_letter_records or []:
+                self.append_dead_letter(record)
+            for record in human_review_records or []:
+                self.upsert_human_review_request(record)
+
+            # 4. Append outbox records.
             for rec in outbox_records:
                 conn.execute(
                     """

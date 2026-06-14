@@ -128,7 +128,7 @@ Expected: profile tests pass and gateway/caller regressions pass.
 
 **Files:**
 - Modify: `src/backend/polaris/delivery/http/v2/runtime_diagnostics.py`
-- Create: `src/backend/docs/governance/ci/scripts/run_contextos_replay.py`
+- Use existing: `src/backend/polaris/delivery/cli/tools/contextos_replay.py`
 - Modify: `src/backend/docs/governance/ci/scripts/run_contextos_governance_gate.py`
 - Modify: `src/backend/docs/governance/ci/pipeline.template.yaml`
 - Create or modify: `src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py`

@@ -96,14 +96,14 @@ def load_vcs(vc_dir: Path) -> list[dict[str, Any]]:
             if data:
                 data["_source_file"] = f.name
                 cards.append(data)
-        except Exception as e:
+        except (OSError, yaml.YAMLError) as e:
             logger.debug("Failed to load VC %s: %s", f.name, e)
     return cards
 
 
 def load_conversation_events(session_path: Path) -> list[dict[str, Any]]:
     """Load events from a conversation JSONL file."""
-    events = []
+    events: list[dict[str, Any]] = []
     if not session_path.exists():
         return events
     try:
@@ -111,7 +111,7 @@ def load_conversation_events(session_path: Path) -> list[dict[str, Any]]:
             line = line.strip()
             if line:
                 events.append(json.loads(line))
-    except Exception as e:
+    except (OSError, json.JSONDecodeError) as e:
         logger.debug("Failed to parse event line in %s: %s", session_path.name, e)
     return events
 
@@ -119,7 +119,6 @@ def load_conversation_events(session_path: Path) -> list[dict[str, Any]]:
 def analyze_vc_for_deep_issues(card: dict[str, Any]) -> list[dict[str, str]]:
     """Identify specific weaknesses in a VC."""
     issues: list[dict[str, str]] = []
-    card_id = card.get("card_id", "?")
 
     # Check each assumption
     for i, assumption in enumerate(card.get("assumptions", [])):
@@ -147,17 +146,15 @@ def analyze_vc_for_deep_issues(card: dict[str, Any]) -> list[dict[str, str]]:
                 }
             )
 
-        if status == "verified_false":
-            # Check if the "correct" assumption was wrong
-            if len(evidence) < 20:
-                issues.append(
-                    {
-                        "severity": "MEDIUM",
-                        "area": f"Assumption A{assumption.get('id', str(i + 1))} (verified_false)",
-                        "problem": f"Evidence too brief for verified_false: '{evidence[:40]}'",
-                        "fix": "verified_false needs specific file:line evidence of what was wrong",
-                    }
-                )
+        if status == "verified_false" and len(evidence) < 20:
+            issues.append(
+                {
+                    "severity": "MEDIUM",
+                    "area": f"Assumption A{assumption.get('id', str(i + 1))} (verified_false)",
+                    "problem": f"Evidence too brief for verified_false: '{evidence[:40]}'",
+                    "fix": "verified_false needs specific file:line evidence of what was wrong",
+                }
+            )
 
     # Check pre_mortem
     pm = card.get("pre_mortem", {})
@@ -217,7 +214,6 @@ def analyze_vc_for_deep_issues(card: dict[str, Any]) -> list[dict[str, str]]:
 
 def build_pattern_report(cards: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a pattern report across all VCs."""
-    all_assumptions: dict[str, int] = {}
     all_keywords: dict[str, int] = {}
     classification_counts: dict[str, int] = {}
     assumption_status_totals: dict[str, int] = {}

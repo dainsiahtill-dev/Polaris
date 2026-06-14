@@ -94,6 +94,12 @@ class TestSplitCorrectness:
         for fill in out[1:]:
             assert "skeleton_stub_only" not in fill
 
+    def test_fills_marked_scope_only(self) -> None:
+        out = split_oversize_steps([_step("main.js", SIGS12, 200)], parent_pm_task=PARENT)
+        assert "fill_scope_only" not in out[0]  # skeleton is not a fill
+        for fill in out[1:]:
+            assert fill["fill_scope_only"] is True  # gateway renders a bounded-edit directive
+
     def test_skeleton_inherits_step_depends_on(self) -> None:
         out = split_oversize_steps([_step("main.js", SIGS12, 200, deps=["S2"])], parent_pm_task=PARENT)
         assert out[0]["depends_on"] == [f"{PARENT}-S2"]

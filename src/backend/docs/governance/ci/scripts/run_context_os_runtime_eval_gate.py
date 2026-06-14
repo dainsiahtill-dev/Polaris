@@ -522,7 +522,7 @@ def _collect_metrics(
         result = collector.collect_metrics()
         if result.metrics is not None:
             return result.metrics.to_dict()
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         # Log but don't fail - metrics collection is optional
         print(f"[context-os-runtime-eval-gate] Warning: metrics collection failed: {exc}", file=sys.stderr)
 

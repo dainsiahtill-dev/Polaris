@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -17,6 +18,23 @@ from polaris.kernelone.llm.runtime import normalize_provider_type, resolve_provi
 from polaris.kernelone.llm.runtime_config import get_role_model
 
 logger = logging.getLogger(__name__)
+_SENSITIVE_OBSERVABILITY_KEYS = frozenset(
+    {
+        "compressed_input",
+        "prompt",
+        "input",
+        "messages",
+        "chat_messages",
+        "content",
+        "output",
+        "reasoning",
+        "thinking",
+        "thinking_content",
+        "notes",
+        "system_prompt",
+    }
+)
+_SECRET_OR_PATH_RE = re.compile(r"(?i)(sk-[A-Za-z0-9_-]{4,}|/home/[^\s\"']+)")
 
 # Keys merged from request.options into provider_cfg for non-streaming invocations.
 _INVOKE_OPTION_KEYS = (
@@ -262,6 +280,117 @@ def build_final_request_trace_refs(
     return tuple(str(item).strip() for item in refs if str(item or "").strip())
 
 
+def build_safe_token_budget_payload(budget_decision: Any) -> dict[str, Any]:
+    """Serialize token budget metadata without prompt-visible compression text."""
+    if isinstance(budget_decision, Mapping):
+        payload: dict[str, Any] = {str(key): value for key, value in budget_decision.items() if str(key)}
+    elif hasattr(budget_decision, "to_dict"):
+        raw_payload = budget_decision.to_dict()
+        payload = dict(raw_payload) if isinstance(raw_payload, Mapping) else {}
+    else:
+        payload = {}
+
+    compression_payload = payload.get("compression")
+    compression_obj = getattr(budget_decision, "compression", None)
+    if isinstance(compression_payload, Mapping) or compression_obj is not None:
+        payload["compression"] = _safe_compression_payload(compression_payload, compression_obj)
+    return payload
+
+
+def coerce_required_flag(value: Any) -> bool:
+    """Parse required-mode booleans without treating ``'false'`` as true."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "y", "on", "required"}:
+            return True
+        if token in {"0", "false", "no", "n", "off", "optional", "disabled", ""}:
+            return False
+    return False
+
+
+def safe_observability_payload(value: Any, *, max_depth: int = 4) -> Any:
+    """Return provider metadata without prompt-like text, secrets, or host paths."""
+    return _safe_observability_value(value, key="", depth=max_depth)
+
+
+def _safe_observability_value(value: Any, *, key: str, depth: int) -> Any:
+    key_token = str(key or "").strip().lower()
+    if key_token in _SENSITIVE_OBSERVABILITY_KEYS:
+        return _redacted_text_summary(value)
+    if depth < 0:
+        return _redacted_text_summary(value)
+    if isinstance(value, Mapping):
+        safe: dict[str, Any] = {}
+        redacted_field_count = 0
+        for raw_key, raw_value in value.items():
+            child_key = str(raw_key or "").strip()
+            if not child_key:
+                continue
+            child_token = child_key.lower()
+            if child_token in _SENSITIVE_OBSERVABILITY_KEYS:
+                redacted_field_count += 1
+                continue
+            safe[child_key] = _safe_observability_value(raw_value, key=child_key, depth=depth - 1)
+        if redacted_field_count:
+            safe["redacted_field_count"] = redacted_field_count
+        return safe
+    if isinstance(value, (list, tuple)):
+        return [_safe_observability_value(item, key=key_token, depth=depth - 1) for item in value[:50]]
+    if isinstance(value, str):
+        return "[redacted]" if _SECRET_OR_PATH_RE.search(value) else value[:512]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return _redacted_text_summary(value)
+
+
+def _redacted_text_summary(value: Any) -> dict[str, Any]:
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, Mapping) else str(value or "")
+    except (TypeError, ValueError):
+        text = str(value or "")
+    return {
+        "redacted": True,
+        "sha256": _stable_sha256_text(text),
+        "chars": len(text),
+    }
+
+
+def _safe_compression_payload(compression_payload: Any, compression_obj: Any) -> dict[str, Any]:
+    raw = compression_payload if isinstance(compression_payload, Mapping) else {}
+    compressed_input = raw.get("compressed_input")
+    if compressed_input is None and compression_obj is not None:
+        compressed_input = getattr(compression_obj, "compressed_input", "")
+    compressed_text = str(compressed_input or "")
+
+    safe: dict[str, Any] = {}
+    for key in (
+        "original_tokens",
+        "compressed_tokens",
+        "strategy",
+        "quality_flag",
+        "drop_ratio",
+    ):
+        value = raw.get(key)
+        if value is None and compression_obj is not None:
+            value = getattr(compression_obj, key, None)
+        if value is not None:
+            safe[key] = value
+
+    notes = raw.get("notes")
+    if notes is None and compression_obj is not None:
+        notes = getattr(compression_obj, "notes", None)
+    if isinstance(notes, list | tuple):
+        safe["notes_count"] = len(notes)
+
+    safe["compressed_text_sha256"] = _stable_sha256_text(compressed_text)
+    safe["compressed_text_chars"] = len(compressed_text)
+    return safe
+
+
 def _capability_profile_ref(context: Mapping[str, Any]) -> dict[str, str]:
     raw_ref = context.get("capability_profile_ref")
     if isinstance(raw_ref, Mapping):
@@ -295,8 +424,14 @@ def _stable_sha256_json(value: Any) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _stable_sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _non_empty_str(value: Any) -> str:
-    return str(value or "").strip()
+    text = str(value or "").strip()
+    safe_text = safe_observability_payload(text)
+    return str(safe_text or "").strip()
 
 
 def _coerce_positive_int(value: Any) -> int:

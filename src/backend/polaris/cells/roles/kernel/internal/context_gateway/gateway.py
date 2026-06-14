@@ -1208,6 +1208,19 @@ class RoleContextGateway:
                 "一次 write_file 写完全部空桩即可，务必极简以一轮落盘"
                 "（试图实现整套逻辑会超出输出预算被截断、导致本步零落盘失败）。"
             )
+        # Fill step (I3-r31): without this the weak model tries to implement the WHOLE
+        # file at once (truncates) or stuffs prose into edit_blocks. Force a bounded,
+        # code-only, anchored edit of ONLY this fill's assigned functions.
+        if step.get("fill_scope_only"):
+            lines.append(
+                "[填充步·只实现被分配的函数] 本步只实现上面 signatures 列出的这几个函数/方法的函数体，"
+                "其它桩一律别动、也别实现。做法：先 read_file 看到这几个函数当前的空桩原文，"
+                "再用 edit_blocks 对每个函数各做一次 SEARCH/REPLACE"
+                "（SEARCH=空桩原文逐字照抄，REPLACE=实现后的完整函数）。"
+                "edit_blocks 的 blocks/replace 参数里只放纯代码——严禁任何说明/计划/意图文字"
+                "（例如 'replace lines 1-46 with full implementation' 是错的，会被工具拒收）。"
+                "严禁 write_file 整文件重写、严禁实现未分配的函数（一次实现整个文件会超预算截断、零落盘）。"
+            )
         interfaces = [str(s).strip() for s in (step.get("interface_names") or []) if str(s).strip()]
         if interfaces:
             lines.append("interfaces: " + ", ".join(interfaces[:16]))

@@ -11,6 +11,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -18,7 +19,7 @@ class GateResult:
     status: str  # PASS | FAIL
     phase: str
     message: str
-    details: dict = None
+    details: dict[str, Any] | None = None
 
 
 def check_vc_schema_exists(workspace: Path) -> GateResult:
@@ -42,7 +43,7 @@ def check_vc_schema_exists(workspace: Path) -> GateResult:
                 phase="Phase 0",
                 message="VC schema missing cognitive_protocol_checklist",
             )
-    except Exception as e:
+    except OSError as e:
         return GateResult(
             status="FAIL",
             phase="Phase 0",
@@ -138,14 +139,14 @@ def check_orchestrator_integration(workspace: Path) -> GateResult:
         from polaris.kernelone.cognitive.orchestrator import CognitiveOrchestrator
 
         # Basic instantiation check
-        orch = CognitiveOrchestrator()
+        CognitiveOrchestrator()
         return GateResult(
             status="PASS",
             phase="Phase 8",
             message="CognitiveOrchestrator integration ready",
             details={"orchestrator_class": "CognitiveOrchestrator"},
         )
-    except Exception as e:
+    except (ImportError, RuntimeError, ValueError) as e:
         return GateResult(
             status="FAIL",
             phase="Phase 8",

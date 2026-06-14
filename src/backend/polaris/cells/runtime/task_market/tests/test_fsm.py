@@ -110,8 +110,63 @@ class TestTaskStageFSM:
             is True
         )
 
+    def test_ack_in_execution_to_pending_exec_is_legal_for_supervision_parent(self, fsm: TaskStageFSM) -> None:
+        assert (
+            fsm.can_transition(
+                "in_execution",
+                "pending_exec",
+                "ack",
+                next_stage="pending_exec",
+            )
+            is True
+        )
+
+    def test_ack_in_execution_to_resolved_is_legal(self, fsm: TaskStageFSM) -> None:
+        assert (
+            fsm.can_transition(
+                "in_execution",
+                "resolved",
+                "ack",
+                terminal_status="resolved",
+            )
+            is True
+        )
+
+    def test_ack_in_execution_to_pending_design_is_illegal(self, fsm: TaskStageFSM) -> None:
+        assert (
+            fsm.can_transition(
+                "in_execution",
+                "pending_design",
+                "ack",
+                next_stage="pending_design",
+            )
+            is False
+        )
+
     def test_fail_in_execution_to_dead_letter(self, fsm: TaskStageFSM) -> None:
         assert fsm.can_transition("in_execution", "dead_letter", "fail") is True
+
+    def test_ack_in_qa_to_resolved_is_legal(self, fsm: TaskStageFSM) -> None:
+        assert (
+            fsm.can_transition(
+                "in_qa",
+                "resolved",
+                "ack",
+                terminal_status="resolved",
+            )
+            is True
+        )
+
+    def test_ack_in_qa_to_waiting_human_is_legal(self, fsm: TaskStageFSM) -> None:
+        assert (
+            fsm.can_transition(
+                "in_qa",
+                "waiting_human",
+                "ack",
+                next_stage="waiting_human",
+            )
+            is True
+        )
 
     def test_ack_pending_qa_to_resolved(self, fsm: TaskStageFSM) -> None:
         assert (

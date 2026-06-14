@@ -147,9 +147,7 @@ def _gitignore_pattern_matches(pattern: str, path: str) -> bool:
         if fnmatch.fnmatch(normalized, collapsed):
             return True
         tail = os.path.basename(normalized)
-        if fnmatch.fnmatch(tail, collapsed):
-            return True
-        return False
+        return bool(fnmatch.fnmatch(tail, collapsed))
 
     if has_slash:
         # Anchored pattern -- match against the full relative path
@@ -171,9 +169,7 @@ def _gitignore_pattern_matches(pattern: str, path: str) -> bool:
             if fnmatch.fnmatch(part, clean):
                 return True
         # Also match the full path itself
-        if fnmatch.fnmatch(normalized, clean):
-            return True
-        return False
+        return bool(fnmatch.fnmatch(normalized, clean))
 
 
 def _collect_gitignore_rules(repo_root: Path) -> list[tuple[str, bool]]:
@@ -198,7 +194,7 @@ def _collect_gitignore_rules(repo_root: Path) -> list[tuple[str, bool]]:
                     # Insert at front so inner (later-processed) rules
                     # take priority in the final list order.
                     rules.insert(0, (pattern, negate))
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 pass
         current = current.parent
     return rules
@@ -269,11 +265,7 @@ def is_directory_covered(
 
     # 4. Pattern match on the directory path itself (catches trailing-slash
     #    patterns when git was unavailable or returned indeterminate).
-    if result is None:
-        if _any_gitignore_pattern_covers(repo_root, repo_rel_dir):
-            return True
-
-    return False
+    return bool(result is None and _any_gitignore_pattern_covers(repo_root, repo_rel_dir))
 
 
 # ---------------------------------------------------------------------------

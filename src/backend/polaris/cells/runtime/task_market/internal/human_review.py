@@ -101,6 +101,9 @@ class HumanReviewManager:
         reason: str,
         escalation_policy: str = "tri_council",
         requested_by: str = "system",
+        *,
+        transitions: list[dict[str, Any]] | None = None,
+        outbox_records: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Mark a task as WAITING_HUMAN and create a review request.
 
@@ -121,6 +124,7 @@ class HumanReviewManager:
             if item.status == "waiting_human" and existing_pending:
                 return existing_pending
 
+            previous_version = int(item.version)
             previous_stage = item.stage
             previous_status = item.status
             item.stage = "waiting_human"
@@ -160,10 +164,13 @@ class HumanReviewManager:
                 "escalation_deadline": _compute_escalation_deadline(now_iso()),
             }
 
-            # Persist the request.
-            self._save_review_request(review_record)
-            items[item.task_id] = item
-            self._store.save_items(items)
+            self._store.save_items_and_outbox_atomic(
+                items={item.task_id: item},
+                transitions=transitions or [],
+                outbox_records=outbox_records or [],
+                expected_versions={item.task_id: previous_version},
+                human_review_records=[review_record],
+            )
 
             return review_record
 
@@ -175,6 +182,8 @@ class HumanReviewManager:
         note: str = "",
         *,
         workspace: str = "",
+        transitions: list[dict[str, Any]] | None = None,
+        outbox_records: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Resolve a waiting human review.
 
@@ -227,6 +236,7 @@ class HumanReviewManager:
             previous_stage = str(waiting_snapshot.get("previous_stage") or "").strip().lower()
             previous_status = str(waiting_snapshot.get("previous_status") or "").strip().lower()
 
+            previous_version = int(item.version)
             # shadow_continue: keep current stage, just clear waiting_human.
             if resolution == "shadow_continue":
                 if previous_stage:
@@ -250,8 +260,6 @@ class HumanReviewManager:
             item.metadata.pop("waiting_human_snapshot", None)
             item.version += 1
             item.updated_at = now_iso()
-            items[item.task_id] = item
-            self._store.save_items(items)
 
             # Update review record.
             review_record = self._find_pending_review(workspace=item.workspace, task_id=task_id)
@@ -272,7 +280,13 @@ class HumanReviewManager:
             review_record["resolution_note"] = str(note or "").strip()
             review_record["final_stage"] = item.stage
             review_record["final_status"] = item.status
-            self._save_review_request(review_record)
+            self._store.save_items_and_outbox_atomic(
+                items={item.task_id: item},
+                transitions=transitions or [],
+                outbox_records=outbox_records or [],
+                expected_versions={item.task_id: previous_version},
+                human_review_records=[review_record],
+            )
 
             return review_record
 

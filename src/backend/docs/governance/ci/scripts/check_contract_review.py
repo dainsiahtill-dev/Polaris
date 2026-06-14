@@ -138,7 +138,7 @@ class ContractReviewChecker(FitnessRuleChecker):
                 check=False,
             )
             return result.stdout, result.stderr, result.returncode
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             return "", str(e), 1
 
     def _check_commit_has_review_evidence(self, commit_message: str) -> tuple[bool, str]:

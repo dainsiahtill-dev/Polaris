@@ -533,3 +533,27 @@ class TestPipelineRunner:
         diagnostics = get_contextos_diagnostics(str(tmp_path.resolve()))
         assert diagnostics["state"] == "available"
         assert diagnostics["details"]["last_projection_report"] == report
+        assert diagnostics["details"]["replay_ready"] is False
+
+    def test_contextos_diagnostics_replay_ready_requires_canonical_ids(self, tmp_path) -> None:
+        from polaris.kernelone.context.context_os.diagnostics import (
+            get_contextos_diagnostics,
+            record_contextos_projection_report,
+            reset_contextos_diagnostics,
+        )
+
+        reset_contextos_diagnostics()
+        report = {
+            "projection_id": "projection-1",
+            "run_id": "run-1",
+            "turn_id": "turn-1",
+            "receipt_refs": ["runtime_receipt:receipt-1"],
+            "nested": {"receipt_id": "not-runtime"},
+        }
+
+        record_contextos_projection_report(str(tmp_path), report)
+
+        diagnostics = get_contextos_diagnostics(str(tmp_path))
+        assert diagnostics["details"]["replay_ready"] is True
+        assert diagnostics["details"]["receipt_refs"] == ["runtime_receipt:receipt-1"]
+        assert diagnostics["details"]["receipt_ref_count"] == 1

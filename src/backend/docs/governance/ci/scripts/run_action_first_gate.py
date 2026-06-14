@@ -11,14 +11,14 @@ import sys
 from pathlib import Path
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", default=".", help="仓库根目录")
     parser.add_argument("--mode", default="all", choices=["all", "prompt", "parser", "recovery"])
     args = parser.parse_args()
 
-    _BACKEND_ROOT = Path(__file__).resolve().parents[4]
-    sys.path.insert(0, str(_BACKEND_ROOT))
+    backend_root = Path(__file__).resolve().parents[4]
+    sys.path.insert(0, str(backend_root))
 
     results = []
 
@@ -42,7 +42,7 @@ def main():
 
             print("[PASS] Prompt template")
             results.append(True)
-        except Exception as e:
+        except (AssertionError, ImportError, OSError, RuntimeError, ValueError) as e:
             print(f"[FAIL] Prompt template: {e}")
             results.append(False)
 
@@ -68,7 +68,7 @@ def main():
 
             print("[PASS] Action parser")
             results.append(True)
-        except Exception as e:
+        except (AssertionError, ImportError, RuntimeError, ValueError) as e:
             print(f"[FAIL] Action parser: {e}")
             results.append(False)
 
@@ -88,7 +88,7 @@ def main():
             assert policy.should_retry(error, 0) is True
             assert policy.should_retry(error, 3) is False  # max_retries=3
 
-            history = []
+            history: list[dict[str, str]] = []
             new_history = ErrorContextInjector.inject_error_context(
                 history, "read_file", "File not found", {"path": "test.py"}
             )
@@ -96,7 +96,7 @@ def main():
 
             print("[PASS] Error recovery")
             results.append(True)
-        except Exception as e:
+        except (AssertionError, ImportError, RuntimeError, ValueError) as e:
             print(f"[FAIL] Error recovery: {e}")
             results.append(False)
 

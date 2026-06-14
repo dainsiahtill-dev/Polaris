@@ -102,6 +102,33 @@ class StaleLeaseTokenError(TaskMarketError):
         self.current_token = current_token
 
 
+class StaleWriteConflictError(TaskMarketError):
+    """Raised when an optimistic write sees a different stored item version."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        task_id: str = "",
+        expected_version: int = 0,
+        actual_version: int = 0,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            code="stale_write_conflict",
+            details={
+                **(details or {}),
+                "task_id": task_id,
+                "expected_version": expected_version,
+                "actual_version": actual_version,
+            },
+        )
+        self.task_id = task_id
+        self.expected_version = expected_version
+        self.actual_version = actual_version
+
+
 class TaskNotClaimableError(TaskMarketError):
     """Raised when a task cannot be claimed (e.g., visibility timeout not yet expired)."""
 

@@ -31,7 +31,6 @@ exclude = [
     "src/backend/tests",       # test files use lots of dynamic imports
     "src/backend/polaris/tests",
     "src/backend/docs/archive/**",
-    "src/backend/docs/governance/ci/scripts/**",
     "src/backend/docs/scripts/**",
     "src/backend/polaris/cells/llm/evaluation/fixtures/**",
     "src/backend/run_*_test.py",

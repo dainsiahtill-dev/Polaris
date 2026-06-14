@@ -8,11 +8,38 @@ import subprocess
 import sys
 from pathlib import Path
 
+import tomllib
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 MANIFEST = REPO_ROOT / "src" / "backend" / "docs" / "governance" / "contextos_module_classification.json"
 CATALOG = REPO_ROOT / "src" / "backend" / "docs" / "graph" / "catalog" / "cells.yaml"
+PACKAGED_MANIFEST = (
+    REPO_ROOT
+    / "src"
+    / "backend"
+    / "polaris"
+    / "kernelone"
+    / "context"
+    / "context_os"
+    / "contextos_module_classification.json"
+)
+RUFF_CONFIG = REPO_ROOT / "ruff.toml"
+CONTEXTOS_FULL_LANDING_CARD = (
+    REPO_ROOT
+    / "src"
+    / "backend"
+    / "docs"
+    / "governance"
+    / "templates"
+    / "verification-cards"
+    / "vc-20260614-contextos-full-landing.yaml"
+)
+ACTIVE_CONTEXTOS_LANDING_DOCS = (
+    CONTEXTOS_FULL_LANDING_CARD,
+    REPO_ROOT / "docs" / "blueprints" / "CONTEXTOS_FULL_LANDING_BLUEPRINT_20260614.md",
+    REPO_ROOT / "docs" / "superpowers" / "plans" / "2026-06-14-contextos-full-landing.md",
+)
 
 
 def test_contextos_dormant_modules_are_explicitly_classified() -> None:
@@ -136,7 +163,44 @@ def test_contextos_graph_declares_real_receipt_store_module() -> None:
     assert "polaris.kernelone.context.context_os.receipt_store" not in modules
 
 
-def test_contextos_module_classification_diagnostics_falls_back_to_packaged_manifest(
+def test_contextos_module_classification_has_no_packaged_manifest_copy() -> None:
+    assert not PACKAGED_MANIFEST.exists()
+
+
+def test_ruff_keeps_hot_governance_scripts_in_lint_scope() -> None:
+    payload = tomllib.loads(RUFF_CONFIG.read_text(encoding="utf-8"))
+    excludes = {str(item) for item in payload.get("exclude", [])}
+
+    assert "src/backend/docs/governance/ci/scripts/**" not in excludes
+
+
+def test_contextos_full_landing_card_uses_executable_replay_entrypoint() -> None:
+    payload = yaml.safe_load(CONTEXTOS_FULL_LANDING_CARD.read_text(encoding="utf-8")) or {}
+    commands = [
+        str(item.get("command") or "")
+        for item in payload.get("verification_plan", {}).get("integration_tests", [])
+        if isinstance(item, dict)
+    ]
+    replay_commands = [
+        command for command in commands if "contextos_replay" in command or "run_contextos_replay" in command
+    ]
+
+    assert replay_commands
+    assert all("run_contextos_replay.py" not in command for command in replay_commands)
+    assert any("python -m polaris.delivery.cli.tools.contextos_replay" in command for command in replay_commands)
+
+
+def test_contextos_landing_docs_do_not_reference_missing_replay_script() -> None:
+    offenders = [
+        str(path.relative_to(REPO_ROOT))
+        for path in ACTIVE_CONTEXTOS_LANDING_DOCS
+        if "run_contextos_replay.py" in path.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []
+
+
+def test_contextos_module_classification_diagnostics_reports_missing_canonical_manifest(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -146,6 +210,7 @@ def test_contextos_module_classification_diagnostics_falls_back_to_packaged_mani
 
     diagnostics = module_classification.get_contextos_module_classification_diagnostics()
 
-    assert diagnostics["state"] == "classified"
-    assert diagnostics["ok"] is True
-    assert diagnostics["details"]["dormant_count"] >= 4
+    assert diagnostics["state"] == "manifest_unavailable"
+    assert diagnostics["ok"] is False
+    assert diagnostics["details"]["manifest_path"] == str(tmp_path / "missing.json")
+    assert diagnostics["evidence"] == [str(tmp_path / "missing.json")]

@@ -20,7 +20,7 @@ _SCRIPT_DIR = Path(__file__).parent.resolve()
 _REPO_ROOT = _SCRIPT_DIR.parent.parent.parent.parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
-from fitness_rule_checker import (
+from fitness_rule_checker import (  # noqa: E402
     FitnessCheckResult,
     FitnessRuleChecker,
 )
@@ -115,7 +115,7 @@ class ContextPackFreshnessChecker(FitnessRuleChecker):
 
             with open(cells_yaml_path, encoding="utf-8") as f:
                 catalog_data = yaml.safe_load(f)
-        except Exception as e:
+        except (OSError, yaml.YAMLError) as e:
             result.passed = False
             result.violations.append(f"Failed to parse cells.yaml: {e}")
             return result

@@ -67,6 +67,44 @@ class TestTaskMarketSQLiteStore:
         assert loaded["task-upd"].priority == "critical"
         assert loaded["task-upd"].version == 2
 
+    def test_save_items_and_outbox_atomic_rejects_stale_expected_version(self, store: TaskMarketSQLiteStore) -> None:
+        item = TaskWorkItemRecord(
+            task_id="task-cas",
+            trace_id="trace-1",
+            run_id="run-1",
+            workspace=store._workspace,
+            stage="pending_exec",
+            status="pending_exec",
+            priority="medium",
+            payload={"version": "original"},
+            metadata={},
+            version=1,
+        )
+        store.upsert_item(item)
+
+        stale_update = TaskWorkItemRecord.from_dict(
+            {
+                **item.to_dict(),
+                "status": "resolved",
+                "payload": {"version": "stale-overwrite"},
+                "version": 2,
+            }
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            store.save_items_and_outbox_atomic(
+                items={"task-cas": stale_update},
+                transitions=[],
+                outbox_records=[],
+                expected_versions={"task-cas": 0},
+            )
+
+        assert getattr(exc_info.value, "code", "") == "stale_write_conflict"
+        loaded = store.load_items()["task-cas"]
+        assert loaded.status == "pending_exec"
+        assert loaded.payload == {"version": "original"}
+        assert loaded.version == 1
+
     def test_revision_fields_round_trip(self, store: TaskMarketSQLiteStore) -> None:
         item = TaskWorkItemRecord(
             task_id="task-revision",

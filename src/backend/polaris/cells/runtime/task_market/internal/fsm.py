@@ -90,9 +90,13 @@ _TRANSITION_RULES: dict[str, dict[str, tuple[str, str]]] = {
     "ack": {
         # in_design can advance to pending_exec, or requeue to pending_design
         # (DESIGN_FAILED expressed via requeue_stage="pending_design").
-        "in_design": ("_always", "ack from in_design"),
-        # in_execution can advance to pending_qa, or retry via requeue.
-        "in_execution": ("_always", "ack from in_execution"),
+        "in_design": ("_ack_design_target", "ack from in_design"),
+        # in_execution can stay in exec as a supervision parent, advance to QA,
+        # explicitly wait for human input, or terminate when a leaf is accepted
+        # without a dedicated QA hop.
+        "in_execution": ("_ack_execution_target", "ack from in_execution"),
+        # A claimed QA item can terminate or request HITL review.
+        "in_qa": ("_ack_qa_target", "ack from in_qa"),
         # pending_qa and waiting_human only accept terminal ack.
         "pending_qa": ("_is_terminal_target", "ack -> resolved/rejected"),
         "waiting_human": ("_is_terminal_target", "ack -> resolved/rejected"),
@@ -262,6 +266,16 @@ class TaskStageFSM:
         if guard == "_is_terminal_target":
             # Terminal status transitions are only allowed when explicitly set.
             return terminal_status is not None and terminal_status in TERMINAL_STATUSES
+        if guard == "_ack_design_target":
+            return next_stage in {"pending_design", "pending_exec"}
+        if guard == "_ack_execution_target":
+            if terminal_status is not None:
+                return terminal_status in TERMINAL_STATUSES
+            return next_stage in {"pending_exec", "pending_qa", "waiting_human"}
+        if guard == "_ack_qa_target":
+            if terminal_status is not None:
+                return terminal_status in TERMINAL_STATUSES
+            return next_stage == "waiting_human"
         if guard == "_requires_next_stage":
             return next_stage is not None
         if guard == "_requires_terminal":
