@@ -136,6 +136,18 @@ class TestResolveRepairEditTarget:
         co = {"construction_step": {"step_id": "S", "target_file": "main.js"}}
         assert resolve_repair_edit_target(co, str(tmp_path)) is None
 
+    def test_edit_on_prior_existing_file_returns_target(self, tmp_path: Path) -> None:
+        # A CE-split fill (edit_on_prior) on an existing skeleton file is hard-forced
+        # to edit even without a last_failure (I3-r29).
+        (tmp_path / "main.js").write_text("function init(){}\n", encoding="utf-8")
+        co = {"construction_step": {"step_id": "S-fill1", "target_file": "main.js", "edit_on_prior": True}}
+        assert resolve_repair_edit_target(co, str(tmp_path)) == "main.js"
+
+    def test_edit_on_prior_absent_file_returns_none(self, tmp_path: Path) -> None:
+        # File not yet created → from-scratch territory, not an edit.
+        co = {"construction_step": {"step_id": "S-fill1", "target_file": "main.js", "edit_on_prior": True}}
+        assert resolve_repair_edit_target(co, str(tmp_path)) is None
+
     def test_blank_error_message_returns_none(self, tmp_path: Path) -> None:
         (tmp_path / "main.js").write_text("// real game\n", encoding="utf-8")
         assert resolve_repair_edit_target(_repair_co("main.js", error="  "), str(tmp_path)) is None

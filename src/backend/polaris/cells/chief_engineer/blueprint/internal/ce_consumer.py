@@ -388,6 +388,29 @@ class CEConsumer:
                     _cache_root,
                     [str(s.get("target_file") or "") for s in steps],
                 )
+                # Right-size (I3-r29): split an over-budget from-scratch code step into
+                # a skeleton + incremental fill chain so the bounded-window weak Director
+                # never one-shots a too-large file (live: 12-function main.js truncated →
+                # never materialized → dead_letter). Cross-parent edit targets (already
+                # owned by an earlier parent) are skipped — they are small edits, not
+                # creations. Adopt only a gate-clean split (fail-open to the original).
+                from polaris.cells.chief_engineer.blueprint.internal.step_splitter import (
+                    split_oversize_steps,
+                )
+
+                split_steps = split_oversize_steps(
+                    steps, parent_pm_task=task_id, owned_elsewhere=set(prior_file_owners)
+                )
+                if split_steps is not steps:
+                    split_errors = validate_construction_steps(split_steps, parent_pm_task=task_id)
+                    if split_errors:
+                        logger.warning(
+                            "step split re-gate failed for %s, keeping original steps: %s",
+                            task_id,
+                            "; ".join(split_errors[:3]),
+                        )
+                    else:
+                        steps = split_steps
                 record_file_owners(self._workspace, _cache_root, steps, task_id)
                 steps_contract = build_blueprint_tasks_contract(
                     parent_pm_task=task_id,

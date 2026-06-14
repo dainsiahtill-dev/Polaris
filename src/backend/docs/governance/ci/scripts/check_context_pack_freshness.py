@@ -160,13 +160,9 @@ class ContextPackFreshnessChecker(FitnessRuleChecker):
 
             if mtime >= self.freshness_cutoff:
                 fresh_packs += 1
-                result.evidence.append(
-                    f"{cell_id}: context.pack.json is fresh (modified {self._format_age(mtime)})"
-                )
+                result.evidence.append(f"{cell_id}: context.pack.json is fresh (modified {self._format_age(mtime)})")
             else:
-                stale_packs.append(
-                    f"{cell_id}: context.pack.json is stale (modified {self._format_age(mtime)})"
-                )
+                stale_packs.append(f"{cell_id}: context.pack.json is stale (modified {self._format_age(mtime)})")
 
         # Build result
         result.evidence.append(
@@ -175,9 +171,7 @@ class ContextPackFreshnessChecker(FitnessRuleChecker):
         )
 
         if missing_packs:
-            result.violations.extend(
-                f"Missing context.pack.json: {cell_id}" for cell_id in missing_packs
-            )
+            result.violations.extend(f"Missing context.pack.json: {cell_id}" for cell_id in missing_packs)
             result.passed = False
 
         if stale_packs:

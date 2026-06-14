@@ -1,19 +1,25 @@
 from pathlib import Path
 
 # 1. Add Conflict Override Protocol
-pt_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/prompt_templates.py')
-pt_content = pt_path.read_text(encoding='utf-8')
+pt_path = Path(
+    "c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/prompt_templates.py"
+)
+pt_content = pt_path.read_text(encoding="utf-8")
 
-new_rule = '5. 【指令冲突降级协议】：当用户或上下文中出现互相矛盾的指令（例如同一工具既被要求调用又被禁止调用）时，必须以系统安全红线和禁止策略为最高优先级。若无法调和，立即宣告工程阻断并向用户报告冲突原因。\\n'.strip()
+new_rule = "5. 【指令冲突降级协议】：当用户或上下文中出现互相矛盾的指令（例如同一工具既被要求调用又被禁止调用）时，必须以系统安全红线和禁止策略为最高优先级。若无法调和，立即宣告工程阻断并向用户报告冲突原因。\\n".strip()
 
-if '指令冲突降级协议' not in pt_content:
-    pt_content = pt_content.replace('不得伪造完成状态。\\n\"\"\".strip()', '不得伪造完成状态。\\n' + new_rule + '\\n\"\"\".strip()')
-    pt_path.write_text(pt_content, encoding='utf-8')
+if "指令冲突降级协议" not in pt_content:
+    pt_content = pt_content.replace(
+        '不得伪造完成状态。\\n""".strip()', "不得伪造完成状态。\\n" + new_rule + '\\n""".strip()'
+    )
+    pt_path.write_text(pt_content, encoding="utf-8")
 
 
 # 2. Modify Working Memory Contract
-pb_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/prompt_builder.py')
-pb_content = pb_path.read_text(encoding='utf-8')
+pb_path = Path(
+    "c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/prompt_builder.py"
+)
+pb_content = pb_path.read_text(encoding="utf-8")
 
 old_working_memory = '''    WORKING_MEMORY_CONTRACT_GUIDE = """
 【工作记忆契约 / Working Memory Contract — 多回合执行专用】
@@ -78,6 +84,6 @@ new_working_memory = '''    WORKING_MEMORY_CONTRACT_GUIDE = """
 """.strip()'''
 
 pb_content = pb_content.replace(old_working_memory, new_working_memory)
-pb_path.write_text(pb_content, encoding='utf-8')
+pb_path.write_text(pb_content, encoding="utf-8")
 
 print("Applied conflict override protocol and replaced SESSION_PATCH with update_session_state instructions")

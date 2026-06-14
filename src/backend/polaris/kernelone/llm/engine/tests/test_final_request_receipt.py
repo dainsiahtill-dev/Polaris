@@ -113,7 +113,15 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
             "run_id": "run-1",
             "task_id": "task-1",
             "session_id": "session-1",
+            "turn_id": "turn-1",
+            "attempt": 2,
+            "fix_attempt_id": "fix-1",
             "native_tool_mode": "native_tools",
+            "capability_profile_ref": {
+                "sha256": "a" * 64,
+                "source": "roles.kernel.llm_caller.pre_projection",
+            },
+            "context_projection_id": "projection-1",
             "chat_messages": [
                 {"role": "system", "content": "SECRET SYSTEM TEXT"},
                 {"role": "user", "content": "SECRET PROMPT TEXT"},
@@ -135,6 +143,13 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
     assert payload["provider_id"] == "fake-provider"
     assert payload["provider_type"] == "fake"
     assert payload["model"] == "fake-model"
+    assert payload["turn_id"] == "turn-1"
+    assert payload["attempt"] == 2
+    assert payload["fix_attempt_id"] == "fix-1"
+    assert payload["context_projection_id"] == "projection-1"
+    assert payload["capability_profile_sha256"] == "a" * 64
+    assert payload["capability_profile_source"] == "roles.kernel.llm_caller.pre_projection"
+    assert len(payload["budget_admission_id"]) == 64
     assert payload["model_window_tokens"] == 4096
     assert payload["requested_output_tokens"] == 1024
     assert payload["final_max_tokens"] == provider_calls[0]["config"]["max_tokens"]
@@ -149,3 +164,233 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
     serialized_receipt = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
     assert "SECRET PROMPT TEXT" not in serialized_receipt
     assert "SECRET SYSTEM TEXT" not in serialized_receipt
+
+
+@pytest.mark.asyncio
+async def test_final_request_receipt_sink_failure_does_not_block_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider_calls: list[dict[str, Any]] = []
+
+    class _Provider:
+        def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            provider_calls.append({"prompt": prompt, "model": model, "config": dict(config)})
+            return InvokeResult(
+                ok=True,
+                output="ok",
+                latency_ms=1,
+                usage=Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                raw={"provider": "fake"},
+            )
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            assert provider_type == "fake"
+            return _Provider()
+
+    def _broken_sink(_receipt: dict[str, Any]) -> None:
+        raise AttributeError("receipt sink shape changed")
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.executor.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=_ModelCatalog(),
+        token_budget=_BudgetManager(),
+        final_request_receipt_sink=_broken_sink,
+    )
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+    request = AIRequest(
+        task_type=TaskType.GENERATION,
+        role="director",
+        provider_id="fake-provider",
+        model="fake-model",
+        input="prompt",
+        options={"max_tokens": 128},
+        context={"run_id": "run-1", "task_id": "task-1"},
+    )
+
+    response = await executor.invoke(request)
+
+    assert response.ok is True
+    assert len(provider_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_final_request_receipt_marks_same_count_chat_message_compression(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    receipts: list[dict[str, Any]] = []
+    provider_calls: list[dict[str, Any]] = []
+
+    class _SmallPromptBudgetManager:
+        def enforce(
+            self,
+            prompt_input: str,
+            model_spec: ModelSpec,
+            *,
+            requested_output_tokens: int,
+            workspace: str | None,
+            role: str,
+            overhead_tokens: int = 0,
+        ) -> TokenBudgetDecision:
+            del prompt_input, model_spec, requested_output_tokens, workspace, role
+            return TokenBudgetDecision(
+                allowed=True,
+                max_context_tokens=4096,
+                allowed_prompt_tokens=300,
+                requested_prompt_tokens=2000,
+                reserved_output_tokens=512,
+                safety_margin_tokens=128,
+                overhead_tokens=overhead_tokens,
+            )
+
+    class _Provider:
+        def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            provider_calls.append({"prompt": prompt, "model": model, "config": dict(config)})
+            return InvokeResult(
+                ok=True,
+                output="ok",
+                latency_ms=1,
+                usage=Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                raw={"provider": "fake"},
+            )
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            assert provider_type == "fake"
+            return _Provider()
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.executor.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=_ModelCatalog(),
+        token_budget=_SmallPromptBudgetManager(),
+        final_request_receipt_sink=receipts.append,
+    )
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+    system_message = "system constraints " * 120
+    user_message = "implement feature " * 160
+    request = AIRequest(
+        task_type=TaskType.GENERATION,
+        role="director",
+        provider_id="fake-provider",
+        model="fake-model",
+        input=user_message,
+        options={"max_tokens": 128},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message},
+            ]
+        },
+    )
+
+    response = await executor.invoke(request)
+
+    assert response.ok is True
+    assert len(provider_calls) == 1
+    effective_messages = provider_calls[0]["config"]["chat_messages"]
+    assert len(effective_messages) == 2
+    assert effective_messages[0]["content"] != system_message
+    assert effective_messages[1]["content"] != user_message
+    payload = receipts[0]["payload"]
+    assert payload["chat_message_count_before"] == 2
+    assert payload["chat_message_count_after"] == 2
+    assert payload["chat_messages_compressed"] is True
+
+
+@pytest.mark.asyncio
+async def test_executor_drops_structured_chat_messages_when_budget_compression_has_no_fit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    receipts: list[dict[str, Any]] = []
+    provider_calls: list[dict[str, Any]] = []
+
+    class _ImpossibleChatBudgetManager:
+        def enforce(
+            self,
+            prompt_input: str,
+            model_spec: ModelSpec,
+            *,
+            requested_output_tokens: int,
+            workspace: str | None,
+            role: str,
+            overhead_tokens: int = 0,
+        ) -> TokenBudgetDecision:
+            del prompt_input, model_spec, requested_output_tokens, workspace, role
+            return TokenBudgetDecision(
+                allowed=True,
+                max_context_tokens=4096,
+                allowed_prompt_tokens=1,
+                requested_prompt_tokens=2000,
+                reserved_output_tokens=512,
+                safety_margin_tokens=128,
+                overhead_tokens=overhead_tokens,
+            )
+
+    class _Provider:
+        def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            provider_calls.append({"prompt": prompt, "model": model, "config": dict(config)})
+            return InvokeResult(
+                ok=True,
+                output="ok",
+                latency_ms=1,
+                usage=Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                raw={"provider": "fake"},
+            )
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            assert provider_type == "fake"
+            return _Provider()
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.executor.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=_ModelCatalog(),
+        token_budget=_ImpossibleChatBudgetManager(),
+        final_request_receipt_sink=receipts.append,
+    )
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+    request = AIRequest(
+        task_type=TaskType.GENERATION,
+        role="director",
+        provider_id="fake-provider",
+        model="fake-model",
+        input="fallback flattened prompt",
+        options={"max_tokens": 128},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "system constraints " * 120},
+                {"role": "user", "content": "implement feature " * 160},
+            ]
+        },
+    )
+
+    response = await executor.invoke(request)
+
+    assert response.ok is True
+    assert len(provider_calls) == 1
+    assert "chat_messages" not in provider_calls[0]["config"]
+    payload = receipts[0]["payload"]
+    assert payload["chat_message_count_before"] == 2
+    assert payload["chat_message_count_after"] == 0
+    assert payload["chat_messages_compressed"] is True

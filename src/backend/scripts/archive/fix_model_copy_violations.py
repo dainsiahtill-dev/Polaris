@@ -12,7 +12,7 @@ from pathlib import Path
 
 def fix_model_copy_in_file(filepath: Path) -> tuple[int, list[str]]:
     """Fix model_copy(update=...) calls in a file.
-    
+
     Returns:
         (count_fixed, error_messages)
     """
@@ -24,14 +24,13 @@ def fix_model_copy_in_file(filepath: Path) -> tuple[int, list[str]]:
     # item.model_copy(update={"field": value})
     pattern1 = re.compile(
         r'(\w+)\s*=\s*(\w+)\.model_copy\(\s*\n?\s*update=\{\s*\n?\s*"(\w+)":\s*(.+?)\s*\},?\s*\n?\s*(?:deep=True,?)?\s*\)',
-        re.DOTALL
+        re.DOTALL,
     )
 
     # Pattern 2: Multi-field update (more complex)
     # This is a simplified pattern - real implementation needs AST parsing
     pattern2 = re.compile(
-        r'(\w+)\s*=\s*(\w+)\.model_copy\(\s*\n?\s*update=\{(.*?)\},?\s*\n?\s*(?:deep=True,?)?\s*\)',
-        re.DOTALL
+        r"(\w+)\s*=\s*(\w+)\.model_copy\(\s*\n?\s*update=\{(.*?)\},?\s*\n?\s*(?:deep=True,?)?\s*\)", re.DOTALL
     )
 
     count = 0
@@ -39,15 +38,15 @@ def fix_model_copy_in_file(filepath: Path) -> tuple[int, list[str]]:
     # Check if validated_replace is imported
     if "validated_replace" not in content and "model_utils" not in content:
         # Add import at the top
-        import_line = 'from polaris.kernelone.context.context_os.model_utils import validated_replace\n'
+        import_line = "from polaris.kernelone.context.context_os.model_utils import validated_replace\n"
         # Find a good place to insert
-        lines = content.split('\n')
+        lines = content.split("\n")
         import_idx = 0
         for i, line in enumerate(lines):
-            if line.startswith('from ') or line.startswith('import '):
+            if line.startswith("from ") or line.startswith("import "):
                 import_idx = i + 1
         lines.insert(import_idx, import_line)
-        content = '\n'.join(lines)
+        content = "\n".join(lines)
 
     # Simple replacements for known patterns
     replacements = [
@@ -56,7 +55,7 @@ def fix_model_copy_in_file(filepath: Path) -> tuple[int, list[str]]:
     ]
 
     # Count remaining violations
-    remaining = len(re.findall(r'\.model_copy\(\s*\n?\s*update=', content))
+    remaining = len(re.findall(r"\.model_copy\(\s*\n?\s*update=", content))
 
     if content != original:
         filepath.write_text(content, encoding="utf-8")
@@ -65,10 +64,14 @@ def fix_model_copy_in_file(filepath: Path) -> tuple[int, list[str]]:
 
 
 def main():
-    files = sys.argv[1:] if len(sys.argv) > 1 else [
-        "polaris/kernelone/context/context_os/pipeline/stages.py",
-        "polaris/kernelone/context/context_os/runtime.py",
-    ]
+    files = (
+        sys.argv[1:]
+        if len(sys.argv) > 1
+        else [
+            "polaris/kernelone/context/context_os/pipeline/stages.py",
+            "polaris/kernelone/context/context_os/runtime.py",
+        ]
+    )
 
     total_remaining = 0
 

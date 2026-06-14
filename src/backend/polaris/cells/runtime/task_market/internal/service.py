@@ -954,6 +954,19 @@ class TaskMarketService:
                     "occurred_at": str(item.last_error["occurred_at"]),
                 },
             }
+            feedback_counters = self._normalize_feedback_counters(
+                dict(item.payload).get("feedback_counters"),
+                dict(command.metadata).get("feedback_counters"),
+            )
+            if feedback_counters:
+                item.payload = {
+                    **dict(item.payload),
+                    "feedback_counters": feedback_counters,
+                }
+                item.metadata = {
+                    **dict(item.metadata),
+                    "feedback_counters": feedback_counters,
+                }
 
             # Determine disposition.
             move_to_dead_letter = bool(command.to_dead_letter) or item.attempts >= item.max_attempts
@@ -1157,10 +1170,22 @@ class TaskMarketService:
             items = store.load_items()
             item = self._require_item(items, command.task_id)
 
+            if item.status in {"rejected", "dead_letter"}:
+                return self._result_from_item(item, ok=False, reason="terminal_status")
+            if item.status == "resolved" and not self._integration_qa_reopen_allowed(command):
+                return self._result_from_item(item, ok=False, reason="terminal_status")
+            if item.status in {"completed", "cancelled"}:
+                return self._result_from_item(item, ok=False, reason="unsupported_status")
+            if item.status == "waiting_human":
+                return self._result_from_item(item, ok=False, reason="waiting_human")
+
+            lm = LeaseManager(store)
+            if str(item.lease_token or "").strip() and not lm.is_lease_expired(item):
+                return self._result_from_item(item, ok=False, reason="active_lease")
+
             previous_status = item.status
             item.stage = command.target_stage
             item.status = command.target_stage
-            lm = LeaseManager(store)
             lm.clear_lease(item)
             requeue_metadata = dict(command.metadata)
             item.metadata = dict(item.metadata)
@@ -2213,6 +2238,9 @@ class TaskMarketService:
                         continue
                     if item.status == "dead_letter":
                         continue
+                    lm = LeaseManager(store)
+                    if str(item.lease_token or "").strip() and not lm.is_lease_expired(item):
+                        continue
 
                     previous_status = item.status
                     previous_stage = item.stage
@@ -2220,7 +2248,7 @@ class TaskMarketService:
                     # Requeue to pending_design.
                     item.stage = "pending_design"
                     item.status = "pending_design"
-                    LeaseManager(store).clear_lease(item)
+                    lm.clear_lease(item)
                     item.metadata = dict(item.metadata)
                     item.metadata["drift_requeue_reason"] = "revision_drift"
                     item.metadata["drift_requeue_from_revision"] = item.plan_revision_id
@@ -2907,12 +2935,34 @@ class TaskMarketService:
             return True
         if not item.is_leaf:
             return False
+
+        def _target(record: TaskWorkItemRecord) -> str:
+            payload = getattr(record, "payload", None)
+            if not isinstance(payload, dict):
+                return ""
+            step = payload.get("construction_step")
+            if isinstance(step, dict):
+                value = str(step.get("target_file") or "").strip()
+                if value:
+                    return value.replace("\\", "/").lstrip("./")
+            targets = payload.get("target_files")
+            if isinstance(targets, list) and targets:
+                return str(targets[0] or "").strip().replace("\\", "/").lstrip("./")
+            return ""
+
+        item_target = _target(item)
         for dep_id in item.depends_on or []:
             dep = items.get(str(dep_id))
             if dep is None:
                 return False
             if dep.status == "resolved":
                 continue
+            # Same-file predecessor must be fully RESOLVED, not merely at QA: the
+            # pending_qa fast-path would otherwise let a QA bounce of the predecessor
+            # put two writers on the same file concurrently (I3-r29 fill chains /
+            # cross-parent edit_on_prior). Independent-file deps keep the fast-path.
+            if item_target and _target(dep) == item_target:
+                return False
             if dep.stage in ("pending_qa", "in_qa"):
                 continue
             return False
@@ -3002,6 +3052,29 @@ class TaskMarketService:
             reason=reason,
             payload=item.payload,
         )
+
+    @staticmethod
+    def _normalize_feedback_counters(*sources: Any) -> dict[str, int]:
+        counters: dict[str, int] = {}
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for raw_key, raw_value in source.items():
+                key = str(raw_key or "").strip()
+                if not key:
+                    continue
+                try:
+                    value = int(raw_value or 0)
+                except (TypeError, ValueError):
+                    continue
+                counters[key] = max(counters.get(key, 0), max(0, value))
+        return counters
+
+    @staticmethod
+    def _integration_qa_reopen_allowed(command: RequeueTaskCommandV1) -> bool:
+        metadata = dict(command.metadata)
+        source = str(metadata.get("source") or "").strip()
+        return source == "pm_dispatch.integration_qa"
 
     def _maybe_emit_webhook(
         self,

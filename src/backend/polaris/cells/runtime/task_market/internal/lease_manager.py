@@ -84,6 +84,13 @@ class LeaseManager:
                 presented_token=lease_token[:8] + "...",
                 current_token=item.lease_token[:8] + "..." if item.lease_token else "(empty)",
             )
+        if self.is_lease_expired(item):
+            raise StaleLeaseTokenError(
+                f"Lease expired for task {item.task_id}",
+                task_id=item.task_id,
+                presented_token=lease_token[:8] + "..." if lease_token else "(empty)",
+                current_token=item.lease_token[:8] + "..." if item.lease_token else "(empty)",
+            )
 
         new_expires_at = now_epoch() + float(visibility_timeout_seconds)
         item.lease_expires_at = new_expires_at

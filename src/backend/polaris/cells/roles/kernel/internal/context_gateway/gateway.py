@@ -8,6 +8,8 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import time
@@ -97,6 +99,62 @@ def _deep_merge_strategy_payload(target: dict[str, Any], source: Mapping[str, An
             _deep_merge_strategy_payload(existing, value)
             continue
         target[key_text] = _copy_strategy_value(value)
+
+
+def _capability_profile_ref_from_request(request: ContextRequest) -> dict[str, Any] | None:
+    context_override = getattr(request, "context_override", None)
+    if not isinstance(context_override, Mapping):
+        return None
+
+    metadata = context_override.get("metadata")
+    metadata_payload = metadata if isinstance(metadata, Mapping) else {}
+    raw_profile = metadata_payload.get("capability_profile")
+    if raw_profile is None:
+        raw_profile = context_override.get("capability_profile")
+    if not isinstance(raw_profile, Mapping):
+        return None
+
+    profile = {str(key): _copy_strategy_value(value) for key, value in raw_profile.items() if str(key)}
+    digest = hashlib.sha256(
+        json.dumps(
+            profile,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    source = (
+        str(profile.get("source") or "").strip()
+        or str(metadata_payload.get("capability_profile_source") or "").strip()
+        or "unknown"
+    )
+    return {
+        "sha256": digest,
+        "source": source,
+        "schema_version": _coerce_int(profile.get("schema_version")),
+        "role_id": str(profile.get("role_id") or "").strip(),
+        "provider_id": str(profile.get("provider_id") or "").strip(),
+        "provider_type": str(profile.get("provider_type") or "").strip(),
+        "model": str(profile.get("model") or "").strip(),
+        "model_window_tokens": _coerce_int(profile.get("model_window_tokens")),
+        "model_output_limit_tokens": _coerce_int(profile.get("model_output_limit_tokens")),
+        "supports_native_tools": bool(profile.get("supports_native_tools")),
+        "supports_json_schema": bool(profile.get("supports_json_schema")),
+        "supports_stream_native_tools": bool(profile.get("supports_stream_native_tools")),
+        "tool_count": _coerce_int(profile.get("tool_count")),
+        "native_tool_mode": str(profile.get("native_tool_mode") or "").strip(),
+        "response_format_mode": str(profile.get("response_format_mode") or "").strip(),
+    }
+
+
+def _coerce_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def render_blueprint_overview(result: Any) -> str | None:
@@ -363,6 +421,7 @@ class RoleContextGateway:
 
         context_os_snapshot = getattr(request, "context_os_snapshot", None)
         has_snapshot = context_os_snapshot is not None and isinstance(context_os_snapshot, dict)
+        capability_profile_ref = _capability_profile_ref_from_request(request)
         strategy_override, strategy_override_sources = self._extract_strategy_override(request)
         strategy_override_applied = bool(strategy_override)
         recent_window_messages = self._effective_recent_window_messages(strategy_override)
@@ -536,22 +595,27 @@ class RoleContextGateway:
                 "base_recent_window_messages": int(self.policy.max_history_turns),
                 "strategy_override_applied": bool(strategy_override_applied),
                 "state_first_mode_active": bool(state_first_mode_active),
+                "capability_profile_ref": capability_profile_ref,
             },
         )
 
         # PR-11: Write context projection event with latency
         duration_ms = (time.monotonic() - start_time) * 1000
 
+        projection_event_metadata: dict[str, Any] = {
+            "token_estimate": token_estimate,
+            "compression_applied": compression_applied,
+            "role": str(getattr(self.profile, "role_id", "") or ""),
+            "recent_window_messages": int(recent_window_messages),
+            "strategy_override_applied": bool(strategy_override_applied),
+        }
+        if capability_profile_ref is not None:
+            projection_event_metadata["capability_profile_sha256"] = capability_profile_ref["sha256"]
+            projection_event_metadata["capability_profile_source"] = capability_profile_ref["source"]
         projection_event = ContextEvent.create(
             EventType.CONTEXT_PROJECTION,
             duration_ms=duration_ms,
-            metadata={
-                "token_estimate": token_estimate,
-                "compression_applied": compression_applied,
-                "role": str(getattr(self.profile, "role_id", "") or ""),
-                "recent_window_messages": int(recent_window_messages),
-                "strategy_override_applied": bool(strategy_override_applied),
-            },
+            metadata=projection_event_metadata,
         )
         self._event_writer.write(projection_event)
 
@@ -590,6 +654,7 @@ class RoleContextGateway:
                 "budget_pressure_detected": budget_pressure_detected,
                 "context_decision_hints": context_decision_hints,
                 "projection_adaptive_weights": self._projection_engine.get_adaptive_weights(),
+                "capability_profile_ref": capability_profile_ref,
             },
         )
 
@@ -1132,6 +1197,17 @@ class RoleContextGateway:
         signatures = [str(s).strip() for s in (step.get("signatures") or []) if str(s).strip()]
         if signatures:
             lines.append("signatures: " + "; ".join(signatures[:12]))
+        # Skeleton step (I3-r30): without this the weak model tries to fully implement
+        # every signature in one write and truncates (finish_reason=length). Force
+        # minimal empty stubs only — the fill steps implement the bodies later.
+        if step.get("skeleton_stub_only"):
+            lines.append(
+                "[骨架步·只写空桩] 本步只为上述每个签名写一个最小空函数体"
+                "（JS: `function 名(){}`；Python: `def 名(): pass`），"
+                "严禁实现任何逻辑、严禁填写函数体内容——逻辑由后续填充步逐个补。"
+                "一次 write_file 写完全部空桩即可，务必极简以一轮落盘"
+                "（试图实现整套逻辑会超出输出预算被截断、导致本步零落盘失败）。"
+            )
         interfaces = [str(s).strip() for s in (step.get("interface_names") or []) if str(s).strip()]
         if interfaces:
             lines.append("interfaces: " + ", ".join(interfaces[:16]))

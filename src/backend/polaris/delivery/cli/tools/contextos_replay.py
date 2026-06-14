@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import sys
 from pathlib import Path
 from typing import Any
-
-from polaris.kernelone.context.context_os.runtime import StateFirstContextOS
 
 
 async def replay_contextos_messages(
@@ -20,6 +19,8 @@ async def replay_contextos_messages(
     recent_window_messages: int = 8,
 ) -> dict[str, Any]:
     """Replay messages through the ContextOS projection pipeline."""
+
+    from polaris.kernelone.context.context_os.runtime import StateFirstContextOS
 
     engine = StateFirstContextOS(workspace=workspace)
     try:
@@ -53,7 +54,12 @@ def load_messages_from_json(value: str) -> list[dict[str, Any]]:
     messages = payload.get("messages") if isinstance(payload, dict) else payload
     if not isinstance(messages, list):
         raise ValueError("messages payload must be a list or an object with a messages list")
-    return [dict(item) for item in messages if isinstance(item, dict)]
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(messages):
+        if not isinstance(item, dict):
+            raise ValueError(f"message at index {index} must be an object")
+        normalized.append(dict(item))
+    return normalized
 
 
 def load_messages_from_file(path: str) -> list[dict[str, Any]]:
@@ -81,14 +87,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.messages_json is not None
         else load_messages_from_file(args.messages_file)
     )
-    result = asyncio.run(
-        replay_contextos_messages(
-            messages,
-            workspace=str(args.workspace),
-            focus=str(args.focus),
-            recent_window_messages=int(args.recent_window_messages),
+    with contextlib.redirect_stdout(sys.stderr):
+        result = asyncio.run(
+            replay_contextos_messages(
+                messages,
+                workspace=str(args.workspace),
+                focus=str(args.focus),
+                recent_window_messages=int(args.recent_window_messages),
+            )
         )
-    )
     sys.stdout.write(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     sys.stdout.write("\n")
     return 0

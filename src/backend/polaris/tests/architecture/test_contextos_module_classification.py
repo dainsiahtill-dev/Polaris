@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 MANIFEST = REPO_ROOT / "src" / "backend" / "docs" / "governance" / "contextos_module_classification.json"
+CATALOG = REPO_ROOT / "src" / "backend" / "docs" / "graph" / "catalog" / "cells.yaml"
 
 
 def test_contextos_dormant_modules_are_explicitly_classified() -> None:
@@ -53,3 +59,93 @@ def test_contextos_hot_path_modules_are_explicitly_classified() -> None:
         item = hot_path[module]
         assert item["status"] == "hot_path"
         assert (REPO_ROOT / item["path"]).exists()
+
+
+def test_contextos_runtime_import_does_not_eagerly_load_dormant_modules() -> None:
+    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    dormant_modules = [
+        str(item["module"])
+        for item in payload.get("dormant_modules", [])
+        if isinstance(item, dict) and item.get("module")
+    ]
+    script = f"""
+import json
+import sys
+
+import polaris.kernelone.context.context_os.runtime  # noqa: F401
+
+dormant = {json.dumps(dormant_modules)}
+loaded = [name for name in dormant if name in sys.modules]
+print(json.dumps(loaded, ensure_ascii=False))
+raise SystemExit(1 if loaded else 0)
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT / "src" / "backend")
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_contextos_package_import_does_not_eagerly_load_dormant_modules() -> None:
+    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    dormant_modules = [
+        str(item["module"])
+        for item in payload.get("dormant_modules", [])
+        if isinstance(item, dict) and item.get("module")
+    ]
+    script = f"""
+import json
+import sys
+
+import polaris.kernelone.context.context_os  # noqa: F401
+
+dormant = {json.dumps(dormant_modules)}
+loaded = [name for name in dormant if name in sys.modules]
+print(json.dumps(loaded, ensure_ascii=False))
+raise SystemExit(1 if loaded else 0)
+"""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT / "src" / "backend")
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_contextos_graph_declares_real_receipt_store_module() -> None:
+    payload = yaml.safe_load(CATALOG.read_text(encoding="utf-8")) or {}
+    kernelone_core = next(cell for cell in payload["cells"] if cell["id"] == "kernelone.core")
+    modules = set(kernelone_core["current_modules"])
+
+    assert "polaris.kernelone.context.receipt_store" in modules
+    assert "polaris.kernelone.context.context_os.receipt_store" not in modules
+
+
+def test_contextos_module_classification_diagnostics_falls_back_to_packaged_manifest(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from polaris.kernelone.context.context_os import module_classification
+
+    monkeypatch.setattr(module_classification, "_default_manifest_path", lambda: tmp_path / "missing.json")
+
+    diagnostics = module_classification.get_contextos_module_classification_diagnostics()
+
+    assert diagnostics["state"] == "classified"
+    assert diagnostics["ok"] is True
+    assert diagnostics["details"]["dormant_count"] >= 4

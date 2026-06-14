@@ -79,7 +79,7 @@ if __name__ == "__main__":
         test_context_cache()
         test_context_engine()
         print("\n=== ALL QUICK TESTS PASSED ===")
-    except Exception as e:
+    except (AssertionError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
         print(f"\nTEST FAILED: {e}")
         import traceback
 

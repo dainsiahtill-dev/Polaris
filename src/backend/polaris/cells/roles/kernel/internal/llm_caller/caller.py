@@ -13,6 +13,8 @@ Migration: 2026-03-31
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
@@ -84,6 +86,37 @@ def _copy_provider_policy_options(*, override: Any, request_options: dict[str, A
             value = policy.get(key)
             if value is not None:
                 request_options[key] = value
+
+
+def _with_projection_capability_profile(context: Any, capability_profile: dict[str, Any]) -> Any:
+    """Attach provider-bound capabilities to the control plane before projection."""
+    override = getattr(context, "context_override", None)
+    merged_override = dict(override) if isinstance(override, dict) else {}
+    raw_metadata = merged_override.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    metadata["capability_profile"] = dict(capability_profile)
+    metadata["capability_profile_source"] = "roles.kernel.llm_caller.pre_projection"
+    merged_override["metadata"] = metadata
+
+    try:
+        return replace(context, context_override=merged_override)
+    except (TypeError, ValueError):
+        pass
+
+    if hasattr(context, "__dict__"):
+        clone = SimpleNamespace(**vars(context))
+        clone.context_override = merged_override
+        return clone
+
+    return SimpleNamespace(
+        message=str(getattr(context, "message", "") or ""),
+        history=tuple(getattr(context, "history", ()) or ()),
+        task_id=getattr(context, "task_id", None),
+        strategy_receipt=getattr(context, "strategy_receipt", None),
+        context_os_snapshot=getattr(context, "context_os_snapshot", None),
+        context_override=merged_override,
+        strategy_override=getattr(context, "strategy_override", None),
+    )
 
 
 class LLMCaller:
@@ -299,6 +332,100 @@ class LLMCaller:
                 and str(forced_tool_choice or "").strip().lower() == "none"
             )
 
+        request_timeout_seconds = resolve_timeout_seconds(
+            profile,
+            override if isinstance(override, dict) else None,
+        )
+        request_max_tokens = resolve_max_tokens(
+            max_tokens,
+            override if isinstance(override, dict) else None,
+        )
+        request_options: dict[str, Any] = {
+            # ADR-0090 W2.6: escalated mutation retries override temperature via
+            # the transaction-kernel channel (deterministic transcription phase).
+            "temperature": resolve_temperature(temperature, override if isinstance(override, dict) else None),
+            "max_tokens": request_max_tokens,
+            "timeout": request_timeout_seconds,
+        }
+        _copy_provider_policy_options(
+            override=override if isinstance(override, dict) else None,
+            request_options=request_options,
+        )
+        capabilities = self._resolve_provider_capabilities(profile)
+        context_override_for_domain = getattr(context, "context_override", None)
+        contract = build_interaction_contract(
+            profile=profile,
+            message=str(getattr(context, "message", "") or ""),
+            domain=str(
+                getattr(context, "domain", "")
+                or (context_override_for_domain.get("domain") if isinstance(context_override_for_domain, dict) else "")
+                or "code"
+            ),
+            stream=stream,
+            response_model=response_model,
+            capabilities=capabilities,
+        )
+        native_tool_schemas: list[dict[str, Any]] = []
+        native_tool_mode = "disabled"
+        native_response_format: dict[str, Any] | None = None
+        response_format_mode = "plain_text"
+        provider_id = str(getattr(profile, "provider_id", "") or "")
+
+        if stream:
+            raw_tool_schemas = (
+                forced_tool_definitions
+                if forced_tool_definitions is not None
+                else (self._build_native_tool_schemas(profile) if contract.native_tools_enabled else [])
+            )
+            if raw_tool_schemas:
+                native_tool_schemas = [dict(item) for item in raw_tool_schemas]
+                if self._formatter is not None:
+                    request_options["tools"] = self._formatter.format_tools(raw_tool_schemas, provider_id)
+                else:
+                    request_options["tools"] = raw_tool_schemas
+                request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
+                native_tool_mode = "native_tools_streaming"
+            elif contract.tool_whitelist and not forced_tools_disabled:
+                native_tool_schemas = self._build_native_tool_schemas(profile)
+                native_tool_mode = "native_tools_unavailable"
+        else:
+            effective_platform_retry_max = resolve_platform_retry_max(profile, platform_retry_max)
+            request_options["max_retries"] = effective_platform_retry_max
+            request_options["platform_transport_only"] = True
+            raw_tool_schemas = (
+                forced_tool_definitions
+                if forced_tool_definitions is not None
+                else (self._build_native_tool_schemas(profile) if contract.native_tools_enabled else [])
+            )
+            if raw_tool_schemas:
+                native_tool_schemas = [dict(item) for item in raw_tool_schemas]
+                if self._formatter is not None:
+                    request_options["tools"] = self._formatter.format_tools(raw_tool_schemas, provider_id)
+                else:
+                    request_options["tools"] = raw_tool_schemas
+                request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
+                native_tool_mode = "native_tools"
+            elif contract.tool_whitelist and not forced_tools_disabled:
+                native_tool_schemas = self._build_native_tool_schemas(profile)
+                native_tool_mode = "native_tools_unavailable"
+            if contract.structured_output_enabled and response_model is not None:
+                native_response_format = build_native_response_format(response_model)
+                if native_response_format:
+                    request_options["response_format"] = native_response_format
+                    response_format_mode = "native_json_schema"
+                else:
+                    response_format_mode = "text_json_fallback"
+
+        capability_profile = resolve_actor_capability_profile(
+            profile=profile,
+            model_catalog=self._model_catalog,
+            provider_capabilities=capabilities,
+            request_options=request_options,
+            native_tool_mode=native_tool_mode,
+            response_format_mode=response_format_mode,
+        ).to_dict()
+        projection_context = _with_projection_capability_profile(context, capability_profile)
+
         if prebuilt_messages is not None:
             messages = list(prebuilt_messages)
             if not messages or str(messages[0].get("role", "")).strip().lower() != "system":
@@ -338,13 +465,14 @@ class LLMCaller:
                 metadata={
                     "prebuilt_projection_messages": True,
                     "source": "transaction_kernel",
+                    "capability_profile": capability_profile,
                 },
             )
         else:
             context_gateway = RoleContextGateway(profile, self.workspace)
             # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt —
             # no second projection pass.
-            context_result = await context_gateway.build_context(context, system_prompt=system_prompt)
+            context_result = await context_gateway.build_context(projection_context, system_prompt=system_prompt)
             messages = list(context_result.messages)
 
         input_text = messages_to_input(
@@ -366,98 +494,10 @@ class LLMCaller:
             current_user_instruction=str(getattr(context, "message", "") or ""),
             expected=True,
         )
-
-        request_timeout_seconds = resolve_timeout_seconds(
-            profile,
-            override if isinstance(override, dict) else None,
-        )
-        request_max_tokens = resolve_max_tokens(
-            max_tokens,
-            override if isinstance(override, dict) else None,
-        )
-        request_options: dict[str, Any] = {
-            # ADR-0090 W2.6: escalated mutation retries override temperature via
-            # the transaction-kernel channel (deterministic transcription phase).
-            "temperature": resolve_temperature(temperature, override if isinstance(override, dict) else None),
-            "max_tokens": request_max_tokens,
-            "timeout": request_timeout_seconds,
-        }
-        _copy_provider_policy_options(
-            override=override if isinstance(override, dict) else None,
-            request_options=request_options,
-        )
-        capabilities = self._resolve_provider_capabilities(profile)
-        contract = build_interaction_contract(
-            profile=profile,
-            message=str(getattr(context, "message", "") or ""),
-            domain=str(
-                getattr(context, "domain", "")
-                or (
-                    (context.context_override or {}).get("domain")
-                    if isinstance(getattr(context, "context_override", None), dict)
-                    else ""
-                )
-                or "code"
-            ),
-            stream=stream,
-            response_model=response_model,
-            capabilities=capabilities,
-        )
-        native_tool_schemas: list[dict[str, Any]] = []
-        native_tool_mode = "disabled"
-        native_response_format: dict[str, Any] | None = None
-        response_format_mode = "plain_text"
-        provider_id = str(getattr(profile, "provider_id", "") or "")
-
-        if stream:
-            raw_tool_schemas = (
-                forced_tool_definitions
-                if forced_tool_definitions is not None
-                else (self._build_native_tool_schemas(profile) if contract.native_tools_enabled else [])
-            )
-            if raw_tool_schemas:
-                if self._formatter is not None:
-                    request_options["tools"] = self._formatter.format_tools(raw_tool_schemas, provider_id)
-                else:
-                    request_options["tools"] = raw_tool_schemas
-                request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
-                native_tool_mode = "native_tools_streaming"
-            elif contract.tool_whitelist and not forced_tools_disabled:
-                native_tool_mode = "native_tools_unavailable"
-        else:
-            effective_platform_retry_max = resolve_platform_retry_max(profile, platform_retry_max)
-            request_options["max_retries"] = effective_platform_retry_max
-            request_options["platform_transport_only"] = True
-            raw_tool_schemas = (
-                forced_tool_definitions
-                if forced_tool_definitions is not None
-                else (self._build_native_tool_schemas(profile) if contract.native_tools_enabled else [])
-            )
-            if raw_tool_schemas:
-                if self._formatter is not None:
-                    request_options["tools"] = self._formatter.format_tools(raw_tool_schemas, provider_id)
-                else:
-                    request_options["tools"] = raw_tool_schemas
-                request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
-                native_tool_mode = "native_tools"
-            elif contract.tool_whitelist and not forced_tools_disabled:
-                native_tool_mode = "native_tools_unavailable"
-            if contract.structured_output_enabled and response_model is not None:
-                native_response_format = build_native_response_format(response_model)
-                if native_response_format:
-                    request_options["response_format"] = native_response_format
-                    response_format_mode = "native_json_schema"
-                else:
-                    response_format_mode = "text_json_fallback"
-
-        capability_profile = resolve_actor_capability_profile(
-            profile=profile,
-            model_catalog=self._model_catalog,
-            provider_capabilities=capabilities,
-            request_options=request_options,
-            native_tool_mode=native_tool_mode,
-            response_format_mode=response_format_mode,
-        ).to_dict()
+        capability_profile_ref = context_metadata.get("capability_profile_ref")
+        context_projection_id = str(
+            context_metadata.get("projection_id") or context_os_audit.get("prompt_digest") or ""
+        ).strip()
         ai_request = AIRequest(
             task_type=TaskType.DIALOGUE,
             role=profile.role_id,
@@ -471,6 +511,8 @@ class LLMCaller:
                 "interaction_contract": contract.to_metadata(),
                 "context_os_audit": context_os_audit,
                 "capability_profile": capability_profile,
+                "capability_profile_ref": capability_profile_ref if isinstance(capability_profile_ref, dict) else {},
+                "context_projection_id": context_projection_id,
                 # ADR-0090 W1.5: carry the STRUCTURED message array alongside the
                 # flattened input so OpenAI-compatible providers can preserve real
                 # chat-template role anchoring (weak local models lose system/user
@@ -544,18 +586,20 @@ class LLMCaller:
         fallback_options.pop("tools", None)
         fallback_options.pop("tool_choice", None)
         fallback_options.pop("parallel_tool_calls", None)
+        fallback_instruction = (
+            "【运行时工具回退】\n"
+            "当前 provider 不接受原生 tools 参数。请禁止输出任何伪造的工具调用、函数调用、"
+            '[TOOL_CALL] 包装、XML 工具标签或"已执行工具"的表述; 只能基于现有上下文直接回答。'
+        )
         fallback_input = append_runtime_fallback_instruction(
             str(prepared.input_text or ""),
-            (
-                "【运行时工具回退】\n"
-                "当前 provider 不接受原生 tools 参数。请禁止输出任何伪造的工具调用、函数调用、"
-                '[TOOL_CALL] 包装、XML 工具标签或"已执行工具"的表述; 只能基于现有上下文直接回答。'
-            ),
+            fallback_instruction,
         )
         fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
         fallback_context["workspace"] = self.workspace
         fallback_context["mode"] = str(mode or "chat")
         fallback_context["native_tool_mode"] = "native_tools_text_fallback"
+        self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
         return AIRequest(
             task_type=TaskType.DIALOGUE,
             role=profile.role_id,
@@ -575,14 +619,16 @@ class LLMCaller:
         """Reuse prepared request baseline when native structured output is unavailable."""
         fallback_options = dict(prepared.request_options)
         fallback_options.pop("response_format", None)
+        fallback_instruction = build_text_response_fallback_instruction(response_model)
         fallback_input = append_runtime_fallback_instruction(
             str(prepared.input_text or ""),
-            build_text_response_fallback_instruction(response_model),
+            fallback_instruction,
         )
         fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
         fallback_context["workspace"] = self.workspace
         fallback_context["mode"] = str(mode or "structured")
         fallback_context["response_format_mode"] = "text_json_fallback"
+        self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
         return AIRequest(
             task_type=TaskType.DIALOGUE,
             role=profile.role_id,
@@ -590,6 +636,34 @@ class LLMCaller:
             options=fallback_options,
             context=fallback_context,
         )
+
+    @staticmethod
+    def _append_fallback_instruction_to_chat_messages(context: dict[str, Any], instruction: str) -> None:
+        raw_messages = context.get("chat_messages")
+        if not isinstance(raw_messages, list):
+            return
+
+        messages: list[dict[str, str]] = []
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "")
+            if not content.strip():
+                continue
+            role = str(item.get("role") or "").strip().lower() or "user"
+            messages.append({"role": role, "content": content})
+
+        if not messages:
+            return
+
+        target_index = next(
+            (index for index in range(len(messages) - 1, -1, -1) if messages[index]["role"] == "user"),
+            len(messages) - 1,
+        )
+        target = dict(messages[target_index])
+        target["content"] = append_runtime_fallback_instruction(target["content"], instruction)
+        messages[target_index] = target
+        context["chat_messages"] = messages
 
     # Event emission methods - delegated to invoker
     def _emit_call_error_event(

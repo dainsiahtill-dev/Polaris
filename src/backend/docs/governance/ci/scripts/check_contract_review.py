@@ -115,9 +115,7 @@ class ContractReviewChecker(FitnessRuleChecker):
         self._contract_files = contract_files
         return contract_files
 
-    def _run_git_log(
-        self, file_path: Path, since_days: int
-    ) -> tuple[str, str, int]:
+    def _run_git_log(self, file_path: Path, since_days: int) -> tuple[str, str, int]:
         """Run git log for a specific file within the last N days."""
         since_date = f"--since={since_days}.days"
         command = [
@@ -210,9 +208,7 @@ class ContractReviewChecker(FitnessRuleChecker):
                     cf.commit_date = parts[1]
                     cf.commit_message = parts[2]
 
-                    has_review, evidence_type = self._check_commit_has_review_evidence(
-                        cf.commit_message
-                    )
+                    has_review, evidence_type = self._check_commit_has_review_evidence(cf.commit_message)
                     cf.has_review_evidence = has_review
                     cf.review_evidence_type = evidence_type
 
@@ -230,18 +226,12 @@ class ContractReviewChecker(FitnessRuleChecker):
                         )
 
         # Build summary
-        result.evidence.append(
-            f"Checked {files_with_changes} file(s) with recent changes (last {self.days} days)"
-        )
+        result.evidence.append(f"Checked {files_with_changes} file(s) with recent changes (last {self.days} days)")
 
         if files_with_changes == 0:
-            result.evidence.append(
-                f"No contract changes in the last {self.days} days - rule not applicable"
-            )
+            result.evidence.append(f"No contract changes in the last {self.days} days - rule not applicable")
         elif files_with_review == files_with_changes:
-            result.evidence.append(
-                f"{GREEN}All {files_with_changes} contract change(s) have review evidence{RESET}"
-            )
+            result.evidence.append(f"{GREEN}All {files_with_changes} contract change(s) have review evidence{RESET}")
         else:
             result.passed = False
             result.violations.insert(
@@ -285,9 +275,7 @@ class ContractReviewChecker(FitnessRuleChecker):
                         file_info["commit_date"] = parts[1]
                         file_info["commit_message"] = parts[2]
 
-                        has_review, evidence_type = self._check_commit_has_review_evidence(
-                            parts[2]
-                        )
+                        has_review, evidence_type = self._check_commit_has_review_evidence(parts[2])
                         file_info["has_review_evidence"] = has_review
                         file_info["review_evidence_type"] = evidence_type
 
@@ -298,9 +286,7 @@ class ContractReviewChecker(FitnessRuleChecker):
 
 def _parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Check that contract changes have review evidence."
-    )
+    parser = argparse.ArgumentParser(description="Check that contract changes have review evidence.")
     parser.add_argument(
         "--days",
         type=int,

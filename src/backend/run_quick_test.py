@@ -1,5 +1,10 @@
 """Quick SUPER pipeline test after tool_choice fix."""
-import subprocess, sys, os, re, pathlib
+
+import os
+import pathlib
+import re
+import subprocess
+import sys
 
 WORKSPACE = r"C:\Temp\polaris_super_test"
 BACKEND = r"C:\Users\dains\Documents\GitLab\polaris\src\backend"
@@ -10,11 +15,27 @@ msg = "请开发一个Python控制台猜数字小游戏：系统随机生成1-10
 
 print("[TEST] Running SUPER pipeline with tool_choice=required fix...")
 result = subprocess.run(
-    [sys.executable, "-m", "polaris.delivery.cli", "console",
-     "--backend", "plain", "--workspace", WORKSPACE,
-     "--role", "director", "--super", "--batch"],
-    input=msg, capture_output=True, text=True, encoding="utf-8",
-    env=env, cwd=BACKEND, timeout=600,
+    [
+        sys.executable,
+        "-m",
+        "polaris.delivery.cli",
+        "console",
+        "--backend",
+        "plain",
+        "--workspace",
+        WORKSPACE,
+        "--role",
+        "director",
+        "--super",
+        "--batch",
+    ],
+    input=msg,
+    capture_output=True,
+    text=True,
+    encoding="utf-8",
+    env=env,
+    cwd=BACKEND,
+    timeout=600,
 )
 print(f"[TEST] Exit: {result.returncode}")
 

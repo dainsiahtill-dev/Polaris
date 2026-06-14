@@ -9,8 +9,12 @@ Covers:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
-from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+from polaris.kernelone.llm.engine.contracts import AIRequest, ModelSpec, TaskType, TokenBudgetDecision
 from polaris.kernelone.llm.engine.stream import (
     StreamExecutor,
     _normalize_arguments,
@@ -18,6 +22,42 @@ from polaris.kernelone.llm.engine.stream import (
     _tool_accumulator_key,
 )
 from polaris.kernelone.llm.engine.stream.config import StreamConfig as DirectStreamConfig
+
+
+class _ModelCatalog:
+    def resolve(self, provider_id: str, model: str, provider_cfg: dict[str, object]) -> ModelSpec:
+        del provider_cfg
+        return ModelSpec(
+            provider_id=provider_id,
+            provider_type="fake",
+            model=model,
+            max_context_tokens=4096,
+            max_output_tokens=1024,
+            supports_tools=True,
+        )
+
+
+class _BudgetManager:
+    def enforce(
+        self,
+        prompt_input: str,
+        model_spec: ModelSpec,
+        *,
+        requested_output_tokens: int,
+        workspace: str | None,
+        role: str,
+        overhead_tokens: int = 0,
+    ) -> TokenBudgetDecision:
+        del prompt_input, model_spec, requested_output_tokens, workspace, role
+        return TokenBudgetDecision(
+            allowed=True,
+            max_context_tokens=4096,
+            allowed_prompt_tokens=2048,
+            requested_prompt_tokens=64,
+            reserved_output_tokens=512,
+            safety_margin_tokens=128,
+            overhead_tokens=overhead_tokens,
+        )
 
 
 class TestStreamExecutorInit:
@@ -134,6 +174,186 @@ class TestStreamExecutorInvokeStreamErrors:
         assert isinstance(payload, dict)
         assert payload["provider_id"] == "resolved-provider"
         assert payload["model"] == "resolved-model"
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_records_provider_bound_final_request_receipt(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        receipts: list[dict[str, Any]] = []
+        provider_calls: list[dict[str, Any]] = []
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                provider_calls.append({"prompt": prompt, "model": model, "config": dict(config)})
+                yield "ok"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+
+        executor = StreamExecutor(
+            workspace=str(tmp_path),
+            model_catalog=_ModelCatalog(),
+            token_budget=_BudgetManager(),
+            final_request_receipt_sink=receipts.append,
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+        request = AIRequest(
+            task_type=TaskType.GENERATION,
+            role="director",
+            provider_id="fake-provider",
+            model="fake-model",
+            input="SECRET STREAM PROMPT",
+            options={
+                "max_tokens": 1024,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {"name": "read_file", "parameters": {"type": "object"}},
+                    }
+                ],
+            },
+            context={
+                "run_id": "run-1",
+                "task_id": "task-1",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+                "attempt": 2,
+                "fix_attempt_id": "fix-1",
+                "native_tool_mode": "native_tools",
+                "capability_profile_ref": {
+                    "sha256": "b" * 64,
+                    "source": "roles.kernel.llm_caller.pre_projection",
+                },
+                "context_projection_id": "projection-1",
+                "chat_messages": [
+                    {"role": "system", "content": "SECRET STREAM SYSTEM"},
+                    {"role": "user", "content": "SECRET STREAM PROMPT"},
+                ],
+            },
+        )
+
+        events = [event async for event in executor.invoke_stream(request)]
+
+        assert any(event.type.value == "complete" for event in events)
+        assert len(provider_calls) == 1
+        assert len(receipts) == 1
+        payload = receipts[0]["payload"]
+        assert payload["source"] == "kernelone.llm.engine.stream_executor"
+        assert payload["stream"] is True
+        assert payload["provider_id"] == "fake-provider"
+        assert payload["provider_type"] == "fake"
+        assert payload["model"] == "fake-model"
+        assert payload["turn_id"] == "turn-1"
+        assert payload["attempt"] == 2
+        assert payload["fix_attempt_id"] == "fix-1"
+        assert payload["context_projection_id"] == "projection-1"
+        assert payload["capability_profile_sha256"] == "b" * 64
+        assert payload["capability_profile_source"] == "roles.kernel.llm_caller.pre_projection"
+        assert len(payload["budget_admission_id"]) == 64
+        assert payload["final_max_tokens"] == provider_calls[0]["config"]["max_tokens"]
+        assert payload["chat_message_count_before"] == 2
+        assert payload["chat_message_count_after"] == 2
+        assert payload["tool_count"] == 1
+        assert len(payload["input_sha256"]) == 64
+        assert len(payload["effective_prompt_sha256"]) == 64
+        assert len(payload["tool_schema_sha256"]) == 64
+
+        serialized_receipt = json.dumps(receipts[0], ensure_ascii=False, sort_keys=True)
+        assert "SECRET STREAM PROMPT" not in serialized_receipt
+        assert "SECRET STREAM SYSTEM" not in serialized_receipt
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_compresses_chat_messages_without_flat_prompt_compression(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        receipts: list[dict[str, Any]] = []
+        provider_calls: list[dict[str, Any]] = []
+
+        class _SmallPromptBudgetManager:
+            def enforce(
+                self,
+                prompt_input: str,
+                model_spec: ModelSpec,
+                *,
+                requested_output_tokens: int,
+                workspace: str | None,
+                role: str,
+                overhead_tokens: int = 0,
+            ) -> TokenBudgetDecision:
+                del prompt_input, model_spec, requested_output_tokens, workspace, role
+                return TokenBudgetDecision(
+                    allowed=True,
+                    max_context_tokens=4096,
+                    allowed_prompt_tokens=300,
+                    requested_prompt_tokens=2000,
+                    reserved_output_tokens=512,
+                    safety_margin_tokens=128,
+                    overhead_tokens=overhead_tokens,
+                )
+
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                provider_calls.append({"prompt": prompt, "model": model, "config": dict(config)})
+                yield "ok"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+
+        executor = StreamExecutor(
+            workspace=str(tmp_path),
+            model_catalog=_ModelCatalog(),
+            token_budget=_SmallPromptBudgetManager(),
+            final_request_receipt_sink=receipts.append,
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+        system_message = "system constraints " * 120
+        user_message = "implement feature " * 160
+        request = AIRequest(
+            task_type=TaskType.GENERATION,
+            role="director",
+            provider_id="fake-provider",
+            model="fake-model",
+            input="short flattened prompt",
+            options={"max_tokens": 128},
+            context={
+                "chat_messages": [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_message},
+                ]
+            },
+        )
+
+        events = [event async for event in executor.invoke_stream(request)]
+
+        assert any(event.type.value == "complete" for event in events)
+        effective_messages = provider_calls[0]["config"]["chat_messages"]
+        assert len(effective_messages) == 2
+        assert effective_messages[0]["content"] != system_message
+        assert effective_messages[1]["content"] != user_message
+        payload = receipts[0]["payload"]
+        assert payload["chat_message_count_before"] == 2
+        assert payload["chat_message_count_after"] == 2
+        assert payload["chat_messages_compressed"] is True
 
 
 class TestProviderSupportsStructuredStream:

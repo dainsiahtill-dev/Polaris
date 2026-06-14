@@ -113,6 +113,8 @@ _QA_FEEDBACK_MAX_CHARS = 600
 # QA<->Director until lease/wall-clock exhaustion. Bound it with a small per-task cap.
 _QA_FINDINGS_MAX_BOUNCES_ENV = "KERNELONE_QA_FINDINGS_MAX_BOUNCES"
 _DEFAULT_QA_FINDINGS_MAX_BOUNCES = 2
+_QA_FEEDBACK_COUNTERS_KEY = "feedback_counters"
+_QA_FINDINGS_COUNTER_KEY = "qa_findings_to_pending_exec"
 
 
 def _qa_findings_requeue_enabled() -> bool:
@@ -132,6 +134,26 @@ def _qa_findings_max_bounces() -> int:
     return _DEFAULT_QA_FINDINGS_MAX_BOUNCES
 
 
+def _normalize_feedback_counters(raw: Any) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        return {}
+    counters: dict[str, int] = {}
+    for key, value in raw.items():
+        name = str(key or "").strip()
+        if not name:
+            continue
+        try:
+            count = int(value or 0)
+        except (TypeError, ValueError):
+            continue
+        counters[name] = max(0, count)
+    return counters
+
+
+def _qa_feedback_counters_from_payload(payload: dict[str, Any]) -> dict[str, int]:
+    return _normalize_feedback_counters(payload.get(_QA_FEEDBACK_COUNTERS_KEY))
+
+
 def _qa_findings_are_actionable(findings: Any) -> bool:
     """True iff findings is a non-empty list with at least one non-blank entry."""
     return isinstance(findings, list) and any(str(item).strip() for item in findings)
@@ -146,6 +168,22 @@ def _format_qa_findings_feedback(findings: list[Any], verdict: str) -> str:
         f"existing working code (do not rewrite the file from scratch):\n{body}"
     )
     return message[:_QA_FEEDBACK_MAX_CHARS]
+
+
+def _format_qa_requeue_feedback(audit_result: dict[str, Any], verdict: str) -> str:
+    findings = audit_result.get("findings", [])
+    if _qa_findings_are_actionable(findings):
+        return _format_qa_findings_feedback(findings, verdict)
+    metrics = audit_result.get("metrics", {})
+    if isinstance(metrics, dict) and metrics.get("missing_director_changed_files_evidence"):
+        return (
+            "QA requested Director retry: missing_director_changed_files evidence. "
+            "Preserve the implementation and publish changed_files/director_changed_files metadata for QA."
+        )
+    reason = str(audit_result.get("reason") or audit_result.get("summary") or "").strip()
+    if reason:
+        return f"QA requested Director retry ({verdict}): {reason}"[:_QA_FEEDBACK_MAX_CHARS]
+    return f"QA requested Director retry ({verdict})."[:_QA_FEEDBACK_MAX_CHARS]
 
 
 def _normalize_path_values(raw: Any) -> list[str]:
@@ -518,14 +556,20 @@ class QAConsumer:
             # through the same last_failure channel the deterministic gates use (-> pending_exec)
             # so the critique reaches the next attempt. Bounded by the market retry/dead-letter cap.
             audit_findings = audit_result.get("findings", [])
+            feedback_counters = _qa_feedback_counters_from_payload(payload)
+            persisted_bounce_count = feedback_counters.get(_QA_FINDINGS_COUNTER_KEY, 0)
+            local_bounce_count = self._qa_findings_bounce_counts.get(task_id, 0)
+            qa_findings_bounce_count = max(persisted_bounce_count, local_bounce_count)
             if (
                 terminal_status == "rejected"
                 and not next_stage
                 and _qa_findings_requeue_enabled()
                 and _qa_findings_are_actionable(audit_findings)
-                and self._qa_findings_bounce_counts.get(task_id, 0) < _qa_findings_max_bounces()
+                and qa_findings_bounce_count < _qa_findings_max_bounces()
             ):
-                self._qa_findings_bounce_counts[task_id] = self._qa_findings_bounce_counts.get(task_id, 0) + 1
+                next_bounce_count = qa_findings_bounce_count + 1
+                self._qa_findings_bounce_counts[task_id] = next_bounce_count
+                feedback_counters[_QA_FINDINGS_COUNTER_KEY] = next_bounce_count
                 self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
@@ -534,6 +578,7 @@ class QAConsumer:
                         error_code="QA_audit_failed",
                         error_message=_format_qa_findings_feedback(audit_findings, verdict),
                         requeue_stage="pending_exec",
+                        metadata={_QA_FEEDBACK_COUNTERS_KEY: feedback_counters},
                     )
                 )
                 return {
@@ -547,6 +592,30 @@ class QAConsumer:
             # requeue): drop its bounce counter so a future task_id reuse starts clean.
             self._qa_findings_bounce_counts.pop(task_id, None)
 
+            if next_stage and next_stage != "waiting_human":
+                requeue = self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code=f"QA_{verdict}_requeue",
+                        error_message=_format_qa_requeue_feedback(audit_result, verdict),
+                        requeue_stage=next_stage,
+                        metadata={
+                            _QA_FEEDBACK_COUNTERS_KEY: feedback_counters,
+                            "qa_next_stage": next_stage,
+                            "qa_terminal_status": terminal_status,
+                        },
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": bool(requeue.ok),
+                    "verdict": verdict,
+                    "status": str(requeue.status or ""),
+                    "reason": "qa_requeue",
+                }
+
             ack_payload: dict[str, Any] = {
                 "verdict": verdict,
                 "audit_id": audit_result.get("audit_id", ""),
@@ -556,6 +625,8 @@ class QAConsumer:
                 "qa_next_stage": next_stage,
                 "qa_terminal_status": terminal_status,
             }
+            if feedback_counters:
+                ack_payload[_QA_FEEDBACK_COUNTERS_KEY] = feedback_counters
 
             command_kwargs: dict[str, Any] = {
                 "workspace": self._workspace,

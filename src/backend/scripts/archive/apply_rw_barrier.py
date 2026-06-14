@@ -1,9 +1,11 @@
 from pathlib import Path
 
-pt_path = Path('c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py')
-content = pt_path.read_text(encoding='utf-8')
+pt_path = Path(
+    "c:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+)
+content = pt_path.read_text(encoding="utf-8")
 
-new_logic = '''        # --- Read-Write Barrier ---
+new_logic = """        # --- Read-Write Barrier ---
         from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
         has_read = False
         has_write = False
@@ -28,13 +30,13 @@ new_logic = '''        # --- Read-Write Barrier ---
                     f"and Write tools ({','.join(set(write_tools))}) in the same parallel batch. "
                     "You must wait for read results to return before writing."
                 )
-'''
+"""
 
 # Find insertion point
 insertion_point = "        latest_user_request = extract_latest_user_message(context)"
 if "Read-Write Barrier" not in content and insertion_point in content:
-    content = content.replace(insertion_point, new_logic + '\n' + insertion_point)
-    pt_path.write_text(content, encoding='utf-8')
+    content = content.replace(insertion_point, new_logic + "\n" + insertion_point)
+    pt_path.write_text(content, encoding="utf-8")
     print("Read-Write Barrier successfully injected into tool_batch_executor.py")
 else:
     print("Read-Write Barrier already present or insertion point not found.")

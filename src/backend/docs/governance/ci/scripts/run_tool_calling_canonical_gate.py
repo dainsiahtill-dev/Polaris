@@ -360,7 +360,7 @@ def main() -> int:
         try:
             input_report = _find_latest_matrix_report(workspace)
         except FileNotFoundError:
-            print(f"[warning] no TOOL_CALLING_MATRIX_REPORT.json found under workspace; running with empty case set")
+            print("[warning] no TOOL_CALLING_MATRIX_REPORT.json found under workspace; running with empty case set")
             input_report = None
 
     if input_report is None:

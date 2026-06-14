@@ -57,6 +57,7 @@ def get_profile(
     payload["profile_ref"] = f"roles.profile:{profile.role_id}:profile:{profile.profile_fingerprint}"
     return RoleProfileResultV1(ok=True, role_id=profile.role_id, payload=payload)
 
+
 __all__ = [
     "Action",
     "PermissionCheckResult",

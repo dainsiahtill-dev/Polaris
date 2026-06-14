@@ -21,6 +21,8 @@ from polaris.kernelone.trace import get_trace_id
 from .._timeout_config import get_invoke_timeout, get_max_concurrency
 from ..providers import get_provider_manager
 from ._executor_base import (
+    build_final_request_observability_fields,
+    build_final_request_trace_refs,
     build_invoke_config,
     clamp_output_tokens_to_window,
     classify_error,
@@ -208,6 +210,7 @@ class AIExecutor:
                 telemetry=self.telemetry,
                 model_catalog=self.model_catalog,
                 token_budget=self.token_budget,
+                final_request_receipt_sink=self.final_request_receipt_sink,
             )
 
             async for event in stream_executor.invoke_stream(request):
@@ -397,9 +400,10 @@ class AIExecutor:
                 chat_messages,
                 budget_decision.allowed_prompt_tokens,
             )
-            effective_chat_messages = budgeted_chat_messages or chat_messages
-            invoke_cfg["chat_messages"] = effective_chat_messages
-            clamp_prompt_text = "\n".join(str(m.get("content") or "") for m in effective_chat_messages)
+            if budgeted_chat_messages is not None:
+                effective_chat_messages = budgeted_chat_messages
+                invoke_cfg["chat_messages"] = effective_chat_messages
+                clamp_prompt_text = "\n".join(str(m.get("content") or "") for m in effective_chat_messages)
 
         max_tokens_before_clamp = self._coerce_int(invoke_cfg.get("max_tokens"))
         clamp_output_tokens_to_window(
@@ -546,7 +550,24 @@ class AIExecutor:
         tools = invoke_cfg.get("tools")
         tool_count = len(tools) if isinstance(tools, list) else 0
         chat_count_before = len(chat_messages_before) if isinstance(chat_messages_before, list) else 0
-        chat_count_after = len(chat_messages_after) if isinstance(chat_messages_after, list) else chat_count_before
+        chat_count_after = len(chat_messages_after) if isinstance(chat_messages_after, list) else 0
+        chat_messages_compressed = self._normalize_chat_messages_for_receipt(
+            chat_messages_before
+        ) != self._normalize_chat_messages_for_receipt(chat_messages_after)
+        input_sha256 = self._sha256_text(prompt_input)
+        effective_prompt_sha256 = self._sha256_text(clamp_prompt_text)
+        tool_schema_sha256 = self._sha256_json(tools) if tool_count else ""
+        token_budget = budget_decision.to_dict() if hasattr(budget_decision, "to_dict") else {}
+        observability_fields = build_final_request_observability_fields(
+            context=context,
+            trace_id=trace_id,
+            provider_id=str(model_spec.provider_id or ""),
+            model=str(model_spec.model or ""),
+            final_max_tokens=self._coerce_int(invoke_cfg.get("max_tokens")),
+            token_budget=token_budget,
+            input_sha256=input_sha256,
+            effective_prompt_sha256=effective_prompt_sha256,
+        )
         receipt = {
             "receipt_type": "contextos.final_request",
             "payload": {
@@ -556,6 +577,7 @@ class AIExecutor:
                 "run_id": self._non_empty_str(context.get("run_id")),
                 "task_id": self._non_empty_str(context.get("task_id")),
                 "session_id": self._non_empty_str(context.get("session_id")),
+                **observability_fields,
                 "role": request.role,
                 "task_type": request.task_type.value,
                 "provider_id": model_spec.provider_id,
@@ -567,22 +589,41 @@ class AIExecutor:
                 "max_tokens_before_clamp": max_tokens_before_clamp,
                 "final_max_tokens": self._coerce_int(invoke_cfg.get("max_tokens")),
                 "payload_overhead_tokens": int(payload_overhead or 0),
-                "token_budget": budget_decision.to_dict() if hasattr(budget_decision, "to_dict") else {},
+                "token_budget": token_budget,
                 "chat_message_count_before": chat_count_before,
                 "chat_message_count_after": chat_count_after,
-                "chat_messages_compressed": chat_count_after != chat_count_before,
+                "chat_messages_compressed": chat_messages_compressed,
                 "tool_count": tool_count,
                 "native_tool_mode": self._non_empty_str(context.get("native_tool_mode")),
-                "input_sha256": self._sha256_text(prompt_input),
-                "effective_prompt_sha256": self._sha256_text(clamp_prompt_text),
-                "tool_schema_sha256": self._sha256_json(tools) if tool_count else "",
+                "input_sha256": input_sha256,
+                "effective_prompt_sha256": effective_prompt_sha256,
+                "tool_schema_sha256": tool_schema_sha256,
             },
-            "trace_refs": (trace_id,),
+            "trace_refs": build_final_request_trace_refs(
+                trace_id=trace_id,
+                observability_fields=observability_fields,
+            ),
         }
         try:
             sink(receipt)
-        except (RuntimeError, ValueError, TypeError) as exc:
+        except Exception as exc:  # noqa: BLE001 - audit sink must not block provider invocation
             logger.warning("[executor] final request receipt sink failed: %s", exc)
+
+    @staticmethod
+    def _normalize_chat_messages_for_receipt(value: Any) -> list[dict[str, str]]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            normalized.append(
+                {
+                    "role": str(item.get("role") or ""),
+                    "content": str(item.get("content") or ""),
+                }
+            )
+        return normalized
 
     @staticmethod
     def _sha256_text(value: Any) -> str:

@@ -33,14 +33,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Directory patterns that should always be gitignored
 # ---------------------------------------------------------------------------
 
 # Exact directory names (relative to backend root)
-EXACT_GITIGNORED_DIRS: List[str] = [
+EXACT_GITIGNORED_DIRS: list[str] = [
     "__pycache__",
     ".mypy_cache",
     ".pytest_cache",
@@ -53,7 +52,7 @@ EXACT_GITIGNORED_DIRS: List[str] = [
 ]
 
 # Glob patterns matching temp/cache directories (relative to backend root)
-GLOB_GITIGNORED_DIRS: List[str] = [
+GLOB_GITIGNORED_DIRS: list[str] = [
     ".tmp_*",  # e.g. .tmp_pytest_context, .tmp_agent_router
 ]
 
@@ -64,6 +63,7 @@ _GITKEEP = ".gitkeep"
 # ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------
+
 
 def find_repo_root(path: Path) -> Path:
     """Walk up from *path* to find the git repository root (.git directory)."""
@@ -90,7 +90,7 @@ def _git_available() -> bool:
         return False
 
 
-def check_git_ignored(repo_root: Path, repo_rel_path: str) -> Optional[bool]:
+def check_git_ignored(repo_root: Path, repo_rel_path: str) -> bool | None:
     """Check if *repo_rel_path* is ignored by git (via ``git check-ignore``).
 
     Returns:
@@ -121,6 +121,7 @@ def check_git_ignored(repo_root: Path, repo_rel_path: str) -> Optional[bool]:
 # ---------------------------------------------------------------------------
 # Gitignore pattern matching (fallback / contents-coverage check)
 # ---------------------------------------------------------------------------
+
 
 def _gitignore_pattern_matches(pattern: str, path: str) -> bool:
     """Best-effort gitignore pattern matcher.
@@ -175,14 +176,14 @@ def _gitignore_pattern_matches(pattern: str, path: str) -> bool:
         return False
 
 
-def _collect_gitignore_rules(repo_root: Path) -> List[Tuple[str, bool]]:
+def _collect_gitignore_rules(repo_root: Path) -> list[tuple[str, bool]]:
     """Walk up from *repo_root* collecting .gitignore rules.
 
     Returns list of (pattern, is_negation) tuples.
     Patterns from inner directories override outer ones (standard git
     semantics: later rules take precedence, and we insert inner rules first).
     """
-    rules: List[Tuple[str, bool]] = []
+    rules: list[tuple[str, bool]] = []
     current = repo_root
     while current != current.parent:
         gi = current / ".gitignore"
@@ -222,6 +223,7 @@ def _any_gitignore_pattern_covers(repo_root: Path, repo_rel_path: str) -> bool:
 # Coverage decision
 # ---------------------------------------------------------------------------
 
+
 def is_directory_covered(
     repo_root: Path,
     repo_rel_dir: str,
@@ -252,9 +254,7 @@ def is_directory_covered(
         try:
             for child in dirpath.iterdir():
                 if child.is_file():
-                    child_rel = (repo_rel_dir + "/" + child.name).replace(
-                        "\\", "/"
-                    )
+                    child_rel = (repo_rel_dir + "/" + child.name).replace("\\", "/")
                     if check_git_ignored(repo_root, child_rel) is True:
                         return True
                     break  # Only need one sample
@@ -280,15 +280,16 @@ def is_directory_covered(
 # Scanner
 # ---------------------------------------------------------------------------
 
+
 def scan_violations(
     workspace: Path,
     repo_root: Path,
-) -> List[Tuple[str, str]]:
+) -> list[tuple[str, str]]:
     """Scan *workspace* for hygiene violations.
 
     Returns list of (relative_path, reason) tuples.
     """
-    violations: List[Tuple[str, str]] = []
+    violations: list[tuple[str, str]] = []
 
     # Compute repo-relative prefix for the workspace
     try:
@@ -296,8 +297,7 @@ def scan_violations(
     except ValueError:
         workspace_rel = Path(".")
         print(
-            f"WARNING: Workspace {workspace} is not inside repo root"
-            f" {repo_root}. Gitignore checks may be unreliable.",
+            f"WARNING: Workspace {workspace} is not inside repo root {repo_root}. Gitignore checks may be unreliable.",
             file=sys.stderr,
         )
 
@@ -317,8 +317,7 @@ def scan_violations(
         violations.append(
             (
                 dirname,
-                f"Directory '{dirname}/' exists but is NOT covered by"
-                " .gitignore",
+                f"Directory '{dirname}/' exists but is NOT covered by .gitignore",
             )
         )
 
@@ -349,17 +348,13 @@ def scan_violations(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Check directory hygiene for Polaris backend"
-    )
+    parser = argparse.ArgumentParser(description="Check directory hygiene for Polaris backend")
     parser.add_argument(
         "--workspace",
         default=None,
-        help=(
-            "Path to backend root directory. "
-            "Defaults to the backend root (four levels up from this script)."
-        ),
+        help=("Path to backend root directory. Defaults to the backend root (four levels up from this script)."),
     )
     parser.add_argument(
         "--quiet",

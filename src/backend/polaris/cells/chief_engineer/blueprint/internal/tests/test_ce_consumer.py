@@ -176,6 +176,50 @@ class TestCEConsumerPollOnce:
         assert fail_call.error_code == "CE_design_failed"
 
 
+class TestStepSplitterIntegration:
+    """I3-r29: an over-budget step is split and the skeleton+fills flow through the
+    real publish path with edit_on_prior preserved (review finding 3)."""
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_split_output_publishes_skeleton_and_fills(self, mock_get: MagicMock) -> None:
+        from polaris.cells.chief_engineer.blueprint.internal.step_contract import (
+            normalize_construction_step,
+            validate_construction_steps,
+        )
+        from polaris.cells.chief_engineer.blueprint.internal.step_splitter import split_oversize_steps
+
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        sigs = [f"function f{i}()" for i in range(12)]
+        oversize = [
+            normalize_construction_step(
+                {
+                    "step_id": "S4",
+                    "target_file": "main.js",
+                    "signatures": sigs,
+                    "est_lines": 200,
+                    "verify": "node --check main.js",
+                },
+                parent_pm_task="PM-0001-1",
+                index=0,
+            )
+        ]
+        split = split_oversize_steps(oversize, parent_pm_task="PM-0001-1")
+        # The split the consumer adopts is always gate-clean (re-gate invariant).
+        assert validate_construction_steps(split, parent_pm_task="PM-0001-1") == []
+
+        consumer._publish_step_tasks(
+            "PM-0001-1", {"run_id": "r"}, split, blueprint_id="b", blueprint_path="p", prior_file_owners={}
+        )
+        published = [c.args[0].payload["construction_step"] for c in consumer._svc.publish_work_item.call_args_list]
+        ids = [s["step_id"] for s in published]
+        assert "PM-0001-1-S4-skel" in ids
+        assert sum(1 for i in ids if "-fill" in i) == 4
+        # fills publish with edit_on_prior preserved (publish path must not strip it).
+        fills = [s for s in published if "-fill" in s["step_id"]]
+        assert fills and all(s.get("edit_on_prior") is True for s in fills)
+
+
 class TestCEConsumerStop:
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     def test_stop_sets_event(self, mock_get_svc: MagicMock) -> None:

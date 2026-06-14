@@ -53,6 +53,27 @@ class TestBlueprintStepCard:
         # the weak prose hint must be gone
         assert "不要原样重写" not in card
 
+    def test_skeleton_stub_only_directive_rendered(self):
+        card = self._card(
+            {
+                "construction_step": {
+                    "step_id": "S-skel",
+                    "target_file": "main.js",
+                    "signatures": ["function init()", "function update()"],
+                    "skeleton_stub_only": True,
+                }
+            }
+        )
+        assert card is not None
+        assert "只写空桩" in card and "严禁实现任何逻辑" in card
+
+    def test_no_stub_directive_without_flag(self):
+        card = self._card(
+            {"construction_step": {"step_id": "S", "target_file": "main.js", "signatures": ["function init()"]}}
+        )
+        assert card is not None
+        assert "只写空桩" not in card
+
 
 class TestProcessContextOverride:
     """Test _process_context_override method."""

@@ -21,6 +21,11 @@ def test_load_messages_from_json_accepts_list_and_envelope() -> None:
     assert envelope == [{"role": "assistant", "content": "hi"}]
 
 
+def test_load_messages_from_json_rejects_non_object_entries() -> None:
+    with pytest.raises(ValueError, match="message at index 1"):
+        load_messages_from_json('[{"role": "user", "content": "hello"}, "bad"]')
+
+
 def test_load_messages_from_file_uses_utf8(tmp_path: Path) -> None:
     payload = {"messages": [{"role": "user", "content": "你好"}]}
     path = tmp_path / "messages.json"

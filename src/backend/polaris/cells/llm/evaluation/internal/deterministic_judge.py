@@ -2025,9 +2025,7 @@ def _register_scout_validators_from_builtin() -> None:
     from polaris.kernelone.benchmark.unified_judge import BUILTIN_VALIDATORS
 
     def _wrap(port: object) -> ValidatorFunc:
-        def _validator(
-            output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]
-        ) -> tuple[bool, str]:
+        def _validator(output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]) -> tuple[bool, str]:
             return port.validate(output_text, observed, known_paths)  # type: ignore[attr-defined]
 
         return _validator
@@ -2035,7 +2033,7 @@ def _register_scout_validators_from_builtin() -> None:
     for name, port in BUILTIN_VALIDATORS.items():
         if not name.startswith("scout_"):
             continue
-        if name in VALIDATOR_REGISTRY._validators:  # noqa: SLF001 - intentional registry sync
+        if name in VALIDATOR_REGISTRY._validators:
             continue
         VALIDATOR_REGISTRY.register(
             name,

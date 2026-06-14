@@ -267,9 +267,7 @@ class CellInternalFenceChecker:
         if not module:
             return
 
-        is_internal = (
-            module.startswith("polaris.cells.") and ".internal" in module
-        ) or (
+        is_internal = (module.startswith("polaris.cells.") and ".internal" in module) or (
             module.startswith("polaris.kernelone.") and ".internal" in module
         )
         if not is_internal:

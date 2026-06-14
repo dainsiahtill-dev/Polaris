@@ -61,3 +61,23 @@ def test_final_request_sink_records_cognitive_runtime_receipt(
     assert command.trace_refs == ("trace-1",)
     assert command.payload["provider_id"] == "provider-a"
     assert command.turn_envelope["source"] == "roles.kernel.llm_invoker"
+
+
+def test_final_request_sink_runtime_shape_error_does_not_raise(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        invoker_module,
+        "_get_cognitive_runtime_receipt_deps",
+        lambda: (RecordRuntimeReceiptCommandV1, lambda: object()),
+    )
+
+    invoker = LLMInvoker(workspace=str(tmp_path))
+    invoker._record_final_request_receipt(
+        {
+            "receipt_type": "contextos.final_request",
+            "payload": {"trace_id": "trace-1", "run_id": "run-1"},
+            "trace_refs": ("trace-1",),
+        }
+    )

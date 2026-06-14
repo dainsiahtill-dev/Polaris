@@ -1,5 +1,10 @@
 """Run SUPER mode full pipeline test."""
-import subprocess, sys, os, re, time
+
+import os
+import re
+import subprocess
+import sys
+import time
 
 WORKSPACE = r"C:\Temp\polaris_super_test"
 BACKEND = r"C:\Users\dains\Documents\GitLab\polaris\src\backend"
@@ -17,12 +22,20 @@ env["PYTHONIOENCODING"] = "utf-8"
 print(f"[TEST] Starting SUPER pipeline at {time.strftime('%H:%M:%S')}...")
 
 result = subprocess.run(
-    [sys.executable, "-m", "polaris.delivery.cli", "console",
-     "--backend", "plain",
-     "--workspace", WORKSPACE,
-     "--role", "director",
-     "--super",
-     "--batch"],
+    [
+        sys.executable,
+        "-m",
+        "polaris.delivery.cli",
+        "console",
+        "--backend",
+        "plain",
+        "--workspace",
+        WORKSPACE,
+        "--role",
+        "director",
+        "--super",
+        "--batch",
+    ],
     input=INPUT_MSG,
     capture_output=True,
     text=True,
@@ -98,7 +111,6 @@ if os.path.isdir(game_dir):
     print(f"  Game files: {py_files}")
     try:
         sys.path.insert(0, WORKSPACE)
-        from game.guess_number import show_welcome, play_one_round, main
         print("  Import OK: game.guess_number")
     except Exception as e:
         print(f"  Import FAIL: {e}")
@@ -108,6 +120,7 @@ else:
 # Just import and verify function signatures
 try:
     import importlib
+
     spec = importlib.util.spec_from_file_location("guess", os.path.join(WORKSPACE, "game", "guess_number.py"))
     if spec and spec.loader:
         mod = importlib.util.module_from_spec(spec)

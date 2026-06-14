@@ -72,7 +72,7 @@ def check_test_imports_in_source() -> list[tuple[str, str]]:
     violations: list[tuple[str, str]] = []
 
     source_files: list[str] = []
-    for root, dirs, files in os.walk("polaris/delivery/cli/visualization"):
+    for root, _dirs, files in os.walk("polaris/delivery/cli/visualization"):
         for file in files:
             if file.endswith(".py") and not file.startswith("test_"):
                 source_files.append(os.path.join(root, file))
@@ -162,11 +162,9 @@ def main() -> int:
     print("❌ 门禁失败: 发现以下违规")
     print()
 
-    has_violations = False
     for category, violations in all_violations:
         if violations:
             print_violations(violations, category)
-            has_violations = True
 
     if args.fix:
         print("修复建议:")

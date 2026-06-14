@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import time
@@ -166,9 +167,9 @@ class LLMInvoker:
 
         trace_refs = self._normalize_trace_refs(receipt.get("trace_refs"), payload.get("trace_id"))
         try:
-            Command, get_service = _get_cognitive_runtime_receipt_deps()
+            command_cls, get_service = _get_cognitive_runtime_receipt_deps()
             result = get_service().record_runtime_receipt(
-                Command(
+                command_cls(
                     workspace=self.workspace or ".",
                     receipt_type=receipt_type,
                     payload=payload,
@@ -184,7 +185,7 @@ class LLMInvoker:
                     },
                 )
             )
-        except (ImportError, RuntimeError, ValueError, TypeError) as exc:
+        except Exception as exc:  # noqa: BLE001 - ContextOS receipt storage is fail-soft telemetry
             logger.warning("[LLMInvoker] contextos final request receipt failed: %s", exc)
             return
         if not bool(getattr(result, "ok", False)):
@@ -1216,6 +1217,16 @@ class LLMInvoker:
             )
             resolved_model = str(getattr(prepared.ai_request, "model", None) or model or "")
             prepared_messages = list(prepared.messages)
+            message_roles: list[str] = []
+            message_content_sha256: list[str] = []
+            message_content_chars: list[int] = []
+            for message in prepared_messages:
+                if not isinstance(message, dict):
+                    continue
+                message_roles.append(str(message.get("role") or ""))
+                content = str(message.get("content") or "")
+                message_content_sha256.append(hashlib.sha256(content.encode("utf-8")).hexdigest())
+                message_content_chars.append(len(content))
 
             with contextlib.suppress(TypeError, AttributeError, RuntimeError):
                 emit_debug_event(
@@ -1231,7 +1242,10 @@ class LLMInvoker:
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                         "message_count": len(prepared_messages),
-                        "messages": prepared_messages,
+                        "message_roles": message_roles,
+                        "message_content_sha256": message_content_sha256,
+                        "message_content_chars": message_content_chars,
+                        "redacted": True,
                     },
                 )
 

@@ -24,7 +24,7 @@ from src.calculator import divide
 
 def test_same_operands_different_precision_should_not_collide() -> None:
     clear_cache()
-    low = divide(7.0, 3.0, precision=2)   # caches 2.33 under (7.0, 3.0)
+    low = divide(7.0, 3.0, precision=2)  # caches 2.33 under (7.0, 3.0)
     high = divide(7.0, 3.0, precision=3)  # EXPECTED 2.333, but stale cache returns 2.33
 
     assert low == 2.33

@@ -122,6 +122,52 @@ def test_drift_requeue_updates_revision_and_stage(tmp_path) -> None:
     assert item["plan_revision_id"] == "rev-2"
 
 
+def test_drift_requeue_skips_item_with_active_lease(tmp_path) -> None:
+    service = TaskMarketService()
+    workspace = str(tmp_path / "ws")
+
+    service.register_plan_revision(
+        RegisterPlanRevisionCommandV1(
+            workspace=workspace,
+            plan_id="plan-1",
+            plan_revision_id="rev-1",
+            source_role="pm",
+        )
+    )
+    _publish(service, workspace, "task-active", plan_revision_id="rev-1", stage="pending_exec")
+    claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=workspace,
+            stage="pending_exec",
+            task_id="task-active",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+    assert claim.ok is True
+
+    service.register_plan_revision(
+        RegisterPlanRevisionCommandV1(
+            workspace=workspace,
+            plan_id="plan-1",
+            plan_revision_id="rev-2",
+            parent_revision_id="rev-1",
+            source_role="pm",
+        )
+    )
+
+    result = service.requeue_drifted_items(workspace)
+
+    assert result["requeued_count"] == 0
+    from polaris.cells.runtime.task_market.public.contracts import QueryTaskMarketStatusV1
+
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=workspace, include_payload=True))
+    row = {item["task_id"]: item for item in status.items}["task-active"]
+    assert row["status"] == "in_execution"
+    assert row["lease_token"] == claim.lease_token
+
+
 def test_drift_requeue_skips_terminal_and_dead_letter(tmp_path) -> None:
     service = TaskMarketService()
     workspace = str(tmp_path / "ws")

@@ -207,6 +207,85 @@ class TestStateFirstContextOSIntegration:
         assert "cognitive_strategy_override" not in content
 
     @pytest.mark.asyncio
+    async def test_capability_profile_is_control_plane_projection_metadata(self):
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+            TranscriptEventV2 as TranscriptEvent,
+        )
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 1000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "truncate"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = "provider-a"
+        mock_profile.model = "qwen-16k"
+        mock_profile.role_id = "director"
+        mock_profile.display_name = "Director"
+
+        gateway = RoleContextGateway(mock_profile, workspace=".")
+
+        mock_snapshot = MagicMock(spec=ContextOSSnapshot)
+        mock_snapshot.budget_plan = MagicMock()
+        mock_snapshot.budget_plan.validation_error = ""
+
+        mock_projection = MagicMock(spec=ContextOSProjection)
+        mock_projection.head_anchor = ""
+        mock_projection.tail_anchor = ""
+        mock_projection.active_window = (
+            TranscriptEvent(
+                event_id="test_1",
+                sequence=1,
+                role="user",
+                kind="user_turn",
+                route="clear",
+                content="Test message",
+            ),
+        )
+        mock_projection.run_card = MagicMock()
+        mock_projection.run_card.current_goal = ""
+        mock_projection.run_card.open_loops = ()
+        mock_projection.run_card.latest_user_intent = ""
+        mock_projection.run_card.pending_followup_action = ""
+        mock_projection.run_card.last_turn_outcome = ""
+        mock_projection.snapshot = mock_snapshot
+        capability_profile = {
+            "schema_version": 1,
+            "source": "roles.kernel.llm_caller.pre_projection",
+            "role_id": "director",
+            "provider_id": "provider-a",
+            "model": "qwen-16k",
+            "model_window_tokens": 16384,
+            "supports_native_tools": True,
+            "supports_json_schema": True,
+        }
+
+        with patch.object(gateway._context_os, "project", return_value=mock_projection):
+            result = await gateway.build_context(
+                ContextRequest(
+                    message="Test message",
+                    history=[("user", "Hello")],
+                    context_os_snapshot=None,
+                    context_override={"metadata": {"capability_profile": capability_profile}},
+                )
+            )
+
+        profile_ref = result.metadata["capability_profile_ref"]
+        assert len(profile_ref["sha256"]) == 64
+        assert profile_ref["source"] == "roles.kernel.llm_caller.pre_projection"
+        assert profile_ref["role_id"] == "director"
+        assert profile_ref["provider_id"] == "provider-a"
+        assert profile_ref["model"] == "qwen-16k"
+        assert profile_ref["model_window_tokens"] == 16384
+        rendered_prompt = "\n".join(message["content"] for message in result.messages)
+        assert "capability_profile" not in rendered_prompt
+
+    @pytest.mark.asyncio
     async def test_build_context_with_snapshot_uses_projection(self):
         """Verify build_context uses projection when snapshot is provided."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway

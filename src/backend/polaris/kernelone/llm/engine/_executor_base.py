@@ -6,8 +6,10 @@ Do NOT import this module from outside the engine package.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from polaris.kernelone.errors import ErrorCategory, classify_error
@@ -196,6 +198,114 @@ def estimate_payload_overhead_tokens(invoke_cfg: dict[str, Any], chat_messages: 
     if isinstance(chat_messages, list):
         overhead += 4 * len(chat_messages)
     return overhead
+
+
+def build_final_request_observability_fields(
+    *,
+    context: Any,
+    trace_id: str,
+    provider_id: str,
+    model: str,
+    final_max_tokens: int,
+    token_budget: dict[str, Any],
+    input_sha256: str,
+    effective_prompt_sha256: str,
+) -> dict[str, Any]:
+    """Build prompt-free correlation fields for ContextOS final request receipts."""
+    payload = context if isinstance(context, Mapping) else {}
+    turn_envelope = payload.get("turn_envelope")
+    turn_payload = turn_envelope if isinstance(turn_envelope, Mapping) else {}
+    context_os_audit = payload.get("context_os_audit")
+    audit_payload = context_os_audit if isinstance(context_os_audit, Mapping) else {}
+    capability_ref = _capability_profile_ref(payload)
+    turn_id = _non_empty_str(payload.get("turn_id") or turn_payload.get("turn_id"))
+    context_projection_id = _non_empty_str(
+        payload.get("context_projection_id") or turn_payload.get("projection_id") or audit_payload.get("prompt_digest")
+    )
+    fields = {
+        "turn_id": turn_id,
+        "attempt": _coerce_positive_int(payload.get("attempt") or payload.get("attempt_no")),
+        "fix_attempt_id": _non_empty_str(payload.get("fix_attempt_id") or payload.get("repair_attempt_id")),
+        "context_projection_id": context_projection_id,
+        "capability_profile_sha256": capability_ref["sha256"],
+        "capability_profile_source": capability_ref["source"],
+    }
+    fields["budget_admission_id"] = _stable_sha256_json(
+        {
+            "trace_id": trace_id,
+            "turn_id": fields["turn_id"],
+            "context_projection_id": fields["context_projection_id"],
+            "capability_profile_sha256": fields["capability_profile_sha256"],
+            "provider_id": provider_id,
+            "model": model,
+            "final_max_tokens": final_max_tokens,
+            "token_budget": token_budget,
+            "input_sha256": input_sha256,
+            "effective_prompt_sha256": effective_prompt_sha256,
+        }
+    )
+    return fields
+
+
+def build_final_request_trace_refs(
+    *,
+    trace_id: str,
+    observability_fields: Mapping[str, Any],
+) -> tuple[str, ...]:
+    refs = [
+        trace_id,
+        observability_fields.get("turn_id"),
+        observability_fields.get("context_projection_id"),
+        observability_fields.get("capability_profile_sha256"),
+        observability_fields.get("budget_admission_id"),
+    ]
+    return tuple(str(item).strip() for item in refs if str(item or "").strip())
+
+
+def _capability_profile_ref(context: Mapping[str, Any]) -> dict[str, str]:
+    raw_ref = context.get("capability_profile_ref")
+    if isinstance(raw_ref, Mapping):
+        sha256 = _non_empty_str(raw_ref.get("sha256"))
+        source = _non_empty_str(raw_ref.get("source"))
+        if sha256:
+            return {"sha256": sha256, "source": source}
+
+    raw_profile = context.get("capability_profile")
+    if isinstance(raw_profile, Mapping):
+        return {
+            "sha256": _stable_sha256_json(raw_profile),
+            "source": _non_empty_str(context.get("capability_profile_source"))
+            or "roles.kernel.llm_caller.capability_profile",
+        }
+
+    return {"sha256": "", "source": ""}
+
+
+def _stable_sha256_json(value: Any) -> str:
+    try:
+        serialized = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    except (TypeError, ValueError):
+        serialized = str(value or "")
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _non_empty_str(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _coerce_positive_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def clamp_output_tokens_to_window(

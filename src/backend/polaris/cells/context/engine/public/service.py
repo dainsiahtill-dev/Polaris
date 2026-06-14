@@ -213,6 +213,7 @@ def _apply_context_os_overlay(
         session_id=session_id,
         turn_index=turn_index,
         context_override=context_override,
+        policy=policy,
     )
     if overlay is None:
         return pack
@@ -246,8 +247,10 @@ def _build_context_os_overlay(
     session_id: str,
     turn_index: int,
     context_override: dict[str, Any] | None,
+    policy: dict[str, Any] | None = None,
 ) -> tuple[str, ContextItem, dict[str, Any]] | None:
     # Lazy imports (P1-CTX-003 convergence)
+    from polaris.kernelone.context.budget_gate import DEFAULT_FALLBACK_WINDOW
     from polaris.kernelone.context.chunks import PromptChunkAssembler
     from polaris.kernelone.context.context_os import summarize_context_os_payload
     from polaris.kernelone.context.engine import ContextItem
@@ -263,7 +266,10 @@ def _build_context_os_overlay(
     summary_text = str(continuity_payload.get("summary") or "").strip()
     source_messages = _coerce_int(continuity_payload.get("source_message_count"), 0)
 
-    assembler = PromptChunkAssembler(model_window=128_000, safety_margin=0.85)
+    assembler = PromptChunkAssembler(
+        model_window=_resolve_context_os_overlay_model_window(policy, DEFAULT_FALLBACK_WINDOW),
+        safety_margin=0.85,
+    )
     chunk = assembler.add_continuity(
         summary_text,
         source_messages=max(0, source_messages),
@@ -293,6 +299,28 @@ def _build_context_os_overlay(
         reason="State-First Context OS continuity overlay",
     )
     return rendered, item, summary
+
+
+def _resolve_context_os_overlay_model_window(policy: dict[str, Any] | None, fallback: int) -> int:
+    payload = dict(policy or {})
+    candidate_keys = (
+        "resolved_context_window",
+        "model_window_tokens",
+        "model_context_window",
+        "context_window_tokens",
+        "max_context_tokens",
+    )
+    for key in candidate_keys:
+        value = _coerce_int(payload.get(key), 0)
+        if value > 0:
+            return value
+    context_window = payload.get("context_window")
+    if isinstance(context_window, dict):
+        for key in candidate_keys:
+            value = _coerce_int(context_window.get(key), 0)
+            if value > 0:
+                return value
+    return max(1, int(fallback or 1))
 
 
 def _extract_context_os_summary(pack: ContextPack) -> dict[str, Any]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import patch
 
@@ -109,6 +110,40 @@ class TestBuildContextWindowContextOSOverlay:
             and entry.get("summary", {}).get("current_goal") == "Fix context.engine continuity overlay"
             for entry in pack.compression_log
         )
+
+    def test_build_context_window_overlay_uses_policy_model_window(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        class _Assembler:
+            def __init__(self, *, model_window: int, safety_margin: float) -> None:
+                captured["model_window"] = model_window
+                captured["safety_margin"] = safety_margin
+
+            def add_continuity(self, *_args: Any, **_kwargs: Any) -> Any:
+                return SimpleNamespace(content="【State-First Context OS】\nwindow-aware overlay")
+
+        monkeypatch.setattr("polaris.kernelone.context.chunks.PromptChunkAssembler", _Assembler)
+        with patch(
+            "polaris.cells.context.engine.public.service._build_context_pack",
+            return_value=_base_pack(),
+        ):
+            build_context_window(
+                project_root=".",
+                role="director",
+                query="continue fixing context engine",
+                step=3,
+                run_id="run_1",
+                mode="interactive",
+                policy={"model_window_tokens": 16_384},
+                context_override=_context_override(),
+                session_id="sess_1",
+            )
+
+        assert captured["model_window"] == 16_384
+        assert captured["safety_margin"] == 0.85
 
     def test_build_context_window_without_override_keeps_pack_unchanged(self) -> None:
         original = _base_pack()

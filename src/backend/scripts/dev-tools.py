@@ -29,8 +29,7 @@ def _forward_to_new_location() -> int:
 def main() -> int:
     """Main entry point with deprecation warning."""
     warnings.warn(
-        "scripts/dev-tools.py is deprecated. "
-        "Use 'python -m polaris.delivery.cli.tools.dev_tools' instead.",
+        "scripts/dev-tools.py is deprecated. Use 'python -m polaris.delivery.cli.tools.dev_tools' instead.",
         DeprecationWarning,
         stacklevel=2,
     )

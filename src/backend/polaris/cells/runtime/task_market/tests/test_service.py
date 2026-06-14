@@ -2260,6 +2260,188 @@ def test_requeue_task_can_teach_next_claim_without_worker_lease(tmp_path: Path) 
     assert teaching["source"] == "pm_dispatch.integration_qa"
 
 
+def test_requeue_task_rejects_actively_leased_work(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-active",
+            run_id="run-active",
+            task_id="step-active",
+            stage="pending_exec",
+            source_role="pm_dispatch",
+            payload={"title": "step"},
+        )
+    )
+    claimed = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-active",
+            worker_role="director",
+        )
+    )
+
+    requeued = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-active",
+            target_stage="pending_exec",
+            reason="integration QA failed",
+        )
+    )
+
+    assert requeued.ok is False
+    assert requeued.reason == "active_lease"
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
+    row = {item["task_id"]: item for item in status.items}["step-active"]
+    assert row["status"] == "in_execution"
+    assert row["lease_token"] == claimed.lease_token
+
+
+def test_requeue_task_rejects_terminal_and_legacy_terminal_statuses(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+
+    for task_id, status in (
+        ("step-rejected", "rejected"),
+        ("step-dead", "dead_letter"),
+        ("step-completed", "completed"),
+        ("step-cancelled", "cancelled"),
+    ):
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id=f"tr-{task_id}",
+                run_id="run-terminal",
+                task_id=task_id,
+                stage="pending_exec",
+                source_role="pm_dispatch",
+                payload={"title": task_id},
+            )
+        )
+        store = get_store(str(workspace))
+        items = store.load_items()
+        item = items[task_id]
+        item.status = status
+        items[task_id] = item
+        store.save_items_and_outbox_atomic(items=items, transitions=[], outbox_records=[])
+
+        requeued = service.requeue_task(
+            RequeueTaskCommandV1(
+                workspace=str(workspace),
+                task_id=task_id,
+                target_stage="pending_exec",
+                reason="generic retry",
+            )
+        )
+
+        assert requeued.ok is False
+        assert requeued.reason in {"terminal_status", "unsupported_status"}
+
+
+def test_requeue_task_allows_integration_qa_to_reopen_resolved_work(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-resolved-integration",
+            run_id="run-resolved-integration",
+            task_id="step-resolved-integration",
+            stage="pending_exec",
+            source_role="pm_dispatch",
+            payload={"title": "step"},
+        )
+    )
+    claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director",
+            worker_role="director",
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="step-resolved-integration",
+            lease_token=claim.lease_token,
+            terminal_status="resolved",
+            summary="done",
+        )
+    )
+
+    requeued = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-resolved-integration",
+            target_stage="pending_exec",
+            reason="integration QA failed",
+            metadata={
+                "source": "pm_dispatch.integration_qa",
+                "last_failure": {
+                    "error_code": "INTEGRATION_QA_FAILED",
+                    "error_message": "pytest failed",
+                },
+            },
+        )
+    )
+
+    assert requeued.ok is True
+    assert requeued.status == "pending_exec"
+
+
+def test_requeue_task_allows_expired_lease_recovery(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-expired",
+            run_id="run-expired",
+            task_id="step-expired",
+            stage="pending_exec",
+            source_role="pm_dispatch",
+            payload={"title": "step"},
+        )
+    )
+    service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-expired",
+            worker_role="director",
+        )
+    )
+    store = get_store(str(workspace))
+    items = store.load_items()
+    item = items["step-expired"]
+    item.lease_expires_at = 0.0
+    items[item.task_id] = item
+    store.save_items_and_outbox_atomic(items=items, transitions=[], outbox_records=[])
+
+    requeued = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-expired",
+            target_stage="pending_exec",
+            reason="supervisor recovery",
+        )
+    )
+
+    assert requeued.ok is True
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
+    row = {entry["task_id"]: entry for entry in status.items}["step-expired"]
+    assert row["status"] == "pending_exec"
+    assert row["lease_token"] == ""
+
+
 class TestCrossParentFileOwnershipSerialization:
     """I3-r18 FIX-1 load-bearing proof: the market serializes two same-file writers
     via depends_on, so a later writer (the level-progression step) only runs AFTER

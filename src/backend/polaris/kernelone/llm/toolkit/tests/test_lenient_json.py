@@ -59,7 +59,7 @@ class TestRepairs:
         assert repaired is True
 
     def test_smart_quotes(self) -> None:
-        obj, repaired = parse_lenient_json_object('{“pattern”: “x”}')
+        obj, repaired = parse_lenient_json_object("{“pattern”: “x”}")
 
         assert obj == {"pattern": "x"}
         assert repaired is True

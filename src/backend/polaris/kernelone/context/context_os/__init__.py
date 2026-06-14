@@ -13,6 +13,8 @@ ContextOS 3.0 Enhancements:
 
 from __future__ import annotations
 
+import importlib
+
 from .attention import AttentionScorer, CandidateRanker, ReasonCodeGenerator
 from .attention.embeddings import EmbeddingProvider
 from .attention.graph import Edge, EdgeType, EventGraph
@@ -88,15 +90,6 @@ from .models_v2 import (
     UserProfileStateV2 as UserProfileState,
     WorkingStateV2 as WorkingState,
 )
-from .multi_resolution_store import (
-    MultiResolutionContent,
-    MultiResolutionStore,
-    ResolutionEntry,
-    ResolutionLevel,
-    create_extractive_content,
-    create_structured_content,
-    create_stub_content,
-)
 from .phase_budget_planner import (
     BudgetProfile,
     PhaseAwareBudgetPlan,
@@ -110,7 +103,6 @@ from .pipeline.attention_aware_stages import AttentionAwareWindowCollector
 from .pipeline.enhanced_runner import EnhancedPipelineRunner
 from .pipeline.phase_aware_stages import PhaseAwareBudgetPlannerStage
 from .policies import StateFirstContextOSPolicy
-from .predictive import PredictionResult, PredictionStrategy, PredictiveCompressor
 from .replay_suite_generator import (
     create_multi_turn_case,
     create_short_session_case,
@@ -127,6 +119,30 @@ from .schemas import (
     validate_report_file,
     validate_suite_file,
 )
+
+_LAZY_EXPORTS = {
+    "MultiResolutionContent": ".multi_resolution_store",
+    "MultiResolutionStore": ".multi_resolution_store",
+    "ResolutionEntry": ".multi_resolution_store",
+    "ResolutionLevel": ".multi_resolution_store",
+    "create_extractive_content": ".multi_resolution_store",
+    "create_structured_content": ".multi_resolution_store",
+    "create_stub_content": ".multi_resolution_store",
+    "PredictionResult": ".predictive",
+    "PredictionStrategy": ".predictive",
+    "PredictiveCompressor": ".predictive",
+}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    module = importlib.import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     # Schema validation

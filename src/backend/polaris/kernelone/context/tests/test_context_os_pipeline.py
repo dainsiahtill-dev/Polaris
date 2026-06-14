@@ -516,3 +516,20 @@ class TestPipelineRunner:
         diagnostics = get_contextos_diagnostics(str(tmp_path))
         assert diagnostics["state"] == "available"
         assert diagnostics["details"]["last_projection_report"]["projection_id"] == report["projection_id"]
+
+    def test_contextos_diagnostics_normalizes_workspace_keys(self, tmp_path, monkeypatch) -> None:
+        from polaris.kernelone.context.context_os.diagnostics import (
+            get_contextos_diagnostics,
+            record_contextos_projection_report,
+            reset_contextos_diagnostics,
+        )
+
+        reset_contextos_diagnostics()
+        monkeypatch.chdir(tmp_path)
+        report = {"projection_id": "projection-1", "candidate_count": 1}
+
+        record_contextos_projection_report(".", report)
+
+        diagnostics = get_contextos_diagnostics(str(tmp_path.resolve()))
+        assert diagnostics["state"] == "available"
+        assert diagnostics["details"]["last_projection_report"] == report

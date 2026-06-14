@@ -136,9 +136,7 @@ def _parse_units(ledger: dict[str, Any]) -> list[MigrationUnit]:
     """Parse all migration units from the ledger."""
     units: list[MigrationUnit] = []
     for raw_unit in ledger.get("units", []):
-        source_refs = tuple(
-            _parse_source_ref(sr) for sr in raw_unit.get("source_refs", [])
-        )
+        source_refs = tuple(_parse_source_ref(sr) for sr in raw_unit.get("source_refs", []))
         units.append(
             MigrationUnit(
                 id=str(raw_unit.get("id", "")),
@@ -207,9 +205,7 @@ def _has_explicit_file_list(note: str) -> bool:
     module_patterns = [
         r"\b(service|storage|models|runtime|engine|config|loader|manager|handler)\b",
     ]
-    explicit_module_count = sum(
-        1 for p in module_patterns if re.search(p, note, re.IGNORECASE)
-    )
+    explicit_module_count = sum(1 for p in module_patterns if re.search(p, note, re.IGNORECASE))
     # If we have multiple explicit module names, consider it explicit
     if explicit_module_count >= 2:
         return True
@@ -257,9 +253,9 @@ def _check_directory_coverage_granularity(
                 if _is_vague_directory_claim(ref.note):
                     violations.append(
                         f"Unit '{unit.id}': Directory '{ref.path}' lacks explicit file list. "
-                        f"Note: \"{ref.note[:80]}...\"" if len(ref.note) > 80
-                        else f"Unit '{unit.id}': Directory '{ref.path}' lacks explicit file list. "
-                        f"Note: \"{ref.note}\""
+                        f'Note: "{ref.note[:80]}..."'
+                        if len(ref.note) > 80
+                        else f"Unit '{unit.id}': Directory '{ref.path}' lacks explicit file list. Note: \"{ref.note}\""
                     )
 
     return violations
@@ -312,9 +308,7 @@ class LegacyCoverageChecker:
         ledger = _load_ledger(self.workspace)
         if ledger is None:
             result.passed = False
-            result.violations.append(
-                "docs/migration/ledger.yaml not found - cannot verify legacy coverage granularity"
-            )
+            result.violations.append("docs/migration/ledger.yaml not found - cannot verify legacy coverage granularity")
             result.duration_ms = self._elapsed_ms()
             return result
 
@@ -333,9 +327,7 @@ class LegacyCoverageChecker:
         result.evidence.append(f"Units with directory-level source refs: {len(dir_refs)}")
 
         if not dir_refs:
-            result.evidence.append(
-                "No directory-level coverage claims found - check passes vacuously"
-            )
+            result.evidence.append("No directory-level coverage claims found - check passes vacuously")
             result.duration_ms = self._elapsed_ms()
             return result
 
@@ -347,13 +339,9 @@ class LegacyCoverageChecker:
 
         # Summary
         if result.passed:
-            result.evidence.append(
-                f"All {len(dir_refs)} directory coverage claims have explicit file lists"
-            )
+            result.evidence.append(f"All {len(dir_refs)} directory coverage claims have explicit file lists")
         else:
-            result.warnings.append(
-                f"Found {len(violations)} directory coverage claims lacking explicit file lists"
-            )
+            result.warnings.append(f"Found {len(violations)} directory coverage claims lacking explicit file lists")
 
         result.duration_ms = self._elapsed_ms()
         return result
@@ -366,9 +354,7 @@ class LegacyCoverageChecker:
 
 def main() -> int:
     """Main entry point for the checker."""
-    parser = argparse.ArgumentParser(
-        description="Check legacy_file_coverage_audit rule"
-    )
+    parser = argparse.ArgumentParser(description="Check legacy_file_coverage_audit rule")
     parser.add_argument(
         "--workspace",
         type=str,

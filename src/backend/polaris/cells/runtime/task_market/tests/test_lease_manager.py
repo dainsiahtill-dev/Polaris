@@ -124,6 +124,16 @@ class TestLeaseManager:
                 lease_token="some-token",
             )
 
+    def test_renew_lease_fails_when_existing_lease_expired(self, lm: LeaseManager, item: TaskWorkItemRecord) -> None:
+        item.lease_token = "valid-token"
+        item.lease_expires_at = 0.0
+        with pytest.raises(StaleLeaseTokenError):
+            lm.renew_lease(
+                item=item,
+                lease_token="valid-token",
+                visibility_timeout_seconds=300,
+            )
+
     # ---- validate_token -----------------------------------------------------
 
     def test_validate_token_raises_on_mismatch(self, lm: LeaseManager, item: TaskWorkItemRecord) -> None:

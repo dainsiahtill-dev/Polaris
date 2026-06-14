@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
@@ -53,7 +54,12 @@ def reset_contextos_diagnostics() -> None:
 
 def _workspace_key(workspace: str | None) -> str:
     token = str(workspace or ".").strip()
-    return token or "."
+    if not token:
+        token = "."
+    try:
+        return str(Path(token).expanduser().resolve())
+    except (OSError, RuntimeError, ValueError):
+        return token
 
 
 __all__ = [

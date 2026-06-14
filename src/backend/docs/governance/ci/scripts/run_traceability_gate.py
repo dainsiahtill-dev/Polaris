@@ -96,15 +96,11 @@ def _check_gate14(workspace: str, matrix: dict[str, Any], errors: list[str]) -> 
             continue
         blueprint = _load_blueprint(workspace, blueprint_id)
         if blueprint is None:
-            errors.append(
-                f"Commit {external_id} references unapproved or missing blueprint {blueprint_id}"
-            )
+            errors.append(f"Commit {external_id} references unapproved or missing blueprint {blueprint_id}")
             continue
         status = str(blueprint.get("status") or "").strip().lower()
         if status != "approved":
-            errors.append(
-                f"Commit {external_id} references unapproved or missing blueprint {blueprint_id}"
-            )
+            errors.append(f"Commit {external_id} references unapproved or missing blueprint {blueprint_id}")
 
 
 def _check_gate15(matrix: dict[str, Any], errors: list[str]) -> None:
@@ -130,9 +126,7 @@ def _check_gate15(matrix: dict[str, Any], errors: list[str]) -> None:
         except (ValueError, TypeError):
             continue
         if bp_ver < doc_ver:
-            errors.append(
-                f"Blueprint {external_id} version {bp_ver} lags behind doc version {doc_ver}"
-            )
+            errors.append(f"Blueprint {external_id} version {bp_ver} lags behind doc version {doc_ver}")
 
 
 def run_traceability_gate(workspace: str) -> GateResult:

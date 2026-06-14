@@ -1,5 +1,11 @@
 """Complex Todo CLI test with fixed anti-exploration prompts."""
-import subprocess, sys, os, re, pathlib, time
+
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import time
 
 W = r"C:\Temp\polaris_super_test4"
 B = r"C:\Users\dains\Documents\GitLab\polaris\src\backend"
@@ -11,11 +17,27 @@ msg = "用Python实现一个命令行Todo事项管理器，支持增删改查、
 
 print(f"START {time.strftime('%H:%M:%S')}")
 proc = subprocess.Popen(
-    [sys.executable, "-m", "polaris.delivery.cli", "console",
-     "--backend", "plain", "--workspace", W, "--role", "director",
-     "--super", "--batch", "--debug"],
-    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    env=env, cwd=B)
+    [
+        sys.executable,
+        "-m",
+        "polaris.delivery.cli",
+        "console",
+        "--backend",
+        "plain",
+        "--workspace",
+        W,
+        "--role",
+        "director",
+        "--super",
+        "--batch",
+        "--debug",
+    ],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    env=env,
+    cwd=B,
+)
 try:
     o, e = proc.communicate(input=msg.encode("utf-8"), timeout=900)
     print(f"DONE {time.strftime('%H:%M:%S')} exit={proc.returncode}")

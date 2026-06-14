@@ -664,6 +664,9 @@ def compress_chat_messages_to_budget(
         normalized.append({"role": role, "content": content})
     if not normalized:
         return None
+    total_tokens = sum(_estimate_message_tokens(message["content"], content_type) for message in normalized)
+    if total_tokens <= int(allowed_prompt_tokens):
+        return normalized
 
     lead_end = 0
     while lead_end < len(normalized) and normalized[lead_end]["role"] == "system":

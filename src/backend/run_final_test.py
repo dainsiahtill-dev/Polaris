@@ -1,5 +1,11 @@
 """Final SUPER pipeline test - 20min timeout."""
-import subprocess, sys, os, re, pathlib, time
+
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import time
 
 WORKSPACE = r"C:\Temp\polaris_super_test"
 BACKEND = r"C:\Users\dains\Documents\GitLab\polaris\src\backend"
@@ -11,11 +17,25 @@ msg = "请创建hello.py文件，打印Hello World。请先制定计划蓝图，
 
 print(f"START: {time.strftime('%H:%M:%S')}")
 proc = subprocess.Popen(
-    [sys.executable, "-m", "polaris.delivery.cli", "console",
-     "--backend", "plain", "--workspace", WORKSPACE,
-     "--role", "director", "--super", "--batch"],
-    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    env=env, cwd=BACKEND,
+    [
+        sys.executable,
+        "-m",
+        "polaris.delivery.cli",
+        "console",
+        "--backend",
+        "plain",
+        "--workspace",
+        WORKSPACE,
+        "--role",
+        "director",
+        "--super",
+        "--batch",
+    ],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    env=env,
+    cwd=BACKEND,
 )
 try:
     stdout, stderr = proc.communicate(input=msg.encode("utf-8"), timeout=1200)

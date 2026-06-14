@@ -2529,6 +2529,11 @@ def _extract_task_id(task: Any) -> str:
     return ""
 
 
+def _is_director_assigned_task(task: dict[str, Any]) -> bool:
+    assigned_to = str(task.get("assigned_to") or task.get("assignee") or "").strip().lower()
+    return not assigned_to or assigned_to == "director"
+
+
 def _string_list_from_task(task: dict[str, Any], key: str) -> list[str]:
     raw = task.get(key)
     if not isinstance(raw, list):
@@ -2536,12 +2541,24 @@ def _string_list_from_task(task: dict[str, Any], key: str) -> list[str]:
     return [str(item).strip() for item in raw if str(item).strip()]
 
 
+def _string_list_from_result_field(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        token = raw.strip()
+        return [token] if token else []
+    if isinstance(raw, (list, tuple)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    token = str(raw).strip()
+    return [token] if token else []
+
+
 def _build_integration_qa_last_failure(
     *,
     result: dict[str, Any],
     task: dict[str, Any],
 ) -> dict[str, Any]:
-    errors = [str(item).strip() for item in (result.get("errors") or []) if str(item).strip()]
+    errors = _string_list_from_result_field(result.get("errors"))
     summary = str(result.get("summary") or "").strip()
     message_parts = [summary, *errors]
     error_message = " | ".join(part for part in message_parts if part).strip()
@@ -2563,6 +2580,45 @@ def _build_integration_qa_last_failure(
     }
 
 
+def _resolve_integration_qa_requeue_target_ids(
+    *,
+    task_market_service: Any,
+    workspace_full: str,
+    pm_task_id: str,
+) -> list[str]:
+    if not hasattr(task_market_service, "query_status"):
+        return [pm_task_id]
+    try:
+        from polaris.cells.runtime.task_market.public.contracts import QueryTaskMarketStatusV1
+
+        status_result = task_market_service.query_status(
+            QueryTaskMarketStatusV1(workspace=workspace_full, limit=10_000, include_payload=True)
+        )
+    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("integration QA lineage lookup failed for %s: %s", pm_task_id, exc)
+        return [pm_task_id]
+
+    leaf_ids: list[str] = []
+    for row in getattr(status_result, "items", ()):
+        if not isinstance(row, dict):
+            continue
+        row_task_id = str(row.get("task_id") or "").strip()
+        if not row_task_id:
+            continue
+        lineage = {
+            row_task_id,
+            str(row.get("root_task_id") or "").strip(),
+            str(row.get("parent_task_id") or "").strip(),
+        }
+        if pm_task_id not in lineage:
+            continue
+        if bool(row.get("is_leaf", True)):
+            leaf_ids.append(row_task_id)
+
+    unique_leaf_ids = list(dict.fromkeys(leaf_ids))
+    return unique_leaf_ids or [pm_task_id]
+
+
 def _requeue_director_tasks_after_integration_qa_failure(
     *,
     workspace_full: str,
@@ -2582,7 +2638,7 @@ def _requeue_director_tasks_after_integration_qa_failure(
         return feedback
 
     try:
-        RequeueTaskCommandV1, get_task_market_service = _get_task_market_requeue_services()
+        requeue_task_command_v1, get_task_market_service = _get_task_market_requeue_services()
         task_market_service = get_task_market_service()
     except (ImportError, RuntimeError, ValueError) as exc:
         feedback["errors"].append(f"task_market_unavailable: {exc}")
@@ -2592,35 +2648,46 @@ def _requeue_director_tasks_after_integration_qa_failure(
     for task in tasks:
         if not isinstance(task, dict):
             continue
+        if not _is_director_assigned_task(task):
+            continue
         task_id = _extract_task_id(task)
         if not task_id or task_id in seen:
             continue
         seen.add(task_id)
         feedback["attempted_task_ids"].append(task_id)
         last_failure = _build_integration_qa_last_failure(result=result, task=task)
-        try:
-            requeue_result = task_market_service.requeue_task(
-                RequeueTaskCommandV1(
-                    workspace=workspace_full,
-                    task_id=task_id,
-                    target_stage="pending_exec",
-                    reason=str(result.get("summary") or result.get("reason") or "integration_qa_failed"),
-                    metadata={
-                        "source": "pm_dispatch.integration_qa",
-                        "last_failure": last_failure,
-                    },
+        target_task_ids = _resolve_integration_qa_requeue_target_ids(
+            task_market_service=task_market_service,
+            workspace_full=workspace_full,
+            pm_task_id=task_id,
+        )
+        for target_task_id in target_task_ids:
+            try:
+                requeue_result = task_market_service.requeue_task(
+                    requeue_task_command_v1(
+                        workspace=workspace_full,
+                        task_id=target_task_id,
+                        target_stage="pending_exec",
+                        reason=str(result.get("summary") or result.get("reason") or "integration_qa_failed"),
+                        metadata={
+                            "source": "pm_dispatch.integration_qa",
+                            "pm_task_id": task_id,
+                            "last_failure": last_failure,
+                        },
+                    )
                 )
-            )
-        except (RuntimeError, ValueError) as exc:
-            feedback["errors"].append(f"{task_id}: {exc}")
-            continue
-        if bool(getattr(requeue_result, "ok", False)):
-            feedback["requeued_task_ids"].append(task_id)
-        else:
-            feedback["skipped_task_ids"].append(task_id)
-            reason = str(getattr(requeue_result, "reason", "") or getattr(requeue_result, "error_message", "") or "")
-            if reason:
-                feedback["errors"].append(f"{task_id}: {reason}")
+            except (RuntimeError, ValueError) as exc:
+                feedback["errors"].append(f"{target_task_id}: {exc}")
+                continue
+            if bool(getattr(requeue_result, "ok", False)):
+                feedback["requeued_task_ids"].append(target_task_id)
+            else:
+                feedback["skipped_task_ids"].append(target_task_id)
+                reason = str(
+                    getattr(requeue_result, "reason", "") or getattr(requeue_result, "error_message", "") or ""
+                )
+                if reason:
+                    feedback["errors"].append(f"{target_task_id}: {reason}")
     return feedback
 
 

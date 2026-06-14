@@ -30,6 +30,14 @@ exclude = [
     "node_modules",
     "src/backend/tests",       # test files use lots of dynamic imports
     "src/backend/polaris/tests",
+    "src/backend/docs/archive/**",
+    "src/backend/docs/governance/ci/scripts/**",
+    "src/backend/docs/scripts/**",
+    "src/backend/polaris/cells/llm/evaluation/fixtures/**",
+    "src/backend/run_*_test.py",
+    "src/backend/scripts/archive/**",
+    "src/backend/scripts/dev-tools.py",
+    "src/backend/scripts/test_intent.py",
     # Squad B Wave 1 baseline: archive snapshots / generated artefacts.
     "**/_archived/**",
     "**/_archived*",

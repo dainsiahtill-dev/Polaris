@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
@@ -25,6 +27,8 @@ from ...provider_adapters.factory import get_adapter
 from ...providers.base_provider import THINKING_PREFIX
 from ...providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
 from .._executor_base import (
+    build_final_request_observability_fields,
+    build_final_request_trace_refs,
     build_invoke_config,
     clamp_output_tokens_to_window,
     estimate_payload_overhead_tokens,
@@ -114,12 +118,14 @@ class StreamExecutor:
         model_catalog: ModelCatalog | None = None,
         token_budget: TokenBudgetManager | None = None,
         config: StreamConfig | None = None,
+        final_request_receipt_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.workspace = workspace
         self.telemetry = telemetry
         self.model_catalog = model_catalog or ModelCatalog(workspace=workspace or ".")
         self.token_budget = token_budget or TokenBudgetManager()
         self._config = config or StreamConfig.from_env()
+        self.final_request_receipt_sink = final_request_receipt_sink
 
     @property
     def config(self) -> StreamConfig:
@@ -155,6 +161,127 @@ class StreamExecutor:
         self, options: dict[str, Any], invoke_cfg: dict[str, Any], model_spec: ModelSpec
     ) -> int:
         return resolve_requested_output_tokens(options, invoke_cfg, model_spec)
+
+    def _record_final_request_receipt(
+        self,
+        *,
+        request: AIRequest,
+        trace_id: str,
+        model_spec: ModelSpec,
+        invoke_cfg: dict[str, Any],
+        budget_decision: Any,
+        requested_output_tokens: int,
+        max_tokens_before_clamp: int,
+        payload_overhead: int,
+        prompt_input: Any,
+        chat_messages_before: Any,
+        chat_messages_after: list[Any] | None,
+        clamp_prompt_text: str,
+    ) -> None:
+        sink = self.final_request_receipt_sink
+        if sink is None:
+            return
+
+        context = request.context if isinstance(request.context, dict) else {}
+        tools = invoke_cfg.get("tools")
+        tool_count = len(tools) if isinstance(tools, list) else 0
+        chat_count_before = len(chat_messages_before) if isinstance(chat_messages_before, list) else 0
+        chat_count_after = len(chat_messages_after) if isinstance(chat_messages_after, list) else 0
+        chat_messages_compressed = self._normalize_chat_messages_for_receipt(
+            chat_messages_before
+        ) != self._normalize_chat_messages_for_receipt(chat_messages_after)
+        input_sha256 = self._sha256_text(prompt_input)
+        effective_prompt_sha256 = self._sha256_text(clamp_prompt_text)
+        tool_schema_sha256 = self._sha256_json(tools) if tool_count else ""
+        token_budget = budget_decision.to_dict() if hasattr(budget_decision, "to_dict") else {}
+        observability_fields = build_final_request_observability_fields(
+            context=context,
+            trace_id=trace_id,
+            provider_id=str(model_spec.provider_id or ""),
+            model=str(model_spec.model or ""),
+            final_max_tokens=self._coerce_int(invoke_cfg.get("max_tokens")),
+            token_budget=token_budget,
+            input_sha256=input_sha256,
+            effective_prompt_sha256=effective_prompt_sha256,
+        )
+        receipt = {
+            "receipt_type": "contextos.final_request",
+            "payload": {
+                "schema_version": 1,
+                "source": "kernelone.llm.engine.stream_executor",
+                "stream": True,
+                "trace_id": trace_id,
+                "run_id": self._non_empty_str(context.get("run_id")),
+                "task_id": self._non_empty_str(context.get("task_id")),
+                "session_id": self._non_empty_str(context.get("session_id")),
+                **observability_fields,
+                "role": request.role,
+                "task_type": request.task_type.value,
+                "provider_id": model_spec.provider_id,
+                "provider_type": model_spec.provider_type,
+                "model": model_spec.model,
+                "model_window_tokens": int(model_spec.max_context_tokens or 0),
+                "model_output_limit_tokens": int(model_spec.max_output_tokens or 0),
+                "requested_output_tokens": requested_output_tokens,
+                "max_tokens_before_clamp": max_tokens_before_clamp,
+                "final_max_tokens": self._coerce_int(invoke_cfg.get("max_tokens")),
+                "payload_overhead_tokens": int(payload_overhead or 0),
+                "token_budget": token_budget,
+                "chat_message_count_before": chat_count_before,
+                "chat_message_count_after": chat_count_after,
+                "chat_messages_compressed": chat_messages_compressed,
+                "tool_count": tool_count,
+                "native_tool_mode": self._non_empty_str(context.get("native_tool_mode")),
+                "input_sha256": input_sha256,
+                "effective_prompt_sha256": effective_prompt_sha256,
+                "tool_schema_sha256": tool_schema_sha256,
+            },
+            "trace_refs": build_final_request_trace_refs(
+                trace_id=trace_id,
+                observability_fields=observability_fields,
+            ),
+        }
+        try:
+            sink(receipt)
+        except Exception as exc:  # noqa: BLE001 - audit sink must not block provider invocation
+            logger.warning("[stream-executor] final request receipt sink failed: %s", exc)
+
+    @staticmethod
+    def _normalize_chat_messages_for_receipt(value: Any) -> list[dict[str, str]]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            normalized.append(
+                {
+                    "role": str(item.get("role") or ""),
+                    "content": str(item.get("content") or ""),
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _sha256_text(value: Any) -> str:
+        return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _sha256_json(value: Any) -> str:
+        payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _non_empty_str(value: Any) -> str:
+        text = str(value or "").strip()
+        return text
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _create_stream_result_tracker(self, trace_id: str) -> _StreamResultTracker:
         return _StreamResultTracker(trace_id=trace_id)
@@ -412,32 +539,51 @@ class StreamExecutor:
             return
 
         prompt_input = request.input
+        clamp_prompt_text = prompt_input if isinstance(prompt_input, str) else str(prompt_input)
         # ADR-0090 W1.5: pass the structured message array through so chat
         # providers can preserve real role anchoring instead of flattening
         # the whole transcript into one user message.
         chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
         if budget_decision.compression_applied and budget_decision.compression is not None:
             prompt_input = budget_decision.compression.compressed_input
+            clamp_prompt_text = prompt_input if isinstance(prompt_input, str) else str(prompt_input)
             request.context["token_budget"] = budget_decision.to_dict()
-            # ADR-0090 W1.5b: under budget pressure, compress the structured
-            # array to the same budget instead of silently flattening — weak
-            # models need role anchoring most exactly when context is largest.
-            if isinstance(chat_messages, list) and chat_messages:
-                budgeted_chat_messages = compress_chat_messages_to_budget(
-                    chat_messages,
-                    budget_decision.allowed_prompt_tokens,
-                )
-                if budgeted_chat_messages:
-                    invoke_cfg["chat_messages"] = budgeted_chat_messages
-        elif isinstance(chat_messages, list) and chat_messages:
-            invoke_cfg["chat_messages"] = chat_messages
 
+        # ADR-0090 W1.5b/d: always budget the structured array independently
+        # from the flattened prompt so provider-bound chat messages cannot
+        # exceed the resolved window just because request.input fits.
+        effective_chat_messages: list[Any] | None = None
+        if isinstance(chat_messages, list) and chat_messages:
+            budgeted_chat_messages = compress_chat_messages_to_budget(
+                chat_messages,
+                budget_decision.allowed_prompt_tokens,
+            )
+            if budgeted_chat_messages is not None:
+                effective_chat_messages = budgeted_chat_messages
+                invoke_cfg["chat_messages"] = effective_chat_messages
+                clamp_prompt_text = "\n".join(str(m.get("content") or "") for m in effective_chat_messages)
+
+        max_tokens_before_clamp = self._coerce_int(invoke_cfg.get("max_tokens"))
         clamp_output_tokens_to_window(
             invoke_cfg,
             model_spec,
-            prompt_input if isinstance(prompt_input, str) else str(prompt_input),
+            clamp_prompt_text,
             overhead_tokens=payload_overhead,
             logger_prefix="[stream-executor]",
+        )
+        self._record_final_request_receipt(
+            request=request,
+            trace_id=trace_id,
+            model_spec=model_spec,
+            invoke_cfg=invoke_cfg,
+            budget_decision=budget_decision,
+            requested_output_tokens=requested_output_tokens,
+            max_tokens_before_clamp=max_tokens_before_clamp,
+            payload_overhead=payload_overhead,
+            prompt_input=prompt_input,
+            chat_messages_before=chat_messages,
+            chat_messages_after=effective_chat_messages,
+            clamp_prompt_text=clamp_prompt_text,
         )
 
         collected_output = ""

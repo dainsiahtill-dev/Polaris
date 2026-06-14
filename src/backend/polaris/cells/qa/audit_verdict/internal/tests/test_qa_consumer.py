@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import polaris.cells.qa.audit_verdict.internal.qa_consumer as qa_consumer_module
 import pytest
 from polaris.cells.qa.audit_verdict.internal.qa_consumer import (
     QAConsumer,
@@ -12,6 +13,13 @@ from polaris.cells.qa.audit_verdict.internal.qa_consumer import (
     _qa_findings_are_actionable,
     _resolve_qa_route,
 )
+from polaris.cells.runtime.task_market.public.contracts import (
+    AcknowledgeTaskStageCommandV1,
+    ClaimTaskWorkItemCommandV1,
+    PublishTaskWorkItemCommandV1,
+    QueryTaskMarketStatusV1,
+)
+from polaris.cells.runtime.task_market.public.service import TaskMarketService
 
 
 class TestResolveQARoute:
@@ -205,19 +213,127 @@ class TestQAConsumerPollOnce:
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
-        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
 
         consumer = QAConsumer(workspace="/test", worker_id="qa-2")
-        with patch.object(consumer, "_run_qa_audit", return_value={"verdict": "REQUEUE_EXEC", "audit_id": "a2"}):
+        with patch.object(
+            consumer,
+            "_run_qa_audit",
+            return_value={"verdict": "REQUEUE_EXEC", "audit_id": "a2", "findings": ["missing artifact evidence"]},
+        ):
             results = consumer.poll_once()
 
         assert len(results) == 1
         assert results[0]["ok"] is True
         assert results[0]["status"] == "pending_exec"
 
-        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
-        assert ack_call.next_stage == "pending_exec"
-        assert ack_call.terminal_status is None
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.requeue_stage == "pending_exec"
+        assert "missing artifact evidence" in fail_call.error_message
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_requeue_design_verdict_preserves_findings_as_last_failure(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-qa-design"
+        claim_result.lease_token = "lease-design"
+        claim_result.payload = {"title": "QA task"}
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_design")
+
+        consumer = QAConsumer(workspace="/test", worker_id="qa-design")
+        with patch.object(
+            consumer,
+            "_run_qa_audit",
+            return_value={
+                "verdict": "REQUEUE_DESIGN",
+                "audit_id": "a-design",
+                "findings": ["[error] blueprint lacks acceptance criteria"],
+            },
+        ):
+            results = consumer.poll_once()
+
+        assert len(results) == 1
+        assert results[0]["ok"] is True
+        assert results[0]["status"] == "pending_design"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.requeue_stage == "pending_design"
+        assert "acceptance criteria" in fail_call.error_message
+
+    def test_findings_bounce_cap_survives_new_consumer_instances(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_QA_FINDINGS_MAX_BOUNCES", "2")
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id="trace-bounce",
+                run_id="run-bounce",
+                task_id="task-bounce",
+                stage="pending_qa",
+                source_role="director",
+                payload={"title": "QA task"},
+                max_attempts=5,
+            )
+        )
+        monkeypatch.setattr(qa_consumer_module, "get_task_market_service", lambda: service)
+        audit = {
+            "verdict": "FAIL",
+            "audit_id": "audit-bounce",
+            "findings": ["[error] main.js: unsatisfiable critique"],
+        }
+
+        def _qa_pass(worker_id: str) -> dict[str, object]:
+            consumer = QAConsumer(workspace=str(workspace), worker_id=worker_id)
+            with patch.object(consumer, "_run_qa_audit", return_value=audit):
+                return consumer.poll_once()[0]
+
+        def _director_moves_back_to_qa(worker_id: str) -> None:
+            claim = service.claim_work_item(
+                ClaimTaskWorkItemCommandV1(
+                    workspace=str(workspace),
+                    stage="pending_exec",
+                    worker_id=worker_id,
+                    worker_role="director",
+                )
+            )
+            assert claim.ok is True
+            service.acknowledge_task_stage(
+                AcknowledgeTaskStageCommandV1(
+                    workspace=str(workspace),
+                    task_id="task-bounce",
+                    lease_token=claim.lease_token,
+                    next_stage="pending_qa",
+                    summary="Director retried after QA findings",
+                )
+            )
+
+        assert _qa_pass("qa-1")["reason"] == "qa_findings_requeued"
+        _director_moves_back_to_qa("director-1")
+        assert _qa_pass("qa-2")["reason"] == "qa_findings_requeued"
+        _director_moves_back_to_qa("director-2")
+
+        third_result = _qa_pass("qa-3")
+
+        assert third_result.get("reason") != "qa_findings_requeued"
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
+        row = {item["task_id"]: item for item in status.items}["task-bounce"]
+        assert row["status"] == "rejected"
+        counters = row["payload"].get("feedback_counters")
+        assert counters == {"qa_findings_to_pending_exec": 2}
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_audit_exception_requeues_pending_qa(self, mock_get_svc: MagicMock) -> None:
@@ -300,7 +416,7 @@ class TestQAConsumerPollOnce:
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
-        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
 
         consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-no-evidence")
         results = consumer.poll_once()
@@ -310,10 +426,10 @@ class TestQAConsumerPollOnce:
         assert results[0]["status"] == "pending_exec"
         assert results[0]["verdict"] == "FAIL"
 
-        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
-        assert ack_call.next_stage == "pending_exec"
-        assert ack_call.terminal_status is None
-        assert ack_call.metadata["metrics"]["missing_director_changed_files_evidence"] is True
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.requeue_stage == "pending_exec"
+        assert "Director changed_files evidence is required" in fail_call.error_message
 
 
 class TestSyntaxGate:

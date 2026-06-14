@@ -179,31 +179,34 @@ _ANCHORED_EDIT_TOOLS = frozenset(
 
 
 def resolve_repair_edit_target(context_override: Any, workspace: str) -> str | None:
-    """Return the target of a REPAIR turn that must preserve existing content (R7).
+    """Return the target of an EDIT-EXISTING turn that must preserve content (R7).
 
-    A repair turn is the symmetric inverse of a from-scratch turn
-    (:func:`resolve_from_scratch_write_target`): it fires only when the leaf
-    step's single declared ``target_file`` **already exists** on disk **and** the
-    turn carries a non-empty ``last_failure`` (QA verdict / syntax-gate error that
-    bounced the prior attempt back to ``pending_exec``). In that state the file is
-    real working code that failed for ONE named reason; the weak model must fix
-    that reason in place, not rewrite the whole file smaller (live I3-r28:
-    ``main.js`` regressed 5762B/22 constructs → 3095B/12 after a repair bounce).
+    Fires when the leaf step's single declared ``target_file`` **already exists** on
+    disk AND the turn must EDIT it in place rather than rewrite from scratch — in
+    either of two cases:
 
-    Returns None when there is no recorded failure (normal edit-on-prior / first
-    write), when the target does not yet exist (that is from-scratch territory),
-    and for non-step turns. Disabled via env ``KERNELONE_REPAIR_PRESERVE_EDIT`` ∈
-    {off,none,disabled,false,0}.
+      * a **repair/bounce turn** — non-empty ``last_failure`` from a prior QA /
+        syntax-gate rejection (live I3-r28: ``main.js`` regressed 5762B/22 → 3095B/12
+        when a repair rewrote it smaller), or
+      * an **``edit_on_prior`` step** — a CE-split *fill* (I3-r29) or a cross-parent
+        second writer, whose job is to extend an already-created file. The fill MUST
+        edit the skeleton's stubs, never ``write_file`` over the accumulated content.
+
+    In both the weak model is restricted to anchored edit tools. Returns None for
+    from-scratch turns (file absent → Prong A territory) and non-step turns. Disabled
+    via env ``KERNELONE_REPAIR_PRESERVE_EDIT`` ∈ {off,none,disabled,false,0}.
     """
     if os.environ.get(_REPAIR_PRESERVE_EDIT_ENV, "").strip().lower() in _REPAIR_PRESERVE_EDIT_DISABLED:
         return None
     if not isinstance(context_override, dict):
         return None
-    last_failure = context_override.get("last_failure")
-    if not isinstance(last_failure, dict) or not str(last_failure.get("error_message") or "").strip():
-        return None
     step = context_override.get("construction_step")
     if not isinstance(step, dict) or not step:
+        return None
+    last_failure = context_override.get("last_failure")
+    has_failure = isinstance(last_failure, dict) and bool(str(last_failure.get("error_message") or "").strip())
+    edit_on_prior = bool(step.get("edit_on_prior"))
+    if not has_failure and not edit_on_prior:
         return None
     target = str(step.get("target_file") or "").strip().replace("\\", "/")
     while target.startswith("./"):
@@ -213,7 +216,7 @@ def resolve_repair_edit_target(context_override: Any, workspace: str) -> str | N
     ws = str(workspace or ".").strip() or "."
     try:
         if os.path.exists(os.path.join(ws, target)):
-            return target  # existing file + recorded failure → preserve-and-edit
+            return target  # existing file + (failure OR edit_on_prior) → preserve-and-edit
     except OSError:
         return None
     return None

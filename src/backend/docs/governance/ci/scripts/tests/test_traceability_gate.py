@@ -117,9 +117,7 @@ def test_commit_without_blueprint_fails() -> None:
         _write_matrix(Path(tmpdir), matrix)
         result = run_traceability_gate(tmpdir)
         assert result.passed is False
-        assert any(
-            "COMMIT-1" in err and "no blueprint ancestor" in err for err in result.errors
-        )
+        assert any("COMMIT-1" in err and "no blueprint ancestor" in err for err in result.errors)
 
 
 def test_cli_exit_code_zero_on_pass(capsys: pytest.CaptureFixture[str]) -> None:
@@ -146,9 +144,7 @@ def test_cli_exit_code_one_on_fail(capsys: pytest.CaptureFixture[str]) -> None:
         }
         _write_matrix(Path(tmpdir), matrix)
         with (
-            mock.patch.object(
-                sys, "argv", ["run_traceability_gate.py", "--workspace", tmpdir]
-            ),
+            mock.patch.object(sys, "argv", ["run_traceability_gate.py", "--workspace", tmpdir]),
             pytest.raises(SystemExit) as exc_info,
         ):
             main()
@@ -192,10 +188,7 @@ def test_gate14_commit_with_unapproved_blueprint_fails() -> None:
         _write_blueprint(Path(tmpdir), "bp-1", {"status": "draft"})
         result = run_traceability_gate(tmpdir)
         assert result.passed is False
-        assert any(
-            "COMMIT-1" in err and "unapproved or missing blueprint bp-1" in err
-            for err in result.errors
-        )
+        assert any("COMMIT-1" in err and "unapproved or missing blueprint bp-1" in err for err in result.errors)
 
 
 def test_gate14_commit_with_approved_blueprint_passes() -> None:
@@ -248,9 +241,7 @@ def test_gate15_version_lag_fails() -> None:
         _write_matrix(Path(tmpdir), matrix)
         result = run_traceability_gate(tmpdir)
         assert result.passed is False
-        assert any(
-            "BP-1 version 2 lags behind doc version 3" in err for err in result.errors
-        )
+        assert any("BP-1 version 2 lags behind doc version 3" in err for err in result.errors)
 
 
 def test_gate15_no_impact_skips() -> None:

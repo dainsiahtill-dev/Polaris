@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import warnings
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -981,6 +982,10 @@ class TestLifecycleAndCacheGuards:
                     "mode": "chat",
                     "native_tool_mode": "disabled",
                     "response_format_mode": "native_json_schema",
+                    "chat_messages": [
+                        {"role": "system", "content": "system"},
+                        {"role": "user", "content": "hello"},
+                    ],
                 }
             ),
         )
@@ -996,6 +1001,42 @@ class TestLifecycleAndCacheGuards:
         assert request.context["mode"] == "structured"
         assert request.context["response_format_mode"] == "text_json_fallback"
         assert "运行时结构化输出回退" in request.input
+        assert "运行时结构化输出回退" in request.context["chat_messages"][-1]["content"]
+
+    def test_native_tool_fallback_request_updates_provider_bound_chat_messages(self) -> None:
+        caller = LLMCaller(workspace="C:/workspace")
+        prepared = SimpleNamespace(
+            request_options={
+                "temperature": 0.2,
+                "max_tokens": 256,
+                "timeout": 120,
+                "tools": [{"type": "function", "function": {"name": "read_file"}}],
+                "tool_choice": "auto",
+            },
+            input_text="read README",
+            ai_request=SimpleNamespace(
+                context={
+                    "workspace": "C:/workspace",
+                    "mode": "chat",
+                    "native_tool_mode": "native_tools",
+                    "chat_messages": [
+                        {"role": "system", "content": "system"},
+                        {"role": "user", "content": "read README"},
+                    ],
+                }
+            ),
+        )
+
+        request = caller._build_native_tool_fallback_request(
+            prepared=cast("PreparedLLMRequest", prepared),
+            profile=cast("RoleProfile", MockProfile(role_id="director", model="qwen", provider_id="local")),
+        )
+
+        assert "tools" not in request.options
+        assert "tool_choice" not in request.options
+        assert request.context["native_tool_mode"] == "native_tools_text_fallback"
+        assert "运行时工具回退" in request.input
+        assert "运行时工具回退" in request.context["chat_messages"][-1]["content"]
 
     @pytest.mark.asyncio
     async def test_call_stream_error_event_contains_metadata_on_prepare_failure(
@@ -1148,7 +1189,10 @@ class TestLifecycleAndCacheGuards:
                     compression_strategy="none",
                     compression_applied=False,
                 ),
-                messages=[{"role": "system", "content": "system"}, {"role": "user", "content": "hello"}],
+                messages=[
+                    {"role": "system", "content": "SECRET SYSTEM CONTENT"},
+                    {"role": "user", "content": "SECRET USER CONTENT"},
+                ],
                 native_tool_mode="disabled",
                 response_format_mode="plain_text",
                 native_tool_schemas=[],
@@ -1185,7 +1229,9 @@ class TestLifecycleAndCacheGuards:
         assert payload["provider_id"] == "openai"
         assert payload["model"] == "gpt-5-resolved"
         assert payload["message_count"] == 2
-        assert payload["messages"] == [
-            {"role": "system", "content": "system"},
-            {"role": "user", "content": "hello"},
-        ]
+        assert payload["message_roles"] == ["system", "user"]
+        assert payload["message_content_sha256"]
+        assert "messages" not in payload
+        serialized_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        assert "SECRET SYSTEM CONTENT" not in serialized_payload
+        assert "SECRET USER CONTENT" not in serialized_payload
