@@ -486,3 +486,33 @@ class TestPipelineRunner:
 
         os = StateFirstContextOS(policy=policy)
         assert os._get_pipeline_runner() is not None
+
+    @pytest.mark.asyncio
+    async def test_state_first_context_os_records_last_projection_report(
+        self,
+        policy: StateFirstContextOSPolicy,
+        tmp_path,
+    ) -> None:
+        from polaris.kernelone.context.context_os.diagnostics import (
+            get_contextos_diagnostics,
+            reset_contextos_diagnostics,
+        )
+        from polaris.kernelone.context.context_os.runtime import StateFirstContextOS
+
+        reset_contextos_diagnostics()
+        os = StateFirstContextOS(policy=policy, workspace=str(tmp_path))
+
+        initial = get_contextos_diagnostics(str(tmp_path))
+        assert initial["state"] == "no_projection"
+
+        projection = await os.project(messages=[{"role": "user", "content": "Hello", "sequence": "0"}])
+
+        assert projection.snapshot is not None
+        report = os.get_last_projection_report()
+        assert report is not None
+        assert report["projection_id"]
+        assert report["candidate_count"] >= 1
+
+        diagnostics = get_contextos_diagnostics(str(tmp_path))
+        assert diagnostics["state"] == "available"
+        assert diagnostics["details"]["last_projection_report"]["projection_id"] == report["projection_id"]

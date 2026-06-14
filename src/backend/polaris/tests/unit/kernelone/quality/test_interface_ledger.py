@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from polaris.kernelone.quality.interface_ledger import (
+    read_all_declared_interfaces,
     read_declared_interfaces,
     record_declared_interfaces,
     render_assume_contract,
@@ -102,3 +103,26 @@ class TestRenderAssumeContract:
         assert "main.js 已公开标识符: update" in text
         assert "function update(dt)" in text
         assert "必须复用" in text
+
+
+class TestReadAllDeclaredInterfaces:
+    """I3-r28: surface the cross-file contract to the Director as a precondition."""
+
+    def test_returns_all_declared_files(self, tmp_path: Path) -> None:
+        record_declared_interfaces(str(tmp_path), str(tmp_path), _steps())
+        declared = read_all_declared_interfaces(str(tmp_path), str(tmp_path))
+        assert set(declared) == {"index.html", "main.js"}
+        assert declared["index.html"]["identifiers"] == ["game", "score", "lives", "message", "hud"]
+
+    def test_exclude_target_drops_own_file(self, tmp_path: Path) -> None:
+        record_declared_interfaces(str(tmp_path), str(tmp_path), _steps())
+        declared = read_all_declared_interfaces(str(tmp_path), str(tmp_path), exclude_target="main.js")
+        assert set(declared) == {"index.html"}
+
+    def test_exclude_target_normalizes_dot_slash(self, tmp_path: Path) -> None:
+        record_declared_interfaces(str(tmp_path), str(tmp_path), _steps())
+        declared = read_all_declared_interfaces(str(tmp_path), str(tmp_path), exclude_target="./main.js")
+        assert "main.js" not in declared
+
+    def test_missing_ledger_is_empty(self, tmp_path: Path) -> None:
+        assert read_all_declared_interfaces(str(tmp_path), str(tmp_path)) == {}

@@ -264,6 +264,28 @@ def _repair_shrink_error(workspace: str, target: str, prior_size: int) -> str | 
     )
 
 
+def _read_consumed_interfaces(
+    workspace: str, payload: dict[str, Any], step: dict[str, Any]
+) -> dict[str, dict[str, Any]] | None:
+    """Frozen identifiers of OTHER files this step must reuse, from the interface ledger.
+
+    I3-r28: surfacing the cross-file contract turns it from an unverified CE-prompt
+    nudge into a precondition the Director actually sees, so it reuses frozen names
+    (e.g. ``gameCanvas``) instead of inventing mismatched ones (e.g. ``game``).
+    Fail-open (None): the contract is advisory context, never a turn-stranding hard dep.
+    """
+    own_target = str(step.get("target_file") or "").strip()
+    try:
+        from polaris.kernelone.quality.interface_ledger import read_all_declared_interfaces
+
+        declared = read_all_declared_interfaces(
+            workspace, str(payload.get("cache_root", "")), exclude_target=own_target
+        )
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return declared or None
+
+
 def _append_normalized_paths(paths: list[str], raw: Any) -> None:
     for value in _normalize_string_list(raw):
         normalized = value.replace("\\", "/")
@@ -896,6 +918,13 @@ class DirectorExecutionConsumer:
             punch_list = _pre_state_punch_list(construction_step, cwd=str(workspace_path))
             if punch_list is not None:
                 context["pre_state_verify"] = punch_list
+            # Interface coherence (I3-r28): surface the frozen identifiers of OTHER
+            # files so the weak Director REUSES cross-file names instead of inventing
+            # mismatched ones (live: main.js getElementById('game') vs index.html
+            # 'gameCanvas'). The cross-file ledger is the shared blackboard trace.
+            consumed_interfaces = _read_consumed_interfaces(str(workspace_path), payload, construction_step)
+            if consumed_interfaces:
+                context["consumed_interfaces"] = consumed_interfaces
         # Bounce teaching: a requeued step carries the previous failure
         # (QA verify output, target-miss directive). Without it the retry
         # is blind — the file looks complete, the model makes no changes,

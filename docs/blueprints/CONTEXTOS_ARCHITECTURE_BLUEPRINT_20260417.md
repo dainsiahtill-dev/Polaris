@@ -14,6 +14,8 @@
 
 > 两者的关系就像 **OS（操作系统）** 与 **具体内核实现（如 Linux kernel）**：ContextOS 是概念与接口规范，StateFirstContextOS 是唯一在生产环境中运行的代码实体。
 
+> 2026-06-14 Cell ownership 补充：ContextOS 四层实现归 `kernelone.core`；`roles.kernel`、`context.engine`、`orchestration.pm_dispatch` 只是 ContextOS consumer / facade / workflow caller；durable receipt 与 handoff 归 `factory.cognitive_runtime`。
+
 ---
 
 ## 2. 为什么叫 "StateFirst"？

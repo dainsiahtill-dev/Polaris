@@ -62,6 +62,15 @@ def _with_context_os_audit(metadata: dict[str, Any], prepared: PreparedLLMReques
     return payload
 
 
+def _get_cognitive_runtime_receipt_deps() -> tuple[Any, Any]:
+    from polaris.cells.factory.cognitive_runtime.public import (
+        RecordRuntimeReceiptCommandV1,
+        get_cognitive_runtime_public_service,
+    )
+
+    return RecordRuntimeReceiptCommandV1, get_cognitive_runtime_public_service
+
+
 # Module loaded indicator
 print(f"[LLMInvoker] MODULE LOADED: __name__={__name__}", flush=True)
 
@@ -141,7 +150,67 @@ class LLMInvoker:
         """Get or create AIExecutor instance (lazy, respects DI injection)."""
         if self._executor is not None:
             return self._executor
-        return AIExecutor()
+        return AIExecutor(
+            workspace=self.workspace,
+            final_request_receipt_sink=self._record_final_request_receipt,
+        )
+
+    def _record_final_request_receipt(self, receipt: dict[str, Any]) -> None:
+        if not isinstance(receipt, dict):
+            return
+        raw_payload = receipt.get("payload")
+        payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        receipt_type = str(receipt.get("receipt_type") or "contextos.final_request").strip()
+        if not receipt_type:
+            receipt_type = "contextos.final_request"
+
+        trace_refs = self._normalize_trace_refs(receipt.get("trace_refs"), payload.get("trace_id"))
+        try:
+            Command, get_service = _get_cognitive_runtime_receipt_deps()
+            result = get_service().record_runtime_receipt(
+                Command(
+                    workspace=self.workspace or ".",
+                    receipt_type=receipt_type,
+                    payload=payload,
+                    session_id=self._optional_str(payload.get("session_id")),
+                    run_id=self._optional_str(payload.get("run_id")),
+                    trace_refs=trace_refs,
+                    turn_envelope={
+                        "source": "roles.kernel.llm_invoker",
+                        "receipt_type": receipt_type,
+                        "trace_id": self._optional_str(payload.get("trace_id")),
+                        "task_id": self._optional_str(payload.get("task_id")),
+                        "role": self._optional_str(payload.get("role")),
+                    },
+                )
+            )
+        except (ImportError, RuntimeError, ValueError, TypeError) as exc:
+            logger.warning("[LLMInvoker] contextos final request receipt failed: %s", exc)
+            return
+        if not bool(getattr(result, "ok", False)):
+            logger.warning(
+                "[LLMInvoker] contextos final request receipt rejected: %s",
+                getattr(result, "error_message", "") or getattr(result, "error_code", ""),
+            )
+
+    @staticmethod
+    def _normalize_trace_refs(raw_refs: Any, fallback_trace_id: Any = None) -> tuple[str, ...]:
+        refs: list[str] = []
+        if isinstance(raw_refs, (list, tuple, set, frozenset)):
+            refs.extend(str(item).strip() for item in raw_refs if str(item or "").strip())
+        else:
+            text = str(raw_refs or "").strip()
+            if text:
+                refs.append(text)
+        fallback = str(fallback_trace_id or "").strip()
+        if fallback and fallback not in refs:
+            refs.append(fallback)
+        return tuple(refs)
+
+    @staticmethod
+    def _optional_str(value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
 
     # ========================================================================
     # Non-streaming call (migrated from call_sync.py)

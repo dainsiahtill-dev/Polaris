@@ -245,6 +245,107 @@ def test_run_post_dispatch_integration_qa_records_cognitive_runtime_receipt(monk
     assert captured["closed"] is True
 
 
+def test_run_post_dispatch_integration_qa_failure_requeues_director_with_critique(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "polaris.cells.factory.cognitive_runtime.public.get_cognitive_runtime_public_service",
+        lambda: _SuccessfulCognitiveRuntimeService(captured),
+    )
+    from polaris.cells.runtime.task_market.public.contracts import (
+        AcknowledgeTaskStageCommandV1,
+        ClaimTaskWorkItemCommandV1,
+        PublishTaskWorkItemCommandV1,
+        QueryTaskMarketStatusV1,
+    )
+    from polaris.cells.runtime.task_market.public.service import get_task_market_service
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = get_task_market_service()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-integration-qa",
+            run_id="pm-00003b",
+            task_id="TASK-A",
+            stage="pending_exec",
+            source_role="PM",
+            payload={
+                "title": "Implement feature",
+                "target_files": ["src/app.py"],
+                "acceptance_criteria": ["pytest passes"],
+            },
+        )
+    )
+    claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director",
+            worker_role="director",
+            task_id="TASK-A",
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="TASK-A",
+            lease_token=claim.lease_token,
+            terminal_status="resolved",
+            summary="Director completed",
+        )
+    )
+
+    run_dir = tmp_path / "runtime" / "runs" / "qa-critique"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_events = tmp_path / "runtime" / "events" / "runtime.events.jsonl"
+    run_events.parent.mkdir(parents=True, exist_ok=True)
+    dialogue_full = tmp_path / "runtime" / "events" / "dialogue.transcript.jsonl"
+    dialogue_full.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = run_post_dispatch_integration_qa(
+        args=SimpleNamespace(integration_qa=True),
+        workspace_full=str(workspace),
+        cache_root_full="",
+        run_dir=str(run_dir),
+        run_id="pm-00003b",
+        iteration=3,
+        tasks=[
+            {
+                "id": "TASK-A",
+                "title": "Implement feature",
+                "assigned_to": "Director",
+                "status": "done",
+                "target_files": ["src/app.py"],
+                "acceptance_criteria": ["pytest passes"],
+            }
+        ],
+        run_events=str(run_events),
+        dialogue_full=str(dialogue_full),
+        verify_runner=lambda workspace_arg: (
+            False,
+            "Integration verification failed: pytest -q",
+            ["tests/test_app.py::test_feature failed"],
+        ),
+    )
+
+    assert payload["passed"] is False
+    assert payload["reason"] == "integration_qa_failed"
+    feedback = payload["director_critique_feedback"]
+    assert feedback["requeued_task_ids"] == ["TASK-A"]
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
+    row = {item["task_id"]: item for item in status.items}["TASK-A"]
+    assert row["status"] == "pending_exec"
+    last_failure = row["payload"]["last_failure"]
+    assert last_failure["error_code"] == "INTEGRATION_QA_FAILED"
+    assert last_failure["source"] == "pm_dispatch.integration_qa"
+    assert "pytest -q" in last_failure["error_message"]
+    assert last_failure["target_files"] == ["src/app.py"]
+
+
 def test_run_post_dispatch_integration_qa_fails_closed_when_required_receipt_fails(monkeypatch, tmp_path) -> None:
     captured: dict[str, Any] = {}
     monkeypatch.setattr(

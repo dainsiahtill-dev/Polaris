@@ -882,17 +882,6 @@ cells:
       - polaris.cells.context.engine.public.service
       - polaris.cells.context.engine.internal.search_gateway
       - polaris.cells.context.engine.internal.precision_mode
-      - polaris.kernelone.context.context_os.models
-      - polaris.kernelone.context.context_os.models_v2
-      - polaris.kernelone.context.context_os.content_store
-      - polaris.kernelone.context.context_os.receipt_store
-      - polaris.kernelone.context.context_os.runtime
-      - polaris.kernelone.context.context_os.storage
-      - polaris.kernelone.context.context_os.snapshot
-      - polaris.kernelone.context.context_os.budget_optimizer
-      - polaris.kernelone.context.context_os.classifier
-      - polaris.kernelone.context.context_os.policies
-      - polaris.kernelone.context.context_os.ports
     owned_paths:
       - polaris/cells/context/engine/public/**
       - polaris/cells/context/engine/internal/search_gateway.py
@@ -3321,6 +3310,15 @@ cells:
       kernel utilities. This cell provides the foundational OS-level
       capabilities used by business cells through explicit contracts.
     current_modules:
+      - polaris.kernelone.context.truth_log_service
+      - polaris.kernelone.context.working_state_manager
+      - polaris.kernelone.context.receipt_store
+      - polaris.kernelone.context.projection_engine
+      - polaris.kernelone.context.control_plane_noise
+      - polaris.kernelone.context.budget_gate
+      - polaris.kernelone.context.compaction
+      - polaris.kernelone.context.session_continuity
+      - polaris.kernelone.context.working_set
       - polaris.kernelone.context.context_os.models
       - polaris.kernelone.context.context_os.models_v2
       - polaris.kernelone.context.context_os.content_store
@@ -3334,7 +3332,7 @@ cells:
       - polaris.kernelone.context.context_os.ports
       - polaris.kernelone.workflow.engine
     owned_paths:
-      - polaris/kernelone/context/context_os/**
+      - polaris/kernelone/context/**
       - polaris/kernelone/workflow/engine.py
     public_contracts:
       modules:

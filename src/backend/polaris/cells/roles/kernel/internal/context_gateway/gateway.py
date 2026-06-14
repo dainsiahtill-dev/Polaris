@@ -1135,6 +1135,23 @@ class RoleContextGateway:
         interfaces = [str(s).strip() for s in (step.get("interface_names") or []) if str(s).strip()]
         if interfaces:
             lines.append("interfaces: " + ", ".join(interfaces[:16]))
+        # Interface coherence (I3-r28): the frozen identifiers OTHER files already
+        # exposed. The weak Director must reuse these exact names so cross-file refs
+        # resolve at runtime (live: main.js must call the id index.html froze, not
+        # invent its own). Bounded to a few files/names to respect the 16k window.
+        consumed = context_override.get("consumed_interfaces")
+        if isinstance(consumed, dict) and consumed:
+            consumed_lines: list[str] = []
+            for other_target in sorted(consumed)[:6]:
+                entry = consumed.get(other_target)
+                if not isinstance(entry, dict):
+                    continue
+                names = [str(n).strip() for n in (entry.get("identifiers") or []) if str(n).strip()][:10]
+                if names:
+                    consumed_lines.append(f"  {other_target} 已公开: {', '.join(names)}")
+            if consumed_lines:
+                lines.append("跨文件接口(必须复用完全相同的名字，勿自创):")
+                lines.extend(consumed_lines)
         verify = str(step.get("verify") or "").strip()
         if verify:
             lines.append(f"verify: {verify}")
@@ -1167,7 +1184,17 @@ class RoleContextGateway:
             failure_code = str(failure.get("error_code") or "").strip()
             if failure_message or failure_code:
                 lines.append(f"上次尝试失败({failure_code}): {failure_message[:240]}")
-                lines.append("必须先修正失败原因，再写目标文件并产生实际变更；不要原样重写。")
+                # R7-B (I3-r28, Self-Refine): the prose "don't rewrite" hint empirically
+                # fails — the weak model rewrites the file smaller anyway. Replace it with
+                # an imperative, format-specific directive that names the anchored edit verb
+                # and warns about the deterministic shrink gate (R7-C) that will reject a
+                # degraded rewrite.
+                lines.append(
+                    "[修复轮·只做定点编辑] 目标文件已存在且是可用代码，只因上述原因失败。"
+                    "只修这一处：用 edit_blocks 发 SEARCH/REPLACE 块（或 file+start+end+replace 行区间编辑），"
+                    "严禁用 write_file 整文件重写。保留所有既有函数/类/逻辑，不得缩短或删除既有内容——"
+                    "任何使文件明显变小或丢失既有功能的回应都会被自动拒收并退回重做。"
+                )
         return "\n".join(lines) or None
 
     def _get_scout_anchors(self) -> str | None:

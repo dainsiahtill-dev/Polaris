@@ -108,10 +108,28 @@ _QA_FINDINGS_REQUEUE_ENV = "KERNELONE_QA_FINDINGS_REQUEUE"
 _QA_FINDINGS_REQUEUE_DISABLED = {"off", "none", "disabled", "false", "0"}
 _QA_FEEDBACK_MAX_FINDINGS = 5
 _QA_FEEDBACK_MAX_CHARS = 600
+# A Director success-ack resets the market's per-stage attempt budget, so without a
+# cross-stage cap a content FAIL the weak model cannot satisfy would ping-pong
+# QA<->Director until lease/wall-clock exhaustion. Bound it with a small per-task cap.
+_QA_FINDINGS_MAX_BOUNCES_ENV = "KERNELONE_QA_FINDINGS_MAX_BOUNCES"
+_DEFAULT_QA_FINDINGS_MAX_BOUNCES = 2
 
 
 def _qa_findings_requeue_enabled() -> bool:
     return os.environ.get(_QA_FINDINGS_REQUEUE_ENV, "").strip().lower() not in _QA_FINDINGS_REQUEUE_DISABLED
+
+
+def _qa_findings_max_bounces() -> int:
+    """Resolve the per-task RANK 1 requeue cap (env override, else 2). Clamped to >=0."""
+    raw = os.environ.get(_QA_FINDINGS_MAX_BOUNCES_ENV, "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            return _DEFAULT_QA_FINDINGS_MAX_BOUNCES
+        if value >= 0:
+            return value
+    return _DEFAULT_QA_FINDINGS_MAX_BOUNCES
 
 
 def _qa_findings_are_actionable(findings: Any) -> bool:
@@ -300,6 +318,11 @@ class QAConsumer:
         self._poll_interval = float(poll_interval)
         self._stop_event = threading.Event()
         self._svc = get_task_market_service()
+        # RANK 1 cross-stage bounce bound (I3-r28): per-task count of content-FAIL
+        # requeues this run. A Director success-ack resets the market's per-stage
+        # attempt budget, so this in-memory cap is what makes an unsatisfiable
+        # critique terminal-reject instead of ping-ponging until lease exhaustion.
+        self._qa_findings_bounce_counts: dict[str, int] = {}
 
         # Initialize QA service
         from polaris.cells.qa.audit_verdict.internal.qa_service import QAConfig
@@ -500,7 +523,9 @@ class QAConsumer:
                 and not next_stage
                 and _qa_findings_requeue_enabled()
                 and _qa_findings_are_actionable(audit_findings)
+                and self._qa_findings_bounce_counts.get(task_id, 0) < _qa_findings_max_bounces()
             ):
+                self._qa_findings_bounce_counts[task_id] = self._qa_findings_bounce_counts.get(task_id, 0) + 1
                 self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
@@ -517,6 +542,10 @@ class QAConsumer:
                     "verdict": verdict,
                     "reason": "qa_findings_requeued",
                 }
+
+            # Reaching here means this task is terminating or advancing (not a RANK 1
+            # requeue): drop its bounce counter so a future task_id reuse starts clean.
+            self._qa_findings_bounce_counts.pop(task_id, None)
 
             ack_payload: dict[str, Any] = {
                 "verdict": verdict,

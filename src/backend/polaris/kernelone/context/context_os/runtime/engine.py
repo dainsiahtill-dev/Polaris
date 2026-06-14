@@ -25,6 +25,7 @@ from polaris.kernelone.errors import StateNotFoundError, ValidationError
 
 from ..bounded_cache import BoundedCache, LRUBoundedCache
 from ..classifier import DialogActClassifier
+from ..diagnostics import record_contextos_projection_report
 from ..domain_adapters import (
     ContextDomainAdapter,
     ContextOSObserver,
@@ -134,6 +135,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         # Immutable snapshot store for context projection audit/replay
         # Resolve via Workspace persistent layer: <workspace>/.polaris/meta/context_snapshots
         self._snapshot_store: SnapshotStore | None = None
+        self._last_projection_report: dict[str, Any] | None = None
 
         # v2.1: Content store for content-addressable deduplication (lazy init)
         self._content_store: Any | None = None
@@ -491,7 +493,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
 
         # 2. Compute projection outside lock (CPU-intensive, thread-safe)
         loop = asyncio.get_event_loop()
-        projection = await loop.run_in_executor(
+        projection, projection_report = await loop.run_in_executor(
             self._executor,
             self._project_via_pipeline_sync,
             snapshot,
@@ -507,8 +509,19 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         async with self._get_project_lock():
             if self._validate_projection(projection):
                 self._commit_projection(projection)
+                self._last_projection_report = projection_report.to_dict()
+                record_contextos_projection_report(self._workspace, self._last_projection_report)
 
         return projection
+
+    def get_last_projection_report(self) -> dict[str, Any] | None:
+        """Return a copy of the latest committed projection report."""
+
+        if self._last_projection_report is None:
+            return None
+        from copy import deepcopy
+
+        return deepcopy(self._last_projection_report)
 
     def _take_snapshot(self) -> tuple[tuple[Any, ...], Any, dict[str, Any]]:
         """Capture minimal immutable snapshot of current state for thread-safe compute.
@@ -595,7 +608,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         focus: str,
         pipeline_runner: PipelineRunner,
         content_store: Any,
-    ) -> ContextOSProjection:
+    ) -> tuple[ContextOSProjection, Any]:
         """Project context via the 7-stage pipeline architecture (pure function).
 
         This method MUST NOT modify shared mutable state. It operates on
@@ -634,7 +647,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
             focus=focus,
         )
 
-        projection, _report = pipeline_runner.project(inp, adapter_id=self.domain_adapter.adapter_id)
+        projection, report = pipeline_runner.project(inp, adapter_id=self.domain_adapter.adapter_id)
 
         logger.debug(
             "[DEBUG][ContextOS] _project_via_pipeline_sync end: tx_events=%d active_window=%d artifacts=%d episodes=%d run_card_goal=%r",
@@ -645,7 +658,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
             projection.run_card.current_goal if projection.run_card else "<none>",
         )
 
-        return projection
+        return projection, report
 
     async def reclassify_event(
         self,

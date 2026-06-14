@@ -155,6 +155,35 @@ def read_declared_interfaces(
     return declared
 
 
+def read_all_declared_interfaces(
+    workspace: str,
+    cache_root: str,
+    *,
+    exclude_target: str = "",
+) -> dict[str, dict[str, Any]]:
+    """Return every ledger entry that declares identifiers/signatures.
+
+    Used to surface the cross-file interface contract to the Director at exec time
+    (I3-r28): the weak model must REUSE the names other files already froze instead
+    of inventing mismatched ones (live: ``main.js`` calling ``getElementById('game')``
+    while ``index.html`` froze ``gameCanvas``). ``exclude_target`` drops the file the
+    current step owns, leaving only what it must consume.
+    """
+    excluded = _normalize_target(exclude_target)
+    ledger = _load(workspace, cache_root)
+    files: dict[str, Any] = ledger["files"]
+    declared: dict[str, dict[str, Any]] = {}
+    for raw_target, entry in files.items():
+        target = _normalize_target(raw_target)
+        if not target or target == excluded or not isinstance(entry, dict):
+            continue
+        identifiers = _string_list(entry.get("identifiers"))
+        signatures = _string_list(entry.get("signatures"))
+        if identifiers or signatures:
+            declared[target] = {"identifiers": identifiers, "signatures": signatures}
+    return declared
+
+
 def render_assume_contract(declared: dict[str, dict[str, Any]]) -> str:
     """Render the frozen cross-file interface contract for the fission prompt.
 
@@ -180,6 +209,7 @@ def render_assume_contract(declared: dict[str, dict[str, Any]]) -> str:
 
 
 __all__ = [
+    "read_all_declared_interfaces",
     "read_declared_interfaces",
     "record_declared_interfaces",
     "render_assume_contract",

@@ -129,6 +129,16 @@ roles.kernel 当前仍处于“旧 TurnEngine 主路径 + 新事务控制器旁�
 8. `python -m pytest polaris/kernelone/tool_execution/tests/test_contracts_validation_integration.py -q` ✅
 9. `python -m pytest polaris/cells/roles/kernel/tests/ polaris/kernelone/context/tests/ -q` ✅ (1753 passed, 5 skipped)
 
+## 2026-06-14 归属补充裁决
+
+本 ADR 的 Context Plane / Data Plane 隔离决策继续有效，但 Cell 归属按当前 graph truth 收口如下：
+
+1. ContextOS 四层实现（`TruthLogService`、`WorkingStateManager`、`ReceiptStore`、`ProjectionEngine`、`StateFirstContextOS`）归 `kernelone.core`。
+2. `roles.kernel` 只通过 `RoleContextGateway`、`TransactionKernel`、`LLMCaller` 消费 ContextOS 能力，不拥有 ContextOS runtime/schema，也不得新增平行 handoff schema。
+3. Durable runtime receipt、handoff export/rehydration 仍归 `factory.cognitive_runtime`，通过公开 `RecordRuntimeReceiptCommandV1` 等契约写入。
+4. `context.engine` 是 graph-constrained role-facing context facade，不拥有 ContextOS 四层实现。
+5. `orchestration.pm_dispatch` 只通过 `runtime.task_market` 和 `factory.cognitive_runtime` 公开契约路由 QA critique/receipt，禁止直接写 ContextOS 或 task-market 内部存储。
+
 ## 关联资产
 
 - `docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md`

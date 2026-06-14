@@ -80,6 +80,18 @@ def _get_task_market_services() -> tuple[type, Callable]:
     return PublishTaskWorkItemCommandV1, get_task_market_service
 
 
+def _get_task_market_requeue_services() -> tuple[type, Callable]:
+    """Lazy import for supervisor requeue without widening module-level coupling."""
+    from polaris.cells.runtime.task_market.public.contracts import (
+        RequeueTaskCommandV1,
+    )
+    from polaris.cells.runtime.task_market.public.service import (
+        get_task_market_service,
+    )
+
+    return RequeueTaskCommandV1, get_task_market_service
+
+
 def _get_task_market_revision_services() -> tuple[type, type, type]:
     """Lazy import for task_market revision/change-order contracts."""
     from polaris.cells.runtime.task_market.public.contracts import (
@@ -2281,6 +2293,11 @@ def run_integration_qa(
         iteration=iteration,
         result=result,
     )
+    result["director_critique_feedback"] = _requeue_director_tasks_after_integration_qa_failure(
+        workspace_full=workspace_full,
+        result=result,
+        tasks=tasks,
+    )
     return result
 
 
@@ -2490,6 +2507,123 @@ def _execute_post_dispatch_integration_qa(
     )
 
 
+def _integration_qa_failure_should_requeue(result: dict[str, Any]) -> bool:
+    if result.get("passed") is not False:
+        return False
+    if result.get("ran") is not True:
+        return False
+    return str(result.get("reason") or "").strip() in {
+        "integration_qa_failed",
+        "integration_qa_runtime_error",
+        "integration_qa_error",
+    }
+
+
+def _extract_task_id(task: Any) -> str:
+    if not isinstance(task, dict):
+        return ""
+    for key in ("id", "task_id", "pm_task_id"):
+        token = str(task.get(key) or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def _string_list_from_task(task: dict[str, Any], key: str) -> list[str]:
+    raw = task.get(key)
+    if not isinstance(raw, list):
+        return []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def _build_integration_qa_last_failure(
+    *,
+    result: dict[str, Any],
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    errors = [str(item).strip() for item in (result.get("errors") or []) if str(item).strip()]
+    summary = str(result.get("summary") or "").strip()
+    message_parts = [summary, *errors]
+    error_message = " | ".join(part for part in message_parts if part).strip()
+    if not error_message:
+        error_message = str(result.get("reason") or "integration_qa_failed")
+    return {
+        "error_code": "INTEGRATION_QA_FAILED",
+        "error_message": error_message[:1200],
+        "source": "pm_dispatch.integration_qa",
+        "reason": str(result.get("reason") or ""),
+        "run_id": str(result.get("run_id") or ""),
+        "pm_iteration": int(result.get("pm_iteration") or 0),
+        "result_path": str(result.get("result_path") or ""),
+        "runtime_result_path": str(result.get("runtime_result_path") or ""),
+        "qa_path": str(result.get("qa_path") or "dispatch_pipeline"),
+        "evidence_grade": str(result.get("evidence_grade") or "unknown"),
+        "target_files": _string_list_from_task(task, "target_files"),
+        "acceptance_criteria": _string_list_from_task(task, "acceptance_criteria"),
+    }
+
+
+def _requeue_director_tasks_after_integration_qa_failure(
+    *,
+    workspace_full: str,
+    result: dict[str, Any],
+    tasks: Any,
+) -> dict[str, Any]:
+    feedback: dict[str, Any] = {
+        "attempted_task_ids": [],
+        "requeued_task_ids": [],
+        "skipped_task_ids": [],
+        "errors": [],
+    }
+    if not _integration_qa_failure_should_requeue(result):
+        return feedback
+    if not isinstance(tasks, list):
+        feedback["errors"].append("tasks_payload_not_list")
+        return feedback
+
+    try:
+        RequeueTaskCommandV1, get_task_market_service = _get_task_market_requeue_services()
+        task_market_service = get_task_market_service()
+    except (ImportError, RuntimeError, ValueError) as exc:
+        feedback["errors"].append(f"task_market_unavailable: {exc}")
+        return feedback
+
+    seen: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = _extract_task_id(task)
+        if not task_id or task_id in seen:
+            continue
+        seen.add(task_id)
+        feedback["attempted_task_ids"].append(task_id)
+        last_failure = _build_integration_qa_last_failure(result=result, task=task)
+        try:
+            requeue_result = task_market_service.requeue_task(
+                RequeueTaskCommandV1(
+                    workspace=workspace_full,
+                    task_id=task_id,
+                    target_stage="pending_exec",
+                    reason=str(result.get("summary") or result.get("reason") or "integration_qa_failed"),
+                    metadata={
+                        "source": "pm_dispatch.integration_qa",
+                        "last_failure": last_failure,
+                    },
+                )
+            )
+        except (RuntimeError, ValueError) as exc:
+            feedback["errors"].append(f"{task_id}: {exc}")
+            continue
+        if bool(getattr(requeue_result, "ok", False)):
+            feedback["requeued_task_ids"].append(task_id)
+        else:
+            feedback["skipped_task_ids"].append(task_id)
+            reason = str(getattr(requeue_result, "reason", "") or getattr(requeue_result, "error_message", "") or "")
+            if reason:
+                feedback["errors"].append(f"{task_id}: {reason}")
+    return feedback
+
+
 def _persist_post_dispatch_integration_qa_result(
     *,
     run_dir: str,
@@ -2667,6 +2801,11 @@ def run_post_dispatch_integration_qa(
         run_id=run_id,
         iteration=iteration,
         result=result,
+    )
+    result["director_critique_feedback"] = _requeue_director_tasks_after_integration_qa_failure(
+        workspace_full=workspace_full,
+        result=result,
+        tasks=tasks,
     )
     _persist_post_dispatch_integration_qa_result(
         run_dir=run_dir,

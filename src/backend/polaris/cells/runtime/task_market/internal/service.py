@@ -1162,10 +1162,17 @@ class TaskMarketService:
             item.status = command.target_stage
             lm = LeaseManager(store)
             lm.clear_lease(item)
+            requeue_metadata = dict(command.metadata)
             item.metadata = dict(item.metadata)
             item.metadata["requeue_reason"] = command.reason
-            item.metadata["requeue_metadata"] = dict(command.metadata)
+            item.metadata["requeue_metadata"] = requeue_metadata
             item.metadata["requeued_at"] = now_iso()
+            last_failure = requeue_metadata.get("last_failure")
+            if isinstance(last_failure, dict):
+                item.payload = {
+                    **dict(item.payload),
+                    "last_failure": dict(last_failure),
+                }
             item.version += 1
             item.updated_at = now_iso()
 

@@ -24,6 +24,7 @@ from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_me
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 
+from .capability_profile import resolve_actor_capability_profile
 from .error_handling import (
     append_runtime_fallback_instruction,
     build_text_response_fallback_instruction,
@@ -449,6 +450,14 @@ class LLMCaller:
                 else:
                     response_format_mode = "text_json_fallback"
 
+        capability_profile = resolve_actor_capability_profile(
+            profile=profile,
+            model_catalog=self._model_catalog,
+            provider_capabilities=capabilities,
+            request_options=request_options,
+            native_tool_mode=native_tool_mode,
+            response_format_mode=response_format_mode,
+        ).to_dict()
         ai_request = AIRequest(
             task_type=TaskType.DIALOGUE,
             role=profile.role_id,
@@ -461,6 +470,7 @@ class LLMCaller:
                 "response_format_mode": response_format_mode,
                 "interaction_contract": contract.to_metadata(),
                 "context_os_audit": context_os_audit,
+                "capability_profile": capability_profile,
                 # ADR-0090 W1.5: carry the STRUCTURED message array alongside the
                 # flattened input so OpenAI-compatible providers can preserve real
                 # chat-template role anchoring (weak local models lose system/user
@@ -483,6 +493,7 @@ class LLMCaller:
             native_response_format=native_response_format,
             response_format_mode=response_format_mode,
             context_os_audit=context_os_audit,
+            capability_profile=capability_profile,
         )
 
     @staticmethod

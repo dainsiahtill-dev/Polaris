@@ -95,6 +95,7 @@ class PreparedLLMRequest:
         native_response_format: OpenAI-format response_format payload
         response_format_mode: Response format mode indicator
         context_os_audit: Prompt-level ContextOS audit evidence
+        capability_profile: Resolved actor/model/provider capability snapshot
     """
 
     messages: list[dict[str, str]]
@@ -109,6 +110,7 @@ class PreparedLLMRequest:
     native_response_format: dict[str, Any] | None = None
     response_format_mode: str = "plain_text"
     context_os_audit: dict[str, Any] = field(default_factory=dict)
+    capability_profile: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

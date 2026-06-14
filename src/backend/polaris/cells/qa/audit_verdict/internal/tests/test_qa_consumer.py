@@ -130,6 +130,37 @@ class TestQAFindingsRequeue:
         assert ack_call.terminal_status == "rejected"
         assert results[0]["verdict"] == "FAIL"
 
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_repeated_content_fail_terminates_at_bounce_cap(self, mock_get_svc: MagicMock) -> None:
+        # A Director success-ack resets the market attempt budget between QA passes,
+        # so the in-memory per-task cap (default 2) is what stops an unsatisfiable
+        # critique from ping-ponging forever.
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim = MagicMock()
+        claim.ok = True
+        claim.task_id = "task-loop"
+        claim.lease_token = "lease-loop"
+        claim.payload = {"title": "QA task"}
+        mock_svc.claim_work_item.return_value = claim  # same task claimed each pass
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="rejected")
+
+        consumer = QAConsumer(workspace="/test", worker_id="qa-loop")
+        audit = {"verdict": "FAIL", "audit_id": "a", "findings": ["[error] main.js: unsatisfiable"]}
+        with patch.object(consumer, "_run_qa_audit", return_value=audit):
+            r1 = consumer._claim_and_process_one()
+            r2 = consumer._claim_and_process_one()
+            r3 = consumer._claim_and_process_one()
+
+        # cap=2: first two requeue with findings, the third terminal-rejects.
+        assert r1["reason"] == "qa_findings_requeued"
+        assert r2["reason"] == "qa_findings_requeued"
+        assert mock_svc.fail_task_stage.call_count == 2
+        assert r3.get("reason") != "qa_findings_requeued"
+        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
+        assert ack_call.terminal_status == "rejected"
+
 
 class TestQAConsumerPollOnce:
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")

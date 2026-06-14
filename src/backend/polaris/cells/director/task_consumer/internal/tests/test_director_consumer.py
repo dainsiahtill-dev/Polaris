@@ -1062,3 +1062,55 @@ class TestPunchListWiring:
         pre_state = seen_context["pre_state_verify"]
         assert pre_state["exit_code"] != 0
         assert pre_state["failing_clauses"] == ["grep -q 'const LEVELS' ./main.js"]
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execute_task_injects_consumed_interfaces(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        from polaris.kernelone.quality.interface_ledger import record_declared_interfaces
+
+        mock_get_svc.return_value = MagicMock()
+        # A sibling file (index.html) froze identifiers; the main.js step must reuse them.
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [{"step_id": "PM-1-S0", "target_file": "index.html", "interface_names": ["gameCanvas", "score"]}],
+        )
+        seen_context: dict[str, Any] = {}
+
+        class FakeDirectorAdapter:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, Any],
+                context: dict[str, Any],
+            ) -> dict[str, Any]:
+                seen_context.update(context)
+                return {"success": True, "task_id": task_id, "tool_results": []}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.create_role_adapter",
+            lambda role_id, workspace: FakeDirectorAdapter(workspace),
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        consumer._execute_task(
+            "PM-1-S3",
+            {
+                "title": "write main.js",
+                "cache_root": str(tmp_path),
+                "construction_step": {"step_id": "PM-1-S3", "target_file": "main.js"},
+            },
+            "lease-iface",
+        )
+        consumed = seen_context["consumed_interfaces"]
+        assert "index.html" in consumed
+        assert consumed["index.html"]["identifiers"] == ["gameCanvas", "score"]
+        assert "main.js" not in consumed  # the step's own target is excluded

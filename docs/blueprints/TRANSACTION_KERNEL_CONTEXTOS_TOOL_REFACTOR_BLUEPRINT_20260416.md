@@ -27,7 +27,7 @@
 1. **当前事实** 以 `AGENTS.md`、`docs/AGENT_ARCHITECTURE_STANDARD.md`、`docs/graph/catalog/cells.yaml`、`docs/graph/subgraphs/*.yaml` 为准。
 2. **目标态父蓝图** 以本文为准；`docs/TURN_ENGINE_TRANSACTIONAL_TOOL_FLOW_BLUEPRINT_2026-03-26.md` 退化为前序蓝图，只保留历史设计依据。
 3. **handoff 契约** 不新建第二套 truth。本文中的 `HandoffPack` 是逻辑名称，代码与持久化 contract 统一落在现有 `polaris.domain.cognitive_runtime.ContextHandoffPack` 及 `factory.cognitive_runtime` 公开契约上。
-4. **ContextOS 四层拆分** 不改变 graph ownership：`roles.kernel` 仍拥有 context plane 相关实现边界，`factory.cognitive_runtime` 仍拥有 handoff / receipt 的公开承载能力。
+4. **ContextOS 四层拆分** 的当前 ownership 以后续 graph truth 为准。2026-06-14 补充裁决：`kernelone.core` 拥有 ContextOS 四层实现，`roles.kernel` 只是执行侧 consumer / gateway，`factory.cognitive_runtime` 仍拥有 handoff / receipt 的公开承载能力。
 5. **旧引擎兼容** 只允许 `TurnEngine -> TransactionKernel` 单向 facade；禁止继续维护“新旧双主路径”。
 6. **当前事实对账** 统一见 `../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_CLOSURE_MATRIX_20260416.md`，不得把本文的历史诊断段直接当作 2026-04-17 当前事实。
 7. **四层正式化执行文档** 统一见 `../../docs/blueprints/CONTEXTOS_SERVICE_HARDENING_BLUEPRINT_20260417.md`；该子蓝图已完成并进入闭环归档阶段。

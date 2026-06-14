@@ -14,6 +14,46 @@ from unittest.mock import MagicMock
 import pytest
 
 
+class TestBlueprintStepCard:
+    """I3-r28: consumed cross-file interfaces (inject-b) + R7-B repair directive."""
+
+    @staticmethod
+    def _card(context_override: dict) -> str | None:
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+
+        return RoleContextGateway._get_blueprint_step(SimpleNamespace(context_override=context_override))
+
+    def test_consumed_interfaces_rendered_for_reuse(self):
+        card = self._card(
+            {
+                "construction_step": {"step_id": "S", "target_file": "main.js"},
+                "consumed_interfaces": {"index.html": {"identifiers": ["gameCanvas", "score"], "signatures": []}},
+            }
+        )
+        assert card is not None
+        assert "必须复用完全相同的名字" in card
+        assert "index.html 已公开: gameCanvas, score" in card
+
+    def test_no_consumed_block_when_absent(self):
+        card = self._card({"construction_step": {"step_id": "S", "target_file": "main.js"}})
+        assert card is not None
+        assert "必须复用完全相同的名字" not in card
+
+    def test_repair_turn_emits_localized_edit_directive(self):
+        card = self._card(
+            {
+                "construction_step": {"step_id": "S", "target_file": "main.js"},
+                "last_failure": {"error_code": "QA_syntax_failed", "error_message": "main.js:42 token ';'"},
+            }
+        )
+        assert card is not None
+        assert "只做定点编辑" in card and "edit_blocks" in card
+        # the weak prose hint must be gone
+        assert "不要原样重写" not in card
+
+
 class TestProcessContextOverride:
     """Test _process_context_override method."""
 
@@ -543,7 +583,8 @@ class TestBlueprintStepCardRendering:
         assert card is not None
         assert "上次尝试失败(QA_step_verify_failed)" in card
         assert "levelDisplay" in card
-        assert "不要原样重写" in card
+        # R7-B (I3-r28): the weak prose hint was replaced by an imperative localized-edit directive.
+        assert "只做定点编辑" in card and "edit_blocks" in card
 
     def test_step_card_without_failure_has_no_teaching_line(self) -> None:
         card = self._render(

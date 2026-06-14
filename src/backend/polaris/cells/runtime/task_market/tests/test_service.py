@@ -23,6 +23,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
     RegisterPlanRevisionCommandV1,
     RenewTaskLeaseCommandV1,
     RequestHumanReviewCommandV1,
+    RequeueTaskCommandV1,
     ResolveHumanReviewCommandV1,
     SubmitChangeOrderCommandV1,
     TaskMarketError,
@@ -2209,6 +2210,54 @@ def test_requeue_carries_failure_teaching_and_advance_clears_it(tmp_path: Path) 
     status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
     row = {item["task_id"]: item for item in status.items}["step-teach"]
     assert "last_failure" not in (row.get("payload") or {})
+
+
+def test_requeue_task_can_teach_next_claim_without_worker_lease(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-integration-qa",
+            run_id="run-integration-qa",
+            task_id="step-integration-qa",
+            stage="pending_exec",
+            source_role="pm_dispatch",
+            payload={"title": "step"},
+        )
+    )
+
+    requeued = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-integration-qa",
+            target_stage="pending_exec",
+            reason="integration QA failed",
+            metadata={
+                "last_failure": {
+                    "error_code": "INTEGRATION_QA_FAILED",
+                    "error_message": "pytest failed after Director success",
+                    "source": "pm_dispatch.integration_qa",
+                }
+            },
+        )
+    )
+
+    assert requeued.ok is True
+    claimed = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-retry",
+            worker_role="director",
+        )
+    )
+    assert claimed.ok is True
+    teaching = claimed.payload.get("last_failure")
+    assert isinstance(teaching, dict)
+    assert teaching["error_code"] == "INTEGRATION_QA_FAILED"
+    assert teaching["source"] == "pm_dispatch.integration_qa"
 
 
 class TestCrossParentFileOwnershipSerialization:

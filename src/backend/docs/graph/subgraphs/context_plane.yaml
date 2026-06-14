@@ -10,6 +10,7 @@ entry_cells:
   - delivery.api_gateway
   - roles.runtime
 cells:
+  - kernelone.core
   - context.engine
   - context.catalog
   - llm.dialogue
@@ -43,23 +44,27 @@ relations:
     type: calls
     contract: ResolveProviderContextCommandV1
   # ------------------------------------------------------------------
-  # Phase 5 canonical exploration edges (2026-03-25)
-  # kernelone/context/* capabilities are owned by roles.kernel (kernelone
-  # is the infrastructure layer under roles.kernel).  Edge types are
-  # mapped to the nearest schema-enum value.
+  # Phase 5 canonical exploration edges (2026-03-25, ownership corrected
+  # 2026-06-14): kernelone/context/* capabilities are owned by kernelone.core.
+  # roles.kernel consumes those capabilities through its execution gateway.
+  # Edge types are mapped to the nearest schema-enum value.
   # ------------------------------------------------------------------
-  # Exploration policy is consumed by working-set assembler (implemented in roles.kernel)
+  - from: roles.kernel
+    to: kernelone.core
+    type: depends_on
+    contract: ContextOS.StateFirstContextOS
+  # Exploration policy is consumed by working-set assembler through kernelone.core.
   - from: context.engine
-    to: roles.kernel
+    to: kernelone.core
     type: depends_on
     contract: IExplorationPolicy.should_expand
-  # Working-set assembler (roles.kernel) consults budget gate
+  # Working-set assembler consults KernelOne budget gate.
   - from: roles.kernel
-    to: roles.kernel
+    to: kernelone.core
     type: calls
     contract: ContextBudgetGate.can_add
   # Budget gate uses context cache
-  - from: roles.kernel
+  - from: kernelone.core
     to: context.engine
     type: calls
     contract: ContextCache.get_cached_pack
@@ -68,14 +73,14 @@ relations:
     to: workspace.integrity
     type: calls
     contract: repo_read_slice
-  # Context engine coordinates with roles.kernel on compaction
+  # Context engine coordinates with kernelone.core on compaction
   - from: context.engine
-    to: roles.kernel
+    to: kernelone.core
     type: calls
     contract: SessionContinuityEngine.project
-  # CompactSnapshot pre/post state tracked by roles.kernel
+  # CompactSnapshot pre/post state tracked by kernelone.core-derived context cache
   - from: context.engine
-    to: roles.kernel
+    to: kernelone.core
     type: owns_state
     contract: CompactSnapshot
 critical_contracts:
@@ -105,8 +110,8 @@ state_boundaries:
     state: workspace/meta/context_catalog/*
   - owner: workspace.integrity
     state: workspace/meta/integrity/*
-  # Phase 5: roles.kernel (kernelone layer) owns context cache state
-  - owner: roles.kernel
+  # Phase 5: KernelOne owns context cache state; roles.kernel only consumes it.
+  - owner: kernelone.core
     state: workspace/.polaris/runtime/context_cache/*
 verify_targets:
   tests:
@@ -135,6 +140,6 @@ migration_notes:
   - ContextCache (Tier 1 pack cache) is extended to 5-tier; existing API remains backward-compatible.
   - Existing 2648 test baseline must not regress after Phase 5 changes.
   - Phase 5 capability modules (exploration_policy, working_set, budget_gate, session_continuity,
-    compaction) live under polaris/kernelone/context/ and are owned by the roles.kernel cell.
+    compaction) live under polaris/kernelone/context/ and are owned by the kernelone.core cell.
   - "The 5-tier cache tiers are: Tier 1 Session Continuity, Tier 2 Repo Map, Tier 3 Symbol Index,
     Tier 4 Hot Slice, Tier 5 Continuity Projection.  Tiers 2-5 are pending implementation."

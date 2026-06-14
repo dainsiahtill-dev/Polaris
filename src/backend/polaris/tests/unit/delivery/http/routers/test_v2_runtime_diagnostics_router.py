@@ -133,6 +133,15 @@ async def test_runtime_diagnostics_exposes_nats_ws_and_rate_limit(client: AsyncC
             "polaris.delivery.http.v2.runtime_diagnostics.get_rate_limit_diagnostics",
             return_value=rate_limit_snapshot,
         ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_contextos_diagnostics",
+            return_value={
+                "state": "available",
+                "ok": True,
+                "details": {"last_projection_report": {"projection_id": "proj-1"}},
+                "evidence": ["ContextOS ProjectionReport"],
+            },
+        ),
     ):
         response = await client.get("/v2/runtime/diagnostics")
 
@@ -146,6 +155,10 @@ async def test_runtime_diagnostics_exposes_nats_ws_and_rate_limit(client: AsyncC
     assert data["websocket"]["details"]["channels"] == ["director", "llm"]
     assert data["rate_limit"]["state"] == "active"
     assert data["rate_limit"]["details"]["store"]["clients"][0]["client_key_hash"] == "abc123"
+    assert data["context_os"]["state"] == "available"
+    assert data["context_os"]["details"]["last_projection_report"]["projection_id"] == "proj-1"
+    assert data["dormant_modules"]["state"] == "classified"
+    assert data["dormant_modules"]["details"]["dormant_count"] >= 4
 
 
 @pytest.mark.asyncio

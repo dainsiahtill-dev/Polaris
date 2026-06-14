@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import hashlib
+import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -46,6 +49,8 @@ if TYPE_CHECKING:
     from .telemetry import TelemetryCollector
 
 logger = logging.getLogger(__name__)
+
+FinalRequestReceiptSink = Callable[[dict[str, Any]], None]
 
 # ─── Global concurrency and timeout configuration ───────────────────────────────
 # Now unified via _timeout_config module
@@ -106,12 +111,14 @@ class AIExecutor:
         resilience: ResilienceManager | None = None,
         model_catalog: ModelCatalog | None = None,
         token_budget: TokenBudgetManager | None = None,
+        final_request_receipt_sink: FinalRequestReceiptSink | None = None,
     ) -> None:
         self.workspace = workspace
         self.telemetry = telemetry
         self.resilience = resilience or ResilienceManager()
         self.model_catalog = model_catalog or ModelCatalog(workspace=workspace or ".")
         self.token_budget = token_budget or TokenBudgetManager()
+        self.final_request_receipt_sink = final_request_receipt_sink
 
     async def invoke(self, request: AIRequest) -> AIResponse:
         """执行 AI 调用
@@ -384,6 +391,7 @@ class AIExecutor:
         # turn and no-ops when the content already fits, so well-sized turns are
         # unaffected.
         clamp_prompt_text = prompt_input if isinstance(prompt_input, str) else str(prompt_input)
+        effective_chat_messages: list[Any] | None = None
         if isinstance(chat_messages, list) and chat_messages:
             budgeted_chat_messages = compress_chat_messages_to_budget(
                 chat_messages,
@@ -393,12 +401,28 @@ class AIExecutor:
             invoke_cfg["chat_messages"] = effective_chat_messages
             clamp_prompt_text = "\n".join(str(m.get("content") or "") for m in effective_chat_messages)
 
+        max_tokens_before_clamp = self._coerce_int(invoke_cfg.get("max_tokens"))
         clamp_output_tokens_to_window(
             invoke_cfg,
             model_spec,
             clamp_prompt_text,
             overhead_tokens=payload_overhead,
             logger_prefix="[executor]",
+        )
+
+        self._record_final_request_receipt(
+            request=request,
+            trace_id=trace_id,
+            model_spec=model_spec,
+            invoke_cfg=invoke_cfg,
+            budget_decision=budget_decision,
+            requested_output_tokens=requested_output_tokens,
+            max_tokens_before_clamp=max_tokens_before_clamp,
+            payload_overhead=payload_overhead,
+            prompt_input=prompt_input,
+            chat_messages_before=chat_messages,
+            chat_messages_after=effective_chat_messages,
+            clamp_prompt_text=clamp_prompt_text,
         )
 
         # Acquire semaphore for concurrency control
@@ -497,6 +521,92 @@ class AIExecutor:
         model_spec: ModelSpec,
     ) -> int:
         return resolve_requested_output_tokens(options, invoke_cfg, model_spec)
+
+    def _record_final_request_receipt(
+        self,
+        *,
+        request: AIRequest,
+        trace_id: str,
+        model_spec: ModelSpec,
+        invoke_cfg: dict[str, Any],
+        budget_decision: Any,
+        requested_output_tokens: int,
+        max_tokens_before_clamp: int,
+        payload_overhead: int,
+        prompt_input: Any,
+        chat_messages_before: Any,
+        chat_messages_after: list[Any] | None,
+        clamp_prompt_text: str,
+    ) -> None:
+        sink = self.final_request_receipt_sink
+        if sink is None:
+            return
+
+        context = request.context if isinstance(request.context, dict) else {}
+        tools = invoke_cfg.get("tools")
+        tool_count = len(tools) if isinstance(tools, list) else 0
+        chat_count_before = len(chat_messages_before) if isinstance(chat_messages_before, list) else 0
+        chat_count_after = len(chat_messages_after) if isinstance(chat_messages_after, list) else chat_count_before
+        receipt = {
+            "receipt_type": "contextos.final_request",
+            "payload": {
+                "schema_version": 1,
+                "source": "kernelone.llm.engine.executor",
+                "trace_id": trace_id,
+                "run_id": self._non_empty_str(context.get("run_id")),
+                "task_id": self._non_empty_str(context.get("task_id")),
+                "session_id": self._non_empty_str(context.get("session_id")),
+                "role": request.role,
+                "task_type": request.task_type.value,
+                "provider_id": model_spec.provider_id,
+                "provider_type": model_spec.provider_type,
+                "model": model_spec.model,
+                "model_window_tokens": int(model_spec.max_context_tokens or 0),
+                "model_output_limit_tokens": int(model_spec.max_output_tokens or 0),
+                "requested_output_tokens": requested_output_tokens,
+                "max_tokens_before_clamp": max_tokens_before_clamp,
+                "final_max_tokens": self._coerce_int(invoke_cfg.get("max_tokens")),
+                "payload_overhead_tokens": int(payload_overhead or 0),
+                "token_budget": budget_decision.to_dict() if hasattr(budget_decision, "to_dict") else {},
+                "chat_message_count_before": chat_count_before,
+                "chat_message_count_after": chat_count_after,
+                "chat_messages_compressed": chat_count_after != chat_count_before,
+                "tool_count": tool_count,
+                "native_tool_mode": self._non_empty_str(context.get("native_tool_mode")),
+                "input_sha256": self._sha256_text(prompt_input),
+                "effective_prompt_sha256": self._sha256_text(clamp_prompt_text),
+                "tool_schema_sha256": self._sha256_json(tools) if tool_count else "",
+            },
+            "trace_refs": (trace_id,),
+        }
+        try:
+            sink(receipt)
+        except (RuntimeError, ValueError, TypeError) as exc:
+            logger.warning("[executor] final request receipt sink failed: %s", exc)
+
+    @staticmethod
+    def _sha256_text(value: Any) -> str:
+        return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _sha256_json(value: Any) -> str:
+        try:
+            normalized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError):
+            normalized = str(value or "")
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _non_empty_str(value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
 
     def _build_raw_payload(
         self,

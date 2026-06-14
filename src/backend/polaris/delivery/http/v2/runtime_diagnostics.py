@@ -11,6 +11,10 @@ from polaris.delivery.http.middleware.rate_limit import get_rate_limit_diagnosti
 from polaris.delivery.http.routers._shared import active_workspace_value, get_state, require_auth
 from polaris.infrastructure.messaging.nats.client import get_default_client_snapshot
 from polaris.infrastructure.messaging.nats.server_runtime import get_managed_nats_runtime_snapshot
+from polaris.kernelone.context.context_os.diagnostics import get_contextos_diagnostics
+from polaris.kernelone.context.context_os.module_classification import (
+    get_contextos_module_classification_diagnostics,
+)
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/runtime", tags=["runtime-diagnostics"])
@@ -34,6 +38,8 @@ class RuntimeDiagnosticsResponse(BaseModel):
     nats: RuntimeDiagnosticSection
     websocket: RuntimeDiagnosticSection
     rate_limit: RuntimeDiagnosticSection
+    context_os: RuntimeDiagnosticSection
+    dormant_modules: RuntimeDiagnosticSection
 
 
 def _utc_now() -> str:
@@ -144,6 +150,34 @@ def _rate_limit_section() -> RuntimeDiagnosticSection:
     )
 
 
+def _context_os_section(workspace: str) -> RuntimeDiagnosticSection:
+    diagnostics = get_contextos_diagnostics(workspace)
+    details = diagnostics.get("details") if isinstance(diagnostics.get("details"), dict) else {}
+    evidence_raw = diagnostics.get("evidence")
+    evidence = [str(item) for item in evidence_raw] if isinstance(evidence_raw, list) else []
+    ok_value = diagnostics.get("ok")
+    return RuntimeDiagnosticSection(
+        state=str(diagnostics.get("state") or "unknown"),
+        ok=bool(ok_value) if ok_value is not None else None,
+        details=dict(details),
+        evidence=evidence,
+    )
+
+
+def _dormant_modules_section() -> RuntimeDiagnosticSection:
+    diagnostics = get_contextos_module_classification_diagnostics()
+    details = diagnostics.get("details") if isinstance(diagnostics.get("details"), dict) else {}
+    evidence_raw = diagnostics.get("evidence")
+    evidence = [str(item) for item in evidence_raw] if isinstance(evidence_raw, list) else []
+    ok_value = diagnostics.get("ok")
+    return RuntimeDiagnosticSection(
+        state=str(diagnostics.get("state") or "unknown"),
+        ok=bool(ok_value) if ok_value is not None else None,
+        details=dict(details),
+        evidence=evidence,
+    )
+
+
 @router.get(
     "/diagnostics",
     dependencies=[Depends(require_auth)],
@@ -156,12 +190,15 @@ async def get_runtime_diagnostics(request: Request) -> RuntimeDiagnosticsRespons
     nats_config = getattr(state.settings, "nats", None)
     nats_url = str(getattr(nats_config, "url", "") or "")
     server_snapshot = await asyncio.to_thread(get_managed_nats_runtime_snapshot, nats_url)
+    workspace = active_workspace_value(state.settings)
     return RuntimeDiagnosticsResponse(
         generated_at=_utc_now(),
-        workspace=active_workspace_value(state.settings),
+        workspace=workspace,
         nats=_nats_section(nats_config, server_snapshot),
         websocket=_websocket_section(request),
         rate_limit=_rate_limit_section(),
+        context_os=_context_os_section(workspace),
+        dormant_modules=_dormant_modules_section(),
     )
 
 

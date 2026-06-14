@@ -1,0 +1,58 @@
+{
+  "schema_version": "contextos_module_classification.v1",
+  "last_reviewed": "2026-06-14",
+  "owner_cell": "kernelone.core",
+  "hot_path_modules": [
+    {
+      "module": "polaris.kernelone.context.truth_log_service",
+      "path": "src/backend/polaris/kernelone/context/truth_log_service.py",
+      "status": "hot_path"
+    },
+    {
+      "module": "polaris.kernelone.context.working_state_manager",
+      "path": "src/backend/polaris/kernelone/context/working_state_manager.py",
+      "status": "hot_path"
+    },
+    {
+      "module": "polaris.kernelone.context.projection_engine",
+      "path": "src/backend/polaris/kernelone/context/projection_engine.py",
+      "status": "hot_path"
+    },
+    {
+      "module": "polaris.kernelone.context.context_os.runtime.engine",
+      "path": "src/backend/polaris/kernelone/context/context_os/runtime/engine.py",
+      "status": "hot_path"
+    },
+    {
+      "module": "polaris.kernelone.context.chunks.assembler",
+      "path": "src/backend/polaris/kernelone/context/chunks/assembler.py",
+      "status": "hot_path"
+    }
+  ],
+  "dormant_modules": [
+    {
+      "module": "polaris.kernelone.context.context_os.adaptive_weights",
+      "path": "src/backend/polaris/kernelone/context/context_os/adaptive_weights.py",
+      "status": "dormant",
+      "activation_gate": "Must be wired through a measured projection-outcome feedback loop and covered by an integration test before being claimed as active capability."
+    },
+    {
+      "module": "polaris.kernelone.context.context_os.budget_optimizer",
+      "path": "src/backend/polaris/kernelone/context/context_os/budget_optimizer.py",
+      "status": "dormant",
+      "activation_gate": "Must replace or explicitly augment BudgetPlanner/TokenBudgetManager on the hot path with before-after budget receipts."
+    },
+    {
+      "module": "polaris.kernelone.context.context_os.multi_resolution_store",
+      "path": "src/backend/polaris/kernelone/context/context_os/multi_resolution_store.py",
+      "status": "dormant",
+      "activation_gate": "Must be selected by the projection pipeline for at least one live resolution tier and leave ProjectionReport evidence."
+    },
+    {
+      "module": "polaris.kernelone.context.context_os.predictive",
+      "path": "src/backend/polaris/kernelone/context/context_os/predictive.py",
+      "status": "dormant",
+      "activation_gate": "Must be enabled by an explicit policy flag, emit prediction receipts, and pass replay determinism gates."
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+card_id: "vc-20260614-contextos-full-landing"
+bug_summary: >
+  ContextOS is load-bearing for weak and strong model execution, but its
+  ownership, final request observability, integration-QA critique loop, replay
+  gate, and dormant-module governance are not yet fully closed. Project-level
+  integration QA failures persist artifacts but do not reliably become
+  Director-visible critique; final provider-bound requests are budgeted in
+  AIExecutor without a durable ContextOS receipt; graph assets still contain
+  historical roles.kernel ownership claims for kernelone/context root modules.
+
+classification: structural
+
+bug_path:
+  file: "src/backend/polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+  method: "run_post_dispatch_integration_qa"
+  symptom: >
+    A failed project-level integration QA writes result artifacts and events but
+    does not put the critique on the Director retry channel.
+
+assumptions:
+  - id: "A1"
+    statement: >
+      ContextOS core four-layer implementation belongs to kernelone.core, not
+      roles.kernel or context.engine.
+    status: verified
+    evidence: >
+      catalog declares kernelone.core as the foundational Context OS capability;
+      StateFirstContextOS constructs TruthLogService, WorkingStateManager,
+      ReceiptStore, and ProjectionEngine in kernelone/context paths.
+  - id: "A2"
+    statement: >
+      Project-level integration QA cannot use FailTaskStageCommandV1 after
+      Director terminal success because fail_task_stage validates a worker lease.
+    status: verified
+    evidence: >
+      runtime.task_market.fail_task_stage validates LeaseManager token before
+      writing payload.last_failure. Supervisor requeue has no worker lease.
+  - id: "A3"
+    statement: >
+      RequeueTaskCommandV1 is the correct public supervisor contract for putting
+      a completed task back into pending_exec.
+    status: verified
+    evidence: >
+      runtime.task_market.requeue_task is a public contract transition with no
+      lease requirement and existing lifecycle receipt recording.
+  - id: "A4"
+    statement: >
+      AIExecutor owns the final provider-bound budget truth after provider/model
+      resolution, payload overhead, chat-message compression, and output clamp.
+    status: verified
+    evidence: >
+      AIExecutor._execute_invoke builds invoke_cfg, resolves ModelSpec, estimates
+      tool/chat overhead, enforces TokenBudgetManager, compresses chat_messages,
+      and clamps max_tokens before provider invocation.
+  - id: "A5"
+    statement: >
+      RuntimeReceipt must be recorded through factory.cognitive_runtime public
+      contracts; no new durable ContextOS receipt store should be introduced.
+    status: verified
+    evidence: >
+      factory.cognitive_runtime owns runtime/cognitive_runtime/cognitive_runtime.sqlite
+      and exposes RecordRuntimeReceiptCommandV1.
+
+pre_mortem:
+  failure_point: >
+    The most likely wrong fix is to write task-market payloads directly from
+    pm_dispatch or forge a fail_task_stage lease. The second likely failure is
+    to emit final request receipts by copying raw prompt content into durable
+    storage, creating data-plane leakage. Both are prevented by using public
+    Cell contracts and redacted budget-ledger payloads.
+  risk_zone:
+    - "src/backend/polaris/cells/runtime/task_market/internal/service.py:requeue_task"
+    - "src/backend/polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py:run_post_dispatch_integration_qa"
+    - "src/backend/polaris/kernelone/llm/engine/executor.py:_execute_invoke"
+    - "src/backend/docs/graph/catalog/cells.yaml"
+    - "src/backend/docs/graph/subgraphs/context_plane.yaml"
+
+verification_plan:
+  unit_tests:
+    - file: "src/backend/polaris/cells/runtime/task_market/tests/test_service.py"
+      description: >
+        RequeueTaskCommandV1 with metadata.last_failure must expose the same
+        last_failure in the next Director claim payload without a worker lease.
+      expected: "test_requeue_task_can_teach_next_claim_without_worker_lease passes."
+      status: in_progress
+    - file: "src/backend/polaris/tests/test_dispatch_pipeline_integration_qa.py"
+      description: >
+        Failed project-level integration QA must requeue Director tasks and
+        persist director_critique_feedback.
+      expected: "test_run_post_dispatch_integration_qa_failure_requeues_director_with_critique passes."
+      status: in_progress
+    - file: "src/backend/polaris/tests/unit/kernelone/llm/engine/test_llm_engine_final_request_receipt.py"
+      description: >
+        AIExecutor final request path records redacted contextos.final_request
+        RuntimeReceipt containing provider/model/window/tool/chat budget ledger.
+      expected: "Receipt payload exists and no raw prompt content is persisted."
+      status: planned
+    - file: "src/backend/polaris/tests/unit/kernelone/llm/engine/test_actor_capability_profile.py"
+      description: >
+        ResolvedActorCapabilityProfile is a frozen read model derived from
+        RoleProfile and ModelCatalog without writing config truth.
+      expected: "Profile fields match model spec and role policy."
+      status: planned
+  integration_tests:
+    - description: "Focused ContextOS/task-market/pm-dispatch regression"
+      command: >
+        LC_ALL=C.UTF-8 PYTHONPATH=src/backend python -m pytest -q
+        src/backend/polaris/cells/runtime/task_market/tests/test_service.py
+        src/backend/polaris/tests/test_dispatch_pipeline_integration_qa.py
+      status: in_progress
+    - description: "KernelOne release gate"
+      command: >
+        LC_ALL=C.UTF-8 PYTHONPATH=src/backend python
+        src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py
+        --mode all
+      status: planned
+    - description: "ContextOS replay gate"
+      command: >
+        LC_ALL=C.UTF-8 PYTHONPATH=src/backend python
+        src/backend/docs/governance/ci/scripts/run_contextos_replay.py
+        --workspace . --report runtime/contextos_replay_report.json
+      status: planned
+
+related_adrs:
+  - "ADR-0071"
+  - "CONTEXTOS_ARCHITECTURE_BLUEPRINT_20260417"
+  - "CONTEXTOS_SERVICE_HARDENING_BLUEPRINT_20260417"
+
+sign_off:
+  completed_by: ""
+  completed_at: ""
+  verified_by: ""
+  verified_at: ""
+  verification_evidence: ""

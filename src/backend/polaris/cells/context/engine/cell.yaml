@@ -34,6 +34,7 @@ public_contracts:
   - ContextEngineErrorV1
 depends_on:
 - context.catalog
+- kernelone.core
 - policy.workspace_guard
 - roles.session
 subgraphs: []
