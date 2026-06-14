@@ -1171,6 +1171,8 @@ class RoleExecutionKernel:
             extract_declared_step_target_files,
             pin_write_tool_file_param_to_targets,
             resolve_from_scratch_write_target,
+            resolve_repair_edit_target,
+            restrict_tool_definitions_to_edit,
             restrict_tool_definitions_to_write,
         )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
@@ -1226,6 +1228,20 @@ class RoleExecutionKernel:
                 "first-turn write-only for from-scratch leaf step: target=%s",
                 _from_scratch_target,
             )
+        else:
+            # R7 (I3-r28): repair/bounce turn on an EXISTING target edits in place —
+            # drop the whole-file rewrite verb so the weak model fixes the named
+            # failure instead of rewriting the file smaller (live r28 main.js
+            # 5762B->3095B). Mutually exclusive with the from-scratch branch above.
+            _repair_target = resolve_repair_edit_target(
+                getattr(request, "context_override", None), str(request.workspace or self.workspace or ".")
+            )
+            if _repair_target:
+                tool_definitions = restrict_tool_definitions_to_edit(tool_definitions)
+                logger.info(
+                    "repair-turn edit-only for existing target: target=%s",
+                    _repair_target,
+                )
 
         try:
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
@@ -1407,6 +1423,8 @@ class RoleExecutionKernel:
             extract_declared_step_target_files,
             pin_write_tool_file_param_to_targets,
             resolve_from_scratch_write_target,
+            resolve_repair_edit_target,
+            restrict_tool_definitions_to_edit,
             restrict_tool_definitions_to_write,
         )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
@@ -1461,6 +1479,20 @@ class RoleExecutionKernel:
                 "first-turn write-only for from-scratch leaf step: target=%s",
                 _from_scratch_target,
             )
+        else:
+            # R7 (I3-r28): repair/bounce turn on an EXISTING target edits in place —
+            # drop the whole-file rewrite verb so the weak model fixes the named
+            # failure instead of rewriting the file smaller (live r28 main.js
+            # 5762B->3095B). Mutually exclusive with the from-scratch branch above.
+            _repair_target = resolve_repair_edit_target(
+                getattr(request, "context_override", None), str(request.workspace or self.workspace or ".")
+            )
+            if _repair_target:
+                tool_definitions = restrict_tool_definitions_to_edit(tool_definitions)
+                logger.info(
+                    "repair-turn edit-only for existing target: target=%s",
+                    _repair_target,
+                )
 
         accumulated_content: list[str] = []
         accumulated_thinking: list[str] = []

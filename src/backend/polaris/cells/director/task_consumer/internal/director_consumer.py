@@ -193,6 +193,77 @@ def _changed_files_cover_target(target_file: str, changed_files: list[str]) -> b
     return False
 
 
+# R7-C (I3-r28): deterministic anti-shrink backstop for repair turns. The weak
+# model, asked to fix one named error in an existing file, tends to rewrite the
+# whole file SMALLER (live r28: main.js 5762B/22 constructs -> 3095B/12). The
+# tool-restriction (R7-A) and preserve-instruction nudge it; this gate is the
+# fail-closed guarantee that does not trust the model — a repair that drops the
+# file below a fraction of its prior size is rejected and re-taught.
+_REPAIR_SHRINK_GUARD_RATIO_ENV = "KERNELONE_REPAIR_SHRINK_GUARD_RATIO"
+_DEFAULT_REPAIR_SHRINK_GUARD_RATIO = 0.6
+# Files smaller than this pre-repair are not guarded — a tiny stub legitimately
+# changes size by large fractions, and the floor is meaningless there.
+_REPAIR_SHRINK_MIN_PRIOR_BYTES = 400
+
+
+def _repair_shrink_guard_ratio() -> float:
+    """Resolve the shrink floor ratio (env override, else 0.6). Clamped to (0,1]."""
+    raw = os.environ.get(_REPAIR_SHRINK_GUARD_RATIO_ENV, "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            return _DEFAULT_REPAIR_SHRINK_GUARD_RATIO
+        if 0.0 < value <= 1.0:
+            return value
+    return _DEFAULT_REPAIR_SHRINK_GUARD_RATIO
+
+
+def _repair_prior_target_size(workspace: str, payload: dict[str, Any]) -> int | None:
+    """Byte size of the step target before a repair exec, else None (fail-open).
+
+    Fires only on a repair turn: the payload carries a non-empty ``last_failure``
+    AND the declared step ``target_file`` already exists on disk. Returns None for
+    first-write / no-failure turns so they are never gated.
+    """
+    last_failure = payload.get("last_failure")
+    if not isinstance(last_failure, dict) or not str(last_failure.get("error_message") or "").strip():
+        return None
+    target = _step_target_file(payload)
+    if not target:
+        return None
+    try:
+        path = os.path.join(workspace, target)
+        if os.path.isfile(path):
+            return os.path.getsize(path)
+    except OSError:
+        return None
+    return None
+
+
+def _repair_shrink_error(workspace: str, target: str, prior_size: int) -> str | None:
+    """Teaching error if a repair shrank the target below the guard floor, else None."""
+    if not target or prior_size < _REPAIR_SHRINK_MIN_PRIOR_BYTES:
+        return None
+    try:
+        path = os.path.join(workspace, target)
+        if not os.path.isfile(path):
+            return None
+        new_size = os.path.getsize(path)
+    except OSError:
+        return None
+    floor = int(prior_size * _repair_shrink_guard_ratio())
+    if new_size >= floor:
+        return None
+    return (
+        f"REPAIR SHRANK '{target}': it was {prior_size} bytes of working code and is now "
+        f"{new_size} bytes (below the {floor}-byte preservation floor). The file already "
+        f"worked except for the named failure — fix ONLY that error in place using edit_blocks "
+        f"(a SEARCH/REPLACE block or a line-range edit). Do NOT rewrite the file from scratch "
+        f"or drop existing functions."
+    )
+
+
 def _append_normalized_paths(paths: list[str], raw: Any) -> None:
     for value in _normalize_string_list(raw):
         normalized = value.replace("\\", "/")
@@ -553,6 +624,9 @@ class DirectorExecutionConsumer:
                 interval_seconds=self._lease_renew_interval_seconds,
             )
             heartbeat.start()
+            # R7-C (I3-r28): snapshot the repair target's prior size BEFORE exec, so a
+            # degenerate "rewrite smaller" repair is caught deterministically below.
+            repair_prior_size = _repair_prior_target_size(self._workspace, payload)
             # Execute (placeholder — actual execution delegated to DirectorAgent)
             exec_result = self._execute_task(task_id, payload, lease_token)
             changed_files = _normalize_string_list(exec_result.get("changed_files"))
@@ -585,6 +659,23 @@ class DirectorExecutionConsumer:
                     )
                 )
                 return {"task_id": task_id, "ok": False, "reason": "step_target_missing"}
+            # R7-C: a repair turn that shrank the target below the preservation floor
+            # deleted working content — requeue with a teaching error (which becomes the
+            # next attempt's last_failure) instead of acking the degraded file to QA.
+            if repair_prior_size is not None and step_target:
+                shrink_error = _repair_shrink_error(self._workspace, step_target, repair_prior_size)
+                if shrink_error is not None:
+                    self._svc.fail_task_stage(
+                        FailTaskStageCommandV1(
+                            workspace=self._workspace,
+                            task_id=task_id,
+                            lease_token=lease_token,
+                            error_code="REPAIR_SHRANK_FILE",
+                            error_message=shrink_error,
+                            requeue_stage="pending_exec",
+                        )
+                    )
+                    return {"task_id": task_id, "ok": False, "reason": "repair_shrank_file"}
             registered_actions = self._register_compensation_actions(
                 task_id=task_id,
                 lease_token=lease_token,

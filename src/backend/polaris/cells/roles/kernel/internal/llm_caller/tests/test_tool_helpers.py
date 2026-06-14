@@ -105,3 +105,82 @@ class TestRestrictToolDefinitionsToWrite:
     def test_returns_original_when_no_write_tool_survives(self) -> None:
         original = _tools("read_file", "repo_rg")
         assert restrict_tool_definitions_to_write(original) is original
+
+
+# ============ R7: repair-preserving edit restriction (I3-r28) ============
+
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (  # noqa: E402
+    resolve_repair_edit_target,
+    restrict_tool_definitions_to_edit,
+)
+
+
+def _repair_co(target: str, *, error: str = "main.js:42 Unexpected token ';'", **step: object) -> dict:
+    return {
+        "construction_step": {"step_id": "S", "target_file": target, **step},
+        "last_failure": {"error_code": "QA_syntax_failed", "error_message": error},
+    }
+
+
+class TestResolveRepairEditTarget:
+    def test_existing_file_with_failure_returns_target(self, tmp_path: Path) -> None:
+        (tmp_path / "main.js").write_text("// real game\n", encoding="utf-8")
+        assert resolve_repair_edit_target(_repair_co("main.js"), str(tmp_path)) == "main.js"
+
+    def test_absent_file_returns_none(self, tmp_path: Path) -> None:
+        # No file on disk → this is from-scratch territory, not repair.
+        assert resolve_repair_edit_target(_repair_co("main.js"), str(tmp_path)) is None
+
+    def test_no_last_failure_returns_none(self, tmp_path: Path) -> None:
+        (tmp_path / "main.js").write_text("// real game\n", encoding="utf-8")
+        co = {"construction_step": {"step_id": "S", "target_file": "main.js"}}
+        assert resolve_repair_edit_target(co, str(tmp_path)) is None
+
+    def test_blank_error_message_returns_none(self, tmp_path: Path) -> None:
+        (tmp_path / "main.js").write_text("// real game\n", encoding="utf-8")
+        assert resolve_repair_edit_target(_repair_co("main.js", error="  "), str(tmp_path)) is None
+
+    def test_dot_slash_target_normalized(self, tmp_path: Path) -> None:
+        (tmp_path / "main.js").write_text("// real game\n", encoding="utf-8")
+        assert resolve_repair_edit_target(_repair_co("./main.js"), str(tmp_path)) == "main.js"
+
+    def test_mutually_exclusive_with_from_scratch(self, tmp_path: Path) -> None:
+        # Same fixture: file present → repair fires, from-scratch does not.
+        (tmp_path / "main.js").write_text("// real game\n", encoding="utf-8")
+        co = _repair_co("main.js")
+        assert resolve_repair_edit_target(co, str(tmp_path)) == "main.js"
+        assert resolve_from_scratch_write_target(co, str(tmp_path)) is None
+
+    def test_no_construction_step_returns_none(self, tmp_path: Path) -> None:
+        assert resolve_repair_edit_target({"last_failure": {"error_message": "x"}}, str(tmp_path)) is None
+        assert resolve_repair_edit_target(None, str(tmp_path)) is None
+
+    def test_env_off_disables(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / "main.js").write_text("// real game\n", encoding="utf-8")
+        monkeypatch.setenv("KERNELONE_REPAIR_PRESERVE_EDIT", "off")
+        assert resolve_repair_edit_target(_repair_co("main.js"), str(tmp_path)) is None
+
+
+class TestRestrictToolDefinitionsToEdit:
+    def test_drops_rewrite_verbs_keeps_edit_and_read(self) -> None:
+        kept = restrict_tool_definitions_to_edit(
+            _tools("read_file", "write_file", "append_to_file", "edit_blocks", "execute_command")
+        )
+        names = {d["function"]["name"] for d in kept}
+        # write_file/append_to_file removed; reads kept (needed to anchor the edit).
+        assert names == {"read_file", "edit_blocks", "execute_command"}
+
+    def test_fail_open_when_no_anchored_edit_tool(self) -> None:
+        original = _tools("read_file", "write_file", "append_to_file")
+        assert restrict_tool_definitions_to_edit(original) is original
+
+    def test_keeps_diff_and_treesitter_edit_tools(self) -> None:
+        kept = restrict_tool_definitions_to_edit(_tools("write_file", "repo_apply_diff", "treesitter_replace_node"))
+        names = {d["function"]["name"] for d in kept}
+        assert names == {"repo_apply_diff", "treesitter_replace_node"}
+
+    def test_does_not_mutate_input_in_place(self) -> None:
+        original = _tools("write_file", "edit_blocks")
+        before = [dict(d) for d in original]
+        restrict_tool_definitions_to_edit(original)
+        assert original == before

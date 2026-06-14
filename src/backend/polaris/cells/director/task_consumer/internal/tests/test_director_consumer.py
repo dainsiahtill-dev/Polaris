@@ -875,6 +875,146 @@ class TestPreStatePunchList:
         assert result["total_clauses"] == 2
 
 
+class TestRepairShrinkGuard:
+    """R7-C (I3-r28): deterministic anti-shrink backstop on repair turns —
+    a weak model asked to fix one error must not rewrite the file smaller
+    (live r28: main.js 5762B/22 constructs -> 3095B/12)."""
+
+    @staticmethod
+    def _prior_size(workspace: str, payload: dict[str, Any]) -> int | None:
+        from polaris.cells.director.task_consumer.internal.director_consumer import (
+            _repair_prior_target_size,
+        )
+
+        return _repair_prior_target_size(workspace, payload)
+
+    @staticmethod
+    def _shrink_error(workspace: str, target: str, prior: int) -> str | None:
+        from polaris.cells.director.task_consumer.internal.director_consumer import (
+            _repair_shrink_error,
+        )
+
+        return _repair_shrink_error(workspace, target, prior)
+
+    @staticmethod
+    def _repair_payload(target: str = "main.js") -> dict[str, Any]:
+        return {
+            "construction_step": {"step_id": "S", "target_file": target},
+            "last_failure": {"error_code": "QA_syntax_failed", "error_message": "main.js:42 token ';'"},
+        }
+
+    def test_prior_size_returns_bytes_on_repair_turn(self, tmp_path: Any) -> None:
+        (tmp_path / "main.js").write_text("x" * 5000, encoding="utf-8")
+        assert self._prior_size(str(tmp_path), self._repair_payload()) == 5000
+
+    def test_prior_size_none_without_last_failure(self, tmp_path: Any) -> None:
+        (tmp_path / "main.js").write_text("x" * 5000, encoding="utf-8")
+        payload = {"construction_step": {"step_id": "S", "target_file": "main.js"}}
+        assert self._prior_size(str(tmp_path), payload) is None
+
+    def test_prior_size_none_when_target_absent(self, tmp_path: Any) -> None:
+        assert self._prior_size(str(tmp_path), self._repair_payload()) is None
+
+    def test_shrink_below_floor_returns_teaching_error(self, tmp_path: Any) -> None:
+        (tmp_path / "main.js").write_text("x" * 1000, encoding="utf-8")  # 50% of 2000 < 0.6 floor
+        err = self._shrink_error(str(tmp_path), "main.js", 2000)
+        assert err is not None
+        assert "REPAIR SHRANK" in err and "edit_blocks" in err and "2000" in err
+
+    def test_preserved_size_returns_none(self, tmp_path: Any) -> None:
+        (tmp_path / "main.js").write_text("x" * 1950, encoding="utf-8")  # ~same size, one-char fix
+        assert self._shrink_error(str(tmp_path), "main.js", 2000) is None
+
+    def test_tiny_prior_file_not_guarded(self, tmp_path: Any) -> None:
+        (tmp_path / "main.js").write_text("x" * 10, encoding="utf-8")
+        assert self._shrink_error(str(tmp_path), "main.js", 300) is None  # below MIN_PRIOR_BYTES
+
+    def test_env_overrides_ratio(self, tmp_path: Any, monkeypatch: Any) -> None:
+        (tmp_path / "main.js").write_text("x" * 850, encoding="utf-8")  # 850/1000 = 0.85
+        # default 0.6: 850 >= 600 -> ok; raise floor to 0.9: 850 < 900 -> violation
+        assert self._shrink_error(str(tmp_path), "main.js", 1000) is None
+        monkeypatch.setenv("KERNELONE_REPAIR_SHRINK_GUARD_RATIO", "0.9")
+        assert self._shrink_error(str(tmp_path), "main.js", 1000) is not None
+
+
+class TestRepairShrinkGuardWiring:
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_shrunk_repair_requeues_pending_exec(self, mock_get_svc: MagicMock, tmp_path: Any) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        target = tmp_path / "main.js"
+        target.write_text("// working game\n" + "x" * 6000, encoding="utf-8")
+        prior = target.stat().st_size
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-repair-1"
+        claim_result.lease_token = "lease-r"
+        claim_result.payload = {
+            "blueprint_id": "bp-r",
+            "construction_step": {"step_id": "S", "target_file": "main.js"},
+            "last_failure": {"error_code": "QA_syntax_failed", "error_message": "main.js:42 token ';'"},
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+
+        def _shrink_exec(task_id: str, payload: dict[str, Any], lease_token: str) -> dict[str, Any]:
+            target.write_text("// tiny rewrite\n", encoding="utf-8")
+            return {"changed_files": ["main.js"], "duration": 1, "side_effects": []}
+
+        with patch.object(consumer, "_execute_task", side_effect=_shrink_exec):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == "repair_shrank_file"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "REPAIR_SHRANK_FILE"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert str(prior) in fail_call.error_message
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_preserving_repair_acks_pending_qa(self, mock_get_svc: MagicMock, tmp_path: Any) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        target = tmp_path / "main.js"
+        target.write_text("// working game\n" + "x" * 6000, encoding="utf-8")
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-repair-2"
+        claim_result.lease_token = "lease-r2"
+        claim_result.payload = {
+            "blueprint_id": "bp-r",
+            "construction_step": {"step_id": "S", "target_file": "main.js"},
+            "last_failure": {"error_code": "QA_syntax_failed", "error_message": "main.js:42 token ';'"},
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="pending_qa")
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+
+        def _edit_exec(task_id: str, payload: dict[str, Any], lease_token: str) -> dict[str, Any]:
+            # localized fix: same size, one char changed
+            target.write_text("// working game\n" + "y" + "x" * 5999, encoding="utf-8")
+            return {"changed_files": ["main.js"], "duration": 1, "side_effects": []}
+
+        with patch.object(consumer, "_execute_task", side_effect=_edit_exec):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is True
+        assert results[0]["status"] == "pending_qa"
+        # no REPAIR_SHRANK_FILE failure was raised
+        for call in mock_svc.fail_task_stage.call_args_list:
+            assert call[0][0].error_code != "REPAIR_SHRANK_FILE"
+
+
 class TestPunchListWiring:
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execute_task_attaches_pre_state_verify_to_context(

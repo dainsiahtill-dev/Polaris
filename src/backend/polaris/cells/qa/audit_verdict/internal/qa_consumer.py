@@ -98,6 +98,38 @@ def _resolve_qa_route(audit_result: dict[str, Any]) -> tuple[str, str, str]:
     return verdict, "", "rejected"
 
 
+# RANK 1 (Reflexion / Actor-Critic): the critic's precise findings must reach the
+# actor in a usable form. A content FAIL previously died in a terminal reject (and
+# even when requeued, acknowledge_task_stage pops last_failure, which the Director
+# is the only reader of) — so the critique was structurally invisible. These helpers
+# route bounce-eligible findings through the same last_failure channel the
+# deterministic gates already use.
+_QA_FINDINGS_REQUEUE_ENV = "KERNELONE_QA_FINDINGS_REQUEUE"
+_QA_FINDINGS_REQUEUE_DISABLED = {"off", "none", "disabled", "false", "0"}
+_QA_FEEDBACK_MAX_FINDINGS = 5
+_QA_FEEDBACK_MAX_CHARS = 600
+
+
+def _qa_findings_requeue_enabled() -> bool:
+    return os.environ.get(_QA_FINDINGS_REQUEUE_ENV, "").strip().lower() not in _QA_FINDINGS_REQUEUE_DISABLED
+
+
+def _qa_findings_are_actionable(findings: Any) -> bool:
+    """True iff findings is a non-empty list with at least one non-blank entry."""
+    return isinstance(findings, list) and any(str(item).strip() for item in findings)
+
+
+def _format_qa_findings_feedback(findings: list[Any], verdict: str) -> str:
+    """Render QA findings as an actionable, content-preserving repair directive."""
+    lines = [str(item).strip() for item in findings if str(item).strip()][:_QA_FEEDBACK_MAX_FINDINGS]
+    body = "\n".join(f"- {line}" for line in lines)
+    message = (
+        f"QA rejected this change ({verdict}). Fix these findings IN PLACE, preserving all "
+        f"existing working code (do not rewrite the file from scratch):\n{body}"
+    )
+    return message[:_QA_FEEDBACK_MAX_CHARS]
+
+
 def _normalize_path_values(raw: Any) -> list[str]:
     if raw is None:
         return []
@@ -455,6 +487,36 @@ class QAConsumer:
             audit_result = self._run_qa_audit(task_id, payload)
 
             verdict, next_stage, terminal_status = _resolve_qa_route(audit_result)
+
+            # RANK 1 (Reflexion/Actor-Critic): a content FAIL with actionable findings
+            # must hand them to the Director, not die in a terminal reject. acknowledge_
+            # task_stage pops last_failure and the Director only reads payload["last_failure"],
+            # so a 'rejected' verdict's findings are structurally invisible. Route the bounce
+            # through the same last_failure channel the deterministic gates use (-> pending_exec)
+            # so the critique reaches the next attempt. Bounded by the market retry/dead-letter cap.
+            audit_findings = audit_result.get("findings", [])
+            if (
+                terminal_status == "rejected"
+                and not next_stage
+                and _qa_findings_requeue_enabled()
+                and _qa_findings_are_actionable(audit_findings)
+            ):
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="QA_audit_failed",
+                        error_message=_format_qa_findings_feedback(audit_findings, verdict),
+                        requeue_stage="pending_exec",
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "verdict": verdict,
+                    "reason": "qa_findings_requeued",
+                }
 
             ack_payload: dict[str, Any] = {
                 "verdict": verdict,

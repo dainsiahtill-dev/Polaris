@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 _FIRST_TURN_WRITE_ENV = "KERNELONE_FIRST_TURN_WRITE"
 _FIRST_TURN_WRITE_DISABLED = {"off", "none", "disabled", "false", "0"}
 
+# I3-r28 (R7, repair-preserving edit): on a repair/bounce turn whose target file
+# already exists, force an ANCHORED edit and forbid the whole-file rewrite verb so
+# the weak model fixes the named error in place instead of rewriting smaller.
+_REPAIR_PRESERVE_EDIT_ENV = "KERNELONE_REPAIR_PRESERVE_EDIT"
+_REPAIR_PRESERVE_EDIT_DISABLED = {"off", "none", "disabled", "false", "0"}
+
 
 def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
     """Resolve tool call format provider hint.
@@ -148,6 +154,85 @@ def restrict_tool_definitions_to_write(tool_definitions: list[dict[str, Any]]) -
     if not any(_tool_name(d) in _FILE_PARAM_WRITE_TOOLS for d in kept):
         return tool_definitions
     return kept
+
+
+# Whole-file rewrite verbs dropped on a repair turn — these let the weak model
+# regenerate the file from its (compressed) memory and thereby shrink/degrade it.
+_FULL_REWRITE_TOOLS = frozenset({"write_file", "append_to_file"})
+
+# Anchored / partial edit tools. Their formats express only a delta against an
+# anchor (Aider-style SEARCH/REPLACE, line-range, unified diff, AST node), so the
+# model physically cannot elide untouched code. At least one must survive for the
+# repair restriction to engage (else the turn would be left unable to write).
+_ANCHORED_EDIT_TOOLS = frozenset(
+    {
+        "edit_blocks",
+        "edit_file",
+        "precision_edit",
+        "repo_apply_diff",
+        "apply_patch",
+        "treesitter_replace_node",
+        "treesitter_insert_method",
+        "treesitter_rename_symbol",
+    }
+)
+
+
+def resolve_repair_edit_target(context_override: Any, workspace: str) -> str | None:
+    """Return the target of a REPAIR turn that must preserve existing content (R7).
+
+    A repair turn is the symmetric inverse of a from-scratch turn
+    (:func:`resolve_from_scratch_write_target`): it fires only when the leaf
+    step's single declared ``target_file`` **already exists** on disk **and** the
+    turn carries a non-empty ``last_failure`` (QA verdict / syntax-gate error that
+    bounced the prior attempt back to ``pending_exec``). In that state the file is
+    real working code that failed for ONE named reason; the weak model must fix
+    that reason in place, not rewrite the whole file smaller (live I3-r28:
+    ``main.js`` regressed 5762B/22 constructs → 3095B/12 after a repair bounce).
+
+    Returns None when there is no recorded failure (normal edit-on-prior / first
+    write), when the target does not yet exist (that is from-scratch territory),
+    and for non-step turns. Disabled via env ``KERNELONE_REPAIR_PRESERVE_EDIT`` ∈
+    {off,none,disabled,false,0}.
+    """
+    if os.environ.get(_REPAIR_PRESERVE_EDIT_ENV, "").strip().lower() in _REPAIR_PRESERVE_EDIT_DISABLED:
+        return None
+    if not isinstance(context_override, dict):
+        return None
+    last_failure = context_override.get("last_failure")
+    if not isinstance(last_failure, dict) or not str(last_failure.get("error_message") or "").strip():
+        return None
+    step = context_override.get("construction_step")
+    if not isinstance(step, dict) or not step:
+        return None
+    target = str(step.get("target_file") or "").strip().replace("\\", "/")
+    while target.startswith("./"):
+        target = target[2:]
+    if not target:
+        return None
+    ws = str(workspace or ".").strip() or "."
+    try:
+        if os.path.exists(os.path.join(ws, target)):
+            return target  # existing file + recorded failure → preserve-and-edit
+    except OSError:
+        return None
+    return None
+
+
+def restrict_tool_definitions_to_edit(tool_definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop the whole-file rewrite verbs on a repair turn, forcing an anchored edit.
+
+    Unlike :func:`restrict_tool_definitions_to_write` (from-scratch, which keeps
+    only write tools and drops reads), the repair restriction is *subtractive*:
+    it removes ``write_file`` / ``append_to_file`` while keeping every anchored
+    edit tool AND the read/scout tools — the model still needs to read the current
+    file to anchor a SEARCH/REPLACE. Fail-open: if no anchored edit tool is
+    present the list is returned unchanged, so a turn is never left unable to
+    write. Definitions are never mutated in place.
+    """
+    if not any(_tool_name(d) in _ANCHORED_EDIT_TOOLS for d in tool_definitions):
+        return tool_definitions
+    return [d for d in tool_definitions if _tool_name(d) not in _FULL_REWRITE_TOOLS]
 
 
 def pin_write_tool_file_param_to_targets(

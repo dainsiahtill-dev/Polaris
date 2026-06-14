@@ -5,7 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from polaris.cells.qa.audit_verdict.internal.qa_consumer import QAConsumer, _resolve_qa_route
+import pytest
+from polaris.cells.qa.audit_verdict.internal.qa_consumer import (
+    QAConsumer,
+    _format_qa_findings_feedback,
+    _qa_findings_are_actionable,
+    _resolve_qa_route,
+)
 
 
 class TestResolveQARoute:
@@ -26,6 +32,103 @@ class TestResolveQARoute:
         assert verdict == "FAIL"
         assert next_stage == "waiting_human"
         assert terminal_status == ""
+
+
+class TestQAFindingsRequeue:
+    """RANK 1 (Reflexion/Actor-Critic): a content FAIL must hand its precise
+    findings to the Director via the last_failure channel, not die in a terminal
+    reject where the Director structurally cannot see them."""
+
+    def test_actionable_predicate(self) -> None:
+        assert _qa_findings_are_actionable(["[error] x: y"]) is True
+        assert _qa_findings_are_actionable([]) is False
+        assert _qa_findings_are_actionable(["", "  "]) is False
+        assert _qa_findings_are_actionable("not a list") is False
+
+    def test_feedback_quotes_findings_and_caps(self) -> None:
+        findings = [f"[error] f{i}.js: issue {i}" for i in range(10)]
+        msg = _format_qa_findings_feedback(findings, "FAIL")
+        assert "QA rejected" in msg and "preserving all existing working code" in msg
+        assert "[error] f0.js: issue 0" in msg
+        # capped at 5 findings -> the 6th must not appear
+        assert "issue 5" not in msg
+        assert len(msg) <= 600
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_content_fail_with_findings_requeues_to_pending_exec(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-qa-fail"
+        claim_result.lease_token = "lease-fail"
+        claim_result.payload = {"title": "QA task"}
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = QAConsumer(workspace="/test", worker_id="qa-fail")
+        audit = {"verdict": "FAIL", "audit_id": "a1", "findings": ["[error] main.js: missing Ball class"]}
+        with patch.object(consumer, "_run_qa_audit", return_value=audit):
+            results = consumer.poll_once()
+
+        assert results[0]["reason"] == "qa_findings_requeued"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "QA_audit_failed"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert "missing Ball class" in fail_call.error_message
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_content_fail_without_findings_stays_terminal_reject(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-qa-fail2"
+        claim_result.lease_token = "lease-fail2"
+        claim_result.payload = {"title": "QA task"}
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="rejected")
+
+        consumer = QAConsumer(workspace="/test", worker_id="qa-fail2")
+        with patch.object(
+            consumer, "_run_qa_audit", return_value={"verdict": "FAIL", "audit_id": "a2", "findings": []}
+        ):
+            results = consumer.poll_once()
+
+        # No actionable findings -> unchanged terminal-reject behavior.
+        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
+        assert ack_call.terminal_status == "rejected"
+        assert results[0]["verdict"] == "FAIL"
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_env_off_keeps_terminal_reject(self, mock_get_svc: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KERNELONE_QA_FINDINGS_REQUEUE", "off")
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-qa-fail3"
+        claim_result.lease_token = "lease-fail3"
+        claim_result.payload = {"title": "QA task"}
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="rejected")
+
+        consumer = QAConsumer(workspace="/test", worker_id="qa-fail3")
+        audit = {"verdict": "FAIL", "audit_id": "a3", "findings": ["[error] main.js: x"]}
+        with patch.object(consumer, "_run_qa_audit", return_value=audit):
+            results = consumer.poll_once()
+
+        mock_svc.fail_task_stage.assert_not_called()
+        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
+        assert ack_call.terminal_status == "rejected"
+        assert results[0]["verdict"] == "FAIL"
 
 
 class TestQAConsumerPollOnce:
