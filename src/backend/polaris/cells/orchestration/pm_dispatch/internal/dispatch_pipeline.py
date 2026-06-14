@@ -765,6 +765,41 @@ def _read_bool_env(name: str, *, default: bool = False) -> bool:
     return default
 
 
+def _endpoint_reachable(base_url: str, *, timeout: float = 4.0) -> bool:
+    """True if an OpenAI-compatible ``/v1/models`` endpoint responds.
+
+    Empty/unknown URL → True (cloud providers without this probe are not skipped).
+    Any connection error / non-2xx-4xx → False (treated as offline).
+    """
+    if not base_url:
+        return True
+    import urllib.request
+
+    url = base_url.rstrip("/")
+    if not url.endswith("/v1"):
+        url += "/v1"
+    url += "/models"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=timeout) as resp:
+            return 200 <= int(getattr(resp, "status", 0) or resp.getcode() or 0) < 500
+    except (OSError, ValueError):  # connection refused / timeout / DNS / bad response → offline
+        return False
+
+
+def _reachable_provider_pool(pool: tuple[str, ...]) -> list[str]:
+    """Filter a provider pool to currently-reachable backends (skip offline endpoints)."""
+    from polaris.kernelone.llm.runtime_config import get_provider_base_url
+
+    live: list[str] = []
+    for provider_id in pool:
+        base_url = get_provider_base_url(provider_id)
+        if _endpoint_reachable(base_url):
+            live.append(provider_id)
+        else:
+            logger.warning("director pool: skipping unreachable backend %s (%s)", provider_id, base_url or "?")
+    return live
+
+
 def _build_director_worker_pool(
     director_consumer_type: type,
     *,
@@ -789,9 +824,21 @@ def _build_director_worker_pool(
         return []
     if concurrency <= 1 or len(pool) < 1:
         return []
+    # Resilience (multi-LLM, skip-offline): health-check the pool and run only on the
+    # backends reachable right now, auto-adjusting the worker count. A single offline
+    # endpoint (e.g. a LAN node down) is skipped, never stranding a worker or the run;
+    # if none are reachable we fall back to the single inline consumer.
+    live_pool = _reachable_provider_pool(pool)
+    if not live_pool:
+        logger.warning("director pool: NO backend reachable; falling back to single inline consumer")
+        return []
+    if len(live_pool) < len(pool):
+        logger.warning("director pool: %d/%d backends live; running on %s", len(live_pool), len(pool), live_pool)
+    # Keep the requested parallelism; round-robin the workers over the LIVE backends
+    # only (so a dead endpoint is routed around, never assigned).
     workers: list[tuple[Any, str]] = []
     for idx in range(concurrency):
-        provider_id = pool[idx % len(pool)]
+        provider_id = live_pool[idx % len(live_pool)]
         consumer = director_consumer_type(
             workspace=workspace_full,
             worker_id=f"pm_inline_director_{worker_suffix}_w{idx}",
@@ -801,10 +848,10 @@ def _build_director_worker_pool(
         )
         workers.append((consumer, provider_id))
     logger.info(
-        "director multi-backend concurrency: %d workers over %d endpoint(s) %s",
+        "director multi-backend concurrency: %d worker(s) over %d live endpoint(s) %s",
         concurrency,
-        len(pool),
-        list(pool),
+        len(live_pool),
+        live_pool,
     )
     return workers
 

@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
     _build_director_worker_pool,
     _drive_director_workers,
@@ -22,6 +23,15 @@ from polaris.kernelone.llm.runtime_config import (
     reset_runtime_config_manager,
     set_runtime_config_manager,
 )
+
+_REACHABLE = "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._endpoint_reachable"
+
+
+@pytest.fixture(autouse=True)
+def _all_endpoints_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Default: treat every endpoint as reachable so the round-robin / drive logic is
+    # tested without real network. The resilient-pool tests override this per-case.
+    monkeypatch.setattr(_REACHABLE, lambda base_url, **_kw: True)
 
 
 def _install_config(tmp_path: Path, director: dict[str, object]) -> None:
@@ -126,3 +136,36 @@ class TestDriveWorkers:
             raise AssertionError("expected worker error to surface")
         except RuntimeError as exc:
             assert "backend down" in str(exc)
+
+
+class TestResilientPool:
+    """Multi-LLM resilience: skip offline backends, auto-adjust the worker count."""
+
+    def teardown_method(self) -> None:
+        _teardown()
+
+    def test_skips_unreachable_backend_and_adjusts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_config(
+            tmp_path,
+            {"provider_id": "prov-local", "model": "qwen", "provider_pool": ["prov-lan"], "concurrency": 4},
+        )
+        # prov-lan (192.168.1.50) is offline; prov-local is reachable.
+        monkeypatch.setattr(_REACHABLE, lambda base_url, **_kw: "192.168.1.50" not in (base_url or ""))
+        workers = _build_director_worker_pool(
+            _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
+        )
+        bound = [pid for _c, pid in workers]
+        assert "prov-lan" not in bound  # the offline backend is never assigned
+        assert set(bound) == {"prov-local"}  # all workers routed to the live backend
+        assert len(bound) == 4  # requested parallelism preserved (round-robin over live)
+
+    def test_no_backend_reachable_falls_back_to_single(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_config(
+            tmp_path,
+            {"provider_id": "prov-local", "model": "qwen", "provider_pool": ["prov-lan"], "concurrency": 4},
+        )
+        monkeypatch.setattr(_REACHABLE, lambda base_url, **_kw: False)
+        workers = _build_director_worker_pool(
+            _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
+        )
+        assert workers == []  # no live backend → single inline consumer fallback

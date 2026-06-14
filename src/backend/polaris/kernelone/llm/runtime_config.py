@@ -351,9 +351,34 @@ def get_role_concurrency(role_id: str) -> int:
     return resolved.concurrency if resolved is not None else 1
 
 
+def get_provider_base_url(provider_id: str) -> str:
+    """Resolve a provider's base endpoint URL from the runtime LLM config.
+
+    Best-effort: returns "" when the provider/config is absent. Used to health-check
+    a multi-backend pool so an offline endpoint can be skipped.
+    """
+    try:
+        config = get_runtime_config_manager()._load_config()
+    except (RuntimeError, ValueError, OSError):
+        return ""
+    providers = config.get("providers")
+    entry: Any = None
+    if isinstance(providers, dict):
+        entry = providers.get(provider_id)
+    elif isinstance(providers, list):
+        for item in providers:
+            if isinstance(item, dict) and str(item.get("id") or item.get("provider_id") or "") == provider_id:
+                entry = item
+                break
+    if isinstance(entry, dict):
+        return str(entry.get("base_url") or entry.get("endpoint") or entry.get("api_base") or "").strip()
+    return ""
+
+
 __all__ = [
     "RoleModelConfig",
     "RuntimeConfigManager",
+    "get_provider_base_url",
     "get_role_model",
     "get_runtime_config_manager",
     "load_role_config",

@@ -1,4 +1,14 @@
-"""DirectorPool: CE-managed pool of Director workers.
+"""DirectorPool: legacy CE-managed pool of Director workers.
+
+DEPRECATED for task assignment (ADR-0093). Director parallelism is realized via the
+**market-pull worker pool** (``dispatch_pipeline._build_director_worker_pool``), NOT
+CE-direct push. The CE coordinates Directors DECLARATIVELY by publishing ``pending_exec``
+leaf steps + ``depends_on`` to ``runtime.task_market`` (the CE consumer records
+``director_pool_assignment = "deferred_to_task_market"``); the market's leasing performs
+the scheduling, parallelism, and failure recovery (lease + visibility-timeout). Do NOT wire
+this class to assign or launch Directors in a way that bypasses the market — that would
+re-centralize scheduling into the CE and regress ADR-0088/ADR-0093. Retained only as a
+non-market utility (dashboards / conflict views).
 
 Provides task assignment, global file conflict detection, real-time
 status dashboard, and failure recovery for multi-Director workflows.
