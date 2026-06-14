@@ -1,8 +1,26 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from polaris.kernelone.utils.json_utils import parse_json_payload
+
+
+@dataclass(frozen=True)
+class FinalizedResponse:
+    """Outcome of the canonical reasoning-aware response finalization (DEFECT 2).
+
+    ``output`` is the visible answer (possibly recovered from the reasoning
+    channel); ``thinking`` carries the reasoning blob when it was recovered or
+    when the turn failed mid-reasoning (for downstream salvage); ``ok`` is False
+    only when the model exhausted the budget inside its reasoning channel and
+    left no complete answer (fail-closed, with a descriptive ``error``).
+    """
+
+    output: str
+    thinking: str | None
+    ok: bool
+    error: str | None
 
 
 class LLMResponseParser:
@@ -86,6 +104,47 @@ class LLMResponseParser:
     @classmethod
     def is_length_finish_reason(cls, reason: str) -> bool:
         return str(reason or "").strip().lower() in cls._LENGTH_FINISH_REASONS
+
+    @classmethod
+    def finalize_response(cls, payload: Any, *, visible_text: str | None = None) -> FinalizedResponse:
+        """THE single reasoning-aware finalization (DEFECT 2 SSoT).
+
+        Every provider/path routes empty-vs-reasoning handling through here so a
+        reasoning model that returns ``content:null`` with the answer in its
+        reasoning channel is never silently dropped as empty. The branch table is
+        defined exactly once:
+
+        - visible content present  -> ok, return it (reasoning NOT surfaced — a
+          chain-of-thought leak guard: recovery is strictly gated on EMPTY output);
+        - empty + reasoning + finish_reason==length -> fail-closed (the answer was
+          truncated mid-reasoning); carry ``thinking`` for downstream salvage;
+        - empty + reasoning (not length) -> recover the reasoning as the answer;
+        - empty + no reasoning -> empty (ok, the caller decides what empty means).
+
+        ``visible_text`` lets a provider pass its own content extraction (some
+        providers extract content differently than :meth:`extract_text`); the
+        reasoning/finish_reason channels always come from ``payload``.
+        """
+        visible = (cls.extract_text(payload) if visible_text is None else str(visible_text)).strip()
+        if visible:
+            return FinalizedResponse(output=visible, thinking=None, ok=True, error=None)
+
+        reasoning = cls.extract_reasoning(payload)
+        if reasoning:
+            finish_reason = cls.extract_finish_reason(payload)
+            if cls.is_length_finish_reason(finish_reason):
+                return FinalizedResponse(
+                    output="",
+                    thinking=reasoning,
+                    ok=False,
+                    error=(
+                        "Empty visible output (reasoning truncated, "
+                        f"finish_reason={finish_reason or 'unknown'}, reasoning_chars={len(reasoning)})"
+                    ),
+                )
+            return FinalizedResponse(output=reasoning, thinking=reasoning, ok=True, error=None)
+
+        return FinalizedResponse(output="", thinking=None, ok=True, error=None)
 
     @classmethod
     def looks_truncated_json(cls, text: str) -> bool:

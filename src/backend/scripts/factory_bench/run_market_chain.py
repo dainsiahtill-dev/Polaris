@@ -101,15 +101,19 @@ def main() -> int:
 
         market_dir = resolve_artifact_path(workspace_full, cache_root_full, "runtime/task_market")
         shutil.rmtree(market_dir, ignore_errors=True)
-        # The cross-parent interface ledger is market-run state: a stale ledger
-        # from a prior run would inject frozen identifiers into this run's CE
-        # fission and defeat a clean re-test.
-        ledger_path = resolve_artifact_path(workspace_full, cache_root_full, "runtime/contracts/interface_ledger.json")
-        try:
-            os.remove(ledger_path)
-            print(f"[market-chain] fresh market: removed stale ledger {ledger_path}", flush=True)
-        except OSError:
-            pass
+        # The cross-parent interface + file-ownership ledgers are market-run
+        # state: a stale ledger from a prior run would inject frozen identifiers /
+        # ownership into this run's CE fission and defeat a clean re-test.
+        for ledger_rel in (
+            "runtime/contracts/interface_ledger.json",
+            "runtime/contracts/file_ownership_ledger.json",
+        ):
+            ledger_path = resolve_artifact_path(workspace_full, cache_root_full, ledger_rel)
+            try:
+                os.remove(ledger_path)
+                print(f"[market-chain] fresh market: removed stale ledger {ledger_path}", flush=True)
+            except OSError:
+                pass
         print(f"[market-chain] fresh market: wiped {market_dir}", flush=True)
 
     contract_path = resolve_artifact_path(workspace_full, cache_root_full, "runtime/contracts/pm_tasks.contract.json")

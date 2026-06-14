@@ -61,6 +61,70 @@ def split_verify_clauses(verify: str) -> list[str]:
     return [part.strip() for part in verify.split(" && ") if part.strip()]
 
 
+# A grep clause that searches for a DECLARED signature/interface token proves
+# real code is present; a grep for the filename or a trivial marker does not.
+_GREP_PATTERN_RE = re.compile(r"grep\s+(?:-[A-Za-z]+\s+)*(?P<quote>['\"])(?P<pat>.*?)(?P=quote)")
+
+
+def _grep_clause_hits_signature(clause: str, signature_tokens: set[str]) -> bool:
+    """True when a grep clause searches for one of the step's declared symbols."""
+    match = _GREP_PATTERN_RE.search(clause)
+    if match is None:
+        return False
+    pattern = match.group("pat").strip().lower()
+    if not pattern:
+        return False
+    for token in signature_tokens:
+        normalized = str(token or "").strip().lower()
+        if len(normalized) < 3:
+            continue
+        if pattern in normalized or normalized in pattern:
+            return True
+    return False
+
+
+def verify_has_structural_clause(verify: str, *, signature_tokens: set[str]) -> bool:
+    """True when the verify carries at least one NON-hollow clause.
+
+    A clause is *hollow* when it only proves the file exists (``test -f``), has a
+    line count (``wc -l`` compare), or contains a trivial marker grep — none of
+    which proves the declared code was actually written (live I3-r21: a step
+    "resolved" on a ``polaris-deterministic-bootstrap`` stub because its verify
+    was existence-only). A clause is *structural* when it is a syntax/compile/run
+    check, a behaviour assertion, or a grep for a declared signature token.
+
+    Fail-OPEN by design: any clause shape this function does not confidently
+    recognize as hollow is treated as structural, so a malformed/exotic verify
+    is never rejected — only a verify whose every clause is provably hollow.
+    """
+    clauses = split_verify_clauses(verify)
+    if not clauses:
+        return False
+    for clause in clauses:
+        candidate = clause.strip()
+        if _TEST_FILE_RE.match(candidate) or _WC_COMPARE_RE.match(candidate):
+            continue
+        if _GREP_FILE_RE.match(candidate):
+            if _grep_clause_hits_signature(candidate, signature_tokens):
+                return True
+            continue
+        # Not existence / line-count / marker-grep -> a real check (syntax,
+        # behaviour, test run, or a grep too complex to classify as hollow).
+        return True
+    return False
+
+
+def verify_is_all_hollow(verify: str, *, signature_tokens: set[str]) -> bool:
+    """True when EVERY verify clause is hollow (and there is at least one clause).
+
+    The inverse of :func:`verify_has_structural_clause`, guarded so an empty
+    verify (handled elsewhere as "missing verify") is never reported as hollow.
+    """
+    if not split_verify_clauses(verify):
+        return False
+    return not verify_has_structural_clause(verify, signature_tokens=signature_tokens)
+
+
 def _clean_path(raw: str) -> str:
     path = raw.strip().strip("'\"")
     return path.removeprefix("./")
@@ -225,4 +289,6 @@ __all__ = [
     "normalize_step_verify",
     "run_step_verify",
     "split_verify_clauses",
+    "verify_has_structural_clause",
+    "verify_is_all_hollow",
 ]

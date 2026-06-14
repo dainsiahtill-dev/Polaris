@@ -715,6 +715,11 @@ class MiniMaxProvider(BaseProvider):
                                     else ""
                                 )
                             ),
+                            # Carry the reasoning channel so a recovery consumer
+                            # (CE step-fission salvage) can parse a JSON answer
+                            # the model completed in thinking before exhausting
+                            # the visible-output budget (I3-r17).
+                            thinking=thinking,
                         )
 
                 try:

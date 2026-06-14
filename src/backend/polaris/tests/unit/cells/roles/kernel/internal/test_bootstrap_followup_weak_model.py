@@ -45,7 +45,13 @@ def _receipt_with_content(content: str) -> dict[str, Any]:
     }
 
 
-def test_bootstrap_context_carries_real_file_content_beyond_old_fragment_limit() -> None:
+def test_bootstrap_context_carries_real_file_content_beyond_old_fragment_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Transcription fidelity is tested with a generous budget (a large-window
+    # provider); the I3-r22 window-sized default is exercised separately below.
+    monkeypatch.setenv("KERNELONE_BOOTSTRAP_READ_TOTAL_CHARS", "16000")
+    monkeypatch.setenv("KERNELONE_BOOTSTRAP_READ_MAX_CHARS", "9000")
     content = "\n".join(f"line {i}: db_table_models[model._meta.db_table].append(x)" for i in range(120))
     assert len(content) > 1200  # would have been truncated to a fragment before
     context = build_retry_write_after_bootstrap_context(
@@ -56,6 +62,24 @@ def test_bootstrap_context_carries_real_file_content_beyond_old_fragment_limit()
     rendered = "\n".join(str(m.get("content") or "") for m in context)
     assert "line 119:" in rendered  # full content present, not the 1200-char fragment
     assert "exact file content follows" in rendered
+
+
+def test_bootstrap_content_window_sized_default_caps_injection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """I3-r22 (F10): the default read-content budget is small (sized for a 16k
+    local-Director window) so a large transcription payload cannot collapse the
+    output budget. 120 lines (~6k chars) is truncated under the default."""
+    monkeypatch.delenv("KERNELONE_BOOTSTRAP_READ_TOTAL_CHARS", raising=False)
+    monkeypatch.delenv("KERNELONE_BOOTSTRAP_READ_MAX_CHARS", raising=False)
+    content = "\n".join(f"line {i}: db_table_models[model._meta.db_table].append(x)" for i in range(120))
+    context = build_retry_write_after_bootstrap_context(
+        original_context=[{"role": "user", "content": "fix it"}],
+        bootstrap_receipt=_receipt_with_content(content),
+        forced_write_tool_name="edit_blocks",
+    )
+    rendered = "\n".join(str(m.get("content") or "") for m in context)
+    assert "[content truncated]" in rendered  # capped under the small default
+    assert "line 0:" in rendered  # the head is still transcribable
+    assert "line 119:" not in rendered  # tail dropped to protect the output budget
 
 
 def test_bootstrap_context_unwraps_executor_envelope() -> None:
@@ -164,6 +188,77 @@ def test_deterministic_fallback_fires_for_user_named_new_file(tmp_path: Path) ->
     )
     assert decision is not None
     assert decision.metadata.get("target_file") == "demo_app.py"
+
+
+# ---------------------------------------------------------------------------
+# I3-r21 root fix: leaf-construction suppression (rank 2) + refuse-to-guess (rank 1)
+# ---------------------------------------------------------------------------
+
+
+def _leaf_step_context(target_file: str, *, verify: str, named_files: str) -> list[dict[str, Any]]:
+    """A turn context carrying a CE construction-step card (a leaf step execution)."""
+    return [
+        {"role": "user", "content": f"build the game across {named_files}"},
+        {
+            "role": "user",
+            "content": "execute the construction step",
+            "context_override": {
+                "construction_step": {
+                    "step_id": "PM-0001-1-S4",
+                    "target_file": target_file,
+                    "verify": verify,
+                }
+            },
+        },
+    ]
+
+
+def test_leaf_construction_step_suppresses_write_fallback(tmp_path: Path) -> None:
+    """A leaf step naming many files must NOT plant a stub for ANY of them — the
+    placeholder can never satisfy the real verify and only poisons the owner.
+    This is the live r21 main.js clobber: S4(readme.md) executing wrote main.js.
+    """
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=_leaf_step_context(
+            "readme.md",
+            verify="test -f main.js && node --check main.js && grep -q 'class Paddle' main.js",
+            named_files="index.html style.css main.js readme.md",
+        ),
+        bootstrap_receipt=_failed_read_receipt("index.html"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+    assert decision is None
+
+
+def test_non_leaf_refuses_to_guess_among_multiple_targets(tmp_path: Path) -> None:
+    """Without a declared single target, >1 user-named new file is ambiguous;
+    picking viable_targets[0] is the wrong-file bug. Refuse rather than guess."""
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="t-multi",
+        original_context=[
+            {"role": "user", "content": "please create index.html and main.js and style.css for me"}
+        ],
+        bootstrap_receipt=_failed_read_receipt("index.html"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+    assert decision is None
+
+
+def test_non_leaf_single_target_still_fires(tmp_path: Path) -> None:
+    """The legitimate non-leaf scaffold case (exactly one user-named new file)
+    is unchanged — the rank-1 guard only refuses when the choice is ambiguous."""
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="t-single",
+        original_context=[{"role": "user", "content": "please create config_app.py with an entry point"}],
+        bootstrap_receipt=_failed_read_receipt("config_app.py"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+    assert decision is not None
+    assert decision.metadata.get("target_file") == "config_app.py"
 
 
 # ---------------------------------------------------------------------------

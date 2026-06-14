@@ -341,6 +341,43 @@ class QAConsumer:
             return f"step verify failed (exit {proc.returncode}) | {clause_detail} | full: {verify!r} :: {output_tail}".strip()
         return f"step verify failed (exit {proc.returncode}): {verify!r} :: {output_tail}".strip()
 
+    def _run_syntax_gate(self, payload: dict[str, Any]) -> str:
+        """Return a precise, weak-model-fixable message when a declared/changed
+        source file does NOT parse, else "" (I3-r18 fail-closed backstop).
+
+        Candidates = the step's target_file ∪ Director changed_files ∪ fallback
+        audit files, restricted to files that exist on disk. Fail-OPEN when no
+        checker could run (the gate blocks only on PROVEN-broken files), so a
+        no-node runner never blocks delivery on a file it cannot evaluate.
+        """
+        from polaris.kernelone.quality import first_syntax_failure
+        from polaris.kernelone.quality.artifact_quality import _compress_node_syntax_error
+
+        candidates: list[str] = []
+        step = payload.get("construction_step")
+        if isinstance(step, dict) and step.get("target_file"):
+            candidates.append(str(step["target_file"]))
+        candidates.extend(_extract_director_changed_files(payload))
+        candidates.extend(_extract_fallback_audit_files(payload))
+
+        seen: set[str] = set()
+        existing: list[str] = []
+        for raw in candidates:
+            rel = str(raw or "").strip()
+            if not rel or rel in seen:
+                continue
+            seen.add(rel)
+            if os.path.isfile(os.path.join(self._workspace, rel)):
+                existing.append(rel)
+        if not existing:
+            return ""
+
+        failure = first_syntax_failure(self._workspace, existing)
+        if failure is None:
+            return ""
+        compact = _compress_node_syntax_error(failure.error, failure.path)
+        return f"语法检查失败(node --check / py_compile),逐字修正后重试:\n{compact}"
+
     def _claim_and_process_one(self) -> dict[str, Any] | None:
         """Attempt to claim one PENDING_QA task and process it.
 
@@ -387,6 +424,31 @@ class QAConsumer:
                     "ok": False,
                     "verdict": "FAIL",
                     "reason": "step_verify_failed",
+                }
+
+            # I3-r18 fail-closed syntax gate: a grep-based step verify can PASS on
+            # a file that does not parse (r18: main.js with a stray ';' inside an
+            # object literal satisfied every grep clause but `node --check` failed),
+            # shipping a non-running product. Reject a DEFINITELY non-parsing target
+            # so the Director repairs it via the corrective re-ask ladder. Fail-OPEN
+            # only when no checker could run (node absent / unknown ext / timeout).
+            syntax_failure = self._run_syntax_gate(payload)
+            if syntax_failure:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="QA_syntax_failed",
+                        error_message=syntax_failure,
+                        requeue_stage="pending_exec",
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "verdict": "FAIL",
+                    "reason": "syntax_failed",
                 }
 
             # Run QA audit

@@ -613,6 +613,8 @@ class TurnEngine(TurnEngineCompatMixin):
             build_native_tool_schemas,
             extract_declared_step_target_files,
             pin_write_tool_file_param_to_targets,
+            resolve_from_scratch_write_target,
+            restrict_tool_definitions_to_write,
         )
         from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
@@ -665,6 +667,18 @@ class TurnEngine(TurnEngineCompatMixin):
         declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
+        # Prong A (I3-r23): a from-scratch leaf step writes on turn 1 — restrict to
+        # write tools so the weak Director cannot detour into a read, which would
+        # trigger an output-starving bootstrap retry (live r23 main.js dead-letter).
+        _from_scratch_target = resolve_from_scratch_write_target(
+            getattr(request, "context_override", None), kernel.workspace
+        )
+        if _from_scratch_target:
+            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+            logger.info(
+                "first-turn write-only for from-scratch leaf step: target=%s",
+                _from_scratch_target,
+            )
 
         tk = self._create_transaction_kernel(role, profile, request)
         turn_id = str(request.run_id or uuid.uuid4().hex[:12])
@@ -872,6 +886,8 @@ class TurnEngine(TurnEngineCompatMixin):
             build_native_tool_schemas,
             extract_declared_step_target_files,
             pin_write_tool_file_param_to_targets,
+            resolve_from_scratch_write_target,
+            restrict_tool_definitions_to_write,
         )
         from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
@@ -927,6 +943,18 @@ class TurnEngine(TurnEngineCompatMixin):
         declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
+        # Prong A (I3-r23): a from-scratch leaf step writes on turn 1 — restrict to
+        # write tools so the weak Director cannot detour into a read, which would
+        # trigger an output-starving bootstrap retry (live r23 main.js dead-letter).
+        _from_scratch_target = resolve_from_scratch_write_target(
+            getattr(request, "context_override", None), kernel.workspace
+        )
+        if _from_scratch_target:
+            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+            logger.info(
+                "first-turn write-only for from-scratch leaf step: target=%s",
+                _from_scratch_target,
+            )
 
         tk = self._create_transaction_kernel(role, profile, request)
         turn_id = str(request.run_id or stream_run_id or uuid.uuid4().hex[:12])

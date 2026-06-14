@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 import requests
 from polaris.kernelone.common.clock import ClockPort, RealClock
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
+from polaris.kernelone.llm.response_parser import LLMResponseParser
 from polaris.kernelone.llm.types import (
     HealthResult,
     InvokeResult,
@@ -808,14 +809,36 @@ def invoke_with_retry(
             data = response.json()
             latency_ms = int((_clock.time() - start) * 1000)
             output = extract_output(data)
-            usage = usage_from_response(prompt, output, data)
-            breaker.on_success()
+            # Canonical reasoning-aware finalization (DEFECT 2 SSoT): one funnel
+            # recovers a content:null reasoning-model answer (qwen3.6/MiniMax-M3)
+            # or fails closed on a mid-reasoning truncation, instead of silently
+            # reporting an empty result. ``output`` is this provider's own content
+            # extraction; the reasoning/finish_reason channels come from ``data``.
+            finalized = LLMResponseParser.finalize_response(data, visible_text=output)
+            usage = usage_from_response(prompt, finalized.output, data)
+            breaker.on_success()  # transport succeeded even if the visible output was empty
+            if not finalized.ok:
+                return InvokeResult(
+                    ok=False,
+                    output="",
+                    latency_ms=latency_ms,
+                    usage=usage,
+                    error=finalized.error,
+                    raw=data,
+                    thinking=finalized.thinking,
+                )
+            if finalized.thinking and not output.strip():
+                logger.info(
+                    "[provider-helpers] recovered answer from reasoning channel (reasoning_chars=%d)",
+                    len(finalized.thinking),
+                )
             return InvokeResult(
                 ok=True,
-                output=output.strip(),
+                output=finalized.output,
                 latency_ms=latency_ms,
                 usage=usage,
                 raw=data,
+                thinking=finalized.thinking,
             )
 
         except (

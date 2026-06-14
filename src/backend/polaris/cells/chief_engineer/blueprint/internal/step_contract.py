@@ -127,8 +127,19 @@ def validate_construction_steps(
             errors.append(
                 f"{label}: est_lines {est_lines} exceeds the convergence ceiling ({_MAX_STEP_LINES}) — split the step"
             )
-        if not str(step.get("verify") or "").strip():
+        verify_text = str(step.get("verify") or "").strip()
+        if not verify_text:
             errors.append(f"{label}: step requires a machine-executable verify")
+        elif _target_requires_signatures(target_file) and _verify_is_all_hollow(step, verify_text):
+            # I3-r21: an existence-only verify (test -f / wc / filename-grep) lets a
+            # code step "resolve" on a placeholder stub that never ran the real logic.
+            # A code target must carry at least one structural clause (syntax check,
+            # behaviour, or a grep for a declared signature symbol).
+            errors.append(
+                f"{label}: verify for a code target is all-hollow (existence/line-count/marker only) — "
+                f"add a structural clause (e.g. 'node --check {target_file}' / 'py_compile', or "
+                f"a grep for a declared signature symbol)"
+            )
         if not step.get("signatures") and _target_requires_signatures(str(step.get("target_file") or "")):
             errors.append(f"{label}: step requires a signatures skeleton")
         for dep in step.get("depends_on") or []:
@@ -176,6 +187,24 @@ def _target_requires_signatures(target_file: str) -> bool:
     demanding one dead-letters legitimate fissions (live I3-r5: the README
     task died on "step requires a signatures skeleton")."""
     return target_file.lower().endswith(_CODE_SIGNATURE_SUFFIXES)
+
+
+def _verify_is_all_hollow(step: dict[str, Any], verify_text: str) -> bool:
+    """True when a code step's verify is existence/line-count/marker-only.
+
+    Delegates to the KernelOne verify SSoT, seeded with the step's declared
+    signature + interface tokens so a grep for a real symbol counts as
+    structural. Fail-OPEN: an unrecognized verify shape is never flagged.
+    """
+    from polaris.kernelone.quality.step_verify import verify_is_all_hollow
+
+    signature_tokens: set[str] = set()
+    for key in ("signatures", "interface_names"):
+        for item in step.get(key) or []:
+            token = str(item or "").strip()
+            if token:
+                signature_tokens.add(token)
+    return verify_is_all_hollow(verify_text, signature_tokens=signature_tokens)
 
 
 def build_blueprint_tasks_contract(

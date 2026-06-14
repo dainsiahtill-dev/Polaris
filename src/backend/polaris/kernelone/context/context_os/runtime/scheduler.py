@@ -11,6 +11,11 @@ import contextlib
 import logging
 from typing import Any
 
+from ..budget_math import (
+    SMALL_CONTEXT_WINDOW_TOKENS,
+    SMALL_WINDOW_ACTIVE_RATIO,
+    active_window_token_budget,
+)
 from ..helpers import (
     _artifact_id,
     _clamp_confidence,
@@ -37,6 +42,15 @@ from .ports import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Canonical small-window active-window math now lives in the shared budget_math
+# module so the live pipeline WindowCollector and this introspection scheduler
+# share ONE implementation (DEFECT 1 SSoT). Aliased to the historical private
+# names to keep callers/tests that patch this module's namespace working.
+_active_window_token_budget = active_window_token_budget
+_SMALL_CONTEXT_WINDOW_TOKENS = SMALL_CONTEXT_WINDOW_TOKENS
+_SMALL_WINDOW_ACTIVE_RATIO = SMALL_WINDOW_ACTIVE_RATIO
 
 
 class _ContextOSSchedulerMixin:
@@ -547,9 +561,21 @@ class _ContextOSSchedulerMixin:
                 pinned_sequences.update(self._sequences_from_turns(entry.source_turns))
         active_artifact_ids = set(working_state.active_artifacts)
         pinned_events: dict[str, TranscriptEvent] = {}
-        # Use policy-based allocation ratio instead of hard-coded 0.45 (T3-6)
-        active_window_ratio = self.policy.token_budget.active_window_budget_ratio
-        token_budget = max(512, min(budget_plan.soft_limit, int(budget_plan.input_budget * active_window_ratio)))
+        # Policy-based allocation ratio (T3-6), with small-window protection so a
+        # local 16k model's mandatory root task event is never starved (I3-r16).
+        # Use the RESOLVED window from the budget plan, not the raw policy field:
+        # the gateway builds ContextOS without a policy=, so
+        # self.policy.context_window.model_context_window stays at the 128k default
+        # and the small-window branch would never fire for a 16k Director (I3-r17).
+        # budget_plan.model_context_window already carries the ModelCatalog-resolved
+        # window (state._plan_budget), so the ratio gate and the input budget agree.
+        token_budget = _active_window_token_budget(
+            model_context_window=budget_plan.model_context_window,
+            input_budget=budget_plan.input_budget,
+            soft_limit=budget_plan.soft_limit,
+            hard_limit=budget_plan.hard_limit,
+            base_ratio=self.policy.token_budget.active_window_budget_ratio,
+        )
         token_count = 0
         for item in reversed(transcript):
             if item.route == RoutingClass.CLEAR and item.event_id not in forced_recent_ids:

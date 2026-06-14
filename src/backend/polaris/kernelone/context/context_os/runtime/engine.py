@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import json
 import logging
@@ -83,6 +84,29 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
             if fallback_context_window is not None and int(fallback_context_window) > 0
             else None
         )
+
+        # DEFECT 1 SSoT (I3-r17): resolve the real provider window ONCE here and
+        # write it BACK into the policy, so policy.context_window.model_context_window
+        # == resolved_context_window == BudgetPlan.model_context_window for the life
+        # of this instance. Before this, the gateway built ContextOS without policy=,
+        # leaving the policy frozen at the 128k default while only BudgetPlan carried
+        # the truth — so any reader of the policy window saw a stale 128k. Forcing the
+        # two equal at construction removes the wrong channel entirely.
+        # Guarded: a catalog/resolution failure must NEVER raise in a constructor —
+        # the property already degrades to the policy default, which leaves the value
+        # unchanged (still a valid SSoT: resolved == policy == default).
+        try:
+            resolved_window = self.resolved_context_window
+            if resolved_window > 0 and resolved_window != self.policy.context_window.model_context_window:
+                self.policy = dataclasses.replace(
+                    self.policy,
+                    context_window=dataclasses.replace(
+                        self.policy.context_window,
+                        model_context_window=resolved_window,
+                    ),
+                )
+        except Exception as exc:  # noqa: BLE001 — degrade, never raise in __init__
+            logger.debug("context-window resolve-then-freeze degraded: %s", exc)
 
         # Initialize dialog act classifier if enabled
         self._dialog_act_classifier: DialogActClassifier | None = None

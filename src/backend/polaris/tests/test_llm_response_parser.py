@@ -81,3 +81,72 @@ def test_docs_dialogue_state_parses_numbered_answers_from_user_message():
         "external_dependencies",
         "acceptance_path",
     }
+
+
+# --- DEFECT 2 SSoT: canonical reasoning-aware finalize_response branch table ---
+
+
+def _reasoning_payload(content, reasoning, finish_reason):
+    return {
+        "choices": [
+            {
+                "message": {"content": content, "reasoning_content": reasoning},
+                "finish_reason": finish_reason,
+            }
+        ]
+    }
+
+
+def test_finalize_visible_content_is_ok_and_does_not_surface_reasoning():
+    payload = _reasoning_payload("the answer", "hidden chain of thought", "stop")
+    result = LLMResponseParser.finalize_response(payload)
+    assert result.ok is True
+    assert result.output == "the answer"
+    assert result.thinking is None  # CoT leak guard: reasoning NEVER surfaced on a visible answer
+
+
+def test_finalize_empty_content_recovers_reasoning_when_complete():
+    payload = _reasoning_payload(None, '{"construction_steps": []}', "stop")
+    result = LLMResponseParser.finalize_response(payload)
+    assert result.ok is True
+    assert result.output == '{"construction_steps": []}'  # reasoning recovered as the answer
+    assert result.thinking == '{"construction_steps": []}'
+
+
+def test_finalize_empty_content_fails_closed_when_reasoning_truncated():
+    payload = _reasoning_payload(None, "partial {", "length")
+    result = LLMResponseParser.finalize_response(payload)
+    assert result.ok is False  # truncated mid-reasoning -> caller must retry/heal
+    assert "reasoning truncated" in str(result.error)
+    assert "finish_reason=length" in str(result.error)
+    assert result.thinking == "partial {"  # carried for downstream salvage
+
+
+def test_finalize_empty_with_no_reasoning_is_empty_ok():
+    payload = _reasoning_payload(None, None, "stop")
+    result = LLMResponseParser.finalize_response(payload)
+    assert result.ok is True
+    assert result.output == ""
+    assert result.thinking is None
+
+
+def test_finalize_respects_provider_visible_text_override():
+    # When the provider extracts content differently, its visible_text wins for
+    # the visible branch; reasoning/finish_reason still come from the payload.
+    payload = _reasoning_payload(None, "reasoning-only", "stop")
+    result = LLMResponseParser.finalize_response(payload, visible_text="provider-content")
+    assert result.ok is True
+    assert result.output == "provider-content"
+    assert result.thinking is None
+
+
+def test_response_normalizer_extract_text_matches_canonical_parser():
+    # Parser-equivalence: the ResponseNormalizer twin must not diverge from the
+    # canonical parser on a reasoning payload (content:null + reasoning_content).
+    from polaris.kernelone.llm.engine.normalizer import ResponseNormalizer
+
+    payload = _reasoning_payload(None, "reasoning text", "stop")
+    assert ResponseNormalizer.extract_text(payload) == LLMResponseParser.extract_text(payload)
+    assert ResponseNormalizer.extract_reasoning(payload) == LLMResponseParser.extract_reasoning(payload)
+    visible = _reasoning_payload("visible answer", "reasoning text", "stop")
+    assert ResponseNormalizer.extract_text(visible) == LLMResponseParser.extract_text(visible) == "visible answer"

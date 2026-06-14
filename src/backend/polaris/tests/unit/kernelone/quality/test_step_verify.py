@@ -16,7 +16,52 @@ from polaris.kernelone.quality.step_verify import (
     first_failing_verify_clause,
     normalize_step_verify,
     split_verify_clauses,
+    verify_has_structural_clause,
+    verify_is_all_hollow,
 )
+
+
+class TestHollowVerifyClassifier:
+    """I3-r21: an existence-only verify can 'resolve' a code step on a stub."""
+
+    def test_test_f_plus_filename_grep_is_all_hollow(self) -> None:
+        assert verify_is_all_hollow(
+            "test -f main.js && grep -q 'main.js' main.js", signature_tokens=set()
+        )
+
+    def test_node_check_is_structural(self) -> None:
+        assert not verify_is_all_hollow(
+            "test -f main.js && node --check main.js", signature_tokens=set()
+        )
+        assert verify_has_structural_clause(
+            "test -f main.js && node --check main.js", signature_tokens=set()
+        )
+
+    def test_grep_for_declared_signature_is_structural(self) -> None:
+        assert not verify_is_all_hollow(
+            "test -f main.js && grep -q 'class Paddle' main.js",
+            signature_tokens={"class Paddle extends Sprite"},
+        )
+
+    def test_grep_for_unrelated_marker_stays_hollow(self) -> None:
+        assert verify_is_all_hollow(
+            "test -f main.js && grep -q 'main.js' main.js",
+            signature_tokens={"class Paddle"},
+        )
+
+    def test_wc_line_count_is_hollow(self) -> None:
+        assert verify_is_all_hollow(
+            'test -f main.js && [ "$(wc -l < main.js)" -ge 5 ]', signature_tokens=set()
+        )
+
+    def test_empty_verify_is_not_hollow(self) -> None:
+        # empty verify is handled separately as "missing verify", not "hollow"
+        assert not verify_is_all_hollow("", signature_tokens=set())
+
+    def test_unparseable_clause_fails_open_as_structural(self) -> None:
+        assert not verify_is_all_hollow(
+            "python -m pytest tests/ -k smoke", signature_tokens=set()
+        )
 
 
 class TestNormalize:

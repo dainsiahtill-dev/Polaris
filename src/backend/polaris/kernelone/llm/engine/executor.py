@@ -372,23 +372,31 @@ class AIExecutor:
         if budget_decision.compression_applied and budget_decision.compression is not None:
             prompt_input = budget_decision.compression.compressed_input
             request.context["token_budget"] = budget_decision.to_dict()
-            # ADR-0090 W1.5b: under budget pressure, compress the structured
-            # array to the same budget instead of silently flattening — weak
-            # models need role anchoring most exactly when context is largest.
-            if isinstance(chat_messages, list) and chat_messages:
-                budgeted_chat_messages = compress_chat_messages_to_budget(
-                    chat_messages,
-                    budget_decision.allowed_prompt_tokens,
-                )
-                if budgeted_chat_messages:
-                    invoke_cfg["chat_messages"] = budgeted_chat_messages
-        elif isinstance(chat_messages, list) and chat_messages:
-            invoke_cfg["chat_messages"] = chat_messages
+
+        # W1.5d (I3-r27): the structured ``chat_messages`` array is the REAL prompt
+        # sent to a chat provider — the flattened ``request.input`` string is only a
+        # fallback estimate. Holding ONLY the string to budget let the array exceed
+        # the window even when the string "fit", collapsing the output budget so a
+        # weak local Director truncated mid-reasoning (live main.js syntax-repair
+        # dead-letter: prompt ~16k of a 16384 window → ~230 output tokens). Compress
+        # the array to the prompt budget UNCONDITIONALLY and clamp the output
+        # against its true size. compress_*_to_budget keeps the system block + final
+        # turn and no-ops when the content already fits, so well-sized turns are
+        # unaffected.
+        clamp_prompt_text = prompt_input if isinstance(prompt_input, str) else str(prompt_input)
+        if isinstance(chat_messages, list) and chat_messages:
+            budgeted_chat_messages = compress_chat_messages_to_budget(
+                chat_messages,
+                budget_decision.allowed_prompt_tokens,
+            )
+            effective_chat_messages = budgeted_chat_messages or chat_messages
+            invoke_cfg["chat_messages"] = effective_chat_messages
+            clamp_prompt_text = "\n".join(str(m.get("content") or "") for m in effective_chat_messages)
 
         clamp_output_tokens_to_window(
             invoke_cfg,
             model_spec,
-            prompt_input if isinstance(prompt_input, str) else str(prompt_input),
+            clamp_prompt_text,
             overhead_tokens=payload_overhead,
             logger_prefix="[executor]",
         )
@@ -451,6 +459,10 @@ class AIExecutor:
                 category=ErrorCategory.PROVIDER_ERROR,
                 latency_ms=latency_ms,
                 trace_id=trace_id,
+                # Carry the reasoning channel through the failure path so a
+                # recovery consumer can salvage an answer the model left in
+                # 'thinking' before exhausting the budget (I3-r17). None-safe.
+                thinking=result.thinking,
             )
 
     def _resolve_provider_model(self, request: AIRequest) -> tuple[str | None, str | None]:

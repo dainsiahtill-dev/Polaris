@@ -546,6 +546,7 @@ class RoleExecutionKernel:
             tool_definitions: list[dict[str, Any]] | None = None,
             tool_choice: Any | None = None,
             temperature_override: Any | None = None,
+            max_tokens_floor: Any | None = None,
         ) -> dict[str, Any]:
             override: dict[str, Any]
             if isinstance(getattr(provider_request, "context_override", None), dict):
@@ -569,6 +570,17 @@ class RoleExecutionKernel:
             # ADR-0090 W2.6: phase-aware low temperature rides the same channel.
             if temperature_override is not None:
                 override["_transaction_kernel_temperature_override"] = temperature_override
+            # I3-r22 (F10): the reserved output floor rides the same channel —
+            # resolve_max_tokens reads override["llm_max_tokens"] as the requested
+            # output budget, which TokenBudgetManager.enforce then reserves while
+            # compressing the (bulky retry) prompt to fit the fixed window.
+            if max_tokens_floor is not None:
+                try:
+                    floor_value = int(max_tokens_floor)
+                except (TypeError, ValueError):
+                    floor_value = 0
+                if floor_value > 0:
+                    override["llm_max_tokens"] = floor_value
             return override
 
         def _extract_model_override_from_request_payload(request_payload: dict[str, Any]) -> str | None:
@@ -636,6 +648,7 @@ class RoleExecutionKernel:
                         cast("list[dict[str, Any]] | None", request_payload.get("tools")),
                         request_payload.get("tool_choice"),
                         request_payload.get("temperature_override"),
+                        request_payload.get("max_tokens_floor"),
                     ),
                 )
 
@@ -761,6 +774,7 @@ class RoleExecutionKernel:
                         cast("list[dict[str, Any]] | None", request_payload.get("tools")),
                         request_payload.get("tool_choice"),
                         request_payload.get("temperature_override"),
+                        request_payload.get("max_tokens_floor"),
                     ),
                 )
 
@@ -1156,6 +1170,8 @@ class RoleExecutionKernel:
             build_native_tool_schemas,
             extract_declared_step_target_files,
             pin_write_tool_file_param_to_targets,
+            resolve_from_scratch_write_target,
+            restrict_tool_definitions_to_write,
         )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
 
@@ -1191,6 +1207,25 @@ class RoleExecutionKernel:
         declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
+        # Prong A (I3-r23): a from-scratch leaf step writes on turn 1 — restrict to
+        # write tools so the weak Director cannot detour into a read, which triggers
+        # an output-starving bootstrap retry (live r23 main.js dead-letter).
+        _co_dbg = getattr(request, "context_override", None)
+        logger.info(
+            "PRONG_A_TRACE: ctx_override_dict=%s has_construction_step=%s keys=%s",
+            isinstance(_co_dbg, dict),
+            isinstance(_co_dbg, dict) and isinstance(_co_dbg.get("construction_step"), dict),
+            list(_co_dbg.keys())[:14] if isinstance(_co_dbg, dict) else None,
+        )
+        _from_scratch_target = resolve_from_scratch_write_target(
+            getattr(request, "context_override", None), str(request.workspace or self.workspace or ".")
+        )
+        if _from_scratch_target:
+            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+            logger.info(
+                "first-turn write-only for from-scratch leaf step: target=%s",
+                _from_scratch_target,
+            )
 
         try:
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
@@ -1371,6 +1406,8 @@ class RoleExecutionKernel:
             build_native_tool_schemas,
             extract_declared_step_target_files,
             pin_write_tool_file_param_to_targets,
+            resolve_from_scratch_write_target,
+            restrict_tool_definitions_to_write,
         )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
         from polaris.cells.roles.kernel.public.turn_events import (
@@ -1414,6 +1451,16 @@ class RoleExecutionKernel:
         declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
+        # Prong A (I3-r23): from-scratch leaf -> restrict to write tools on turn 1.
+        _from_scratch_target = resolve_from_scratch_write_target(
+            getattr(request, "context_override", None), str(request.workspace or self.workspace or ".")
+        )
+        if _from_scratch_target:
+            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+            logger.info(
+                "first-turn write-only for from-scratch leaf step: target=%s",
+                _from_scratch_target,
+            )
 
         accumulated_content: list[str] = []
         accumulated_thinking: list[str] = []

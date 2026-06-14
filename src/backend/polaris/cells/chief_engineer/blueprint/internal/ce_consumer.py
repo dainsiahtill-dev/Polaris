@@ -27,6 +27,11 @@ from polaris.cells.runtime.task_market.public.contracts import (
     PublishTaskWorkItemCommandV1,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
+from polaris.kernelone.quality.file_ownership_ledger import (
+    read_file_owners,
+    record_file_owners,
+    render_edit_contract,
+)
 from polaris.kernelone.quality.interface_ledger import (
     read_declared_interfaces,
     record_declared_interfaces,
@@ -34,6 +39,34 @@ from polaris.kernelone.quality.interface_ledger import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS = 16000
+
+
+def _ce_fission_max_output_tokens() -> int:
+    """Output-token budget for the CE step-fission LLM call (I3-r17).
+
+    The shared role-caller default is 4000, which is structurally below the
+    reasoning a model such as MiniMax-M3 burns before emitting the JSON answer
+    (live r17: ~9.7k thinking tokens, finish_reason=length, empty content). The
+    engine clamps the request to the model's max_output_tokens, so this only
+    raises the floor where the model allows; the provider self-heal then carries
+    it the rest of the way. Env-tunable, never a hardcoded project value.
+    """
+    raw = os.getenv("KERNELONE_CE_FISSION_MAX_TOKENS", "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS
+    return value if value > 0 else _DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS
+
+
+def _normalize_owned_target(raw: Any) -> str:
+    """Match file_ownership_ledger._normalize_target so publish-time lookups hit."""
+    target = str(raw or "").strip().replace("\\", "/")
+    while target.startswith("./"):
+        target = target[2:]
+    return target
 
 
 def _blueprint_runtime_path(blueprint_id: str) -> str:
@@ -343,7 +376,19 @@ class CEConsumer:
                     return {"task_id": task_id, "ok": False, "reason": "CE_step_gate_failed"}
                 # Freeze this parent's declared interfaces so sibling parents
                 # that share a file reuse the exact names (组合律 ledger).
-                record_declared_interfaces(self._workspace, str(payload.get("cache_root", "")), steps)
+                _cache_root = str(payload.get("cache_root", ""))
+                record_declared_interfaces(self._workspace, _cache_root, steps)
+                # Cross-parent file ownership (one file = one owner, I3-r18): read
+                # which of this parent's target_files are ALREADY owned by an
+                # earlier parent (BEFORE recording), then claim the rest for this
+                # parent. The publish step then serializes a later writer AFTER its
+                # owner so the second writer EDITS rather than clobbers.
+                prior_file_owners = read_file_owners(
+                    self._workspace,
+                    _cache_root,
+                    [str(s.get("target_file") or "") for s in steps],
+                )
+                record_file_owners(self._workspace, _cache_root, steps, task_id)
                 steps_contract = build_blueprint_tasks_contract(
                     parent_pm_task=task_id,
                     blueprint_id=blueprint_id,
@@ -367,6 +412,7 @@ class CEConsumer:
                     steps,
                     blueprint_id=blueprint_id,
                     blueprint_path=blueprint_path,
+                    prior_file_owners=prior_file_owners,
                 )
                 ack_payload["construction_steps"] = steps
                 ack_payload["fission_step_count"] = fission_published
@@ -474,6 +520,16 @@ class CEConsumer:
             list(task_brief["target_files"]),
         )
         message = message + render_assume_contract(declared)
+        # 跨父文件归属 (I3-r18): a file already created by an earlier parent must be
+        # EDITED, not rewritten — and this step must depends_on its owner (overrides
+        # the depends_on-minimization default for that file). Only earlier parents'
+        # ownership is visible here (this parent records after fission).
+        owned_elsewhere = read_file_owners(
+            self._workspace,
+            str(payload.get("cache_root", "")),
+            list(task_brief["target_files"]),
+        )
+        message = message + render_edit_contract(owned_elsewhere)
 
         def _invoke(extra: str = "") -> dict[str, Any]:
             has_loop = True
@@ -496,6 +552,10 @@ class CEConsumer:
                     "llm_call_timeout_seconds": 300,
                     "request_timeout_seconds": 300,
                     "timeout_seconds": 300,
+                    # Reasoning-sized output budget so the fission JSON survives
+                    # the model's thinking burn (I3-r17); clamped to the model's
+                    # max_output_tokens by the engine.
+                    "llm_max_tokens": _ce_fission_max_output_tokens(),
                 },
                 # The fission JSON is its own contract (step gate below);
                 # the CE blueprint checklist would zero-score it.
@@ -511,15 +571,23 @@ class CEConsumer:
             import re as _re
 
             text = str(result.get("content") or result.get("response") or "")
-            last_raw_head["text"] = " ".join(text.split())[:200]
+            # Reasoning models (MiniMax-M3) can exhaust the output budget on
+            # thinking and put the construction_steps JSON in the reasoning
+            # channel with EMPTY content (I3-r17). role_dialogue surfaces that as
+            # 'thinking'; scan it too so a completed-in-thinking answer is
+            # recovered. validate_construction_steps below stays the sole
+            # accept/reject authority, so this never relaxes fail-closed.
+            thinking_blob = str(result.get("thinking") or "")
+            last_raw_head["text"] = " ".join((text or thinking_blob).split())[:200]
             # Reasoning wrappers and fences drift run-to-run (live I3-r6: the
             # same model that emitted clean JSON in r5 returned think-wrapped
             # fenced output). Strip thinking, prefer fenced JSON, then scan
             # every balanced object via raw_decode until one carries steps.
             text = _re.sub(r"<think>.*?</think>", " ", text, flags=_re.DOTALL | _re.IGNORECASE)
-            fenced = _re.findall(r"```(?:json)?\s*(.*?)```", text, flags=_re.DOTALL)
+            thinking_blob = _re.sub(r"<think>.*?</think>", " ", thinking_blob, flags=_re.DOTALL | _re.IGNORECASE)
+            fenced = _re.findall(r"```(?:json)?\s*(.*?)```", text + "\n" + thinking_blob, flags=_re.DOTALL)
             decoder = _json.JSONDecoder()
-            for blob in [*fenced, text]:
+            for blob in [*fenced, text, thinking_blob]:
                 position = blob.find("{")
                 while position != -1:
                     try:
@@ -557,11 +625,31 @@ class CEConsumer:
         *,
         blueprint_id: str,
         blueprint_path: str,
+        prior_file_owners: dict[str, dict[str, str]] | None = None,
     ) -> int:
-        """E1 fan-out: publish each construction step as a leaf pending_exec item."""
+        """E1 fan-out: publish each construction step as a leaf pending_exec item.
+
+        Cross-parent file ownership (I3-r18): when this step's target_file is
+        already owned by an EARLIER parent's step, the owner is appended to
+        ``depends_on`` so the market serializes this writer AFTER the owner
+        (``_exec_claim_ready`` enforces it for free), and ``edit_on_prior`` is
+        stamped so the Director extends the owner's content instead of clobbering
+        it. The load-bearing guarantee is the serialization — even if the weak
+        model ignores the prompt's edit instruction, the two writers can never run
+        concurrently and last-write-wins is structurally impossible.
+        """
+        owners = prior_file_owners or {}
         published = 0
         run_id = str(payload.get("run_id", ""))
         for step in steps:
+            step_id = str(step.get("step_id") or "")
+            depends_on = list(step.get("depends_on") or ())
+            owner = owners.get(_normalize_owned_target(step.get("target_file")))
+            if owner and owner.get("owner_parent") != task_id and owner.get("owner_step_id") not in ("", step_id):
+                owner_sid = owner["owner_step_id"]
+                if owner_sid not in depends_on:
+                    depends_on.append(owner_sid)
+                step = {**step, "edit_on_prior": True, "edit_on_prior_owner": owner_sid}
             step_payload = {
                 **{k: payload.get(k) for k in ("workspace", "run_id", "run_dir", "cache_root") if payload.get(k)},
                 "title": step.get("title") or f"{payload.get('title', task_id)} · {step['step_id']}",
@@ -585,7 +673,7 @@ class CEConsumer:
                     parent_task_id=task_id,
                     root_task_id=str(payload.get("root_task_id") or task_id),
                     is_leaf=True,
-                    depends_on=tuple(step.get("depends_on") or ()),
+                    depends_on=tuple(depends_on),
                     metadata={"blueprint_id": blueprint_id, "fission": "ce-blueprint-tasks/1"},
                 )
             )

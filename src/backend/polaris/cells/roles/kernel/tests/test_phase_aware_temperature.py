@@ -21,17 +21,54 @@ from typing import Any
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
-from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_temperature
+from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_max_tokens, resolve_temperature
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     RetryOrchestrator,
     resolve_escalation_temperature,
+    resolve_retry_output_floor,
     resolve_retry_temperature_override,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import RawLLMResponse
 
 _ENV = "KERNELONE_RETRY_ESCALATION_TEMPERATURE"
 _CHANNEL_KEY = "_transaction_kernel_temperature_override"
+_FLOOR_ENV = "KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS"
+_FLOOR_CHANNEL_KEY = "llm_max_tokens"
+
+
+class TestResolveRetryOutputFloor:
+    """I3-r22 (F10): reserved reasoning-sized output floor for retry/re-ask calls."""
+
+    def test_unset_env_defaults_to_reasoning_sized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(_FLOOR_ENV, raising=False)
+        assert resolve_retry_output_floor() == 2500
+
+    @pytest.mark.parametrize("sentinel", ["", "off", "none", "disabled", "false", "0", "-100"])
+    def test_disable_sentinels_return_none(self, monkeypatch: pytest.MonkeyPatch, sentinel: str) -> None:
+        monkeypatch.setenv(_FLOOR_ENV, sentinel)
+        assert resolve_retry_output_floor() is None
+
+    def test_env_value_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(_FLOOR_ENV, "3200")
+        assert resolve_retry_output_floor() == 3200
+
+    def test_garbage_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(_FLOOR_ENV, "lots")
+        assert resolve_retry_output_floor() == 2500
+
+
+class TestRetryOutputFloorChannel:
+    """The floor rides context_override['llm_max_tokens'], which resolve_max_tokens reads."""
+
+    def test_resolve_max_tokens_honors_floor_override(self) -> None:
+        # core maps max_tokens_floor -> override['llm_max_tokens']; resolve_max_tokens
+        # then returns it as the requested output budget (becomes the reserved floor).
+        assert resolve_max_tokens(4000, {_FLOOR_CHANNEL_KEY: 2500}) == 2500
+
+    def test_no_floor_keeps_requested(self) -> None:
+        assert resolve_max_tokens(4000, {}) == 4000
+        assert resolve_max_tokens(4000, None) == 4000
 
 
 class TestResolveEscalationTemperature:
@@ -149,9 +186,12 @@ class TestExecuteRetryBatchTemperaturePassThrough:
         assert captured["temperature_override"] == 0.2
 
     @pytest.mark.asyncio
-    async def test_default_path_keeps_legacy_call_shape(self) -> None:
+    async def test_default_path_keeps_legacy_call_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """attempt_temperature_override=None must NOT widen the call signature —
-        pre-W2.6 fakes/callers with explicit kwargs keep working unchanged."""
+        pre-W2.6 fakes/callers with explicit kwargs keep working unchanged.
+        The F10 output floor is disabled here so the temperature-shape contract
+        is tested in isolation (the floor has its own pass-through tests)."""
+        monkeypatch.setenv(_FLOOR_ENV, "off")
 
         async def _strict_legacy_stream(
             context: Any,
@@ -209,6 +249,61 @@ class TestExecuteRetryBatchTemperaturePassThrough:
 
         assert response.content == "ok"
         assert captured["temperature_override"] == 0.1
+
+    @pytest.mark.asyncio
+    async def test_non_stream_path_passes_output_floor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """I3-r22 (F10): the retry batch reserves a reasoning-sized output floor."""
+        monkeypatch.setenv(_FLOOR_ENV, "2500")
+        captured: dict[str, Any] = {}
+
+        async def _fake_decision(context: Any, tools: Any, ledger: Any, **kwargs: Any) -> RawLLMResponse:
+            captured.update(kwargs)
+            return _raw_response()
+
+        orchestrator = _build_orchestrator(
+            call_llm_for_decision=_fake_decision,
+            call_llm_for_decision_stream=None,
+        )
+        response = await orchestrator._execute_retry_batch(
+            turn_id="t4",
+            attempt_context=[],
+            attempt_tool_definitions=[],
+            ledger=TurnLedger(turn_id="t4"),
+            attempt_tool_choice_override=None,
+            attempt_model_override=None,
+            stream=False,
+            shadow_engine=None,
+            attempt_temperature_override=None,
+        )
+
+        assert response.content == "ok"
+        assert captured["max_tokens_floor"] == 2500
+
+    @pytest.mark.asyncio
+    async def test_floor_disabled_does_not_widen_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(_FLOOR_ENV, "off")
+        captured: dict[str, Any] = {}
+
+        async def _fake_decision(context: Any, tools: Any, ledger: Any, **kwargs: Any) -> RawLLMResponse:
+            captured.update(kwargs)
+            return _raw_response()
+
+        orchestrator = _build_orchestrator(
+            call_llm_for_decision=_fake_decision,
+            call_llm_for_decision_stream=None,
+        )
+        await orchestrator._execute_retry_batch(
+            turn_id="t5",
+            attempt_context=[],
+            attempt_tool_definitions=[],
+            ledger=TurnLedger(turn_id="t5"),
+            attempt_tool_choice_override=None,
+            attempt_model_override=None,
+            stream=False,
+            shadow_engine=None,
+            attempt_temperature_override=None,
+        )
+        assert "max_tokens_floor" not in captured
 
 
 class TestTransactionKernelTemperatureChannel:

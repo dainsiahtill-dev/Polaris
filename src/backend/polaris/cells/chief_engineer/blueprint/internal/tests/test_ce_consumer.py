@@ -184,3 +184,90 @@ class TestCEConsumerStop:
         assert not consumer._stop_event.is_set()
         consumer.stop()
         assert consumer._stop_event.is_set()
+
+
+class TestCEFissionMaxOutputTokens:
+    """The CE step-fission output budget (I3-r17): reasoning-sized floor, env-tunable."""
+
+    def test_default_is_reasoning_sized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import _ce_fission_max_output_tokens
+
+        monkeypatch.delenv("KERNELONE_CE_FISSION_MAX_TOKENS", raising=False)
+        # well above the shared 4000 role default that starved the fission call
+        assert _ce_fission_max_output_tokens() == 16000
+
+    def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import _ce_fission_max_output_tokens
+
+        monkeypatch.setenv("KERNELONE_CE_FISSION_MAX_TOKENS", "20000")
+        assert _ce_fission_max_output_tokens() == 20000
+
+    def test_invalid_env_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import _ce_fission_max_output_tokens
+
+        monkeypatch.setenv("KERNELONE_CE_FISSION_MAX_TOKENS", "not-a-number")
+        assert _ce_fission_max_output_tokens() == 16000
+        monkeypatch.setenv("KERNELONE_CE_FISSION_MAX_TOKENS", "0")
+        assert _ce_fission_max_output_tokens() == 16000
+
+
+class TestCrossParentFileOwnershipInjection:
+    """I3-r18 FIX-1: a step writing a file owned by an EARLIER parent is published
+    with a serializing depends_on on the owner + an edit_on_prior flag, so the
+    market serializes the writers and the second EDITS instead of clobbering."""
+
+    def _steps(self) -> list[dict]:
+        return [{"step_id": "PM-2-step-2", "target_file": "main.js", "verify": "test -f main.js", "title": "levels"}]
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_owned_file_gets_depends_on_and_edit_flag(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        prior = {"main.js": {"owner_step_id": "PM-1-S4", "owner_parent": "PM-0001-1"}}
+        consumer._publish_step_tasks(
+            "PM-0001-2",
+            {"run_id": "r"},
+            self._steps(),
+            blueprint_id="b",
+            blueprint_path="p",
+            prior_file_owners=prior,
+        )
+        cmd = consumer._svc.publish_work_item.call_args_list[0].args[0]
+        assert "PM-1-S4" in cmd.depends_on
+        pub_step = cmd.payload["construction_step"]
+        assert pub_step["edit_on_prior"] is True
+        assert pub_step["edit_on_prior_owner"] == "PM-1-S4"
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_unowned_file_keeps_minimization(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        steps = [{"step_id": "S", "target_file": "style.css", "verify": "test -f style.css", "title": "style"}]
+        consumer._publish_step_tasks(
+            "PM-0001-2",
+            {"run_id": "r"},
+            steps,
+            blueprint_id="b",
+            blueprint_path="p",
+            prior_file_owners={"main.js": {"owner_step_id": "PM-1-S4", "owner_parent": "PM-0001-1"}},
+        )
+        cmd = consumer._svc.publish_work_item.call_args_list[0].args[0]
+        assert cmd.depends_on == ()  # no injected dependency for an unowned file
+        assert "edit_on_prior" not in cmd.payload["construction_step"]
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_same_parent_owner_not_self_serialized(self, mock_get: MagicMock) -> None:
+        mock_get.return_value = MagicMock()
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        # The owner belongs to the SAME parent -> not a cross-parent conflict, no injection.
+        prior = {"main.js": {"owner_step_id": "PM-2-S1", "owner_parent": "PM-0001-2"}}
+        consumer._publish_step_tasks(
+            "PM-0001-2",
+            {"run_id": "r"},
+            self._steps(),
+            blueprint_id="b",
+            blueprint_path="p",
+            prior_file_owners=prior,
+        )
+        cmd = consumer._svc.publish_work_item.call_args_list[0].args[0]
+        assert "PM-2-S1" not in cmd.depends_on

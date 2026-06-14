@@ -1540,11 +1540,14 @@ class TurnTransactionController:
         tool_choice_override: Any | None = None,
         model_override: str | None = None,
         temperature_override: float | None = None,
+        max_tokens_floor: int | None = None,
     ) -> RawLLMResponse:
         """调用LLM获取决策
 
         Phase 3.1: Integrates adaptive model routing based on task complexity.
         Phase 3.3: Tracks token usage for budget management.
+        I3-r22 (F10): ``max_tokens_floor`` reserves a reasoning-sized output
+        budget for retry/re-ask calls so a large prompt cannot starve generation.
         """
         decision_messages = self._build_decision_messages(context, tool_definitions, ledger)
 
@@ -1565,6 +1568,8 @@ class TurnTransactionController:
             "model_override": normalized_model_override,
             # ADR-0090 W2.6: phase-aware low temperature for escalated retries.
             "temperature_override": temperature_override,
+            # I3-r22 (F10): reasoning-sized reserved output floor for retry calls.
+            "max_tokens_floor": max_tokens_floor,
         }
 
         # Phase 3.3: Check budget before making call
@@ -1618,6 +1623,7 @@ class TurnTransactionController:
         tool_choice_override: Any | None = None,
         model_override: str | None = None,
         temperature_override: float | None = None,
+        max_tokens_floor: int | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """Proxy to StreamOrchestrator._call_llm_for_decision_stream_impl."""
         async for event in self._stream_orchestrator._call_llm_for_decision_stream_impl(
@@ -1628,6 +1634,7 @@ class TurnTransactionController:
             tool_choice_override=tool_choice_override,
             model_override=model_override,
             temperature_override=temperature_override,
+            max_tokens_floor=max_tokens_floor,
         ):
             yield event
 

@@ -1084,3 +1084,4 @@ class TestProtocolPanicHandoff:
         assert result["kind"] == "tool_batch_with_receipt"
         # batch_receipt 应存在，因为决策阶段工具已执行
         assert result.get("batch_receipt") is not None
+

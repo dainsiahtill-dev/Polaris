@@ -63,6 +63,51 @@ class TestGate:
         errors = validate_construction_steps([_step(signatures=[])], parent_pm_task="PM-1")
         assert any("signatures skeleton" in e for e in errors)
 
+    def test_all_hollow_verify_for_code_target_blocked(self) -> None:
+        # I3-r21: existence-only verify let a code step "resolve" on a stub.
+        errors = validate_construction_steps(
+            [_step(target_file="main.js", verify="test -f main.js && grep -q 'main.js' main.js")],
+            parent_pm_task="PM-1",
+        )
+        assert any("all-hollow" in e for e in errors)
+
+    def test_syntax_check_verify_passes(self) -> None:
+        # The real S3 verify: node --check is a structural clause.
+        errors = validate_construction_steps(
+            [_step(target_file="main.js", verify="test -f main.js && node --check main.js")],
+            parent_pm_task="PM-1",
+        )
+        assert errors == []
+
+    def test_signature_grep_verify_passes(self) -> None:
+        # A grep for a DECLARED signature token is structural, not hollow.
+        errors = validate_construction_steps(
+            [
+                _step(
+                    target_file="main.js",
+                    signatures=["class Paddle"],
+                    verify="test -f main.js && grep -q 'class Paddle' main.js",
+                )
+            ],
+            parent_pm_task="PM-1",
+        )
+        assert errors == []
+
+    def test_doc_target_existence_only_verify_exempt(self) -> None:
+        # readme.md has no signatures to assert — existence-only verify is fine.
+        errors = validate_construction_steps(
+            [_step(target_file="readme.md", signatures=[], verify="test -f readme.md")],
+            parent_pm_task="PM-1",
+        )
+        assert errors == []
+
+    def test_style_target_existence_only_verify_exempt(self) -> None:
+        errors = validate_construction_steps(
+            [_step(target_file="style.css", signatures=[], verify="test -f style.css")],
+            parent_pm_task="PM-1",
+        )
+        assert errors == []
+
     def test_unknown_dependency_blocked(self) -> None:
         errors = validate_construction_steps([_step(depends_on=["PM-1-S9"])], parent_pm_task="PM-1")
         assert any("unknown step" in e for e in errors)

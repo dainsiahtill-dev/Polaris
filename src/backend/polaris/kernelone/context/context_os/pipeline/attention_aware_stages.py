@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.context.context_os.attention.ranker import CandidateRanker
 from polaris.kernelone.context.context_os.attention.scorer import AttentionScorer, ScoringContext
+from polaris.kernelone.context.context_os.budget_math import active_window_token_budget
 from polaris.kernelone.context.context_os.decision_log import (
     ContextDecisionType,
     ReasonCode,
@@ -191,8 +192,16 @@ class AttentionAwareWindowCollector:
                 pinned_sequences.update(self._sequences_from_turns(entry.source_turns))
 
         active_artifact_ids = set(working_state.active_artifacts)
-        active_window_ratio = self._policy.token_budget.active_window_budget_ratio
-        token_budget = max(512, min(budget_plan.soft_limit, int(budget_plan.input_budget * active_window_ratio)))
+        # Canonical small-window-aware budget (DEFECT 1 SSoT): shared with the
+        # live WindowCollector and the introspection scheduler so the small-window
+        # protection cannot diverge between collectors.
+        token_budget = active_window_token_budget(
+            model_context_window=budget_plan.model_context_window,
+            input_budget=budget_plan.input_budget,
+            soft_limit=budget_plan.soft_limit,
+            hard_limit=budget_plan.hard_limit,
+            base_ratio=self._policy.token_budget.active_window_budget_ratio,
+        )
 
         # Build scoring context for attention scoring
         scoring_context = self._build_scoring_context(working_state)

@@ -9,6 +9,7 @@ import time
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.context.context_os.budget_math import active_window_token_budget
 from polaris.kernelone.context.context_os.classifier import DialogActClassifier
 from polaris.kernelone.context.context_os.helpers import (
     _artifact_id,
@@ -1000,8 +1001,16 @@ class WindowCollector:
 
         active_artifact_ids = set(working_state.active_artifacts)
         pinned_events: dict[str, TranscriptEvent] = {}
-        active_window_ratio = self._policy.token_budget.active_window_budget_ratio
-        token_budget = max(512, min(budget_plan.soft_limit, int(budget_plan.input_budget * active_window_ratio)))
+        # Canonical small-window-aware budget (DEFECT 1 SSoT): on a small/local
+        # window the mandatory root event must not be starved by the large-window
+        # ratio. budget_plan.model_context_window is the resolved provider window.
+        token_budget = active_window_token_budget(
+            model_context_window=budget_plan.model_context_window,
+            input_budget=budget_plan.input_budget,
+            soft_limit=budget_plan.soft_limit,
+            hard_limit=budget_plan.hard_limit,
+            base_ratio=self._policy.token_budget.active_window_budget_ratio,
+        )
         token_count = 0
 
         for item in reversed(transcript):

@@ -7,11 +7,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# I3-r23 (Prong A): force the write tool on turn 1 for a from-scratch leaf step.
+_FIRST_TURN_WRITE_ENV = "KERNELONE_FIRST_TURN_WRITE"
+_FIRST_TURN_WRITE_DISABLED = {"off", "none", "disabled", "false", "0"}
 
 
 def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
@@ -75,6 +80,74 @@ def extract_declared_step_target_files(context_override: Any) -> tuple[str, ...]
     if not target.startswith("./"):
         variants.append(f"./{target}")
     return tuple(dict.fromkeys(variants))
+
+
+# Tools kept for a from-scratch leaf step's first turn: the write/mutation tools
+# plus execute_command (so the model may self-verify after writing). All read /
+# scout / exploration tools are dropped so the weak Director cannot detour into a
+# read before writing.
+_WRITE_KEEP_TOOLS = _FILE_PARAM_WRITE_TOOLS | {"repo_apply_diff", "execute_command"}
+
+
+def _tool_name(definition: Any) -> str:
+    if not isinstance(definition, dict):
+        return ""
+    fn = definition.get("function")
+    if isinstance(fn, dict):
+        return str(fn.get("name") or "").strip()
+    return str(definition.get("name") or "").strip()
+
+
+def resolve_from_scratch_write_target(context_override: Any, workspace: str) -> str | None:
+    """Return the single target of a FROM-SCRATCH leaf step, else None (I3-r23).
+
+    A from-scratch step is a CE construction step (leaf) whose single declared
+    ``target_file`` does NOT yet exist and is NOT an edit-on-prior (cross-parent)
+    target. Such a step needs no read — every interface symbol it consumes is
+    already named in its construction-step / cross-file contract — so forcing it
+    to write immediately avoids the read-first detour that triggers an
+    output-starving bootstrap retry (live r23: ``main.js`` dead-lettered after the
+    retry's injected file content collapsed the 16k-window output budget).
+
+    Returns None for edit-on-prior steps, existing targets, and non-step turns —
+    all of which legitimately read before writing (改建式 / Fix-13). Disabled via
+    env ``KERNELONE_FIRST_TURN_WRITE`` ∈ {off,none,disabled,false,0}.
+    """
+    if os.environ.get(_FIRST_TURN_WRITE_ENV, "").strip().lower() in _FIRST_TURN_WRITE_DISABLED:
+        return None
+    if not isinstance(context_override, dict):
+        return None
+    step = context_override.get("construction_step")
+    if not isinstance(step, dict) or not step:
+        return None
+    if step.get("edit_on_prior"):
+        return None
+    target = str(step.get("target_file") or "").strip().replace("\\", "/")
+    while target.startswith("./"):
+        target = target[2:]
+    if not target:
+        return None
+    ws = str(workspace or ".").strip() or "."
+    try:
+        if os.path.exists(os.path.join(ws, target)):
+            return None  # existing file → edit mode, keep read-first
+    except OSError:
+        return None
+    return target
+
+
+def restrict_tool_definitions_to_write(tool_definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only write/mutation (+ execute_command) tools, dropping read/scout.
+
+    Used for a from-scratch leaf step's first turn (see
+    :func:`resolve_from_scratch_write_target`). If no write tool would survive the
+    filter, the original list is returned unchanged — a turn is never stranded
+    with zero usable tools. Definitions are never mutated in place.
+    """
+    kept = [d for d in tool_definitions if _tool_name(d) in _WRITE_KEEP_TOOLS]
+    if not any(_tool_name(d) in _FILE_PARAM_WRITE_TOOLS for d in kept):
+        return tool_definitions
+    return kept
 
 
 def pin_write_tool_file_param_to_targets(

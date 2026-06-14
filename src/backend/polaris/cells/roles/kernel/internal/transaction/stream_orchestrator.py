@@ -838,6 +838,7 @@ class StreamOrchestrator:
         tool_choice_override: Any | None = None,
         model_override: str | None = None,
         temperature_override: float | None = None,
+        max_tokens_floor: int | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """流式调用LLM获取决策，yield 事件并返回最终 RawLLMResponse（通过内部 materialize 事件）。"""
         from polaris.cells.roles.kernel.internal.turn_engine.stream_handler import StreamEventHandler
@@ -853,12 +854,16 @@ class StreamOrchestrator:
             "model_override": normalized_model_override,
             # ADR-0090 W2.6: phase-aware low temperature for escalated retries.
             "temperature_override": temperature_override,
+            # I3-r22 (F10): reasoning-sized reserved output floor for retry calls.
+            "max_tokens_floor": max_tokens_floor,
         }
 
         if self.llm_provider_stream is None:
             non_stream_kwargs: dict[str, Any] = {}
             if temperature_override is not None:
                 non_stream_kwargs["temperature_override"] = temperature_override
+            if max_tokens_floor is not None:
+                non_stream_kwargs["max_tokens_floor"] = max_tokens_floor
             response = await self.call_llm_for_decision(
                 context,
                 tool_definitions,

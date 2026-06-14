@@ -180,3 +180,46 @@ class TestQAConsumerPollOnce:
         assert ack_call.next_stage == "pending_exec"
         assert ack_call.terminal_status is None
         assert ack_call.metadata["metrics"]["missing_director_changed_files_evidence"] is True
+
+
+class TestSyntaxGate:
+    """I3-r18 fail-closed syntax gate: a non-parsing target is rejected, not shipped."""
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_rejects_broken_python_target(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        # py_compile is always available, so this runs everywhere.
+        mock_get_svc.return_value = MagicMock()
+        (tmp_path / "mod.py").write_text("def f(:\n    pass\n", encoding="utf-8")
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-1")
+        msg = consumer._run_syntax_gate({"construction_step": {"target_file": "mod.py"}})
+        assert msg
+        assert "语法检查失败" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_clean_python_target_passes(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        mock_get_svc.return_value = MagicMock()
+        (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-1")
+        assert consumer._run_syntax_gate({"construction_step": {"target_file": "mod.py"}}) == ""
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_missing_file_not_blocked(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        mock_get_svc.return_value = MagicMock()
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-1")
+        assert consumer._run_syntax_gate({"construction_step": {"target_file": "absent.py"}}) == ""
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_broken_js_target_rejected_with_line(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        import shutil
+
+        import pytest
+
+        if shutil.which("node") is None:
+            pytest.skip("node not available")
+        mock_get_svc.return_value = MagicMock()
+        (tmp_path / "main.js").write_text("bricks.push({\n    alive: true;\n});\n", encoding="utf-8")
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-1")
+        msg = consumer._run_syntax_gate({"construction_step": {"target_file": "main.js"}})
+        assert msg
+        assert "main.js" in msg
+        assert "SyntaxError" in msg or "Unexpected" in msg

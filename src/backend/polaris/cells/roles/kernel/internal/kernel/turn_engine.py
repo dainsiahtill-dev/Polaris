@@ -661,6 +661,8 @@ class TurnEngineExecutor:
             build_native_tool_schemas,
             extract_declared_step_target_files,
             pin_write_tool_file_param_to_targets,
+            resolve_from_scratch_write_target,
+            restrict_tool_definitions_to_write,
         )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
         from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -689,6 +691,16 @@ class TurnEngineExecutor:
         declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
+        # Prong A (I3-r23): from-scratch leaf -> restrict to write tools on turn 1.
+        _from_scratch_target = resolve_from_scratch_write_target(
+            getattr(request, "context_override", None), str(self._kernel.workspace or ".")
+        )
+        if _from_scratch_target:
+            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+            logger.info(
+                "first-turn write-only for from-scratch leaf step: target=%s",
+                _from_scratch_target,
+            )
 
         try:
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
@@ -843,6 +855,8 @@ class TurnEngineExecutor:
             build_native_tool_schemas,
             extract_declared_step_target_files,
             pin_write_tool_file_param_to_targets,
+            resolve_from_scratch_write_target,
+            restrict_tool_definitions_to_write,
         )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
         from polaris.cells.roles.kernel.public.turn_events import (
@@ -878,6 +892,16 @@ class TurnEngineExecutor:
         declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
+        # Prong A (I3-r23): from-scratch leaf -> restrict to write tools on turn 1.
+        _from_scratch_target = resolve_from_scratch_write_target(
+            getattr(request, "context_override", None), str(self._kernel.workspace or ".")
+        )
+        if _from_scratch_target:
+            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+            logger.info(
+                "first-turn write-only for from-scratch leaf step: target=%s",
+                _from_scratch_target,
+            )
 
         accumulated_content: list[str] = []
         accumulated_thinking: list[str] = []

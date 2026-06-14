@@ -129,6 +129,118 @@ def test_invoke_with_retry_opens_circuit_after_threshold(monkeypatch):
     assert "circuit_open" in str(third.error)
 
 
+def _reasoning_post(content, reasoning, finish_reason):
+    """Build a fake requests.post returning an OpenAI-compatible reasoning-model body."""
+
+    def _post(*args, **kwargs):
+        del args, kwargs
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def json() -> dict:
+                return {
+                    "choices": [
+                        {
+                            "message": {"content": content, "reasoning_content": reasoning},
+                            "finish_reason": finish_reason,
+                        }
+                    ]
+                }
+
+        return _Resp()
+
+    return _post
+
+
+def _content_only_extract(payload):
+    # Mirrors the openai_compat provider: visible content only, no reasoning.
+    from polaris.kernelone.llm.response_parser import LLMResponseParser
+
+    return LLMResponseParser.extract_text(payload)
+
+
+def test_invoke_with_retry_recovers_answer_from_reasoning_when_content_empty(monkeypatch):
+    """A reasoning model (qwen3.6) may return content:null with the answer in the
+    reasoning channel; the non-streaming path must recover it, not report empty (I3-r17)."""
+    answer = '{"construction_steps": [{"step_id": "s1"}]}'
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers.requests.post",
+        _reasoning_post(content=None, reasoning=answer, finish_reason="stop"),
+    )
+
+    result = invoke_with_retry(
+        "https://example.com/v1/chat",
+        {},
+        {"model": "qwen"},
+        timeout=5,
+        retries=0,
+        prompt="hello",
+        extract_output=_content_only_extract,
+        usage_from_response=_usage_from_response,
+        clock=MockClock(),
+    )
+
+    assert result.ok is True
+    assert result.output == answer  # reasoning surfaced as the answer
+    assert result.thinking == answer
+
+
+def test_invoke_with_retry_fails_closed_when_reasoning_truncated(monkeypatch):
+    """finish_reason=length means the reasoning answer is incomplete; fail closed
+    with a descriptive error (so the caller can retry/heal) instead of silent empty."""
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers.requests.post",
+        _reasoning_post(content=None, reasoning="partial {", finish_reason="length"),
+    )
+
+    result = invoke_with_retry(
+        "https://example.com/v1/chat",
+        {},
+        {"model": "qwen"},
+        timeout=5,
+        retries=0,
+        prompt="hello",
+        extract_output=_content_only_extract,
+        usage_from_response=_usage_from_response,
+        clock=MockClock(),
+    )
+
+    assert result.ok is False
+    assert "reasoning truncated" in str(result.error)
+    assert "finish_reason=length" in str(result.error)
+    assert result.thinking == "partial {"  # carried for any downstream salvage
+
+
+def test_invoke_with_retry_normal_content_does_not_surface_reasoning(monkeypatch):
+    """When visible content is present, reasoning must never be surfaced or leaked."""
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers.requests.post",
+        _reasoning_post(content="the answer", reasoning="chain of thought", finish_reason="stop"),
+    )
+
+    result = invoke_with_retry(
+        "https://example.com/v1/chat",
+        {},
+        {"model": "qwen"},
+        timeout=5,
+        retries=0,
+        prompt="hello",
+        extract_output=_content_only_extract,
+        usage_from_response=_usage_from_response,
+        clock=MockClock(),
+    )
+
+    assert result.ok is True
+    assert result.output == "the answer"
+    assert result.thinking is None  # no chain-of-thought leak on normal answers
+
+
 def test_stream_session_reuse_and_cleanup():
     async def _run():
         first = await get_stream_session("test_provider", timeout_seconds=5)

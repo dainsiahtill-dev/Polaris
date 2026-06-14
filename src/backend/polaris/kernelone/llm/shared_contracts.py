@@ -344,7 +344,13 @@ class AIResponse:
         platform_retry_count: int = 0,
         platform_retry_exhausted: bool = False,
         last_transport_error: str | None = None,
+        thinking: str | None = None,
     ) -> AIResponse:
+        # ``thinking`` is carried on failures too (default None keeps every
+        # existing caller behaviour-identical): a reasoning model can exhaust the
+        # output budget and leave a near-complete answer in the reasoning channel
+        # with empty visible content, which a recovery path (e.g. CE step-fission
+        # salvage) parses out of the failed response (I3-r17).
         return cls(
             ok=False,
             error=error,
@@ -353,6 +359,7 @@ class AIResponse:
             model=model,
             provider_id=provider_id,
             trace_id=trace_id,
+            thinking=thinking,
             metadata=dict(metadata or {}),
             platform_retry_count=platform_retry_count,
             platform_retry_exhausted=platform_retry_exhausted,

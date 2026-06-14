@@ -483,6 +483,24 @@ class TestAIResponse:
         assert response.error == "Something went wrong"
         assert response.error_category == ErrorCategory.PROVIDER_ERROR
 
+    def test_failure_carries_thinking_when_provided(self) -> None:
+        """A reasoning model can leave a near-complete answer in the reasoning
+        channel on a failed turn; failure() must carry it for salvage (I3-r17)."""
+        response = AIResponse.failure(
+            error="Empty visible output",
+            category=ErrorCategory.PROVIDER_ERROR,
+            thinking='{"construction_steps": []}',
+        )
+
+        assert response.ok is False
+        assert response.thinking == '{"construction_steps": []}'
+
+    def test_failure_thinking_defaults_none(self) -> None:
+        """Default None keeps every existing failure() caller behaviour-identical."""
+        response = AIResponse.failure(error="boom")
+
+        assert response.thinking is None
+
     def test_to_dict_success(self) -> None:
         """Verify to_dict for success response."""
         usage = Usage(prompt_tokens=100, completion_tokens=50)

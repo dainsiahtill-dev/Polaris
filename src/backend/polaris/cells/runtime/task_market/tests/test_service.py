@@ -2209,3 +2209,48 @@ def test_requeue_carries_failure_teaching_and_advance_clears_it(tmp_path: Path) 
     status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
     row = {item["task_id"]: item for item in status.items}["step-teach"]
     assert "last_failure" not in (row.get("payload") or {})
+
+
+class TestCrossParentFileOwnershipSerialization:
+    """I3-r18 FIX-1 load-bearing proof: the market serializes two same-file writers
+    via depends_on, so a later writer (the level-progression step) only runs AFTER
+    its owner (the game-loop step) has left the exec queue and created the file.
+
+    _exec_claim_ready reads only .stage/.is_leaf/.depends_on/.status, so stubs suffice.
+    """
+
+    @staticmethod
+    def _stub(stage: str, *, status: str = "", is_leaf: bool = True, depends_on=()) -> SimpleNamespace:
+        return SimpleNamespace(stage=stage, status=status, is_leaf=is_leaf, depends_on=list(depends_on))
+
+    def test_dependent_blocked_until_owner_leaves_exec_queue(self) -> None:
+        owner = self._stub("pending_exec")  # PM-0001-1-S4 game loop
+        dependent = self._stub("pending_exec", depends_on=["owner"])  # PM-0001-2 main.js (level progression)
+        items = {"owner": owner, "dependent": dependent}
+
+        # While the owner is still executing, the dependent CANNOT claim -> no
+        # concurrent clobber; the owner creates main.js first.
+        assert TaskMarketService._exec_claim_ready(dependent, items) is False
+        # Owner advances to QA (main.js now exists) -> dependent becomes claimable and EDITs it.
+        owner.stage = "pending_qa"
+        assert TaskMarketService._exec_claim_ready(dependent, items) is True
+        # Owner resolved -> still claimable.
+        owner.stage, owner.status = "done", "resolved"
+        assert TaskMarketService._exec_claim_ready(dependent, items) is True
+
+    def test_failed_owner_requeue_keeps_dependent_blocked(self) -> None:
+        # Fail-closed: an owner that failed and requeued to pending_exec blocks the
+        # dependent (it must not edit a half-written / reverted file).
+        owner = self._stub("pending_exec", status="")
+        dependent = self._stub("pending_exec", depends_on=["owner"])
+        assert TaskMarketService._exec_claim_ready(dependent, {"owner": owner, "dependent": dependent}) is False
+
+    def test_no_dependency_makes_both_concurrently_claimable_regression(self) -> None:
+        # The bug FIX-1 closes: with EMPTY depends_on (pre-fix), two steps writing
+        # the same file are BOTH immediately claimable -> run concurrently ->
+        # last-write-wins -> incoherent product (r18 main.js).
+        s1 = self._stub("pending_exec", depends_on=[])
+        s2 = self._stub("pending_exec", depends_on=[])
+        items = {"s1": s1, "s2": s2}
+        assert TaskMarketService._exec_claim_ready(s1, items) is True
+        assert TaskMarketService._exec_claim_ready(s2, items) is True

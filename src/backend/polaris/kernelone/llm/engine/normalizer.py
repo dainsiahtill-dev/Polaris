@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.kernelone.llm.response_parser import LLMResponseParser
 from polaris.kernelone.utils.json_utils import parse_json_payload
 
 from .contracts import AIResponse, ErrorCategory, Usage
@@ -23,66 +24,21 @@ class ResponseNormalizer:
 
     @classmethod
     def extract_text(cls, payload: Any) -> str:
-        """从各种响应格式中提取文本"""
-        if isinstance(payload, str):
-            return payload.strip()
-        if not isinstance(payload, dict):
-            return ""
+        """从各种响应格式中提取文本。
 
-        output_text = payload.get("output_text")
-        if isinstance(output_text, str) and output_text.strip():
-            return output_text.strip()
-
-        first_choice = cls._first_choice(payload)
-        if isinstance(first_choice, dict):
-            message = first_choice.get("message")
-            text = cls._extract_message_content(message)
-            if text:
-                return text
-            raw_text = first_choice.get("text")
-            if isinstance(raw_text, str) and raw_text.strip():
-                return raw_text.strip()
-
-        message = payload.get("message")
-        text = cls._extract_message_content(message)
-        if text:
-            return text
-
-        content = payload.get("content")
-        text = cls._stringify_content(content)
-        if text:
-            return text
-
-        for key in ("text", "response", "output"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-
-        return ""
+        DEFECT 2 SSoT: delegate to the canonical LLMResponseParser so this twin
+        can never silently diverge from (or drop reasoning relative to) the single
+        authoritative parser.
+        """
+        return LLMResponseParser.extract_text(payload)
 
     @classmethod
     def extract_reasoning(cls, payload: Any) -> str:
-        """从响应中提取 reasoning/thinking 内容"""
-        if not isinstance(payload, dict):
-            return ""
+        """从响应中提取 reasoning/thinking 内容。
 
-        first_choice = cls._first_choice(payload)
-        if isinstance(first_choice, dict):
-            message = first_choice.get("message")
-            reasoning = cls._extract_reasoning_from_message(message)
-            if reasoning:
-                return reasoning
-            for key in cls._REASONING_KEYS:
-                value = first_choice.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-
-        for key in cls._REASONING_KEYS:
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-
-        return ""
+        DEFECT 2 SSoT: delegate to the canonical LLMResponseParser.
+        """
+        return LLMResponseParser.extract_reasoning(payload)
 
     @classmethod
     def extract_finish_reason(cls, payload: Any) -> str:

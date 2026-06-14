@@ -198,6 +198,9 @@ _ESCALATION_START_ATTEMPT_INDEX = 2
 _RETRY_ESCALATION_TEMPERATURE_ENV = "KERNELONE_RETRY_ESCALATION_TEMPERATURE"
 _DEFAULT_RETRY_ESCALATION_TEMPERATURE = 0.2
 
+_RETRY_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS"
+_DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS = 2500
+
 
 def resolve_escalation_temperature() -> float | None:
     """ADR-0090 W2.6: deterministic sampling temperature for escalated writes.
@@ -225,6 +228,42 @@ def resolve_escalation_temperature() -> float | None:
     if value < 0:
         return None
     return min(value, 2.0)
+
+
+def resolve_retry_output_floor() -> int | None:
+    """I3-r22 (F10): reserved reasoning-sized OUTPUT floor for retry/re-ask calls.
+
+    The mutation-contract retry re-injects up to 16000 chars of bootstrap file
+    content into a 16384-token local-Director window. With only the default
+    ``max_tokens`` and no reserved-output floor, the prompt fills the window and
+    ``clamp_output_tokens_to_window`` collapses the generation budget toward its
+    256-token floor — a reasoning model then exhausts the budget mid-thought
+    (live r22 main.js: ``finish_reason=length, reasoning_chars=633``) and emits
+    no visible write. Passing this floor as the retry call's requested output
+    tokens makes ``TokenBudgetManager.enforce`` RESERVE it and COMPRESS the
+    (bulky, mostly-verbatim) prompt to fit, instead of starving the output.
+
+    Retry-path-local: it rides the same context_override channel the temperature
+    override uses, so the main-turn budget is untouched. Respects the model's
+    hard window by shrinking the input, never raising the window.
+
+    Env ``KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS``: positive int; ``off``/``none``/
+    ``disabled``/empty/non-positive disables the floor (returns ``None`` → legacy
+    behavior). Unset → 2500.
+    """
+    raw = os.environ.get(_RETRY_OUTPUT_FLOOR_ENV)
+    if raw is None:
+        return _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS
+    text = raw.strip().lower()
+    if text in {"", "off", "none", "disabled", "false"}:
+        return None
+    try:
+        value = int(text)
+    except ValueError:
+        return _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS
+    if value <= 0:
+        return None
+    return value
 
 
 def resolve_retry_temperature_override(*, attempt_index: int) -> float | None:
@@ -683,8 +722,36 @@ def build_forced_write_only_retry_tool_definitions(
 # follow-up write context. The previous 1200-char JSON fragment made correct
 # SEARCH/REPLACE transcription impossible by construction — the model was forced
 # to write a file it could not see.
-_BOOTSTRAP_READ_CONTENT_MAX_CHARS = 9000
-_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS = 16000
+#
+# I3-r22/r23 (F10): the 16000/9000 defaults were sized for large cloud windows.
+# On a 16384-token LOCAL Director they inject ~4000 tokens of verbatim read
+# content — the dominant input cost — which fills the window and collapses the
+# output budget so the model truncates mid-reasoning and emits no write (live
+# main.js empty-output dead-letter). Sized for the small window here and made
+# env-tunable so a large-window provider can restore the bigger budget.
+_DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS = 5000
+_DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS = 6000
+_BOOTSTRAP_READ_MAX_CHARS_ENV = "KERNELONE_BOOTSTRAP_READ_MAX_CHARS"
+_BOOTSTRAP_READ_TOTAL_CHARS_ENV = "KERNELONE_BOOTSTRAP_READ_TOTAL_CHARS"
+
+
+def _read_positive_int_env(env_name: str, default: int) -> int:
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw.strip())
+    except (AttributeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _bootstrap_read_content_max_chars() -> int:
+    return _read_positive_int_env(_BOOTSTRAP_READ_MAX_CHARS_ENV, _DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS)
+
+
+def _bootstrap_read_content_total_chars() -> int:
+    return _read_positive_int_env(_BOOTSTRAP_READ_TOTAL_CHARS_ENV, _DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS)
 
 
 def build_retry_write_after_bootstrap_context(
@@ -698,6 +765,8 @@ def build_retry_write_after_bootstrap_context(
     successful_files: list[str] = []
     failed_files: list[str] = []
     content_chars_used = 0
+    bootstrap_total_chars = _bootstrap_read_content_total_chars()
+    bootstrap_max_chars = _bootstrap_read_content_max_chars()
     for item in list(bootstrap_receipt.get("results", []) or []):
         if not isinstance(item, Mapping):
             continue
@@ -715,10 +784,10 @@ def build_retry_write_after_bootstrap_context(
                     raw_content = inner.get("content")
             if isinstance(raw_content, str) and raw_content.strip():
                 file_content = raw_content
-        if file_content and content_chars_used < _BOOTSTRAP_READ_CONTENT_TOTAL_CHARS:
+        if file_content and content_chars_used < bootstrap_total_chars:
             budget = min(
-                _BOOTSTRAP_READ_CONTENT_MAX_CHARS,
-                _BOOTSTRAP_READ_CONTENT_TOTAL_CHARS - content_chars_used,
+                bootstrap_max_chars,
+                bootstrap_total_chars - content_chars_used,
             )
             if len(file_content) > budget:
                 file_content = file_content[:budget] + "\n...[content truncated]"
@@ -828,6 +897,34 @@ def _normalize_deterministic_bootstrap_target(value: Any) -> str:
     if path.lower() == "agents":
         return "AGENTS.md"
     return path
+
+
+def _extract_declared_step_card(original_context: list[dict]) -> dict[str, Any] | None:
+    """Return the executing construction-step card carried in the turn context.
+
+    A CE-fissioned leaf step is dispatched with its blueprint card injected as
+    ``context_override["construction_step"]`` (director_consumer:802); the same
+    message list is handed to the retry orchestrator as ``original_context``.
+    Locating that card lets the deterministic write fallback honor the step's
+    single declared ``target_file`` instead of guessing one from a prompt scrape,
+    and lets it recognize a leaf-construction turn (where a placeholder write can
+    never satisfy a real verify and only poisons the rightful owner step).
+    """
+    for message in reversed(original_context or []):
+        if not isinstance(message, dict):
+            continue
+        for source in (
+            message,
+            message.get("context"),
+            message.get("metadata"),
+            message.get("context_override"),
+        ):
+            if not isinstance(source, dict):
+                continue
+            step = source.get("construction_step")
+            if isinstance(step, dict) and step:
+                return step
+    return None
 
 
 def _extract_deterministic_bootstrap_write_targets(
@@ -1087,6 +1184,26 @@ def build_deterministic_bootstrap_followup_write_decision(
 ) -> TurnDecision | None:
     if "write_file" not in allowed_tool_names:
         return None
+    # I3-r21 root fix (rank 2): a CE-fissioned LEAF construction step carries its
+    # blueprint card in the turn context. Such a step has a single declared
+    # target_file and a machine verify clause that a synthesized placeholder can
+    # NEVER satisfy (e.g. `node --check && grep -q 'class Paddle'`). Worse, the
+    # placeholder plants the file BEFORE its rightful owner step runs; the
+    # file-ownership ledger then tells the owner "the file exists, read+EDIT it",
+    # and the weak model stalls on a meaningless stub (live r21: PM-0001-1-S3
+    # main.js, 3/3 director_no_materialized_changes, ~1470s). For leaf steps the
+    # write fallback is pure poison — suppress it entirely and keep only the READ
+    # bootstrap path. Honest no_materialized_changes is fail-closed and strictly
+    # better than a stub that dead-locks the owner.
+    declared_step = _extract_declared_step_card(original_context)
+    if declared_step is not None:
+        logger.info(
+            "deterministic bootstrap write fallback suppressed for leaf construction step "
+            "(turn_id=%s declared_target=%s): READ bootstrap only, model must emit a real write",
+            turn_id,
+            str(declared_step.get("target_file") or ""),
+        )
+        return None
     targets = _extract_deterministic_bootstrap_write_targets(
         original_context=original_context,
         bootstrap_receipt=bootstrap_receipt,
@@ -1115,6 +1232,17 @@ def build_deterministic_bootstrap_followup_write_decision(
         logger.warning(
             "deterministic bootstrap write fallback skipped: no safe user-named non-existing target (candidates=%s)",
             targets[:5],
+        )
+        return None
+    # I3-r21 root fix (rank 1): with NO single declared target (non-leaf / repo-fix
+    # context), multiple user-named non-existing files are ambiguous. Picking
+    # viable_targets[0] is the bug that wrote main.js while readme.md was the step's
+    # target. Refuse to guess — a wrong-file write is worse than no write.
+    if len(viable_targets) > 1:
+        logger.warning(
+            "deterministic bootstrap write fallback skipped: %d viable targets, refusing to guess (%s)",
+            len(viable_targets),
+            viable_targets[:5],
         )
         return None
     target = viable_targets[0]
@@ -1382,6 +1510,11 @@ class RetryOrchestrator:
         llm_call_kwargs: dict[str, Any] = {}
         if attempt_temperature_override is not None:
             llm_call_kwargs["temperature_override"] = attempt_temperature_override
+        # I3-r22 (F10): reserve a reasoning-sized output floor so a large retry
+        # prompt cannot starve the generation budget (compresses input to fit).
+        retry_output_floor = resolve_retry_output_floor()
+        if retry_output_floor is not None:
+            llm_call_kwargs["max_tokens_floor"] = retry_output_floor
         stream_callable = self.call_llm_for_decision_stream
         use_stream_retry = stream and stream_callable is not None
         if use_stream_retry and stream_callable is not None:
@@ -1788,6 +1921,12 @@ class RetryOrchestrator:
                 followup_temperature_override = resolve_escalation_temperature()
                 if followup_temperature_override is not None:
                     followup_llm_kwargs["temperature_override"] = followup_temperature_override
+            # I3-r22 (F10): THE call that truncated in r22 (main.js bootstrap
+            # follow-up write, 16000 chars of injected file content). Reserve a
+            # reasoning-sized output floor so the write can be emitted.
+            followup_output_floor = resolve_retry_output_floor()
+            if followup_output_floor is not None:
+                followup_llm_kwargs["max_tokens_floor"] = followup_output_floor
             max_followup_attempts = 3
             current_write_context = write_context
             current_followup_allowed_tool_names = set(followup_allowed_tool_names)
