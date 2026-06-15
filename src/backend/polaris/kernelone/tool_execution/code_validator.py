@@ -22,6 +22,7 @@ import ast
 import builtins
 import logging
 import re
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -29,6 +30,80 @@ from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Resolved lazily + cached: a single PATH lookup for `node`, used to upgrade the .js
+# pre-write gate from a bracket heuristic to an authoritative `node --check`.
+_NODE_EXECUTABLE: str | None = None
+_NODE_RESOLVED = False
+
+
+def _node_executable() -> str | None:
+    """Path to `node`, or None when unavailable (caller falls back to the heuristic)."""
+    global _NODE_EXECUTABLE, _NODE_RESOLVED
+    if not _NODE_RESOLVED:
+        _NODE_EXECUTABLE = shutil.which("node")
+        _NODE_RESOLVED = True
+    return _NODE_EXECUTABLE
+
+
+def _parse_node_check_error(stderr: str) -> tuple[int, str]:
+    """Extract (line, message) from `node --check` stderr.
+
+    Format: ``<tmppath>:<line>\\n  <source>\\n     ^\\n\\nSyntaxError: <msg>``.
+    """
+    line_no = 0
+    message = "JavaScript syntax error"
+    for raw in stderr.splitlines():
+        stripped = raw.strip()
+        if line_no == 0:
+            tail = re.search(r":(\d+)$", stripped)
+            if tail:
+                line_no = int(tail.group(1))
+        if stripped.startswith(("SyntaxError:", "ReferenceError:")):
+            message = stripped
+    return line_no, message
+
+
+def _node_check_js_syntax(code: str) -> SyntaxValidationResult | None:
+    """Authoritative JavaScript syntax check via ``node --check``.
+
+    Returns None when node is unavailable (the caller falls back to the bracket
+    heuristic) — fail-OPEN on missing infra, never on a real syntax error. A bracket
+    heuristic cannot see statement-level errors such as a ``;`` used as an object-literal
+    member separator (live 2026-06-15: L2-09 game.js, L2-10 app.js shipped broken JS that
+    `node --check` catches), so node is the authority when present.
+    """
+    node = _node_executable()
+    if not node:
+        return None
+    # Module goal: a static top-level import/export needs ESM parsing. Pick the temp
+    # extension so node uses the correct goal and never false-rejects valid ESM or CJS.
+    is_module = re.search(r"^\s*(?:export\b|import\s+[\w{*'\"])", code, re.MULTILINE) is not None
+    suffix = ".mjs" if is_module else ".cjs"
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as fh:
+            fh.write(code)
+            tmp_path = fh.name
+        proc = subprocess.run(
+            [node, "--check", tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("node --check unavailable/failed, falling back to heuristic: %s", exc)
+        return None
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+    if proc.returncode == 0:
+        return SyntaxValidationResult.success()
+    line_no, message = _parse_node_check_error(proc.stderr)
+    return SyntaxValidationResult.failure(
+        [CodeSyntaxError(line=line_no, column=0, message=message, error_type="SyntaxError")],
+        [f"node --check: {message}"],
+    )
 
 
 @dataclass
@@ -800,16 +875,29 @@ class MultiLanguageCodeValidator:
     ]
 
     def _js_validator(self, code: str, filepath: str | None) -> SyntaxValidationResult:
-        """JavaScript验证器（括号检查 + 幻觉修复）。"""
-        # 先尝试自动修复 JS 特有的幻觉模式
+        """JavaScript 验证器。
+
+        For plain ``.js/.mjs/.cjs`` with ``node`` available, ``node --check`` is the
+        authority (fail-closed on real syntax errors a bracket heuristic cannot see, e.g.
+        a ``;`` used as an object-literal separator). When node is absent — or for
+        ``.ts/.jsx/.tsx`` whose syntax ``node --check`` does not understand — fall back to
+        the bracket-balance + hallucination-fix heuristic. We do NOT apply the regex
+        hallucination "fixes" to node-validated code: the missing-semicolon-before-``}``
+        pattern can itself inject an invalid ``;`` into a valid object/array literal.
+        """
+        ext = self._get_extension(filepath or "")
+        if ext in (".js", ".mjs", ".cjs"):
+            node_result = _node_check_js_syntax(code)
+            if node_result is not None:
+                return node_result
+
+        # Fallback: node unavailable, or a TypeScript/JSX dialect node cannot parse.
         fixed_code, fixes = self._fix_js_hallucinations(code)
 
-        # 括号匹配检查
         errors = self._check_brackets(fixed_code, ["()", "[]", "{}"])
         if errors:
             return SyntaxValidationResult.failure(errors)
 
-        # 如果有修复，返回修复后的代码
         if fixes:
             return SyntaxValidationResult.success(fixed_code=fixed_code)
 

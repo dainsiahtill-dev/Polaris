@@ -111,6 +111,31 @@ def test_read_file_ignores_unknown_llm_parameters(monkeypatch, tmp_path) -> None
     assert "print('ok')" in str(payload.get("content") or "")
 
 
+def test_read_file_preserves_explicit_line_range_through_executor(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "app.py").write_text(
+        "line 1\nline 2\nline 3\nline 4\n",
+        encoding="utf-8",
+    )
+
+    result = executor.execute(
+        "read_file",
+        {"file": "src/app.py", "start_line": 2, "end_line": 3},
+    )
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    content = str(payload.get("content") or "")
+    assert "2 | line 2" in content
+    assert "3 | line 3" in content
+    assert "1 | line 1" not in content
+    assert "4 | line 4" not in content
+    assert payload.get("range_used") == {"start_line": 2, "end_line": 3}
+
+
 def test_execute_command_returns_error_without_shell_fallback_on_permission_error(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
     executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
@@ -154,7 +179,7 @@ def test_read_file_accepts_file_path_alias(monkeypatch, tmp_path) -> None:
     payload = result.get("result")
     assert isinstance(payload, dict)
     assert str(payload.get("file") or "").endswith("sample.txt")
-    assert str(payload.get("content") or "").strip() == "hello"
+    assert str(payload.get("content") or "").strip() == "1 | hello"
 
 
 def test_write_file_normalizes_empty_search_patch_payload(monkeypatch, tmp_path) -> None:

@@ -336,6 +336,39 @@ class TestProjectionEnginePromptInjectionBaseline:
         assert "<script>" in rendered
         assert "【Run Card】" in rendered
 
+    def test_run_card_goal_is_capped_to_avoid_budget_duplication(self) -> None:
+        """The Run Card Goal line must be capped: the full goal lives in the dedicated
+        'Current goal' plane, and embedding it here in full blew the PM-planning budget
+        (L3-16 Tetris, 2026-06-15, total=10218 vs 8000)."""
+        engine = ProjectionEngine()
+        run_card = MagicMock()
+        run_card.current_goal = "你是项目经理。GLOBAL REQUIREMENTS: " + ("需求 " * 4000)  # ~12k chars
+        run_card.open_loops = []
+        run_card.latest_user_intent = ""
+        run_card.pending_followup_action = ""
+        run_card.last_turn_outcome = ""
+
+        rendered = engine.render_run_card(run_card)
+        goal_line = next(line for line in rendered.splitlines() if line.startswith("Goal:"))
+        # capped to ~300 chars + a short prefix/ellipsis, NOT the full 12k-char goal
+        assert len(goal_line) < 400, f"Run Card Goal not capped: {len(goal_line)} chars"
+        assert "你是项目经理" in goal_line  # the essential head is preserved
+        assert goal_line.endswith("…")
+
+    def test_run_card_short_goal_is_not_truncated(self) -> None:
+        """A short goal must pass through verbatim (no spurious ellipsis)."""
+        engine = ProjectionEngine()
+        run_card = MagicMock()
+        run_card.current_goal = "Fix the login bug"
+        run_card.open_loops = []
+        run_card.latest_user_intent = ""
+        run_card.pending_followup_action = ""
+        run_card.last_turn_outcome = ""
+
+        rendered = engine.render_run_card(run_card)
+        assert "Goal: Fix the login bug" in rendered
+        assert "…" not in rendered
+
 
 class TestReceiptStoreContentOffloading:
     """Tests for ReceiptStore large-content offloading safety."""

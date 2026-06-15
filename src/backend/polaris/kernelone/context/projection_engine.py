@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 _RECEIPT_REF_SAFE_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 
+# The Run Card is a compact state card; the full goal/requirements lives in the dedicated
+# 'Current goal' plane. Cap the card's Goal line so it stays a short reminder rather than a
+# multi-thousand-token duplicate of the goal (see render_run_card).
+_RUN_CARD_GOAL_MAX_CHARS = 300
+
 
 @dataclass
 class _AdaptiveWeights:
@@ -558,7 +563,14 @@ class ProjectionEngine:
             return ""
         run_card_lines = ["【Run Card】"]
         if getattr(run_card, "current_goal", ""):
-            run_card_lines.append(f"Goal: {run_card.current_goal}")
+            # The Run Card is a COMPACT state card (other fields truncated to 100 chars).
+            # The full goal/requirements is already carried by the dedicated 'Current goal'
+            # plane; embedding it in full here duplicated ~2.5k tokens and blew the
+            # PM-planning context budget (L3-16 Tetris, 2026-06-15, total=10218 vs 8000).
+            goal_text = str(run_card.current_goal)
+            if len(goal_text) > _RUN_CARD_GOAL_MAX_CHARS:
+                goal_text = goal_text[:_RUN_CARD_GOAL_MAX_CHARS].rstrip() + " …"
+            run_card_lines.append(f"Goal: {goal_text}")
         if getattr(run_card, "open_loops", ()):
             run_card_lines.append(f"Open loops: {len(list(run_card.open_loops))}")
         if getattr(run_card, "latest_user_intent", ""):

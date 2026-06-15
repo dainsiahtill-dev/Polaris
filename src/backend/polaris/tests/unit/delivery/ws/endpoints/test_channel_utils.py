@@ -146,9 +146,7 @@ class TestResolveChannelPath:
         assert result == ""
 
     @patch("polaris.delivery.ws.endpoints.channel_utils.resolve_current_run_id")
-    def test_runtime_events_resolves_per_run_file_when_present(
-        self, mock_resolve_run, tmp_path
-    ) -> None:
+    def test_runtime_events_resolves_per_run_file_when_present(self, mock_resolve_run, tmp_path) -> None:
         """runtime_events must follow the active run's per-run events file.
 
         The live emit path (orchestration_engine) writes context.build /
@@ -180,9 +178,7 @@ class TestResolveChannelPath:
 
     @patch("polaris.cells.runtime.projection.public.service.resolve_artifact_path")
     @patch("polaris.delivery.ws.endpoints.channel_utils.resolve_current_run_id")
-    def test_runtime_events_falls_back_when_no_run_id(
-        self, mock_resolve_run, mock_resolve_artifact, tmp_path
-    ) -> None:
+    def test_runtime_events_falls_back_when_no_run_id(self, mock_resolve_run, mock_resolve_artifact, tmp_path) -> None:
         """No active run → fall back to the workspace-level channel path."""
         mock_resolve_run.return_value = ""
         workspace_level = str(tmp_path / "events" / "runtime.events.jsonl")

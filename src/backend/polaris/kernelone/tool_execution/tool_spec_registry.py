@@ -937,6 +937,8 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "arguments": [
             {"name": "file", "type": "string", "required": True},
             {"name": "max_bytes", "type": "integer", "required": False, "default": 200001},
+            {"name": "start_line", "type": "integer", "required": False, "minimum": 1},
+            {"name": "end_line", "type": "integer", "required": False, "minimum": 1},
             {"name": "range_required", "type": "boolean", "required": False, "default": False},
         ],
         "response_format_hint": "Full file content with truncation flag",

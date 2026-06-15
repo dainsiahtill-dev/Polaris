@@ -167,9 +167,7 @@ def resolve_channel_path(workspace: str, cache_root: str, channel: str) -> str:
         # stale workspace-level file the live emit path never writes.
         run_id = resolve_current_run_id(cache_root)
         if run_id:
-            per_run = os.path.join(
-                cache_root, "runs", run_id, "events", "runtime.events.jsonl"
-            )
+            per_run = os.path.join(cache_root, "runs", run_id, "events", "runtime.events.jsonl")
             if os.path.isfile(per_run):
                 return per_run
 

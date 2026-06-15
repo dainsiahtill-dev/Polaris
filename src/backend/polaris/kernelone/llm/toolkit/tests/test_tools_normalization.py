@@ -454,5 +454,39 @@ class TestExecuteCommandSynonyms:
         assert normalized.get("command") == "node index.js"
 
 
+class TestEditFileSynonyms:
+    """Weak/diverse-LLM adaptation for edit_file body names.
+
+    Line-range edits must keep the model's explicit replacement body. Without this,
+    _drop_unknown_arguments removes `new_text`/`replacement` and the handler receives an
+    empty `content`, which can turn a clear line replacement into an accidental deletion.
+    """
+
+    @pytest.mark.parametrize("synonym", ["new_text", "replacement", "code", "source", "body"])
+    def test_line_range_body_synonym_maps_to_content(self, synonym: str) -> None:
+        normalized = normalize_tool_arguments(
+            "edit_file",
+            {
+                "file": "app.js",
+                "start_line": 2,
+                "end_line": 2,
+                synonym: "const ready = true;\n",
+            },
+        )
+
+        assert normalized.get("content") == "const ready = true;\n", (
+            f"{synonym!r} did not map to line-range content: {normalized}"
+        )
+
+    def test_search_replacement_synonym_maps_to_replace_not_content(self) -> None:
+        normalized = normalize_tool_arguments(
+            "edit_file",
+            {"file": "app.js", "search": "oldName", "replacement": "newName"},
+        )
+
+        assert normalized.get("replace") == "newName"
+        assert "content" not in normalized
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

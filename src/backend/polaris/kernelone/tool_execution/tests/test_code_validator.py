@@ -320,3 +320,48 @@ class TestPostWriteVerification:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestJsNodeCheckGate:
+    """Write-path fail-closed JS syntax gate (2026-06-15, batch b-norm root cause #1).
+
+    Live evidence: L2-09 game.js:50 and L2-10 app.js:10 shipped broken JS (a `;` used as
+    an object-literal member separator) because the old bracket-balance heuristic could not
+    see statement-level errors. `node --check` (authority) must REJECT these before they land.
+    """
+
+    # exact L2-09 game.js shape: ';' instead of ',' inside an object literal
+    L209_BROKEN = (
+        "function step() {\n"
+        "  const head = {\n"
+        "    x: snake[0].x + direction.x,\n"
+        "    y: snake[0].y + direction.y;\n"
+        "  };\n"
+        "  return head;\n"
+        "}\n"
+    )
+    # exact L2-10 app.js shape: ';' before the closing brace of setOptions({...})
+    L210_BROKEN = "marked.setOptions({\n  gfm: true,\n  breaks: true,\n  mangle: false;\n});\n"
+
+    def test_object_literal_semicolon_is_rejected_l209(self) -> None:
+        result = validate_code_syntax(self.L209_BROKEN, "game.js")
+        assert not result.is_valid, "node --check must reject ';' as an object-literal separator"
+
+    def test_object_literal_semicolon_is_rejected_l210(self) -> None:
+        result = validate_code_syntax(self.L210_BROKEN, "app.js")
+        assert not result.is_valid
+
+    def test_valid_classic_js_passes(self) -> None:
+        code = "function add(a, b) {\n  const o = { x: a, y: b };\n  return o.x + o.y;\n}\n"
+        result = validate_code_syntax(code, "game.js")
+        assert result.is_valid, format_validation_error(result, "game.js")
+
+    def test_valid_esm_js_passes(self) -> None:
+        """A valid ES-module .js (top-level import/export) must NOT be false-rejected."""
+        code = "import { CONFIG } from './config.js';\nexport function init() {\n  return CONFIG;\n}\n"
+        result = validate_code_syntax(code, "main.js")
+        assert result.is_valid, format_validation_error(result, "main.js")
+
+    def test_rejection_reports_a_line(self) -> None:
+        result = validate_code_syntax(self.L210_BROKEN, "app.js")
+        assert result.errors and any(e.line > 0 for e in result.errors)

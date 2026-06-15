@@ -414,3 +414,349 @@ Collapse four divergent synonym vocabularies, two divergent coercers, three dive
 builders, and four un-funneled parsers into ONE canonical key_vocabulary + ONE lenient coercer +
 ONE schema-emission function + ONE parse->normalize chokepoint, applied before dispatch, with
 fail-closed intent gates so adaptation never invents a destructive call.
+
+---
+
+## 7) Graph / Cell ownership map (implementation constraint)
+
+This refactor must NOT create a new Cell. It is a KernelOne technical capability consumed by the
+LLM and role Cells through their existing public execution surfaces.
+
+| Concern | Current/target owner | Allowed touched paths | Boundary rule |
+|---|---|---|---|
+| Tool spec SSoT | `kernelone.tool_execution` | `polaris/kernelone/tool_execution/tool_spec_registry.py` | Tool names, canonical args, `required_any`, enum/items/min/max remain here. |
+| Canonical normalization | `kernelone.llm.toolkit` | `polaris/kernelone/llm/toolkit/tool_normalization/**` | Owns alias vocabulary, coercion, Stage 0 unwrap, idempotency. |
+| Parser adaptation | `kernelone.llm.toolkit` + `roles.kernel` parse adapter | `polaris/kernelone/llm/toolkit/parsers/**`, `polaris/cells/roles/kernel/internal/**` parse-only paths | Role code may call canonical normalizer; it must not define its own synonym vocabulary. |
+| Tool execution hard gates | `kernelone.llm.toolkit.executor` | `polaris/kernelone/llm/toolkit/executor/**` | Read-before-edit, allowed-tools, validation, and effect dispatch stay executor-owned. |
+| Tool handlers | `kernelone.llm.toolkit.executor.handlers` | `polaris/kernelone/llm/toolkit/executor/handlers/**` | Handlers consume canonical keys only after P10; before that, compatibility reads are audit targets. |
+| LLM tool orchestration | `llm.tool_runtime` Cell | `polaris/cells/llm/tool_runtime/**` | Should observe normalized calls/results, not duplicate parse or binding logic. |
+| Role runtime | `roles.kernel` / `roles.runtime` Cells | `polaris/cells/roles/**` public/internal parse edges only | No cross-Cell import of another Cell internal implementation. |
+
+Graph implications:
+
+1. No new `docs/graph/catalog/cells.yaml` Cell is required.
+2. If new public contracts are introduced, they must be KernelOne contracts or existing Cell public
+   contracts; do not add a second tool-spec registry.
+3. Normalization itself is pure. File, process, network, and KFS effects remain in the executor and
+   existing handlers. Receipts/metrics introduced by this blueprint are observability effects, not
+   tool effects.
+4. `polaris/kernelone/llm/tools/normalizer.py` is a compatibility shim. It must delegate to
+   `polaris.kernelone.llm.toolkit.tool_normalization` and may not carry independent alias/coercion
+   rules.
+
+---
+
+## 8) Execution-grade release plan
+
+The original P1..P10 list is the target backlog. Land it in the following slices so the system gains
+adaptation without weakening safety.
+
+### Slice 0 - Audit foundation, no behavior change
+
+Goal: make drift visible before changing acceptance behavior.
+
+- Add `tool_normalization/key_vocabulary.py` with canonical synonym constants, but do not wire every
+  consumer yet.
+- Add a golden corpus file:
+  `polaris/kernelone/llm/toolkit/tests/fixtures/tool_call_normalization_corpus.jsonl`.
+- Add a corpus runner test that can operate in two modes:
+  - `expected_current`: documents current reject/drop behavior.
+  - `expected_target`: documents desired normalized behavior.
+- Add `ToolNormalizationReceipt` as an in-memory/audit structure behind the normalizer boundary.
+  It records what changed without persisting full file bodies.
+- Add an audit-only arg coverage script:
+  `docs/governance/ci/scripts/run_tool_arg_coverage_gate.py --mode audit`.
+
+Exit criteria:
+
+- Current behavior is reproducible from corpus.
+- Every P1..P10 gap maps to at least one corpus row.
+- Coverage script reports drift but does not fail CI yet.
+
+### Slice 1 - Non-destructive argument survival
+
+Goal: remove the silent drops that directly block weak models, while avoiding intent
+reclassification.
+
+Includes: P1, P2, P3, and the native dict-args part of P6.
+
+Allowed behavior changes:
+
+- Content synonyms bind to `content`/`diff`/`command`.
+- `read_file` range args survive `_drop_unknown_arguments`.
+- JSON-string argument objects unwrap only when keys match this tool's param/alias namespace.
+- Scalar/list coercion accepts common weak-model shapes.
+
+Not allowed yet:
+
+- Whole-file overwrite inference.
+- Implicit file binding from history.
+- Text-protocol fallback execution.
+
+Exit criteria:
+
+- All non-destructive corpus rows pass.
+- Safety corpus rows still reject.
+- Idempotency test proves `normalize_tool_arguments(name, normalize_tool_arguments(name, args))`
+  equals a single pass for every corpus row.
+
+### Slice 2 - Parser chokepoint and schema parity
+
+Goal: make advertised tool schemas and accepted runtime shapes match.
+
+Includes: remaining P6 plus P9.
+
+Allowed behavior changes:
+
+- Native parsers accept already-decoded dict args and provider-specific `input/params/parameters`.
+- Every parsed `(tool_name, args)` flows through canonical tool-name and argument normalization.
+- Schema builders share one arg-to-JSON-schema mapper.
+
+Exit criteria:
+
+- OpenAI/DeepSeek/Anthropic/Gemini/Ollama parser tests prove the same logical call normalizes to the
+  same canonical `{name, args}`.
+- Schema emission tests prove `enum/items/min/max/required_any` survive across OpenAI,
+  Anthropic, and contract-native builders.
+- No advertised tool name changes.
+
+### Slice 3 - Intent-aware edit recovery, gated
+
+Goal: fix the dominant `edit_blocks` weak-model wall without guessing destructive actions.
+
+Includes: P5.
+
+Rollout guard:
+
+- Introduce a mode flag, initially defaulting to audit-only:
+  `KERNELONE_TOOL_NORMALIZATION_INTENT_MODE=audit|enforce`.
+- In `audit`, receipts report what would have been rebound/reclassified, but executor behavior stays
+  unchanged.
+- In `enforce`, only the invariants in Section 2.4 may trigger behavior changes.
+
+Allowed behavior changes in enforce:
+
+- `start/end/replace` line-range payloads can bind a file only when exactly one fresh read is in the
+  executor window.
+- Explicit empty replacement over an explicit range is accepted as delete intent.
+- Bare whole-file payload can become overwrite only when the target exists and the classifier proves
+  complete-file intent.
+- Read-before-edit is re-armed after implicit binding.
+
+Exit criteria:
+
+- Ambiguous multi-file history corpus rejects with a teaching error.
+- Not-read edit corpus remains blocked by read-before-edit.
+- Whole-file shrink safety corpus rejects unless explicit-intent predicate is true.
+
+### Slice 4 - Text fallback and handler de-duplication
+
+Goal: accept recoverable text calls only after the canonical native path is stable.
+
+Includes: P7, P8, P10.
+
+Rules:
+
+- Text fallback runs only when native tool calls are empty.
+- XML/tag extraction must be whitelisted to known tool names.
+- Handler-level alias reads are removed only after coverage gate has been clean in audit mode.
+- Coverage gate moves from `--mode audit` to `--mode enforce` after the handler cleanup.
+
+Exit criteria:
+
+- Text fallback corpus accepts `[TOOL_CALL]`/bare JSON tool calls without binding prose tags.
+- Handler coverage gate has zero unregistered read keys and zero normalizer-emitted unknown keys.
+- `_MISSING_ARG_HINTS` and executor validation produce one canonical error style.
+
+---
+
+## 9) Golden corpus design
+
+The corpus is the contract between audit findings and implementation. It prevents this refactor from
+becoming a collection of anecdotal fixes.
+
+### 9.1 Corpus row schema
+
+```json
+{
+  "id": "write_file.content_text_alias",
+  "phase": "P1",
+  "tool": "write_file",
+  "provider_shape": "native_openai|native_anthropic|text_json|executor_direct",
+  "raw_name": "write_file",
+  "raw_args": {"file": "src/app.js", "text": "console.log('ok')"},
+  "preconditions": {
+    "workspace_files": [],
+    "fresh_reads": []
+  },
+  "expected_target": {
+    "tool": "write_file",
+    "args": {"file": "src/app.js", "content": "console.log('ok')"},
+    "accepted": true,
+    "receipt_codes": ["alias:content:text"]
+  },
+  "safety_class": "non_destructive"
+}
+```
+
+### 9.2 Required corpus groups
+
+| Group | Minimum rows | Must include |
+|---|---:|---|
+| Write body aliases | 8 | `text`, `body`, `code`, `source`, `file_content`, fenced body, escaped `\n`. |
+| Read/search ranges | 6 | `offset/limit`, `start/end`, `start_line/end_line`, bad optional int. |
+| Command shapes | 8 | argv list, dict `{cmd,cwd}`, `executable+args`, timeout units, prompt sigil. |
+| Native provider args | 10 | OpenAI dict args, DeepSeek dict args, Anthropic string input, Gemini/Ollama response. |
+| Text fallback | 6 | `[TOOL_CALL]`, bare JSON, XML whitelisted, XML prose false positive. |
+| Edit blocks | 15 | line range, missing file with one fresh read, missing file with two fresh reads, YAML-ish string, bare whole file, partial bare code. |
+| Safety abuse | 10 | JSON content not unwrapped, ambiguous file binding, inferred delete, destructive shrink, unknown tool-name fold. |
+
+Every corpus row must specify whether the desired outcome is `accepted`, `teaching_error`, or
+`dropped_unknown_tool`. Silent drop is not a valid target outcome for a known tool with recoverable
+args.
+
+---
+
+## 10) Normalization receipt and telemetry
+
+Add a receipt so production failures can be reconstructed without logging full user code.
+
+### 10.1 Receipt fields
+
+```python
+@dataclass(frozen=True)
+class ToolNormalizationReceipt:
+    tool_name_raw: str
+    tool_name_canonical: str
+    input_shape: str
+    normalized: bool
+    accepted: bool
+    safety_class: str
+    changes: tuple[str, ...]
+    dropped_keys: tuple[str, ...]
+    teaching_error: str | None
+    raw_args_sha256: str
+    normalized_args_sha256: str
+```
+
+Rules:
+
+1. Do not store full `content`, `diff`, `replacement`, or `command` bodies in receipts.
+2. Store key names, type transitions, short scalar previews, and SHA-256 hashes.
+3. Receipt codes are stable strings, for example:
+   `alias:content:text`, `coerce:int:timeout`, `unwrap:arguments_json`,
+   `guard:ambiguous_implicit_file`, `reject:destructive_shrink`.
+4. Executor errors should include the receipt id/hash when a teaching error is generated, so replay
+   can connect model output -> normalizer decision -> executor result.
+
+### 10.2 Metrics
+
+Track counters by role, provider, model, and tool:
+
+- `tool_normalization.accepted_total`
+- `tool_normalization.changed_total`
+- `tool_normalization.teaching_error_total`
+- `tool_normalization.safety_reject_total`
+- `tool_normalization.dropped_unknown_key_total`
+- `tool_normalization.intent_reclassification_total`
+- `tool_normalization.text_fallback_total`
+
+These metrics are production stability signals. A spike in `teaching_error_total` for one model
+means the vocabulary still does not match that model's conventions. A spike in
+`safety_reject_total` after P5 means the classifier is seeing risky edit shapes and should stay in
+audit mode for that path.
+
+---
+
+## 11) Test and gate matrix
+
+### 11.1 Unit tests
+
+| Test file | Coverage |
+|---|---|
+| `polaris/kernelone/llm/toolkit/tests/test_tool_call_normalization_corpus.py` | Runs golden corpus through Stage 0/1/2 normalization. |
+| `polaris/kernelone/llm/toolkit/tests/test_tool_normalization_idempotency.py` | Double-normalization invariants. |
+| `polaris/kernelone/llm/toolkit/tests/test_tool_normalization_receipts.py` | Receipt redaction and stable codes. |
+| `polaris/kernelone/llm/toolkit/tests/test_tool_parser_normalization_chokepoint.py` | Native/text parser funnels produce canonical calls. |
+| `polaris/kernelone/tool_execution/tests/test_tool_arg_coverage_gate.py` | Spec args, aliases, normalizer output, and handler reads agree. |
+| `polaris/kernelone/llm/toolkit/tests/test_tool_schema_emission_parity.py` | OpenAI/Anthropic/contract builders emit equivalent constraints. |
+| `polaris/kernelone/llm/toolkit/tests/test_edit_intent_classifier.py` | P5 safety and recovery decisions. |
+
+### 11.2 Required commands per slice
+
+```bash
+cd src/backend
+python -m ruff check polaris/kernelone/llm/toolkit polaris/kernelone/tool_execution polaris/cells/roles/kernel --fix
+python -m ruff format polaris/kernelone/llm/toolkit polaris/kernelone/tool_execution polaris/cells/roles/kernel
+python -m mypy polaris/kernelone/llm/toolkit polaris/kernelone/tool_execution polaris/cells/roles/kernel
+python -m pytest -q \
+  polaris/kernelone/llm/toolkit/tests \
+  polaris/kernelone/tool_execution/tests \
+  polaris/tests/test_output_parser_patch_file.py
+python docs/governance/ci/scripts/run_tool_arg_coverage_gate.py --mode audit
+```
+
+For Slice 3 enforce mode:
+
+```bash
+cd src/backend
+KERNELONE_TOOL_NORMALIZATION_INTENT_MODE=enforce python -m pytest -q \
+  polaris/kernelone/llm/toolkit/tests/test_edit_intent_classifier.py \
+  polaris/kernelone/llm/toolkit/tests/test_tool_call_normalization_corpus.py \
+  polaris/tests/test_output_parser_patch_file.py
+```
+
+For final enforcement:
+
+```bash
+cd src/backend
+python docs/governance/ci/scripts/run_tool_arg_coverage_gate.py --mode enforce
+python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+```
+
+---
+
+## 12) High-risk design decisions that must be explicit in code review
+
+1. **Unknown keys are evidence, not noise.** `_drop_unknown_arguments` may still filter before
+   handler dispatch, but every dropped key from a known tool must be visible in the receipt. Silent
+   severing is the bug class this blueprint removes.
+2. **Canonical key wins only when non-empty.** If both `file=""` and `path="src/a.py"` appear, the
+   non-empty alias must be allowed to supply the canonical value. Empty canonical fields must not
+   shadow useful alias values.
+3. **Schema aliases are not schema advertising spam.** Runtime may accept broad aliases, but emitted
+   schemas should prefer canonical properties with a concise "also accepts" hint. Over-advertising
+   many alias fields causes weak models to double-fill conflicting keys.
+4. **Parser fallback is subordinate to native calls.** Text fallback is never allowed to add calls
+   when native calls are already present unless a future ADR explicitly defines merge semantics.
+5. **Intent reclassification is not normalization.** Alias/coercion preserves intent. P5 changes
+   execution class (`edit_blocks` -> `write_file`, missing file -> implicit file). That requires a
+   separate classifier, receipts, flags, and stronger tests.
+6. **No target-project special cases.** Extensionless filename allowlists may include only generic
+   well-known names. Do not add application-specific file names, frameworks, or product terms.
+7. **The old normalizer shim must shrink.** Any bug fixed in
+   `polaris/kernelone/llm/toolkit/tool_normalization` must not be re-fixed in
+   `polaris/kernelone/llm/tools/normalizer.py`; the latter delegates and eventually disappears.
+
+---
+
+## 13) Definition of done
+
+The refactor is complete only when all of the following are true:
+
+1. The 60 inventoried gaps have corpus coverage and either pass target behavior or are explicitly
+   documented as residual risk.
+2. No parser path can return a known tool call without passing through canonical tool-name and
+   argument normalization.
+3. Normalization is idempotent across the full corpus.
+4. `read_file` ranged reads preserve `start_line/end_line` through executor dispatch.
+5. Write-family content aliases reach handlers as canonical `content`; unknown content aliases are
+   no longer silently dropped.
+6. `execute_command` accepts argv/list/dict shapes only when they can be losslessly represented as a
+   command string and still pass command safety policy.
+7. `edit_blocks` intent recovery is either audit-only with clear receipts or enforce-mode with all
+   Section 2.4 invariants passing.
+8. Schema emission and runtime acceptance are checked by one parity test suite.
+9. Handler-level alias fallback code has been removed or has a tracked exception with a test and
+   coverage-gate waiver.
+10. KernelOne release gate passes, or any remaining failure has a concrete owner, path, and reason.

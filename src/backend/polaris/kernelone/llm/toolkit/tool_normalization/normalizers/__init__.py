@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._background import normalize_background_check_args, normalize_background_run_args
 from ._edit_blocks import normalize_edit_blocks_args
+from ._edit_file import normalize_edit_file_args
 from ._file_path import normalize_file_path_args
 from ._glob import normalize_glob_args
 from ._list_directory import normalize_list_directory_args
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
 TOOL_NORMALIZERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "read_file": normalize_read_file_args,
     "write_file": normalize_file_path_args,
-    "edit_file": normalize_file_path_args,
+    "edit_file": normalize_edit_file_args,
     "append_to_file": normalize_file_path_args,
     "edit_blocks": normalize_edit_blocks_args,
     "precision_edit": normalize_precision_edit_args,
@@ -99,6 +100,7 @@ __all__ = [
     "normalize_background_check_args",
     "normalize_background_run_args",
     "normalize_edit_blocks_args",
+    "normalize_edit_file_args",
     "normalize_file_path_args",
     "normalize_glob_args",
     "normalize_list_directory_args",
