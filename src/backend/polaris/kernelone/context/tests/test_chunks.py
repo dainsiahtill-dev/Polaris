@@ -17,6 +17,7 @@ from polaris.kernelone.context.chunks import (
     PromptChunkAssembler,
     StrategyMetadata,
 )
+from polaris.kernelone.errors import BudgetExceededError
 
 
 class TestChunkType:
@@ -261,6 +262,33 @@ class TestChunkBudgetTracker:
 
         assert len(admitted) == 3
         assert len(evicted) == 0
+
+    def test_try_admit_many_pins_system_and_current_turn_under_tight_budget(self) -> None:
+        """Core prompt chunks must survive before low-value repository context."""
+        tracker = ChunkBudgetTracker(model_window=1000, safety_margin=1.0)
+        repo_meta = ChunkMetadata(chunk_type=ChunkType.READONLY_ASSETS, source="test", estimated_tokens=800)
+        repo_chunk = PromptChunk(ChunkType.READONLY_ASSETS, "Repo info", repo_meta)
+        system_meta = ChunkMetadata(chunk_type=ChunkType.SYSTEM, source="test", estimated_tokens=300)
+        system_chunk = PromptChunk(ChunkType.SYSTEM, "System prompt", system_meta)
+        current_meta = ChunkMetadata(chunk_type=ChunkType.CURRENT_TURN, source="test", estimated_tokens=200)
+        current_chunk = PromptChunk(ChunkType.CURRENT_TURN, "Current turn", current_meta)
+
+        admitted, evicted = tracker.try_admit_many([repo_chunk, system_chunk, current_chunk])
+
+        assert system_chunk in admitted
+        assert current_chunk in admitted
+        assert repo_chunk in evicted
+
+    def test_try_admit_many_fails_closed_when_pinned_chunks_exceed_budget(self) -> None:
+        """Pinned identity/current-turn chunks cannot be silently evicted."""
+        tracker = ChunkBudgetTracker(model_window=400, safety_margin=1.0)
+        system_meta = ChunkMetadata(chunk_type=ChunkType.SYSTEM, source="test", estimated_tokens=300)
+        system_chunk = PromptChunk(ChunkType.SYSTEM, "System prompt", system_meta)
+        current_meta = ChunkMetadata(chunk_type=ChunkType.CURRENT_TURN, source="test", estimated_tokens=200)
+        current_chunk = PromptChunk(ChunkType.CURRENT_TURN, "Current turn", current_meta)
+
+        with pytest.raises(BudgetExceededError):
+            tracker.try_admit_many([system_chunk, current_chunk])
 
     def test_eviction_log(self) -> None:
         """Tracker records eviction decisions."""

@@ -61,12 +61,12 @@ def _nats_section(nats_config: Any, server_snapshot: dict[str, Any]) -> RuntimeD
     elif connected:
         state = "connected"
         ok = True
-    elif tcp_reachable:
-        state = "server_reachable"
-        ok = True
     elif required:
         state = "required_disconnected"
         ok = False
+    elif tcp_reachable:
+        state = "server_reachable"
+        ok = True
     else:
         state = "optional_disconnected"
         ok = True

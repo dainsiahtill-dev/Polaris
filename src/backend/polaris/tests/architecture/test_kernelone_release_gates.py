@@ -77,8 +77,6 @@ DEPRECATION_SHIM_PATHS: frozenset[str] = frozenset(
         "polaris/kernelone/events/task_trace_events.py",
         # ACGA 2.0 migration: KernelOne context models import metrics for budget tracking
         "polaris/kernelone/context/context_os/models.py",
-        # ACGA 2.0 migration: KernelOne chunk assembler optionally integrates cells metrics
-        "polaris/kernelone/context/chunks/assembler.py",
         # ACGA 2.0 migration: KernelOne cognitive orchestrator bridges cells alignment service
         "polaris/kernelone/cognitive/orchestrator.py",
         # ACGA 2.0 migration: KernelOne multi-agent bus port bridges cells runtime bus
@@ -298,6 +296,15 @@ def test_kernelone_import_fence_blocks_reverse_layer_imports() -> None:
     if violations:
         formatted = "\n".join(f"  - {entry}" for entry in sorted(set(violations)))
         pytest.fail(f"KernelOne import fence violated: reverse-layer imports detected.\n{formatted}")
+
+
+def test_kernelone_chunk_assembler_has_no_roles_kernel_metrics_reverse_dependency() -> None:
+    rel = "polaris/kernelone/context/chunks/assembler.py"
+    source = (BACKEND_ROOT / rel).read_text(encoding="utf-8")
+
+    assert rel not in DEPRECATION_SHIM_PATHS
+    assert "polaris.cells.roles.kernel.internal.metrics" not in source
+    assert "get_dead_loop_metrics" not in source
 
 
 def test_kernelone_exception_budget_is_non_regressive() -> None:

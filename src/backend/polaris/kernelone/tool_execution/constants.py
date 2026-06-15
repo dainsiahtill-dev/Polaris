@@ -25,6 +25,10 @@ ALLOWED_TOOLS: set[str] = READ_ONLY_TOOLS | WRITE_TOOLS
 BLOCKED_COMMAND_PATTERNS: tuple[str, ...] = (
     r"\brm\s+-rf\b",
     r"\brm\s+-r\b",
+    r"\bgit\s+reset\s+--hard\b",
+    r"\bgit\s+clean\s+-[a-z]*f[a-z]*\b",
+    r"\bgit\s+checkout\s+--\s+\S+",
+    r"\bgit\s+restore\s+(?:--worktree\s+)?(?:--staged\s+)?\S+",
     r"\bdel\s+/s\b",
     r"\brmdir\s+/s\b",
     r"\bformat\s+[a-z]:",
@@ -39,6 +43,29 @@ BLOCKED_COMMAND_PATTERNS: tuple[str, ...] = (
     r"\bsudo\s+dd\b",
     r">/dev/sd[a-z]",
     r":\(\)\s*\{.*:.*\|.*:.*&.*\}",  # Fork bomb variant
+)
+
+PROTECTED_EXECUTION_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "BASH_ENV",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "ENV",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_SYSTEM",
+        "LANG",
+        "LC_ALL",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "PATH",
+        "PYTHONHOME",
+        "PYTHONIOENCODING",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONUTF8",
+        "VIRTUAL_ENV",
+    }
 )
 
 # Development tool command whitelist
@@ -257,6 +284,11 @@ class CommandWhitelistValidator:
             except re.error:
                 continue
         return None
+
+    @classmethod
+    def check_blocked_patterns(cls, command: str) -> CommandValidationResult | None:
+        """Check only the fail-closed blocked pattern set without enforcing allowlist."""
+        return cls._check_blocked_patterns(command)
 
     @classmethod
     def _check_whitelist(cls, command: str) -> CommandValidationResult | None:

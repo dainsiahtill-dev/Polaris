@@ -17,8 +17,13 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.errors import BudgetExceededError
+
 if TYPE_CHECKING:
     from polaris.kernelone.context.chunks.taxonomy import PromptChunk
+
+
+_PINNED_CHUNK_TYPES = frozenset({"system", "current_turn"})
 
 
 @dataclass(frozen=True)
@@ -182,8 +187,10 @@ class ChunkBudgetTracker:
         Returns:
             (admitted_chunks, evicted_chunks)
         """
-        # Sort by eviction priority (higher priority first)
-        sorted_chunks = sorted(chunks, key=lambda c: (-c.chunk_type.eviction_priority, c.tokens))
+        # Lower eviction_priority means stronger eviction resistance. Admit
+        # identity/current-turn chunks first so low-value assets cannot occupy
+        # the window before pinned context gets a chance to fit.
+        sorted_chunks = sorted(chunks, key=lambda c: (c.chunk_type.eviction_priority, c.tokens))
 
         admitted: list[PromptChunk] = []
         evicted: list[PromptChunk] = []
@@ -193,6 +200,15 @@ class ChunkBudgetTracker:
             if ok:
                 admitted.append(chunk)
             else:
+                if chunk.chunk_type.value in _PINNED_CHUNK_TYPES:
+                    current = self.get_current_budget().total_tokens
+                    raise BudgetExceededError(
+                        f"Pinned prompt chunk {chunk.chunk_type.value!r} exceeds chunk budget",
+                        limit=int(self.model_window * self.safety_margin),
+                        requested=chunk.tokens,
+                        current=current,
+                        suggestion="Reduce system/current-turn prompt size before adding optional context.",
+                    )
                 evicted.append(chunk)
 
         # Return in original order for deterministic output

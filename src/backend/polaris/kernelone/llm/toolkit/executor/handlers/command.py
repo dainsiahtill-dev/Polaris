@@ -361,14 +361,17 @@ def _execute_command_chain(
                 )
 
         if input_file:
-            # Read stdin from file for next command
-            try:
-                with open(input_file, encoding="utf-8") as f:
-                    stdin_content = f.read()
-                single_result["stdin_content"] = stdin_content
-            except OSError as e:
+            stdin_content, input_error = _read_input_redirect_file(self, input_file=input_file)
+            if input_error is not None:
                 single_result["ok"] = False
-                single_result["error"] = f"Failed to read from {input_file}: {e}"
+                single_result["exit_code"] = 1
+                single_result["error"] = str(input_error.get("error") or "")
+                single_result["stderr"] = str(input_error.get("error") or "")
+                for key in ("blocked", "error_type"):
+                    if key in input_error:
+                        single_result[key] = input_error[key]
+            else:
+                single_result["stdin_content"] = stdin_content or ""
 
         all_stdout.append(single_result.get("stdout", ""))
         all_stderr.append(single_result.get("stderr", ""))
@@ -471,6 +474,41 @@ def _write_redirect_output(
         },
     }
     return _attach_director_policy_evidence(result, policy_result.get("director_policy"))
+
+
+def _read_input_redirect_file(
+    self: AgentAccelToolExecutor,
+    *,
+    input_file: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Read shell-style stdin redirection only from workspace-routed files."""
+    try:
+        target_path = resolve_workspace_path(self._kernel_fs, input_file)
+        rel = to_workspace_relative_path(self._kernel_fs, target_path)
+    except (OSError, ValueError) as exc:
+        return None, {
+            "ok": False,
+            "error": f"Input redirection must stay inside workspace: {input_file} ({exc})",
+            "blocked": True,
+            "error_type": "input_redirection_outside_workspace",
+        }
+
+    try:
+        if not self._kernel_fs.workspace_exists(rel) or not self._kernel_fs.workspace_is_file(rel):
+            return None, {
+                "ok": False,
+                "error": f"Input redirection source is not a workspace file: {rel}",
+                "blocked": True,
+                "error_type": "input_redirection_invalid_source",
+            }
+        return self._kernel_fs.workspace_read_text(rel, encoding="utf-8"), None
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, {
+            "ok": False,
+            "error": f"Failed to read input redirection source {rel}: {exc}",
+            "blocked": True,
+            "error_type": "input_redirection_read_failed",
+        }
 
 
 def _has_output_redirection(command_text: str) -> bool:

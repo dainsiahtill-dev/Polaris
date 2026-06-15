@@ -18,11 +18,79 @@ contract drift and circular imports between the two packages.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Protocol
 
 from polaris.kernelone.errors import ErrorCategory
+
+_SERIALIZED_RAW_SENSITIVE_KEYS = frozenset(
+    {
+        "compressed_input",
+        "prompt",
+        "input",
+        "messages",
+        "chat_messages",
+        "content",
+        "output",
+        "reasoning",
+        "thinking",
+        "thinking_content",
+        "notes",
+        "system_prompt",
+    }
+)
+_SERIALIZED_RAW_SECRET_OR_PATH_RE = re.compile(r"(?i)(sk-[A-Za-z0-9_-]{4,}|/home/[^\s\"']+)")
+
+
+def _stable_sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _redacted_raw_summary(value: Any) -> dict[str, Any]:
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, Mapping) else str(value or "")
+    except (TypeError, ValueError):
+        text = str(value or "")
+    return {
+        "redacted": True,
+        "sha256": _stable_sha256_text(text),
+        "chars": len(text),
+    }
+
+
+def _safe_serialized_raw_value(value: Any, *, key: str = "", depth: int = 16) -> Any:
+    key_token = str(key or "").strip().lower()
+    if key_token in _SERIALIZED_RAW_SENSITIVE_KEYS:
+        return _redacted_raw_summary(value)
+    if depth < 0:
+        return _redacted_raw_summary(value)
+    if isinstance(value, Mapping):
+        safe: dict[str, Any] = {}
+        redacted_field_count = 0
+        for raw_key, raw_value in value.items():
+            child_key = str(raw_key or "").strip()
+            if not child_key:
+                continue
+            child_token = child_key.lower()
+            if child_token in _SERIALIZED_RAW_SENSITIVE_KEYS:
+                redacted_field_count += 1
+                continue
+            safe[child_key] = _safe_serialized_raw_value(raw_value, key=child_key, depth=depth - 1)
+        if redacted_field_count:
+            safe["redacted_field_count"] = redacted_field_count
+        return safe
+    if isinstance(value, (list, tuple)):
+        return [_safe_serialized_raw_value(item, key=key_token, depth=depth - 1) for item in value[:50]]
+    if isinstance(value, str):
+        return "[redacted]" if _SERIALIZED_RAW_SECRET_OR_PATH_RE.search(value) else value[:512]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return _redacted_raw_summary(value)
 
 
 class TaskType(str, Enum):
@@ -260,7 +328,7 @@ class AIResponse:
         if self.trace_id:
             result["trace_id"] = self.trace_id
         if self.raw is not None:
-            result["raw"] = self.raw
+            result["raw"] = _safe_serialized_raw_value(self.raw)
         if self.thinking is not None:
             result["thinking"] = self.thinking
         if self.metadata:

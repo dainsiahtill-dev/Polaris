@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.kernelone.errors import BudgetExceededError
+from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
 from polaris.kernelone.llm.engine.contracts import (
     AIRequest,
+    AIStreamEvent,
     CompressionResult,
     ModelSpec,
     TaskType,
@@ -26,8 +29,18 @@ from polaris.kernelone.llm.engine.stream import (
     _normalize_arguments,
     _provider_supports_structured_stream,
     _tool_accumulator_key,
+    stream_to_response,
 )
 from polaris.kernelone.llm.engine.stream.config import StreamConfig as DirectStreamConfig
+
+
+def test_stream_clamp_fails_closed_when_prompt_exceeds_window() -> None:
+    class _Spec:
+        max_context_tokens = 1000
+
+    cfg = {"max_tokens": 800}
+    with pytest.raises(BudgetExceededError):
+        clamp_output_tokens_to_window(cfg, _Spec(), "中" * 990, logger_prefix="[stream-executor]")
 
 
 class _ModelCatalog:
@@ -564,6 +577,82 @@ class TestStreamExecutorInvokeStreamErrors:
         assert payload["chat_message_count_before"] == 2
         assert payload["chat_message_count_after"] == 2
         assert payload["chat_messages_compressed"] is True
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_stops_when_collected_output_exceeds_limit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                yield "12345"
+                yield "67890"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+
+        executor = StreamExecutor(
+            workspace=str(tmp_path),
+            model_catalog=_ModelCatalog(),
+            token_budget=_BudgetManager(),
+            config=DirectStreamConfig(max_collected_chars=8),
+            final_request_receipt_sink=lambda _receipt: None,
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                AIRequest(
+                    task_type=TaskType.GENERATION,
+                    role="director",
+                    provider_id="fake-provider",
+                    model="fake-model",
+                    input="prompt",
+                    options={"max_tokens": 128},
+                    context={},
+                )
+            )
+        ]
+
+        assert [event.type.value for event in events] == ["chunk", "error"]
+        assert "stream output exceeded accumulation limit" in str(events[-1].error)
+
+    def test_stream_tool_argument_buffer_is_bounded(self) -> None:
+        executor = StreamExecutor(config=DirectStreamConfig(max_tool_argument_chars=8))
+
+        with pytest.raises(RuntimeError, match="stream tool arguments exceeded accumulation limit"):
+            executor._accumulate_stream_tool_call(
+                {},
+                {"tool": "write_file", "arguments_text": "123456789", "index": 0},
+                ordinal=1,
+                provider_type="fake",
+            )
+
+    @pytest.mark.asyncio
+    async def test_stream_to_response_returns_failure_when_collected_output_exceeds_limit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_LLM_STREAM_MAX_COLLECTED_CHARS", "8")
+
+        async def _events():
+            yield AIStreamEvent.chunk_event("12345")
+            yield AIStreamEvent.chunk_event("67890")
+
+        response = await stream_to_response(_events())
+
+        assert response.ok is False
+        assert "stream output exceeded accumulation limit" in str(response.error)
 
 
 class TestProviderSupportsStructuredStream:

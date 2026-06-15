@@ -48,6 +48,38 @@ def test_append_fact_event_and_query_roundtrip(tmp_path: Path) -> None:
     assert queried.events[0]["task_id"] == "task-1"
 
 
+def test_append_fact_event_is_idempotent_by_key(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    command = AppendFactEventCommandV1(
+        workspace=str(workspace),
+        stream="task_runtime.execution",
+        event_type="claimed",
+        payload={"task_id": "task-idem", "run_id": "run-idem"},
+        source="runtime.task_runtime",
+        task_id="task-idem",
+        run_id="run-idem",
+        idempotency_key="outbox-idem-1",
+    )
+
+    first = append_fact_event(command)
+    second = append_fact_event(command)
+
+    assert second.event_id == first.event_id
+
+    queried = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            limit=50,
+            offset=0,
+            task_id="task-idem",
+        )
+    )
+    assert queried.total == 1
+
+
 def test_query_fact_events_pagination(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

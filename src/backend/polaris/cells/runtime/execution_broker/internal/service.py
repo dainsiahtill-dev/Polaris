@@ -35,6 +35,10 @@ from polaris.kernelone.runtime import (
     get_shared_execution_facade,
     reset_shared_execution_facade,
 )
+from polaris.kernelone.tool_execution.constants import (
+    PROTECTED_EXECUTION_ENV_KEYS,
+    CommandWhitelistValidator,
+)
 from polaris.kernelone.trace import create_task_with_context, get_logger
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
@@ -137,6 +141,71 @@ def _format_error_for_log(error: str) -> str:
     return str(error or "").replace("\r", " ").replace("\n", " | ")
 
 
+def _security_blocked_launch_result(
+    command: LaunchExecutionProcessCommandV1,
+    message: str,
+) -> ExecutionProcessLaunchResultV1:
+    _logger.warning(
+        "execution_broker.process.security_blocked",
+        execution_id=command.name,
+        workspace=command.workspace,
+        error=message,
+    )
+    return ExecutionProcessLaunchResultV1(
+        success=False,
+        error_message=message,
+        error_code=ExecutionErrorCode.SECURITY_BLOCKED,
+        launched_at=_utc_now(),
+    )
+
+
+def _validate_launch_args(args: Iterable[str]) -> str | None:
+    command_text = shlex.join(str(item) for item in args)
+    blocked = CommandWhitelistValidator.check_blocked_patterns(command_text)
+    if blocked is None:
+        return None
+    reason = blocked.reason
+    if blocked.blocked_pattern:
+        reason = f"{reason}: {blocked.blocked_pattern}"
+    return f"Process command blocked by execution sink policy: {reason}"
+
+
+def _normalize_log_path_inside_workspace(log_path: str | None, workspace: str) -> str | None:
+    if not log_path:
+        return None
+    workspace_path = Path(workspace).resolve()
+    raw_path = Path(str(log_path)).expanduser()
+    candidate = raw_path if raw_path.is_absolute() else workspace_path / raw_path
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(workspace_path)
+    except ValueError as exc:
+        raise ValueError(f"log_path must stay inside workspace: {resolved}") from exc
+    return str(resolved)
+
+
+def _build_sanitized_process_env(extra: dict[str, str]) -> tuple[dict[str, str], tuple[str, ...]]:
+    sanitized_extra: dict[str, str] = {}
+    dropped: list[str] = []
+    for raw_key, raw_value in extra.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        if key.upper() in PROTECTED_EXECUTION_ENV_KEYS:
+            dropped.append(key)
+            continue
+        sanitized_extra[key] = str(raw_value)
+
+    env = build_utf8_env(sanitized_extra)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    for locale_key in ("LANG", "LC_ALL"):
+        locale_value = str(env.get(locale_key) or "")
+        if "utf" not in locale_value.lower():
+            env[locale_key] = "C.UTF-8"
+    return env, tuple(dropped)
+
+
 async def _wait_for_terminal_snapshot(handle: ExecutionHandle, *, timeout_seconds: float = 10.0) -> ExecutionSnapshot:
     with contextlib.suppress(TimeoutError):
         await handle.wait(timeout=max(timeout_seconds, 0.0))
@@ -176,8 +245,15 @@ class ExecutionBrokerService:
             workspace=command.workspace,
             timeout_seconds=command.timeout_seconds,
         )
+        blocked_message = _validate_launch_args(command.args)
+        if blocked_message is not None:
+            return _security_blocked_launch_result(command, blocked_message)
         try:
-            env = build_utf8_env(dict(command.env))
+            log_path = _normalize_log_path_inside_workspace(command.log_path, command.workspace)
+        except ValueError as exc:
+            return _security_blocked_launch_result(command, str(exc))
+        try:
+            env, dropped_env_keys = _build_sanitized_process_env(dict(command.env))
             stdin_lines = self._normalize_stdin(command.stdin_input)
             handle = await self._facade.submit_process(
                 ProcessSpec(
@@ -190,9 +266,10 @@ class ExecutionBrokerService:
                     metadata={
                         # Internal fields FIRST to prevent user metadata override
                         "workspace": command.workspace,
-                        "log_path": command.log_path or "",
+                        "log_path": log_path or "",
                         "execution_broker": "runtime.execution_broker",
                         "args": list(command.args),
+                        "sanitized_env_keys": list(dropped_env_keys),
                         # User metadata stored separately - cannot override internal fields
                         "_user_metadata": dict(command.metadata),
                     },
@@ -203,7 +280,7 @@ class ExecutionBrokerService:
                 pid=handle.pid,
                 name=command.name,
                 workspace=command.workspace,
-                log_path=command.log_path,
+                log_path=log_path,
                 metadata={
                     # User metadata stored under _user_metadata key
                     "_user_metadata": dict(command.metadata),
@@ -211,8 +288,8 @@ class ExecutionBrokerService:
             )
             async with self._handles_lock:
                 self._process_handles.set(process_handle.execution_id, process_handle)
-            if command.log_path:
-                await self._register_log_drain(handle, command.log_path)
+            if log_path:
+                await self._register_log_drain(handle, log_path)
 
             _logger.info(
                 "execution_broker.process.launched",

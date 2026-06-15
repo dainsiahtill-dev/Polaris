@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from polaris.cells.runtime.execution_broker.internal import service as broker_service_module
 from polaris.cells.runtime.execution_broker.public.contracts import (
+    ExecutionErrorCode,
     ExecutionProcessStatusV1,
     GetExecutionProcessStatusQueryV1,
     LaunchExecutionProcessCommandV1,
@@ -378,6 +379,100 @@ def test_command_rejects_empty_user_metadata() -> None:
     )
     # Should not raise, empty metadata is valid
     assert command.metadata == {}
+
+
+# =============================================================================
+# Security Tests - Effect Sink Guardrails
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_launch_process_blocks_destructive_git_command(tmp_path: Path) -> None:
+    runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
+    broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))
+
+    command = LaunchExecutionProcessCommandV1(
+        name="dangerous-git-test",
+        args=("git", "reset", "--hard"),
+        workspace=str(tmp_path),
+        timeout_seconds=5.0,
+    )
+
+    try:
+        launch = await broker.launch_process(command)
+        assert launch.success is False
+        assert launch.handle is None
+        assert launch.error_code == ExecutionErrorCode.SECURITY_BLOCKED
+        assert "blocked" in str(launch.error_message).lower()
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_process_rejects_log_path_outside_workspace(tmp_path: Path) -> None:
+    runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
+    broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))
+    outside_log = tmp_path.parent / f"{tmp_path.name}-outside.log"
+
+    command = LaunchExecutionProcessCommandV1(
+        name="outside-log-test",
+        args=(sys.executable, "-c", "print('ok')"),
+        workspace=str(tmp_path),
+        timeout_seconds=5.0,
+        log_path=str(outside_log),
+    )
+
+    try:
+        launch = await broker.launch_process(command)
+        assert launch.success is False
+        assert launch.handle is None
+        assert launch.error_code == ExecutionErrorCode.SECURITY_BLOCKED
+        assert not outside_log.exists()
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_process_filters_dangerous_env_overrides(tmp_path: Path) -> None:
+    runtime = ExecutionRuntime(async_concurrency=1, blocking_concurrency=1, process_concurrency=1)
+    broker = ExecutionBrokerService(facade=ExecutionFacade(runtime=runtime))
+    log_path = tmp_path / "env-filter.log"
+
+    command = LaunchExecutionProcessCommandV1(
+        name="env-filter-test",
+        args=(
+            sys.executable,
+            "-c",
+            (
+                "import os; "
+                "print('PYTHONUTF8=' + str(os.environ.get('PYTHONUTF8'))); "
+                "print('SAFE_ENV=' + str(os.environ.get('SAFE_ENV'))); "
+                "print('LD_PRELOAD=' + str(os.environ.get('LD_PRELOAD')))"
+            ),
+        ),
+        workspace=str(tmp_path),
+        timeout_seconds=5.0,
+        env={
+            "PYTHONUTF8": "0",
+            "LD_PRELOAD": "/tmp/polaris-unsafe-preload.so",
+            "SAFE_ENV": "allowed",
+        },
+        log_path=str(log_path),
+    )
+
+    try:
+        launch = await broker.launch_process(command)
+        assert launch.success is True
+        assert launch.handle is not None
+
+        wait_result = await broker.wait_process(launch.handle, timeout_seconds=5.0)
+        assert wait_result.success is True
+        content = log_path.read_text(encoding="utf-8")
+        assert "PYTHONUTF8=1" in content
+        assert "SAFE_ENV=allowed" in content
+        assert "/tmp/polaris-unsafe-preload.so" not in content
+    finally:
+        await runtime.close()
 
 
 # =============================================================================

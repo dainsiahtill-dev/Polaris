@@ -66,6 +66,9 @@ class ExecutionErrorCode(Enum):
     # Metadata errors
     METADATA_ERROR = "execution_broker.metadata_error"
 
+    # Security and sink policy errors
+    SECURITY_BLOCKED = "execution_broker.security_blocked"
+
     # Runtime errors
     RUNTIME_ERROR = "execution_broker.runtime_error"
     EXECUTION_NOT_SUBPROCESS = "execution_broker.execution_not_subprocess"

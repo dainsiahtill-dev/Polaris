@@ -1704,6 +1704,60 @@ def test_fact_emit_failure_marks_failed_and_relay_recovers(tmp_path: Path) -> No
     assert any(str(row.get("task_id") or "") == "task-outbox-fail" for row in sent)
 
 
+def test_outbox_relay_retry_after_mark_sent_failure_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.events.fact_stream.public.service import QueryFactEventsV1, query_fact_events
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+    store = get_store(str(workspace))
+    monkeypatch.setattr(service, "_get_store", lambda _workspace: store)
+
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-outbox-idem",
+            run_id="run-outbox-idem",
+            task_id="task-outbox-idem",
+            stage="pending_design",
+            source_role="pm",
+            payload={"title": "outbox idem"},
+        )
+    )
+
+    original_mark_sent = store.mark_outbox_message_sent
+    calls = {"count": 0}
+
+    def flaky_mark_sent(workspace_token: str, outbox_id: str, *, delivered_at: str = "") -> None:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("mark sent failed after append")
+        original_mark_sent(workspace_token, outbox_id, delivered_at=delivered_at)
+
+    monkeypatch.setattr(store, "mark_outbox_message_sent", flaky_mark_sent)
+    first_relay = service.relay_outbox_messages(str(workspace), limit=50)
+    assert first_relay["failed"] >= 1
+
+    monkeypatch.setattr(store, "mark_outbox_message_sent", original_mark_sent)
+    second_relay = service.relay_outbox_messages(str(workspace), limit=50)
+    assert second_relay["sent"] >= 1
+
+    queried = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(workspace),
+            stream="task_market.events",
+            limit=50,
+            offset=0,
+            event_type="task_market.work_item_published",
+            task_id="task-outbox-idem",
+        )
+    )
+    assert queried.total == 1
+
+
 def test_atomic_write_preserves_items_and_outbox_together(tmp_path: Path) -> None:
     """Verify that save_items_and_outbox_atomic writes items, transitions,
     and outbox records in a single SQLite transaction.

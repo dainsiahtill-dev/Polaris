@@ -28,6 +28,7 @@ class AppendFactEventCommandV1:
     run_id: str | None = None
     task_id: str | None = None
     correlation_id: str | None = None
+    idempotency_key: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
@@ -38,6 +39,8 @@ class AppendFactEventCommandV1:
         if not payload:
             raise ValueError("payload must not be empty")
         object.__setattr__(self, "payload", payload)
+        idempotency_key = str(self.idempotency_key or "").strip() or None
+        object.__setattr__(self, "idempotency_key", idempotency_key)
 
 
 @dataclass(frozen=True)

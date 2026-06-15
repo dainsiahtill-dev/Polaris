@@ -31,11 +31,27 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
     """Append an immutable fact event to the canonical runtime stream."""
     try:
         store = JsonlEventStore(command.workspace)
+        idempotency_key = str(command.idempotency_key or "").strip()
+        if idempotency_key:
+            existing = _find_existing_idempotent_event(
+                store=store,
+                stream=command.stream,
+                idempotency_key=idempotency_key,
+            )
+            if existing is not None:
+                return FactEventAppendedV1(
+                    event_id=existing.event_id,
+                    workspace=command.workspace,
+                    stream=command.stream,
+                    storage_path=store.stream_logical_path(command.stream),
+                    appended_at=existing.occurred_at,
+                )
         metadata = _compact_metadata(
             {
                 "run_id": command.run_id,
                 "task_id": command.task_id,
                 "correlation_id": command.correlation_id,
+                "idempotency_key": idempotency_key,
             }
         )
         event = store.append(
@@ -66,6 +82,23 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
         storage_path=store.stream_logical_path(command.stream),
         appended_at=event.occurred_at,
     )
+
+
+def _find_existing_idempotent_event(
+    *,
+    store: JsonlEventStore,
+    stream: str,
+    idempotency_key: str,
+) -> Any | None:
+    offset = 0
+    while True:
+        result = store.query(stream=stream, limit=1000, offset=offset)
+        for event in result.events:
+            if str(event.metadata.get("idempotency_key") or "").strip() == idempotency_key:
+                return event
+        if result.next_offset == 0:
+            return None
+        offset = result.next_offset
 
 
 def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:

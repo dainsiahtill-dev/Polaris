@@ -28,6 +28,7 @@ from polaris.kernelone.context.contracts import (
 from polaris.kernelone.context.history_materialization import SessionContinuityStrategy
 from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
+from polaris.kernelone.errors import BudgetExceededError
 from polaris.kernelone.events.context_events import ContextEvent, EventType, get_event_writer
 from polaris.kernelone.fs import format_workspace_tree
 from polaris.kernelone.llm.reasoning import ReasoningStripper
@@ -434,10 +435,15 @@ class RoleContextGateway:
             reserved_system_prompt_tokens = self._token_estimator.estimate(
                 [{"role": "system", "content": system_prompt}]
             )
-        enforcement_budget_tokens = max(
-            min(self._MIN_ENFORCEMENT_BUDGET_TOKENS, self._enforcement_budget_tokens),
-            self._enforcement_budget_tokens - reserved_system_prompt_tokens,
-        )
+        if reserved_system_prompt_tokens >= self._enforcement_budget_tokens:
+            raise BudgetExceededError(
+                "role system prompt exceeds context enforcement budget",
+                limit=self._enforcement_budget_tokens,
+                requested=reserved_system_prompt_tokens,
+                current=0,
+                suggestion="shorten the role system prompt or use a model binding with a larger context window",
+            )
+        enforcement_budget_tokens = max(1, self._enforcement_budget_tokens - reserved_system_prompt_tokens)
         effective_context_budget_tokens = max(
             1,
             int(enforcement_budget_tokens * context_budget_trigger_pct),
@@ -555,7 +561,7 @@ class RoleContextGateway:
 
         # 7. 应用统一压缩策略（预算 = min(角色策略, 模型窗口×0.85) − system prompt 预留）
         if token_estimate > enforcement_budget_tokens:
-            if state_first_mode_active and has_snapshot:
+            if state_first_mode_active:
                 messages, token_estimate = self._compression_engine.emergency_truncate_with_limit(
                     messages, enforcement_budget_tokens
                 )
@@ -570,6 +576,15 @@ class RoleContextGateway:
             messages.insert(0, {"role": "system", "content": system_prompt})
             sources.append("role_system_prompt")
             token_estimate += reserved_system_prompt_tokens
+
+        if token_estimate > self._enforcement_budget_tokens:
+            raise BudgetExceededError(
+                "assembled role context exceeds context enforcement budget",
+                limit=self._enforcement_budget_tokens,
+                requested=token_estimate,
+                current=self._enforcement_budget_tokens,
+                suggestion="reduce projected context, compress history, or use a larger context window",
+            )
 
         emit_debug_event(
             category="context",

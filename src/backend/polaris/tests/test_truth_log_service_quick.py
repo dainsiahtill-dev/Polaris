@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime, timezone
 
 import pytest
-
 from polaris.kernelone.context.truth_log_service import TruthLogIndex, TruthLogService
 
 
@@ -128,3 +127,24 @@ class TestAppendAsync:
         entries = service.replay()
         assert len(entries) == 1
         assert entries[0]["content"] == "async"
+
+    @pytest.mark.asyncio
+    async def test_sync_append_bounds_background_index_tasks(self, monkeypatch):
+        service = TruthLogService(enable_semantic_index=False, max_pending_index_tasks=2)
+        release = asyncio.Event()
+
+        async def _blocked_index(_entry, _entry_id):
+            await release.wait()
+
+        monkeypatch.setattr(service, "_index_entry_async", _blocked_index)
+
+        service.append({"content": "one"})
+        service.append({"content": "two"})
+        service.append({"content": "three"})
+
+        assert service.pending_index_task_count == 2
+        assert service.skipped_background_index_count == 1
+        assert len(service.replay()) == 3
+
+        release.set()
+        await asyncio.sleep(0)

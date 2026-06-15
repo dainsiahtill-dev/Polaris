@@ -60,6 +60,7 @@ from .assembler import (
     AssemblyContext,
     AssemblyResult,
     PromptChunkAssembler,
+    set_intent_switch_recorder,
 )
 from .budget import (
     ChunkBudget,
@@ -100,4 +101,5 @@ __all__ = [
     "PromptChunk",
     "PromptChunkAssembler",
     "StrategyMetadata",
+    "set_intent_switch_recorder",
 ]

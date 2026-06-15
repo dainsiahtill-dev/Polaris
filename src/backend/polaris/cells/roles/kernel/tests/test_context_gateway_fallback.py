@@ -9,9 +9,26 @@ This test file covers:
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
+
+def _gateway_profile(*, max_context_tokens: int = 128000) -> MagicMock:
+    mock_profile = MagicMock()
+    mock_profile.context_policy = MagicMock()
+    mock_profile.context_policy.max_history_turns = 8
+    mock_profile.context_policy.max_context_tokens = max_context_tokens
+    mock_profile.context_policy.include_project_structure = False
+    mock_profile.context_policy.include_task_history = False
+    mock_profile.context_policy.compression_strategy = "none"
+    mock_profile.context_domain = None
+    mock_profile.provider_id = "test_provider"
+    mock_profile.model = "test_model"
+    mock_profile.role_id = "director"
+    mock_profile.display_name = "Director"
+    return mock_profile
 
 
 class TestBlueprintStepCard:
@@ -585,6 +602,63 @@ class TestIntegration:
         override_msgs = [m for m in result.messages if m.get("name") == "context_override"]
         assert len(override_msgs) >= 1
         assert "safe_key: normal context" in override_msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_over_budget_fails_closed(self):
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
+        from polaris.kernelone.errors import BudgetExceededError
+
+        gateway = RoleContextGateway(_gateway_profile(max_context_tokens=128), workspace=".")
+        gateway._enforcement_budget_tokens = 64
+
+        async def project_stub(**_kwargs):
+            return SimpleNamespace(active_window=(), snapshot=None)
+
+        gateway._context_os.project = project_stub
+        gateway._build_projection_dict = MagicMock(return_value=({}, MagicMock(), []))
+        gateway._projection_engine = MagicMock()
+        gateway._projection_engine.project.return_value = []
+        gateway._projection_engine.get_adaptive_weights.return_value = {}
+
+        with pytest.raises(BudgetExceededError):
+            await gateway.build_context(ContextRequest(message="hello"), system_prompt="x" * 5000)
+
+    @pytest.mark.asyncio
+    async def test_state_first_receipt_without_snapshot_uses_bounded_emergency_truncate(self):
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
+
+        gateway = RoleContextGateway(_gateway_profile(max_context_tokens=128), workspace=".")
+        gateway._enforcement_budget_tokens = 64
+
+        async def project_stub(**_kwargs):
+            return SimpleNamespace(active_window=(), snapshot=None)
+
+        gateway._context_os.project = project_stub
+        gateway._build_projection_dict = MagicMock(return_value=({}, MagicMock(), []))
+        gateway._projection_engine = MagicMock()
+        gateway._projection_engine.project.return_value = [
+            {"role": "user", "content": "x" * 5000},
+        ]
+        gateway._projection_engine.get_adaptive_weights.return_value = {}
+        gateway._compression_engine = MagicMock()
+        gateway._compression_engine.emergency_truncate_with_limit.return_value = (
+            [{"role": "user", "content": "trimmed"}],
+            20,
+        )
+
+        result = await gateway.build_context(
+            ContextRequest(
+                message="hello",
+                strategy_receipt=SimpleNamespace(compaction_triggered=True),
+            )
+        )
+
+        gateway._compression_engine.emergency_truncate_with_limit.assert_called_once()
+        assert result.compression_applied is True
+        assert result.token_estimate == 20
+        assert result.metadata["final_tokens"] == 20
 
 
 class TestBlueprintStepCardRendering:

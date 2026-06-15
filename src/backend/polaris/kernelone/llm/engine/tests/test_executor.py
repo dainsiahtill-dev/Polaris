@@ -576,14 +576,25 @@ class TestOutputWindowClamp:
         assert cfg["max_tokens"] == 4000
 
     def test_floor_protects_minimum_output(self) -> None:
+        from polaris.kernelone.errors import BudgetExceededError
         from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
 
         class _Spec:
             max_context_tokens = 1000
 
         cfg = {"max_tokens": 800}
-        clamp_output_tokens_to_window(cfg, _Spec(), "中" * 990)
-        assert cfg["max_tokens"] == 256
+        with pytest.raises(BudgetExceededError):
+            clamp_output_tokens_to_window(cfg, _Spec(), "中" * 990)
+
+    def test_small_positive_headroom_clamps_to_exact_headroom(self) -> None:
+        from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
+
+        class _Spec:
+            max_context_tokens = 1000
+
+        cfg = {"max_tokens": 800}
+        clamp_output_tokens_to_window(cfg, _Spec(), "中" * 900)
+        assert cfg["max_tokens"] == 36
 
     def test_no_window_no_clamp(self) -> None:
         from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window

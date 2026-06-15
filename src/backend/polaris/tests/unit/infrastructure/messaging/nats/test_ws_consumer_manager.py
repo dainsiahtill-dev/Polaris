@@ -73,11 +73,17 @@ class _FakeMessage:
         self.data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.metadata = _FakeMetadata(stream=stream_seq)
         self.ack_calls = 0
+        self.nak_calls = 0
         self.acked = asyncio.Event()
+        self.nacked = asyncio.Event()
 
     async def ack(self) -> None:
         self.ack_calls += 1
         self.acked.set()
+
+    async def nak(self) -> None:
+        self.nak_calls += 1
+        self.nacked.set()
 
 
 class _OneShotSubscription:
@@ -244,7 +250,7 @@ def test_durable_token_can_prevent_client_id_collision() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consume_dropped_reports_jetstream_queue_overflow(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_queue_full_does_not_ack_dropped_jetstream_message(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = JetStreamConsumerManager(
         workspace_key="workspace",
         client_id="client-1",
@@ -288,8 +294,12 @@ async def test_consume_dropped_reports_jetstream_queue_overflow(monkeypatch: pyt
 
     manager._consumer_task = asyncio.create_task(manager._consume_messages_loop())
     try:
-        await asyncio.wait_for(msg.acked.wait(), timeout=1.0)
-        assert msg.ack_calls == 1
+        deadline = asyncio.get_running_loop().time() + 1.0
+        while manager._dropped_messages == 0 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        assert msg.ack_calls == 0
+        assert msg.nak_calls == 1
+        assert manager.resync_required is True
         assert manager.consume_dropped() == 1
         assert manager.consume_dropped() == 0
         assert manager._pending_acks == {}

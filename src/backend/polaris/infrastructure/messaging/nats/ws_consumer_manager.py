@@ -77,6 +77,7 @@ class JetStreamConsumerManager:
         self._message_queue: asyncio.Queue[RuntimeEventEnvelope] = asyncio.Queue(maxsize=_MESSAGE_QUEUE_MAX_SIZE)
         self._pending_acks: dict[int, Any] = {}
         self._dropped_messages = 0
+        self._resync_required = False
         self._connected = False
         self._closed = False
         self._consumer_task: asyncio.Task | None = None
@@ -84,6 +85,10 @@ class JetStreamConsumerManager:
     @property
     def is_connected(self) -> bool:
         return self._connected and self._jetstream is not None and self._subscription is not None and not self._closed
+
+    @property
+    def resync_required(self) -> bool:
+        return self._resync_required
 
     async def connect(self) -> bool:
         """Connect to JetStream and create consumer.
@@ -223,6 +228,16 @@ class JetStreamConsumerManager:
         self._jetstream = None
         self._pending_acks.clear()
         self._dropped_messages = 0
+        self._resync_required = False
+
+    async def _nak_for_redelivery(self, msg: Any) -> None:
+        nak = getattr(msg, "nak", None)
+        if not callable(nak):
+            return
+        try:
+            await nak()
+        except (RuntimeError, ValueError):
+            logger.debug("Failed to NAK dropped JetStream message", exc_info=True)
 
     async def _consume_messages_loop(self) -> None:
         """Background task that continuously consumes messages from JetStream into internal queue.
@@ -289,7 +304,8 @@ class JetStreamConsumerManager:
                                     self.client_id,
                                 )
                                 self._pending_acks.pop(cursor, None)
-                                await msg.ack()  # Still ACK to avoid redelivery
+                                self._resync_required = True
+                                await self._nak_for_redelivery(msg)
                     except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse JetStream message: {e}")
                         await msg.ack()
@@ -356,6 +372,8 @@ class JetStreamConsumerManager:
         """Consume and reset queue-overflow drop count for this connection."""
         dropped = int(self._dropped_messages)
         self._dropped_messages = 0
+        if dropped > 0:
+            self._resync_required = False
         return dropped
 
     async def fetch_historical(self, limit: int = 200) -> list[RuntimeEventEnvelope]:

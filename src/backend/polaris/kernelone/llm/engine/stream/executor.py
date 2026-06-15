@@ -10,6 +10,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -53,7 +54,7 @@ from ..contracts import (
 from ..model_catalog import ModelCatalog
 from ..normalizer import ResponseNormalizer
 from ..prompt_budget import TokenBudgetManager, compress_chat_messages_to_budget
-from .config import StreamConfig
+from .config import DEFAULT_MAX_COLLECTED_STREAM_CHARS, StreamConfig
 from .result_tracker import _StreamResultTracker
 from .tool_accumulator import (
     _normalize_arguments,
@@ -66,6 +67,26 @@ if TYPE_CHECKING:
     from ..telemetry import TelemetryCollector
 
 logger = logging.getLogger(__name__)
+
+_STREAM_OUTPUT_TOKEN_CHAR_MULTIPLIER = 16
+
+
+def _append_bounded_stream_text(current: str, addition: str, *, limit_chars: int, label: str) -> str:
+    if not addition:
+        return current
+    next_len = len(current) + len(addition)
+    if limit_chars > 0 and next_len > limit_chars:
+        msg = f"stream {label} exceeded accumulation limit ({next_len}>{limit_chars} chars)"
+        raise RuntimeError(msg)
+    return current + addition
+
+
+def _stream_collection_limit_from_env() -> int:
+    try:
+        parsed = int(os.environ.get("KERNELONE_LLM_STREAM_MAX_COLLECTED_CHARS", DEFAULT_MAX_COLLECTED_STREAM_CHARS))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_COLLECTED_STREAM_CHARS
+    return parsed if parsed > 0 else DEFAULT_MAX_COLLECTED_STREAM_CHARS
 
 
 def normalize_stream_usage(raw_usage: dict[str, Any] | None) -> Usage:
@@ -141,6 +162,13 @@ class StreamExecutor:
     @property
     def max_pending_calls(self) -> int:
         return self._config.max_pending_calls
+
+    def _stream_collection_limit(self, max_tokens: int) -> int:
+        configured_limit = self._config.max_collected_chars
+        if max_tokens <= 0:
+            return configured_limit
+        token_derived_limit = max(4096, max_tokens * _STREAM_OUTPUT_TOKEN_CHAR_MULTIPLIER)
+        return min(configured_limit, token_derived_limit)
 
     def _resolve_provider_model(self, request: AIRequest) -> tuple[str | None, str | None]:
         return resolve_provider_model(
@@ -427,6 +455,15 @@ class StreamExecutor:
             if arguments_complete and explicit_arguments and not accumulator.arguments_buffer:
                 accumulator.arguments_buffer = json.dumps(explicit_arguments, ensure_ascii=False)
 
+        max_tool_argument_chars = self._config.max_tool_argument_chars
+        if max_tool_argument_chars > 0 and len(accumulator.arguments_buffer) > max_tool_argument_chars:
+            pending_tool_calls.pop(key, None)
+            msg = (
+                "stream tool arguments exceeded accumulation limit "
+                f"({len(accumulator.arguments_buffer)}>{max_tool_argument_chars} chars)"
+            )
+            raise RuntimeError(msg)
+
         accumulator.provider_meta = {
             "provider": provider_type,
             "index": tool_call.get("index"),
@@ -585,6 +622,7 @@ class StreamExecutor:
             overhead_tokens=payload_overhead,
             logger_prefix="[stream-executor]",
         )
+        stream_collection_limit = self._stream_collection_limit(self._coerce_int(invoke_cfg.get("max_tokens")))
         try:
             self._record_final_request_receipt(
                 request=request,
@@ -640,9 +678,19 @@ class StreamExecutor:
                     _check_overall_timeout()
                     chunk_count += 1
                     if event.type == StreamEventType.CHUNK and event.chunk:
-                        collected_output += event.chunk
+                        collected_output = _append_bounded_stream_text(
+                            collected_output,
+                            event.chunk,
+                            limit_chars=stream_collection_limit,
+                            label="output",
+                        )
                     elif event.type == StreamEventType.REASONING_CHUNK and event.reasoning:
-                        collected_reasoning += event.reasoning
+                        collected_reasoning = _append_bounded_stream_text(
+                            collected_reasoning,
+                            event.reasoning,
+                            limit_chars=stream_collection_limit,
+                            label="reasoning",
+                        )
                     elif event.type == StreamEventType.TOOL_CALL and event.tool_call:
                         emitted_tool_calls.append(dict(event.tool_call))
                     elif event.type == StreamEventType.ERROR:
@@ -679,9 +727,19 @@ class StreamExecutor:
                     _check_overall_timeout()
                     chunk_count += 1
                     if event.type == StreamEventType.CHUNK and event.chunk:
-                        collected_output += event.chunk
+                        collected_output = _append_bounded_stream_text(
+                            collected_output,
+                            event.chunk,
+                            limit_chars=stream_collection_limit,
+                            label="output",
+                        )
                     elif event.type == StreamEventType.REASONING_CHUNK and event.reasoning:
-                        collected_reasoning += event.reasoning
+                        collected_reasoning = _append_bounded_stream_text(
+                            collected_reasoning,
+                            event.reasoning,
+                            limit_chars=stream_collection_limit,
+                            label="reasoning",
+                        )
                     elif event.type == StreamEventType.ERROR:
                         if self.telemetry:
                             try:
@@ -1033,6 +1091,7 @@ async def stream_to_response(stream_gen: AIStreamGenerator, timeout: float | Non
     error: str | None = None
     structured: dict[str, Any] | None = None
     start_time = time.time()
+    stream_collection_limit = _stream_collection_limit_from_env()
 
     try:
         if timeout:
@@ -1040,9 +1099,19 @@ async def stream_to_response(stream_gen: AIStreamGenerator, timeout: float | Non
 
         async for event in stream_gen:
             if event.type == StreamEventType.CHUNK and event.chunk:
-                collected_output += event.chunk
+                collected_output = _append_bounded_stream_text(
+                    collected_output,
+                    event.chunk,
+                    limit_chars=stream_collection_limit,
+                    label="output",
+                )
             elif event.type == StreamEventType.REASONING_CHUNK and event.reasoning:
-                collected_reasoning += event.reasoning
+                collected_reasoning = _append_bounded_stream_text(
+                    collected_reasoning,
+                    event.reasoning,
+                    limit_chars=stream_collection_limit,
+                    label="reasoning",
+                )
             elif event.type == StreamEventType.COMPLETE and event.meta:
                 structured = event.meta.get("structured")
             elif event.type == StreamEventType.ERROR:

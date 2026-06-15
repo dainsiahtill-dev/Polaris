@@ -10,8 +10,11 @@ write-only, and the final attempt must force the selected write tool by name.
 from __future__ import annotations
 
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
+    detect_creation_mode,
     narrow_edit_blocks_schema_to_line_range,
+    resolve_escalation_temperature,
     resolve_retry_escalation,
+    resolve_retry_temperature_override,
 )
 
 _STRICT_DEFS = [
@@ -107,6 +110,108 @@ class TestResolveRetryEscalation:
 
         assert definitions == _STRICT_DEFS
         assert tool_choice is None
+
+
+class TestF16CreationModeEscalation:
+    """F16 (2026-06-15): from-scratch creates force the write tool by name from
+    the FIRST retry escalation (index 1), keeping retry attempt 1 (index 0) free.
+
+    Live (L2-12 brick-breaker, b2 solo): qwen emitted ``execute_command``×3
+    through the graduated ladder before the last-attempt forced rung, tripping
+    the circuit breaker into a dead-letter (0 runnable products). Pulling the
+    force forward keeps ``single_batch_contract_violation`` per turn at <=1.
+    """
+
+    def test_creation_keeps_first_retry_attempt_free(self) -> None:
+        definitions, tool_choice = resolve_retry_escalation(
+            attempt_index=0,
+            max_retry_attempts=4,
+            strict_tool_definitions=_STRICT_DEFS,
+            forced_write_tool_name="write_file",
+            force_write_immediately=True,
+        )
+        assert definitions is None
+        assert tool_choice is None
+
+    def test_creation_forces_named_write_from_second_attempt(self) -> None:
+        definitions, tool_choice = resolve_retry_escalation(
+            attempt_index=1,
+            max_retry_attempts=4,
+            strict_tool_definitions=_STRICT_DEFS,
+            forced_write_tool_name="write_file",
+            force_write_immediately=True,
+        )
+        # The graduated (non-creation) ladder would still be in the free phase at
+        # index 1 — creation forces the write by name three attempts earlier.
+        assert definitions == _STRICT_DEFS
+        assert tool_choice == {"type": "function", "function": {"name": "write_file"}}
+
+    def test_creation_forces_edit_blocks_schema_narrowing_early(self) -> None:
+        definitions, tool_choice = resolve_retry_escalation(
+            attempt_index=1,
+            max_retry_attempts=4,
+            strict_tool_definitions=_STRICT_DEFS,
+            forced_write_tool_name="edit_blocks",
+            force_write_immediately=True,
+        )
+        assert tool_choice == {"type": "function", "function": {"name": "edit_blocks"}}
+        edit_def = next(d for d in definitions if d["function"]["name"] == "edit_blocks")
+        assert set(edit_def["function"]["parameters"]["required"]) == {"file", "start", "end", "replace"}
+
+    def test_non_creation_schedule_is_unchanged(self) -> None:
+        # Identical inputs without the creation flag stay in the free phase at
+        # index 1 and only force on the final attempt — behaviour preserved.
+        free_defs, free_choice = resolve_retry_escalation(
+            attempt_index=1,
+            max_retry_attempts=4,
+            strict_tool_definitions=_STRICT_DEFS,
+            forced_write_tool_name="write_file",
+        )
+        assert free_defs is None
+        assert free_choice is None
+
+    def test_creation_low_temperature_phase_shifts_with_force(self) -> None:
+        # Free shot at index 0 keeps profile temperature; forced index 1 drops to
+        # the deterministic transcription temperature, aligned with the force.
+        assert resolve_retry_temperature_override(attempt_index=0, force_write_immediately=True) is None
+        assert (
+            resolve_retry_temperature_override(attempt_index=1, force_write_immediately=True)
+            == resolve_escalation_temperature()
+        )
+        # Non-creation index 1 stays at profile temperature (unchanged).
+        assert resolve_retry_temperature_override(attempt_index=1) is None
+
+
+class TestDetectCreationMode:
+    def test_missing_target_is_creation(self, tmp_path) -> None:
+        assert detect_creation_mode(str(tmp_path), ("index.html",)) is True
+
+    def test_any_missing_target_is_creation(self, tmp_path) -> None:
+        (tmp_path / "a.js").write_text("x", encoding="utf-8")
+        assert detect_creation_mode(str(tmp_path), ("a.js", "b.js")) is True
+
+    def test_all_existing_targets_is_not_creation(self, tmp_path) -> None:
+        (tmp_path / "a.js").write_text("x", encoding="utf-8")
+        assert detect_creation_mode(str(tmp_path), ("a.js",)) is False
+
+    def test_no_targets_is_not_creation(self, tmp_path) -> None:
+        assert detect_creation_mode(str(tmp_path), ()) is False
+
+    def test_no_workspace_is_not_creation(self) -> None:
+        assert detect_creation_mode("", ("index.html",)) is False
+
+    def test_extensionless_stem_phantom_does_not_flag_existing_file(self, tmp_path) -> None:
+        # The message extractor yields BOTH "README.md" and the bare stem
+        # "README" for "修改 README.md"; the stem never exists on disk and must
+        # not mis-classify an edit-to-existing task as a from-scratch create.
+        (tmp_path / "README.md").write_text("# r\n", encoding="utf-8")
+        assert detect_creation_mode(str(tmp_path), ("README.md", "README")) is False
+
+    def test_stem_filter_preserves_distinct_missing_targets(self, tmp_path) -> None:
+        # Round-7 semantics: a genuinely distinct missing target still flags a
+        # create even when another listed target already exists.
+        (tmp_path / "quotes.json").write_text("[]", encoding="utf-8")
+        assert detect_creation_mode(str(tmp_path), ("quotes.json", "index.html", "script.js")) is True
 
 
 class TestMutationImpliesVerification:

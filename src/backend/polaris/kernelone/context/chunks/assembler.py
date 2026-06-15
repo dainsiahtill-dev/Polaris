@@ -17,20 +17,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from polaris.kernelone.llm.toolkit.contracts import TokenEstimatorPort
-
-# Import metrics for intent switch tracking
-try:
-    from polaris.cells.roles.kernel.internal.metrics import get_dead_loop_metrics
-
-    _METRICS_AVAILABLE = True
-except ImportError:
-    _METRICS_AVAILABLE = False
 
 from .budget import ChunkBudgetTracker
 from .receipt import (
@@ -48,6 +40,23 @@ from .taxonomy import (
 )
 
 logger = logging.getLogger(__name__)
+_INTENT_SWITCH_RECORDER: Callable[[str, str], None] | None = None
+
+
+def set_intent_switch_recorder(recorder: Callable[[str, str], None] | None) -> None:
+    """Register an optional upper-layer metrics sink for intent switches."""
+    global _INTENT_SWITCH_RECORDER
+    _INTENT_SWITCH_RECORDER = recorder
+
+
+def _record_intent_switch(old_intent: str, new_intent: str) -> None:
+    recorder = _INTENT_SWITCH_RECORDER
+    if recorder is None:
+        return
+    try:
+        recorder(old_intent, new_intent)
+    except (RuntimeError, ValueError) as exc:
+        logger.debug("intent switch recorder failed: %s", exc)
 
 
 @dataclass
@@ -366,9 +375,7 @@ class PromptChunkAssembler:
                     else:
                         block_lines.append(f"[已完成: {current_goal}]")
                     block_lines.append(f"[!] 意图切换: 当前任务 → {latest_intent}")
-                    # Record metrics for intent switch
-                    if _METRICS_AVAILABLE:
-                        get_dead_loop_metrics().record_intent_switch(current_goal, latest_intent)
+                    _record_intent_switch(current_goal, latest_intent)
                 elif current_goal and current_goal not in "\n".join(block_lines):
                     block_lines.append(f"Current goal: {current_goal}")
                 hard_constraints = run_card.get("hard_constraints")
@@ -665,4 +672,5 @@ __all__ = [
     "AssemblyContext",
     "AssemblyResult",
     "PromptChunkAssembler",
+    "set_intent_switch_recorder",
 ]

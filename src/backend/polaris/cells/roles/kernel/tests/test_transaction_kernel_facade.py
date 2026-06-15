@@ -798,11 +798,17 @@ async def test_stream_provider_tool_events_materialize_native_tool_calls(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkeypatch) -> None:
+async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkeypatch, tmp_path) -> None:
+    # The task EDITS an existing README.md, so the graduated ladder applies (the
+    # next attempt must NOT lock to a single tool). The file must physically
+    # exist in the workspace, otherwise F16 correctly classifies it as a
+    # from-scratch create and forces the write early (covered separately by
+    # test_retry_api_escalation.TestF16CreationModeEscalation).
+    (tmp_path / "README.md").write_text("# readme\n", encoding="utf-8")
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),
         tool_runtime=AsyncMock(return_value={}),
-        config=TransactionConfig(domain="code"),
+        config=TransactionConfig(domain="code", workspace=str(tmp_path)),
         llm_provider_stream=AsyncMock(),
     )
     state_machine = TurnStateMachine(turn_id="turn_retry_escalation")

@@ -25,6 +25,17 @@ from polaris.kernelone.llm._timeout_config import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_COLLECTED_STREAM_CHARS = 2_000_000
+DEFAULT_MAX_TOOL_ARGUMENT_CHARS = 262_144
+
+
+def _int_from_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        logger.warning("[stream-executor] Invalid integer env %s, using default %d", name, default)
+        return default
+
 
 # ============================================================================
 # Stream Configuration (Immutable Dataclass - H-04 Fix)
@@ -44,6 +55,8 @@ class StreamConfig:
     buffer_size: int = DEFAULT_LLM_STREAM_BUFFER_SIZE
     max_pending_calls: int = 100
     token_timeout_sec: float = 60.0
+    max_collected_chars: int = DEFAULT_MAX_COLLECTED_STREAM_CHARS
+    max_tool_argument_chars: int = DEFAULT_MAX_TOOL_ARGUMENT_CHARS
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -57,6 +70,10 @@ class StreamConfig:
             object.__setattr__(self, "max_pending_calls", 100)
         if self.token_timeout_sec <= 0:
             object.__setattr__(self, "token_timeout_sec", 60.0)
+        if self.max_collected_chars <= 0:
+            object.__setattr__(self, "max_collected_chars", DEFAULT_MAX_COLLECTED_STREAM_CHARS)
+        if self.max_tool_argument_chars <= 0:
+            object.__setattr__(self, "max_tool_argument_chars", DEFAULT_MAX_TOOL_ARGUMENT_CHARS)
 
     @classmethod
     def from_env(cls) -> StreamConfig:
@@ -66,6 +83,14 @@ class StreamConfig:
             buffer_size=int(os.environ.get("KERNELONE_LLM_STREAM_BUFFER_SIZE", str(DEFAULT_LLM_STREAM_BUFFER_SIZE))),
             max_pending_calls=int(os.environ.get("KERNELONE_LLM_MAX_PENDING_CALLS", "100")),
             token_timeout_sec=_get_token_timeout_unified(),
+            max_collected_chars=_int_from_env(
+                "KERNELONE_LLM_STREAM_MAX_COLLECTED_CHARS",
+                DEFAULT_MAX_COLLECTED_STREAM_CHARS,
+            ),
+            max_tool_argument_chars=_int_from_env(
+                "KERNELONE_LLM_STREAM_MAX_TOOL_ARGUMENT_CHARS",
+                DEFAULT_MAX_TOOL_ARGUMENT_CHARS,
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -76,6 +101,8 @@ class StreamConfig:
             "buffer_size": self.buffer_size,
             "max_pending_calls": self.max_pending_calls,
             "token_timeout_sec": self.token_timeout_sec,
+            "max_collected_chars": self.max_collected_chars,
+            "max_tool_argument_chars": self.max_tool_argument_chars,
         }
 
 

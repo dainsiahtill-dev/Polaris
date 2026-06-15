@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from copy import deepcopy
 from dataclasses import dataclass
@@ -11,6 +12,18 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_MAX_PENDING_INDEX_TASKS = 256
+
+
+def _coerce_positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return parsed
 
 
 @dataclass
@@ -361,6 +374,7 @@ class TruthLogService:
         *,
         enable_semantic_index: bool = True,
         session_id: str | None = None,
+        max_pending_index_tasks: int | None = None,
     ) -> None:
         self._entries: list[dict[str, Any]] = []
         self._entries_lock = threading.Lock()
@@ -371,6 +385,17 @@ class TruthLogService:
         self._index_lock = asyncio.Lock()
         self._index_initialized = False
         self._pending_index_tasks: set[asyncio.Task[Any]] = set()
+        self._pending_index_tasks_lock = threading.Lock()
+        configured_pending_tasks = (
+            max_pending_index_tasks
+            if max_pending_index_tasks is not None
+            else os.environ.get("KERNELONE_TRUTH_LOG_MAX_PENDING_INDEX_TASKS")
+        )
+        self._max_pending_index_tasks = _coerce_positive_int(
+            configured_pending_tasks,
+            _DEFAULT_MAX_PENDING_INDEX_TASKS,
+        )
+        self._skipped_background_index_count = 0
 
     def _ensure_index(self) -> TruthLogIndex:
         """Lazily create the semantic index."""
@@ -398,6 +423,38 @@ class TruthLogService:
         index = self._ensure_index()
         await index.add_entry(entry, entry_id)
 
+    def _prune_pending_index_tasks_locked(self) -> None:
+        self._pending_index_tasks = {task for task in self._pending_index_tasks if not task.done()}
+
+    def _can_schedule_background_index_task(self) -> bool:
+        with self._pending_index_tasks_lock:
+            self._prune_pending_index_tasks_locked()
+            if len(self._pending_index_tasks) >= self._max_pending_index_tasks:
+                self._skipped_background_index_count += 1
+                return False
+            return True
+
+    def _register_pending_index_task(self, task: asyncio.Task[Any]) -> None:
+        with self._pending_index_tasks_lock:
+            self._pending_index_tasks.add(task)
+
+    def _discard_pending_index_task(self, task: asyncio.Task[Any]) -> None:
+        with self._pending_index_tasks_lock:
+            self._pending_index_tasks.discard(task)
+
+    @property
+    def pending_index_task_count(self) -> int:
+        """Number of in-flight background index tasks."""
+        with self._pending_index_tasks_lock:
+            self._prune_pending_index_tasks_locked()
+            return len(self._pending_index_tasks)
+
+    @property
+    def skipped_background_index_count(self) -> int:
+        """Number of index updates skipped because the background queue was full."""
+        with self._pending_index_tasks_lock:
+            return self._skipped_background_index_count
+
     def append(self, entry: dict[str, Any] | Any) -> None:
         """Append an entry to the truth log (sync)."""
         normalized = self._normalize_entry(entry)
@@ -407,17 +464,21 @@ class TruthLogService:
         # Index update: fire-and-forget in async context, sync fallback otherwise
         try:
             loop = asyncio.get_running_loop()
+            if not self._can_schedule_background_index_task():
+                logger.warning(
+                    "Truth log background indexing skipped: pending task limit reached (%d)",
+                    self._max_pending_index_tasks,
+                )
+                return
             task = loop.create_task(self._index_entry_async(normalized, entry_id))
-            self._pending_index_tasks.add(task)
+            self._register_pending_index_task(task)
 
             def _handle_index_error(t: asyncio.Task[Any]) -> None:
-                self._pending_index_tasks.discard(t)
+                self._discard_pending_index_task(t)
                 try:
                     t.result()
                 except (RuntimeError, asyncio.InvalidStateError, asyncio.CancelledError) as e:
-                    import logging
-
-                    logging.getLogger(__name__).debug("Truth log background indexing failed (safe to ignore): %s", e)
+                    logger.debug("Truth log background indexing failed (safe to ignore): %s", e)
 
             task.add_done_callback(_handle_index_error)
         except RuntimeError:

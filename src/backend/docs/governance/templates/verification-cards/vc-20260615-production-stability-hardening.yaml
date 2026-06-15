@@ -1,0 +1,49 @@
+id: vc-20260615-production-stability-hardening
+title: Production stability hardening for ContextOS, effect sinks, and reliable facts
+date: "2026-06-15"
+status: active
+classification: structural
+owner: backend-engine
+scope:
+  cells:
+    - kernelone.core
+    - roles.kernel
+    - runtime.execution_broker
+    - runtime.task_market
+    - events.fact_stream
+    - delivery.api_gateway
+  paths:
+    - src/backend/polaris/kernelone/context/**
+    - src/backend/polaris/kernelone/llm/engine/**
+    - src/backend/polaris/cells/runtime/execution_broker/**
+    - src/backend/polaris/cells/runtime/task_market/**
+    - src/backend/polaris/infrastructure/messaging/nats/**
+assumption_register:
+  - id: A1
+    assumption: Provider-bound prompt plus output must never exceed the resolved model window.
+    evidence_required: Focused LLM executor and gateway tests fail closed before provider invocation.
+  - id: A2
+    assumption: Runtime execution and file writes are high-risk effect sinks and must enforce policy at the sink, not only upstream.
+    evidence_required: Broker and tool-executor tests reject destructive commands, unsafe env, and unguarded writes.
+  - id: A3
+    assumption: Cross-cell facts and receipts must be emitted after state CAS succeeds and must be idempotent.
+    evidence_required: TaskMarket tests prove failed CAS does not leave Cognitive Runtime receipts and repeated outbox relay does not duplicate facts.
+  - id: A4
+    assumption: Reliable realtime transport must not acknowledge messages it failed to deliver.
+    evidence_required: JetStream queue-full tests prove messages are NAKed or left unacked, not ACKed.
+pre_mortem:
+  likely_failure_modes:
+    - Existing tests may assert the old 256-token output floor and need behavior-oriented updates.
+    - Compatibility callers may create LaunchExecutionProcessCommandV1 without subject metadata; new fields must be optional while sink checks high-risk operations.
+    - TaskMarket receipt migration can accidentally duplicate receipts unless deterministic idempotency keys are used.
+    - Governance gates may expose pre-existing graph drift; fixes must not label target-state assets as current facts.
+verification_plan:
+  focused_tests:
+    - PYTHONUTF8=1 LC_ALL=C.UTF-8 PYTHONPATH=src/backend pytest -q src/backend/polaris/kernelone/context/tests/test_chunks.py src/backend/polaris/kernelone/llm/engine/tests/test_executor.py src/backend/polaris/kernelone/llm/engine/stream/tests/test_executor.py
+    - PYTHONUTF8=1 LC_ALL=C.UTF-8 PYTHONPATH=src/backend pytest -q src/backend/polaris/cells/runtime/execution_broker/tests/test_service.py src/backend/polaris/cells/runtime/task_market/tests
+    - PYTHONUTF8=1 LC_ALL=C.UTF-8 PYTHONPATH=src/backend pytest -q src/backend/polaris/tests/unit/infrastructure/messaging/nats/test_ws_consumer_manager.py src/backend/polaris/tests/unit/delivery/http/routers/test_v2_runtime_diagnostics_router.py
+  governance_gates:
+    - PYTHONUTF8=1 LC_ALL=C.UTF-8 PYTHONPATH=src/backend python src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+    - PYTHONUTF8=1 LC_ALL=C.UTF-8 PYTHONPATH=src/backend python src/backend/docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace src/backend --mode fail-on-new
+rollback:
+  strategy: Revert each wave independently; every wave has focused regression tests and no schema migration should be irreversible.

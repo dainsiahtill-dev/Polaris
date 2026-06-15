@@ -26,7 +26,7 @@ from polaris.cells.roles.kernel.internal.interaction_contract import (
     TurnIntent,
     infer_turn_intent,
 )
-from polaris.cells.roles.kernel.internal.metrics import record_cache_stats
+from polaris.cells.roles.kernel.internal.metrics import get_dead_loop_metrics, record_cache_stats
 from polaris.cells.roles.kernel.internal.prompt_templates import (
     ROLE_PROMPT_TEMPLATES,
     SHARED_SECURITY_BOUNDARY,
@@ -39,6 +39,7 @@ from polaris.kernelone.context.chunks import (
     ChunkType,
     FinalRequestReceipt,
     PromptChunkAssembler,
+    set_intent_switch_recorder,
 )
 from polaris.kernelone.role.composer import (
     get_role_composer,
@@ -163,6 +164,7 @@ class PromptBuilder:
         # 统计信息
         self._stats = {"l1_hits": 0, "l1_misses": 0, "l2_hits": 0, "l2_misses": 0, "l3_hits": 0, "l3_misses": 0}
         # Prompt chunk assembly
+        set_intent_switch_recorder(get_dead_loop_metrics().record_intent_switch)
         self._chunk_assembler = PromptChunkAssembler(
             model_window=self._CHUNK_MODEL_WINDOW,
             safety_margin=self._CHUNK_SAFETY_MARGIN,

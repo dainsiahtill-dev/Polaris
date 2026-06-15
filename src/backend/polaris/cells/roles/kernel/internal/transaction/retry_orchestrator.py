@@ -266,14 +266,19 @@ def resolve_retry_output_floor() -> int | None:
     return value
 
 
-def resolve_retry_temperature_override(*, attempt_index: int) -> float | None:
+def resolve_retry_temperature_override(*, attempt_index: int, force_write_immediately: bool = False) -> float | None:
     """Phase-aware decoding: low temperature only for escalated retry attempts.
 
     Attempts 1-2 (index 0-1) keep the profile temperature — they still choose
     tools freely and benefit from exploration. From the escalation phase on
     (write-only set / forced tool name) the task is deterministic transcription.
+
+    F16: from-scratch creates (``force_write_immediately``) start the escalation
+    one attempt earlier, so the low-temp transcription phase shifts with it to
+    stay aligned with the forced-write phase in ``resolve_retry_escalation``.
     """
-    if attempt_index < _ESCALATION_START_ATTEMPT_INDEX:
+    escalation_start = 1 if force_write_immediately else _ESCALATION_START_ATTEMPT_INDEX
+    if attempt_index < escalation_start:
         return None
     return resolve_escalation_temperature()
 
@@ -284,6 +289,7 @@ def resolve_retry_escalation(
     max_retry_attempts: int,
     strict_tool_definitions: list[dict] | None,
     forced_write_tool_name: str | None,
+    force_write_immediately: bool = False,
 ) -> tuple[list[dict] | None, Any | None]:
     """ADR-0090: API-level escalation ladder for mutation-contract retries.
 
@@ -301,14 +307,25 @@ def resolve_retry_escalation(
       ``edit_blocks``, its schema is simultaneously narrowed to the line-range
       form so guided decoding can only produce a concrete replacement.
 
+    F16 (2026-06-15): a from-scratch create (``force_write_immediately``) never
+    gets the weak model to emit the write tool spontaneously — live, qwen burned
+    three ``execute_command`` retries per turn before the forced rung, tripping
+    the circuit breaker into a dead-letter. Creation steps bring the escalation
+    phase forward one attempt: narrow to write-only AND force the selected tool
+    by name from the FIRST retry escalation (index 1), keeping retry attempt 1
+    (index 0) as the single free exploration shot. Edit-existing steps are
+    byte-for-byte unchanged (``force_write_immediately`` defaults False).
+
     Returns ``(tool_definitions_override, tool_choice_override)`` — ``None``
     members mean "keep the attempt's defaults".
     """
-    if attempt_index < _ESCALATION_START_ATTEMPT_INDEX or not strict_tool_definitions:
+    escalation_start = 1 if force_write_immediately else _ESCALATION_START_ATTEMPT_INDEX
+    if attempt_index < escalation_start or not strict_tool_definitions:
         return None, None
     definitions_override = strict_tool_definitions
     tool_choice_override: Any | None = None
-    if attempt_index >= max_retry_attempts - 1 and forced_write_tool_name:
+    force_from_index = escalation_start if force_write_immediately else max_retry_attempts - 1
+    if attempt_index >= force_from_index and forced_write_tool_name:
         tool_choice_override = {
             "type": "function",
             "function": {"name": forced_write_tool_name},
@@ -542,6 +559,38 @@ def build_retry_tool_definitions_for_mutation(
     return [item for item in tool_definitions if extract_tool_name_from_definition(item) not in _forbidden]
 
 
+def detect_creation_mode(
+    workspace: str,
+    target_files: tuple[str, ...] | list[str] = (),
+) -> bool:
+    """Return True when at least one target file does not yet exist on disk.
+
+    A from-scratch creation step has nothing to read, so the weak model's
+    instinct to explore (``execute_command`` / ``read_file``) before writing is
+    pure waste — live forensics (L2-12 brick-breaker, 2026-06-15) show qwen
+    never emits the write tool spontaneously for a create, burning the retry
+    budget until the circuit breaker dead-letters the step. Callers use this to
+    force the write tool by name earlier in the escalation ladder (F16). ANY
+    missing target flips to creation mode (a partially-created set must not lock
+    the remaining missing files back onto an edit-only tool).
+    """
+    if not (workspace and target_files):
+        return False
+    normalized = [stripped for target in target_files if (stripped := str(target).strip())]
+    # The message extractor yields BOTH "README.md" and the bare stem "README"
+    # for a single mention; the extension-less stem never exists on disk and
+    # would wrongly flag an edit-to-existing task as a create (forcing a
+    # destructive whole-file overwrite). Drop any stem that another, longer
+    # token extends with a file extension — genuinely distinct targets stay.
+    candidates = [
+        token for token in normalized if not any(other.startswith(f"{token}.") for other in normalized)
+    ] or normalized
+    try:
+        return any(not os.path.exists(os.path.join(workspace, token)) for token in candidates)
+    except OSError:
+        return False
+
+
 def select_retry_forced_write_tool_name(
     tool_definitions: list[dict],
     *,
@@ -561,21 +610,11 @@ def select_retry_forced_write_tool_name(
     # for a CREATION task (no target exists yet) locks weak models into the
     # "edit_blocks cannot create new files → use write_file" teaching loop
     # forever. When every known target is missing, write_file leads.
-    creation_mode = False
-    if workspace and target_files:
-        try:
-            # ANY missing target flips to creation mode (round-7 live: the
-            # model created quotes.json first, then the remaining three
-            # missing files were locked back onto edit_blocks by an
-            # all-missing check). write_file handles existing files too —
-            # the destructive-shrink gate guards against gutting them.
-            creation_mode = any(
-                not os.path.exists(os.path.join(workspace, str(target).strip()))
-                for target in target_files
-                if str(target).strip()
-            )
-        except OSError:
-            creation_mode = False
+    # ANY missing target flips to creation mode (round-7 live: the model created
+    # quotes.json first, then the remaining three missing files must not be
+    # locked back onto edit_blocks). write_file handles existing files too — the
+    # destructive-shrink gate guards against gutting them.
+    creation_mode = detect_creation_mode(workspace, target_files)
     if creation_mode:
         priority_order = (
             "write_file",
@@ -1434,7 +1473,7 @@ class RetryOrchestrator:
         requires_verification: bool,
         requires_mutation: bool,
         forbidden_tool_names: set[str] | None = None,
-    ) -> tuple[list[dict], list[dict], set[str], set[str], str | None, dict[str, Any] | None, list[dict]]:
+    ) -> tuple[list[dict], list[dict], set[str], set[str], str | None, dict[str, Any] | None, list[dict], bool]:
         """构建重试上下文和工具定义。
 
         ``forbidden_tool_names`` is threaded through all narrowing helpers so
@@ -1450,11 +1489,20 @@ class RetryOrchestrator:
         )
         allowed_retry_tool_names = extract_allowed_tool_names_from_definitions(retry_tool_definitions)
         _latest_request = extract_latest_user_message(context)
+        _retry_workspace = str(
+            getattr(self.config, "workspace", "") or os.environ.get("KERNELONE_WORKSPACE", "") or "."
+        )
+        _retry_target_files = tuple(extract_target_files_from_message(_latest_request))
         forced_write_tool_name = select_retry_forced_write_tool_name(
             retry_tool_definitions,
-            workspace=str(getattr(self.config, "workspace", "") or os.environ.get("KERNELONE_WORKSPACE", "") or "."),
-            target_files=tuple(extract_target_files_from_message(_latest_request)),
+            workspace=_retry_workspace,
+            target_files=_retry_target_files,
         )
+        # F16: a from-scratch create never gets the weak model to emit the write
+        # tool spontaneously (it explores via execute_command until the circuit
+        # breaker dead-letters the step), so force the write by name from the
+        # first retry escalation instead of only the last attempt.
+        from_scratch_create = detect_creation_mode(_retry_workspace, _retry_target_files)
         _strict_retry_tool_definitions = build_forced_write_only_retry_tool_definitions(
             retry_tool_definitions,
             forced_write_tool_name,
@@ -1488,6 +1536,7 @@ class RetryOrchestrator:
             forced_write_tool_name,
             forced_tool_choice,
             _strict_retry_tool_definitions,
+            from_scratch_create,
         )
 
     async def _execute_retry_batch(
@@ -1643,6 +1692,7 @@ class RetryOrchestrator:
             forced_write_tool_name,
             forced_tool_choice,
             strict_retry_tool_defs,
+            from_scratch_create,
         ) = self._build_retry_context(
             turn_id=turn_id,
             context=context,
@@ -1699,6 +1749,7 @@ class RetryOrchestrator:
                 max_retry_attempts=max_retry_attempts,
                 strict_tool_definitions=strict_retry_tool_defs,
                 forced_write_tool_name=forced_write_tool_name,
+                force_write_immediately=from_scratch_create,
             )
             if escalated_definitions is not None:
                 attempt_tool_definitions = escalated_definitions
@@ -1714,7 +1765,9 @@ class RetryOrchestrator:
 
             # ADR-0090 W2.6: phase-aware decoding — escalated attempts transcribe
             # an already-made decision, so they sample near-deterministically.
-            attempt_temperature_override = resolve_retry_temperature_override(attempt_index=attempt_index)
+            attempt_temperature_override = resolve_retry_temperature_override(
+                attempt_index=attempt_index, force_write_immediately=from_scratch_create
+            )
             if attempt_temperature_override is not None:
                 logger.warning(
                     "mutation-contract retry attempt=%s phase-aware low temperature: %s",

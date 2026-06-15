@@ -205,3 +205,32 @@ async def test_runtime_diagnostics_prefers_active_workspace_path(
 
     assert response.status_code == 200
     assert response.json()["workspace"] == "C:/Temp/Product"
+
+
+@pytest.mark.asyncio
+async def test_runtime_diagnostics_required_nats_disconnected_is_unhealthy(client: AsyncClient) -> None:
+    with (
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_managed_nats_runtime_snapshot",
+            return_value={"tcp_reachable": True, "process_running": True},
+        ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_default_client_snapshot",
+            return_value={
+                "default_client_exists": True,
+                "state": "disconnected",
+                "is_connected": False,
+                "last_connect_failure": {"message": "jetstream unavailable"},
+            },
+        ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_rate_limit_diagnostics",
+            return_value={"enabled": False, "store": {}},
+        ),
+    ):
+        response = await client.get("/v2/runtime/diagnostics")
+
+    assert response.status_code == 200
+    nats = response.json()["nats"]
+    assert nats["ok"] is False
+    assert nats["state"] == "required_disconnected"

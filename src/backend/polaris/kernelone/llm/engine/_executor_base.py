@@ -13,7 +13,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.kernelone.errors import ErrorCategory, classify_error
+from polaris.kernelone.errors import BudgetExceededError, ErrorCategory, classify_error
 from polaris.kernelone.llm.runtime import normalize_provider_type, resolve_provider_api_key
 from polaris.kernelone.llm.runtime_config import get_role_model, get_role_provider_override
 
@@ -502,7 +502,18 @@ def clamp_output_tokens_to_window(
     headroom = window - prompt_tokens - max(0, int(overhead_tokens)) - 64
     if headroom >= requested:
         return
-    clamped = max(256, headroom)
+    if headroom <= 0:
+        raise BudgetExceededError(
+            (
+                f"{logger_prefix} prompt exceeds model window before output allocation: "
+                f"prompt~{prompt_tokens} + overhead {max(0, int(overhead_tokens))} + reserve 64 > window {window}"
+            ),
+            limit=window,
+            requested=requested,
+            current=prompt_tokens + max(0, int(overhead_tokens)) + 64,
+            suggestion="Compress or reduce the prompt before invoking the provider.",
+        )
+    clamped = headroom
     logging.getLogger(__name__).warning(
         "%s output budget clamped to window: prompt~%s + requested %s > window %s -> max_tokens=%s",
         logger_prefix,

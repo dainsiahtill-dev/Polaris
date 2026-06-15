@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import threading
 import time
-import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
@@ -78,6 +79,32 @@ _CONTEXT_OS_EXPECTED_KEYS = (
     "context_os_expected",
     "task_market_context_os_expected",
 )
+
+
+def _stable_outbox_id(
+    *,
+    workspace: str,
+    stream: str,
+    event_type: str,
+    run_id: str,
+    task_id: str,
+    payload: dict[str, Any],
+) -> str:
+    basis = {
+        "workspace": str(workspace or "").strip(),
+        "stream": str(stream or "").strip(),
+        "event_type": str(event_type or "").strip(),
+        "run_id": str(run_id or "").strip(),
+        "task_id": str(task_id or "").strip(),
+        "payload": dict(payload),
+    }
+    encoded = json.dumps(
+        basis,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"tm-{hashlib.sha256(encoded).hexdigest()}"
 
 
 # ---------------------------------------------------------------------------
@@ -1706,6 +1733,7 @@ class TaskMarketService:
                             run_id=str(row.get("run_id") or "").strip(),
                             task_id=str(row.get("task_id") or "").strip(),
                             payload=payload,
+                            idempotency_key=outbox_id,
                         )
                     )
                     store.mark_outbox_message_sent(
@@ -3314,7 +3342,14 @@ class TaskMarketService:
     ) -> dict[str, Any]:
         """Build an outbox record for later atomic write or direct append."""
         return {
-            "outbox_id": uuid.uuid4().hex,
+            "outbox_id": _stable_outbox_id(
+                workspace=workspace,
+                stream="task_market.events",
+                event_type=event_type,
+                run_id=run_id,
+                task_id=task_id,
+                payload=payload,
+            ),
             "workspace": workspace,
             "stream": "task_market.events",
             "event_type": event_type,
@@ -3345,7 +3380,14 @@ class TaskMarketService:
         the outbox_atomic fitness rule. The outbox record is written to the store,
         and a relay process handles delivery to fact_stream.
         """
-        outbox_id = uuid.uuid4().hex
+        outbox_id = _stable_outbox_id(
+            workspace=workspace,
+            stream="task_market.events",
+            event_type=event_type,
+            run_id=run_id,
+            task_id=task_id,
+            payload=payload,
+        )
         outbox_record: dict[str, Any] = {
             "outbox_id": outbox_id,
             "workspace": workspace,
