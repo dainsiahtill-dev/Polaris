@@ -52,6 +52,7 @@ import {
   type PipelineState,
   type RoleCard,
 } from './contextOSData';
+import { useContextOSTelemetry } from './useContextOSTelemetry';
 
 export interface ContextOSWorkspaceProps {
   workspace: string;
@@ -116,6 +117,19 @@ function badgeColorForState(state: PipelineState): 'success' | 'error' | 'defaul
   if (state === 'active') return 'success';
   if (state === 'blocked') return 'error';
   return 'default';
+}
+
+/** 把最近更新时间戳格式化成相对新鲜度（刚刚 / Ns 前 / Nm 前）。 */
+function formatFreshness(epochMs: number): string {
+  const deltaMs = Date.now() - epochMs;
+  if (!Number.isFinite(deltaMs) || deltaMs < 0) return '刚刚';
+  const seconds = Math.floor(deltaMs / 1000);
+  if (seconds < 5) return '刚刚';
+  if (seconds < 60) return `${seconds}s 前`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m 前`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h 前`;
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +278,27 @@ function DecisionTable({ rows }: { rows: DecisionRow[] }) {
           <span className={cn('truncate font-medium', toneClass[row.tone])} title={`${row.actor} · ${row.kind}`}>
             {row.actor}
           </span>
-          <span className="truncate text-text-muted" title={row.summary}>{row.summary || row.kind}</span>
+          <div className="min-w-0">
+            <span className="block truncate text-text-muted" title={row.summary}>{row.summary || row.kind}</span>
+            {(row.source === 'telemetry') && (row.tokens || row.latencyMs || row.receipt) && (
+              <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                {row.kind && (
+                  <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-dim">{row.kind}</span>
+                )}
+                {typeof row.tokens === 'number' && row.tokens > 0 && (
+                  <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">
+                    {contextOSFormat.tokens(row.tokens)} tok
+                  </span>
+                )}
+                {typeof row.latencyMs === 'number' && row.latencyMs > 0 && (
+                  <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-muted">{row.latencyMs}ms</span>
+                )}
+                {row.receipt && (
+                  <span className="rounded bg-gold/10 px-1 font-mono text-[9px] text-gold">快照</span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       ))}
     </div>
@@ -314,6 +348,9 @@ export function ContextOSWorkspace({
   snapshot,
   qualityGate,
 }: ContextOSWorkspaceProps) {
+  // 真实 ContextOS 观测遥测（轮询 llm.observations.jsonl，4s 实时刷新）。
+  const { telemetry, lastUpdated, refresh: refreshTelemetry } = useContextOSTelemetry(workspace);
+
   const model = useMemo(
     () => buildContextOSModel({
       usageStats,
@@ -324,8 +361,9 @@ export function ContextOSWorkspace({
       currentPhase,
       pmRunning,
       directorRunning,
+      telemetry,
     }),
-    [usageStats, dialogueEvents, executionLogs, snapshot, llmRuntimeState, currentPhase, pmRunning, directorRunning],
+    [usageStats, dialogueEvents, executionLogs, snapshot, llmRuntimeState, currentPhase, pmRunning, directorRunning, telemetry],
   );
 
   const [activeRole, setActiveRole] = useState<string | null>(null);
@@ -334,8 +372,21 @@ export function ContextOSWorkspace({
   const wsLabel = live ? 'WS LIVE' : reconnecting ? 'WS RECONNECT' : 'WS OFFLINE';
   const phaseLabel = (currentPhase || 'idle').trim() || 'idle';
   const gatePassed = qualityGate?.passed;
-  const idle = model.dataIdle || (!live && !model.running);
-  const pipelineLive = model.running && live;
+  // 观测到活动 = PM/Director 运行中 或 真实遥测有内容。
+  const observed = model.running || model.telemetryActive;
+  // 「真正有数据」= 真实遥测有内容；此时不再视为空闲水印。
+  const idle = !model.telemetryActive && (model.dataIdle || (!live && !model.running));
+  const pipelineLive = observed && live;
+
+  // 新鲜度以"最近一条真实观测事件"的时间为准（而非轮询时刻），避免陈旧数据被误读为实时。
+  const lastEventEpoch = model.lastTelemetryEpoch;
+  const telemetryAgeMs = lastEventEpoch ? Date.now() - lastEventEpoch : null;
+  const telemetryFresh = telemetryAgeMs !== null && telemetryAgeMs < 30_000; // 30s 内视为"实时"
+  const freshnessLabel = lastEventEpoch
+    ? formatFreshness(lastEventEpoch)
+    : lastUpdated
+      ? formatFreshness(lastUpdated)
+      : null;
 
   const filteredDecisions = useMemo(
     () => model.decisions.filter((row) => decisionMatchesRole(row.actor, activeRole)),
@@ -343,6 +394,11 @@ export function ContextOSWorkspace({
   );
 
   const toggleRole = (roleId: string) => setActiveRole((prev) => (prev === roleId ? null : roleId));
+
+  const handleRefresh = () => {
+    onRefresh?.();
+    refreshTelemetry();
+  };
 
   return (
     <div data-testid="contextos-workspace" className="flex h-full flex-col overflow-hidden bg-bg text-text-main">
@@ -394,22 +450,36 @@ export function ContextOSWorkspace({
             <span className="font-mono text-[11px] font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
             <span className="text-[9px] font-bold uppercase tracking-wider text-accent-secondary/70">tokens</span>
           </div>
+          {/* 真实遥测实时性指示：以最近一条观测事件的时间为准。新鲜=实时(脉冲)，陈旧=不脉冲。 */}
+          <StatusBadge
+            color={model.telemetryActive ? (telemetryFresh ? 'success' : 'warning') : 'default'}
+            variant="dot"
+            pulse={model.telemetryActive && telemetryFresh}
+          >
+            <span
+              className="font-mono text-[10px]"
+              title="ContextOS 真实观测遥测 (runtime/events/llm.observations.jsonl)，时间为最近一条观测事件"
+              data-testid="contextos-telemetry-freshness"
+            >
+              {model.telemetryActive
+                ? `${telemetryFresh ? '实时遥测' : '遥测'}${freshnessLabel ? ` · ${freshnessLabel}` : ''}`
+                : '遥测待命'}
+            </span>
+          </StatusBadge>
           <StatusBadge color={wsTone} variant="dot" pulse={reconnecting}>
             <span className="font-mono text-[10px]">{wsLabel}</span>
           </StatusBadge>
-          {onRefresh && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onRefresh}
-              data-testid="contextos-refresh"
-              title="刷新运行状态"
-              aria-label="刷新运行状态"
-              className="border-accent-secondary/30 text-accent-secondary hover:bg-accent-secondary/10"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            data-testid="contextos-refresh"
+            title="刷新运行状态与遥测"
+            aria-label="刷新运行状态与遥测"
+            className="border-accent-secondary/30 text-accent-secondary hover:bg-accent-secondary/10"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </header>
 
@@ -474,8 +544,8 @@ export function ContextOSWorkspace({
               subtitle="实时上下文装配管线"
               icon={Network}
               action={
-                <StatusBadge color={model.running ? 'success' : 'default'} variant="dot" pulse={model.running}>
-                  <span className="text-[10px]">{model.running ? '装配中' : '空闲'}</span>
+                <StatusBadge color={observed ? 'success' : 'default'} variant="dot" pulse={observed}>
+                  <span className="text-[10px]">{observed ? '装配中' : '空闲'}</span>
                 </StatusBadge>
               }
             >
@@ -507,7 +577,11 @@ export function ContextOSWorkspace({
                     <div className="text-[11px] font-semibold leading-tight text-text-main">Receipt</div>
                     <div className="text-[9px] uppercase tracking-wide text-text-dim">遥测反馈</div>
                     <div className={cn('mt-0.5 rounded-full bg-black/30 px-1.5 py-0.5 font-mono text-[9px]', model.errorCount > 0 ? 'text-status-error' : 'text-gold')}>
-                      {model.errorCount > 0 ? `${model.errorCount} 错误` : `${model.calls} 调用`}
+                      {model.errorCount > 0
+                        ? `${model.errorCount} 错误`
+                        : model.receiptCount > 0
+                          ? `${model.receiptCount} 快照`
+                          : `${model.calls} 调用`}
                     </div>
                   </div>
                 </div>
@@ -548,9 +622,28 @@ export function ContextOSWorkspace({
 
             <SectionCard
               title="Decision Log / Receipts"
-              subtitle={activeRole ? `决策与回执流 · 仅 ${activeRole.toUpperCase()}` : '决策与回执流'}
+              subtitle={
+                model.telemetryActive
+                  ? activeRole
+                    ? `实时观测流 · 仅 ${activeRole.toUpperCase()}`
+                    : '实时观测流 · llm.observations.jsonl'
+                  : activeRole
+                    ? `决策与回执流 · 仅 ${activeRole.toUpperCase()}`
+                    : '决策与回执流'
+              }
               icon={Activity}
               className="min-h-[220px]"
+              action={
+                model.telemetryActive ? (
+                  <span
+                    className="rounded-full border border-accent-secondary/20 bg-accent-secondary/[0.08] px-2 py-0.5 font-mono text-[9px] text-accent-secondary"
+                    data-testid="contextos-telemetry-source"
+                    title="决策流来自真实观测遥测"
+                  >
+                    REAL · {model.projectionCount} 投影 · {model.receiptCount} 快照
+                  </span>
+                ) : undefined
+              }
             >
               <DecisionTable rows={filteredDecisions} />
             </SectionCard>
@@ -629,7 +722,7 @@ export function ContextOSWorkspace({
         {/* Footer — Outcome Feedback Loop */}
         <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-white/[0.07] bg-bg-panel/40 px-4 py-3 backdrop-blur-sm">
           <div className="flex items-center gap-2">
-            <Activity className={cn('h-4 w-4', model.running ? 'text-accent-secondary' : 'text-text-dim')} />
+            <Activity className={cn('h-4 w-4', observed ? 'text-accent-secondary' : 'text-text-dim')} />
             <span className="text-xs font-semibold text-text-main">Outcome Feedback Loop</span>
             <span className="text-[10px] text-text-dim">结果反馈闭环</span>
           </div>
@@ -647,8 +740,11 @@ export function ContextOSWorkspace({
           <div className="ml-auto flex items-center gap-4 font-mono text-[10px] text-text-dim">
             <span>提示 {contextOSFormat.tokens(model.promptTokens)}</span>
             <span>输出 {contextOSFormat.tokens(model.completionTokens)}</span>
-            <StatusBadge color={badgeColorForState(model.running ? 'active' : 'idle')} variant="dot">
-              <span>{model.running ? 'LIVE' : 'IDLE'}</span>
+            {model.realLatencyMs !== null && (
+              <span title="最近真实调用时延">时延 {model.realLatencyMs}ms</span>
+            )}
+            <StatusBadge color={badgeColorForState(observed ? 'active' : 'idle')} variant="dot">
+              <span>{observed ? 'LIVE' : 'IDLE'}</span>
             </StatusBadge>
           </div>
         </div>

@@ -492,6 +492,25 @@ class LLMInvoker:
                 response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
                 is_response_ok = (bool(response_ok) if isinstance(response_ok, bool) else True) and not response_error
 
+            # 5th floor: a reasoning model truncated mid-thought (finish_reason=length)
+            # and emitted no visible output / tool call. Re-ask ONCE with a reserved
+            # output budget + a "minimal reasoning, emit the tool call now" directive so
+            # the write actually lands instead of dying as director_no_materialized_changes.
+            _is_reasoning_truncation = (
+                "empty visible output" in response_error.lower() and "reasoning truncated" in response_error.lower()
+            )
+            if not is_response_ok and _is_reasoning_truncation:
+                active_request = caller._build_reasoning_truncation_retry_request(prepared=prepared, profile=profile)
+                response = await executor.invoke(active_request)
+                logger.warning(
+                    "[invoker] reasoning-truncation re-ask: reserved output budget + minimal-reasoning directive"
+                )
+                response_ok = getattr(response, "ok", True)
+                _has_error = hasattr(response, "error")
+                _raw_error = getattr(response, "error", None) if _has_error else None
+                response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
+                is_response_ok = (bool(response_ok) if isinstance(response_ok, bool) else True) and not response_error
+
             if not is_response_ok:
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 classified = classify_error(response_error)

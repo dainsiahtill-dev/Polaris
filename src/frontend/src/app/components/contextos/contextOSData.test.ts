@@ -6,6 +6,7 @@ import {
   contextOSFormat,
   NOMINAL_CONTEXT_WINDOW,
 } from './contextOSData';
+import { parseObservationLog } from './contextOSTelemetry';
 import type { UsageStats } from '@/app/components/UsageHUD';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { LogEntry } from '@/types/log';
@@ -153,6 +154,76 @@ describe('buildContextOSModel', () => {
     expect(model.taskCount).toBe(3);
     expect(model.iteration).toBe(7);
     expect(model.pipeline.find((s) => s.id === 'request')?.metric).toContain('3 任务');
+  });
+});
+
+describe('buildContextOSModel with real telemetry', () => {
+  const TELEMETRY_LOG = [
+    JSON.stringify({
+      ts: '2026-06-15T10:00:00Z', ts_epoch: 1781856000.0, seq: 1, event_id: 'p1',
+      kind: 'observation', actor: 'PM', name: 'prompt_context', refs: { run_id: 'r1', step: 1 },
+      summary: 'Prompt Context Injection', ok: true,
+      output: { context_hash: 'h1', context_snapshot: 'runtime/snap/h1.json' },
+    }),
+    JSON.stringify({
+      ts: '2026-06-15T10:00:02Z', ts_epoch: 1781856002.0, seq: 2, event_id: 'c1',
+      kind: 'observation', actor: 'PM', name: 'llm_call', refs: { mode: 'pm.planning' },
+      summary: 'pm call', ok: true,
+      output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 } },
+      duration_ms: 2400,
+    }),
+    JSON.stringify({
+      ts: '2026-06-15T10:00:04Z', ts_epoch: 1781856004.0, seq: 3, event_id: 'c2',
+      kind: 'observation', actor: 'Director', name: 'llm_call', refs: { mode: 'director.execution' },
+      summary: 'director call', ok: true,
+      output: { usage: { prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000 } },
+      duration_ms: 1800,
+    }),
+  ].join('\n');
+
+  it('prefers real telemetry for tokens, projections, receipts and decisions', () => {
+    const telemetry = parseObservationLog(TELEMETRY_LOG);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+
+    expect(model.telemetryActive).toBe(true);
+    // Telemetry-derived totals (no usageStats prop supplied).
+    expect(model.totalTokens).toBe(2500);
+    expect(model.calls).toBe(2);
+    expect(model.projectionCount).toBe(1);
+    expect(model.receiptCount).toBe(1);
+    expect(model.realLatencyMs).toBe(1800);
+
+    // Pipeline projection node shows the real projection count.
+    expect(model.pipeline.find((s) => s.id === 'projection')?.metric).toBe('1 投影');
+
+    // Decision log is the real observation stream (newest first), with token/receipt enrichment.
+    expect(model.decisions[0].source).toBe('telemetry');
+    expect(model.decisions[0].actor).toBe('Director');
+    const projectionRow = model.decisions.find((d) => d.id === 'p1');
+    expect(projectionRow?.receipt).toBe(true);
+    const callRow = model.decisions.find((d) => d.id === 'c1');
+    expect(callRow?.tokens).toBe(1500);
+
+    // Not idle even though pmRunning/directorRunning are false — telemetry is observed activity.
+    expect(model.dataIdle).toBe(false);
+  });
+
+  it('maps telemetry actor tokens onto role cards and marks them active', () => {
+    const telemetry = parseObservationLog(TELEMETRY_LOG);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+    const director = model.roles.find((r) => r.id === 'director');
+    expect(pm?.tokens).toBe(1500);
+    expect(pm?.state).toBe('active'); // produced telemetry events
+    expect(director?.tokens).toBe(1000);
+    const qa = model.roles.find((r) => r.id === 'qa');
+    expect(qa?.state).toBe('idle');
+  });
+
+  it('falls back to proxy derivation when telemetry is empty', () => {
+    const model = buildContextOSModel(baseInput());
+    expect(model.telemetryActive).toBe(false);
+    expect(model.decisions).toHaveLength(0);
   });
 });
 

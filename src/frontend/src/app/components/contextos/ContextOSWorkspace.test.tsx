@@ -1,11 +1,40 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { ContextOSWorkspace } from './ContextOSWorkspace';
+import { readFile } from '@/services/fileService';
 import type { UsageStats } from '@/app/components/UsageHUD';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { LogEntry } from '@/types/log';
 import type { LlmRuntimeGateState } from '@/app/hooks/useLlmRuntimeGate';
+
+// The telemetry hook polls runtime/events/llm.observations.jsonl via readFile.
+// Mock it so tests are deterministic (no real backend/network).
+vi.mock('@/services/fileService', () => ({
+  readFile: vi.fn(async () => ({ ok: true, data: { content: '' } })),
+}));
+const mockReadFile = vi.mocked(readFile);
+
+const TELEMETRY_FIXTURE = [
+  JSON.stringify({
+    ts: '2026-06-15T10:00:00Z', ts_epoch: 1781856000.0, seq: 1, event_id: 'p1',
+    kind: 'observation', actor: 'PM', name: 'prompt_context', refs: { run_id: 'r1', step: 1 },
+    summary: 'Prompt Context Injection', ok: true,
+    output: { context_hash: 'h1', context_snapshot: 'runtime/snap/h1.json' },
+  }),
+  JSON.stringify({
+    ts: '2026-06-15T10:00:02Z', ts_epoch: 1781856002.0, seq: 2, event_id: 'c1',
+    kind: 'observation', actor: 'PM', name: 'llm_call', refs: { mode: 'pm.planning' },
+    summary: 'pm planning call', ok: true,
+    output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 } },
+    duration_ms: 2400,
+  }),
+].join('\n');
+
+beforeEach(() => {
+  mockReadFile.mockReset();
+  mockReadFile.mockResolvedValue({ ok: true, data: { content: '' } } as Awaited<ReturnType<typeof readFile>>);
+});
 
 const READY_LLM: LlmRuntimeGateState = {
   state: 'READY',
@@ -79,6 +108,33 @@ describe('ContextOSWorkspace', () => {
     );
     // total tokens appears (header chip + budget headline)
     expect(screen.getAllByText('10,000').length).toBeGreaterThan(0);
+  });
+
+  it('surfaces REAL ContextOS telemetry from the observation log', async () => {
+    mockReadFile.mockResolvedValue({
+      ok: true,
+      data: { content: TELEMETRY_FIXTURE },
+    } as Awaited<ReturnType<typeof readFile>>);
+
+    render(<ContextOSWorkspace {...baseProps()} />);
+
+    // The telemetry source badge appears once real observations are parsed.
+    const sourceBadge = await screen.findByTestId('contextos-telemetry-source');
+    expect(sourceBadge.textContent).toContain('REAL');
+    expect(sourceBadge.textContent).toContain('1 投影');
+    expect(sourceBadge.textContent).toContain('1 快照');
+
+    // Real-time freshness badge flips to live telemetry.
+    await waitFor(() => {
+      expect(screen.getByTestId('contextos-telemetry-freshness').textContent).toContain('实时遥测');
+    });
+
+    // The real observation events appear in the decision log.
+    expect(screen.getByText('Prompt Context Injection')).toBeTruthy();
+    expect(screen.getByText('pm planning call')).toBeTruthy();
+
+    // Real token total (1500) is reflected in the budget headline.
+    expect(screen.getAllByText('1,500').length).toBeGreaterThan(0);
   });
 
   it('cross-filters the decision stream when a role tab is selected', () => {

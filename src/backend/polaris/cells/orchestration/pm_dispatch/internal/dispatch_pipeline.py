@@ -840,6 +840,58 @@ def _reachable_provider_pool(pool: tuple[str, ...], *, probe_timeout: float = 3.
     return live
 
 
+def _build_role_worker_pool(
+    role_id: str,
+    consumer_factory: Callable[[str], Any],
+    *,
+    worker_suffix: str,
+) -> list[tuple[Any, Any]]:
+    """Build N market worker consumers for a ROLE, one per CONFIGURED worker slot.
+
+    Role-agnostic + config-driven: the worker count and per-worker provider binding
+    come from ``resolve_role_worker_plan(role_id)`` (the single source of truth —
+    concurrency decoupled from provider count, so a role may run N workers on ONE
+    provider OR N providers). ``consumer_factory(worker_id)`` builds the role's own
+    consumer with the right kwargs (CE needs ``analysis_runner``, Director needs
+    ``enable_safe_parallel``, QA neither) so the builder references no role-specific
+    construction. Returns ``[]`` (→ the single inline consumer, unchanged) when
+    concurrency<=1, the plan is single-slot, or no bound backend is reachable.
+    Fail-open on any resolution error.
+    """
+    try:
+        from polaris.kernelone.llm.runtime_config import resolve_role_worker_plan
+
+        plan = resolve_role_worker_plan(role_id)
+    except (ImportError, RuntimeError, ValueError) as exc:
+        logger.debug("%s worker pool resolution failed, using single consumer: %s", role_id, exc)
+        return []
+    if len(plan) <= 1:
+        return []
+    slot_provider_ids = tuple(dict.fromkeys(str(slot.provider_id) for slot in plan if slot.provider_id))
+    live_provider_ids = set(_reachable_provider_pool(slot_provider_ids))
+    if not live_provider_ids:
+        logger.warning("%s pool: NO bound backend reachable; falling back to single inline consumer", role_id)
+        return []
+    live_slots = [slot for slot in plan if str(slot.provider_id) in live_provider_ids]
+    if not live_slots:
+        return []
+    # Preserve the configured worker COUNT (== len(plan) == concurrency) and round-robin
+    # each worker over the LIVE slots: a worker whose backend went dark is reassigned to a
+    # live binding (never stranded, never silently dropped) — this is what "honor the
+    # configured concurrency" means, and matches the legacy round-robin-over-live policy.
+    workers: list[tuple[Any, Any]] = []
+    for idx in range(len(plan)):
+        slot = live_slots[idx % len(live_slots)]
+        consumer = consumer_factory(f"pm_inline_{role_id}_{worker_suffix}_w{idx}")
+        workers.append((consumer, slot))
+    logger.info("%s role-pool concurrency: %d worker(s) over %d live slot(s)", role_id, len(workers), len(live_slots))
+    _pool_trace(
+        f"POOL BUILT ({role_id}): {len(workers)} worker(s); "
+        f"bindings={[(c.worker_id if hasattr(c, 'worker_id') else f'w{i}', str(slot.provider_id), getattr(slot, 'model', '')) for i, (c, slot) in enumerate(workers)]}"
+    )
+    return workers
+
+
 def _build_director_worker_pool(
     director_consumer_type: type,
     *,
@@ -848,104 +900,36 @@ def _build_director_worker_pool(
     exec_timeout: int,
     enable_safe_parallel: bool,
 ) -> list[tuple[Any, Any]]:
-    """Build N Director worker consumers, each bound to a pool backend endpoint.
+    """Byte-identical Director facade over the role-generalized ``_build_role_worker_pool``."""
 
-    Returns an empty list when the Director role requests no concurrency (<=1) or
-    has no multi-endpoint pool — the caller then uses the single inline consumer
-    (zero behaviour change for current single-backend configs).
-    """
-    try:
-        from polaris.kernelone.llm.runtime_config import (
-            get_role_binding_slots,
-            get_role_concurrency,
-            get_role_provider_pool,
-            load_role_config,
-        )
-
-        role_config = load_role_config("director")
-        binding_slots = get_role_binding_slots("director")
-        concurrency = get_role_concurrency("director")
-        pool = get_role_provider_pool("director")
-    except (ImportError, RuntimeError, ValueError) as exc:
-        logger.debug("director worker pool resolution failed, using single consumer: %s", exc)
-        return []
-    if role_config is not None and role_config.bindings:
-        if len(binding_slots) <= 1:
-            return []
-        slot_provider_ids = tuple(dict.fromkeys(str(slot.provider_id) for slot in binding_slots if slot.provider_id))
-        live_provider_ids = set(_reachable_provider_pool(slot_provider_ids))
-        if not live_provider_ids:
-            logger.warning("director pool: NO bound backend reachable; falling back to single inline consumer")
-            return []
-        live_slots = [slot for slot in binding_slots if str(slot.provider_id) in live_provider_ids]
-        if len(live_slots) <= 1:
-            return []
-        slot_workers: list[tuple[Any, Any]] = []
-        for idx, slot in enumerate(live_slots):
-            consumer = director_consumer_type(
-                workspace=workspace_full,
-                worker_id=f"pm_inline_director_{worker_suffix}_w{idx}",
-                visibility_timeout_seconds=exec_timeout,
-                poll_interval=0.05,
-                enable_safe_parallel=enable_safe_parallel,
-            )
-            slot_workers.append((consumer, slot))
-        logger.info(
-            "director role-binding concurrency: %d worker(s) over %d live deployment slot(s)",
-            len(slot_workers),
-            len(live_slots),
-        )
-        _pool_trace(
-            f"POOL BUILT: {len(slot_workers)} role-binding worker(s); "
-            f"bindings={[(c.worker_id if hasattr(c, 'worker_id') else f'w{i}', str(slot), getattr(slot, 'model', '')) for i, (c, slot) in enumerate(slot_workers)]}"
-        )
-        return slot_workers
-    if concurrency <= 1 or len(pool) < 1:
-        return []
-    # Resilience (multi-LLM, skip-offline): health-check the pool and run only on the
-    # backends reachable right now, auto-adjusting the worker count. A single offline
-    # endpoint (e.g. a LAN node down) is skipped, never stranding a worker or the run;
-    # if none are reachable we fall back to the single inline consumer.
-    live_pool = _reachable_provider_pool(pool)
-    if not live_pool:
-        logger.warning("director pool: NO backend reachable; falling back to single inline consumer")
-        return []
-    if len(live_pool) < len(pool):
-        logger.warning("director pool: %d/%d backends live; running on %s", len(live_pool), len(pool), live_pool)
-    # Keep the requested parallelism; round-robin the workers over the LIVE backends
-    # only (so a dead endpoint is routed around, never assigned).
-    legacy_workers: list[tuple[Any, str]] = []
-    for idx in range(concurrency):
-        provider_id = live_pool[idx % len(live_pool)]
-        consumer = director_consumer_type(
+    def _director_factory(worker_id: str) -> Any:
+        return director_consumer_type(
             workspace=workspace_full,
-            worker_id=f"pm_inline_director_{worker_suffix}_w{idx}",
+            worker_id=worker_id,
             visibility_timeout_seconds=exec_timeout,
             poll_interval=0.05,
             enable_safe_parallel=enable_safe_parallel,
         )
-        legacy_workers.append((consumer, provider_id))
-    logger.info(
-        "director multi-backend concurrency: %d worker(s) over %d live endpoint(s) %s",
-        concurrency,
-        len(live_pool),
-        live_pool,
-    )
-    _pool_trace(
-        f"POOL BUILT: {len(legacy_workers)} worker(s) over {len(live_pool)} live backend(s); "
-        f"bindings={[(c.worker_id if hasattr(c, 'worker_id') else f'w{i}', pid) for i, (c, pid) in enumerate(legacy_workers)]}"
-    )
-    return legacy_workers
+
+    return _build_role_worker_pool("director", _director_factory, worker_suffix=worker_suffix)
 
 
-def _drive_director_workers(
+def _drive_role_workers(
+    role_id: str,
     workers: list[tuple[Any, Any]],
     *,
     poll_interval: float = 0.05,
     max_claims_per_worker: int = 256,
     stall_seconds: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Continuously drain ready exec steps across the Director worker pool.
+    """Continuously drain ready stage items across a ROLE's worker pool.
+
+    Role-agnostic (``role_id`` keys the per-worker provider/binding override); the
+    Director is just ``role_id="director"`` via the :func:`_drive_director_workers`
+    wrapper. F15 retirement, fairness yield, all-idle quorum and the stall watchdog
+    are unchanged and apply to any role.
+
+    Continuously drain ready exec steps across the Director worker pool.
 
     Each worker runs its OWN poll loop and, the instant it finishes a step, it
     immediately tries to claim the next ready leaf step — keeping every bound
@@ -1058,9 +1042,9 @@ def _drive_director_workers(
         binding_id = _binding_id(binding)
         slot_index = _binding_slot_index(binding)
         if model:
-            set_role_binding_override("director", provider_id=provider_id, model=model, binding_id=binding_id)
+            set_role_binding_override(role_id, provider_id=provider_id, model=model, binding_id=binding_id)
         else:
-            set_role_provider_override("director", provider_id)
+            set_role_provider_override(role_id, provider_id)
         backend_failures = 0
         try:
             claims = 0
@@ -1126,10 +1110,10 @@ def _drive_director_workers(
                     return
                 time.sleep(poll_interval)  # a sibling is still executing; it may unblock a step
         finally:
-            clear_role_provider_override("director")
+            clear_role_provider_override(role_id)
 
     threads = [
-        threading.Thread(target=_run, args=(i, consumer, binding), name=f"director-w{i}", daemon=True)
+        threading.Thread(target=_run, args=(i, consumer, binding), name=f"{role_id}-w{i}", daemon=True)
         for i, (consumer, binding) in enumerate(workers)
     ]
     for thread in threads:
@@ -1177,6 +1161,23 @@ def _drive_director_workers(
         raise errors[0]
     _log_director_backend_distribution(workers, merged)
     return merged
+
+
+def _drive_director_workers(
+    workers: list[tuple[Any, Any]],
+    *,
+    poll_interval: float = 0.05,
+    max_claims_per_worker: int = 256,
+    stall_seconds: float | None = None,
+) -> list[dict[str, Any]]:
+    """Byte-identical Director facade over the role-generalized :func:`_drive_role_workers`."""
+    return _drive_role_workers(
+        "director",
+        workers,
+        poll_interval=poll_interval,
+        max_claims_per_worker=max_claims_per_worker,
+        stall_seconds=stall_seconds,
+    )
 
 
 def _log_director_backend_distribution(workers: list[tuple[Any, Any]], merged: list[dict[str, Any]]) -> None:
@@ -1290,6 +1291,33 @@ def _run_inline_task_market_consumers(
             "error": str(exc),
         }
 
+    def _ce_factory(worker_id: str) -> Any:
+        """Build a CE consumer for a pooled worker (role-specific kwargs: analysis_runner)."""
+        return ce_consumer_type(
+            workspace=workspace_full,
+            analysis_runner=analysis_runner,
+            worker_id=worker_id,
+            visibility_timeout_seconds=design_timeout,
+            poll_interval=0.05,
+        )
+
+    def _role_pool_enabled(role_id: str) -> bool:
+        """A non-Director role drains via a config-driven worker pool ONLY when explicitly
+        opted in (KERNELONE_TASK_MARKET_ROLE_POOLS comma list) AND its resolved plan is
+        multi-worker. Default OFF, so behaviour is byte-identical until enabled per role."""
+        raw = os.environ.get("KERNELONE_TASK_MARKET_ROLE_POOLS", "")
+        enabled = {token.strip().lower() for token in raw.split(",") if token.strip()}
+        return role_id.strip().lower() in enabled
+
+    def _refresh_role_workers(role_id: str, consumer_factory: Callable[[str], Any]) -> list[tuple[Any, Any]]:
+        """Re-probe reachability and (re)build a role's config-driven worker pool for THIS
+        cycle (real-time load-balancing). Fail-open to [] (single consumer)."""
+        try:
+            return _build_role_worker_pool(role_id, consumer_factory, worker_suffix=worker_suffix)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("%s pool refresh failed this cycle, using single consumer: %s", role_id, exc)
+            return []
+
     def _refresh_director_workers() -> list[tuple[Any, Any]]:
         """Re-evaluate backend reachability and (re)build the Director worker pool for
         THIS cycle, so recovered backends rejoin and dead ones drop out — real-time
@@ -1318,7 +1346,13 @@ def _run_inline_task_market_consumers(
     for cycle_index in range(max_cycles):
         cycles_ran = cycle_index + 1
         try:
-            ce_cycle = ce_consumer.poll_once()
+            # CE drains via its config-driven pool when opted in (default OFF → single
+            # consumer, byte-identical). chief_engineer already resolves to its configured
+            # concurrency (e.g. 3 on MiniMax) via resolve_role_worker_plan.
+            ce_workers = (
+                _refresh_role_workers("chief_engineer", _ce_factory) if _role_pool_enabled("chief_engineer") else []
+            )
+            ce_cycle = _drive_role_workers("chief_engineer", ce_workers) if ce_workers else ce_consumer.poll_once()
             # Real-time pool: re-probe reachable backends every cycle so the run
             # absorbs LLMs that come online mid-run and routes around ones that drop.
             director_workers = _refresh_director_workers()

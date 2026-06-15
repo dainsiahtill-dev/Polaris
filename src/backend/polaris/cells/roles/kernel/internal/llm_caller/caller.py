@@ -65,6 +65,19 @@ _PROVIDER_POLICY_KEYS = (
 )
 
 
+# 5th floor (2026-06-15): reserved output budget for the reasoning-truncation re-ask.
+_REASONING_TRUNCATION_RETRY_MAX_TOKENS = 8000
+
+
+def is_reasoning_truncation_error(error: str) -> bool:
+    """True when an LLM call failed because a reasoning model truncated mid-thought
+    (``finish_reason=length``) leaving no visible output / tool call — the 5th-floor
+    wall. Matches the canonical message from ``LLMResponseParser.finalize_response``.
+    """
+    text = str(error or "").lower()
+    return "empty visible output" in text and "reasoning truncated" in text
+
+
 def _normalize_user_message_for_dedupe(value: Any) -> str:
     token = str(value or "")
     token = token.replace("\r\n", "\n").replace("\r", "\n")
@@ -633,6 +646,47 @@ class LLMCaller:
         self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
         return AIRequest(
             task_type=TaskType.DIALOGUE,
+            role=profile.role_id,
+            input=fallback_input,
+            options=fallback_options,
+            context=fallback_context,
+        )
+
+    def _build_reasoning_truncation_retry_request(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        profile: RoleProfile,
+    ) -> AIRequest:
+        """Re-ask after a reasoning-model truncated mid-thought (5th floor).
+
+        Live (factory-bench L2-08/11/12, 2026-06-15): on an edit/fill turn whose output
+        budget collapsed, the weak qwen Director spends its tiny budget on
+        ``reasoning_content`` and is truncated (``finish_reason=length``) BEFORE any
+        visible output / tool call → ``Empty visible output`` → ``no_materialized``.
+        This retry RESERVES a larger output budget AND tells the model to stop thinking
+        and emit the tool call directly, so the write actually lands. Native tools and
+        the original task_type are PRESERVED (unlike the native-tool-text fallback).
+        """
+        fallback_options = dict(prepared.request_options)
+        try:
+            current_max = int(fallback_options.get("max_tokens") or 0)
+        except (TypeError, ValueError):
+            current_max = 0
+        fallback_options["max_tokens"] = max(current_max, _REASONING_TRUNCATION_RETRY_MAX_TOKENS)
+        fallback_instruction = (
+            "【推理截断回退】\n"
+            "你上一次在推理(thinking)中途被截断(finish_reason=length),没有产出任何可见输出或工具调用。"
+            "这次请【最小化推理】:不要长篇思考,直接输出工具调用(write_file/edit_blocks 等)。"
+            "把要写的文件正文【完整放进工具参数】,严禁只在思考里描述而不调用工具。"
+        )
+        fallback_input = append_runtime_fallback_instruction(str(prepared.input_text or ""), fallback_instruction)
+        fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
+        fallback_context["workspace"] = self.workspace
+        fallback_context["reasoning_truncation_retry"] = True
+        self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
+        return AIRequest(
+            task_type=prepared.ai_request.task_type,
             role=profile.role_id,
             input=fallback_input,
             options=fallback_options,

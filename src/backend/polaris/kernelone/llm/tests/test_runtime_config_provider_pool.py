@@ -21,6 +21,7 @@ from polaris.kernelone.llm.runtime_config import (
     get_role_model,
     get_role_provider_pool,
     reset_runtime_config_manager,
+    resolve_role_worker_plan,
     set_role_binding_override,
     set_role_provider_override,
     set_runtime_config_manager,
@@ -45,6 +46,41 @@ def _manager_with_config(tmp_path: Path, config: dict[str, object]) -> RuntimeCo
     path = tmp_path / "llm_config.json"
     path.write_text(json.dumps(config), encoding="utf-8")
     return RuntimeConfigManager(config_path_resolver=lambda: str(path))
+
+
+class TestResolveRoleWorkerPlan:
+    """Per-role worker plan: len == configured concurrency, decoupled from provider count."""
+
+    def test_plan_count_equals_concurrency_over_pool(self, tmp_path: Path) -> None:
+        set_runtime_config_manager(
+            _manager(
+                tmp_path,
+                {"provider_id": "prov-local", "model": "qwen", "provider_pool": ["prov-lan"], "concurrency": 4},
+            )
+        )
+        try:
+            plan = resolve_role_worker_plan("director")
+            assert len(plan) == 4  # 4 workers (concurrency), NOT 2 (provider count)
+            assert [str(s) for s in plan] == ["prov-local", "prov-lan", "prov-local", "prov-lan"]
+        finally:
+            reset_runtime_config_manager()
+
+    def test_three_workers_on_one_provider(self, tmp_path: Path) -> None:
+        # The user's case: concurrency=3 on ONE provider (e.g. CE=3 on a single MiniMax).
+        set_runtime_config_manager(_manager(tmp_path, {"provider_id": "prov-local", "model": "qwen", "concurrency": 3}))
+        try:
+            plan = resolve_role_worker_plan("director")
+            assert len(plan) == 3
+            assert {str(s) for s in plan} == {"prov-local"}
+        finally:
+            reset_runtime_config_manager()
+
+    def test_concurrency_one_is_single_worker(self, tmp_path: Path) -> None:
+        set_runtime_config_manager(_manager(tmp_path, {"provider_id": "prov-local", "model": "qwen", "concurrency": 1}))
+        try:
+            assert len(resolve_role_worker_plan("director")) == 1
+        finally:
+            reset_runtime_config_manager()
 
 
 class TestRoleModelConfigPool:

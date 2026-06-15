@@ -105,7 +105,7 @@ class TestBuildPool:
             _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
         )
         # 3 workers over 2 endpoints: local, lan, local
-        assert [pid for _c, pid in workers] == ["prov-local", "prov-lan", "prov-local"]
+        assert [str(pid) for _c, pid in workers] == ["prov-local", "prov-lan", "prov-local"]
         assert [c.worker_id for c, _p in workers] == [
             "pm_inline_director_s_w0",
             "pm_inline_director_s_w1",
@@ -358,7 +358,7 @@ class TestF15MidRunResilience:
             workers = _build_director_worker_pool(
                 _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
             )
-            return [pid for _c, pid in workers]
+            return [str(pid) for _c, pid in workers]
 
         # Cycle 1: prov-lan down → all workers on prov-local.
         assert set(_build()) == {"prov-local"}
@@ -496,7 +496,7 @@ class TestResilientPool:
         workers = _build_director_worker_pool(
             _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
         )
-        bound = [pid for _c, pid in workers]
+        bound = [str(pid) for _c, pid in workers]
         assert "prov-lan" not in bound  # the offline backend is never assigned
         assert set(bound) == {"prov-local"}  # all workers routed to the live backend
         assert len(bound) == 4  # requested parallelism preserved (round-robin over live)

@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -722,6 +722,62 @@ def get_provider_max_concurrency(provider_id: str) -> int:
 def get_role_binding_slots(role_id: str) -> tuple[RoleBindingSlot, ...]:
     """Concrete role binding slots after role/provider/binding caps are applied."""
     return get_runtime_config_manager().get_role_binding_slots(role_id)
+
+
+def resolve_role_worker_plan(role_id: str) -> list[RoleBindingSlot]:
+    """Canonical per-role worker plan: ONE slot per worker, ``len(plan) == configured
+    concurrency``, decoupled from provider count.
+
+    This is the single source of truth for "how many market workers a role runs and
+    which provider each binds to". A role may run N workers over ONE provider OR N
+    providers — concurrency is read from config, never from the provider count.
+
+    Built on :func:`get_role_binding_slots`, which already yields ``concurrency`` slots
+    for the no-binding pool case (it round-robins the pool). The ONLY gap it repairs is
+    the binding-path remainder drop: when distinct bindings each default to
+    ``max_concurrency=1`` the slot count equals the binding count and any concurrency
+    beyond it is silently lost (live: pm asks 3, gets 2). Here we round-robin EXTRA
+    duplicate slots over the existing providers until the count reaches the configured
+    concurrency, capping each provider at its ``max_concurrency`` so a single shared
+    cloud endpoint is never oversubscribed. Never reduces, never exceeds concurrency.
+    Pure + fail-open (returns the base slots / empty on error) so callers fall back to
+    the single consumer unchanged.
+    """
+    try:
+        slots = list(get_role_binding_slots(role_id))
+        target = max(1, int(get_role_concurrency(role_id)))
+    except (RuntimeError, ValueError, TypeError):
+        return []
+    if not slots or len(slots) >= target:
+        return slots
+
+    def _cap(provider_id: str) -> int:
+        try:
+            return max(1, int(get_provider_max_concurrency(provider_id)))
+        except (RuntimeError, ValueError, TypeError):
+            return 1
+
+    base = list(slots)
+    caps = {slot.provider_id: _cap(slot.provider_id) for slot in base}
+    used: dict[str, int] = {}
+    for slot in base:
+        used[slot.provider_id] = used.get(slot.provider_id, 0) + 1
+    idx = 0
+    while len(slots) < target:
+        if all(used.get(provider_id, 0) >= cap for provider_id, cap in caps.items()):
+            break  # every provider saturated at its max_concurrency — do not oversubscribe
+        src = base[idx % len(base)]
+        idx += 1
+        if used.get(src.provider_id, 0) >= caps[src.provider_id]:
+            continue
+        slots.append(replace(src, slot_index=len(slots), binding_id=f"{src.binding_id}#dup{len(slots)}"))
+        used[src.provider_id] = used.get(src.provider_id, 0) + 1
+    return slots
+
+
+def role_worker_count(role_id: str) -> int:
+    """Number of worker consumers a role's market pool should build (config-driven)."""
+    return len(resolve_role_worker_plan(role_id))
 
 
 def get_provider_base_url(provider_id: str) -> str:
