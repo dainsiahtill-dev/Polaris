@@ -73,8 +73,8 @@ describe('ContextOSWorkspace', () => {
     for (const id of ['turflog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'telemetry']) {
       expect(screen.getByTestId(`contextos-component-${id}`)).toBeTruthy();
     }
-    // 4 role cards
-    for (const id of ['pm', 'architect', 'director', 'qa']) {
+    // 5 role cards (pm/architect/chief_engineer/director/qa — the real 5-role system)
+    for (const id of ['pm', 'architect', 'chief_engineer', 'director', 'qa']) {
       expect(screen.getByTestId(`contextos-role-${id}`)).toBeTruthy();
     }
   });

@@ -58,6 +58,15 @@ export interface BudgetSlice {
   colorClass: string;
 }
 
+/** 真实事件类型分布的一段（来自观测事件的 category 归类）。 */
+export interface EventTypeSlice {
+  key: string;
+  label: string;
+  count: number;
+  ratio: number;
+  colorClass: string;
+}
+
 export interface RoleCard {
   id: string;
   title: string;
@@ -119,14 +128,29 @@ export interface ContextOSModel {
   components: ComponentHealth[];
   budget: BudgetSlice[];
   byModeSlices: BudgetSlice[];
+  /** 真实事件类型分布（projection/call/tool/state/error），仅遥测激活时非空。 */
+  eventTypes: EventTypeSlice[];
+  /** 事件类型分布的统计基数（= 最近事件窗口大小）。 */
+  eventTypesTotal: number;
   roles: RoleCard[];
   decisions: DecisionRow[];
   policies: string[];
 }
 
+/** 事件类型 → 展示标签与颜色（与解析层 category 一致）。 */
+const EVENT_TYPE_META: ReadonlyArray<{ key: ContextOSEvent['category']; label: string; colorClass: string }> = [
+  { key: 'projection', label: '投影', colorClass: 'bg-accent-secondary' },
+  { key: 'call', label: '调用', colorClass: 'bg-gold' },
+  { key: 'tool', label: '工具', colorClass: 'bg-accent' },
+  { key: 'state', label: '状态', colorClass: 'bg-status-info' },
+  { key: 'error', label: '错误', colorClass: 'bg-status-error' },
+  { key: 'event', label: '其他', colorClass: 'bg-text-dim' },
+];
+
 const ROLE_KEY_ALIASES: Record<string, string[]> = {
   pm: ['pm', 'project_manager', 'planning', 'plan'],
   architect: ['architect', 'design', 'architecture'],
+  chief_engineer: ['chief_engineer', 'chief', 'engineer', 'blueprint'],
   director: ['director', 'execution', 'implementation', 'code', 'worker'],
   qa: ['qa', 'review', 'reviewer', 'quality', 'test'],
 };
@@ -135,9 +159,24 @@ const ROLE_KEY_ALIASES: Record<string, string[]> = {
 export const ROLE_DECISION_ALIASES: Record<string, string[]> = {
   pm: ['pm'],
   architect: ['architect'],
+  chief_engineer: ['chief', 'engineer'],
   director: ['director'],
   qa: ['qa', 'reviewer'],
 };
+
+/**
+ * ContextOS 角色信号面对应的 5 个主角色（与后端 `ROLE_PROMPT_TEMPLATES` /
+ * 统一角色对话 API「所有 5 个角色」一致）。scout 为只读辅助 sub-agent，按设计不入此面。
+ */
+const ROLE_DEFINITIONS: ReadonlyArray<{ id: string; key: string; courtTitle: string; title: string }> = [
+  { id: 'pm', key: 'pm', courtTitle: '尚书令', title: 'PM' },
+  { id: 'architect', key: 'architect', courtTitle: '中书令', title: 'Architect' },
+  { id: 'chief_engineer', key: 'chief_engineer', courtTitle: '工部尚书', title: 'Chief Eng' },
+  { id: 'director', key: 'director', courtTitle: '工部侍郎', title: 'Director' },
+  { id: 'qa', key: 'qa', courtTitle: '门下侍中', title: 'QA' },
+];
+/** 主角色总数（角色信号面 N/N 角色的分母）。 */
+const ROLE_COUNT = ROLE_DEFINITIONS.length;
 
 /** 判断某条决策记录是否属于给定角色（roleId 为 null 时表示「全部」）。 */
 export function decisionMatchesRole(actor: string, roleId: string | null): boolean {
@@ -410,7 +449,7 @@ export function buildContextOSModel(input: {
     { id: 'turflog', label: 'TurfLog', component: 'TurnLog', hint: '事件真值流', state: stateFor('turflog'), metric: `${turfEventTotal} 事件` },
     { id: 'working_mem', label: 'WorkingMem', component: 'WorkingMemoryWindow', hint: '活动上下文窗口', state: stateFor('working_mem'), metric: `${windowItems} 项` },
     { id: 'projection', label: 'ProjectionEngine', component: 'ProjectionEngine', hint: '自适应排序投影', state: stateFor('projection'), metric: telemetryActive ? `${projectionCount} 投影` : `${calls} 次` },
-    { id: 'role_signal', label: 'RoleSignalPlane', component: 'RoleSignalPlane', hint: '角色信号注入', state: stateFor('role_signal'), metric: `${4 - blockedRoles.size}/4 角色` },
+    { id: 'role_signal', label: 'RoleSignalPlane', component: 'RoleSignalPlane', hint: '角色信号注入', state: stateFor('role_signal'), metric: `${Math.max(0, ROLE_COUNT - blockedRoles.size)}/${ROLE_COUNT} 角色` },
     { id: 'budget', label: 'BudgetPlanner', component: 'PhaseAwareBudgetPlanner', hint: '相位感知预算', state: stateFor('budget'), metric: `${formatTokens(avgPerCall)} tok/次` },
     { id: 'prompt', label: 'PromptAssembler', component: 'project() → messages', hint: '提示装配与门禁', state: stateFor('prompt'), metric: `${formatTokens(promptTokens)} 提示` },
     { id: 'llm', label: 'LLM Invoke', component: 'AIExecutor', hint: '模型调用', state: stateFor('llm'), metric: lastLatencyMs !== null ? `${formatTokens(completionTokens)} · ${lastLatencyMs}ms` : `${formatTokens(completionTokens)} 输出` },
@@ -440,7 +479,7 @@ export function buildContextOSModel(input: {
     {
       id: 'role_signal', name: 'RoleSignalPlane', component: '角色信号',
       state: blockedRoles.size > 0 ? 'blocked' : observed ? 'active' : 'idle',
-      metric: blockedRoles.size > 0 ? `${blockedRoles.size} 角色受阻` : `${4 - blockedRoles.size} 角色就绪`,
+      metric: blockedRoles.size > 0 ? `${blockedRoles.size} 角色受阻` : `${Math.max(0, ROLE_COUNT - blockedRoles.size)} 角色就绪`,
       intensity: null,
     },
     {
@@ -488,6 +527,25 @@ export function buildContextOSModel(input: {
       colorClass: modePalette[index % modePalette.length],
     }));
 
+  // 真实事件类型分布（基于最近事件窗口的 category 归类）。
+  const eventTypesTotal = telemetry.events.length;
+  const categoryCounts = new Map<string, number>();
+  for (const event of telemetry.events) {
+    categoryCounts.set(event.category, (categoryCounts.get(event.category) ?? 0) + 1);
+  }
+  const eventTypes: EventTypeSlice[] = telemetryActive
+    ? EVENT_TYPE_META.map((meta) => {
+        const count = categoryCounts.get(meta.key) ?? 0;
+        return {
+          key: meta.key,
+          label: meta.label,
+          count,
+          ratio: eventTypesTotal > 0 ? count / eventTypesTotal : 0,
+          colorClass: meta.colorClass,
+        };
+      }).filter((slice) => slice.count > 0)
+    : [];
+
   const speakerTokens = (speakers: string[]): number => {
     const lowered = speakers.map((s) => s.toLowerCase());
     return dialogueEvents.filter((event) => lowered.includes(String(event.speaker || '').toLowerCase())).length;
@@ -513,12 +571,7 @@ export function buildContextOSModel(input: {
     return 0;
   };
 
-  const roles: RoleCard[] = [
-    { id: 'pm', key: 'pm', courtTitle: '尚书令', title: 'PM' },
-    { id: 'architect', key: 'architect', courtTitle: '中书令', title: 'Architect' },
-    { id: 'director', key: 'director', courtTitle: '工部侍郎', title: 'Director' },
-    { id: 'qa', key: 'qa', courtTitle: '门下侍中', title: 'QA' },
-  ].map((role) => {
+  const roles: RoleCard[] = ROLE_DEFINITIONS.map((role) => {
     const tokens = roleTokens(role.key);
     const telemetryEvents = telemetryActive ? telemetryRoleEvents(telemetry, role.key) : 0;
     const speeches = speakerTokens(role.key === 'qa' ? ['QA', 'Reviewer'] : [role.title]);
@@ -575,6 +628,8 @@ export function buildContextOSModel(input: {
     components,
     budget,
     byModeSlices,
+    eventTypes,
+    eventTypesTotal,
     roles,
     decisions,
     policies,

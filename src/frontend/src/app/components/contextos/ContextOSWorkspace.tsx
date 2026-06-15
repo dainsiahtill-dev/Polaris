@@ -48,6 +48,7 @@ import {
   NOMINAL_CONTEXT_WINDOW,
   type ComponentHealth,
   type DecisionRow,
+  type EventTypeSlice,
   type PipelineStage,
   type PipelineState,
   type RoleCard,
@@ -252,6 +253,34 @@ function BudgetBar({ label, tokens, ratio, colorClass }: { label: string; tokens
       <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
         <div className={cn('h-full rounded-full transition-all duration-500', colorClass)} style={{ width: `${Math.max(2, Math.round(ratio * 100))}%` }} />
       </div>
+    </div>
+  );
+}
+
+function EventTypeDistribution({ slices, total }: { slices: EventTypeSlice[]; total: number }) {
+  return (
+    <div className="space-y-2.5">
+      <div className="flex h-2 overflow-hidden rounded-full bg-white/5" role="img" aria-label="事件类型分布">
+        {slices.map((slice) => (
+          <div
+            key={slice.key}
+            className={cn('h-full', slice.colorClass)}
+            style={{ width: `${Math.max(1, Math.round(slice.ratio * 100))}%` }}
+            title={`${slice.label} · ${slice.count} (${Math.round(slice.ratio * 100)}%)`}
+          />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+        {slices.map((slice) => (
+          <div key={slice.key} className="flex items-center gap-1.5 text-[10px]">
+            <span className={cn('h-2 w-2 shrink-0 rounded-sm', slice.colorClass)} />
+            <span className="text-text-muted">{slice.label}</span>
+            <span className="font-mono text-text-main">{slice.count}</span>
+            <span className="text-text-dim">{Math.round(slice.ratio * 100)}%</span>
+          </div>
+        ))}
+      </div>
+      <div className="text-right font-mono text-[9px] text-text-dim">基于最近 {total} 条观测事件</div>
     </div>
   );
 }
@@ -604,11 +633,11 @@ export function ContextOSWorkspace({
 
             <SectionCard
               title="角色信号面"
-              subtitle="RoleSignalPlane · 四相角色"
+              subtitle={`RoleSignalPlane · ${model.roles.length} 主角色`}
               icon={Boxes}
               action={<span className="text-[10px] text-text-dim">点击按角色过滤决策流</span>}
             >
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 {model.roles.map((role) => (
                   <RoleHex
                     key={role.id}
@@ -716,6 +745,14 @@ export function ContextOSWorkspace({
                 </div>
               )}
             </SectionCard>
+
+            {model.eventTypes.length > 0 && (
+              <SectionCard title="事件类型分布" subtitle="Event Types · 真实观测" icon={Activity}>
+                <div data-testid="contextos-event-types">
+                  <EventTypeDistribution slices={model.eventTypes} total={model.eventTypesTotal} />
+                </div>
+              </SectionCard>
+            )}
           </div>
         </div>
 

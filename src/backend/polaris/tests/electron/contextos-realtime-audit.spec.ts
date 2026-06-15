@@ -71,8 +71,8 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
   for (const id of ["turflog", "working_mem", "projection", "role_signal", "budget", "prompt", "telemetry"]) {
     await expect(window.locator(`[data-testid='contextos-component-${id}']`)).toBeVisible();
   }
-  // 4 role cards.
-  for (const id of ["pm", "architect", "director", "qa"]) {
+  // 5 role cards (pm/architect/chief_engineer/director/qa).
+  for (const id of ["pm", "architect", "chief_engineer", "director", "qa"]) {
     await expect(window.locator(`[data-testid='contextos-role-${id}']`)).toBeVisible();
   }
 
@@ -160,6 +160,11 @@ test("ContextOS renders REAL telemetry seeded into the observation log", async (
   await expect(window.getByTestId("contextos-telemetry-freshness")).toContainText("实时遥测");
   await expect(window.getByText("Prompt Context Injection", { exact: false }).first()).toBeVisible();
   await expect(window.getByText("seeded planning call", { exact: false }).first()).toBeVisible();
+
+  // Real event-type distribution (derived from observation categories) is shown.
+  await expect(window.locator("[data-testid='contextos-event-types']")).toBeVisible();
+  // The 5th role (Chief Engineer / 工部尚书) is part of the real role-signal plane.
+  await expect(window.locator("[data-testid='contextos-role-chief_engineer']")).toBeVisible();
 
   // 截图供人工视觉审计（真实数据态）。
   const shot = "/tmp/contextos-realdata.png";

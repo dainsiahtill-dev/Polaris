@@ -329,10 +329,11 @@ export function parseObservationLog(content: string | null | undefined): Context
   };
 }
 
-/** 角色 id → 观测 actor 的匹配别名（用于把真实事件归并到 4 个角色卡）。 */
+/** 角色 id → 观测 actor 的匹配别名（用于把真实事件归并到 5 个角色卡）。 */
 const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
   pm: ['pm'],
   architect: ['architect'],
+  chief_engineer: ['chief', 'engineer'],
   director: ['director'],
   qa: ['qa', 'reviewer'],
 };

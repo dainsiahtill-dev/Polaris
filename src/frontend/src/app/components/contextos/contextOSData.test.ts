@@ -42,7 +42,8 @@ describe('buildContextOSModel', () => {
     expect(model.totalTokens).toBe(0);
     expect(model.pipeline).toHaveLength(8);
     expect(model.components).toHaveLength(7);
-    expect(model.roles).toHaveLength(4);
+    expect(model.roles).toHaveLength(5);
+    expect(model.roles.map((r) => r.id)).toEqual(['pm', 'architect', 'chief_engineer', 'director', 'qa']);
     expect(model.decisions).toHaveLength(0);
     // Window occupancy must stay within [0,1].
     expect(model.windowOccupancy).toBeGreaterThanOrEqual(0);
@@ -206,6 +207,19 @@ describe('buildContextOSModel with real telemetry', () => {
 
     // Not idle even though pmRunning/directorRunning are false — telemetry is observed activity.
     expect(model.dataIdle).toBe(false);
+  });
+
+  it('derives a real event-type distribution from observation categories', () => {
+    const telemetry = parseObservationLog(TELEMETRY_LOG);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+    // TELEMETRY_LOG = 1 prompt_context (projection) + 2 llm_call (call).
+    expect(model.eventTypesTotal).toBe(3);
+    const byKey = Object.fromEntries(model.eventTypes.map((s) => [s.key, s.count]));
+    expect(byKey['projection']).toBe(1);
+    expect(byKey['call']).toBe(2);
+    // ratios sum to 1 over the present categories.
+    const ratioSum = model.eventTypes.reduce((acc, s) => acc + s.ratio, 0);
+    expect(ratioSum).toBeCloseTo(1, 5);
   });
 
   it('maps telemetry actor tokens onto role cards and marks them active', () => {
