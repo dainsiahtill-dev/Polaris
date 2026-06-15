@@ -44,6 +44,12 @@ normalization could turn a benign-looking call into something the model did not 
 - [LANDED 2026-06-15] Toolkit `parse_tool_calls(text=...)` fail-open fallback parses bare JSON
   tool calls and explicit `[TOOL_CALL]...[/TOOL_CALL]` JSON wrappers only when native/response calls
   are absent; recovered calls flow through canonical tool-name and argument normalization.
+- [LANDED 2026-06-15] `JSONToolParser` accepts provider-style argument containers
+  (`input`, `kwargs`, `tool_input`, `tool_arguments`, `tool_args`, `function_arguments`,
+  `function_args`) and registered-tool flat sibling arguments such as
+  `{"name":"readFile","path":"..."}`. The sibling fallback is gated by the ToolSpecRegistry
+  argument namespace, and `is_json_tool_call()` uses the same guard so package metadata remains
+  non-tool JSON.
 
 ---
 
@@ -284,7 +290,9 @@ Counts: 60 gaps total. Each maps to a P-item in §4. `(sev)` = auditor severity.
 - args under `parameters/input/params` not read by native parsers (only `arguments`).
   **[LANDED 2026-06-15 for native provider parsers; text/json parser chokepoints remain]**
 - arguments JSON parses to non-object (bare list/string) discarded entirely. **(med)**
-- json_based: args spread as sibling top-level keys, or arguments string decoding to dict, ignored. **(med)**
+- json_based: args spread as sibling top-level keys ignored.
+  **[LANDED 2026-06-15 for registered-tool namespace-gated sibling args and expanded argument
+  containers; non-object argument payloads remain fail-closed]**
 - cohere/gemini-string shapes unreachable under `provider='auto'` (partial auto chain). **(med)**
 - tool name uppercase/hyphen/dot (`Write-File`, `fs.write_file`) fails regex gate, dropped. **(med)**
 - text parsers (`json_based`, `core`) return raw args with NO `normalize_tool_arguments` pass.
@@ -377,6 +385,9 @@ Files: `filesystem.py`, `executor/core.py`, new `tool_normalization/edit_intent.
   / JSON-or-Python-literal argument parsing; run Anthropic string `input` through
   `_parse_json_arguments`; add `parameters/input/params/args` arg-key fallback across the native
   provider parser set.
+- [LANDED 2026-06-15] `JSONToolParser` accepts expanded argument-container keys and namespace-gated
+  flat sibling arguments for registered tools while preserving its legacy raw-name/raw-args output
+  contract; `core.parse_tool_calls(text=...)` performs the canonical normalization pass.
 - Remaining: route `_parse_json_arguments` through the lenient `parse_lenient_json_object`.
 - Funnel EVERY parser's `(name,args)` through `normalize_tool_arguments` (+ `normalize_tool_name`
   fold step). Complete the `provider='auto'` parser registry.

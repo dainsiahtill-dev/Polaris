@@ -72,6 +72,29 @@ class GateResult:
 # ---------------------------------------------------------------------------
 
 
+def _case_insensitive_match_exists(full: str) -> bool:
+    """Return True when a file matching ``full`` exists under different casing.
+
+    On case-sensitive filesystems (Linux/WSL2) a declared target like
+    ``readme.md`` does not satisfy ``os.path.exists`` when the materialized file
+    is ``README.md``. Without this fallback the existence gate reports a false
+    ``missing``, flips the task to *create*, and the Director burns turns
+    recreating a file that already exists under different casing (live
+    factory-bench L2-12: ``readme.md`` vs ``README.md``). Read-only and
+    deterministic: only the sibling directory listing is consulted.
+    """
+    name = os.path.basename(full)
+    if not name:
+        return False
+    parent = os.path.dirname(full) or "."
+    try:
+        entries = os.listdir(parent)
+    except OSError:
+        return False
+    lowered = name.lower()
+    return any(entry.lower() == lowered for entry in entries)
+
+
 def check_mode(
     target_files: list[str],
     workspace: str,
@@ -103,7 +126,7 @@ def check_mode(
 
     for rel in clean_targets:
         full = os.path.join(workspace, rel) if workspace else rel
-        if os.path.exists(full):
+        if os.path.exists(full) or _case_insensitive_match_exists(full):
             existing.append(rel)
         else:
             missing.append(rel)

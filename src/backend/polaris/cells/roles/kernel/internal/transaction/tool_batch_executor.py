@@ -893,6 +893,33 @@ class ToolBatchExecutor:
             and not has_direct_read
             and not _has_write
         ):
+            # From-scratch create trap (live factory-bench L3-16): when every known
+            # target file is still absent on disk, demanding read_file on them sends
+            # the Director to read a non-existent file (which fails and yields no read
+            # evidence), so it loops on broad exploration and the entry file (main.py)
+            # is never written. Steer to a direct write — never a read of a file that
+            # does not exist — when no known target has been materialized yet.
+            existing_targets = [
+                target
+                for target in known_target_files
+                if _resolve_existing_workspace_file(workspace=workspace, raw_path=target) is not None
+            ]
+            if known_target_files and not existing_targets:
+                self._raise_contract_violation(
+                    turn_id=turn_id,
+                    error_type="known_target_requires_write",
+                    message=(
+                        "single_batch_contract_violation: target_files_known_and_absent; "
+                        "requires_direct_write. The known target files do not exist yet — do not read a file "
+                        "that does not exist. Call write_file to create them this turn."
+                    ),
+                    metadata={
+                        "phase": "exploring",
+                        "tool_names": non_empty_tool_names,
+                        "known_target_files": known_target_files[:6],
+                        "absent_targets": True,
+                    },
+                )
             self._raise_contract_violation(
                 turn_id=turn_id,
                 error_type="known_target_requires_read",

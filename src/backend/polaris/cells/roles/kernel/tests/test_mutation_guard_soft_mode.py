@@ -605,6 +605,62 @@ async def test_known_target_requires_read_blocks_exploration_only_batch(
 
 
 @pytest.mark.asyncio
+async def test_known_target_absent_steers_to_write_not_read(
+    mock_guard_assert: Any,
+) -> None:
+    """From-scratch create trap (live factory-bench L3-16): when every known target
+    file is still absent on disk, the executor must steer to a direct write — never
+    demand a read of a file that does not exist (which fails, yields no read evidence,
+    loops on broad exploration, and starves the entry file like main.py)."""
+    captured_events: list[Any] = []
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=lambda event: captured_events.append(event),
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    decision = cast(
+        TurnDecision,
+        {
+            "turn_id": "turn_known_target_absent",
+            "metadata": {"workspace": "."},
+            "finalize_mode": "none",
+            "tool_batch": {
+                "batch_id": "batch_known_target_absent",
+                "invocations": [
+                    {
+                        "call_id": "call_glob",
+                        "tool_name": "glob",
+                        "arguments": {"pattern": "**/*"},
+                    }
+                ],
+            },
+        },
+    )
+    state_machine = _build_decoded_state_machine("turn_known_target_absent")
+    ledger = TurnLedger(turn_id="turn_known_target_absent")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    context = [
+        {
+            "role": "user",
+            "content": "请进一步完善 src/brand_new_entry_xyz123.py 文件，实现完整的程序入口逻辑。",
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="target_files_known_and_absent"):
+        await executor.execute_tool_batch(decision, state_machine, ledger, context, stream=False)
+    assert any(
+        isinstance(event, ErrorEvent) and event.error_type == "known_target_requires_write" for event in captured_events
+    )
+    # the read-violation must NOT fire when the known target does not exist yet
+    assert not any(
+        isinstance(event, ErrorEvent) and event.error_type == "known_target_requires_read" for event in captured_events
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("invocations", "case_id"),
     [

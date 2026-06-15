@@ -246,5 +246,43 @@ class TestExecutionModeType:
             assert result.mode == mode
 
 
+class TestCheckModeCaseInsensitive:
+    """L2-12 regression: a declared target whose only on-disk match differs in
+    casing (readme.md vs README.md) must NOT be reported as missing, or the
+    Director flips to create-mode and burns turns recreating an existing file."""
+
+    def test_declared_lowercase_resolves_to_uppercase_on_disk(self, tmp_path: Path) -> None:
+        from polaris.cells.director.tasking.internal.existence_gate import check_mode
+
+        (tmp_path / "README.md").write_text("# project", encoding="utf-8")
+
+        result = check_mode(target_files=["readme.md"], workspace=str(tmp_path))
+
+        assert result.mode == "modify", "case-variant existing file must count as existing"
+        assert "readme.md" in result.existing
+        assert result.missing == []
+
+    def test_case_variant_in_subdir_is_matched(self, tmp_path: Path) -> None:
+        from polaris.cells.director.tasking.internal.existence_gate import check_mode
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "Index.HTML").write_text("<html></html>", encoding="utf-8")
+
+        result = check_mode(target_files=["src/index.html"], workspace=str(tmp_path))
+
+        assert "src/index.html" in result.existing
+        assert result.missing == []
+
+    def test_genuinely_absent_file_still_missing(self, tmp_path: Path) -> None:
+        from polaris.cells.director.tasking.internal.existence_gate import check_mode
+
+        (tmp_path / "README.md").write_text("# project", encoding="utf-8")
+
+        # main.py has no case-variant on disk → still correctly missing
+        result = check_mode(target_files=["main.py"], workspace=str(tmp_path))
+
+        assert "main.py" in result.missing
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

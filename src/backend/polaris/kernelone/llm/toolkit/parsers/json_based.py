@@ -24,17 +24,63 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.toolkit.parsers.utils import (
     ParsedToolCall,
-    _normalize_allowed_tool_names,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_tool_name_for_matching(tool_name: str) -> str:
+    """Return the canonical tool name used for filtering and namespace checks."""
+    from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+    normalized = str(normalize_tool_name(tool_name) or "").strip()
+    return normalized.lower()
+
+
+def _normalize_allowed_tool_names_for_matching(
+    allowed_tool_names: Iterable[str] | None,
+) -> set[str]:
+    """Normalize an allow-list through the registered tool-name resolver."""
+    return {
+        normalized
+        for item in (allowed_tool_names or [])
+        if (normalized := _normalize_tool_name_for_matching(str(item or "")))
+    }
+
+
+def _tool_argument_namespace(tool_name: str) -> set[str]:
+    """Return canonical and alias argument names for a registered tool."""
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    spec = ToolSpecRegistry.get_all_specs().get(tool_name) or {}
+    keys: set[str] = set()
+    arguments = spec.get("arguments", [])
+    if isinstance(arguments, list):
+        for arg in arguments:
+            if not isinstance(arg, Mapping):
+                continue
+            name = str(arg.get("name") or "").strip().lower()
+            if name:
+                keys.add(name)
+
+    arg_aliases = spec.get("arg_aliases", {})
+    if isinstance(arg_aliases, Mapping):
+        for alias, canonical in arg_aliases.items():
+            alias_key = str(alias or "").strip().lower()
+            canonical_key = str(canonical or "").strip().lower()
+            if alias_key:
+                keys.add(alias_key)
+            if canonical_key:
+                keys.add(canonical_key)
+    return keys
 
 
 class JSONToolParser:
@@ -49,7 +95,21 @@ class JSONToolParser:
     """
 
     # Keys that indicate the arguments field
-    ARGUMENT_KEYS: frozenset[str] = frozenset({"arguments", "args", "params", "parameters"})
+    ARGUMENT_KEYS: frozenset[str] = frozenset(
+        {
+            "arguments",
+            "args",
+            "params",
+            "parameters",
+            "input",
+            "kwargs",
+            "tool_input",
+            "tool_arguments",
+            "tool_args",
+            "function_arguments",
+            "function_args",
+        }
+    )
 
     # Keys that indicate the tool name field
     TOOL_NAME_KEYS: frozenset[str] = frozenset({"name", "tool", "function", "action", "tool_name"})
@@ -91,7 +151,7 @@ class JSONToolParser:
             allowed_tool_names: Optional whitelist of allowed tool names.
                                If provided, only these tools will be parsed.
         """
-        self._allowed_names = _normalize_allowed_tool_names(allowed_tool_names)
+        self._allowed_names = _normalize_allowed_tool_names_for_matching(allowed_tool_names)
 
     @classmethod
     def parse(
@@ -171,20 +231,24 @@ class JSONToolParser:
         tool_name = self._extract_tool_name(data)
         if not tool_name:
             return []
+        canonical_tool_name = _normalize_tool_name_for_matching(tool_name)
 
         # Check if tool name is allowed
-        if self._allowed_names and tool_name.lower() not in self._allowed_names:
+        if self._allowed_names and canonical_tool_name not in self._allowed_names:
             logger.debug("Tool '%s' not in allowed list, skipping", tool_name)
             return []
 
         # Extract arguments
         data_lower = {k.lower(): v for k, v in data.items()}
-        if not any(key in data_lower for key in self.ARGUMENT_KEYS):
-            return []
-
-        arguments = self._extract_arguments(data)
-        if arguments is None:
-            arguments = {}
+        has_argument_container = any(key in data_lower for key in self.ARGUMENT_KEYS)
+        if not has_argument_container:
+            sibling_arguments = self._extract_sibling_arguments(data, canonical_tool_name)
+            if sibling_arguments is None:
+                return []
+            arguments: dict[str, Any] = sibling_arguments
+        else:
+            extracted_arguments = self._extract_arguments(data)
+            arguments = {} if extracted_arguments is None else extracted_arguments
 
         import uuid
 
@@ -196,6 +260,36 @@ class JSONToolParser:
                 source="json_parser",
             )
         ]
+
+    def _extract_sibling_arguments(
+        self,
+        data: dict[str, Any],
+        tool_name: str,
+    ) -> dict[str, Any] | None:
+        """Extract flat sibling arguments when they match a registered tool schema.
+
+        Weak models sometimes emit ``{"name": "readFile", "path": "x"}``
+        instead of wrapping the payload under ``arguments``. The fallback stays
+        fail-closed by requiring every sibling key to belong to the registered
+        tool's canonical argument or alias namespace.
+        """
+        namespace = _tool_argument_namespace(tool_name)
+        if not namespace:
+            return None
+
+        meta_keys = {key.lower() for key in self.TOOL_NAME_KEYS | self.ARGUMENT_KEYS} | {
+            "call_id",
+            "id",
+            "source",
+            "tool_call_id",
+            "type",
+        }
+        candidates = {key: value for key, value in data.items() if key.lower() not in meta_keys}
+        if not candidates:
+            return None
+        if not all(key.lower() in namespace for key in candidates):
+            return None
+        return candidates
 
     def _extract_tool_name(self, data: dict[str, Any]) -> str | None:
         """Extract tool name from dictionary.
@@ -263,7 +357,7 @@ class JSONToolParser:
 
         for call in calls:
             # Filter by allowed names if specified
-            if self._allowed_names and call.name.lower() not in self._allowed_names:
+            if self._allowed_names and _normalize_tool_name_for_matching(call.name) not in self._allowed_names:
                 continue
 
             # Deduplicate by name + arguments hash
@@ -319,11 +413,17 @@ def is_json_tool_call(text: str) -> bool:
     if not stripped.startswith("{"):
         return False
 
-    # Quick check: does it have name and arguments keys?
+    # Quick check: does it have name and explicit arguments keys?
     has_name = bool(JSONToolParser._HAS_NAME_RE.search(stripped))
     has_args = bool(JSONToolParser._HAS_ARGUMENTS_RE.search(stripped))
+    if has_name and has_args:
+        return True
 
-    return has_name and has_args
+    # Slow path: flat sibling arguments must pass the same registered-tool
+    # namespace guard as the parser, so package metadata remains non-tool JSON.
+    if has_name:
+        return bool(JSONToolParser.parse(stripped))
+    return False
 
 
 __all__ = [

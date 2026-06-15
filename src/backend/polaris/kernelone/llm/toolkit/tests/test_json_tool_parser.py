@@ -58,6 +58,24 @@ class TestJSONToolParserNormal:
         assert result[0].name == "execute"
         assert result[0].arguments == {"cmd": "ls"}
 
+    def test_parse_with_input_key(self) -> None:
+        """Normal: JSON tool call using provider-style 'input' arguments."""
+        text = '{"name": "read_file", "input": {"path": "test.py", "start_line": "2"}}'
+        result = JSONToolParser.parse(text)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"path": "test.py", "start_line": "2"}
+
+    def test_parse_registered_tool_with_sibling_arguments(self) -> None:
+        """Normal: Registered tool calls may carry args beside the tool name."""
+        text = '{"name": "readFile", "path": "test.py", "start_line": "2"}'
+        result = JSONToolParser.parse(text, allowed_tool_names=["read_file"])
+
+        assert len(result) == 1
+        assert result[0].name == "readFile"
+        assert result[0].arguments == {"path": "test.py", "start_line": "2"}
+
     def test_parse_multiple_calls(self) -> None:
         """Normal: Multiple JSON tool calls in text."""
         text = '{"name": "read", "args": {}} {"name": "write", "args": {}}'
@@ -192,6 +210,13 @@ class TestJSONToolParserException:
 
         assert result == []
 
+    def test_unknown_tool_with_sibling_payload_is_not_tool_call(self) -> None:
+        """Regression: sibling-argument fallback is limited to registered tools."""
+        text = '{"name": "custom_tool", "payload": "hello"}'
+        result = JSONToolParser.parse(text)
+
+        assert result == []
+
     def test_parse_empty_string_returns_empty(self) -> None:
         """Exception: Empty string returns empty list."""
         assert JSONToolParser.parse("") == []
@@ -308,6 +333,14 @@ class TestIsJsonToolCall:
     def test_valid_json_tool_call(self) -> None:
         """Normal: Valid JSON tool call format."""
         assert is_json_tool_call('{"name": "read", "arguments": {}}') is True
+
+    def test_flat_sibling_registered_tool_call(self) -> None:
+        """Normal: Registered flat-sibling JSON calls are recognized."""
+        assert is_json_tool_call('{"name": "readFile", "path": "f.txt"}') is True
+
+    def test_package_json_is_not_tool_call(self) -> None:
+        """Regression: package metadata with a name field is not a tool call."""
+        assert is_json_tool_call('{"name": "bootstrap-project", "version": "1.0.0"}') is False
 
     def test_non_json(self) -> None:
         """Normal: Non-JSON text."""

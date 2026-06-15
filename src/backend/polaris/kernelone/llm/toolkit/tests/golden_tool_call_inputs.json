@@ -461,6 +461,18 @@
         "start_line": 17
       },
       "forbidden_keys": ["path"]
+    },
+    {
+      "id": "text_flat_sibling_read_file",
+      "provider": "text",
+      "payload": "{\"name\": \"readFile\", \"path\": \"/workspace/src/text_flat.py\", \"start_line\": \"18\"}",
+      "allowed_tools": ["read_file"],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/text_flat.py",
+        "start_line": 18
+      },
+      "forbidden_keys": ["path"]
     }
   ]
 }
