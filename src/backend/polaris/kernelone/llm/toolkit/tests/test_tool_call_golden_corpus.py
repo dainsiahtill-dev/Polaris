@@ -33,6 +33,18 @@ def _parse_case(case: dict[str, Any]) -> list[ParsedToolCall]:
     if provider == "anthropic":
         assert isinstance(payload, list)
         return NativeFunctionCallingParser.parse_anthropic(payload)
+    if provider == "azure":
+        assert isinstance(payload, dict)
+        return NativeFunctionCallingParser.parse_azure_openai(payload)
+    if provider == "gemini":
+        assert isinstance(payload, dict)
+        return NativeFunctionCallingParser.parse_gemini(payload)
+    if provider == "cohere":
+        assert isinstance(payload, dict)
+        return NativeFunctionCallingParser.parse_cohere(payload)
+    if provider == "bedrock":
+        assert isinstance(payload, dict)
+        return NativeFunctionCallingParser.parse_bedrock_claude(payload)
     raise AssertionError(f"Unsupported corpus provider: {provider}")
 
 

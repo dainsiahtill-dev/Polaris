@@ -289,6 +289,7 @@ class AgentAccelToolExecutor:
         Returns:
             Execution result
         """
+        import ast
         import json
 
         from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
@@ -314,11 +315,22 @@ class AgentAccelToolExecutor:
         # Arguments must be a dict or a JSON string that decodes to an object.
         if not isinstance(arguments, dict):
             is_json_object_string = False
-            if isinstance(arguments, str):
+            if isinstance(arguments, list):
+                is_json_object_string = len(arguments) == 1 and isinstance(arguments[0], dict)
+            elif isinstance(arguments, str):
+                raw = arguments.strip() or "{}"
                 try:
-                    is_json_object_string = isinstance(json.loads(arguments.strip() or "{}"), dict)
+                    parsed_arguments = json.loads(raw)
                 except json.JSONDecodeError:
-                    is_json_object_string = False
+                    try:
+                        parsed_arguments = ast.literal_eval(raw)
+                    except (ValueError, SyntaxError):
+                        parsed_arguments = None
+                is_json_object_string = isinstance(parsed_arguments, dict) or (
+                    isinstance(parsed_arguments, list)
+                    and len(parsed_arguments) == 1
+                    and isinstance(parsed_arguments[0], dict)
+                )
             if not is_json_object_string:
                 return {
                     "ok": False,

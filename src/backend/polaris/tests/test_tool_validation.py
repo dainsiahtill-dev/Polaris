@@ -136,6 +136,21 @@ def test_read_file_preserves_explicit_line_range_through_executor(monkeypatch, t
     assert payload.get("range_used") == {"start_line": 2, "end_line": 3}
 
 
+def test_executor_accepts_registered_tool_name_variants(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = executor.execute("Read-File", {"path": "sample.txt", "start_line": 1, "end_line": 1})
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload.get("file") == "sample.txt"
+    assert payload.get("range_used") == {"start_line": 1, "end_line": 1}
+
+
 def test_executor_accepts_json_string_wrapped_arguments(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
     executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
@@ -143,6 +158,51 @@ def test_executor_accepts_json_string_wrapped_arguments(monkeypatch, tmp_path) -
     target.write_text("hello\n", encoding="utf-8")
 
     result = executor.execute("read_file", '{"file": "sample.txt", "start_line": 1, "end_line": 1}')
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload.get("range_used") == {"start_line": 1, "end_line": 1}
+    assert str(payload.get("content") or "").strip() == "1 | hello"
+
+
+def test_executor_accepts_python_literal_string_wrapped_arguments(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = executor.execute("read_file", "{'path': 'sample.txt', 'start_line': '1', 'end_line': '1'}")
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload.get("range_used") == {"start_line": 1, "end_line": 1}
+    assert str(payload.get("content") or "").strip() == "1 | hello"
+
+
+def test_executor_accepts_single_object_array_arguments(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = executor.execute("read_file", [{"path": "sample.txt", "start_line": "1", "end_line": "1"}])
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload.get("range_used") == {"start_line": 1, "end_line": 1}
+    assert str(payload.get("content") or "").strip() == "1 | hello"
+
+
+def test_executor_accepts_json_string_single_object_array_arguments(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = executor.execute("read_file", '[{"path": "sample.txt", "start_line": "1", "end_line": "1"}]')
 
     assert result["ok"] is True
     payload = result.get("result")
@@ -160,6 +220,42 @@ def test_executor_accepts_json_string_nested_arguments_wrapper(monkeypatch, tmp_
     result = executor.execute(
         "read_file",
         '{"arguments": {"path": "sample.txt", "start_line": "1", "end_line": "1"}}',
+    )
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload.get("range_used") == {"start_line": 1, "end_line": 1}
+    assert str(payload.get("content") or "").strip() == "1 | hello"
+
+
+def test_executor_accepts_json_string_tool_arguments_wrapper(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = executor.execute(
+        "read_file",
+        '{"tool_arguments": {"path": "sample.txt", "start_line": "1", "end_line": "1"}}',
+    )
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload.get("range_used") == {"start_line": 1, "end_line": 1}
+    assert str(payload.get("content") or "").strip() == "1 | hello"
+
+
+def test_executor_accepts_json_string_double_nested_arguments_wrapper(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = executor.execute(
+        "read_file",
+        '{"arguments": {"kwargs": {"path": "sample.txt", "start_line": "1", "end_line": "1"}}}',
     )
 
     assert result["ok"] is True
@@ -198,6 +294,46 @@ def test_execute_command_strips_markdown_from_python_flag_but_keeps_security_blo
 
     assert result["ok"] is False
     assert "Unsafe Python inline execution flag is not allowed: -c" in str(result.get("error") or "")
+
+
+def test_execute_command_accepts_argv_shape(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+
+    result = executor.execute("execute_command", {"argv": ["python", "--version"], "timeout": 10})
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    output = f"{payload.get('stdout') or ''}\n{payload.get('stderr') or ''}"
+    assert "Python" in output
+
+
+def test_repo_apply_diff_accepts_patch_text_alias_for_dry_run(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "src" / "app.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("old\n", encoding="utf-8")
+
+    read_result = executor.execute("read_file", {"file": "src/app.py"})
+    assert read_result["ok"] is True
+
+    diff = """--- a/src/app.py
++++ b/src/app.py
+@@ -1 +1 @@
+-old
++new
+"""
+
+    result = executor.execute("repo_apply_diff", {"patch_text": diff, "dry_run": True})
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload["files"] == 1
+    assert payload["validation"] == [{"file": "src/app.py", "valid": True, "hunks": 1}]
+    assert target.read_text(encoding="utf-8") == "old\n"
 
 
 def test_read_file_accepts_file_path_alias(monkeypatch, tmp_path) -> None:

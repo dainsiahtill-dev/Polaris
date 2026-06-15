@@ -272,10 +272,64 @@ class TestJsonWrappedArguments:
         assert normalized["file"] == "app.js"
         assert normalized["content"] == "console.log(1);\n"
 
+    def test_raw_python_literal_object_string_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "write_file",
+            "{'file': 'app.js', 'text': 'console.log(1);\\n'}",
+        )
+
+        assert normalized["file"] == "app.js"
+        assert normalized["content"] == "console.log(1);\n"
+
+    def test_single_object_array_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            [{"path": "/workspace/src/app.py", "start_line": "2"}],
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
+
+    def test_json_string_single_object_array_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            '[{"path": "/workspace/src/app.py", "start_line": "2"}]',
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
+
+    def test_python_literal_single_object_array_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            "[{'path': '/workspace/src/app.py', 'start_line': '2'}]",
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
+
+    def test_multi_object_array_is_not_unwrapped(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            [{"path": "a.py"}, {"path": "b.py"}],
+        )
+
+        assert "file" not in normalized
+
     def test_nested_arguments_json_string_unwraps_to_tool_arguments(self) -> None:
         normalized = normalize_tool_arguments(
             "read_file",
             {"arguments": '{"path": "/workspace/src/app.py", "start_line": "2", "end_line": "4"}'},
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
+        assert normalized["end_line"] == 4
+
+    def test_nested_arguments_python_literal_string_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            {"arguments": "{'path': '/workspace/src/app.py', 'start_line': '2', 'end_line': '4'}"},
         )
 
         assert normalized["file"] == "src/app.py"
@@ -292,6 +346,33 @@ class TestJsonWrappedArguments:
         assert normalized["start_line"] == 2
         assert normalized["end_line"] == 4
 
+    def test_tool_argument_wrapper_aliases_unwrap_to_tool_arguments(self) -> None:
+        for wrapper_key in ("tool_arguments", "function_arguments", "tool_args", "function_args"):
+            normalized = normalize_tool_arguments(
+                "read_file",
+                {wrapper_key: {"path": "/workspace/src/app.py", "start_line": "2"}},
+            )
+
+            assert normalized["file"] == "src/app.py"
+            assert normalized["start_line"] == 2
+
+    def test_tool_argument_wrapper_alias_string_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "write_file",
+            {"function_arguments": '{"file_path": "app.js", "body": "console.log(1);\\n"}'},
+        )
+
+        assert normalized["file"] == "app.js"
+        assert normalized["content"] == "console.log(1);\n"
+
+    def test_foreign_wrapper_key_with_tool_arguments_is_not_unwrapped(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            {"metadata": {"path": "/workspace/src/app.py", "start_line": "2"}},
+        )
+
+        assert "file" not in normalized
+
     def test_raw_json_string_nested_arguments_object_unwraps_to_tool_arguments(self) -> None:
         normalized = normalize_tool_arguments(
             "read_file",
@@ -301,6 +382,24 @@ class TestJsonWrappedArguments:
         assert normalized["file"] == "src/app.py"
         assert normalized["start_line"] == 2
         assert normalized["end_line"] == 4
+
+    def test_double_nested_arguments_kwargs_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            {"arguments": {"kwargs": {"path": "/workspace/src/app.py", "start_line": "2"}}},
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
+
+    def test_raw_json_string_double_nested_arguments_kwargs_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            '{"arguments": {"kwargs": {"path": "/workspace/src/app.py", "start_line": "2"}}}',
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
 
     def test_nested_object_wrapper_with_foreign_keys_is_not_unwrapped(self) -> None:
         normalized = normalize_tool_arguments(
@@ -320,6 +419,49 @@ class TestJsonWrappedArguments:
 
         assert normalized["file"] == "data.json"
         assert normalized["content"] == content
+
+    def test_write_content_python_literal_string_is_not_unwrapped(self) -> None:
+        content = "{'file': 'wrong.txt', 'content': 'wrong'}"
+
+        normalized = normalize_tool_arguments(
+            "write_file",
+            {"file": "data.json", "content": content},
+        )
+
+        assert normalized["file"] == "data.json"
+        assert normalized["content"] == content
+
+
+class TestRepoApplyDiffNormalization:
+    """repo_apply_diff accepts only explicit unified-diff payload aliases."""
+
+    SIMPLE_UNIFIED_DIFF = """--- a/src/app.py
++++ b/src/app.py
+@@ -1 +1 @@
+-old
++new
+"""
+
+    @pytest.mark.parametrize("alias", ["patch", "patch_text", "unified_diff", "diff_text"])
+    def test_explicit_diff_payload_alias_maps_to_diff(self, alias: str) -> None:
+        normalized = normalize_tool_arguments(
+            "repo_apply_diff",
+            {alias: self.SIMPLE_UNIFIED_DIFF, "dry_run": "true"},
+        )
+
+        assert normalized["diff"] == self.SIMPLE_UNIFIED_DIFF
+        assert alias not in normalized
+        assert normalized["dry_run"] is True
+
+    def test_file_content_pair_is_not_inferred_as_diff(self) -> None:
+        normalized = normalize_tool_arguments(
+            "repo_apply_diff",
+            {"file": "src/app.py", "content": "old\nnew\n", "dry_run": "true"},
+        )
+
+        assert "diff" not in normalized
+        assert normalized["file"] == "src/app.py"
+        assert normalized["dry_run"] is True
 
 
 class TestSearchReplaceNormalization:
@@ -381,6 +523,21 @@ class TestToolNameNormalization:
         assert normalize_tool_name("ripgrep") == "repo_rg"
         assert normalize_tool_name("list_directory") == "repo_tree"
         assert normalize_tool_name("list_dir") == "repo_tree"
+
+    def test_llm_tool_name_variants_fold_to_registered_canonical_names(self) -> None:
+        """Common weak-model tool-name casing/separator variants should resolve."""
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+        assert normalize_tool_name("Write-File") == "write_file"
+        assert normalize_tool_name("readFile") == "read_file"
+        assert normalize_tool_name("fs.read_file") == "read_file"
+        assert normalize_tool_name("tools.repo-rg") == "repo_rg"
+
+    def test_unknown_namespaces_do_not_fold_to_phantom_tools(self) -> None:
+        """Namespaced unknown tools should stay unknown instead of becoming valid-looking."""
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+        assert normalize_tool_name("fs.delete_everything") == "fs.delete_everything"
 
 
 class TestTypeCoercion:
@@ -515,6 +672,21 @@ class TestExecuteCommandSynonyms:
     def test_command_synonym_maps_to_command(self, synonym: str) -> None:
         normalized = normalize_tool_arguments("execute_command", {synonym: "npm install"})
         assert normalized.get("command") == "npm install", f"{synonym!r} did not map to command: {normalized}"
+
+    def test_argv_list_maps_to_shell_command(self) -> None:
+        normalized = normalize_tool_arguments("execute_command", {"argv": ["npm", "run", "build"]})
+
+        assert normalized.get("command") == "npm run build"
+
+    def test_args_list_maps_to_shell_command(self) -> None:
+        normalized = normalize_tool_arguments("execute_command", {"args": ["npm", "run", "build"]})
+
+        assert normalized.get("command") == "npm run build"
+
+    def test_executable_args_shape_maps_to_shell_command(self) -> None:
+        normalized = normalize_tool_arguments("execute_command", {"executable": "npm", "args": ["run", "build"]})
+
+        assert normalized.get("command") == "npm run build"
 
     def test_canonical_command_unchanged(self) -> None:
         normalized = normalize_tool_arguments("execute_command", {"command": "node index.js"})

@@ -609,6 +609,19 @@ class RoleContextGateway:
                 messages, token_estimate = self._compression_engine.apply_compression(messages, token_estimate)
                 compression_applied = True
 
+        # Guaranteed-fit last resort: apply_compression targets the engine's
+        # construction-time window and only trims dialogue, so a system-heavy
+        # projection (PM planning's oversized "Current goal" plane, no assistant
+        # turns to compress) can survive compression still over budget and crash
+        # the turn before any write. Force the assembly under
+        # enforcement_budget_tokens — which already reserves the role system_prompt
+        # inserted just below — by truncating the oversized system planes.
+        if token_estimate > enforcement_budget_tokens:
+            messages, token_estimate = self._compression_engine.emergency_truncate_with_limit(
+                messages, enforcement_budget_tokens
+            )
+            compression_applied = True
+
         # ADR-0090 I4.3: the role system prompt is prepended HERE, post-enforcement
         # and pre-budgeted — callers must not run a second projection to inject it.
         if system_prompt:

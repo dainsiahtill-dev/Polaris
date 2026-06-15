@@ -555,3 +555,14 @@ class TestMigrationFromContracts:
         # query is the only required argument; mode is optional.
         assert spec.parameters["required"] == ["query"]
         assert "mode" in spec.parameters["properties"]
+
+    def test_repo_apply_diff_schema_allows_registered_patch_aliases(self) -> None:
+        """LLM schema must not flat-require only `diff` when aliases are valid."""
+        spec = ToolSpecRegistry.get("repo_apply_diff")
+        assert spec is not None
+
+        parameters = spec.parameters
+        required = parameters.get("required", [])
+        assert "diff" not in required
+        for key in ("diff", "patch", "patch_text", "unified_diff", "diff_text"):
+            assert key in parameters["properties"]

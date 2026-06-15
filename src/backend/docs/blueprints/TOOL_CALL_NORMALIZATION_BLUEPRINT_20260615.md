@@ -1,6 +1,7 @@
 # Tool-Call Normalization Blueprint (2026-06-15)
 
-> Status: Blueprint & Architecture (per `src/backend/CLAUDE.md §4.1`). No execution yet.
+> Status: Blueprint + incremental implementation ledger (per `src/backend/CLAUDE.md §4.1`).
+> Landed items are marked below; unresolved items remain plan-level until code/tests prove them.
 > Scope: `src/backend` — `polaris/kernelone/llm/toolkit/**`, `polaris/kernelone/tool_execution/**`,
 > `polaris/cells/roles/kernel/internal/**` (parse layer only).
 > Authority order: `AGENTS.md` → `docs/AGENT_ARCHITECTURE_STANDARD.md` → graph → this blueprint.
@@ -20,6 +21,26 @@ Fail-closed safety is preserved: normalization never *invents* a destructive int
 normalization could turn a benign-looking call into something the model did not ask for
 (e.g. a whole-file overwrite, a delete), we gate it behind explicit-intent signals
 (model-chosen `start`/`end`, target-exists checks, the destructive-shrink predicate).
+
+### 0.1 Implementation ledger
+
+- [LANDED 2026-06-15] Stage-0 JSON/Python-literal object unwrap, nested wrapper unwrap
+  (`arguments`, `parameters`, `params`, `input`, `args`, `kwargs`, `tool_input`,
+  `tool_arguments`, `tool_args`, `function_arguments`, `function_args`), and single-object-array
+  unwrap. Multi-object arrays remain fail-closed.
+- [LANDED 2026-06-15] Native provider parsers accept already-decoded dict args and
+  `parameters`/`params`/`input`/`args` aliases across OpenAI, DeepSeek, Anthropic, Gemini,
+  Ollama, Azure OpenAI, Mistral, Groq, Cohere, Vertex AI, and Bedrock Claude; parsed tool names use
+  registry canonicalization.
+- [LANDED 2026-06-15] Registered tool-name folding resolves known casing/separator/namespace
+  variants such as `Write-File`, `readFile`, `fs.read_file`, `tools.repo-rg`; unknown namespaces
+  remain unknown.
+- [LANDED 2026-06-15] `execute_command` accepts explicit argv/CommandRequest shapes:
+  `argv: [...]`, `args: [...]`, `executable + args`, and scalar `args`.
+- [LANDED 2026-06-15] `repo_apply_diff` accepts explicit unified-diff payload aliases
+  `patch`, `patch_text`, `unified_diff`, `diff_text` -> `diff`, and no longer emits a flat
+  JSON-schema `required: ["diff"]` that contradicts `required_any`. Plain `file+content` remains
+  intentionally non-normalized because it is not a diff.
 
 ---
 
@@ -229,8 +250,10 @@ Counts: 60 gaps total. Each maps to a P-item in §4. `(sev)` = auditor severity.
   consumes them, `_drop_unknown_arguments` severs them -> every ranged read degrades to full-file
   read -> trips budget guards. (tool_spec_registry.py:937-941). **(high)**
 - scout_probe mode synonym `find/search/explore/map` rejected (only `locate`/`boundary`). **(med)**
-- repo_apply_diff given `file`+`content` (full body) instead of unified diff; `content` not aliased
-  to `diff`, `file` not in arguments -> dropped, generic "Invalid diff format". **(med)**
+- repo_apply_diff given `file`+`content` (full body) instead of unified diff is intentionally not
+  aliased to `diff`; explicit diff payload aliases are now accepted (`patch`/`patch_text`/
+  `unified_diff`/`diff_text` -> `diff`). Residual gap: improve the teaching error when a full body
+  is sent to a diff-only tool. **(med / fail-closed by design)**
 - repo_rg `glob` as `['*.py']` list not coerced (only string-declared single-element list is). **(low)**
 - repo_read_* canonical `file` skips path-normalization when tool has no triggering alias. **(low)**
 - file_exists double-filled `file`+`path` discards the non-empty alias when canonical is empty. **(low)**
@@ -251,9 +274,10 @@ Counts: 60 gaps total. Each maps to a P-item in §4. `(sev)` = auditor severity.
 - **textual tool call in content** (`[TOOL_CALL]{...}` / bare JSON) silently dropped — the built
   `CanonicalToolCallParser`/`JSONToolParser` are not wired for execution (`del text`, core.py:131). **(high)**
 - **OpenAI/DeepSeek `function.arguments` as already-decoded dict** -> `_parse_json_arguments`
-  stringifies then json.loads fails -> `{}` (native_function.py:68,258). **(high)**
-- Anthropic `input` as JSON string dropped to `{}` (line 109,115). **(med)**
-- args under `parameters/input/params` not read by native parsers (only `arguments`). **(med)**
+  stringifies then json.loads fails -> `{}` (native_function.py:68,258). **[LANDED 2026-06-15]**
+- Anthropic `input` as JSON string dropped to `{}` (line 109,115). **[LANDED 2026-06-15]**
+- args under `parameters/input/params` not read by native parsers (only `arguments`).
+  **[LANDED 2026-06-15 for native provider parsers; text/json parser chokepoints remain]**
 - arguments JSON parses to non-object (bare list/string) discarded entirely. **(med)**
 - json_based: args spread as sibling top-level keys, or arguments string decoding to dict, ignored. **(med)**
 - cohere/gemini-string shapes unreachable under `provider='auto'` (partial auto chain). **(med)**
@@ -274,7 +298,8 @@ Counts: 60 gaps total. Each maps to a P-item in §4. `(sev)` = auditor severity.
   silently dropped. **(med)**
 - read_file `offset=0` (0-based) discarded by `>0` guard. **(low)**
 - arguments as JSON STRING at dispatch boundary -> `{}` -> missing-required (duplicate of Stage 0). **(high)**
-- repo_apply_diff vs apply_patch mirror-image alias directions misbind. **(low)**
+- repo_apply_diff vs apply_patch mirror-image alias directions misbind. **(low; repo_apply_diff
+  direction landed for explicit diff aliases, apply_patch unification remains P4)**
 - empty-string/null optional int validated as junk instead of falling back to default. **(med)**
 - handler-level alias re-implementation duplicates SSoT and masks drift. **(centralization)**
 
@@ -282,7 +307,8 @@ Counts: 60 gaps total. Each maps to a P-item in §4. `(sev)` = auditor severity.
 - content-synonym aliases absent from `_BUILTIN_REGISTRY` write tools (advertise + resolve). **(high)**
 - arguments-as-JSON-string lost to `{}` in `normalize_tool_arguments` (Stage 0 home). **(high)**
 - `to_anthropic_tool` strips `required[]` unconditionally (line 71) -> model never told mandatory args. **(high)**
-- repo_apply_diff `diff` in flat `required[]` contradicts `required_any` -> strict client rejects patch-only. **(med)**
+- repo_apply_diff `diff` in flat `required[]` contradicts `required_any` -> strict client rejects patch-only.
+  **[LANDED 2026-06-15]**
 - contract-native schema builder drops `enum` -> model guesses closed-set values. **(med)**
 - array `items` hardcoded `{type:string}`; scalar->array tolerance not advertised. **(low)**
 - repo_rg over-advertises 5+ alias properties -> model double-fills conflicting values. **(low)**
@@ -326,7 +352,8 @@ Files: `tool_normalization/__init__.py`, `executor/core.py`.
   in one module; consumed by spec builder, SchemaDrivenNormalizer, `_edit_blocks`, write/edit
   handlers, parsers. Lift inner SEARCH/REPLACE aliases (`old_string/new_string/before/after`) into
   `arg_aliases` for precision_edit/search_replace/edit_file. Unify patch param across
-  repo_apply_diff/apply_patch.
+  repo_apply_diff/apply_patch. `repo_apply_diff` explicit patch/diff aliases are already landed;
+  the shared vocabulary module and `apply_patch` side remain open.
 Files: `key_vocabulary.py`, `_edit_blocks.py`, `filesystem.py`, `repo.py`, `tool_spec_registry.py`.
 
 ### P5 — edit_blocks payload classifier + create-intent redirect  *(L)*
@@ -340,9 +367,11 @@ Files: `key_vocabulary.py`, `_edit_blocks.py`, `filesystem.py`, `repo.py`, `tool
 Files: `filesystem.py`, `executor/core.py`, new `tool_normalization/edit_intent.py`.
 
 ### P6 — Parse-layer single chokepoint + native dict-args fix  *(M)*
-- Branch `parse_openai/parse_deepseek` on `isinstance(args, dict)` (return dict directly); run
-  Anthropic string `input` through `_parse_json_arguments`; add `parameters/input/params` arg-key
-  fallback; route `_parse_json_arguments` through the lenient `parse_lenient_json_object`.
+- [LANDED 2026-06-15] Branch native provider parsers through shared decoded-object / single-object-array
+  / JSON-or-Python-literal argument parsing; run Anthropic string `input` through
+  `_parse_json_arguments`; add `parameters/input/params/args` arg-key fallback across the native
+  provider parser set.
+- Remaining: route `_parse_json_arguments` through the lenient `parse_lenient_json_object`.
 - Funnel EVERY parser's `(name,args)` through `normalize_tool_arguments` (+ `normalize_tool_name`
   fold step). Complete the `provider='auto'` parser registry.
 Files: `parsers/native_function.py`, `parsers/json_based.py`, `parsers/core.py`,

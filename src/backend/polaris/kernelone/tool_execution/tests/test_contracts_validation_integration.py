@@ -371,8 +371,15 @@ class TestContractsValidationIntegration:
         assert canonicalize_tool_name("read_head") == "repo_read_head"
         assert canonicalize_tool_name("repo_head") == "repo_read_head"
 
+        # LLM/provider variants fold only when they resolve to registered tools.
+        assert canonicalize_tool_name("Write-File") == "write_file"
+        assert canonicalize_tool_name("readFile") == "read_file"
+        assert canonicalize_tool_name("fs.read_file") == "read_file"
+        assert canonicalize_tool_name("tools.repo-rg") == "repo_rg"
+
         # Unknown tools preserved when keep_unknown=True (default)
         assert canonicalize_tool_name("unknown_tool") == "unknown_tool"
+        assert canonicalize_tool_name("fs.delete_everything") == "fs.delete_everything"
 
     def test_normalize_with_none_args(self) -> None:
         """None 参数规范化测试。

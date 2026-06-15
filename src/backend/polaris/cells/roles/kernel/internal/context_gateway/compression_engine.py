@@ -421,6 +421,9 @@ class CompressionEngine:
         return ""
 
     _EMERGENCY_USER_CONTENT_FLOOR_CHARS = 400
+    _SYSTEM_PLANE_FLOOR_CHARS = 600
+    _SYSTEM_PLANE_TRIM_CHARS_PER_TOKEN = 2
+    _SYSTEM_PLANE_TRIM_PAD_CHARS = 240
 
     def emergency_truncate(self, messages: list[dict[str, Any]], max_tokens: int) -> list[dict[str, Any]]:
         """Emergency truncation when budget is violated.
@@ -454,6 +457,46 @@ class CompressionEngine:
             history.pop(0)
             total = self._token_estimator.estimate(_assemble())
 
+        # When history is exhausted but the assembly still overflows, the weight
+        # sits in an oversized system plane (e.g. PM planning's multi-thousand-token
+        # "Current goal" — there is no dialogue left to trim). Compress, don't crash:
+        # truncate the LARGEST system planes' content head+tail until it fits. The
+        # role_definition system prompt is injected by the gateway AFTER enforcement,
+        # so it is never among these messages and cannot be clipped here.
+        if total > max_tokens and system_msgs:
+            for idx in sorted(
+                range(len(system_msgs)),
+                key=lambda i: self._token_estimator.estimate([system_msgs[i]]),
+                reverse=True,
+            ):
+                if total <= max_tokens:
+                    break
+                content = str(system_msgs[idx].get("content") or "")
+                if len(content) <= self._SYSTEM_PLANE_FLOOR_CHARS:
+                    continue
+                overflow_tokens = total - max_tokens
+                chars_to_remove = min(
+                    len(content) - self._SYSTEM_PLANE_FLOOR_CHARS,
+                    overflow_tokens * self._SYSTEM_PLANE_TRIM_CHARS_PER_TOKEN + self._SYSTEM_PLANE_TRIM_PAD_CHARS,
+                )
+                if chars_to_remove <= 0:
+                    continue
+                keep = len(content) - chars_to_remove
+                head_len = max(1, int(keep * 0.7))
+                tail_len = max(1, keep - head_len)
+                system_msgs[idx] = {
+                    **system_msgs[idx],
+                    "content": (
+                        content[:head_len]
+                        + f"\n...[SYSTEM_PLANE_TRUNCATED:{chars_to_remove} chars]...\n"
+                        + content[-tail_len:]
+                    ),
+                }
+                total = self._token_estimator.estimate(_assemble())
+
+        # Absolute last resort: the final user instruction is content-truncated only
+        # if even truncated system planes cannot make room. Preserving the user turn
+        # keeps the delivery-contract resolver from defaulting to ANALYZE_ONLY.
         if final_user is not None and total > max_tokens:
             content = str(final_user.get("content") or "")
             while total > max_tokens and len(content) > self._EMERGENCY_USER_CONTENT_FLOOR_CHARS:

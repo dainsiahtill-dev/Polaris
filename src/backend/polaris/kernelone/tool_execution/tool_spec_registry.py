@@ -18,6 +18,7 @@ ToolSpecRegistry - 单一权威源头 for LLM Tool定义
 
 from __future__ import annotations
 
+import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -91,6 +92,35 @@ class ToolSpec:
 # =============================================================================
 # ToolSpecRegistry - 单一Source of Truth
 # =============================================================================
+
+
+def _fold_tool_name_token(value: str) -> str:
+    token = str(value or "").strip()
+    if not token:
+        return ""
+    token = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", token)
+    token = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", token)
+    token = re.sub(r"[^A-Za-z0-9]+", "_", token)
+    token = re.sub(r"_+", "_", token).strip("_").lower()
+    return token
+
+
+def _tool_name_candidates(value: str) -> tuple[str, ...]:
+    raw = str(value or "").strip()
+    if not raw:
+        return ()
+
+    candidates: list[str] = [raw]
+    folded = _fold_tool_name_token(raw)
+    if folded and folded not in candidates:
+        candidates.append(folded)
+
+    for segment in raw.split("."):
+        segment_folded = _fold_tool_name_token(segment)
+        if segment_folded and segment_folded not in candidates:
+            candidates.append(segment_folded)
+
+    return tuple(candidates)
 
 
 class ToolSpecRegistry:
@@ -238,8 +268,12 @@ class ToolSpecRegistry:
     @classmethod
     def get_canonical(cls, name: str) -> str:
         """获取canonical name"""
-        spec = cls._get_specs().get(name)
-        return spec.canonical_name if spec else name
+        specs = cls._get_specs()
+        for candidate in _tool_name_candidates(name):
+            spec = specs.get(candidate)
+            if spec:
+                return spec.canonical_name
+        return name
 
     @classmethod
     def is_registered(cls, name: str) -> bool:
@@ -846,16 +880,25 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "write",
         "description": "Apply a unified diff patch to files. Parses file paths from diff headers.",
         "aliases": ["apply_diff", "patch_apply"],
-        "arg_aliases": {"path": "file", "patch": "diff"},
+        "arg_aliases": {
+            "path": "file",
+            "patch": "diff",
+            "patch_text": "diff",
+            "unified_diff": "diff",
+            "diff_text": "diff",
+        },
         "arguments": [
-            {"name": "diff", "type": "string", "required": True},
+            {"name": "diff", "type": "string", "required": False},
             {"name": "patch", "type": "string", "required": False},
+            {"name": "patch_text", "type": "string", "required": False},
+            {"name": "unified_diff", "type": "string", "required": False},
+            {"name": "diff_text", "type": "string", "required": False},
             {"name": "dry_run", "type": "boolean", "required": False},
             {"name": "strict", "type": "boolean", "required": False},
         ],
         "response_format_hint": "Patch application result with files processed and hunks applied",
-        "required_any": [["diff", "patch"]],
-        "required_doc": "args.file + (args.diff or args.patch)",
+        "required_any": [["diff", "patch", "patch_text", "unified_diff", "diff_text"]],
+        "required_doc": "args.diff, args.patch, args.patch_text, args.unified_diff, or args.diff_text required",
     },
     "apply_patch": {
         "category": "write",

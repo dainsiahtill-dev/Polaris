@@ -13,6 +13,7 @@ Single source of truth for:
 
 from __future__ import annotations
 
+import ast
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -68,18 +69,43 @@ TOOL_NAME_ALIASES: dict[str, str] = {
 }
 
 
-_JSON_ARGUMENT_WRAPPER_KEYS = frozenset({"arguments", "parameters", "params", "input", "args", "kwargs", "tool_input"})
+_JSON_ARGUMENT_WRAPPER_KEYS = frozenset(
+    {
+        "arguments",
+        "parameters",
+        "params",
+        "input",
+        "args",
+        "kwargs",
+        "tool_input",
+        "tool_arguments",
+        "tool_args",
+        "function_arguments",
+        "function_args",
+    }
+)
+
+
+def _single_object_array(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], Mapping):
+        return dict(value[0])
+    return None
 
 
 def _parse_json_object(value: str) -> dict[str, Any] | None:
     token = value.strip()
-    if not token or not token.startswith("{"):
+    if not token or not token.startswith(("{", "[")):
         return None
     try:
         parsed = json.loads(token)
     except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+        try:
+            parsed = ast.literal_eval(token)
+        except (ValueError, SyntaxError):
+            return None
+    if isinstance(parsed, dict):
+        return parsed
+    return _single_object_array(parsed)
 
 
 def _tool_argument_namespace(tool_name: str) -> set[str]:
@@ -120,6 +146,15 @@ def _unwrap_json_wrapped_arguments(tool_name: str, tool_args: Any) -> dict[str, 
                 return unwrapped
         return {}
 
+    single_object = _single_object_array(tool_args)
+    if single_object is not None:
+        if _object_keys_belong_to_tool(tool_name, single_object):
+            return single_object
+        unwrapped = _unwrap_json_wrapped_arguments(tool_name, single_object)
+        if unwrapped != single_object:
+            return unwrapped
+        return {}
+
     if not isinstance(tool_args, Mapping):
         return {}
 
@@ -134,6 +169,9 @@ def _unwrap_json_wrapped_arguments(tool_name: str, tool_args: Any) -> dict[str, 
     if isinstance(value, Mapping):
         if _object_keys_belong_to_tool(tool_name, value):
             return dict(value)
+        unwrapped = _unwrap_json_wrapped_arguments(tool_name, value)
+        if unwrapped != value:
+            return unwrapped
         return normalized
 
     if not isinstance(value, str):
@@ -150,12 +188,19 @@ def normalize_tool_name(tool_name: str) -> str:
 
     Resolution order:
     1. Explicit TOOL_NAME_ALIASES (for command-style aliases)
-    2. Schema-driven resolution via contracts.py aliases
+    2. ToolSpecRegistry canonical/alias resolution
+    3. Schema-driven resolution fallback via contracts.py aliases
     """
-    token = str(tool_name or "").strip().lower()
+    raw_token = str(tool_name or "").strip()
+    token = raw_token.lower()
     # First check explicit TOOL_NAME_ALIASES
     if token in TOOL_NAME_ALIASES:
         return TOOL_NAME_ALIASES[token]
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    registry_name = ToolSpecRegistry.get_canonical(raw_token)
+    if registry_name != raw_token:
+        return registry_name
     # Then resolve via schema-driven alias resolution
     from .schema_driven_normalizer import get_schema_normalizer
 

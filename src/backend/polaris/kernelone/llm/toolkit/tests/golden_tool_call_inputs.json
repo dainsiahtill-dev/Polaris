@@ -51,6 +51,79 @@
       "forbidden_keys": ["parameters", "path", "text"]
     },
     {
+      "id": "openai_function_parameters_read_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_function_parameters",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "parameters": {
+              "path": "/workspace/src/parameters.py",
+              "start_line": "10"
+            }
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/parameters.py",
+        "start_line": 10
+      },
+      "forbidden_keys": ["path"]
+    },
+    {
+      "id": "openai_decoded_tool_arguments_wrapper_read_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_tool_arguments_object",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": {
+              "tool_arguments": {
+                "path": "/workspace/src/tool_arguments.py",
+                "start_line": "9"
+              }
+            }
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/tool_arguments.py",
+        "start_line": 9
+      },
+      "forbidden_keys": ["tool_arguments", "path"]
+    },
+    {
+      "id": "openai_decoded_function_args_wrapper_write_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_function_args_object",
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "arguments": {
+              "function_args": {
+                "file_path": "function_args.txt",
+                "body": "wrapped\n"
+              }
+            }
+          }
+        }
+      ],
+      "expected_name": "write_file",
+      "expected_arguments": {
+        "file": "function_args.txt",
+        "content": "wrapped\n"
+      },
+      "forbidden_keys": ["function_args", "file_path", "body"]
+    },
+    {
       "id": "openai_decoded_kwargs_wrapper_read_file",
       "provider": "openai",
       "payload": [
@@ -74,6 +147,78 @@
         "start_line": 3
       },
       "forbidden_keys": ["kwargs", "path"]
+    },
+    {
+      "id": "openai_double_nested_arguments_kwargs_read_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_double_nested_kwargs",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": {
+              "arguments": {
+                "kwargs": {
+                  "path": "/workspace/src/double.py",
+                  "start_line": "4"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/double.py",
+        "start_line": 4
+      },
+      "forbidden_keys": ["arguments", "kwargs", "path"]
+    },
+    {
+      "id": "openai_python_literal_arguments_read_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_python_literal_args",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{'path': '/workspace/src/literal.py', 'start_line': '6'}"
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/literal.py",
+        "start_line": 6
+      },
+      "forbidden_keys": ["path"]
+    },
+    {
+      "id": "openai_single_object_array_arguments_read_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_single_object_array",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": [
+              {
+                "path": "/workspace/src/array.py",
+                "start_line": "7"
+              }
+            ]
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/array.py",
+        "start_line": 7
+      },
+      "forbidden_keys": ["path"]
     },
     {
       "id": "deepseek_decoded_args_wrapper_write_file",
@@ -106,6 +251,36 @@
         "content": "line\n"
       },
       "forbidden_keys": ["args", "file_path", "body"]
+    },
+    {
+      "id": "deepseek_function_input_read_file",
+      "provider": "deepseek",
+      "payload": {
+        "choices": [
+          {
+            "message": {
+              "tool_calls": [
+                {
+                  "id": "call_deepseek_function_input",
+                  "function": {
+                    "name": "read_file",
+                    "input": {
+                      "path": "/workspace/src/deepseek_input.py",
+                      "end_line": "11"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/deepseek_input.py",
+        "end_line": 11
+      },
+      "forbidden_keys": ["path"]
     },
     {
       "id": "anthropic_decoded_input_wrapper_read_file",
@@ -152,6 +327,116 @@
         "end_line": 8
       },
       "forbidden_keys": ["tool_input", "path"]
+    },
+    {
+      "id": "azure_function_input_read_file",
+      "provider": "azure",
+      "payload": {
+        "choices": [
+          {
+            "message": {
+              "tool_calls": [
+                {
+                  "id": "call_azure_function_input",
+                  "function": {
+                    "name": "read_file",
+                    "input": {
+                      "path": "/workspace/src/azure_input.py",
+                      "end_line": "12"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/azure_input.py",
+        "end_line": 12
+      },
+      "forbidden_keys": ["path"]
+    },
+    {
+      "id": "gemini_function_parameters_read_file",
+      "provider": "gemini",
+      "payload": {
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "functionCall": {
+                    "name": "read_file",
+                    "parameters": {
+                      "path": "/workspace/src/gemini_parameters.py",
+                      "start_line": "13"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/gemini_parameters.py",
+        "start_line": 13
+      },
+      "forbidden_keys": ["path"]
+    },
+    {
+      "id": "cohere_input_read_file",
+      "provider": "cohere",
+      "payload": {
+        "tool_calls": [
+          {
+            "id": "call_cohere_input",
+            "name": "read_file",
+            "input": {
+              "path": "/workspace/src/cohere_input.py",
+              "end_line": "14"
+            }
+          }
+        ]
+      },
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/cohere_input.py",
+        "end_line": 14
+      },
+      "forbidden_keys": ["path"]
+    },
+    {
+      "id": "bedrock_tool_use_parameters_read_file",
+      "provider": "bedrock",
+      "payload": {
+        "output": {
+          "message": {
+            "content": [
+              {
+                "type": "toolUse",
+                "toolUse": {
+                  "toolUseId": "call_bedrock_parameters",
+                  "name": "read_file",
+                  "parameters": {
+                    "path": "/workspace/src/bedrock_parameters.py",
+                    "start_line": "15"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/bedrock_parameters.py",
+        "start_line": 15
+      },
+      "forbidden_keys": ["path"]
     }
   ]
 }

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.toolkit.parsers.utils import (
@@ -18,6 +19,94 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
+
+_TOOL_CALL_WRAPPER_RE = re.compile(
+    r"\[(?P<bracket_tag>tool_calls?|TOOL_CALLS?)\](?P<bracket_payload>.*?)\[/\1\]"
+    r"|<(?P<angle_tag>tool_calls?)>(?P<angle_payload>.*?)</\3>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _normalize_allowed_tool_names(
+    allowed_tool_names: Iterable[str] | None,
+) -> set[str]:
+    from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+    return {
+        normalize_tool_name(str(item or ""))
+        for item in (allowed_tool_names or [])
+        if normalize_tool_name(str(item or ""))
+    }
+
+
+def _normalize_textual_calls(
+    calls: list[ParsedToolCall],
+    *,
+    allowed_tool_names: Iterable[str] | None,
+) -> list[ParsedToolCall]:
+    from polaris.kernelone.llm.contracts.tool import ToolCall
+    from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments, normalize_tool_name
+
+    allowed = _normalize_allowed_tool_names(allowed_tool_names)
+    normalized: list[ParsedToolCall] = []
+    for index, call in enumerate(calls):
+        name = normalize_tool_name(str(call.name or ""))
+        if not name:
+            continue
+        if allowed and name not in allowed:
+            continue
+        arguments = normalize_tool_arguments(name, call.arguments if isinstance(call.arguments, dict) else {})
+        normalized.append(
+            ToolCall(
+                id=str(call.id or f"text_{index}"),
+                name=name,
+                arguments=arguments,
+                source=call.source or "text_fallback",
+                raw=call.raw,
+                parse_error=call.parse_error,
+            )
+        )
+    return deduplicate_tool_calls(normalized)
+
+
+def _parse_text_fallback_calls(
+    text: str | None,
+    *,
+    allowed_tool_names: Iterable[str] | None,
+) -> list[ParsedToolCall]:
+    token = str(text or "")
+    if not token.strip():
+        return []
+    from polaris.kernelone.llm.toolkit.parsers.json_based import JSONToolParser
+
+    return _normalize_textual_calls(
+        JSONToolParser.parse(token, allowed_tool_names=None),
+        allowed_tool_names=allowed_tool_names,
+    )
+
+
+def _strip_recovered_tool_call_wrappers(
+    text: str,
+    *,
+    allowed_tool_names: Iterable[str] | None,
+) -> str:
+    source = str(text or "")
+    if not source:
+        return ""
+    pieces: list[str] = []
+    cursor = 0
+    removed_any = False
+    for match in _TOOL_CALL_WRAPPER_RE.finditer(source):
+        wrapped = str(match.group(0) or "")
+        if not _parse_text_fallback_calls(wrapped, allowed_tool_names=allowed_tool_names):
+            continue
+        pieces.append(source[cursor : match.start()])
+        cursor = match.end()
+        removed_any = True
+    if not removed_any:
+        return source
+    pieces.append(source[cursor:])
+    return "".join(pieces).strip()
 
 
 def parse_tool_calls(
@@ -127,40 +216,48 @@ def parse_tool_calls(
                     if deepseek_tools:
                         results.extend(deepseek_tools)
 
-    # Text protocol is deprecated for execution - kept for compatibility
-    del text
+    if not results and text:
+        results.extend(
+            _parse_text_fallback_calls(
+                text,
+                allowed_tool_names=allowed_tool_names,
+            )
+        )
 
     return deduplicate_tool_calls(results)
 
 
-def extract_tool_calls_and_remainder(text: str) -> tuple[list[ParsedToolCall], str]:
+def extract_tool_calls_and_remainder(
+    text: str,
+    *,
+    allowed_tool_names: Iterable[str] | None = None,
+) -> tuple[list[ParsedToolCall], str]:
     """Extract tool calls and return remaining text.
-
-    Note: This function is deprecated for execution as text-based tool
-    protocols are no longer executed.
 
     Args:
         text: Input text
+        allowed_tool_names: Optional whitelist of allowed tool names
 
     Returns:
-        (empty list, original text) - text protocols not executed
+        Parsed text fallback calls plus text with accepted explicit wrappers removed.
     """
-    return [], str(text or "")
+    source = str(text or "")
+    calls = _parse_text_fallback_calls(source, allowed_tool_names=allowed_tool_names)
+    if not calls:
+        return [], source
+    return calls, _strip_recovered_tool_call_wrappers(source, allowed_tool_names=allowed_tool_names)
 
 
 def has_tool_calls(text: str) -> bool:
     """Check if text contains tool calls.
 
-    Note: Always returns False as text-based protocols are deprecated.
-
     Args:
         text: Input text
 
     Returns:
-        False (text protocols not executed)
+        True when text contains a recoverable JSON/text fallback call.
     """
-    del text
-    return False
+    return bool(_parse_text_fallback_calls(text, allowed_tool_names=None))
 
 
 def format_tool_result(tool_name: str, result: dict[str, Any]) -> str:

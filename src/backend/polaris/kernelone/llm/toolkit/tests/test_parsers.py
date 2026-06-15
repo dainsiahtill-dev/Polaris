@@ -159,7 +159,123 @@ class TestNativeFunctionCallingParser:
 
         assert len(result) == 1
         assert result[0].name == "read_file"
-        assert result[0].arguments == {"file": "src/app.py", "start_line": 2}
+        assert result[0].arguments["file"] == "src/app.py"
+        assert result[0].arguments["start_line"] == 2
+
+    def test_parse_openai_accepts_python_literal_string_arguments(self) -> None:
+        """Weak/OpenAI-compatible adapters may return Python literal strings."""
+        tool_calls = [
+            {
+                "id": "call_python_literal",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": "{'file': 'src/app.py', 'start_line': '2'}",
+                },
+            }
+        ]
+
+        result = NativeFunctionCallingParser.parse_openai(tool_calls)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py", "start_line": "2"}
+
+    def test_parse_openai_accepts_single_object_array_arguments(self) -> None:
+        """Weak/OpenAI-compatible adapters may wrap arguments in a one-item array."""
+        tool_calls = [
+            {
+                "id": "call_array",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": [{"file": "src/app.py", "start_line": "2"}],
+                },
+            }
+        ]
+
+        result = NativeFunctionCallingParser.parse_openai(tool_calls)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py", "start_line": "2"}
+
+    def test_parse_openai_accepts_json_string_single_object_array_arguments(self) -> None:
+        """Weak/OpenAI-compatible adapters may stringify one-item argument arrays."""
+        tool_calls = [
+            {
+                "id": "call_array_string",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '[{"file": "src/app.py", "start_line": "2"}]',
+                },
+            }
+        ]
+
+        result = NativeFunctionCallingParser.parse_openai(tool_calls)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py", "start_line": "2"}
+
+    def test_parse_openai_accepts_function_parameters_arguments(self) -> None:
+        """OpenAI-compatible adapters may put args under function.parameters."""
+        tool_calls = [
+            {
+                "id": "call_parameters",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "parameters": {"file": "src/app.py", "start_line": "2"},
+                },
+            }
+        ]
+
+        result = NativeFunctionCallingParser.parse_openai(tool_calls)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py", "start_line": "2"}
+
+    def test_parse_openai_canonicalizes_llm_tool_name_variants(self) -> None:
+        """CamelCase/separator tool names should survive parser canonicalization."""
+        tool_calls = [
+            {
+                "id": "call_read_file",
+                "type": "function",
+                "function": {
+                    "name": "readFile",
+                    "arguments": {"file": "src/app.py"},
+                },
+            }
+        ]
+
+        result = NativeFunctionCallingParser.parse_openai(tool_calls, allowed_tool_names=["read_file"])
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py"}
+
+    def test_parse_openai_uses_non_empty_function_args_when_arguments_is_empty(self) -> None:
+        """Empty canonical arguments should not mask a non-empty function args alias."""
+        tool_calls = [
+            {
+                "id": "call_empty_arguments_with_args",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": {},
+                    "args": {"file": "src/app.py", "end_line": "3"},
+                },
+            }
+        ]
+
+        result = NativeFunctionCallingParser.parse_openai(tool_calls)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py", "end_line": "3"}
 
     def test_parse_deepseek_accepts_decoded_dict_arguments(self) -> None:
         """DeepSeek-compatible adapters may already decode function arguments."""
@@ -187,6 +303,77 @@ class TestNativeFunctionCallingParser:
         assert result[0].name == "write_file"
         assert result[0].arguments == {"file": "src/app.py", "content": "print('ok')"}
 
+    def test_parse_deepseek_accepts_function_input_arguments(self) -> None:
+        """DeepSeek-compatible adapters may put args under function.input."""
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "ds_input",
+                                "function": {
+                                    "name": "read_file",
+                                    "input": {"file": "src/app.py", "end_line": "4"},
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_deepseek(response)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py", "end_line": "4"}
+
+    def test_parse_gemini_accepts_function_parameters_arguments(self) -> None:
+        """Gemini-compatible adapters may put function-call args under parameters."""
+        response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "name": "read_file",
+                                    "parameters": {"file": "src/gemini.py", "end_line": "7"},
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_gemini(response)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/gemini.py", "end_line": "7"}
+
+    def test_parse_ollama_accepts_function_params_arguments(self) -> None:
+        """Ollama-compatible adapters may put function args under params."""
+        response = {
+            "tool_calls": [
+                {
+                    "id": "ollama_params",
+                    "function": {
+                        "name": "read_file",
+                        "params": {"file": "src/ollama.py", "start_line": "4"},
+                    },
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_ollama(response)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/ollama.py", "start_line": "4"}
+
     def test_parse_anthropic_accepts_json_string_input(self) -> None:
         """Anthropic-compatible adapters may pass tool_use input as JSON text."""
         blocks = [
@@ -204,20 +391,204 @@ class TestNativeFunctionCallingParser:
         assert result[0].name == "read_file"
         assert result[0].arguments == {"file": "src/app.py", "start_line": 3}
 
+    def test_parse_azure_accepts_function_input_arguments(self) -> None:
+        """Azure/OpenAI-compatible adapters may put function args under input."""
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "azure_input",
+                                "function": {
+                                    "name": "read_file",
+                                    "input": {"file": "src/azure.py", "end_line": "4"},
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_azure_openai(response)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/azure.py", "end_line": "4"}
+
+    def test_parse_mistral_accepts_function_params_arguments(self) -> None:
+        """Mistral-compatible adapters may put function args under params."""
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "mistral_params",
+                                "function": {
+                                    "name": "write_file",
+                                    "params": '{"file": "src/mistral.py", "content": "print(1)"}',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_mistral(response)
+
+        assert len(result) == 1
+        assert result[0].name == "write_file"
+        assert result[0].arguments == {"file": "src/mistral.py", "content": "print(1)"}
+
+    def test_parse_groq_uses_non_empty_args_when_arguments_is_empty(self) -> None:
+        """Empty Groq function.arguments should not mask a non-empty args alias."""
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "groq_args",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": "{}",
+                                    "args": {"file": "src/groq.py", "start_line": "2"},
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_groq(response)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/groq.py", "start_line": "2"}
+
+    def test_parse_cohere_accepts_input_arguments(self) -> None:
+        """Cohere-compatible adapters may put args under input instead of parameters."""
+        response = {
+            "tool_calls": [
+                {
+                    "id": "cohere_input",
+                    "name": "read_file",
+                    "input": {"file": "src/cohere.py", "end_line": "6"},
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_cohere(response)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/cohere.py", "end_line": "6"}
+
+    def test_parse_bedrock_accepts_tool_use_parameters_arguments(self) -> None:
+        """Bedrock-compatible adapters may put toolUse args under parameters."""
+        response = {
+            "output": {
+                "message": {
+                    "content": [
+                        {
+                            "type": "toolUse",
+                            "toolUse": {
+                                "toolUseId": "bedrock_params",
+                                "name": "read_file",
+                                "parameters": {"file": "src/bedrock.py", "start_line": "3"},
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+
+        result = NativeFunctionCallingParser.parse_bedrock_claude(response)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/bedrock.py", "start_line": "3"}
+
+    def test_parse_vertex_accepts_function_input_arguments(self) -> None:
+        """Vertex-compatible adapters may put function-call args under input."""
+        response = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "function_call": {
+                                    "name": "read_file",
+                                    "input": {"file": "src/vertex.py", "end_line": "9"},
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_vertex_ai(response)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/vertex.py", "end_line": "9"}
+
 
 class TestCoreParsingFunctions:
     """Test core parsing functions from parsers module."""
 
-    def test_extract_tool_calls_and_remainder_returns_empty(self) -> None:
-        """Test that extract_tool_calls_and_remainder returns empty list."""
-        result, remainder = extract_tool_calls_and_remainder("some text")
-        assert result == []
-        assert remainder == "some text"
+    def test_extract_tool_calls_and_remainder_parses_tool_call_wrapper(self) -> None:
+        """Text fallback should parse explicit TOOL_CALL wrappers and strip them from remainder."""
+        text = (
+            'Need a file.\n[TOOL_CALL]{"tool": "readFile", "arguments": {"path": "/workspace/src/app.py", '
+            '"start_line": "2"}}[/TOOL_CALL]\nContinue.'
+        )
 
-    def test_has_tool_calls_returns_false(self) -> None:
-        """Test that has_tool_calls always returns False (text protocols deprecated)."""
-        assert has_tool_calls("[TOOL]test[/TOOL]") is False
+        result, remainder = extract_tool_calls_and_remainder(text, allowed_tool_names=["read_file"])
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments["file"] == "src/app.py"
+        assert result[0].arguments["start_line"] == 2
+        assert "[TOOL_CALL]" not in remainder
+        assert "Need a file." in remainder
+        assert "Continue." in remainder
+
+    def test_has_tool_calls_detects_recoverable_text_calls_only(self) -> None:
+        """Detection should follow the same recoverable text fallback as parsing."""
+        assert has_tool_calls('[TOOL_CALL]{"tool":"read_file","arguments":{"path":"README.md"}}[/TOOL_CALL]') is True
+        assert has_tool_calls('{"name": "read_file", "arguments": {"path": "README.md"}}') is True
+        assert has_tool_calls('{"name": "package", "version": "1.0.0"}') is False
         assert has_tool_calls("any text") is False
+
+    def test_parse_tool_calls_falls_back_to_normalized_bare_json_text(self) -> None:
+        """Bare JSON text should parse through the same canonical name/argument normalization."""
+        text = '{"name": "readFile", "arguments": {"path": "/workspace/src/app.py", "end_line": "5"}}'
+
+        result = parse_tool_calls(text=text, allowed_tool_names=["read_file"])
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments["file"] == "src/app.py"
+        assert result[0].arguments["end_line"] == 5
+
+    def test_parse_tool_calls_ignores_text_when_native_calls_exist(self) -> None:
+        """Native tool calls remain authoritative over textual fallback."""
+        tool_calls = [
+            {"id": "call_1", "type": "function", "function": {"name": "repo_rg", "arguments": '{"pattern": "test"}'}}
+        ]
+        text = '{"name": "read_file", "arguments": {"path": "fallback.py"}}'
+
+        result = parse_tool_calls(text=text, tool_calls=tool_calls, provider="openai")
+
+        assert len(result) == 1
+        assert result[0].name == "repo_rg"
+        assert result[0].arguments == {"pattern": "test"}
 
     def test_parse_tool_calls_with_native_format(self) -> None:
         """Test parse_tool_calls with native format."""

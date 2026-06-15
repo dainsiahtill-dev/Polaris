@@ -74,6 +74,48 @@ _PATH_CANONICAL_KEYS = frozenset(
 )
 
 
+def _string_list(value: Any) -> list[str] | None:
+    if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+        return value
+    return None
+
+
+def _non_empty_string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _normalize_execute_command_shape(args: dict[str, Any]) -> dict[str, Any]:
+    if _non_empty_string(args.get("command")) or _string_list(args.get("command")) is not None:
+        return args
+
+    argv = _string_list(args.get("argv"))
+    if argv is not None:
+        args["command"] = shlex.join(argv)
+        args.pop("argv", None)
+        return args
+
+    executable = _non_empty_string(args.get("executable"))
+    command_args = _string_list(args.get("args"))
+    if executable and command_args is not None:
+        args["command"] = shlex.join([executable, *command_args])
+        args.pop("executable", None)
+        args.pop("args", None)
+        return args
+
+    if command_args is not None:
+        args["command"] = shlex.join(command_args)
+        args.pop("args", None)
+        return args
+
+    args_value = _non_empty_string(args.get("args"))
+    if args_value:
+        args["command"] = args_value
+        args.pop("args", None)
+    return args
+
+
 def _is_path_key(key: str) -> bool:
     """检查规范参数名是否为路径类型。"""
     return key.lower() in _PATH_CANONICAL_KEYS
@@ -90,7 +132,9 @@ class SchemaDrivenNormalizer:
 
     def __init__(self, contracts_specs: dict[str, dict[str, Any]]) -> None:
         self.specs = contracts_specs
-        self._escape_hatches: dict[str, Callable[..., Any]] = {}
+        self._escape_hatches: dict[str, Callable[..., Any]] = {
+            "execute_command": _normalize_execute_command_shape,
+        }
 
     def register_escape_hatch(self, tool_name: str, func: Callable[..., Any]) -> None:
         """为特定工具注册复杂转换钩子。"""

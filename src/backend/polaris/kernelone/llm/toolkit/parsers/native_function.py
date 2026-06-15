@@ -5,6 +5,7 @@ Parses tool calls from OpenAI, Anthropic, Gemini, Ollama, and DeepSeek native fo
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,54 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
+
+_FUNCTION_ARGUMENT_KEYS = (
+    "arguments",
+    "parameters",
+    "params",
+    "input",
+    "args",
+    "kwargs",
+    "tool_input",
+    "tool_arguments",
+    "tool_args",
+    "function_arguments",
+    "function_args",
+)
+
+_EMPTY_ARGUMENT_STRINGS = frozenset({"", "{}", "[]", "null"})
+
+
+def _argument_payload_is_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, dict | list):
+        return not value
+    if isinstance(value, str):
+        return value.strip().lower() in _EMPTY_ARGUMENT_STRINGS
+    return False
+
+
+def _function_arguments_payload(function: dict[str, Any]) -> Any:
+    fallback: Any = {}
+    for key in _FUNCTION_ARGUMENT_KEYS:
+        if key not in function:
+            continue
+        value = function[key]
+        if not _argument_payload_is_empty(value):
+            return value
+        if key == "arguments":
+            fallback = value
+    return fallback
+
+
+def _parsed_tool_name(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+    return normalize_tool_name(raw)
 
 
 class NativeFunctionCallingParser:
@@ -59,13 +108,13 @@ class NativeFunctionCallingParser:
         for call in tool_calls:
             if call.get("type") == "function":
                 function = call.get("function", {})
-                name = str(function.get("name") or "").strip().lower()
+                name = _parsed_tool_name(function.get("name"))
                 if not name:
                     continue
                 if allowed and name not in allowed:
                     continue
 
-                args_str = function.get("arguments", "{}")
+                args_str = _function_arguments_payload(function)
                 arguments, _parse_error = cls._parse_json_arguments(args_str)
 
                 results.append(
@@ -100,7 +149,7 @@ class NativeFunctionCallingParser:
 
         for block in tool_calls:
             if block.get("type") == "tool_use":
-                name = str(block.get("name") or "").strip().lower()
+                name = _parsed_tool_name(block.get("name"))
                 if not name:
                     continue
                 if allowed and name not in allowed:
@@ -150,7 +199,7 @@ class NativeFunctionCallingParser:
                 fc = part.get("functionCall") or part.get("function_call")
                 if not isinstance(fc, dict):
                     continue
-                name = str(fc.get("name") or "").strip().lower()
+                name = _parsed_tool_name(fc.get("name"))
                 if not name:
                     continue
                 if allowed and name not in allowed:
@@ -159,11 +208,7 @@ class NativeFunctionCallingParser:
                 # ADR-0090 W1.7: this parse body was mis-indented under the
                 # whitelist `continue` and therefore unreachable — parse_gemini
                 # silently returned [] for every response.
-                args_str = fc.get("args", "{}")
-                if isinstance(args_str, str):
-                    arguments, _ = cls._parse_json_arguments(args_str)
-                else:
-                    arguments = args_str if isinstance(args_str, dict) else {}
+                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(fc))
 
                 results.append(
                     ParsedToolCall(
@@ -198,18 +243,16 @@ class NativeFunctionCallingParser:
         # Ollama format: tool_calls array
         tool_calls = response.get("tool_calls", [])
         for call in tool_calls:
-            name = str(call.get("function", {}).get("name") or call.get("name") or "").strip().lower()
+            name = _parsed_tool_name(call.get("function", {}).get("name") or call.get("name"))
             if not name:
                 continue
             if allowed and name not in allowed:
                 continue
 
-            args_str = call.get("function", {}).get("arguments", "{}")
-            arguments, _ = (
-                cls._parse_json_arguments(args_str)
-                if isinstance(args_str, str)
-                else (args_str if isinstance(args_str, dict) else {})
-            )
+            function_payload = _function_arguments_payload(call.get("function", {}))
+            if _argument_payload_is_empty(function_payload):
+                function_payload = _function_arguments_payload(call)
+            arguments, _ = cls._parse_json_arguments(function_payload)
 
             results.append(
                 ParsedToolCall(
@@ -249,13 +292,13 @@ class NativeFunctionCallingParser:
 
             for call in tool_calls:
                 function = call.get("function", {}) if isinstance(call, dict) else {}
-                name = str(function.get("name") or "").strip().lower()
+                name = _parsed_tool_name(function.get("name"))
                 if not name:
                     continue
                 if allowed and name not in allowed:
                     continue
 
-                args_str = function.get("arguments", "{}")
+                args_str = _function_arguments_payload(function)
                 arguments, _ = cls._parse_json_arguments(args_str)
 
                 results.append(
@@ -305,18 +348,13 @@ class NativeFunctionCallingParser:
             tool_calls = message.get("tool_calls", [])
             for call in tool_calls:
                 function = call.get("function", {}) if isinstance(call, dict) else {}
-                name = str(function.get("name") or "").strip().lower()
+                name = _parsed_tool_name(function.get("name"))
                 if not name:
                     continue
                 if allowed and name not in allowed:
                     continue
 
-                args_str = function.get("arguments", "{}")
-                arguments, _ = (
-                    cls._parse_json_arguments(args_str)
-                    if isinstance(args_str, str)
-                    else (args_str if isinstance(args_str, dict) else {})
-                )
+                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
                     ParsedToolCall(
@@ -357,18 +395,13 @@ class NativeFunctionCallingParser:
 
             for call in tool_calls:
                 function = call.get("function", {}) if isinstance(call, dict) else {}
-                name = str(function.get("name") or "").strip().lower()
+                name = _parsed_tool_name(function.get("name"))
                 if not name:
                     continue
                 if allowed and name not in allowed:
                     continue
 
-                args_str = function.get("arguments", "{}")
-                arguments, _ = (
-                    cls._parse_json_arguments(args_str)
-                    if isinstance(args_str, str)
-                    else (args_str if isinstance(args_str, dict) else {})
-                )
+                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
                     ParsedToolCall(
@@ -409,18 +442,13 @@ class NativeFunctionCallingParser:
 
             for call in tool_calls:
                 function = call.get("function", {}) if isinstance(call, dict) else {}
-                name = str(function.get("name") or "").strip().lower()
+                name = _parsed_tool_name(function.get("name"))
                 if not name:
                     continue
                 if allowed and name not in allowed:
                     continue
 
-                args_str = function.get("arguments", "{}")
-                arguments, _ = (
-                    cls._parse_json_arguments(args_str)
-                    if isinstance(args_str, str)
-                    else (args_str if isinstance(args_str, dict) else {})
-                )
+                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(function))
 
                 results.append(
                     ParsedToolCall(
@@ -460,19 +488,13 @@ class NativeFunctionCallingParser:
             if not isinstance(call, dict):
                 continue
 
-            name = str(call.get("name") or "").strip().lower()
+            name = _parsed_tool_name(call.get("name"))
             if not name:
                 continue
             if allowed and name not in allowed:
                 continue
 
-            # Cohere uses 'parameters' key for arguments
-            params = call.get("parameters", {})
-            arguments, _ = (
-                cls._parse_json_arguments(params)
-                if isinstance(params, str)
-                else (params if isinstance(params, dict) else {})
-            )
+            arguments, _ = cls._parse_json_arguments(_function_arguments_payload(call))
 
             results.append(
                 ParsedToolCall(
@@ -521,7 +543,7 @@ class NativeFunctionCallingParser:
                 fc = part.get("functionCall") or part.get("function_call")
                 if not isinstance(fc, dict):
                     continue
-                name = str(fc.get("name") or "").strip().lower()
+                name = _parsed_tool_name(fc.get("name"))
                 if not name:
                     continue
                 if allowed and name not in allowed:
@@ -530,11 +552,7 @@ class NativeFunctionCallingParser:
                 # ADR-0090 W1.7: this parse body was mis-indented under the
                 # whitelist `continue` (unreachable), and the dict branch tried
                 # to tuple-unpack a plain dict — parse_vertex_ai returned [].
-                args_str = fc.get("args", "{}")
-                if isinstance(args_str, str):
-                    arguments, _ = cls._parse_json_arguments(args_str)
-                else:
-                    arguments = args_str if isinstance(args_str, dict) else {}
+                arguments, _ = cls._parse_json_arguments(_function_arguments_payload(fc))
 
                 results.append(
                     ParsedToolCall(
@@ -592,18 +610,13 @@ class NativeFunctionCallingParser:
             if not tool_use:
                 continue
 
-            name = str(tool_use.get("name") or "").strip().lower()
+            name = _parsed_tool_name(tool_use.get("name"))
             if not name:
                 continue
             if allowed and name not in allowed:
                 continue
 
-            input_data = tool_use.get("input", {})
-            arguments, _ = (
-                cls._parse_json_arguments(input_data)
-                if isinstance(input_data, str)
-                else (input_data if isinstance(input_data, dict) else {})
-            )
+            arguments, _ = cls._parse_json_arguments(_function_arguments_payload(tool_use))
 
             # toolUseId may be None or empty string
             tool_id = tool_use.get("toolUseId") or tool_use.get("tool_use_id")
@@ -630,12 +643,19 @@ class NativeFunctionCallingParser:
         """
         if isinstance(args_str, dict):
             return dict(args_str), None
+        if isinstance(args_str, list) and len(args_str) == 1 and isinstance(args_str[0], dict):
+            return dict(args_str[0]), None
 
         raw = str(args_str or "").strip() or "{}"
         try:
             parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                return parsed, None
-            return {}, "arguments must be a JSON object"
         except json.JSONDecodeError as exc:
-            return {}, f"invalid JSON arguments: {exc}"
+            try:
+                parsed = ast.literal_eval(raw)
+            except (ValueError, SyntaxError):
+                return {}, f"invalid JSON arguments: {exc}"
+        if isinstance(parsed, dict):
+            return parsed, None
+        if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+            return dict(parsed[0]), None
+        return {}, "arguments must be a JSON object"
