@@ -279,7 +279,7 @@ class AgentAccelToolExecutor:
                 dropped.append(str(key))
         return filtered, dropped
 
-    def execute(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def execute(self, tool_name: str, arguments: Any) -> dict[str, Any]:
         """Execute a tool call.
 
         Args:
@@ -289,16 +289,16 @@ class AgentAccelToolExecutor:
         Returns:
             Execution result
         """
+        import json
+
         from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
         from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
         from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
         # Resolve aliases to canonical name using ToolSpecRegistry
         canonical_tool_name = canonicalize_tool_name(tool_name, keep_unknown=True)
-        normalized_arguments = normalize_tool_arguments(
-            canonical_tool_name,
-            arguments if isinstance(arguments, dict) else {},
-        )
+        normalized_arguments = normalize_tool_arguments(canonical_tool_name, arguments)
+        raw_arguments = arguments if isinstance(arguments, dict) else {}
 
         # Runtime-enforced tool whitelist check (executor-level hard gate).
         # This prevents role-policy bypass: even if an upstream gate is skipped,
@@ -311,12 +311,19 @@ class AgentAccelToolExecutor:
         if spec is None:
             return {"ok": False, "error": f"Unknown tool: {canonical_tool_name}"}
 
-        # Arguments must be a dict
+        # Arguments must be a dict or a JSON string that decodes to an object.
         if not isinstance(arguments, dict):
-            return {
-                "ok": False,
-                "error": "Parameter validation failed: arguments must be an object",
-            }
+            is_json_object_string = False
+            if isinstance(arguments, str):
+                try:
+                    is_json_object_string = isinstance(json.loads(arguments.strip() or "{}"), dict)
+                except json.JSONDecodeError:
+                    is_json_object_string = False
+            if not is_json_object_string:
+                return {
+                    "ok": False,
+                    "error": "Parameter validation failed: arguments must be an object",
+                }
 
         normalized_arguments, dropped_arguments = self._drop_unknown_arguments(
             spec,
@@ -350,7 +357,7 @@ class AgentAccelToolExecutor:
         # to "select" — the LLM must read the file before editing.
         # Precision errors like 'return0' (generated vs. recalled) are prevented here.
         if canonical_tool_name in EDIT_TOOLS:
-            edit_file_arg = normalized_arguments.get("file", arguments.get("file"))
+            edit_file_arg = normalized_arguments.get("file", raw_arguments.get("file"))
             if edit_file_arg:
                 from polaris.kernelone.llm.toolkit.executor.utils import (
                     resolve_workspace_path,
@@ -410,7 +417,7 @@ class AgentAccelToolExecutor:
                 # Pass search fingerprint for sequence-break detection on no_match errors
                 search_fp: str | None = None
                 if error_pattern.error_type == "no_match":
-                    search_val = normalized_arguments.get("search", arguments.get("search"))
+                    search_val = normalized_arguments.get("search", raw_arguments.get("search"))
                     if search_val:
                         search_fp = str(search_val)[:200]
                 failure_result = self._failure_budget.record_failure(error_pattern, search_fingerprint=search_fp)

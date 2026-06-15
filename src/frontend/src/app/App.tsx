@@ -263,7 +263,10 @@ function AppContent() {
   } = useFactory({ workspace });
   const factoryRuntimeActive = factoryIsLoading || isFactoryRunActive(factoryCurrentRun);
 
-  const { stats: usageStats, loading: usageLoading, error: usageError, refresh: refreshUsage } = useUsageStats(workspace || null);
+  // Usage stats are derived from the live WebSocket LLM stream (journal raw.data
+  // tokens), not a polled file — see useUsageStats. llmStreamEvents is destructured
+  // from useRuntime above.
+  const { stats: usageStats, loading: usageLoading, error: usageError, refresh: refreshUsage } = useUsageStats(llmStreamEvents);
   const directorRunning = resolveRunning(directorStatus);
   const lancedbBlocked = isLancedbExplicitlyBlocked(lancedbStatus);
   const latestProcessActivity = useMemo(

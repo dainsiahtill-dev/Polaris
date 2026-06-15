@@ -106,13 +106,13 @@ class NativeFunctionCallingParser:
                 if allowed and name not in allowed:
                     continue
 
-                arguments = block.get("input", {})
+                arguments, _ = cls._parse_json_arguments(block.get("input", {}))
 
                 results.append(
                     ParsedToolCall(
                         id=str(block.get("id") or f"anthropic_{len(results)}"),
                         name=name,
-                        arguments=arguments if isinstance(arguments, dict) else {},
+                        arguments=arguments,
                         raw=json.dumps(block, ensure_ascii=False),
                     )
                 )
@@ -619,15 +619,18 @@ class NativeFunctionCallingParser:
         return results
 
     @staticmethod
-    def _parse_json_arguments(args_str: str) -> tuple[dict[str, Any], str | None]:
-        """Parse JSON arguments string.
+    def _parse_json_arguments(args_str: Any) -> tuple[dict[str, Any], str | None]:
+        """Parse JSON arguments string or decoded object.
 
         Args:
-            args_str: JSON string of arguments
+            args_str: JSON string or already-decoded arguments object
 
         Returns:
             Tuple of (parsed_dict, error_message or None)
         """
+        if isinstance(args_str, dict):
+            return dict(args_str), None
+
         raw = str(args_str or "").strip() or "{}"
         try:
             parsed = json.loads(raw)

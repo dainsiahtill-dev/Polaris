@@ -1,116 +1,84 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useMemo } from 'react';
 import type { UsageStats } from '@/app/components/UsageHUD';
-import { readFile } from '@/services/fileService';
+import type { LogEntry } from '@/types/log';
 
-interface RuntimeUsageData {
-  totals: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-  calls: number;
-  by_mode?: Record<string, { total_tokens: number; calls: number }>;
+function toNum(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
 }
 
-export const LLM_OBSERVATIONS_LOGICAL_PATH = 'runtime/events/llm.observations.jsonl';
-
 /**
- * Hook to fetch and manage usage statistics
- * Data is read from runtime events JSONL files
+ * Hook deriving LLM usage statistics from the live WebSocket runtime stream.
+ *
+ * Source of truth = Polaris's existing realtime framework, NOT file polling:
+ *   emit_llm_event → MessageBus → WS /v2/ws/runtime → useRuntime.llmStreamEvents.
+ * The journal `llm` channel (CanonicalLogEventV2) carries real per-call usage in
+ * raw.data (prompt/completion tokens), which parseLlmStreamLine surfaces into
+ * LogEntry.meta (promptTokens / completionTokens / totalTokens). We aggregate those
+ * push-delivered events — no polling, no file read.
+ *
+ * Previously this polled `runtime/events/llm.observations.jsonl` — a phantom file no
+ * backend code path writes — so the global token HUD was permanently empty in real
+ * runs. This rewire roots out that defect by consuming the same realtime stream the
+ * rest of the app already renders live.
  */
-export function useUsageStats(workspace: string | null) {
-  const [stats, setStats] = useState<UsageStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function useUsageStats(llmStreamEvents: readonly LogEntry[] | null | undefined) {
+  const stats = useMemo<UsageStats | null>(() => {
+    const events = Array.isArray(llmStreamEvents) ? llmStreamEvents : [];
+    if (events.length === 0) return null;
 
-  const fetchStats = useCallback(async () => {
-    if (!workspace) {
-      setStats(null);
-      return;
+    const totals = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    const byMode: Record<string, { total_tokens: number; calls: number }> = {};
+    let calls = 0;
+
+    for (const entry of events) {
+      const meta = entry && typeof entry.meta === 'object' && entry.meta ? (entry.meta as Record<string, unknown>) : {};
+      const streamEvent = String(meta['streamEvent'] || '').toLowerCase();
+      // A discrete call = a "completed" lifecycle event. Recognise both the canonical
+      // journal vocabulary (llm_completed/llm_failed) and the legacy one (invoke_*).
+      const isCall =
+        streamEvent === 'llm_completed' ||
+        streamEvent === 'llm_failed' ||
+        streamEvent === 'invoke_done' ||
+        streamEvent === 'invoke_error';
+
+      const prompt = toNum(meta['promptTokens']);
+      const completion = toNum(meta['completionTokens']);
+      const total = toNum(meta['totalTokens']) || prompt + completion;
+
+      totals.prompt_tokens += prompt;
+      totals.completion_tokens += completion;
+      totals.total_tokens += total;
+
+      if (isCall) {
+        calls += 1;
+        const mode = String(meta['role'] || entry.source || 'unknown').toLowerCase();
+        if (!byMode[mode]) byMode[mode] = { total_tokens: 0, calls: 0 };
+        byMode[mode].calls += 1;
+        byMode[mode].total_tokens += total;
+      }
     }
 
-    setLoading(true);
-    setError(null);
+    if (calls === 0 && totals.total_tokens === 0) return null;
 
-    try {
-      // Always read via the logical runtime path so storage-layout changes do not break the HUD.
-      const result = await readFile(LLM_OBSERVATIONS_LOGICAL_PATH, 500);
-
-      if (!result.ok || !result.data) {
-        // If no usage file exists, return null silently
-        setStats(null);
-        return;
-      }
-
-      const content = result.data.content as string | undefined;
-      
-      if (!content) {
-        setStats(null);
-        return;
-      }
-
-      // Parse JSONL content
-      const lines = content.split('\n').filter(line => line.trim());
-      const usageData: RuntimeUsageData = {
-        totals: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        calls: 0,
-        by_mode: {}
-      };
-
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line);
-          if (entry.kind === 'observation' && entry.output?.usage) {
-            const usage = entry.output.usage;
-            const mode = entry.refs?.mode || 'unknown';
-            
-            // Aggregate totals
-            usageData.totals.prompt_tokens += usage.prompt_tokens || 0;
-            usageData.totals.completion_tokens += usage.completion_tokens || 0;
-            usageData.totals.total_tokens += usage.total_tokens || 0;
-            usageData.calls += 1;
-
-            // Aggregate by mode
-            if (!usageData.by_mode) {
-              usageData.by_mode = {};
-            }
-            if (!usageData.by_mode[mode]) {
-              usageData.by_mode[mode] = { total_tokens: 0, calls: 0 };
-            }
-            usageData.by_mode[mode].total_tokens += usage.total_tokens || 0;
-            usageData.by_mode[mode].calls += 1;
-          }
-        } catch {
-          // Skip invalid JSON lines
-        }
-      }
-
-      setStats({
-        totals: usageData.totals,
-        calls: usageData.calls,
-        estimated_calls: 0,
-        by_mode: usageData.by_mode
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch usage stats');
-      setStats(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspace]);
-
-  useEffect(() => {
-    fetchStats();
-    
-    // Poll every 30 seconds
-    const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
-  }, [fetchStats]);
+    return {
+      totals,
+      calls,
+      // Journal usage is a real token count, never a char estimate.
+      estimated_calls: 0,
+      by_mode: byMode,
+    };
+  }, [llmStreamEvents]);
 
   return {
     stats,
-    loading,
-    error,
-    refresh: fetchStats
+    loading: false,
+    error: null as string | null,
+    // Push-based: usage flows from the WebSocket runtime stream; nothing to re-fetch.
+    refresh: () => {},
   };
 }

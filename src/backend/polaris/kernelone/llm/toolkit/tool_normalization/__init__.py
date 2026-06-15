@@ -13,6 +13,7 @@ Single source of truth for:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,83 @@ TOOL_NAME_ALIASES: dict[str, str] = {
 }
 
 
+_JSON_ARGUMENT_WRAPPER_KEYS = frozenset({"arguments", "parameters", "params", "input", "args", "kwargs", "tool_input"})
+
+
+def _parse_json_object(value: str) -> dict[str, Any] | None:
+    token = value.strip()
+    if not token or not token.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(token)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _tool_argument_namespace(tool_name: str) -> set[str]:
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    spec = ToolSpecRegistry.get_all_specs().get(tool_name) or {}
+    keys: set[str] = set()
+    for arg in spec.get("arguments", []):
+        if isinstance(arg, Mapping):
+            name = str(arg.get("name") or "").strip()
+            if name:
+                keys.add(name)
+    arg_aliases = spec.get("arg_aliases", {})
+    if isinstance(arg_aliases, Mapping):
+        for alias, canonical in arg_aliases.items():
+            alias_key = str(alias or "").strip()
+            canonical_key = str(canonical or "").strip()
+            if alias_key:
+                keys.add(alias_key)
+            if canonical_key:
+                keys.add(canonical_key)
+    return keys
+
+
+def _object_keys_belong_to_tool(tool_name: str, payload: Mapping[str, Any]) -> bool:
+    namespace = _tool_argument_namespace(tool_name)
+    return bool(namespace) and set(payload).issubset(namespace)
+
+
+def _unwrap_json_wrapped_arguments(tool_name: str, tool_args: Any) -> dict[str, Any]:
+    if isinstance(tool_args, str):
+        parsed = _parse_json_object(tool_args)
+        if parsed is not None and _object_keys_belong_to_tool(tool_name, parsed):
+            return dict(parsed)
+        if parsed is not None:
+            unwrapped = _unwrap_json_wrapped_arguments(tool_name, parsed)
+            if unwrapped != parsed:
+                return unwrapped
+        return {}
+
+    if not isinstance(tool_args, Mapping):
+        return {}
+
+    normalized = dict(tool_args)
+    if len(normalized) != 1:
+        return normalized
+
+    key, value = next(iter(normalized.items()))
+    if str(key) not in _JSON_ARGUMENT_WRAPPER_KEYS:
+        return normalized
+
+    if isinstance(value, Mapping):
+        if _object_keys_belong_to_tool(tool_name, value):
+            return dict(value)
+        return normalized
+
+    if not isinstance(value, str):
+        return normalized
+
+    parsed = _parse_json_object(value)
+    if parsed is not None and _object_keys_belong_to_tool(tool_name, parsed):
+        return dict(parsed)
+    return normalized
+
+
 def normalize_tool_name(tool_name: str) -> str:
     """Normalize tool name by applying alias mappings.
 
@@ -86,7 +164,7 @@ def normalize_tool_name(tool_name: str) -> str:
 
 def normalize_tool_arguments(
     tool_name: str,
-    tool_args: Mapping[str, Any] | None,
+    tool_args: Any,
 ) -> dict[str, Any]:
     """Normalize tool arguments using two-stage normalization.
 
@@ -97,10 +175,9 @@ def normalize_tool_arguments(
     parameter aliases, while per-tool normalizers handle complex transformations
     that cannot be expressed as simple alias mappings.
     """
-    normalized = {} if not isinstance(tool_args, Mapping) else dict(tool_args)
-
     # First resolve tool name aliases
     normalized_tool_name = normalize_tool_name(tool_name)
+    normalized = _unwrap_json_wrapped_arguments(normalized_tool_name, tool_args)
 
     # Stage 1: Apply schema-driven normalization (arg_aliases)
     # This handles all parameter alias mappings declared in contracts.py

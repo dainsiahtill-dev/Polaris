@@ -30,8 +30,10 @@ from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
 from polaris.kernelone.errors import BudgetExceededError
 from polaris.kernelone.events.context_events import ContextEvent, EventType, get_event_writer
+from polaris.kernelone.events.io_events import emit_event
 from polaris.kernelone.fs import format_workspace_tree
 from polaris.kernelone.llm.reasoning import ReasoningStripper
+from polaris.kernelone.storage.io_paths import resolve_run_dir
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 from polaris.kernelone.telemetry.metrics import METRIC_CONTEXT_LATENCY_P95, record_metric
 from polaris.kernelone.telemetry.trace import new_trace_id, set_trace_id
@@ -699,6 +701,17 @@ class RoleContextGateway:
         # Record latency metric
         record_metric(METRIC_CONTEXT_LATENCY_P95, duration_ms)
 
+        # Emit a per-run context.build observation (mirrors ContextEngine) so the
+        # realtime ContextOS dashboard surfaces projections / in-window item counts
+        # for THIS role turn — not just PM planning's prompt_context. Best-effort.
+        self._emit_context_build_observation(
+            request,
+            items_count=active_window_size,
+            total_tokens=token_estimate,
+            message_count=len(messages),
+            projection_id=projection_id,
+        )
+
         logger.debug(
             "[DEBUG][ContextGateway] _build_context_impl end: messages=%d token_estimate=%d/%d compression=%s sources=%s",
             len(messages),
@@ -736,6 +749,69 @@ class RoleContextGateway:
                 "context_result_id": context_result_id,
             },
         )
+
+    def _emit_context_build_observation(
+        self,
+        request: ContextRequest,
+        *,
+        items_count: int,
+        total_tokens: int,
+        message_count: int,
+        projection_id: str,
+    ) -> None:
+        """Emit a ``context.build`` observation to the per-run events file.
+
+        Mirrors ``ContextEngine._emit_context_events`` so the realtime ContextOS
+        dashboard surfaces projection / in-window item counts for *every* role turn
+        (Director/CE/QA), not only PM planning's ``prompt_context``. The role turn
+        keeps its snapshot as in-memory state and persists no snapshot file, so no
+        ``context.snapshot`` receipt is emitted here (honest: no receipt fabricated).
+
+        Fail-safe: resolves the per-run events file from ``request.events_path`` or
+        from ``workspace + run_id`` via the canonical ``resolve_run_dir``; when self-
+        resolving it emits ONLY if the run directory already exists (created by the
+        orchestration that owns the run). A resolution mismatch therefore skips
+        silently rather than writing a stray/phantom file. Observability must never
+        break a turn, so all failures are swallowed.
+        """
+        run_id = str(getattr(request, "run_id", "") or "").strip()
+        if not run_id:
+            return
+        events_path = str(getattr(request, "events_path", "") or "").strip()
+        if not events_path:
+            try:
+                run_dir = resolve_run_dir(str(self.workspace), "", run_id)
+            except (OSError, ValueError) as exc:  # pragma: no cover - defensive
+                logger.debug("context.build resolve_run_dir failed: %s", exc)
+                return
+            if not run_dir or not os.path.isdir(run_dir):
+                # No live run directory for this run_id → resolution does not match a
+                # real orchestration run; skip rather than create a phantom file.
+                return
+            events_path = os.path.join(run_dir, "events", "runtime.events.jsonl")
+        role_id = str(getattr(self.profile, "role_id", "") or "")
+        try:
+            emit_event(
+                events_path,
+                kind="observation",
+                actor="System",
+                name="context.build",
+                refs={
+                    "run_id": run_id,
+                    "role": role_id,
+                    "task_id": getattr(request, "task_id", None),
+                },
+                summary=f"ContextPack built ({items_count} items)",
+                output={
+                    "items_count": int(items_count),
+                    "total_tokens": int(total_tokens),
+                    "message_count": int(message_count),
+                    "projection_id": projection_id,
+                    "role": role_id,
+                },
+            )
+        except (OSError, ValueError) as exc:  # pragma: no cover - never break a turn
+            logger.debug("context.build emit failed: %s", exc)
 
     def _extract_strategy_override(self, request: ContextRequest) -> tuple[dict[str, Any], tuple[str, ...]]:
         merged: dict[str, Any] = {}

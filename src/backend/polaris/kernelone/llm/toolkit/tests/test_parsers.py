@@ -142,6 +142,68 @@ class TestNativeFunctionCallingParser:
         assert len(result) == 1
         assert result[0].name == "repo_rg"
 
+    def test_parse_openai_accepts_decoded_dict_arguments(self) -> None:
+        """OpenAI-compatible adapters may already decode function arguments."""
+        tool_calls = [
+            {
+                "id": "call_dict",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": {"file": "src/app.py", "start_line": 2},
+                },
+            }
+        ]
+
+        result = NativeFunctionCallingParser.parse_openai(tool_calls)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py", "start_line": 2}
+
+    def test_parse_deepseek_accepts_decoded_dict_arguments(self) -> None:
+        """DeepSeek-compatible adapters may already decode function arguments."""
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "ds_dict",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": {"file": "src/app.py", "content": "print('ok')"},
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        result = NativeFunctionCallingParser.parse_deepseek(response)
+
+        assert len(result) == 1
+        assert result[0].name == "write_file"
+        assert result[0].arguments == {"file": "src/app.py", "content": "print('ok')"}
+
+    def test_parse_anthropic_accepts_json_string_input(self) -> None:
+        """Anthropic-compatible adapters may pass tool_use input as JSON text."""
+        blocks = [
+            {
+                "id": "anthropic_json",
+                "type": "tool_use",
+                "name": "read_file",
+                "input": '{"file": "src/app.py", "start_line": 3}',
+            }
+        ]
+
+        result = NativeFunctionCallingParser.parse_anthropic(blocks)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"file": "src/app.py", "start_line": 3}
+
 
 class TestCoreParsingFunctions:
     """Test core parsing functions from parsers module."""

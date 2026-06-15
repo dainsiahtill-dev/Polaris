@@ -214,6 +214,13 @@ class TurnEngineContextRequest:
     # This is control-plane data: ContextGateway may consume it, but it must
     # never be rendered as prompt-visible context_override text.
     strategy_override: dict[str, Any] | None = None
+    # Run scope for observability: lets RoleContextGateway emit a per-run
+    # ``context.build`` observation (mirroring ContextEngine) so the realtime
+    # ContextOS dashboard shows projections / in-window item counts for every
+    # role turn — not just PM planning. ``events_path`` is optional; when empty
+    # the gateway resolves the per-run events file from workspace + run_id.
+    run_id: str = ""
+    events_path: str = ""
 
 
 @dataclass(frozen=True)

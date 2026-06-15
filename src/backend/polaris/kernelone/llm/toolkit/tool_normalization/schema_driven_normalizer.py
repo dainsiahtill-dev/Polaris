@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -21,7 +22,10 @@ __all__ = ["SchemaDrivenNormalizer", "normalize_with_schema"]
 _UNCHANGED = object()
 
 
-def _coerce_scalar_value(declared_type: str, value: Any) -> Any:
+_BODY_STRING_KEYS = frozenset({"content", "blocks"})
+
+
+def _coerce_scalar_value(declared_type: str, value: Any, *, arg_name: str = "") -> Any:
     """Coerce an obviously-mistyped scalar into the declared schema type.
 
     Weak models routinely send ``paths: "src/"`` where the schema declares an
@@ -37,27 +41,29 @@ def _coerce_scalar_value(declared_type: str, value: Any) -> Any:
             return [value]
         return _UNCHANGED
     if declared_type == "string":
-        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
-            return value[0]
+        if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+            if arg_name == "command":
+                return shlex.join(value)
+            if arg_name in _BODY_STRING_KEYS:
+                return "\n".join(value)
+            if len(value) == 1:
+                return value[0]
         return _UNCHANGED
     if declared_type == "integer":
         if isinstance(value, bool):
             return _UNCHANGED
-        if isinstance(value, str):
-            token = value.strip()
-            if token.lstrip("-").isdigit():
-                return int(token)
-            return _UNCHANGED
-        if isinstance(value, float) and value.is_integer():
-            return int(value)
+        from .normalizers._shared import _coerce_int
+
+        coerced_int = _coerce_int(value)
+        if coerced_int is not None:
+            return coerced_int
         return _UNCHANGED
     if declared_type == "boolean":
-        if isinstance(value, str):
-            token = value.strip().lower()
-            if token == "true":
-                return True
-            if token == "false":
-                return False
+        from .normalizers._shared import _coerce_bool
+
+        coerced_bool = _coerce_bool(value)
+        if coerced_bool is not None:
+            return coerced_bool
         return _UNCHANGED
     return _UNCHANGED
 
@@ -182,7 +188,14 @@ class SchemaDrivenNormalizer:
             name = str(arg_spec.get("name") or "")
             if not name or name not in args:
                 continue
-            coerced = _coerce_scalar_value(str(arg_spec.get("type") or ""), args[name])
+            declared_type = str(arg_spec.get("type") or "")
+            value = args[name]
+            if not bool(arg_spec.get("required", False)) and (
+                value is None or (declared_type != "string" and isinstance(value, str) and not value.strip())
+            ):
+                args.pop(name, None)
+                continue
+            coerced = _coerce_scalar_value(declared_type, value, arg_name=name)
             if coerced is not _UNCHANGED:
                 args[name] = coerced
         return args

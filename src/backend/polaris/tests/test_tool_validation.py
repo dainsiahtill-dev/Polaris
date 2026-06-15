@@ -136,6 +136,39 @@ def test_read_file_preserves_explicit_line_range_through_executor(monkeypatch, t
     assert payload.get("range_used") == {"start_line": 2, "end_line": 3}
 
 
+def test_executor_accepts_json_string_wrapped_arguments(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = executor.execute("read_file", '{"file": "sample.txt", "start_line": 1, "end_line": 1}')
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload.get("range_used") == {"start_line": 1, "end_line": 1}
+    assert str(payload.get("content") or "").strip() == "1 | hello"
+
+
+def test_executor_accepts_json_string_nested_arguments_wrapper(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
+    executor = executor_module.AgentAccelToolExecutor(str(tmp_path))
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = executor.execute(
+        "read_file",
+        '{"arguments": {"path": "sample.txt", "start_line": "1", "end_line": "1"}}',
+    )
+
+    assert result["ok"] is True
+    payload = result.get("result")
+    assert isinstance(payload, dict)
+    assert payload.get("range_used") == {"start_line": 1, "end_line": 1}
+    assert str(payload.get("content") or "").strip() == "1 | hello"
+
+
 def test_execute_command_returns_error_without_shell_fallback_on_permission_error(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(executor_module, "CODE_INTELLIGENCE_AVAILABLE", False)
     executor = executor_module.AgentAccelToolExecutor(str(tmp_path))

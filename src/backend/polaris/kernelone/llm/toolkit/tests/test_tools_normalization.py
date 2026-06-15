@@ -255,6 +255,73 @@ class TestReadFileNormalization:
         assert normalized["file"] == "index.html"
 
 
+class TestJsonWrappedArguments:
+    """Stage 0 JSON-wrapped argument recovery.
+
+    Weak/provider-compatible models sometimes place the whole argument object in a
+    JSON string. This is recoverable only when the parsed keys belong to the
+    selected tool's parameter namespace.
+    """
+
+    def test_raw_json_object_string_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "write_file",
+            '{"file": "app.js", "text": "console.log(1);\\n"}',
+        )
+
+        assert normalized["file"] == "app.js"
+        assert normalized["content"] == "console.log(1);\n"
+
+    def test_nested_arguments_json_string_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            {"arguments": '{"path": "/workspace/src/app.py", "start_line": "2", "end_line": "4"}'},
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
+        assert normalized["end_line"] == 4
+
+    def test_nested_arguments_object_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            {"arguments": {"path": "/workspace/src/app.py", "start_line": "2", "end_line": "4"}},
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
+        assert normalized["end_line"] == 4
+
+    def test_raw_json_string_nested_arguments_object_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "read_file",
+            '{"arguments": {"path": "/workspace/src/app.py", "start_line": "2", "end_line": "4"}}',
+        )
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["start_line"] == 2
+        assert normalized["end_line"] == 4
+
+    def test_nested_object_wrapper_with_foreign_keys_is_not_unwrapped(self) -> None:
+        normalized = normalize_tool_arguments(
+            "write_file",
+            {"arguments": {"unexpected": "value"}},
+        )
+
+        assert normalized == {"arguments": {"unexpected": "value"}}
+
+    def test_write_content_json_string_is_not_unwrapped(self) -> None:
+        content = '{"file": "wrong.txt", "content": "wrong"}'
+
+        normalized = normalize_tool_arguments(
+            "write_file",
+            {"file": "data.json", "content": content},
+        )
+
+        assert normalized["file"] == "data.json"
+        assert normalized["content"] == content
+
+
 class TestSearchReplaceNormalization:
     """Test search_replace argument normalization."""
 

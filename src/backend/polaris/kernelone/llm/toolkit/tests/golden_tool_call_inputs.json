@@ -1,0 +1,157 @@
+{
+  "cases": [
+    {
+      "id": "openai_decoded_arguments_wrapper_read_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_args_object",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": {
+              "arguments": {
+                "path": "/workspace/src/app.py",
+                "start_line": "2"
+              }
+            }
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/app.py",
+        "start_line": 2
+      },
+      "forbidden_keys": ["arguments", "path"]
+    },
+    {
+      "id": "openai_decoded_parameters_wrapper_write_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_params_object",
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "arguments": {
+              "parameters": {
+                "path": "app.js",
+                "text": "console.log(1);\n"
+              }
+            }
+          }
+        }
+      ],
+      "expected_name": "write_file",
+      "expected_arguments": {
+        "file": "app.js",
+        "content": "console.log(1);\n"
+      },
+      "forbidden_keys": ["parameters", "path", "text"]
+    },
+    {
+      "id": "openai_decoded_kwargs_wrapper_read_file",
+      "provider": "openai",
+      "payload": [
+        {
+          "id": "call_openai_kwargs_object",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": {
+              "kwargs": {
+                "path": "/workspace/src/kwargs.py",
+                "start_line": "3"
+              }
+            }
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/kwargs.py",
+        "start_line": 3
+      },
+      "forbidden_keys": ["kwargs", "path"]
+    },
+    {
+      "id": "deepseek_decoded_args_wrapper_write_file",
+      "provider": "deepseek",
+      "payload": {
+        "choices": [
+          {
+            "message": {
+              "tool_calls": [
+                {
+                  "id": "call_deepseek_args_object",
+                  "function": {
+                    "name": "write_file",
+                    "arguments": {
+                      "args": {
+                        "file_path": "notes.txt",
+                        "body": "line\n"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expected_name": "write_file",
+      "expected_arguments": {
+        "file": "notes.txt",
+        "content": "line\n"
+      },
+      "forbidden_keys": ["args", "file_path", "body"]
+    },
+    {
+      "id": "anthropic_decoded_input_wrapper_read_file",
+      "provider": "anthropic",
+      "payload": [
+        {
+          "id": "call_anthropic_input_object",
+          "type": "tool_use",
+          "name": "read_file",
+          "input": {
+            "input": {
+              "path": "/workspace/src/config.py",
+              "end_line": "5"
+            }
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/config.py",
+        "end_line": 5
+      },
+      "forbidden_keys": ["input", "path"]
+    },
+    {
+      "id": "anthropic_decoded_tool_input_wrapper_read_file",
+      "provider": "anthropic",
+      "payload": [
+        {
+          "id": "call_anthropic_tool_input_object",
+          "type": "tool_use",
+          "name": "read_file",
+          "input": {
+            "tool_input": {
+              "path": "/workspace/src/tool_input.py",
+              "end_line": "8"
+            }
+          }
+        }
+      ],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/tool_input.py",
+        "end_line": 8
+      },
+      "forbidden_keys": ["tool_input", "path"]
+    }
+  ]
+}

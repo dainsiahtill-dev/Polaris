@@ -417,6 +417,9 @@ class ToolLoopController:
             context_os_snapshot=context_os_snapshot,
             context_override=context_override_payload or None,
             strategy_override=self._extract_strategy_override(context_override_payload),
+            # Run scope so the gateway can emit a per-run context.build observation
+            # (realtime ContextOS dashboard projection / in-window items for this turn).
+            run_id=str(self.request.run_id or ""),
         )
 
     def _extract_strategy_override(self, context_override: Mapping[str, Any]) -> dict[str, Any] | None:
