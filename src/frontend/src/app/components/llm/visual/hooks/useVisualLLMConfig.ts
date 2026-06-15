@@ -21,6 +21,7 @@ import {
   modelNodeId,
   removeManualModel,
   removeProvider,
+  removeRoleBinding,
   restoreNodeStates,
   updateRoleAssignment,
   updateVisualStates,
@@ -242,20 +243,23 @@ export function useVisualLLMConfig({ config, status, onConfigChange }: UseVisual
         if (modelData.kind !== 'model' || roleData.kind !== 'role') return;
         updateConfigRole(roleData.roleId, modelData.providerId, modelData.model);
         setEdges((current) => {
-          const filtered = current.filter(
-            (edge) => !(edge.data?.kind === 'model-to-role' && edge.target === targetNode.id)
-          );
-          const exists = filtered.some(
+          const exists = current.some(
             (edge) => edge.source === connection.source && edge.target === connection.target
           );
-          if (exists) return filtered;
+          if (exists) return current;
           return addEdge(
             {
               ...connection,
+              id: `edge:${connection.source}:${connection.target}:${Date.now()}`,
               type: 'custom',
-              data: { kind: 'model-to-role' },
+              data: {
+                kind: 'model-to-role',
+                roleId: roleData.roleId,
+                providerId: modelData.providerId,
+                model: modelData.model,
+              },
             },
-            filtered
+            current
           );
         });
       } else if (sourceNode.type === 'provider' && targetNode.type === 'model') {
@@ -331,15 +335,22 @@ export function useVisualLLMConfig({ config, status, onConfigChange }: UseVisual
     (deleted: Edge<VisualEdgeData>[]) => {
       deleted.forEach((edge) => {
         if (edge.data?.kind !== 'model-to-role') return;
+        const sourceNode = nodeMap.get(edge.source);
         const targetNode = nodeMap.get(edge.target);
-        if (!targetNode || targetNode.type !== 'role') return;
+        if (!sourceNode || !targetNode || sourceNode.type !== 'model' || targetNode.type !== 'role') return;
+        const modelData = sourceNode.data;
         const roleData = targetNode.data;
-        if (roleData.kind === 'role') {
-          clearConfigRole(roleData.roleId);
+        if (modelData.kind === 'model' && roleData.kind === 'role') {
+          const currentConfig = latestConfigRef.current;
+          const onChange = onConfigChangeRef.current;
+          if (!currentConfig || !onChange) return;
+          const nextConfig = removeRoleBinding(currentConfig, roleData.roleId, modelData.providerId, modelData.model);
+          latestConfigRef.current = nextConfig;
+          onChange(nextConfig);
         }
       });
     },
-    [clearConfigRole, nodeMap]
+    [nodeMap]
   );
 
   const deleteNode = useCallback(

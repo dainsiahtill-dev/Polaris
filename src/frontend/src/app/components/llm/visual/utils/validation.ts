@@ -1,6 +1,7 @@
 import type { Connection, Node } from '@xyflow/react';
 import { getRoleDisplayLabel } from '@/app/constants/roleLabels';
 import type { VisualGraphConfig, ValidationIssue, VisualNodeData, VisualRoleId } from '../types/visual';
+import { getRoleBindings } from './configConverter';
 
 export const isValidVisualConnection = (
   connection: Connection,
@@ -53,15 +54,16 @@ export const validateVisualGraph = (
 
   roleIds.forEach((roleId) => {
     const roleCfg = config.roles?.[roleId];
+    const bindings = getRoleBindings(roleCfg);
 
-    if (!roleCfg?.provider_id) {
+    if (!bindings.length && !roleCfg?.provider_id) {
       issues.push({
         type: 'DISCONNECTED_ROLE',
         nodeId: `role:${roleId}`,
         message: `角色 ${getRoleLabel(roleId)} 未连接到提供商`,
         suggestion: '请从提供商拖拽连线到该角色',
       });
-    } else if (!roleCfg?.model) {
+    } else if (!bindings.length && !roleCfg?.model) {
       issues.push({
         type: 'MISSING_MODEL',
         nodeId: `role:${roleId}`,
@@ -73,8 +75,8 @@ export const validateVisualGraph = (
 
   // Check if Provider exists
   Object.entries(config.roles || {}).forEach(([roleId, roleCfg]) => {
-    if (roleCfg?.provider_id) {
-      const provider = config.providers?.[roleCfg.provider_id];
+    getRoleBindings(roleCfg).forEach((binding) => {
+      const provider = config.providers?.[binding.provider_id];
       if (!provider) {
         issues.push({
           type: 'INVALID_PROVIDER',
@@ -83,7 +85,7 @@ export const validateVisualGraph = (
           suggestion: '请重新配置提供商',
         });
       }
-    }
+    });
   });
 
   return {

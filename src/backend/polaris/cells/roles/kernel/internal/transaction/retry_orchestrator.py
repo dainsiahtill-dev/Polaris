@@ -201,6 +201,9 @@ _DEFAULT_RETRY_ESCALATION_TEMPERATURE = 0.2
 _RETRY_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS"
 _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS = 2500
 
+_RETRY_CREATE_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_CREATE_OUTPUT_FLOOR_TOKENS"
+_DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS = 7000
+
 
 def resolve_escalation_temperature() -> float | None:
     """ADR-0090 W2.6: deterministic sampling temperature for escalated writes.
@@ -261,6 +264,34 @@ def resolve_retry_output_floor() -> int | None:
         value = int(text)
     except ValueError:
         return _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS
+    if value <= 0:
+        return None
+    return value
+
+
+def resolve_retry_create_output_floor() -> int | None:
+    """F16 follow-up (Wall 2, 2026-06-15): a LARGER reserved output floor for a
+    pure-create forced write.
+
+    A from-scratch create has nothing to read, so the retry prompt is small — but
+    the model must emit a COMPLETE file body in ONE shot. The standard floor (sized
+    for an edit re-ask, ~2500) is shared with reasoning_content and truncates a
+    several-hundred-line body (finish_reason=length) → the write lands empty/partial
+    → director_no_materialized_changes. Selected ONLY at the pure-create site (there
+    is no injected read content to evict), so reserving more output is safe. Env
+    ``KERNELONE_RETRY_CREATE_OUTPUT_FLOOR_TOKENS``; ``off``/``none``/``disabled``/
+    empty/non-positive disables (falls back to the standard floor). Unset → 7000.
+    """
+    raw = os.environ.get(_RETRY_CREATE_OUTPUT_FLOOR_ENV)
+    if raw is None:
+        return _DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS
+    text = raw.strip().lower()
+    if text in {"", "off", "none", "disabled", "false"}:
+        return None
+    try:
+        value = int(text)
+    except ValueError:
+        return _DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS
     if value <= 0:
         return None
     return value
@@ -1551,6 +1582,7 @@ class RetryOrchestrator:
         stream: bool,
         shadow_engine: Any | None,
         attempt_temperature_override: float | None = None,
+        force_write_create: bool = False,
     ) -> RawLLMResponse:
         """执行单个重试批次，返回 LLM 响应。"""
         retry_response: RawLLMResponse | None = None
@@ -1562,6 +1594,13 @@ class RetryOrchestrator:
         # I3-r22 (F10): reserve a reasoning-sized output floor so a large retry
         # prompt cannot starve the generation budget (compresses input to fit).
         retry_output_floor = resolve_retry_output_floor()
+        if force_write_create:
+            # Wall 2 (F16 follow-up): a pure-create forced write must emit a full
+            # file body in one shot; take the larger create floor. Nothing to read
+            # here, so the extra reserved output evicts no injected content.
+            create_floor = resolve_retry_create_output_floor()
+            candidates = [floor for floor in (retry_output_floor, create_floor) if floor is not None]
+            retry_output_floor = max(candidates) if candidates else None
         if retry_output_floor is not None:
             llm_call_kwargs["max_tokens_floor"] = retry_output_floor
         stream_callable = self.call_llm_for_decision_stream
@@ -1785,6 +1824,7 @@ class RetryOrchestrator:
                 stream=stream,
                 shadow_engine=shadow_engine,
                 attempt_temperature_override=attempt_temperature_override,
+                force_write_create=from_scratch_create,
             )
             if attempt_model_override:
                 logger.warning(

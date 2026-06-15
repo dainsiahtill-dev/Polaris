@@ -57,6 +57,11 @@ export type VisualEdgeKind = 'provider-to-model' | 'model-to-role';
 
 export interface VisualEdgeData extends Record<string, unknown> {
   kind: VisualEdgeKind;
+  roleId?: VisualRoleId;
+  providerId?: string;
+  model?: string;
+  bindingIndex?: number;
+  maxConcurrency?: number;
 }
 
 export interface VisualNodePosition {
@@ -96,9 +101,26 @@ export interface VisualNodeState {
   };
 }
 
+export interface RoleModelBinding {
+  provider_id: string;
+  model: string;
+  profile?: string;
+  max_concurrency?: number;
+  concurrency?: number;
+}
+
+export interface VisualRoleConfig {
+  provider_id?: string;
+  model?: string;
+  profile?: string;
+  max_concurrency?: number;
+  concurrency?: number;
+  bindings?: RoleModelBinding[];
+}
+
 export interface VisualGraphConfig {
   providers: Record<string, unknown>;
-  roles: Record<string, { provider_id?: string; model?: string; profile?: string }>;
+  roles: Record<string, VisualRoleConfig>;
   visual_layout?: Record<string, VisualNodePosition>;
   // 新增：完整的节点状态持久化
   visual_node_states?: Record<string, VisualNodeState>;
@@ -130,6 +152,8 @@ export interface RoleAssignment {
   providerId: string;
   model: string;
   profile?: string;
+  maxConcurrency?: number;
+  roleMaxConcurrency?: number;
 }
 
 export interface RuntimeLLMConfig {

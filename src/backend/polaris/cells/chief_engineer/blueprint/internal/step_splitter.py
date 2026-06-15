@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.internal.step_contract import (
@@ -32,6 +33,14 @@ from polaris.cells.chief_engineer.blueprint.internal.step_contract import (
 
 _SPLIT_ENV = "KERNELONE_CE_STEP_SPLIT"
 _SPLIT_DISABLED = {"off", "none", "disabled", "false", "0"}
+
+# Over-fission suppression (batch-b1, 2026-06-15): a SOLE-WRITER single-file leaf
+# triggered by signature COUNT alone (est_lines below the line trigger) is kept as
+# ONE coherent whole-file step. The weak Director cannot stitch one file across N
+# fill-turns — live b1 game.js/main.js were split into fill1..fillN that disagreed
+# on interfaces, DRIFTed, and dead-lettered. Genuinely large files (est_lines
+# trigger) and multi-writer same-file steps still split.
+_SINGLE_FILE_NO_FISSION_ENV = "KERNELONE_CE_SINGLE_FILE_NO_FISSION"
 
 # Trigger: a code file with enough body to risk a one-shot truncation. est_lines
 # approaching the ≤120 gate ceiling OR a high signature count (the r29 signature:
@@ -59,6 +68,27 @@ _SUBSTEP_FILL_RE = re.compile(r"-fill\d+$")
 
 def _split_enabled() -> bool:
     return os.environ.get(_SPLIT_ENV, "").strip().lower() not in _SPLIT_DISABLED
+
+
+def _single_file_no_fission_enabled() -> bool:
+    return os.environ.get(_SINGLE_FILE_NO_FISSION_ENV, "").strip().lower() not in _SPLIT_DISABLED
+
+
+def _is_sig_only_trigger(step: dict[str, Any]) -> bool:
+    """True when ONLY the signature-count trigger fired (est_lines below the line
+    trigger). Such a step is a many-small-functions file with a modest line count —
+    one-turn-writable, so for a sole writer it is kept whole rather than over-fissioned.
+
+    A sig-only step has ``est_lines < _SPLIT_TRIGGER_LINES (100) < _MAX_STEP_LINES (120)``,
+    so suppressing its split never leaves an over-budget leaf that the step-contract
+    gate would reject — it stays one valid whole-file step.
+    """
+    try:
+        est_lines = int(step.get("est_lines") or 0)
+    except (TypeError, ValueError):
+        est_lines = 0
+    trigger_lines = _read_positive_int_env("KERNELONE_STEP_SPLIT_TRIGGER_LINES", _SPLIT_TRIGGER_LINES)
+    return est_lines < trigger_lines
 
 
 def _read_positive_int_env(name: str, default: int) -> int:
@@ -236,13 +266,25 @@ def split_oversize_steps(
     if any(_is_substep(step) for step in steps):
         return steps  # idempotency: never re-split produced sub-steps
     owned = {_norm_target(target) for target in owned_elsewhere}
+    # Multiplicity of each target across this parent's steps — a target written by
+    # exactly one step is a "sole-writer" leaf (over-fission suppression below).
+    target_multiplicity = Counter(norm for step in steps if (norm := _norm_target(step.get("target_file"))))
+    suppress_single_file = _single_file_no_fission_enabled()
 
     out: list[dict[str, Any]] = []
     remap: dict[str, str] = {}  # split original step_id -> its terminal fill id
     changed = False
     for step in steps:
         step_id = str(step.get("step_id") or "")
-        if _norm_target(step.get("target_file")) not in owned and _should_split(step):
+        target = _norm_target(step.get("target_file"))
+        if target not in owned and _should_split(step):
+            # Over-fission suppression: a sole-writer single-file leaf triggered by
+            # signature count alone is kept as ONE coherent whole-file step (the weak
+            # Director cannot stitch one file across N fill-turns). Large files
+            # (est_lines trigger) and multi-writer same-file steps still split.
+            if suppress_single_file and target_multiplicity.get(target, 0) <= 1 and _is_sig_only_trigger(step):
+                out.append(dict(step))
+                continue
             sub_steps = _split_one(step, parent_pm_task=parent_pm_task)
             out.extend(sub_steps)
             remap[step_id] = sub_steps[-1]["step_id"]

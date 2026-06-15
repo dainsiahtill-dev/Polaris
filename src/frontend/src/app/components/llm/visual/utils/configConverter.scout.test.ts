@@ -1,7 +1,17 @@
 import { getRoleDisplayLabel } from '@/app/constants/roleLabels';
 import { describe, expect, it } from 'vitest';
 import type { VisualGraphConfig } from '../types/visual';
-import { buildVisualGraph, updateRoleAssignment, validateRoleAssignments, visualToRuntimeConfig } from './configConverter';
+import {
+  buildVisualGraph,
+  clearRoleAssignment,
+  removeRoleBinding,
+  updateProviderConcurrency,
+  updateRoleBindingConcurrency,
+  updateRoleAssignment,
+  updateRoleConcurrency,
+  validateRoleAssignments,
+  visualToRuntimeConfig,
+} from './configConverter';
 import { getRoleLabel } from './validation';
 
 // Scout (探子) was previously absent from the LLM visual config editor: it is an
@@ -46,5 +56,155 @@ describe('LLM visual config editor — Scout role', () => {
     const result = validateRoleAssignments({ providers: {}, roles: {} });
     expect(result.missing).not.toContain('scout');
     expect(result.incomplete).not.toContain('scout');
+  });
+});
+
+describe('LLM visual config editor — multi-binding concurrency', () => {
+  it('adds multiple model bindings to one role without replacing the first binding', () => {
+    const base: VisualGraphConfig = {
+      providers: {
+        kimi: { type: 'kimi', name: 'Kimi', max_concurrency: 20 },
+      },
+      roles: {
+        director: { max_concurrency: 5 },
+      },
+    };
+
+    const first = updateRoleAssignment(base, 'director', 'kimi', 'kimi-k2', { maxConcurrency: 3 });
+    const second = updateRoleAssignment(first, 'director', 'kimi', 'kimi-k1', { maxConcurrency: 2 });
+
+    expect(second.roles.director.provider_id).toBe('kimi');
+    expect(second.roles.director.model).toBe('kimi-k2');
+    expect(second.roles.director.max_concurrency).toBe(5);
+    expect(second.roles.director.bindings).toEqual([
+      { provider_id: 'kimi', model: 'kimi-k2', max_concurrency: 3 },
+      { provider_id: 'kimi', model: 'kimi-k1', max_concurrency: 2 },
+    ]);
+  });
+
+  it('renders one model-to-role edge per binding, including same-provider bindings', () => {
+    const config: VisualGraphConfig = {
+      providers: { kimi: { type: 'kimi', name: 'Kimi' } },
+      roles: {
+        director: {
+          max_concurrency: 4,
+          bindings: [
+            { provider_id: 'kimi', model: 'kimi-k2', max_concurrency: 2 },
+            { provider_id: 'kimi', model: 'kimi-k1', max_concurrency: 2 },
+          ],
+        },
+      },
+    };
+
+    const { nodes, edges } = buildVisualGraph(config);
+    const modelRoleEdges = edges.filter((edge) => edge.data?.kind === 'model-to-role');
+    const assignedModels = nodes
+      .filter((node) => node.type === 'model' && node.data.kind === 'model')
+      .filter((node) => node.data.assignedRoles?.includes('director'))
+      .map((node) => node.data.model)
+      .sort();
+
+    expect(modelRoleEdges).toHaveLength(2);
+    expect(assignedModels).toEqual(['kimi-k1', 'kimi-k2']);
+  });
+
+  it('removes only the selected binding when a model-role edge is deleted', () => {
+    const config: VisualGraphConfig = {
+      providers: { kimi: { type: 'kimi' } },
+      roles: {
+        director: {
+          provider_id: 'kimi',
+          model: 'kimi-k2',
+          bindings: [
+            { provider_id: 'kimi', model: 'kimi-k2', max_concurrency: 2 },
+            { provider_id: 'kimi', model: 'kimi-k1', max_concurrency: 2 },
+          ],
+        },
+      },
+    };
+
+    const next = removeRoleBinding(config, 'director', 'kimi', 'kimi-k2');
+
+    expect(next.roles.director.provider_id).toBe('kimi');
+    expect(next.roles.director.model).toBe('kimi-k1');
+    expect(next.roles.director.bindings).toEqual([
+      { provider_id: 'kimi', model: 'kimi-k1', max_concurrency: 2 },
+    ]);
+  });
+
+  it('converts every role binding to runtime assignments with concurrency metadata', () => {
+    const config: VisualGraphConfig = {
+      providers: { kimi: { type: 'kimi', max_concurrency: 20 } },
+      roles: {
+        director: {
+          max_concurrency: 5,
+          bindings: [
+            { provider_id: 'kimi', model: 'kimi-k2', max_concurrency: 3 },
+            { provider_id: 'kimi', model: 'kimi-k1', max_concurrency: 2 },
+          ],
+        },
+      },
+    };
+
+    const runtime = visualToRuntimeConfig(config);
+
+    expect(runtime.roleAssignments.filter((assignment) => assignment.roleId === 'director')).toEqual([
+      {
+        roleId: 'director',
+        providerId: 'kimi',
+        model: 'kimi-k2',
+        profile: 'default',
+        maxConcurrency: 3,
+        roleMaxConcurrency: 5,
+      },
+      {
+        roleId: 'director',
+        providerId: 'kimi',
+        model: 'kimi-k1',
+        profile: 'default',
+        maxConcurrency: 2,
+        roleMaxConcurrency: 5,
+      },
+    ]);
+  });
+
+  it('clears every binding for a role when clearing the role assignment', () => {
+    const config: VisualGraphConfig = {
+      providers: { kimi: { type: 'kimi' } },
+      roles: {
+        director: {
+          provider_id: 'kimi',
+          model: 'kimi-k2',
+          bindings: [{ provider_id: 'kimi', model: 'kimi-k2' }],
+        },
+      },
+    };
+
+    const next = clearRoleAssignment(config, 'director');
+
+    expect(next.roles.director.provider_id).toBeUndefined();
+    expect(next.roles.director.model).toBeUndefined();
+    expect(next.roles.director.bindings).toEqual([]);
+  });
+
+  it('updates provider, role, and binding concurrency knobs independently', () => {
+    const config: VisualGraphConfig = {
+      providers: { kimi: { type: 'kimi' } },
+      roles: {
+        director: {
+          bindings: [{ provider_id: 'kimi', model: 'kimi-k2' }],
+        },
+      },
+    };
+
+    const providerCapped = updateProviderConcurrency(config, 'kimi', 20);
+    const roleCapped = updateRoleConcurrency(providerCapped, 'director', 5);
+    const bindingCapped = updateRoleBindingConcurrency(roleCapped, 'director', 'kimi', 'kimi-k2', 3);
+
+    expect(bindingCapped.providers.kimi).toEqual(expect.objectContaining({ max_concurrency: 20 }));
+    expect(bindingCapped.roles.director.max_concurrency).toBe(5);
+    expect(bindingCapped.roles.director.bindings).toEqual([
+      { provider_id: 'kimi', model: 'kimi-k2', max_concurrency: 3 },
+    ]);
   });
 });

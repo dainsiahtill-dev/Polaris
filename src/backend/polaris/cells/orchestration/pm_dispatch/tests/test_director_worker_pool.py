@@ -50,6 +50,12 @@ def _install_config(tmp_path: Path, director: dict[str, object]) -> None:
     set_runtime_config_manager(RuntimeConfigManager(config_path_resolver=lambda: str(path)))
 
 
+def _install_raw_config(tmp_path: Path, config: dict[str, object]) -> None:
+    path = tmp_path / "llm_config.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    set_runtime_config_manager(RuntimeConfigManager(config_path_resolver=lambda: str(path)))
+
+
 class _FakeConsumer:
     """Records its worker_id and the provider its thread resolves at poll time.
 
@@ -105,6 +111,84 @@ class TestBuildPool:
             "pm_inline_director_s_w1",
             "pm_inline_director_s_w2",
         ]
+
+    def test_local_single_provider_capacity_stays_single_worker(self, tmp_path: Path) -> None:
+        _install_raw_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "local": {
+                        "type": "ollama",
+                        "base_url": "http://127.0.0.1:11434",
+                        "model": "qwen",
+                    }
+                },
+                "roles": {
+                    "director": {
+                        "max_concurrency": 5,
+                        "bindings": [{"provider_id": "local", "model": "qwen"}],
+                    }
+                },
+            },
+        )
+
+        workers = _build_director_worker_pool(
+            _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
+        )
+
+        assert workers == []
+
+    def test_local_explicit_capacity_builds_multiple_workers(self, tmp_path: Path) -> None:
+        _install_raw_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "local": {
+                        "type": "ollama",
+                        "base_url": "http://127.0.0.1:11434",
+                        "model": "qwen",
+                        "max_concurrency": 3,
+                    }
+                },
+                "roles": {
+                    "director": {
+                        "max_concurrency": 5,
+                        "bindings": [{"provider_id": "local", "model": "qwen"}],
+                    }
+                },
+            },
+        )
+
+        workers = _build_director_worker_pool(
+            _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
+        )
+
+        assert [str(pid) for _c, pid in workers] == ["local", "local", "local"]
+        assert [getattr(pid, "slot_index", None) for _c, pid in workers] == [0, 1, 2]
+
+    def test_same_cloud_provider_capacity_builds_multiple_workers(self, tmp_path: Path) -> None:
+        _install_raw_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {"kimi": {"type": "kimi", "model": "kimi-k2", "max_concurrency": 4}},
+                "roles": {
+                    "director": {
+                        "max_concurrency": 3,
+                        "bindings": [{"provider_id": "kimi", "model": "kimi-k2"}],
+                    }
+                },
+            },
+        )
+
+        workers = _build_director_worker_pool(
+            _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
+        )
+
+        assert [str(pid) for _c, pid in workers] == ["kimi", "kimi", "kimi"]
+        assert [getattr(pid, "slot_index", None) for _c, pid in workers] == [0, 1, 2]
 
 
 class TestDriveWorkers:

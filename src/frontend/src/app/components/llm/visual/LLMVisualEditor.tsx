@@ -16,7 +16,14 @@ import { devLogger } from '@/app/utils/devLogger';
 import { useVisualLLMConfig } from './hooks/useVisualLLMConfig';
 import { nodeTypes, edgeTypes } from './utils/nodeTypes';
 import { validateVisualGraph } from './utils/validation';
-import { extractNodePositions, extractNodeStates } from './utils/configConverter';
+import {
+  extractNodePositions,
+  extractNodeStates,
+  getRoleBindings,
+  updateProviderConcurrency,
+  updateRoleBindingConcurrency,
+  updateRoleConcurrency,
+} from './utils/configConverter';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { ValidationPanel, ValidationBadge } from './components/ValidationPanel';
 import type {
@@ -27,6 +34,7 @@ import type {
   VisualProviderNodeData,
   VisualModelNodeData,
   VisualRoleNodeData,
+  VisualRoleId,
 } from './types/visual';
 
 interface LLMVisualEditorProps {
@@ -45,6 +53,26 @@ type ContextMenuState = {
 };
 
 type LayoutPoint = { x: number; y: number };
+
+const ROLE_LABELS: Record<VisualRoleId, string> = {
+  pm: 'PM',
+  director: 'Director',
+  chief_engineer: 'Chief Engineer',
+  qa: 'QA',
+  architect: 'Architect',
+  cfo: 'CFO',
+  hr: 'HR',
+  scout: 'Scout',
+};
+
+const isVisualRoleId = (value: string): value is VisualRoleId => value in ROLE_LABELS;
+
+const readPositiveInt = (value: string): number | undefined => {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+};
 
 function extractLayoutWithFallback(nodes: Node<VisualNodeData>[]): Record<string, LayoutPoint> {
   const layout = extractNodePositions(nodes);
@@ -106,6 +134,38 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
   const [showValidationPanel, setShowValidationPanel] = useState(true);
 
   const providers = useMemo(() => Object.entries(config?.providers || {}), [config]);
+  const roleConcurrencyRows = useMemo(() => {
+    return Object.entries(config?.roles || {})
+      .filter(([roleId]) => isVisualRoleId(roleId))
+      .map(([roleId, roleCfg]) => ({
+        roleId: roleId as VisualRoleId,
+        roleCfg,
+        bindings: getRoleBindings(roleCfg),
+      }))
+      .filter((row) => row.bindings.length > 0 || row.roleCfg.provider_id || row.roleCfg.model);
+  }, [config]);
+
+  const bindingRows = useMemo(
+    () =>
+      roleConcurrencyRows.flatMap((row) =>
+        row.bindings.map((binding, index) => ({
+          roleId: row.roleId,
+          binding,
+          index,
+        }))
+      ),
+    [roleConcurrencyRows]
+  );
+
+  const commitConfigUpdate = useCallback(
+    (updater: (current: VisualGraphConfig) => VisualGraphConfig) => {
+      const current = getCurrentConfig() || config;
+      if (!current || !onConfigChange) return;
+      const next = updater(current);
+      onConfigChange(next);
+    },
+    [config, getCurrentConfig, onConfigChange]
+  );
 
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node<VisualNodeData>) => {
@@ -262,6 +322,25 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
     setModelDraft('');
   };
 
+  const handleProviderConcurrencyChange = (providerId: string, rawValue: string) => {
+    commitConfigUpdate((current) => updateProviderConcurrency(current, providerId, readPositiveInt(rawValue)));
+  };
+
+  const handleRoleConcurrencyChange = (roleId: VisualRoleId, rawValue: string) => {
+    commitConfigUpdate((current) => updateRoleConcurrency(current, roleId, readPositiveInt(rawValue)));
+  };
+
+  const handleBindingConcurrencyChange = (
+    roleId: VisualRoleId,
+    providerId: string,
+    model: string,
+    rawValue: string
+  ) => {
+    commitConfigUpdate((current) =>
+      updateRoleBindingConcurrency(current, roleId, providerId, model, readPositiveInt(rawValue))
+    );
+  };
+
   const isValid = useCallback((connection: Connection | Edge) => {
     return Boolean(connection.source && connection.target);
   }, []);
@@ -399,6 +478,120 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           </button>
         </div>
       ) : null}
+
+      <div className="mb-3 border-y border-white/10 py-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="text-[10px] font-semibold text-text-main">并发容量</div>
+          <div className="text-[10px] text-text-dim">Provider 上限 ∩ Role 上限 ∩ Binding 上限</div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+          <div className="min-w-0">
+            <div className="mb-1 text-[10px] font-semibold text-text-dim">Provider</div>
+            <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
+              {providers.map(([providerId, provider]) => {
+                const providerCfg =
+                  typeof provider === 'object' && provider !== null
+                    ? (provider as Record<string, unknown>)
+                    : {};
+                const value =
+                  typeof providerCfg.max_concurrency === 'number' ? providerCfg.max_concurrency : '';
+                return (
+                  <label
+                    key={providerId}
+                    className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
+                  >
+                    <span className="truncate text-text-main">{providerId}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={value}
+                      onChange={(event) => handleProviderConcurrencyChange(providerId, event.target.value)}
+                      className="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-text-main"
+                      placeholder="auto"
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="mb-1 text-[10px] font-semibold text-text-dim">Role</div>
+            <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
+              {roleConcurrencyRows.map(({ roleId, roleCfg }) => {
+                const value =
+                  typeof roleCfg.max_concurrency === 'number'
+                    ? roleCfg.max_concurrency
+                    : typeof roleCfg.concurrency === 'number'
+                      ? roleCfg.concurrency
+                      : '';
+                return (
+                  <label
+                    key={roleId}
+                    className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
+                  >
+                    <span className="truncate text-text-main">{ROLE_LABELS[roleId]}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={value}
+                      onChange={(event) => handleRoleConcurrencyChange(roleId, event.target.value)}
+                      className="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-text-main"
+                      placeholder="1"
+                    />
+                  </label>
+                );
+              })}
+              {roleConcurrencyRows.length === 0 ? (
+                <div className="text-[10px] text-text-dim">暂无 Role 绑定</div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="mb-1 text-[10px] font-semibold text-text-dim">Binding</div>
+            <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
+              {bindingRows.map(({ roleId, binding, index }) => {
+                const value =
+                  typeof binding.max_concurrency === 'number'
+                    ? binding.max_concurrency
+                    : typeof binding.concurrency === 'number'
+                      ? binding.concurrency
+                      : '';
+                return (
+                  <label
+                    key={`${roleId}:${binding.provider_id}:${binding.model}:${index}`}
+                    className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
+                  >
+                    <span className="truncate text-text-main">
+                      {ROLE_LABELS[roleId]} · {binding.provider_id}/{binding.model}
+                    </span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={value}
+                      onChange={(event) =>
+                        handleBindingConcurrencyChange(
+                          roleId,
+                          binding.provider_id,
+                          binding.model,
+                          event.target.value
+                        )
+                      }
+                      className="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-text-main"
+                      placeholder="auto"
+                    />
+                  </label>
+                );
+              })}
+              {bindingRows.length === 0 ? <div className="text-[10px] text-text-dim">暂无 Binding</div> : null}
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div className="h-[60vh] min-h-[520px] rounded-xl border border-white/10 overflow-hidden">
         <ReactFlow

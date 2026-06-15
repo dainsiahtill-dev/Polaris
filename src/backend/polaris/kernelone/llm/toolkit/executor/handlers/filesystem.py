@@ -142,6 +142,56 @@ _SUGGEST_BARE_NAME_MAX_DEPTH = 2
 _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES = 100
 _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO = 0.4
 
+# Wall 2 (2026-06-15): a write_file whose ``content`` is blank/whitespace on a
+# content-bearing target silently produced a 0-byte file that passed as a
+# successful write — .css/.html were never syntax-gated and an empty .js passes
+# the bracket check — so the step died ``director_no_materialized_changes`` with
+# NO recovery. Guard these extensions; the teaching error is recognised by
+# ``contract_guards`` as an argument-shape failure so the escalation/re-ask
+# ladder forces a real-content write instead of dead-lettering.
+_EMPTY_WRITE_GUARD_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".py",
+        ".pyw",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".go",
+        ".rs",
+        ".css",
+        ".scss",
+        ".less",
+        ".html",
+        ".htm",
+        ".md",
+        ".json",
+        ".vue",
+        ".svelte",
+    }
+)
+# Files that may LEGITIMATELY be empty — never flag these.
+_EMPTY_WRITE_SENTINEL_BASENAMES: frozenset[str] = frozenset({"__init__.py", "py.typed", ".gitkeep"})
+
+
+def is_empty_write_content_violation(rel: str, content: str) -> bool:
+    """True when a blank write to a content-bearing target is a Wall-2 violation.
+
+    The weak Director narrates the file body in prose/reasoning and emits
+    ``write_file`` with an empty ``content`` argument; that 0-byte write was
+    being accepted as authoritative. Sentinel files (``__init__.py`` /
+    ``py.typed`` / ``.gitkeep``) may legitimately be empty.
+    """
+    if content.strip():
+        return False
+    normalized = rel.replace("\\", "/")
+    basename = normalized.rsplit("/", 1)[-1]
+    if basename in _EMPTY_WRITE_SENTINEL_BASENAMES:
+        return False
+    return any(normalized.endswith(ext) for ext in _EMPTY_WRITE_GUARD_EXTENSIONS)
+
 
 def _destructive_shrink_error(target: str, removed_lines: int, added_lines: int, *, tool_hint: str) -> dict[str, Any]:
     return {
@@ -641,6 +691,16 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
         return {"ok": False, "error": normalized.error}
 
     text = str(normalized.content or "")
+    if is_empty_write_content_violation(rel, text):
+        return {
+            "ok": False,
+            "error_type": "empty_write_content",
+            "error": (
+                f"Empty write content: write_file for {rel} received blank content. "
+                "The COMPLETE file body must go in the `content` argument — do not "
+                "narrate it in prose or reasoning. Re-emit write_file with the full file content."
+            ),
+        }
     policy_result = _validate_director_policy_for_write(
         self,
         rel=rel,

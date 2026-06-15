@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
 
 
 def _gateway_profile(*, max_context_tokens: int = 128000) -> MagicMock:
@@ -161,6 +165,47 @@ class TestProcessContextOverride:
         assert result["name"] == "context_override"
         assert "key1: value1" in result["content"]
         assert "key2: value2" in result["content"]
+
+    @staticmethod
+    def _gateway() -> RoleContextGateway:
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 128000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "none"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = None
+        mock_profile.model = None
+        mock_profile.role_id = "test"
+        mock_profile.display_name = "Test"
+        return RoleContextGateway(mock_profile, workspace=".")
+
+    def test_control_plane_runtime_knobs_excluded(self):
+        """order-4 (ADR-0071): runtime execution knobs must NOT leak into the data
+        plane — they were the dominant BudgetExceededError contributor (L2-11)."""
+        override = {
+            "disable_internal_tool_rounds": True,
+            "llm_call_timeout_seconds": 300,
+            "keep_me": "real context",
+        }
+        result = self._gateway()._process_context_override(override)
+        assert result is not None
+        assert "disable_internal_tool_rounds" not in result["content"]
+        assert "llm_call_timeout_seconds" not in result["content"]
+        assert "keep_me: real context" in result["content"]
+
+    def test_oversized_value_is_capped(self):
+        """order-4: a single oversized value cannot blow the window."""
+        big = "x" * 50000
+        result = self._gateway()._process_context_override({"payload": big})
+        assert result is not None
+        assert "…[truncated]" in result["content"]
+        # Bounded well under the original 50k chars (default cap 1500 + marker).
+        assert len(result["content"]) < 2000
 
     def test_process_context_override_filters_prompt_injection(self):
         """Verify prompt injection patterns are filtered."""

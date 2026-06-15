@@ -28,6 +28,38 @@ from .helpers import (
 
 logger = logging.getLogger(__name__)
 
+_DIAG_WRITE_TOOL_NAMES = frozenset(
+    {"append_to_file", "edit_blocks", "edit_file", "patch_apply", "precision_edit", "repo_apply_diff", "write_file"}
+)
+
+
+def _diag_write_results_summary(tool_results: list[dict[str, Any]]) -> list[tuple[str, int]]:
+    """Wall 2 diagnostic: ``(tool_name, max content length)`` per write-tool result.
+
+    Standalone/defensive so the ``director_no_materialized_changes`` verdict log can
+    reveal whether a forced write emitted with an EMPTY ``content`` argument
+    (prose-vs-structured-field, F16 follow-up) rather than a non-authoritative write.
+    ``write_tool_evidence`` and the file counts otherwise live only in
+    ``completion_metadata``, which the bench logger (WARNING) never surfaces.
+    Best-effort; never raises.
+    """
+    summary: list[tuple[str, int]] = []
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("tool_name") or item.get("tool") or "").strip().lower()
+        if name not in _DIAG_WRITE_TOOL_NAMES:
+            continue
+        content_len = 0
+        for source in (item, item.get("arguments"), item.get("result"), item.get("payload")):
+            if isinstance(source, dict):
+                for key in ("content", "new", "replace", "text", "patch"):
+                    value = source.get(key)
+                    if isinstance(value, str):
+                        content_len = max(content_len, len(value))
+        summary.append((name, content_len))
+    return summary
+
 
 def _finalize_claimed_execution(
     adapter: Any,
@@ -1012,6 +1044,21 @@ async def _execute_standard_llm_flow(
         and (requires_fresh_materialization or not bool(existing_contract_evidence.get("ok")))
     ):
         error = "director_no_materialized_changes"
+        # Wall 2 diagnostic (F16 follow-up): the forced write emitted but the
+        # workspace diff is empty. Surface the discriminating signals so a single
+        # solo rerun reveals whether the write content ARG was empty (prose lands
+        # in reasoning, structured `content` stays blank) or the write was
+        # non-authoritative — directs the Wall 2 fix without guessing.
+        logger.warning(
+            "director_no_materialized_changes DIAGNOSTIC: write_tool_evidence=%s tools_executed=%s "
+            "new_files=%s modified_files=%s requires_fresh=%s write_args(name,content_len)=%s",
+            write_tool_evidence,
+            len(tool_results),
+            len(new_files),
+            len(modified_files),
+            requires_fresh_materialization,
+            _diag_write_results_summary(tool_results),
+        )
         completion_metadata = {
             "adapter_result": {
                 "tools_executed": len(tool_results),

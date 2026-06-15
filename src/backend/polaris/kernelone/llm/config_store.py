@@ -249,6 +249,7 @@ class ProviderConfig(BaseModel):
     timeout: float = Field(default=60.0, gt=0, le=MAX_LLM_PROVIDER_TIMEOUT_SECONDS)
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0, le=100000)
+    max_concurrency: int | None = Field(default=None, gt=0, le=1000)
 
     @field_validator("type")
     @classmethod
@@ -274,12 +275,25 @@ class ProviderConfig(BaseModel):
         return v
 
 
+class RoleBindingConfig(BaseModel):
+    """Validation model for one role -> provider/model binding."""
+
+    provider_id: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    profile: str | None = None
+    max_concurrency: int | None = Field(default=None, gt=0, le=1000)
+    concurrency: int | None = Field(default=None, gt=0, le=1000)
+
+
 class RoleConfig(BaseModel):
     """Validation model for a single role configuration."""
 
     provider_id: str | None = Field(default=None, min_length=1)
     model: str | None = None
     profile: str | None = None
+    max_concurrency: int | None = Field(default=None, gt=0, le=1000)
+    concurrency: int | None = Field(default=None, gt=0, le=1000)
+    bindings: list[RoleBindingConfig] = Field(default_factory=list)
 
 
 class LLMConfigSchema(BaseModel):
@@ -774,6 +788,97 @@ def _ensure_llm_config_exists(path: str, settings: Any | None = None) -> None:
             write_json_atomic(path, build_default_config(settings), lock_timeout_sec=None)
 
 
+def _optional_positive_int(raw: Any) -> int | None:
+    """Coerce optional concurrency knobs to positive ints for persisted config."""
+    if raw is None or raw == "":
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _normalize_role_binding(raw: Any, *, role_profile: str | None = None) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    provider_id = str(raw.get("provider_id") or raw.get("providerId") or "").strip()
+    model = str(raw.get("model") or "").strip()
+    if not provider_id or not model:
+        return None
+
+    binding: dict[str, Any] = {
+        "provider_id": provider_id,
+        "model": model,
+    }
+    profile = str(raw.get("profile") or role_profile or "").strip()
+    if profile:
+        binding["profile"] = profile
+    for field_name in ("max_concurrency", "concurrency"):
+        value = _optional_positive_int(raw.get(field_name))
+        if value is not None:
+            binding[field_name] = value
+    return binding
+
+
+def _normalize_role_config(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    normalized = dict(raw)
+    role_profile = str(raw.get("profile") or "").strip() or None
+
+    for field_name in ("max_concurrency", "concurrency"):
+        if field_name in normalized:
+            value = _optional_positive_int(normalized.get(field_name))
+            if value is None:
+                normalized.pop(field_name, None)
+            else:
+                normalized[field_name] = value
+
+    bindings: list[dict[str, Any]] = []
+    raw_bindings = raw.get("bindings")
+    if isinstance(raw_bindings, list):
+        for item in raw_bindings:
+            binding = _normalize_role_binding(item, role_profile=role_profile)
+            if binding is not None:
+                bindings.append(binding)
+
+    if not bindings:
+        legacy_binding = _normalize_role_binding(
+            {
+                "provider_id": raw.get("provider_id"),
+                "model": raw.get("model"),
+                "profile": raw.get("profile"),
+            },
+            role_profile=role_profile,
+        )
+        if legacy_binding is not None:
+            bindings.append(legacy_binding)
+
+    normalized["bindings"] = bindings
+    if bindings:
+        primary = bindings[0]
+        normalized["provider_id"] = primary["provider_id"]
+        normalized["model"] = primary["model"]
+        if primary.get("profile"):
+            normalized["profile"] = primary["profile"]
+        elif "profile" in normalized and not str(normalized.get("profile") or "").strip():
+            normalized.pop("profile", None)
+    else:
+        provider_id = str(normalized.get("provider_id") or "").strip()
+        model = str(normalized.get("model") or "").strip()
+        if provider_id:
+            normalized["provider_id"] = provider_id
+        else:
+            normalized.pop("provider_id", None)
+        if model:
+            normalized["model"] = model
+        else:
+            normalized.pop("model", None)
+
+    return normalized
+
+
 def load_llm_config(
     workspace: str,
     cache_root: str,
@@ -944,7 +1049,8 @@ def normalize_llm_config(payload: dict[str, Any], settings: Any | None = None) -
     if not isinstance(visual_viewport, dict):
         visual_viewport = None
 
-    merged_roles = {**base.get("roles", {}), **roles}
+    merged_roles = {role_id: _normalize_role_config(role_cfg) for role_id, role_cfg in base.get("roles", {}).items()}
+    merged_roles.update({role_id: _normalize_role_config(role_cfg) for role_id, role_cfg in roles.items()})
     fallback_provider_id = _fallback_provider_id(providers) if isinstance(providers, dict) else None
     if fallback_provider_id:
         for role_id, role_cfg in list(merged_roles.items()):
@@ -952,7 +1058,12 @@ def normalize_llm_config(payload: dict[str, Any], settings: Any | None = None) -
                 continue
             provider_id = role_cfg.get("provider_id")
             if provider_id and provider_id not in providers:
-                merged_roles[role_id] = {**role_cfg, "provider_id": fallback_provider_id}
+                fallback_role = {**role_cfg, "provider_id": fallback_provider_id}
+                if isinstance(fallback_role.get("bindings"), list) and fallback_role["bindings"]:
+                    first_binding = dict(fallback_role["bindings"][0])
+                    first_binding["provider_id"] = fallback_provider_id
+                    fallback_role["bindings"] = [first_binding, *fallback_role["bindings"][1:]]
+                merged_roles[role_id] = _normalize_role_config(fallback_role)
 
     merged = {
         "schema_version": int(schema_version or 1),
@@ -1018,7 +1129,11 @@ def validate_llm_config(config: dict[str, Any]) -> tuple[bool, list[str], list[s
             if role_id not in roles or not isinstance(role_cfg, dict):
                 errors.append(f"Required role '{role_id}' not defined in roles")
                 continue
-            if not role_cfg.get("provider_id"):
+            bindings = role_cfg.get("bindings")
+            has_binding = isinstance(bindings, list) and any(
+                isinstance(item, dict) and item.get("provider_id") and item.get("model") for item in bindings
+            )
+            if not role_cfg.get("provider_id") and not has_binding:
                 warnings.append(f"Required role '{role_id}' is missing 'provider_id'")
 
         for role_id, role_cfg in roles.items():
@@ -1031,6 +1146,29 @@ def validate_llm_config(config: dict[str, Any]) -> tuple[bool, list[str], list[s
                     errors.append(f"Role '{role_id}' references provider '{provider_id}' but providers not defined")
                 elif provider_id not in providers:
                     errors.append(f"Role '{role_id}' references non-existent provider '{provider_id}'")
+            bindings = role_cfg.get("bindings")
+            if isinstance(bindings, list):
+                for index, binding in enumerate(bindings):
+                    if not isinstance(binding, dict):
+                        errors.append(f"Role '{role_id}' binding[{index}] is not a dictionary")
+                        continue
+                    binding_provider_id = str(binding.get("provider_id") or "").strip()
+                    binding_model = str(binding.get("model") or "").strip()
+                    if not binding_provider_id:
+                        errors.append(f"Role '{role_id}' binding[{index}] is missing provider_id")
+                        continue
+                    if not binding_model:
+                        errors.append(f"Role '{role_id}' binding[{index}] is missing model")
+                    if not isinstance(providers, dict):
+                        errors.append(
+                            f"Role '{role_id}' binding[{index}] references provider '{binding_provider_id}' "
+                            "but providers not defined"
+                        )
+                    elif binding_provider_id not in providers:
+                        errors.append(
+                            f"Role '{role_id}' binding[{index}] references non-existent provider "
+                            f"'{binding_provider_id}'"
+                        )
 
     schema_version = config.get("schema_version")
     if schema_version is not None and not isinstance(schema_version, int):

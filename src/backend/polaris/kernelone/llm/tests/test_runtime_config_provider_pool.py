@@ -16,10 +16,12 @@ from polaris.kernelone.llm.runtime_config import (
     RoleModelConfig,
     RuntimeConfigManager,
     clear_role_provider_override,
+    get_role_binding_slots,
     get_role_concurrency,
     get_role_model,
     get_role_provider_pool,
     reset_runtime_config_manager,
+    set_role_binding_override,
     set_role_provider_override,
     set_runtime_config_manager,
 )
@@ -34,6 +36,12 @@ def _manager(tmp_path: Path, director: dict[str, object]) -> RuntimeConfigManage
         },
         "roles": {"director": director},
     }
+    path = tmp_path / "llm_config.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return RuntimeConfigManager(config_path_resolver=lambda: str(path))
+
+
+def _manager_with_config(tmp_path: Path, config: dict[str, object]) -> RuntimeConfigManager:
     path = tmp_path / "llm_config.json"
     path.write_text(json.dumps(config), encoding="utf-8")
     return RuntimeConfigManager(config_path_resolver=lambda: str(path))
@@ -79,6 +87,102 @@ class TestConfigParsing:
         mgr = _manager(tmp_path, {"provider_id": "prov-local", "model": "qwen", "concurrency": 0})
         cfg = mgr.get_role_config("director")
         assert cfg is not None and cfg.concurrency == 1
+
+    def test_local_provider_defaults_to_one_slot_even_when_role_allows_more(self, tmp_path: Path) -> None:
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {"local": {"type": "ollama", "base_url": "http://127.0.0.1:11434", "model": "qwen"}},
+                "roles": {
+                    "director": {
+                        "max_concurrency": 6,
+                        "bindings": [{"provider_id": "local", "model": "qwen"}],
+                    }
+                },
+            },
+        )
+
+        slots = mgr.get_role_binding_slots("director")
+
+        assert len(slots) == 1
+        assert slots[0].provider_id == "local"
+        assert slots[0].model == "qwen"
+        assert slots[0].max_concurrency == 1
+
+    def test_local_provider_explicit_capacity_can_allocate_multiple_slots(self, tmp_path: Path) -> None:
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "local": {
+                        "type": "ollama",
+                        "base_url": "http://127.0.0.1:11434",
+                        "model": "qwen",
+                        "max_concurrency": 3,
+                    }
+                },
+                "roles": {
+                    "director": {
+                        "max_concurrency": 5,
+                        "bindings": [{"provider_id": "local", "model": "qwen"}],
+                    }
+                },
+            },
+        )
+
+        slots = mgr.get_role_binding_slots("director")
+
+        assert len(slots) == 3
+        assert all(slot.provider_id == "local" and slot.model == "qwen" for slot in slots)
+
+    def test_cloud_provider_can_allocate_multiple_same_provider_slots(self, tmp_path: Path) -> None:
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {"kimi": {"type": "kimi", "max_concurrency": 20, "model": "kimi-k2"}},
+                "roles": {
+                    "director": {
+                        "max_concurrency": 5,
+                        "bindings": [{"provider_id": "kimi", "model": "kimi-k2", "max_concurrency": 4}],
+                    }
+                },
+            },
+        )
+
+        slots = mgr.get_role_binding_slots("director")
+
+        assert len(slots) == 4
+        assert {(slot.role_id, slot.provider_id, slot.model) for slot in slots} == {("director", "kimi", "kimi-k2")}
+        assert [slot.slot_index for slot in slots] == [0, 1, 2, 3]
+
+    def test_role_cap_limits_total_slots_across_bindings(self, tmp_path: Path) -> None:
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "kimi": {"type": "kimi", "max_concurrency": 10},
+                    "minimax": {"type": "minimax", "max_concurrency": 10},
+                },
+                "roles": {
+                    "director": {
+                        "max_concurrency": 3,
+                        "bindings": [
+                            {"provider_id": "kimi", "model": "kimi-k2", "max_concurrency": 2},
+                            {"provider_id": "minimax", "model": "MiniMax-M2", "max_concurrency": 2},
+                        ],
+                    }
+                },
+            },
+        )
+
+        slots = mgr.get_role_binding_slots("director")
+
+        assert len(slots) == 3
+        assert [slot.provider_id for slot in slots] == ["kimi", "kimi", "minimax"]
 
 
 class TestThreadOverride:
@@ -144,6 +248,29 @@ class TestThreadOverride:
         # asyncio.run in this thread inherits the current context (override set)
         assert asyncio.run(_coro()) == ("prov-lan", "qwen")
 
+    def test_binding_override_distinguishes_same_provider_different_models(self, tmp_path: Path) -> None:
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {"kimi": {"type": "kimi", "max_concurrency": 4}},
+                "roles": {
+                    "director": {
+                        "max_concurrency": 2,
+                        "bindings": [
+                            {"provider_id": "kimi", "model": "kimi-k2"},
+                            {"provider_id": "kimi", "model": "kimi-k1"},
+                        ],
+                    }
+                },
+            },
+        )
+        set_runtime_config_manager(mgr)
+
+        set_role_binding_override("director", provider_id="kimi", model="kimi-k1")
+
+        assert get_role_model("director") == ("kimi", "kimi-k1")
+
 
 class TestModuleHelpers:
     def teardown_method(self) -> None:
@@ -157,12 +284,14 @@ class TestModuleHelpers:
         set_runtime_config_manager(mgr)
         assert get_role_provider_pool("director") == ("prov-local", "prov-lan")
         assert get_role_concurrency("director") == 2
+        assert len(get_role_binding_slots("director")) == 2
 
     def test_helpers_safe_when_unbound(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path, {"model": "qwen"})  # no provider_id -> unbound
         set_runtime_config_manager(mgr)
         assert get_role_provider_pool("director") == ()
         assert get_role_concurrency("director") == 1
+        assert get_role_binding_slots("director") == ()
 
 
 class TestResolveProviderModelHonorsOverride:

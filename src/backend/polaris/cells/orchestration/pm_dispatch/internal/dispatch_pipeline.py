@@ -847,7 +847,7 @@ def _build_director_worker_pool(
     worker_suffix: str,
     exec_timeout: int,
     enable_safe_parallel: bool,
-) -> list[tuple[Any, str]]:
+) -> list[tuple[Any, Any]]:
     """Build N Director worker consumers, each bound to a pool backend endpoint.
 
     Returns an empty list when the Director role requests no concurrency (<=1) or
@@ -855,13 +855,51 @@ def _build_director_worker_pool(
     (zero behaviour change for current single-backend configs).
     """
     try:
-        from polaris.kernelone.llm.runtime_config import get_role_concurrency, get_role_provider_pool
+        from polaris.kernelone.llm.runtime_config import (
+            get_role_binding_slots,
+            get_role_concurrency,
+            get_role_provider_pool,
+            load_role_config,
+        )
 
+        role_config = load_role_config("director")
+        binding_slots = get_role_binding_slots("director")
         concurrency = get_role_concurrency("director")
         pool = get_role_provider_pool("director")
     except (ImportError, RuntimeError, ValueError) as exc:
         logger.debug("director worker pool resolution failed, using single consumer: %s", exc)
         return []
+    if role_config is not None and role_config.bindings:
+        if len(binding_slots) <= 1:
+            return []
+        slot_provider_ids = tuple(dict.fromkeys(str(slot.provider_id) for slot in binding_slots if slot.provider_id))
+        live_provider_ids = set(_reachable_provider_pool(slot_provider_ids))
+        if not live_provider_ids:
+            logger.warning("director pool: NO bound backend reachable; falling back to single inline consumer")
+            return []
+        live_slots = [slot for slot in binding_slots if str(slot.provider_id) in live_provider_ids]
+        if len(live_slots) <= 1:
+            return []
+        slot_workers: list[tuple[Any, Any]] = []
+        for idx, slot in enumerate(live_slots):
+            consumer = director_consumer_type(
+                workspace=workspace_full,
+                worker_id=f"pm_inline_director_{worker_suffix}_w{idx}",
+                visibility_timeout_seconds=exec_timeout,
+                poll_interval=0.05,
+                enable_safe_parallel=enable_safe_parallel,
+            )
+            slot_workers.append((consumer, slot))
+        logger.info(
+            "director role-binding concurrency: %d worker(s) over %d live deployment slot(s)",
+            len(slot_workers),
+            len(live_slots),
+        )
+        _pool_trace(
+            f"POOL BUILT: {len(slot_workers)} role-binding worker(s); "
+            f"bindings={[(c.worker_id if hasattr(c, 'worker_id') else f'w{i}', str(slot), getattr(slot, 'model', '')) for i, (c, slot) in enumerate(slot_workers)]}"
+        )
+        return slot_workers
     if concurrency <= 1 or len(pool) < 1:
         return []
     # Resilience (multi-LLM, skip-offline): health-check the pool and run only on the
@@ -876,7 +914,7 @@ def _build_director_worker_pool(
         logger.warning("director pool: %d/%d backends live; running on %s", len(live_pool), len(pool), live_pool)
     # Keep the requested parallelism; round-robin the workers over the LIVE backends
     # only (so a dead endpoint is routed around, never assigned).
-    workers: list[tuple[Any, str]] = []
+    legacy_workers: list[tuple[Any, str]] = []
     for idx in range(concurrency):
         provider_id = live_pool[idx % len(live_pool)]
         consumer = director_consumer_type(
@@ -886,7 +924,7 @@ def _build_director_worker_pool(
             poll_interval=0.05,
             enable_safe_parallel=enable_safe_parallel,
         )
-        workers.append((consumer, provider_id))
+        legacy_workers.append((consumer, provider_id))
     logger.info(
         "director multi-backend concurrency: %d worker(s) over %d live endpoint(s) %s",
         concurrency,
@@ -894,14 +932,14 @@ def _build_director_worker_pool(
         live_pool,
     )
     _pool_trace(
-        f"POOL BUILT: {len(workers)} worker(s) over {len(live_pool)} live backend(s); "
-        f"bindings={[(c.worker_id if hasattr(c, 'worker_id') else f'w{i}', pid) for i, (c, pid) in enumerate(workers)]}"
+        f"POOL BUILT: {len(legacy_workers)} worker(s) over {len(live_pool)} live backend(s); "
+        f"bindings={[(c.worker_id if hasattr(c, 'worker_id') else f'w{i}', pid) for i, (c, pid) in enumerate(legacy_workers)]}"
     )
-    return workers
+    return legacy_workers
 
 
 def _drive_director_workers(
-    workers: list[tuple[Any, str]],
+    workers: list[tuple[Any, Any]],
     *,
     poll_interval: float = 0.05,
     max_claims_per_worker: int = 256,
@@ -943,7 +981,11 @@ def _drive_director_workers(
     import threading
     import time
 
-    from polaris.kernelone.llm.runtime_config import clear_role_provider_override, set_role_provider_override
+    from polaris.kernelone.llm.runtime_config import (
+        clear_role_provider_override,
+        set_role_binding_override,
+        set_role_provider_override,
+    )
 
     death_threshold = _read_positive_int_env(
         "KERNELONE_DIRECTOR_WORKER_DEATH_THRESHOLD", default=3, minimum=1, maximum=100
@@ -984,6 +1026,24 @@ def _drive_director_workers(
                 return True
         return False
 
+    def _binding_provider_id(binding: Any) -> str:
+        return str(getattr(binding, "provider_id", binding) or "").strip()
+
+    def _binding_model(binding: Any) -> str:
+        return str(getattr(binding, "model", "") or "").strip()
+
+    def _binding_id(binding: Any) -> str:
+        return str(getattr(binding, "binding_id", "") or "").strip()
+
+    def _binding_slot_index(binding: Any) -> int | None:
+        raw = getattr(binding, "slot_index", None)
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
     def _retire(index: int, provider_id: str, reason: str) -> None:
         logger.warning("director worker w%d (%s) retired mid-cycle (F15): %s", index, provider_id, reason)
         _pool_trace(f"w{index} ({provider_id}) RETIRED: {reason}")
@@ -992,8 +1052,15 @@ def _drive_director_workers(
             if all(idle):
                 stop.set()
 
-    def _run(index: int, consumer: Any, provider_id: str) -> None:
-        set_role_provider_override("director", provider_id)
+    def _run(index: int, consumer: Any, binding: Any) -> None:
+        provider_id = _binding_provider_id(binding)
+        model = _binding_model(binding)
+        binding_id = _binding_id(binding)
+        slot_index = _binding_slot_index(binding)
+        if model:
+            set_role_binding_override("director", provider_id=provider_id, model=model, binding_id=binding_id)
+        else:
+            set_role_provider_override("director", provider_id)
         backend_failures = 0
         try:
             claims = 0
@@ -1015,6 +1082,12 @@ def _drive_director_workers(
                     for row in batch:
                         if isinstance(row, dict):
                             row.setdefault("_director_backend", provider_id)
+                            if model:
+                                row.setdefault("_director_model", model)
+                            if binding_id:
+                                row.setdefault("_director_binding_id", binding_id)
+                            if slot_index is not None:
+                                row.setdefault("_director_slot_index", slot_index)
                     results[index].extend(batch)
                     claims += len(batch)
                     resolved = any(isinstance(r, dict) and r.get("ok") for r in batch)
@@ -1056,8 +1129,8 @@ def _drive_director_workers(
             clear_role_provider_override("director")
 
     threads = [
-        threading.Thread(target=_run, args=(i, consumer, pid), name=f"director-w{i}", daemon=True)
-        for i, (consumer, pid) in enumerate(workers)
+        threading.Thread(target=_run, args=(i, consumer, binding), name=f"director-w{i}", daemon=True)
+        for i, (consumer, binding) in enumerate(workers)
     ]
     for thread in threads:
         thread.start()
@@ -1106,7 +1179,7 @@ def _drive_director_workers(
     return merged
 
 
-def _log_director_backend_distribution(workers: list[tuple[Any, str]], merged: list[dict[str, Any]]) -> None:
+def _log_director_backend_distribution(workers: list[tuple[Any, Any]], merged: list[dict[str, Any]]) -> None:
     """Emit a one-line per-backend claim distribution so 4-Director load is visible."""
     if not merged:
         return
@@ -1117,7 +1190,7 @@ def _log_director_backend_distribution(workers: list[tuple[Any, str]], merged: l
         if isinstance(row, dict):
             pid = str(row.get("_director_backend") or "?")
             counts[pid] = counts.get(pid, 0) + 1
-    bound = {pid for _c, pid in workers}
+    bound = {str(getattr(binding, "provider_id", binding) or "").strip() for _c, binding in workers}
     parts = []
     for pid in sorted(bound | set(counts)):
         try:
@@ -1217,7 +1290,7 @@ def _run_inline_task_market_consumers(
             "error": str(exc),
         }
 
-    def _refresh_director_workers() -> list[tuple[Any, str]]:
+    def _refresh_director_workers() -> list[tuple[Any, Any]]:
         """Re-evaluate backend reachability and (re)build the Director worker pool for
         THIS cycle, so recovered backends rejoin and dead ones drop out — real-time
         load-balancing over whatever LLMs are currently responding (per user directive

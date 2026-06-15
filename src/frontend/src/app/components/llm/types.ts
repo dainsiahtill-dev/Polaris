@@ -134,6 +134,7 @@ export interface ProviderConfig {
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
+  max_concurrency?: number;
   max_context_tokens?: number;
   max_output_tokens?: number;
   model?: string;
@@ -194,6 +195,15 @@ export interface RoleConfig {
   provider_id?: string;
   model?: string;
   profile?: string;
+  max_concurrency?: number;
+  concurrency?: number;
+  bindings?: Array<{
+    provider_id: string;
+    model: string;
+    profile?: string;
+    max_concurrency?: number;
+    concurrency?: number;
+  }>;
 }
 
 // Role Requirements

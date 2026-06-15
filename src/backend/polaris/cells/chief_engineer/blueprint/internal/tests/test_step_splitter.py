@@ -110,10 +110,33 @@ class TestTriggerBoundaries:
         steps = [_step("main.js", ["function init()", "function update()", "function render()"], 60)]
         assert split_oversize_steps(steps, parent_pm_task=PARENT) is steps
 
-    def test_signature_count_triggers_even_with_low_est_lines(self) -> None:
-        # 8 signatures but est_lines=40 (the CE under-report case) → still splits.
+    def test_sole_writer_sig_only_leaf_is_kept_whole(self) -> None:
+        # Over-fission suppression (batch-b1, 2026-06-15): 8 signatures but
+        # est_lines=40 (sig-only trigger) on a SOLE-WRITER file is kept as ONE
+        # coherent whole-file step — the weak Director cannot stitch one file across
+        # N fill-turns. Identity preserved (nothing split).
+        steps = [_step("main.js", SIGS12[:8], 40)]
+        assert split_oversize_steps(steps, parent_pm_task=PARENT) is steps
+
+    def test_sig_only_split_still_fires_when_suppression_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KERNELONE_CE_SINGLE_FILE_NO_FISSION", "off")
         out = split_oversize_steps([_step("main.js", SIGS12[:8], 40)], parent_pm_task=PARENT)
         assert _ids(out)[0].endswith("-skel")
+
+    def test_est_lines_trigger_still_splits_sole_writer(self) -> None:
+        # est_lines>=100 is NOT sig-only — a genuinely large file still splits.
+        out = split_oversize_steps([_step("main.js", SIGS12[:8], 110)], parent_pm_task=PARENT)
+        assert _ids(out)[0].endswith("-skel")
+
+    def test_multi_writer_same_file_sig_only_still_splits(self) -> None:
+        # Two steps target the SAME file (multiplicity>1) → not a sole-writer leaf,
+        # so the sig-only split is NOT suppressed.
+        steps = [
+            _step("main.js", SIGS12[:8], 40, sid="S4a"),
+            _step("main.js", SIGS12[:6], 40, sid="S4b"),
+        ]
+        out = split_oversize_steps(steps, parent_pm_task=PARENT)
+        assert any(sid.endswith("-skel") for sid in _ids(out))
 
     def test_doc_target_never_split(self) -> None:
         steps = [_step("readme.md", ["intro", "controls", "run", "scoring", "levels"], 200)]

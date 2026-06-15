@@ -9,7 +9,45 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _should_use_whole_file_placeholder_replacement,
     _should_use_whole_file_prefix_replacement,
     _write_temp_verify_rename,
+    is_empty_write_content_violation,
 )
+
+
+class TestEmptyWriteContentViolation:
+    """Wall 2 (2026-06-15): a blank write_file `content` on a content-bearing
+    target was silently accepted as a 0-byte successful write -> the step died
+    director_no_materialized_changes with no recovery."""
+
+    @pytest.mark.parametrize(
+        "rel",
+        ["style.css", "index.html", "main.js", "app.ts", "game.jsx", "readme.md", "data.json", "src/a/b.py"],
+    )
+    @pytest.mark.parametrize("blank", ["", "   ", "\n\t\n", "  \r\n  "])
+    def test_blank_content_on_code_or_markup_is_flagged(self, rel: str, blank: str) -> None:
+        assert is_empty_write_content_violation(rel, blank) is True
+
+    @pytest.mark.parametrize("rel", ["__init__.py", "pkg/__init__.py", "py.typed", "assets/.gitkeep"])
+    def test_sentinel_files_may_be_empty(self, rel: str) -> None:
+        assert is_empty_write_content_violation(rel, "") is False
+
+    def test_non_blank_content_is_not_flagged(self) -> None:
+        assert is_empty_write_content_violation("style.css", "#game { width: 100%; }") is False
+
+    @pytest.mark.parametrize("rel", ["notes.txt", "data.csv", "config.env", ".env"])
+    def test_non_content_bearing_targets_are_not_flagged(self, rel: str) -> None:
+        # Only code/markup extensions are guarded; plain data/config files may be
+        # legitimately empty and are out of scope.
+        assert is_empty_write_content_violation(rel, "") is False
+
+    def test_error_string_matches_contract_guard_anchor(self) -> None:
+        # The teaching error MUST be recognised as an argument-shape failure so
+        # the escalation/re-ask ladder engages (panel-flagged mandatory wiring).
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS,
+        )
+
+        error = "Empty write content: write_file for style.css received blank content."
+        assert any(anchor in error for anchor in _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS)
 
 
 class TestWriteTempVerifyRename:

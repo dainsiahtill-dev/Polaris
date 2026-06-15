@@ -58,6 +58,11 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     "context_os_expected",
     "context_os_snapshot",
     "cognitive_strategy_override",
+    # Runtime execution knobs (control plane) — ADR-0071: must NOT enter the data
+    # plane. Live (L2-11 2026-06-15) these leaked into the context_override system
+    # message and, alongside an uncapped value, were the dominant BudgetExceededError.
+    "disable_internal_tool_rounds",
+    "llm_call_timeout_seconds",
     "domain",
     "factory_run_id",
     "host_kind",
@@ -80,6 +85,25 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     "workspace",
     "workspace_root",
 }
+
+# Budget guard (order-4, 2026-06-15): a single oversized context_override value
+# (a serialized blueprint/payload/guidance) was rendered verbatim into one system
+# message — 5588 tokens live (L2-11), the dominant cause of BudgetExceededError
+# crashing the Director turn BEFORE any write. Cap each value so no one value can
+# blow the window; the weak model cannot use multi-thousand-token metadata anyway.
+_DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP = 1500
+
+
+def _context_override_value_char_cap() -> int:
+    raw = os.environ.get("KERNELONE_CONTEXT_OVERRIDE_VALUE_CHAR_CAP", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            return _DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP
+        if value > 0:
+            return value
+    return _DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP
 
 
 def _copy_strategy_value(value: Any) -> Any:
@@ -578,6 +602,29 @@ class RoleContextGateway:
             token_estimate += reserved_system_prompt_tokens
 
         if token_estimate > self._enforcement_budget_tokens:
+            # order-4 diagnostic (2026-06-15): BudgetExceededError dominates the
+            # weak-Director SOLO path (L2-08 8x, L2-11 6x) — it crashes the turn
+            # before any write. Log the per-message token breakdown BEFORE raising
+            # so the compress-to-fit fix targets the right plane (role system_prompt
+            # vs injected blueprint_step signal card vs dialogue) instead of guessing.
+            try:
+                breakdown = [
+                    {
+                        "role": str(message.get("role") or "?"),
+                        "tokens": int(self._token_estimator.estimate([message])),
+                        "head": str(message.get("content") or "")[:60].replace("\n", " "),
+                    }
+                    for message in messages
+                ]
+                logger.warning(
+                    "BudgetExceededError DIAGNOSTIC: budget=%s system_prompt_reserved=%s total=%s breakdown=%s",
+                    self._enforcement_budget_tokens,
+                    reserved_system_prompt_tokens,
+                    token_estimate,
+                    breakdown,
+                )
+            except Exception:  # noqa: BLE001 — diagnostics must never mask the real error
+                logger.warning("BudgetExceededError DIAGNOSTIC failed to build the message breakdown")
             raise BudgetExceededError(
                 "assembled role context exceeds context enforcement budget",
                 limit=self._enforcement_budget_tokens,
@@ -813,6 +860,7 @@ class RoleContextGateway:
 
         filtered_items: list[str] = []
         has_injection = False
+        value_char_cap = _context_override_value_char_cap()
 
         for key, value in context_override.items():
             if not isinstance(key, str):
@@ -822,6 +870,10 @@ class RoleContextGateway:
                 continue
 
             str_value = str(value) if value is not None else ""
+            # Bound each value so no single oversized payload can blow the window
+            # (order-4): the weak model cannot use multi-thousand-token metadata.
+            if len(str_value) > value_char_cap:
+                str_value = str_value[:value_char_cap] + " …[truncated]"
 
             # Detect prompt injection patterns
             if self._config.detect_prompt_injection:

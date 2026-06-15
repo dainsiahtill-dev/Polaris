@@ -13,9 +13,35 @@ from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     detect_creation_mode,
     narrow_edit_blocks_schema_to_line_range,
     resolve_escalation_temperature,
+    resolve_retry_create_output_floor,
     resolve_retry_escalation,
+    resolve_retry_output_floor,
     resolve_retry_temperature_override,
 )
+
+
+class TestRetryCreateOutputFloor:
+    """F16 follow-up (Wall 2, 2026-06-15): a pure-create forced write needs a
+    larger reserved output floor so a full file body is not truncated
+    (finish_reason=length) into an empty/partial write."""
+
+    def test_default_create_floor_exceeds_standard_floor(self) -> None:
+        # The create floor must be larger so max() picks it at the pure-create site.
+        assert resolve_retry_create_output_floor() == 7000
+        assert resolve_retry_create_output_floor() > (resolve_retry_output_floor() or 0)
+
+    def test_env_override(self, monkeypatch) -> None:
+        monkeypatch.setenv("KERNELONE_RETRY_CREATE_OUTPUT_FLOOR_TOKENS", "9000")
+        assert resolve_retry_create_output_floor() == 9000
+
+    def test_env_disable(self, monkeypatch) -> None:
+        monkeypatch.setenv("KERNELONE_RETRY_CREATE_OUTPUT_FLOOR_TOKENS", "off")
+        assert resolve_retry_create_output_floor() is None
+
+    def test_non_positive_disables(self, monkeypatch) -> None:
+        monkeypatch.setenv("KERNELONE_RETRY_CREATE_OUTPUT_FLOOR_TOKENS", "0")
+        assert resolve_retry_create_output_floor() is None
+
 
 _STRICT_DEFS = [
     {

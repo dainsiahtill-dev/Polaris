@@ -613,6 +613,12 @@ _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS: tuple[str, ...] = (
     # blocked write and dies as no_materialized_changes (live factory-bench
     # L2-11 r3: main.py IndentationError blocked once, never retried).
     "Code syntax validation failed",
+    # Wall 2 (2026-06-15): write_file emitted with a blank `content` argument on
+    # a content-bearing target (the body got narrated in prose/reasoning instead).
+    # Recognising it as an argument-shape failure routes it into the same
+    # escalation/re-ask ladder so a real-content write is forced — otherwise the
+    # single empty write dies as director_no_materialized_changes with no recovery.
+    "Empty write content",
 )
 
 

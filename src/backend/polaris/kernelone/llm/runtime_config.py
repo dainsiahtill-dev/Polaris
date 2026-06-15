@@ -7,12 +7,14 @@ reverse dependency on application-level Settings.
 from __future__ import annotations
 
 import contextvars
+import ipaddress
 import json
 import logging
 import os
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from polaris.kernelone.storage import resolve_global_path
 
@@ -31,6 +33,60 @@ MASKED_SECRET = "********"
 
 
 @dataclass(frozen=True)
+class ResolvedRoleBinding:
+    """One explicit role -> provider/model binding from runtime config."""
+
+    role_id: str
+    provider_id: str
+    model: str
+    profile: str | None = None
+    max_concurrency: int | None = None
+    binding_id: str = ""
+    binding_index: int = 0
+
+
+@dataclass(frozen=True)
+class RoleBindingSlot:
+    """One schedulable request slot for a role binding."""
+
+    role_id: str
+    provider_id: str
+    model: str
+    profile: str | None = None
+    binding_id: str = ""
+    binding_index: int = 0
+    slot_index: int = 0
+    max_concurrency: int = 1
+
+    def __str__(self) -> str:
+        return self.provider_id
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            return self.provider_id == other
+        if not isinstance(other, RoleBindingSlot):
+            return False
+        return (
+            self.role_id,
+            self.provider_id,
+            self.model,
+            self.binding_id,
+            self.binding_index,
+            self.slot_index,
+        ) == (
+            other.role_id,
+            other.provider_id,
+            other.model,
+            other.binding_id,
+            other.binding_index,
+            other.slot_index,
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.role_id, self.provider_id, self.model, self.binding_id, self.binding_index, self.slot_index))
+
+
+@dataclass(frozen=True)
 class RoleModelConfig:
     """Resolved model configuration for a role.
 
@@ -46,11 +102,20 @@ class RoleModelConfig:
     profile: str | None = None
     provider_pool: tuple[str, ...] = ()
     concurrency: int = 1
+    bindings: tuple[ResolvedRoleBinding, ...] = ()
 
     def resolved_pool(self) -> tuple[str, ...]:
         """The effective endpoint pool — the explicit pool, else the primary id."""
-        pool = tuple(pid for pid in self.provider_pool if pid)
-        return pool or ((self.provider_id,) if self.provider_id else ())
+        if self.bindings:
+            pool: list[str] = []
+            seen: set[str] = set()
+            for binding in self.bindings:
+                if binding.provider_id and binding.provider_id not in seen:
+                    seen.add(binding.provider_id)
+                    pool.append(binding.provider_id)
+            return tuple(pool)
+        provider_pool = tuple(pid for pid in self.provider_pool if pid)
+        return provider_pool or ((self.provider_id,) if self.provider_id else ())
 
 
 # Per-worker provider override: a Director worker binds its own backend endpoint
@@ -67,6 +132,9 @@ class RoleModelConfig:
 _role_provider_override: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
     "role_provider_override", default=None
 )
+_role_binding_override: contextvars.ContextVar[dict[str, dict[str, str]] | None] = contextvars.ContextVar(
+    "role_binding_override", default=None
+)
 
 
 def set_role_provider_override(role_id: str, provider_id: str) -> None:
@@ -80,19 +148,58 @@ def set_role_provider_override(role_id: str, provider_id: str) -> None:
     else:
         updated.pop(role, None)
     _role_provider_override.set(updated)
+    binding_overrides = dict(_role_binding_override.get() or {})
+    binding_overrides.pop(role, None)
+    _role_binding_override.set(binding_overrides or None)
+
+
+def set_role_binding_override(
+    role_id: str,
+    *,
+    provider_id: str,
+    model: str,
+    binding_id: str | None = None,
+) -> None:
+    """Bind ``role_id`` to a specific provider/model for this execution context."""
+    role = _normalize_runtime_role_id(role_id)
+    pid = str(provider_id or "").strip()
+    model_name = str(model or "").strip()
+    updated = dict(_role_binding_override.get() or {})
+    if pid and model_name:
+        payload = {"provider_id": pid, "model": model_name}
+        bid = str(binding_id or "").strip()
+        if bid:
+            payload["binding_id"] = bid
+        updated[role] = payload
+    else:
+        updated.pop(role, None)
+    _role_binding_override.set(updated or None)
+
+    provider_overrides = dict(_role_provider_override.get() or {})
+    if pid:
+        provider_overrides[role] = pid
+    else:
+        provider_overrides.pop(role, None)
+    _role_provider_override.set(provider_overrides or None)
 
 
 def clear_role_provider_override(role_id: str | None = None) -> None:
     """Clear the current context's override for ``role_id`` (or all roles)."""
     current = _role_provider_override.get()
-    if not current:
-        return
     if role_id is None:
         _role_provider_override.set(None)
+        _role_binding_override.set(None)
         return
-    updated = dict(current)
-    updated.pop(_normalize_runtime_role_id(role_id), None)
-    _role_provider_override.set(updated or None)
+    normalized_role_id = _normalize_runtime_role_id(role_id)
+    if current:
+        updated = dict(current)
+        updated.pop(normalized_role_id, None)
+        _role_provider_override.set(updated or None)
+    binding_current = _role_binding_override.get()
+    if binding_current:
+        binding_updated = dict(binding_current)
+        binding_updated.pop(normalized_role_id, None)
+        _role_binding_override.set(binding_updated or None)
 
 
 def _get_role_provider_override(role_id: str) -> str | None:
@@ -100,6 +207,14 @@ def _get_role_provider_override(role_id: str) -> str | None:
     if not overrides:
         return None
     return overrides.get(_normalize_runtime_role_id(role_id))
+
+
+def _get_role_binding_override(role_id: str) -> dict[str, str] | None:
+    overrides = _role_binding_override.get()
+    if not overrides:
+        return None
+    payload = overrides.get(_normalize_runtime_role_id(role_id))
+    return dict(payload) if isinstance(payload, dict) else None
 
 
 def get_role_provider_override(role_id: str) -> str | None:
@@ -110,6 +225,11 @@ def get_role_provider_override(role_id: str) -> str | None:
     resolution consults this so a worker's binding wins over any provider baked into
     a cached role profile."""
     return _get_role_provider_override(role_id)
+
+
+def get_role_binding_override(role_id: str) -> dict[str, str] | None:
+    """Return the current context's provider/model binding override, if any."""
+    return _get_role_binding_override(role_id)
 
 
 def _parse_provider_pool(raw: Any, primary_provider_id: str) -> tuple[str, ...]:
@@ -134,6 +254,34 @@ def _parse_concurrency(raw: Any) -> int:
     except (TypeError, ValueError):
         return 1
     return max(1, value)
+
+
+def _parse_optional_positive_int(raw: Any) -> int | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _is_local_base_url(raw_url: Any) -> bool:
+    value = str(raw_url or "").strip()
+    if not value:
+        return False
+    try:
+        host = urlparse(value).hostname or ""
+    except ValueError:
+        return False
+    lowered = host.strip().lower()
+    if lowered in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(lowered)
+    except ValueError:
+        return lowered.endswith(".local")
+    return ip.is_loopback or ip.is_private or ip.is_link_local
 
 
 def _normalize_runtime_role_id(role_id: str) -> str:
@@ -221,28 +369,121 @@ class RuntimeConfigManager:
             logger.debug("[RuntimeConfig] Loaded config from: %s", config_path)
             return dict(config)
 
+    def _provider_entry(self, provider_id: str) -> dict[str, Any]:
+        providers = self._load_config().get("providers")
+        entry: Any = None
+        if isinstance(providers, dict):
+            entry = providers.get(provider_id)
+        elif isinstance(providers, list):
+            for item in providers:
+                if isinstance(item, dict) and str(item.get("id") or item.get("provider_id") or "") == provider_id:
+                    entry = item
+                    break
+        return dict(entry) if isinstance(entry, dict) else {}
+
+    def _parse_role_bindings(
+        self, normalized_role_id: str, role_cfg: dict[str, Any]
+    ) -> tuple[ResolvedRoleBinding, ...]:
+        raw_bindings = role_cfg.get("bindings")
+        if not isinstance(raw_bindings, list):
+            return ()
+
+        bindings: list[ResolvedRoleBinding] = []
+        role_profile = str(role_cfg.get("profile") or "").strip() or None
+        for index, raw in enumerate(raw_bindings):
+            if not isinstance(raw, dict):
+                continue
+            provider_id = str(raw.get("provider_id") or raw.get("providerId") or "").strip()
+            model = str(raw.get("model") or "").strip()
+            if not provider_id or not model:
+                continue
+            profile = str(raw.get("profile") or role_profile or "").strip() or None
+            max_concurrency = _parse_optional_positive_int(raw.get("max_concurrency"))
+            if max_concurrency is None:
+                max_concurrency = _parse_optional_positive_int(raw.get("concurrency"))
+            bindings.append(
+                ResolvedRoleBinding(
+                    role_id=normalized_role_id,
+                    provider_id=provider_id,
+                    model=model,
+                    profile=profile,
+                    max_concurrency=max_concurrency,
+                    binding_id=f"{normalized_role_id}:{index}:{provider_id}:{model}",
+                    binding_index=index,
+                )
+            )
+        return tuple(bindings)
+
+    def _role_config_from_assignments(self, normalized_role_id: str, assignments: list[Any]) -> RoleModelConfig | None:
+        bindings: list[ResolvedRoleBinding] = []
+        role_cap: int | None = None
+        for index, assignment in enumerate(assignments):
+            if not isinstance(assignment, dict):
+                continue
+            assignment_role = _normalize_runtime_role_id(str(assignment.get("roleId") or assignment.get("role") or ""))
+            if assignment_role != normalized_role_id:
+                continue
+            provider_id = str(assignment.get("providerId") or assignment.get("provider_id") or "").strip()
+            model = str(assignment.get("model") or "").strip()
+            if not provider_id or not model:
+                continue
+            binding_cap = _parse_optional_positive_int(assignment.get("maxConcurrency"))
+            if binding_cap is None:
+                binding_cap = _parse_optional_positive_int(assignment.get("max_concurrency"))
+            role_cap = role_cap or _parse_optional_positive_int(assignment.get("roleMaxConcurrency"))
+            profile = str(assignment.get("profile") or "").strip() or None
+            bindings.append(
+                ResolvedRoleBinding(
+                    role_id=normalized_role_id,
+                    provider_id=provider_id,
+                    model=model,
+                    profile=profile,
+                    max_concurrency=binding_cap,
+                    binding_id=f"{normalized_role_id}:assignment:{index}:{provider_id}:{model}",
+                    binding_index=index,
+                )
+            )
+        if not bindings:
+            return None
+        primary = bindings[0]
+        return RoleModelConfig(
+            role_id=normalized_role_id,
+            provider_id=primary.provider_id,
+            model=primary.model,
+            profile=primary.profile,
+            provider_pool=tuple(dict.fromkeys(binding.provider_id for binding in bindings)),
+            concurrency=max(1, role_cap or 1),
+            bindings=tuple(bindings),
+        )
+
+    def get_provider_max_concurrency(self, provider_id: str) -> int:
+        """Effective provider/deployment concurrency cap.
+
+        Local/CLI providers default to 1 because most local installs are single
+        worker by default; explicit ``max_concurrency`` always wins, including
+        local deployments that are configured for parallel serving.
+        """
+        entry = self._provider_entry(provider_id)
+        explicit = _parse_optional_positive_int(entry.get("max_concurrency"))
+        if explicit is not None:
+            return explicit
+
+        provider_type = str(entry.get("type") or "").strip().lower()
+        if provider_type in {"ollama", "codex_cli", "gemini_cli", "cli", "local", "local_http"}:
+            return 1
+        if _is_local_base_url(entry.get("base_url") or entry.get("endpoint") or entry.get("api_base")):
+            return 1
+        return 5
+
     def get_role_config(self, role_id: str) -> RoleModelConfig | None:
         config = self._load_config()
         normalized_role_id = _normalize_runtime_role_id(role_id)
 
         assignments = config.get("roleAssignments", [])
         if isinstance(assignments, list):
-            for assignment in assignments:
-                if not isinstance(assignment, dict):
-                    continue
-                assignment_role = _normalize_runtime_role_id(str(assignment.get("roleId") or ""))
-                if assignment_role != normalized_role_id:
-                    continue
-                provider_id = str(assignment.get("providerId") or "").strip()
-                model = str(assignment.get("model") or "").strip()
-                if not provider_id or not model:
-                    continue
-                return RoleModelConfig(
-                    role_id=normalized_role_id,
-                    provider_id=provider_id,
-                    model=model,
-                    profile=str(assignment.get("profile") or "").strip() or None,
-                )
+            assignment_config = self._role_config_from_assignments(normalized_role_id, assignments)
+            if assignment_config is not None:
+                return assignment_config
 
         roles = config.get("roles", {})
         if not isinstance(roles, dict):
@@ -254,18 +495,30 @@ class RuntimeConfigManager:
         if not isinstance(role_cfg, dict):
             return None
 
-        provider_id = str(role_cfg.get("provider_id") or "").strip()
-        model = str(role_cfg.get("model") or "").strip()
+        bindings = self._parse_role_bindings(normalized_role_id, role_cfg)
+        if bindings:
+            provider_id = bindings[0].provider_id
+            model = bindings[0].model
+            profile = bindings[0].profile
+        else:
+            provider_id = str(role_cfg.get("provider_id") or "").strip()
+            model = str(role_cfg.get("model") or "").strip()
+            profile = str(role_cfg.get("profile") or "").strip() or None
         if not provider_id or not model:
             return None
+
+        concurrency = _parse_optional_positive_int(role_cfg.get("max_concurrency"))
+        if concurrency is None:
+            concurrency = _parse_concurrency(role_cfg.get("concurrency"))
 
         return RoleModelConfig(
             role_id=normalized_role_id,
             provider_id=provider_id,
             model=model,
-            profile=str(role_cfg.get("profile") or "").strip() or None,
+            profile=profile,
             provider_pool=_parse_provider_pool(role_cfg.get("provider_pool"), provider_id),
-            concurrency=_parse_concurrency(role_cfg.get("concurrency")),
+            concurrency=concurrency,
+            bindings=bindings,
         )
 
     def _provider_model(self, provider_id: str) -> str:
@@ -275,44 +528,116 @@ class RuntimeConfigManager:
         endpoints serve distinctly-named models. Returns "" when absent.
         """
         try:
-            providers = self._load_config().get("providers")
+            entry = self._provider_entry(provider_id)
         except (RuntimeError, ValueError, OSError):
             return ""
-        entry: Any = None
-        if isinstance(providers, dict):
-            entry = providers.get(provider_id)
-        elif isinstance(providers, list):
-            for item in providers:
-                if isinstance(item, dict) and str(item.get("id") or item.get("provider_id") or "") == provider_id:
-                    entry = item
-                    break
         if isinstance(entry, dict):
             return str(entry.get("model") or "").strip()
         return ""
+
+    def get_role_binding_slots(self, role_id: str) -> tuple[RoleBindingSlot, ...]:
+        normalized_role_id = _normalize_runtime_role_id(role_id)
+        resolved = self.get_role_config(normalized_role_id)
+        if resolved is None:
+            return ()
+
+        if not resolved.bindings:
+            pool = resolved.resolved_pool()
+            if not pool:
+                return ()
+            legacy_slots: list[RoleBindingSlot] = []
+            for index in range(resolved.concurrency):
+                provider_id = pool[index % len(pool)]
+                legacy_slots.append(
+                    RoleBindingSlot(
+                        role_id=normalized_role_id,
+                        provider_id=provider_id,
+                        model=self._provider_model(provider_id) or resolved.model,
+                        profile=resolved.profile,
+                        binding_id=f"{normalized_role_id}:legacy:{index}:{provider_id}",
+                        binding_index=index % len(pool),
+                        slot_index=index,
+                        max_concurrency=resolved.concurrency,
+                    )
+                )
+            return tuple(legacy_slots)
+
+        role_remaining = max(1, resolved.concurrency)
+        provider_remaining = {
+            provider_id: self.get_provider_max_concurrency(provider_id) for provider_id in resolved.resolved_pool()
+        }
+        binding_slots: list[RoleBindingSlot] = []
+        multiple_bindings = len(resolved.bindings) > 1
+        for binding in resolved.bindings:
+            if role_remaining <= 0:
+                break
+            provider_cap_remaining = provider_remaining.get(binding.provider_id, 0)
+            if provider_cap_remaining <= 0:
+                continue
+            binding_cap = (
+                binding.max_concurrency
+                if binding.max_concurrency is not None
+                else 1
+                if multiple_bindings
+                else self.get_provider_max_concurrency(binding.provider_id)
+            )
+            allocatable = min(role_remaining, provider_cap_remaining, max(1, binding_cap))
+            for slot_index in range(allocatable):
+                binding_slots.append(
+                    RoleBindingSlot(
+                        role_id=normalized_role_id,
+                        provider_id=binding.provider_id,
+                        model=binding.model,
+                        profile=binding.profile,
+                        binding_id=binding.binding_id,
+                        binding_index=binding.binding_index,
+                        slot_index=slot_index,
+                        max_concurrency=allocatable,
+                    )
+                )
+            provider_remaining[binding.provider_id] = provider_cap_remaining - allocatable
+            role_remaining -= allocatable
+        return tuple(binding_slots)
 
     def get_role_model(self, role_id: str) -> tuple[str, str]:
         normalized_role_id = _normalize_runtime_role_id(role_id)
         resolved = self.get_role_config(normalized_role_id)
         if resolved is not None:
+            binding_override = _get_role_binding_override(normalized_role_id)
+            if binding_override:
+                override_pid = str(binding_override.get("provider_id") or "").strip()
+                override_model = str(binding_override.get("model") or "").strip()
+                override_bid = str(binding_override.get("binding_id") or "").strip()
+                for binding in resolved.bindings:
+                    same_provider_model = binding.provider_id == override_pid and binding.model == override_model
+                    same_binding_id = bool(override_bid and binding.binding_id == override_bid)
+                    if same_provider_model or same_binding_id:
+                        logger.debug(
+                            "[RuntimeConfig] %s: binding override %s/%s",
+                            normalized_role_id,
+                            override_pid,
+                            override_model,
+                        )
+                        return override_pid, override_model
             # A worker thread bound to a specific backend overrides the provider
             # id (keeping the role's configured model). Only honoured when the
             # override names a provider actually in the role's pool, so a stale
             # override can never route to an unconfigured endpoint.
-            override_pid = _get_role_provider_override(normalized_role_id)
-            if override_pid and override_pid in resolved.resolved_pool():
+            provider_override_pid = _get_role_provider_override(normalized_role_id)
+            if provider_override_pid and provider_override_pid in resolved.resolved_pool():
                 # Heterogeneous pools: each backend may serve a DIFFERENTLY-NAMED
                 # model (e.g. one endpoint serves 'qwen3.6-27b-gpu0', not the role's
                 # 'int4'). Prefer the bound provider's own configured model so the
                 # request's model name matches the endpoint (a mismatch is a hard
                 # 404); fall back to the role model for homogeneous pools.
-                override_model = self._provider_model(override_pid) or resolved.model
+                provider_override_model = self._provider_model(provider_override_pid) or resolved.model
                 logger.debug(
                     "[RuntimeConfig] %s: thread override %s/%s",
                     normalized_role_id,
-                    override_pid,
-                    override_model,
+                    provider_override_pid,
+                    provider_override_model,
                 )
-                return override_pid, override_model
+                return provider_override_pid, provider_override_model
             logger.debug(
                 "[RuntimeConfig] %s: using %s/%s",
                 normalized_role_id,
@@ -389,6 +714,16 @@ def get_role_concurrency(role_id: str) -> int:
     return resolved.concurrency if resolved is not None else 1
 
 
+def get_provider_max_concurrency(provider_id: str) -> int:
+    """Effective provider max concurrency from the runtime LLM config."""
+    return get_runtime_config_manager().get_provider_max_concurrency(provider_id)
+
+
+def get_role_binding_slots(role_id: str) -> tuple[RoleBindingSlot, ...]:
+    """Concrete role binding slots after role/provider/binding caps are applied."""
+    return get_runtime_config_manager().get_role_binding_slots(role_id)
+
+
 def get_provider_base_url(provider_id: str) -> str:
     """Resolve a provider's base endpoint URL from the runtime LLM config.
 
@@ -414,14 +749,23 @@ def get_provider_base_url(provider_id: str) -> str:
 
 
 __all__ = [
+    "ResolvedRoleBinding",
+    "RoleBindingSlot",
     "RoleModelConfig",
     "RuntimeConfigManager",
     "get_provider_base_url",
+    "get_provider_max_concurrency",
+    "get_role_binding_override",
+    "get_role_binding_slots",
+    "get_role_concurrency",
     "get_role_model",
     "get_role_provider_override",
+    "get_role_provider_pool",
     "get_runtime_config_manager",
     "load_role_config",
     "reset_runtime_config_manager",
     "set_default_model_resolver",
+    "set_role_binding_override",
+    "set_role_provider_override",
     "set_runtime_config_manager",
 ]

@@ -55,6 +55,7 @@ export function BaseProviderSettings({
       : typeof provider.max_tokens === 'number'
         ? provider.max_tokens
         : '';
+  const maxConcurrencyValue = typeof provider.max_concurrency === 'number' ? provider.max_concurrency : '';
 
   useEffect(() => {
     const result = onValidate();
@@ -169,6 +170,23 @@ export function BaseProviderSettings({
             min="1"
             max="300"
           />
+        </div>
+
+        <div>
+          <label className="block text-xs text-text-muted mb-1">最大并发请求数</label>
+          <input
+            type="number"
+            data-testid="provider-max-concurrency-input"
+            value={maxConcurrencyValue}
+            onChange={(e) => handleFieldChange('max_concurrency', parseOptionalPositiveInt(e.target.value))}
+            className={cyberInputClasses}
+            min="1"
+            step="1"
+            placeholder={provider.type === 'ollama' ? '默认 1，可显式放大' : '例如 5 或 20'}
+          />
+          <p className="text-[9px] text-text-dim mt-1">
+            Provider 的物理/账号容量上限；Role 并发不能突破这个上限。
+          </p>
         </div>
 
         <div>

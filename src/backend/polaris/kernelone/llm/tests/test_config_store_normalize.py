@@ -88,6 +88,48 @@ class TestNormalizeLLMConfig:
         result = normalize_llm_config({})
         assert result["visual_node_states"] == {}
 
+    def test_normalize_role_bindings_preserves_multi_model_and_mirrors_primary(self) -> None:
+        """Multi-binding roles keep all bindings while legacy provider/model mirrors the primary."""
+        payload = {
+            "providers": {
+                "kimi": {"type": "kimi"},
+                "minimax": {"type": "minimax"},
+            },
+            "roles": {
+                "director": {
+                    "max_concurrency": 6,
+                    "bindings": [
+                        {"provider_id": "kimi", "model": "kimi-k2", "max_concurrency": 4},
+                        {"provider_id": "minimax", "model": "MiniMax-M2", "max_concurrency": 2},
+                    ],
+                }
+            },
+        }
+
+        result = normalize_llm_config(payload)
+
+        director = result["roles"]["director"]
+        assert director["provider_id"] == "kimi"
+        assert director["model"] == "kimi-k2"
+        assert director["max_concurrency"] == 6
+        assert director["bindings"] == [
+            {"provider_id": "kimi", "model": "kimi-k2", "max_concurrency": 4},
+            {"provider_id": "minimax", "model": "MiniMax-M2", "max_concurrency": 2},
+        ]
+
+    def test_normalize_legacy_role_assignment_adds_single_binding(self) -> None:
+        """Legacy single-binding roles are upgraded to bindings[] for visual/runtime parity."""
+        payload = {
+            "providers": {"ollama": {"type": "ollama"}},
+            "roles": {"director": {"provider_id": "ollama", "model": "qwen", "profile": "director-default"}},
+        }
+
+        result = normalize_llm_config(payload)
+
+        assert result["roles"]["director"]["bindings"] == [
+            {"provider_id": "ollama", "model": "qwen", "profile": "director-default"}
+        ]
+
 
 class TestValidateLLMConfig:
     """Tests for validate_llm_config function."""
@@ -187,3 +229,66 @@ class TestValidateLLMConfig:
         is_valid, errors, _ = validate_llm_config(config)
         assert is_valid is False
         assert len(errors) > 0
+
+    def test_validate_accepts_role_and_provider_concurrency_fields(self) -> None:
+        """Role/provider/binding max_concurrency are first-class config fields."""
+        config = {
+            "schema_version": 2,
+            "providers": {
+                "kimi": {"type": "kimi", "max_concurrency": 20},
+                "local": {"type": "ollama", "max_concurrency": 1},
+            },
+            "roles": {
+                "director": {
+                    "max_concurrency": 6,
+                    "bindings": [
+                        {"provider_id": "kimi", "model": "kimi-k2", "max_concurrency": 5},
+                        {"provider_id": "local", "model": "qwen", "max_concurrency": 1},
+                    ],
+                }
+            },
+        }
+
+        is_valid, errors, warnings = validate_llm_config(config)
+
+        assert is_valid is True
+        assert errors == []
+        assert warnings == []
+
+    def test_validate_rejects_binding_to_missing_provider(self) -> None:
+        """Every role binding must reference an existing provider, not only the primary."""
+        config = {
+            "schema_version": 2,
+            "providers": {"kimi": {"type": "kimi"}},
+            "roles": {
+                "director": {
+                    "bindings": [
+                        {"provider_id": "kimi", "model": "kimi-k2"},
+                        {"provider_id": "missing", "model": "ghost"},
+                    ]
+                }
+            },
+        }
+
+        is_valid, errors, _warnings = validate_llm_config(config)
+
+        assert is_valid is False
+        assert any("binding" in error.lower() and "missing" in error for error in errors)
+
+    def test_validate_rejects_invalid_concurrency_values(self) -> None:
+        """Concurrency values must be positive integers when present."""
+        config = {
+            "schema_version": 2,
+            "providers": {"kimi": {"type": "kimi", "max_concurrency": 0}},
+            "roles": {
+                "director": {
+                    "max_concurrency": -1,
+                    "bindings": [{"provider_id": "kimi", "model": "kimi-k2", "max_concurrency": 0}],
+                }
+            },
+        }
+
+        is_valid, errors, _warnings = validate_llm_config(config)
+
+        assert is_valid is False
+        assert any("max_concurrency" in error for error in errors)
