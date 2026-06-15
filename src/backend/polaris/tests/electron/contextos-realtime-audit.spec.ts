@@ -64,11 +64,11 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
   await expect(window.getByText("ContextOS 实时视图", { exact: false }).first()).toBeVisible();
 
   // All 8 pipeline stages are present.
-  for (const id of ["request", "turflog", "working_mem", "projection", "role_signal", "budget", "prompt", "llm"]) {
+  for (const id of ["request", "truthlog", "working_mem", "projection", "role_signal", "budget", "prompt", "llm"]) {
     await expect(window.locator(`[data-testid='contextos-stage-${id}']`)).toBeVisible();
   }
   // 7 component-health cards.
-  for (const id of ["turflog", "working_mem", "projection", "role_signal", "budget", "prompt", "telemetry"]) {
+  for (const id of ["truthlog", "working_mem", "projection", "role_signal", "budget", "prompt", "telemetry"]) {
     await expect(window.locator(`[data-testid='contextos-component-${id}']`)).toBeVisible();
   }
   // 5 role cards (pm/architect/chief_engineer/director/qa).
@@ -119,28 +119,41 @@ test("ContextOS renders REAL telemetry seeded into the observation log", async (
   expect(resolved.ok, `backend file resolution failed: ${resolved.error}`).toBeTruthy();
   expect(resolved.path, "backend must resolve a physical observation-log path").toBeTruthy();
 
-  // 2) 写入真实 schema 的观测记录（投影 + 携 usage 的调用 + 错误）。
+  // 2) 写入真实 schema 的观测记录（取自后端 io_events.emit_event / ContextEngine._emit_context_events）：
+  //    context.build(全角色装配) + prompt_context(PM 注入) + context.snapshot(落盘回执) + 两条 llm_invoke。
   const nowEpoch = Date.now() / 1000;
   const seededLines = [
     {
-      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch, seq: 1, event_id: "seed-proj",
+      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch, seq: 1, event_id: "seed-build",
+      kind: "observation", actor: "System", name: "context.build", refs: { run_id: "seed", step: 1, phase: "director.execution" },
+      summary: "ContextPack built (5 items)", ok: true,
+      output: { request_hash: "seedhash", items_count: 5, total_tokens: 3200, snapshot_path: "runtime/snap/seedhash.json" },
+    },
+    {
+      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 1, seq: 2, event_id: "seed-proj",
       kind: "observation", actor: "PM", name: "prompt_context", refs: { run_id: "seed", step: 1 },
       summary: "Prompt Context Injection", ok: true,
       output: { context_hash: "seedhash", context_snapshot: "runtime/snap/seedhash.json" },
     },
     {
-      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 1, seq: 2, event_id: "seed-call",
-      kind: "observation", actor: "PM", name: "llm_call", refs: { run_id: "seed", step: 1, mode: "pm.planning" },
-      summary: "seeded planning call", ok: true,
-      output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 } },
-      duration_ms: 2400,
+      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 2, seq: 3, event_id: "seed-snap",
+      kind: "observation", actor: "System", name: "context.snapshot", refs: { run_id: "seed", step: 1 },
+      summary: "Context snapshot stored", ok: true,
+      output: { request_hash: "seedhash", snapshot_path: "runtime/snap/seedhash.json", snapshot_hash: "seedsnap" },
     },
     {
-      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 2, seq: 3, event_id: "seed-dir",
-      kind: "observation", actor: "Director", name: "llm_call", refs: { run_id: "seed", mode: "director.execution" },
+      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 3, seq: 4, event_id: "seed-call",
+      kind: "observation", actor: "PM", name: "llm_invoke", refs: { run_id: "seed", step: 1, mode: "pm.planning" },
+      summary: "seeded planning call", ok: true,
+      // 真实 llm_invoke：时延在 output.duration_ms。
+      output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 }, duration_ms: 2400 },
+    },
+    {
+      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 4, seq: 5, event_id: "seed-dir",
+      kind: "observation", actor: "Director", name: "llm_invoke", refs: { run_id: "seed", mode: "director.execution" },
       summary: "seeded director call", ok: true,
-      output: { usage: { prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000 } },
-      duration_ms: 1800,
+      // 字符估算的 usage → estimated:true，UI 应显示「含估算」标记。
+      output: { usage: { prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000, estimated: true }, duration_ms: 1800 },
     },
   ];
   const content = `${seededLines.map((line) => JSON.stringify(line)).join("\n")}\n`;
@@ -157,6 +170,8 @@ test("ContextOS renders REAL telemetry seeded into the observation log", async (
   await expect(source).toBeVisible();
   await expect(source).toContainText("REAL");
   await expect(source).toContainText("投影");
+  // Canonical context.snapshot is counted as a real receipt (快照).
+  await expect(source).toContainText("快照");
   await expect(window.getByTestId("contextos-telemetry-freshness")).toContainText("实时遥测");
   await expect(window.getByText("Prompt Context Injection", { exact: false }).first()).toBeVisible();
   await expect(window.getByText("seeded planning call", { exact: false }).first()).toBeVisible();
@@ -165,6 +180,8 @@ test("ContextOS renders REAL telemetry seeded into the observation log", async (
   await expect(window.locator("[data-testid='contextos-event-types']")).toBeVisible();
   // The 5th role (Chief Engineer / 工部尚书) is part of the real role-signal plane.
   await expect(window.locator("[data-testid='contextos-role-chief_engineer']")).toBeVisible();
+  // The estimated-token honesty marker appears because the seeded director call has usage.estimated=true.
+  await expect(window.getByTestId("contextos-estimated-marker")).toContainText("含估算");
 
   // 截图供人工视觉审计（真实数据态）。
   const shot = "/tmp/contextos-realdata.png";

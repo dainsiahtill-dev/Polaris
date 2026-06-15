@@ -17,6 +17,7 @@ import type { SnapshotPayload } from '@/app/types/appContracts';
 import {
   EMPTY_TELEMETRY,
   telemetryRoleEvents,
+  telemetryRoleHasUsageChannel,
   telemetryRoleTokens,
   type ContextOSEvent,
   type ContextOSTelemetry,
@@ -75,6 +76,12 @@ export interface RoleCard {
   tokens: number;
   state: PipelineState;
   detail: string;
+  /**
+   * 该角色的 token 是否来自真实带 usage 的观测通道。
+   * 后端目前仅 PM 路径构造 UsageContext → 仅 PM 有真实 token 归并；
+   * 其余角色无 usage 通道，detail 以事件数/无观测呈现，不冒充 token 归因。
+   */
+  tokensReal: boolean;
 }
 
 export interface DecisionRow {
@@ -124,6 +131,12 @@ export interface ContextOSModel {
   realLatencyMs: number | null;
   /** 最近真实事件 epoch（毫秒），无则 null。 */
   lastTelemetryEpoch: number | null;
+  /** 由后端字符估算得到 usage 的调用数（output.usage.estimated），用于在 token 总量旁标「含估算」。 */
+  estimatedCalls: number;
+  /** 最近一次 context.build 装配的真实上下文项数（WorkingMem 在窗项数），无则 null。 */
+  contextItemsCount: number | null;
+  /** 遥测是否只覆盖尾部窗口（解析行数达读取上限）；用于把「累计」诚实降级为「最近窗口」。 */
+  telemetryWindowed: boolean;
   pipeline: PipelineStage[];
   components: ComponentHealth[];
   budget: BudgetSlice[];
@@ -395,10 +408,18 @@ export function buildContextOSModel(input: {
   const avgPerCall = calls > 0 ? Math.round(totalTokens / calls) : 0;
 
   // 真实 ContextOS 内部计数（telemetry 优先，无则估算回退）。
+  // projectionCount 现统计 context.build（全角色 ContextEngine 装配）+ PM prompt_context，
+  // 是真实的全角色上下文装配信号（不再仅 PM）。
   const projectionCount = telemetryActive ? telemetry.projectionCount : calls;
   const receiptCount = telemetry.receiptCount;
   const realLatencyMs = telemetry.lastLatencyMs ?? telemetry.avgLatencyMs;
   const lastTelemetryEpoch = telemetry.lastEventEpoch;
+  // 由后端字符估算得到 usage 的调用数（用于 token 总量旁的「含估算」标注）。
+  const estimatedCalls = telemetryActive ? telemetry.estimatedCalls : 0;
+  // 最近一次 context.build 装配的真实上下文项数（WorkingMem 在窗项数），无则 null。
+  const contextItemsCount = telemetryActive ? telemetry.contextItemsCount : null;
+  // 遥测只读尾部窗口时为 true：把「累计」诚实降级为「最近窗口」。
+  const telemetryWindowed = telemetry.windowed;
 
   // 估算单次上下文窗口占用：以「平均单次提示 token」近似当前窗口压力。
   const avgPromptPerCall = calls > 0 ? promptTokens / calls : promptTokens;
@@ -431,7 +452,12 @@ export function buildContextOSModel(input: {
   // 用 parsedLines（解析到的全部观测条数）作为"观测"计数，而非被截断到 120 的事件流长度，
   // 避免出现"显示 120 观测 / 聚合按全量"的内部不一致。
   const telemetryEventCount = telemetryActive ? telemetry.parsedLines : telemetry.events.length;
-  const windowItems = Math.min(Math.max(eventCount, telemetry.events.length), 32);
+  // WorkingMem「在窗项数」优先用真实 context.build 的 items_count；无则用事件流长度估算（明确标注）。
+  const realWindowItems = telemetryActive ? telemetry.contextItemsCount : null;
+  const windowItemsReal = realWindowItems !== null;
+  const windowItems = windowItemsReal
+    ? realWindowItems
+    : Math.min(Math.max(eventCount, telemetry.events.length), 32);
 
   // 观测到活动 = PM/Director 运行中 或 真实遥测有数据（如一次角色对话）。
   const observed = running || telemetryActive;
@@ -444,21 +470,26 @@ export function buildContextOSModel(input: {
   const dataIdle = !observed && totalTokens === 0 && eventCount === 0 && logCount === 0;
 
   const turfEventTotal = Math.max(eventCount + logCount, telemetryEventCount);
+  const contextTokensLatest = telemetryActive ? telemetry.contextTokensLatest : null;
+  // 管线顺序忠实于后端真实装配流（gateway.py + ProjectionEngine 内部 7 段）：
+  //   投影(ProjectionEngine.project，内部含 BudgetPlanner 预算「规划」) → 角色信号(supplemental_turns)
+  //   → 装配(project()→messages) → CompressionEngine 预算「压缩兜底」(装配后最后一步) → LLM。
+  // 预算分两处发生：规划在投影内部，压缩在装配之后——故 CompressionEngine 节点排在 prompt 之后。
   const pipeline: PipelineStage[] = [
     { id: 'request', label: '用户请求', component: 'UserTurn', hint: '进入的指令 / 反馈', state: observed ? 'active' : 'idle', metric: taskCount > 0 ? `${eventCount} 轮 · ${taskCount} 任务` : `${eventCount} 轮` },
-    { id: 'turflog', label: 'TurfLog', component: 'TurnLog', hint: '事件真值流', state: stateFor('turflog'), metric: `${turfEventTotal} 事件` },
-    { id: 'working_mem', label: 'WorkingMem', component: 'WorkingMemoryWindow', hint: '活动上下文窗口', state: stateFor('working_mem'), metric: `${windowItems} 项` },
-    { id: 'projection', label: 'ProjectionEngine', component: 'ProjectionEngine', hint: '自适应排序投影', state: stateFor('projection'), metric: telemetryActive ? `${projectionCount} 投影` : `${calls} 次` },
-    { id: 'role_signal', label: 'RoleSignalPlane', component: 'RoleSignalPlane', hint: '角色信号注入', state: stateFor('role_signal'), metric: `${Math.max(0, ROLE_COUNT - blockedRoles.size)}/${ROLE_COUNT} 角色` },
-    { id: 'budget', label: 'BudgetPlanner', component: 'PhaseAwareBudgetPlanner', hint: '相位感知预算', state: stateFor('budget'), metric: `${formatTokens(avgPerCall)} tok/次` },
-    { id: 'prompt', label: 'PromptAssembler', component: 'project() → messages', hint: '提示装配与门禁', state: stateFor('prompt'), metric: `${formatTokens(promptTokens)} 提示` },
+    { id: 'truthlog', label: 'TruthLog', component: 'TruthLogService', hint: '事件真值流', state: stateFor('truthlog'), metric: `${turfEventTotal} 事件` },
+    { id: 'working_mem', label: 'WorkingMem', component: 'WorkingMemoryWindow', hint: '活动上下文窗口', state: stateFor('working_mem'), metric: windowItemsReal ? `${windowItems} 项在窗` : `~${windowItems} 项 (估算)` },
+    { id: 'projection', label: 'ProjectionEngine', component: 'ProjectionEngine', hint: '自适应排序投影 · 含预算规划', state: stateFor('projection'), metric: telemetryActive ? `${projectionCount} 投影` : `~${calls} 次 (估算)` },
+    { id: 'role_signal', label: 'RoleSignalPlane', component: 'allocate_role_signals', hint: '角色信号注入', state: stateFor('role_signal'), metric: `${Math.max(0, ROLE_COUNT - blockedRoles.size)}/${ROLE_COUNT} 角色` },
+    { id: 'prompt', label: 'Projection.project', component: 'project() → messages', hint: '消息装配', state: stateFor('prompt'), metric: `${formatTokens(promptTokens)} 提示` },
+    { id: 'budget', label: 'CompressionEngine', component: 'CompressionEngine', hint: '装配后预算压缩兜底', state: stateFor('budget'), metric: contextTokensLatest !== null ? `${formatTokens(contextTokensLatest)} 上下文` : `${formatTokens(avgPerCall)} tok/次` },
     { id: 'llm', label: 'LLM Invoke', component: 'AIExecutor', hint: '模型调用', state: stateFor('llm'), metric: lastLatencyMs !== null ? `${formatTokens(completionTokens)} · ${lastLatencyMs}ms` : `${formatTokens(completionTokens)} 输出` },
   ];
 
   const componentIntensityBase = Math.max(promptTokens + completionTokens, 1);
   const components: ComponentHealth[] = [
     {
-      id: 'turflog', name: 'TurfLog', component: '真值事件流',
+      id: 'truthlog', name: 'TruthLog', component: '真值事件流',
       state: observed ? 'active' : 'idle',
       metric: telemetryActive ? `${telemetryEventCount} 观测 · ${logCount} 日志` : `${eventCount} 轮 · ${logCount} 日志`,
       intensity: turfEventTotal > 0 ? Math.min(1, turfEventTotal / 48) : null,
@@ -466,30 +497,35 @@ export function buildContextOSModel(input: {
     {
       id: 'working_mem', name: 'WorkingMem', component: '活动窗口',
       state: observed ? 'active' : 'idle',
-      metric: `${windowItems} 项在窗`,
+      // 真实遥测时用 context.build 的 items_count（真实在窗项数）；无则用事件流长度估算，明确标注。
+      metric: windowItemsReal ? `${windowItems} 项在窗` : `~${windowItems} 项 (估算)`,
       intensity: windowItems > 0 ? Math.min(1, windowItems / 32) : null,
     },
     {
       id: 'projection', name: 'ProjectionEngine', component: '排序投影',
       state: observed ? 'active' : 'idle',
-      // 真实遥测时显示真实投影数；无遥测时只能用调用数估算，明确标注，不冒充投影计数。
+      // 真实遥测时显示真实投影数（context.build 全角色 + PM 注入）；无遥测时用调用数估算，明确标注。
       metric: telemetryActive ? `投影 ${projectionCount} 次` : `~${calls} 次 (估算)`,
       intensity: telemetryActive && projectionCount > 0 ? Math.min(1, projectionCount / 24) : null,
     },
     {
-      id: 'role_signal', name: 'RoleSignalPlane', component: '角色信号',
+      // 注意：该卡的「就绪/受阻」来自 LLM 运行时门（某角色是否绑定了可用 provider），
+      // 而非 RoleSignalPlane 的信号注入（后者不写观测日志，无法在此呈现）。据实命名为「LLM 角色门」。
+      id: 'role_signal', name: 'LLM 角色门', component: 'LLM 绑定就绪',
       state: blockedRoles.size > 0 ? 'blocked' : observed ? 'active' : 'idle',
       metric: blockedRoles.size > 0 ? `${blockedRoles.size} 角色受阻` : `${Math.max(0, ROLE_COUNT - blockedRoles.size)} 角色就绪`,
       intensity: null,
     },
     {
-      id: 'budget', name: 'BudgetPlanner', component: '相位预算',
+      // avgPerCall = 累计 token / 调用数 = 事后实际平均消耗，并非 PhaseAwareBudgetPlanner 的事前预算分配
+      // （后者不写观测日志）。据实命名为「平均消耗」，不冒充预算规划器。
+      id: 'budget', name: '平均消耗', component: '单次平均用量',
       state: observed ? 'active' : 'idle',
       metric: `${formatTokens(avgPerCall)} tok / 次`,
       intensity: avgPerCall > 0 ? Math.min(1, avgPerCall / NOMINAL_CONTEXT_WINDOW * 4) : null,
     },
     {
-      id: 'prompt', name: 'PromptAssembler', component: '提示装配',
+      id: 'prompt', name: 'Projection.project', component: '消息装配',
       state: llmBlocked ? 'blocked' : observed ? 'active' : 'idle',
       metric: `${formatTokens(promptTokens)} 提示 tok`,
       intensity: promptTokens > 0 ? Math.min(1, promptTokens / componentIntensityBase) : null,
@@ -575,19 +611,24 @@ export function buildContextOSModel(input: {
     const tokens = roleTokens(role.key);
     const telemetryEvents = telemetryActive ? telemetryRoleEvents(telemetry, role.key) : 0;
     const speeches = speakerTokens(role.key === 'qa' ? ['QA', 'Reviewer'] : [role.title]);
+    // 只有拥有真实 usage 观测通道（目前仅 PM）的角色才以 token 归因；其余据实以事件数呈现，
+    // 不把「无 usage 通道」误读为真实零用量。
+    const tokensReal = telemetryActive && telemetryRoleHasUsageChannel(telemetry, role.key) && tokens > 0;
+    const detail = tokensReal
+      ? `${formatTokens(tokens)} tok`
+      : telemetryEvents > 0
+        ? `${telemetryEvents} 事件`
+        : speeches > 0
+          ? `${speeches} 次发言`
+          : '待命';
     return {
       id: role.id,
       title: role.title,
       courtTitle: role.courtTitle,
       tokens,
       state: roleState(role.key),
-      detail: tokens > 0
-        ? `${formatTokens(tokens)} tok`
-        : telemetryEvents > 0
-          ? `${telemetryEvents} 事件`
-          : speeches > 0
-            ? `${speeches} 次发言`
-            : '待命',
+      detail,
+      tokensReal,
     };
   });
 
@@ -624,6 +665,9 @@ export function buildContextOSModel(input: {
     receiptCount,
     realLatencyMs,
     lastTelemetryEpoch,
+    estimatedCalls,
+    contextItemsCount,
+    telemetryWindowed,
     pipeline,
     components,
     budget,

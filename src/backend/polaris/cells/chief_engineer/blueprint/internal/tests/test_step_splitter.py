@@ -123,8 +123,16 @@ class TestTriggerBoundaries:
         out = split_oversize_steps([_step("main.js", SIGS12[:8], 40)], parent_pm_task=PARENT)
         assert _ids(out)[0].endswith("-skel")
 
-    def test_est_lines_trigger_still_splits_sole_writer(self) -> None:
-        # est_lines>=100 is NOT sig-only — a genuinely large file still splits.
+    def test_sole_writer_est_lines_trigger_leaf_is_kept_whole(self) -> None:
+        # After the output-budget floor and reasoning-truncation re-ask fixes,
+        # splitting one file across fill turns is more dangerous than one coherent
+        # write. A sole-writer single-file leaf stays whole even when est_lines
+        # crosses the splitter's line trigger.
+        steps = [_step("main.js", SIGS12[:8], 110)]
+        assert split_oversize_steps(steps, parent_pm_task=PARENT) is steps
+
+    def test_est_lines_trigger_can_still_split_when_suppression_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KERNELONE_CE_SINGLE_FILE_NO_FISSION", "off")
         out = split_oversize_steps([_step("main.js", SIGS12[:8], 110)], parent_pm_task=PARENT)
         assert _ids(out)[0].endswith("-skel")
 

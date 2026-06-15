@@ -1,13 +1,13 @@
 /**
  * ContextOS 实时视图 (ContextOS Real-time Dashboard)
  *
- * 可视化 Polaris 的「上下文操作系统」实时数据流：从用户请求进入，经 TurfLog 真值流 →
- * WorkingMemory 活动窗口 → ProjectionEngine 自适应排序投影 → RoleSignalPlane 角色信号 →
- * PhaseAwareBudgetPlanner 预算分配 → PromptAssembler 提示装配 → LLM 调用，再回流到
- * Receipt / Telemetry 回执遥测的反馈闭环。
+ * 可视化 Polaris 的「上下文操作系统」实时数据流：从用户请求进入，经 TruthLog 真值流 →
+ * WorkingMemory 活动窗口 → ProjectionEngine 自适应排序投影（内部含预算规划）→ RoleSignalPlane
+ * 角色信号 → project() 消息装配 → CompressionEngine 装配后预算压缩兜底 → LLM 调用，再回流到
+ * Receipt / Telemetry 回执遥测的反馈闭环（顺序忠实于后端 gateway.py 真实装配流）。
  *
- * 数据全部派生自 App 已有的真实运行时 props（见 contextOSData.ts）；图中暗示但暂无真实
- * 数据源的指标以「估算」明确标注，不伪造精度。
+ * 数据全部源自真实观测日志 runtime/events/llm.observations.jsonl（见 contextOSData.ts /
+ * contextOSTelemetry.ts）；后端未写入或仅尾部窗口的量以「估算 / 最近窗口」明确标注，不伪造精度。
  */
 
 import { useMemo, useState, type ReactNode } from 'react';
@@ -74,7 +74,7 @@ export interface ContextOSWorkspaceProps {
 
 const STAGE_ICONS: Record<string, LucideIcon> = {
   request: Radio,
-  turflog: Database,
+  truthlog: Database,
   working_mem: Layers,
   projection: GitBranch,
   role_signal: Boxes,
@@ -84,7 +84,7 @@ const STAGE_ICONS: Record<string, LucideIcon> = {
 };
 
 const COMPONENT_ICONS: Record<string, LucideIcon> = {
-  turflog: Database,
+  truthlog: Database,
   working_mem: Layers,
   projection: GitBranch,
   role_signal: Boxes,
@@ -592,7 +592,7 @@ export function ContextOSWorkspace({
                       'flex w-[112px] shrink-0 flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-center transition-all duration-500',
                       model.errorCount > 0 ? 'border-status-error/50 bg-status-error/10' : 'border-gold/30 bg-gold/5',
                     )}
-                    title="ReceiptStore + TelemetryCollector — 回执与遥测反馈闭环"
+                    title="Context Snapshot + Telemetry — 落盘上下文快照(context.snapshot)与遥测反馈闭环"
                   >
                     <div className={cn('relative flex h-9 w-9 items-center justify-center rounded-lg bg-black/30', model.errorCount > 0 ? 'text-status-error' : 'text-gold')}>
                       <ShieldCheck className="h-4 w-4" />
@@ -625,7 +625,7 @@ export function ContextOSWorkspace({
                 <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-bg-panel/70 to-transparent xl:hidden" aria-hidden />
               </div>
               <div className="mt-1 flex items-center gap-2 border-t border-white/[0.06] pt-2 text-[10px] text-text-dim">
-                <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono">状态 = Prompt → 投影排序 → 预算加权 → 装配</span>
+                <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono">投影排序(含预算规划) → 角色信号 → 装配 → 压缩兜底</span>
                 <span className="text-text-dim/60">·</span>
                 <span>自适应权重: route / confidence / recency / dialog_act / role</span>
               </div>
@@ -647,6 +647,9 @@ export function ContextOSWorkspace({
                   />
                 ))}
               </div>
+              <p className="mt-2.5 text-[9px] leading-relaxed text-text-dim">
+                Token 归并仅 PM 携 usage 观测；其余角色按真实事件数计（后端暂无 per-role UsageContext）。
+              </p>
             </SectionCard>
 
             <SectionCard
@@ -667,9 +670,10 @@ export function ContextOSWorkspace({
                   <span
                     className="rounded-full border border-accent-secondary/20 bg-accent-secondary/[0.08] px-2 py-0.5 font-mono text-[9px] text-accent-secondary"
                     data-testid="contextos-telemetry-source"
-                    title="决策流来自真实观测遥测"
+                    title="决策流来自真实观测遥测 (runtime/events/llm.observations.jsonl)"
                   >
                     REAL · {model.projectionCount} 投影 · {model.receiptCount} 快照
+                    {model.telemetryWindowed ? ' · 最近800条' : ''}
                   </span>
                 ) : undefined
               }
@@ -683,14 +687,34 @@ export function ContextOSWorkspace({
             <SectionCard title="上下文预算" subtitle="Context Budget" icon={Coins}>
               <div className="space-y-4">
                 <div>
-                  <div className="flex items-baseline gap-2">
+                  <div className="flex flex-wrap items-baseline gap-2">
                     <span className="font-heading text-3xl font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
-                    <span className="text-[11px] text-text-dim">累计 tokens</span>
+                    <span className="text-[11px] text-text-dim">{model.telemetryWindowed ? '窗口 tokens' : '累计 tokens'}</span>
+                    {model.estimatedCalls > 0 && (
+                      <span
+                        className="rounded bg-status-warning/10 px-1 py-0.5 text-[9px] text-status-warning"
+                        data-testid="contextos-estimated-marker"
+                        title={`其中 ${model.estimatedCalls} 次调用的 token 为后端字符估算 (output.usage.estimated)`}
+                      >
+                        含估算 {model.estimatedCalls}
+                      </span>
+                    )}
                   </div>
-                  <div className="mt-1 flex items-center gap-3 text-[10px] text-text-dim">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-text-dim">
                     <span>{model.calls} 次调用</span>
                     <span>·</span>
                     <span>{contextOSFormat.tokens(model.avgPerCall)} tok / 次</span>
+                    {model.telemetryWindowed && (
+                      <>
+                        <span>·</span>
+                        <span
+                          className="text-status-warning/80"
+                          title="观测日志仅读取尾部 800 行，统计为最近窗口而非全程累计"
+                        >
+                          最近 800 条窗口
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 

@@ -23,11 +23,16 @@ const TELEMETRY_FIXTURE = [
     output: { context_hash: 'h1', context_snapshot: 'runtime/snap/h1.json' },
   }),
   JSON.stringify({
-    ts: '2026-06-15T10:00:02Z', ts_epoch: 1781856002.0, seq: 2, event_id: 'c1',
-    kind: 'observation', actor: 'PM', name: 'llm_call', refs: { mode: 'pm.planning' },
+    ts: '2026-06-15T10:00:01Z', ts_epoch: 1781856001.0, seq: 2, event_id: 's1',
+    kind: 'observation', actor: 'System', name: 'context.snapshot', refs: { run_id: 'r1', step: 1 },
+    summary: 'Context snapshot stored', ok: true,
+    output: { request_hash: 'rh1', snapshot_path: 'runtime/snap/h1.json', snapshot_hash: 'sh1' },
+  }),
+  JSON.stringify({
+    ts: '2026-06-15T10:00:02Z', ts_epoch: 1781856002.0, seq: 3, event_id: 'c1',
+    kind: 'observation', actor: 'PM', name: 'llm_invoke', refs: { mode: 'pm.planning' },
     summary: 'pm planning call', ok: true,
-    output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 } },
-    duration_ms: 2400,
+    output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 }, duration_ms: 2400 },
   }),
 ].join('\n');
 
@@ -66,11 +71,11 @@ describe('ContextOSWorkspace', () => {
   it('renders the dashboard shell + all 8 pipeline stages with empty props', () => {
     render(<ContextOSWorkspace {...baseProps()} />);
     expect(screen.getByTestId('contextos-workspace')).toBeTruthy();
-    for (const id of ['request', 'turflog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'llm']) {
+    for (const id of ['request', 'truthlog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'llm']) {
       expect(screen.getByTestId(`contextos-stage-${id}`)).toBeTruthy();
     }
     // 7 component-health cards
-    for (const id of ['turflog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'telemetry']) {
+    for (const id of ['truthlog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'telemetry']) {
       expect(screen.getByTestId(`contextos-component-${id}`)).toBeTruthy();
     }
     // 5 role cards (pm/architect/chief_engineer/director/qa — the real 5-role system)

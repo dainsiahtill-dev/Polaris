@@ -4,17 +4,23 @@
  * Polaris 把每一次上下文装配 / LLM 调用都写入规范观测日志
  * `runtime/events/llm.observations.jsonl`（schema 见后端 io_events.emit_event）。
  * 每条 `kind:"observation"` 记录携带真实的 ContextOS 内部遥测：
- *   - actor            角色（PM / Director / Architect / QA …）
- *   - name             事件名（如 `prompt_context` = 一次 ProjectionEngine 投影）
+ *   - actor            角色（PM / Director / System / QA …）
+ *   - name             事件名：
+ *                        · `context.build`   = ContextEngine 装配一份 ContextPack（全角色，actor=System）
+ *                        · `context.snapshot`= 落盘一份上下文快照（output.snapshot_path）
+ *                        · `prompt_context`  = PM 规划路径的提示上下文注入（仅 PM）
+ *                        · `llm_invoke`      = 一次带 usage 的 LLM 调用（track_usage 发出）
  *   - refs.mode/run_id/step
- *   - output.usage     真实 token（prompt / completion / total）
- *   - output.context_snapshot  持久化的上下文快照路径（落盘产物）
- *   - duration_ms      真实时延
+ *   - output.usage     真实 token（prompt / completion / total，含 estimated 标志）
+ *   - output.items_count / total_tokens   ContextPack 装配规模（context.build）
+ *   - output.snapshot_path                落盘快照路径（context.snapshot）
+ *   - output.duration_ms / duration_ms    真实时延（llm_invoke 的时延在 output.duration_ms）
  *   - error            真实错误
  *   - ts / ts_epoch    真实时间线
  *
  * 本模块把这条 JSONL 解析成 ContextOS 仪表盘可直接消费的「真实」遥测模型，
- * 不再依赖代理估算 —— 这是「真正能看到 ContextOS 实时数据」的数据底座。
+ * 字段全部源自后端实际写入的观测记录 —— 这是「真正能看到 ContextOS 实时数据」的数据底座。
+ * 后端确未写入的量一律标「估算」，绝不伪造精度。
  */
 
 /** ContextOS 真实观测事件（来自 llm.observations.jsonl 的一条记录）。 */
@@ -37,12 +43,19 @@ export interface ContextOSEvent {
   totalTokens: number;
   /** 是否携带 token 用量（区分「LLM 调用」与「纯投影 / 状态」事件）。 */
   hasUsage: boolean;
+  /** 该次 usage 是否为后端字符估算（output.usage.estimated === true）。 */
+  estimatedTokens: boolean;
+  /** 真实时延（ms）；llm_invoke 的时延在 output.duration_ms，已回退读取。 */
   durationMs: number | null;
   error: string | null;
-  /** 是否落盘了上下文快照(output.context_snapshot) —— 一次持久化的上下文快照产物。 */
+  /** 是否落盘了上下文快照（name==='context.snapshot' 且 output.snapshot_path 非空）。 */
   hasReceipt: boolean;
   contextHash: string | null;
-  /** name===prompt_context / context_projection —— ProjectionEngine 投影事件。 */
+  /** context.build 装配的上下文项数（output.items_count）；非 context.build 事件为 null。 */
+  contextItems: number | null;
+  /** context.build 装配的上下文 token 数（output.total_tokens）；非 context.build 事件为 null。 */
+  contextTokens: number | null;
+  /** name==='context.build'（全角色 ContextEngine 装配）/ 'prompt_context'（PM 注入）—— 投影/上下文装配事件。 */
   isProjection: boolean;
   category: 'projection' | 'call' | 'tool' | 'error' | 'state' | 'event';
 }
@@ -63,17 +76,25 @@ export interface ContextOSTelemetry {
   hasData: boolean;
   /** 解析的原始行数（用于「读取了多少条」展示）。 */
   parsedLines: number;
+  /** 是否只读到尾部窗口（解析行数已达读取上限，更早的记录未纳入聚合）。 */
+  windowed: boolean;
   /** 事件流（按时间倒序，已截断）。 */
   events: ContextOSEvent[];
   /** 携带 usage 的观测条数（= 真实 LLM 调用次数）。 */
   totalCalls: number;
+  /** 其中由后端字符估算得到 usage 的调用数（output.usage.estimated）。 */
+  estimatedCalls: number;
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
-  /** ProjectionEngine 投影事件数（真实）。 */
+  /** 上下文装配事件数（context.build 全角色 + PM prompt_context，真实）。 */
   projectionCount: number;
-  /** 落盘的上下文快照数（真实，output.context_snapshot 计数）。 */
+  /** 落盘的上下文快照数（真实，name==='context.snapshot' 计数）。 */
   receiptCount: number;
+  /** 最近一次 context.build 装配的上下文项数（真实），无则 null。 */
+  contextItemsCount: number | null;
+  /** 最近一次 context.build 装配的上下文 token 数（真实），无则 null。 */
+  contextTokensLatest: number | null;
   /** 错误事件数（真实）。 */
   errorCount: number;
   /** 平均时延（ms，仅统计有 duration 的事件），无则 null。 */
@@ -90,13 +111,17 @@ export interface ContextOSTelemetry {
 export const EMPTY_TELEMETRY: ContextOSTelemetry = {
   hasData: false,
   parsedLines: 0,
+  windowed: false,
   events: [],
   totalCalls: 0,
+  estimatedCalls: 0,
   totalTokens: 0,
   promptTokens: 0,
   completionTokens: 0,
   projectionCount: 0,
   receiptCount: 0,
+  contextItemsCount: null,
+  contextTokensLatest: null,
   errorCount: 0,
   avgLatencyMs: null,
   lastLatencyMs: null,
@@ -170,24 +195,38 @@ function parseEntry(entry: Record<string, unknown>, index: number): ContextOSEve
   const completionTokens = toFiniteNumber(usage['completion_tokens']);
   const totalFromUsage = toFiniteNumber(usage['total_tokens']);
   const totalTokens = totalFromUsage > 0 ? totalFromUsage : promptTokens + completionTokens;
+  // 后端对部分 provider / 预算兜底用字符估算 usage 并打 estimated=true（usage_metrics.py）。
+  const estimatedTokens = hasUsage && usage['estimated'] === true;
 
   const errorText = nonEmptyString(entry['error']);
   const isError = kind === 'error' || Boolean(errorText) || entry['ok'] === false;
 
   const contextHash = nonEmptyString(output['context_hash']) || null;
-  const contextSnapshot = nonEmptyString(output['context_snapshot']);
-  // 仅当存在真实落盘的上下文快照路径(context_snapshot)时才算一次"快照"。
-  // context_hash 只是投影上下文的标识(每次投影都有)，不代表持久化产物，不计入。
-  const hasReceipt = Boolean(contextSnapshot);
-
   const loweredName = name.toLowerCase();
-  const isProjection =
-    loweredName === 'prompt_context' ||
-    kind === 'context_projection' ||
-    loweredName.includes('projection') ||
-    loweredName === 'context_projection';
 
-  const durationRaw = toFiniteNumber(entry['duration_ms']);
+  // 落盘快照：以规范的 ContextEngine 事件 name==='context.snapshot'（output.snapshot_path，全角色）
+  // 为唯一事实来源。PM 的 prompt_context 也带 context_snapshot 键，但指向同一物理文件，
+  // 若同时计数会重复，故只认 context.snapshot。
+  const snapshotPath = nonEmptyString(output['snapshot_path']);
+  const hasReceipt = loweredName === 'context.snapshot' && Boolean(snapshotPath);
+
+  // 投影 / 上下文装配：name==='context.build' 是后端 ContextEngine 对所有角色装配 ContextPack 的
+  // 规范事件（actor=System）；'prompt_context' 是 PM 规划路径的提示注入。两者都是真实的上下文装配信号。
+  // 旧的 kind==='context_projection' 分支是死代码（该枚举只走 Python logging，从不写入本观测日志），已移除。
+  const isProjection =
+    loweredName === 'context.build' ||
+    loweredName === 'prompt_context' ||
+    loweredName.includes('projection');
+
+  // context.build 携带真实的上下文装配规模（items_count / total_tokens）。
+  const isContextBuild = loweredName === 'context.build';
+  const contextItems = isContextBuild ? Math.round(toFiniteNumber(output['items_count'])) : null;
+  const contextTokens = isContextBuild ? Math.round(toFiniteNumber(output['total_tokens'])) : null;
+
+  // 时延：llm_invoke 由 track_usage 发出，其 duration 在 output.duration_ms；
+  // 其余（PM 节点 / 内核事务）写在顶层 duration_ms。两处都回退读取，才能覆盖真实调用时延。
+  const topLevelDuration = toFiniteNumber(entry['duration_ms']);
+  const durationRaw = topLevelDuration > 0 ? topLevelDuration : toFiniteNumber(output['duration_ms']);
   const durationMs = durationRaw > 0 ? Math.round(durationRaw) : null;
 
   // 区分"字段缺失"与"值为 0"：合法的 step/iteration 0（首步）必须保留，不能当缺失。
@@ -219,10 +258,13 @@ function parseEntry(entry: Record<string, unknown>, index: number): ContextOSEve
     completionTokens,
     totalTokens,
     hasUsage,
+    estimatedTokens,
     durationMs,
     error: errorText || null,
     hasReceipt,
     contextHash,
+    contextItems,
+    contextTokens,
     isProjection,
     category: classify({ kind, name, isProjection, hasUsage, isError }),
   };
@@ -232,8 +274,12 @@ function parseEntry(entry: Record<string, unknown>, index: number): ContextOSEve
  * 解析 `llm.observations.jsonl` 文本为 ContextOS 真实遥测模型。
  *
  * 防御式解析：逐行 JSON.parse，跳过坏行；缺字段一律取安全缺省，绝不抛出。
+ *
+ * @param windowLimit 读取该日志时使用的尾部行上限（如 readFile 的 tailLines）。
+ *        当解析到的行数达到该上限时，说明只看到尾部窗口，更早的记录未纳入聚合，
+ *        windowed=true 让 UI 诚实标注「最近 N 条窗口」而非冒充全程累计。
  */
-export function parseObservationLog(content: string | null | undefined): ContextOSTelemetry {
+export function parseObservationLog(content: string | null | undefined, windowLimit?: number): ContextOSTelemetry {
   if (!content || !content.trim()) return EMPTY_TELEMETRY;
 
   const lines = content.split('\n');
@@ -259,6 +305,7 @@ export function parseObservationLog(content: string | null | undefined): Context
 
   // 聚合（基于全部解析事件，再截断展示）。
   let totalCalls = 0;
+  let estimatedCalls = 0;
   let totalTokens = 0;
   let promptTokens = 0;
   let completionTokens = 0;
@@ -286,6 +333,7 @@ export function parseObservationLog(content: string | null | undefined): Context
 
     if (event.hasUsage) {
       totalCalls += 1;
+      if (event.estimatedTokens) estimatedCalls += 1;
       totalTokens += event.totalTokens;
       promptTokens += event.promptTokens;
       completionTokens += event.completionTokens;
@@ -309,17 +357,23 @@ export function parseObservationLog(content: string | null | undefined): Context
 
   const lastWithLatency = sorted.find((event) => event.durationMs !== null);
   const lastEventEpoch = sorted.length > 0 ? sorted[0].epoch || null : null;
+  // 最近一次 context.build 的真实装配规模（items_count / total_tokens）。
+  const lastContextBuild = sorted.find((event) => event.contextItems !== null);
 
   return {
     hasData: true,
     parsedLines,
+    windowed: typeof windowLimit === 'number' && windowLimit > 0 && parsedLines >= windowLimit,
     events: sorted.slice(0, MAX_EVENTS),
     totalCalls,
+    estimatedCalls,
     totalTokens,
     promptTokens,
     completionTokens,
     projectionCount,
     receiptCount,
+    contextItemsCount: lastContextBuild ? lastContextBuild.contextItems : null,
+    contextTokensLatest: lastContextBuild ? lastContextBuild.contextTokens : null,
     errorCount,
     avgLatencyMs: latencyCount > 0 ? Math.round(latencySum / latencyCount) : null,
     lastLatencyMs: lastWithLatency ? lastWithLatency.durationMs : null,
@@ -362,4 +416,23 @@ export function telemetryRoleEvents(telemetry: ContextOSTelemetry, roleId: strin
     }
   }
   return total;
+}
+
+/**
+ * 该角色是否拥有真实的「带 usage 的观测通道」。
+ *
+ * 后端目前只有 PM 路径构造 UsageContext（usage_metrics.py / pm_planning），
+ * 因此只有 PM 的观测携带 output.usage → 只有 PM 有真实 token 归并。
+ * 其余角色（architect/director/qa/chief_engineer）即便在跑，也不产生带 usage 的观测，
+ * 其 token 恒为 0。UI 据此把「无 usage 通道」与「空闲」区分开，避免把结构性的 0 当作真实零用量。
+ */
+export function telemetryRoleHasUsageChannel(telemetry: ContextOSTelemetry, roleId: string): boolean {
+  const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
+  for (const [actor, agg] of Object.entries(telemetry.byActor)) {
+    const lowered = actor.toLowerCase();
+    if (aliases.some((alias) => lowered.includes(alias)) && agg.calls > 0) {
+      return true;
+    }
+  }
+  return false;
 }

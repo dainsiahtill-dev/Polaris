@@ -69,7 +69,8 @@ export function useContextOSTelemetry(
         return;
       }
       const content = (result.data.content as string | undefined) ?? '';
-      const parsed = parseObservationLog(content);
+      // 传入尾部读取上限：解析行数达上限时 telemetry.windowed=true，UI 据此诚实标注「最近窗口」。
+      const parsed = parseObservationLog(content, TAIL_LINES);
       setTelemetry(parsed);
       setLastUpdated(Date.now());
     } catch (err) {
