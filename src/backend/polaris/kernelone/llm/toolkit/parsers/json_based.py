@@ -45,15 +45,21 @@ def _normalize_tool_name_for_matching(tool_name: str) -> str:
     return normalized.lower()
 
 
+def _tool_name_match_keys(tool_name: str) -> set[str]:
+    """Return raw and canonical lowercase forms accepted by allow-list filters."""
+    raw = str(tool_name or "").strip().lower()
+    canonical = _normalize_tool_name_for_matching(tool_name)
+    return {item for item in (raw, canonical) if item}
+
+
 def _normalize_allowed_tool_names_for_matching(
     allowed_tool_names: Iterable[str] | None,
 ) -> set[str]:
     """Normalize an allow-list through the registered tool-name resolver."""
-    return {
-        normalized
-        for item in (allowed_tool_names or [])
-        if (normalized := _normalize_tool_name_for_matching(str(item or "")))
-    }
+    names: set[str] = set()
+    for item in allowed_tool_names or []:
+        names.update(_tool_name_match_keys(str(item or "")))
+    return names
 
 
 def _tool_argument_namespace(tool_name: str) -> set[str]:
@@ -234,7 +240,7 @@ class JSONToolParser:
         canonical_tool_name = _normalize_tool_name_for_matching(tool_name)
 
         # Check if tool name is allowed
-        if self._allowed_names and canonical_tool_name not in self._allowed_names:
+        if self._allowed_names and not (_tool_name_match_keys(tool_name) & self._allowed_names):
             logger.debug("Tool '%s' not in allowed list, skipping", tool_name)
             return []
 
@@ -357,7 +363,7 @@ class JSONToolParser:
 
         for call in calls:
             # Filter by allowed names if specified
-            if self._allowed_names and _normalize_tool_name_for_matching(call.name) not in self._allowed_names:
+            if self._allowed_names and not (_tool_name_match_keys(call.name) & self._allowed_names):
                 continue
 
             # Deduplicate by name + arguments hash

@@ -84,6 +84,26 @@ class TestExtractToolCallsFromTextNormal:
         args = json.loads(result[0]["function"]["arguments"])
         assert args == {"query": {"term": "test", "filters": {"type": "py"}}}
 
+    def test_lfm_pythonic_tool_call_block(self) -> None:
+        """Normal: LFM/Pythonic local-model tool call text is recovered."""
+        text = '<|tool_call_start|>[repo_read_head(file="src/utils/helpers.py", n=50)]<|tool_call_end|>'
+        result = _extract_tool_calls_from_text(text)
+
+        assert len(result) == 1
+        assert result[0]["function"]["name"] == "repo_read_head"
+        args = json.loads(result[0]["function"]["arguments"])
+        assert args == {"file": "src/utils/helpers.py", "n": 50}
+
+    def test_xml_pythonic_tool_call_block(self) -> None:
+        """Normal: XML-wrapped Pythonic local-model tool call text is recovered."""
+        text = '<tool_call>repo_read_head(file="src/utils/helpers.py", n=50)</tool_call>'
+        result = _extract_tool_calls_from_text(text)
+
+        assert len(result) == 1
+        assert result[0]["function"]["name"] == "repo_read_head"
+        args = json.loads(result[0]["function"]["arguments"])
+        assert args == {"file": "src/utils/helpers.py", "n": 50}
+
 
 class TestExtractToolCallsFromTextBoundary:
     """Boundary scenario tests: edge cases."""

@@ -13,6 +13,11 @@ GEMMA_READ_HEAD = '<|tool_call>call:repo_read_head{file:<|"|>src/utils/helpers.p
 GEMMA_TREE = '<|tool_call>call:repo_tree{path:<|"|>.<|"|>}'
 GEMMA_RG = '<|tool_call>call:repo_rg{pattern:<|"|>def -<|"|>,path:<|"|>src/<|"|>}'
 GEMMA_READ_TAIL = '<|tool_call>call:repo_read_tail{count:10,file:<|"|>server.py<|"|>}'
+LFM_READ_HEAD = '<|tool_call_start|>[repo_read_head(file="src/utils/helpers.py", n=50)]<|tool_call_end|>'
+LFM_MULTI_CALL = (
+    '<|tool_call_start|>[repo_tree(path="."), repo_rg(pattern="TODO", paths=["backend", "frontend"])]<|tool_call_end|>'
+)
+XML_PYTHONIC_READ_HEAD = '<tool_call>repo_read_head(file="src/utils/helpers.py", n=50)</tool_call>'
 
 
 class TestRecoverTextualToolCalls:
@@ -85,6 +90,40 @@ class TestRecoverTextualToolCalls:
         assert args["missing"] is None
         assert args["depth"] == 3
 
+    def test_recovers_lfm_pythonic_tool_call_block(self) -> None:
+        calls = recover_textual_tool_calls(LFM_READ_HEAD)
+        assert calls == [
+            {
+                "tool": "repo_read_head",
+                "arguments": {"file": "src/utils/helpers.py", "n": 50},
+                "call_id": "",
+            }
+        ]
+
+    def test_recovers_multiple_lfm_pythonic_calls_in_order(self) -> None:
+        calls = recover_textual_tool_calls(LFM_MULTI_CALL)
+        assert [call["tool"] for call in calls] == ["repo_tree", "repo_rg"]
+        assert calls[0]["arguments"] == {"path": "."}
+        assert calls[1]["arguments"] == {
+            "pattern": "TODO",
+            "paths": ["backend", "frontend"],
+        }
+
+    def test_lfm_allowed_tool_names_filters_unknown(self) -> None:
+        calls = recover_textual_tool_calls(LFM_MULTI_CALL, allowed_tool_names=["repo_rg"])
+        assert len(calls) == 1
+        assert calls[0]["tool"] == "repo_rg"
+
+    def test_recovers_xml_pythonic_tool_call_block(self) -> None:
+        calls = recover_textual_tool_calls(XML_PYTHONIC_READ_HEAD)
+        assert calls == [
+            {
+                "tool": "repo_read_head",
+                "arguments": {"file": "src/utils/helpers.py", "n": 50},
+                "call_id": "",
+            }
+        ]
+
 
 class TestHasTextualToolCalls:
     def test_detects_marker(self) -> None:
@@ -92,6 +131,12 @@ class TestHasTextualToolCalls:
 
     def test_detects_bare_call(self) -> None:
         assert has_textual_tool_calls("call:repo_tree{path:.}") is True
+
+    def test_detects_lfm_marker(self) -> None:
+        assert has_textual_tool_calls(LFM_READ_HEAD) is True
+
+    def test_detects_bare_lfm_list(self) -> None:
+        assert has_textual_tool_calls('[repo_tree(path=".")]') is True
 
     def test_negative(self) -> None:
         assert has_textual_tool_calls("just text") is False
@@ -117,3 +162,17 @@ class TestStripTextualToolCallMarkers:
         cleaned = strip_textual_tool_call_markers(GEMMA_TREE, allowed_tool_names=["read_file"])
         # repo_tree span not stripped (not allowed), but stray markers removed.
         assert "repo_tree" in cleaned
+
+    def test_strips_lfm_call_span_and_markers(self) -> None:
+        cleaned = strip_textual_tool_call_markers("I will inspect it.\n" + LFM_READ_HEAD + "\nDone.")
+        assert "I will inspect it." in cleaned
+        assert "Done." in cleaned
+        assert "repo_read_head" not in cleaned
+        assert "<|tool_call_start|>" not in cleaned
+
+    def test_strips_xml_pythonic_call_span_and_markers(self) -> None:
+        cleaned = strip_textual_tool_call_markers("I will inspect it.\n" + XML_PYTHONIC_READ_HEAD + "\nDone.")
+        assert "I will inspect it." in cleaned
+        assert "Done." in cleaned
+        assert "repo_read_head" not in cleaned
+        assert "<tool_call>" not in cleaned

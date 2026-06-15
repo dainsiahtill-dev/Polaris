@@ -263,6 +263,13 @@ class TestJSONToolParserAllowedNames:
         assert len(result) == 1
         assert result[0].name == "Read"
 
+    def test_allowed_names_accept_raw_and_canonical_forms(self) -> None:
+        """Boundary: CamelCase folded names still match legacy raw allow-list forms."""
+        text = '{"name": "ReadFile", "args": {}}'
+
+        assert len(JSONToolParser.parse(text, allowed_tool_names=["readfile"])) == 1
+        assert len(JSONToolParser.parse(text, allowed_tool_names=["read_file"])) == 1
+
     def test_with_empty_allowed_names(self) -> None:
         """Normal: Empty allowed names list means no filtering."""
         text = '{"name": "read", "args": {}}'

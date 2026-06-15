@@ -50,6 +50,13 @@ normalization could turn a benign-looking call into something the model did not 
   `{"name":"readFile","path":"..."}`. The sibling fallback is gated by the ToolSpecRegistry
   argument namespace, and `is_json_tool_call()` uses the same guard so package metadata remains
   non-tool JSON.
+- [LANDED 2026-06-16] Textual recovery accepts LFM/Pythonic local-model blocks such as
+  `<|tool_call_start|>[repo_read_head(file="src/a.py", n=50)]<|tool_call_end|>` and whole-response
+  bare call lists like `[repo_tree(path=".")]`, with keyword-only literal argument parsing and the
+  existing allowed-tool filter.
+- [LANDED 2026-06-16] Textual recovery also accepts explicitly marker-bounded XML/Pythonic blocks
+  such as `<tool_call>repo_read_head(file="src/a.py", n=50)</tool_call>`. This reuses the same
+  keyword-only literal parser and does not scan arbitrary prose for `tool(args)` calls.
 
 ---
 
@@ -399,7 +406,12 @@ Files: `parsers/native_function.py`, `parsers/json_based.py`, `parsers/core.py`,
   `parsers.core.parse_tool_calls` runs `JSONToolParser` as a fail-open fallback for bare JSON tool
   calls and explicit `[TOOL_CALL]...[/TOOL_CALL]` JSON wrappers, then normalizes tool names and
   arguments.
-- Remaining: XML/tag fallback should be whitelisted and false-positive tested before enabling.
+- [LANDED 2026-06-16] `textual_tool_recovery` also recovers LFM/Pythonic local-model tool-call
+  blocks (`<|tool_call_start|>[tool(arg=value)]<|tool_call_end|>`) and whole-response bare call
+  lists. It intentionally does not scan arbitrary prose for `foo(...)`; only marked blocks or an
+  entire bracketed call-list response trigger this path.
+- Remaining: broader XML/tag fallback beyond explicit Pythonic tool-call markers should be whitelisted
+  and false-positive tested before enabling.
 Files: `parsers/core.py`, `roles/kernel/internal/output_parser.py`, `tool_call_protocol.py`.
 
 ### P8 — Enum/value-synonym normalization + scout/command shape repair  *(S)*
@@ -612,7 +624,8 @@ Rules:
 
 Exit criteria:
 
-- Text fallback corpus accepts `[TOOL_CALL]`/bare JSON tool calls without binding prose tags.
+- Text fallback corpus accepts `[TOOL_CALL]`/bare JSON/LFM-Pythonic/XML-Pythonic tool calls without
+  binding prose tags.
 - Handler coverage gate has zero unregistered read keys and zero normalizer-emitted unknown keys.
 - `_MISSING_ARG_HINTS` and executor validation produce one canonical error style.
 

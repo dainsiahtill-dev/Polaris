@@ -596,3 +596,97 @@ class TestWorkspaceCheckCli:
         checked, failures = run_workspace_check(str(tmp_path))
         assert checked == 0
         assert failures == []
+
+
+def _symbol_errors(errors: list[str]) -> list[str]:
+    return [e for e in errors if "unresolved import symbol" in e]
+
+
+class TestPythonCrossFileSymbolCoherence:
+    """L3-16 regression: a package file importing a symbol a sibling never defines
+    (SRS_ROTATION_STATES) must fail the quality gate so the Director self-heals,
+    instead of shipping a package whose ``import`` raises ImportError at runtime."""
+
+    def test_unresolved_import_symbol_is_flagged(self, tmp_path: Path) -> None:
+        (tmp_path / "tetris").mkdir()
+        (tmp_path / "tetris" / "constants.py").write_text("BOARD_WIDTH = 10\nBOARD_HEIGHT = 20\n", encoding="utf-8")
+        (tmp_path / "tetris" / "__init__.py").write_text(
+            "from tetris.constants import BOARD_WIDTH, SRS_ROTATION_STATES\n", encoding="utf-8"
+        )
+
+        errors = _symbol_errors(scan_workspace_artifact_quality(str(tmp_path)))
+
+        assert errors, "drift symbol must be flagged"
+        assert any("SRS_ROTATION_STATES" in e for e in errors)
+        assert not any("BOARD_WIDTH" in e for e in errors), "defined symbol must not be flagged"
+
+    def test_relative_import_unresolved_symbol_is_flagged(self, tmp_path: Path) -> None:
+        (tmp_path / "tetris").mkdir()
+        (tmp_path / "tetris" / "constants.py").write_text("BOARD_WIDTH = 10\n", encoding="utf-8")
+        (tmp_path / "tetris" / "__init__.py").write_text(
+            "from .constants import SRS_ROTATION_STATES\n", encoding="utf-8"
+        )
+
+        errors = _symbol_errors(scan_workspace_artifact_quality(str(tmp_path)))
+
+        assert any("SRS_ROTATION_STATES" in e for e in errors)
+
+    def test_resolved_symbols_pass(self, tmp_path: Path) -> None:
+        (tmp_path / "tetris").mkdir()
+        (tmp_path / "tetris" / "constants.py").write_text(
+            "BOARD_WIDTH = 10\nSRS_ROTATION_STATES = {}\n\n\ndef helper():\n    return 1\n", encoding="utf-8"
+        )
+        (tmp_path / "tetris" / "__init__.py").write_text(
+            "from .constants import BOARD_WIDTH, SRS_ROTATION_STATES, helper\n", encoding="utf-8"
+        )
+
+        assert _symbol_errors(scan_workspace_artifact_quality(str(tmp_path))) == []
+
+    def test_class_and_function_exports_recognized(self, tmp_path: Path) -> None:
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "board.py").write_text(
+            "class Board:\n    pass\n\n\ndef make():\n    return Board()\n", encoding="utf-8"
+        )
+        (tmp_path / "pkg" / "__init__.py").write_text("from .board import Board, make\n", encoding="utf-8")
+
+        assert _symbol_errors(scan_workspace_artifact_quality(str(tmp_path))) == []
+
+    def test_submodule_import_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "board.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (tmp_path / "pkg" / "__init__.py").write_text("from . import board\n", encoding="utf-8")
+
+        assert _symbol_errors(scan_workspace_artifact_quality(str(tmp_path))) == []
+
+    def test_external_import_not_flagged(self, tmp_path: Path) -> None:
+        (tmp_path / "app.py").write_text(
+            "import os\nfrom collections import OrderedDict\nfrom os import path\n\nprint(os, OrderedDict, path)\n",
+            encoding="utf-8",
+        )
+
+        assert _symbol_errors(scan_workspace_artifact_quality(str(tmp_path))) == []
+
+    def test_wildcard_target_fails_open(self, tmp_path: Path) -> None:
+        # constants re-exports via wildcard → its surface is unknown → must NOT flag.
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "base.py").write_text("ANYTHING = 1\n", encoding="utf-8")
+        (tmp_path / "pkg" / "constants.py").write_text("from pkg.base import *\n", encoding="utf-8")
+        (tmp_path / "pkg" / "__init__.py").write_text("from .constants import SOMETHING_DYNAMIC\n", encoding="utf-8")
+
+        assert _symbol_errors(scan_workspace_artifact_quality(str(tmp_path))) == []
+
+    def test_dunder_getattr_fails_open(self, tmp_path: Path) -> None:
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "constants.py").write_text("def __getattr__(name):\n    return name\n", encoding="utf-8")
+        (tmp_path / "pkg" / "__init__.py").write_text("from .constants import WHATEVER\n", encoding="utf-8")
+
+        assert _symbol_errors(scan_workspace_artifact_quality(str(tmp_path))) == []
+
+    def test_reexported_symbol_recognized(self, tmp_path: Path) -> None:
+        # constants re-exports Foo from base via an explicit ImportFrom → Foo IS part of its surface.
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "base.py").write_text("class Foo:\n    pass\n", encoding="utf-8")
+        (tmp_path / "pkg" / "constants.py").write_text("from pkg.base import Foo\n", encoding="utf-8")
+        (tmp_path / "pkg" / "__init__.py").write_text("from .constants import Foo\n", encoding="utf-8")
+
+        assert _symbol_errors(scan_workspace_artifact_quality(str(tmp_path))) == []
