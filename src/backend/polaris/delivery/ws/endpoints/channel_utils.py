@@ -157,6 +157,22 @@ def resolve_channel_path(workspace: str, cache_root: str, channel: str) -> str:
             return ""
         return os.path.join(cache_root, "runs", run_id, "logs", "journal.norm.jsonl")
 
+    if channel == "runtime_events":
+        # Context / runtime observation events (``context.build`` /
+        # ``prompt_context`` / ``context.snapshot``) are emitted to the
+        # *per-run* events file (``runs/<run_id>/events/runtime.events.jsonl``);
+        # the workspace-level ``CHANNEL_FILES`` path is only a fallback for
+        # legacy writers. Resolve the active run first so the realtime ContextOS
+        # dashboard tails the events the live run actually produces, instead of a
+        # stale workspace-level file the live emit path never writes.
+        run_id = resolve_current_run_id(cache_root)
+        if run_id:
+            per_run = os.path.join(
+                cache_root, "runs", run_id, "events", "runtime.events.jsonl"
+            )
+            if os.path.isfile(per_run):
+                return per_run
+
     rel = CHANNEL_FILES.get(channel)
     if not rel:
         return ""

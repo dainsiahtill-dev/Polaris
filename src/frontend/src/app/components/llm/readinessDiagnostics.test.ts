@@ -117,7 +117,7 @@ describe('readinessDiagnostics', () => {
     });
   });
 
-  it('shows stale readiness records with provider, model, and tested timestamp', () => {
+  it('filters deprecated stale readiness records from blocked diagnostics', () => {
     const diagnostics = buildBlockedRoleDiagnostics({
       blockedRoles: ['director'],
       roles: {
@@ -140,17 +140,7 @@ describe('readinessDiagnostics', () => {
       },
     });
 
-    expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]).toMatchObject({
-      roleLabel: 'Director',
-      providerName: 'Kimi Coding',
-      configuredModel: 'kimi-for-coding',
-      issue: 'readiness_stale',
-      issueLabel: '最近测试记录已过期，请重新测试当前 Provider/模型',
-      testedTimestamp: '2026-05-25T19:01:09+00:00',
-    });
-    expect(formatBlockedRoleTitle(diagnostics[0])).toContain('Kimi Coding/kimi-for-coding');
-    expect(formatBlockedRoleTitle(diagnostics[0])).toContain('测试时间: 2026-05-25T19:01:09+00:00');
+    expect(diagnostics).toEqual([]);
   });
 
   it('shows failed readiness records with the tested provider and model', () => {

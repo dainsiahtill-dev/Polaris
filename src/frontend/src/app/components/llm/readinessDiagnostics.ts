@@ -36,7 +36,7 @@ const ISSUE_LABELS: Record<string, string> = {
   model_mismatch: '最近通过测试的模型不是当前绑定模型',
   provider_mismatch: '最近通过测试的 Provider 不是当前绑定 Provider',
   readiness_failed: '最近一次深度测试失败，请重新测试或切换 Provider/模型',
-  readiness_stale: '最近测试记录已过期，请重新测试当前 Provider/模型',
+  readiness_stale: '历史测试状态待刷新',
   director_codex_read_only_sandbox: 'Director 的 Codex CLI 当前是只读沙箱，无法落盘代码或文档',
   director_codex_invalid_sandbox: 'Director 的 Codex CLI 沙箱配置无效，无法确认可写能力',
   director_minimax_tool_contract_unverified: 'Director 绑定的 MiniMax 尚未通过工具调用合同验证',
@@ -73,6 +73,10 @@ function modelName(role: LLMStatusRole | undefined, provider: ProviderConfig | u
 
 function issueLabel(issue: string): string {
   return ISSUE_LABELS[issue] || issue || '未获得具体失败原因';
+}
+
+function isDeprecatedReadinessStaleOnly(detail: BlockedRoleDiagnostic): boolean {
+  return detail.issue === 'readiness_stale' && detail.runtimeSupported;
 }
 
 export function buildBlockedRoleDiagnostics({
@@ -120,7 +124,8 @@ export function buildBlockedRoleDiagnostics({
         ready: Boolean(role?.ready),
         runtimeSupported,
       };
-    });
+    })
+    .filter((detail) => !isDeprecatedReadinessStaleOnly(detail));
 }
 
 export function formatBlockedRoleTitle(detail: BlockedRoleDiagnostic): string {

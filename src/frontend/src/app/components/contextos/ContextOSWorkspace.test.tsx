@@ -9,6 +9,7 @@ import type { LlmRuntimeGateState } from '@/app/hooks/useLlmRuntimeGate';
 
 // ContextOS 现在直接消费 useRuntime 经 WebSocket 实时推送的运行时流（props），不再轮询任何文件。
 // 这些 LogEntry 夹具取自 parseLlmStreamLine / parseRuntimeEvent 的输出形态。
+// 真实 journal `llm` 通道形态：llm_completed + meta 携带真实 per-call usage / 时延。
 const LLM_STREAM: LogEntry[] = [
   {
     id: 'c1',
@@ -16,9 +17,18 @@ const LLM_STREAM: LogEntry[] = [
     level: 'success',
     source: 'PM',
     message: 'pm planning call returned',
-    details: 'backend=minimax chars=120 2400ms',
-    meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'PM' },
-    tags: ['invoke_done'],
+    details: 'model=MiniMax-M3 prompt=1932 completion=1454 2400ms',
+    meta: {
+      channel: 'llm',
+      streamEvent: 'llm_completed',
+      role: 'PM',
+      model: 'MiniMax-M3',
+      promptTokens: 1932,
+      completionTokens: 1454,
+      totalTokens: 3386,
+      durationMs: 2400,
+    },
+    tags: ['llm_completed'],
   },
 ];
 const EXECUTION_STREAM: LogEntry[] = [
@@ -123,6 +133,12 @@ describe('ContextOSWorkspace', () => {
 
     // The realtime activity chip reflects the live call count + latency.
     expect(screen.getByTestId('contextos-activity-chip').textContent).toContain('2400ms');
+
+    // Real per-call tokens (journal llm channel raw.data) are surfaced as realtime, not degraded.
+    expect(screen.getAllByText('3,386').length).toBeGreaterThan(0);
+    expect(screen.getByText(/tokens · 实时/)).toBeTruthy();
+    // The honest "waiting / unavailable" empty-state is NOT shown once real tokens arrive.
+    expect(screen.queryByTestId('contextos-tokens-unavailable')).toBeNull();
 
     // The real WS event appears in the decision log.
     expect(screen.getByText('pm planning call returned')).toBeTruthy();

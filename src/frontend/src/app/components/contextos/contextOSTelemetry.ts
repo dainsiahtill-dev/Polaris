@@ -11,17 +11,20 @@
  * 本模块把这些由 WS 实时推送的 `LogEntry` 流派生成 ContextOS 仪表盘可消费的遥测模型。
  * 仪表盘随 WS 事件到达即重渲染，无任何轮询。
  *
- * 诚实原则（关键）：WS 推送的是**展示级**事件（source/message/level/details/meta），
- * 不是结构化观测记录。因此：
- *   - 可实时还原：活动/新鲜度、按类别的事件计数、LLM 调用次数与时延（invoke_done）、
- *     按角色的活动量、错误数、阶段。
- *   - 实时流**不含**精确 per-call token / context items_count / 快照路径 等结构化量，
- *     一律不伪造精度（token 聚合恒为 0，对应 UI 以"事件/时延"诚实呈现）。
+ * 诚实原则（关键）：识别后端**真实**的规范事件词汇，不臆造、不伪造精度。
+ *   - journal `llm` 通道（CanonicalLogEventV2）携带真实 per-call 用量与时延：
+ *     raw.stream_event ∈ {llm_waiting, llm_completed, llm_failed}、
+ *     raw.data.{prompt_tokens, completion_tokens, context_tokens_after}、
+ *     raw.data.metadata.elapsed_ms。这些经 parseLlmStreamLine 注入 LogEntry.meta 实时送达。
+ *     → 据此实时还原：调用次数、真实 token 聚合、真实时延、按角色用量、错误数、上下文规模。
+ *   - runtime_events 通道（emit_event）携带 prompt_context / context.build（含 items_count /
+ *     total_tokens / snapshot_hash）等装配观测，经 parseRuntimeEvent 的 meta=data/output 保真送达。
+ *     → 据此识别投影/在窗项数/快照回执。注意：弱模型 PM-only 真实 run 仅发 prompt_context（无
+ *     items_count/snapshot），故投影计数可得、in-window items/快照随后端是否发 context.build 而定，
+ *     缺失时诚实留空，不臆造。
  *
- * 旧实现轮询 `runtime/events/llm.observations.jsonl`——这是一个后端任何代码路径都不写入的
- * 幽灵文件（规范事件日志见 kernelone/runtime/defaults.py：runtime.events.jsonl /
- * pm.llm.events.jsonl / director.llm.events.jsonl …），故真实运行时仪表盘永不更新。本模块改为
- * 直接消费 WS 实时流，根除该缺陷。
+ * 旧实现轮询 `runtime/events/llm.observations.jsonl`——后端任何代码路径都不写入的幽灵文件，
+ * 故真实运行时仪表盘永不更新。本模块改为直接消费 WS 既有实时流，根除该缺陷。
  */
 
 import type { LogEntry } from '@/types/log';
@@ -44,23 +47,23 @@ export interface ContextOSEvent {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
-  /** 是否携带 token 用量。WS 展示级流不含精确 usage，恒 false（诚实）。 */
+  /** 是否携带真实 token 用量（journal `llm` 通道 raw.data.prompt/completion_tokens）。 */
   hasUsage: boolean;
-  /** 该次 usage 是否为后端字符估算。WS 流无此信息，恒 false。 */
+  /** 该次 usage 是否为后端字符估算。journal usage 为真实计数，恒 false。 */
   estimatedTokens: boolean;
-  /** 真实时延（ms）；llm_invoke 的时延从 invoke_done 的 details 中还原。 */
+  /** 真实时延（ms）：meta.durationMs（raw.data.metadata.elapsed_ms）优先，回退从 details 还原。 */
   durationMs: number | null;
   error: string | null;
   /** 是否为落盘快照回执。WS 展示级流无法可靠区分，恒 false（诚实，不过度声明）。 */
   hasReceipt: boolean;
   contextHash: string | null;
-  /** 上下文项数。WS 流不含 items_count，恒 null（诚实）。 */
+  /** 上下文项数（context.build 的 items_count，经 runtime_events meta 送达）；缺失 null。 */
   contextItems: number | null;
-  /** 上下文 token 数。WS 流不含 total_tokens，恒 null（诚实）。 */
+  /** 上下文 token 规模（context.build total_tokens 或 llm context_tokens_after）；缺失 null。 */
   contextTokens: number | null;
   /** 是否为上下文装配 / 投影事件（按事件名/消息识别 context.build / prompt_context / projection）。 */
   isProjection: boolean;
-  /** 是否为一次离散 LLM 调用（invoke_done / invoke_error）——用于实时调用计数。 */
+  /** 是否为一次离散 LLM 调用（llm_completed / llm_failed 或旧版 invoke_done / invoke_error）。 */
   isCall: boolean;
   category: 'projection' | 'call' | 'tool' | 'error' | 'state' | 'event';
 }
@@ -85,21 +88,21 @@ export interface ContextOSTelemetry {
   windowed: boolean;
   /** 事件流（按时间倒序，已截断）。 */
   events: ContextOSEvent[];
-  /** 离散 LLM 调用次数（invoke_done / invoke_error，真实）。 */
+  /** 离散 LLM 调用次数（llm_completed / llm_failed 或旧版 invoke_done / invoke_error，真实）。 */
   totalCalls: number;
-  /** 其中由后端字符估算得到 usage 的调用数。WS 流无此信息，恒 0。 */
+  /** 其中由后端字符估算得到 usage 的调用数。journal usage 为真实计数，恒 0。 */
   estimatedCalls: number;
-  /** token 聚合。WS 展示级流不含精确 usage，恒 0（诚实，不伪造精度）。 */
+  /** 真实 token 聚合（journal `llm` 通道 raw.data 的 prompt/completion usage 之和）。 */
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
   /** 上下文装配 / 投影事件数（按事件名识别，真实）。 */
   projectionCount: number;
-  /** 落盘快照回执数。WS 流无法可靠区分，恒 0（诚实）。 */
+  /** 落盘快照回执数（context.snapshot 的 snapshot_hash 签名计数）；后端未发时为 0。 */
   receiptCount: number;
-  /** 最近一次装配的上下文项数。WS 流不含，恒 null。 */
+  /** 最近一次装配（context.build）的真实上下文项数；后端未发 context.build 时为 null。 */
   contextItemsCount: number | null;
-  /** 最近一次装配的上下文 token 数。WS 流不含，恒 null。 */
+  /** 最近一次装配/调用的上下文 token 规模；缺失时 null。 */
   contextTokensLatest: number | null;
   /** 错误事件数（真实）。 */
   errorCount: number;
@@ -184,15 +187,20 @@ function classifyStream(params: {
   const { streamEvent, channel, text, isError, isProjection } = params;
   const token = `${streamEvent} ${text}`.toLowerCase();
 
-  // 离散 LLM 调用：invoke_done 是成功完成，invoke_error 是失败完成；两者都计一次调用。
-  const isCall = streamEvent === 'invoke_done' || streamEvent === 'invoke_error';
+  // 离散 LLM 调用：一次「完成」事件计一次调用。规范 journal `llm` 通道用 llm_completed/llm_failed；
+  // 旧版 *.llm.events.jsonl 用 invoke_done/invoke_error。两套词汇都识别。
+  const isCall =
+    streamEvent === 'invoke_done' ||
+    streamEvent === 'invoke_error' ||
+    streamEvent === 'llm_completed' ||
+    streamEvent === 'llm_failed';
 
   let category: ContextOSEvent['category'];
-  if (isError || streamEvent === 'invoke_error') category = 'error';
+  if (isError || streamEvent === 'invoke_error' || streamEvent === 'llm_failed') category = 'error';
   else if (streamEvent === 'tool_call' || streamEvent === 'tool_result') category = 'tool';
   else if (isProjection) category = 'projection';
   else if (isCall) category = 'call';
-  else if (streamEvent === 'thinking_chunk' || streamEvent === 'content_chunk') category = 'state';
+  else if (streamEvent === 'thinking_chunk' || streamEvent === 'content_chunk' || streamEvent === 'llm_waiting') category = 'state';
   else if (channel === 'llm' || token.includes('invoke') || token.includes('llm')) category = 'call';
   else if (token.includes('waiting') || token.includes('idle') || token.includes('state')) category = 'state';
   else category = 'event';
@@ -221,29 +229,49 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
 
   // 结构化信号（来自 meta = 事件 data/output）。
   const contextItems = toFiniteOrNull(meta['items_count']);
-  const contextTokens = toFiniteOrNull(meta['total_tokens']);
+  // 上下文规模：context.build 的 total_tokens（全量装配规模）优先；llm 通道的 context_tokens_after 次之。
+  const contextTokens = toFiniteOrNull(meta['total_tokens']) ?? toFiniteOrNull(meta['contextTokens']);
   const snapshotHash = nonEmptyString(meta['snapshot_hash']);
   const requestHash = nonEmptyString(meta['request_hash']);
-  const snapshotPath = nonEmptyString(meta['snapshot_path']);
   const contextHash = nonEmptyString(meta['context_hash']) || requestHash || null;
 
-  // 投影 / 上下文装配：context.build 携带 items_count（装配规模，唯一可靠签名）；
-  // 其余投影类（prompt_context / projection）靠文本信号。注意 context.snapshot 也带 request_hash，
-  // 故不能用 request_hash 判投影（否则会把快照回执误计为投影）。
+  // 真实 per-call 用量（来自 journal `llm` 通道 raw.data，经 parseLlmStreamLine 注入 meta）。
+  const usagePromptTokens = toFiniteOrNull(meta['promptTokens']) ?? 0;
+  const usageCompletionTokens = toFiniteOrNull(meta['completionTokens']) ?? 0;
+  const usageTotalTokens = toFiniteOrNull(meta['totalTokens']) ?? (usagePromptTokens + usageCompletionTokens);
+  const hasUsage = usageTotalTokens > 0;
+  const metaDurationMs = toFiniteOrNull(meta['durationMs']);
+
+  // 投影 / 上下文装配的识别（按可靠性递减）：
+  //  ① context.build 携带 items_count（装配规模，最可靠签名）；
+  //  ② prompt_context 经 parseRuntimeEvent 后 name 被 summary「Prompt Context Injection」覆盖，但
+  //     output(=meta) 保真携带 persona_id / strategy / token_usage_estimate 等投影签名字段；
+  //  ③ 文本兜底（覆盖真实 summary 形态：prompt context / context injection / ContextPack …）。
+  // 注意 context.snapshot 也带 request_hash，故不能用 request_hash 判投影（否则把快照回执误计为投影）。
+  const personaId = nonEmptyString(meta['persona_id']);
+  const projectionStrategy = nonEmptyString(meta['strategy']);
   const isProjection =
     contextItems !== null ||
+    Boolean(personaId) ||
+    Boolean(projectionStrategy) ||
     token.includes('context.build') ||
     token.includes('prompt_context') ||
+    token.includes('prompt context') ||
+    token.includes('context injection') ||
+    token.includes('contextpack') ||
+    token.includes('context pack') ||
     token.includes('projection') ||
     token.includes('context_assembl') ||
     token.includes('context.item');
 
-  // 落盘快照回执：以 context.snapshot 的 snapshot_hash 为唯一签名（context.build 也带 snapshot_path，
-  // 但无 snapshot_hash，避免重复计数）。
-  const hasReceipt = Boolean(snapshotHash) || (Boolean(snapshotPath) && token.includes('snapshot'));
+  // 落盘快照回执：以 context.snapshot 的 snapshot_hash 为唯一签名。注意真实 context.build 的 output
+  // 也带 snapshot_hash，但它同时带 items_count（是装配事件而非回执），故按「有 snapshot_hash 且无
+  // items_count」识别真正的回执，避免把同一次快照在 build + snapshot 两条事件上重复计数。
+  const hasReceipt = Boolean(snapshotHash) && contextItems === null;
 
   const { category, isCall } = classifyStream({ streamEvent, channel, text, isError, isProjection });
-  const durationMs = parseLatencyMs(log.details);
+  // 真实时延：meta.durationMs（journal raw.data.metadata.elapsed_ms）优先，回退从 details 文本还原。
+  const durationMs = metaDurationMs ?? parseLatencyMs(log.details);
 
   return {
     id: nonEmptyString(log.id) || `ws-${channel}-${index}`,
@@ -256,10 +284,10 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     mode: channel || 'unknown',
     iteration: null,
     summary: (nonEmptyString(log.message) || nonEmptyString(log.title) || streamEvent).replace(/\s+/g, ' ').trim().slice(0, 160),
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    hasUsage: false,
+    promptTokens: usagePromptTokens,
+    completionTokens: usageCompletionTokens,
+    totalTokens: usageTotalTokens,
+    hasUsage,
     estimatedTokens: false,
     durationMs,
     error: isError ? nonEmptyString(log.details) || nonEmptyString(log.message) || 'error' : null,
@@ -277,6 +305,10 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   if (events.length === 0) return EMPTY_TELEMETRY;
 
   let totalCalls = 0;
+  let estimatedCalls = 0;
+  let totalTokens = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
   let projectionCount = 0;
   let receiptCount = 0;
   let errorCount = 0;
@@ -294,15 +326,23 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       latencyCount += 1;
     }
 
+    // 真实 token 聚合（journal `llm` 通道携带 prompt/completion usage）。
+    totalTokens += event.totalTokens;
+    promptTokens += event.promptTokens;
+    completionTokens += event.completionTokens;
+    if (event.estimatedTokens) estimatedCalls += 1;
+
     const actorKey = event.actor;
     const actorAgg = byActor[actorKey] ?? { totalTokens: 0, calls: 0, events: 0 };
     actorAgg.events += 1;
+    actorAgg.totalTokens += event.totalTokens;
 
     if (event.isCall || event.hasUsage) {
       totalCalls += 1;
       const modeKey = event.mode || 'unknown';
       const modeAgg = byMode[modeKey] ?? { totalTokens: 0, calls: 0 };
       modeAgg.calls += 1;
+      modeAgg.totalTokens += event.totalTokens;
       byMode[modeKey] = modeAgg;
       actorAgg.calls += 1;
     }
@@ -317,8 +357,10 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
 
   const lastWithLatency = sorted.find((event) => event.durationMs !== null);
   const lastEventEpoch = sorted.length > 0 ? sorted[0].epoch || null : null;
-  // 最近一次装配（context.build）的真实规模（items_count / total_tokens），经 WS meta 送达。
+  // 最近一次装配（context.build）的真实在窗项数（items_count），经 runtime_events meta 送达。
   const lastContextBuild = sorted.find((event) => event.contextItems !== null);
+  // 最近一次上下文规模（context.build total_tokens 或 llm 通道 context_tokens_after）。
+  const lastContextSize = sorted.find((event) => event.contextTokens !== null);
 
   return {
     hasData: true,
@@ -326,14 +368,14 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     windowed,
     events: sorted.slice(0, MAX_EVENTS),
     totalCalls,
-    estimatedCalls: 0,
-    totalTokens: 0,
-    promptTokens: 0,
-    completionTokens: 0,
+    estimatedCalls,
+    totalTokens,
+    promptTokens,
+    completionTokens,
     projectionCount,
     receiptCount,
     contextItemsCount: lastContextBuild ? lastContextBuild.contextItems : null,
-    contextTokensLatest: lastContextBuild ? lastContextBuild.contextTokens : null,
+    contextTokensLatest: lastContextSize ? lastContextSize.contextTokens : null,
     errorCount,
     avgLatencyMs: latencyCount > 0 ? Math.round(latencySum / latencyCount) : null,
     lastLatencyMs: lastWithLatency ? lastWithLatency.durationMs : null,
@@ -398,7 +440,7 @@ const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
   qa: ['qa', 'reviewer'],
 };
 
-/** 汇总某角色在真实遥测里的 token（按 actor 别名匹配）。WS 流无精确 token，恒 0。 */
+/** 汇总某角色在真实遥测里的 token（按 actor 别名匹配，来自 journal `llm` 通道的真实 usage）。 */
 export function telemetryRoleTokens(telemetry: ContextOSTelemetry, roleId: string): number {
   const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
   let total = 0;
@@ -427,10 +469,10 @@ export function telemetryRoleEvents(telemetry: ContextOSTelemetry, roleId: strin
 /**
  * 该角色是否拥有真实的「带 usage 的观测通道」。
  *
- * WS 实时流是展示级事件，不含精确 per-call token，因此任何角色都没有「带 usage 的通道」，
- * 恒返回 false。UI 据此对所有角色统一以「事件/时延」诚实呈现，而非伪造 per-role token。
- * （精确 token 需走 /v2/{pm,director}/llm-events 证据端点，非实时 WS 通道。）
+ * journal `llm` 通道（emit_llm_event → MessageBus → WS）在 raw.data 携带真实 prompt/completion
+ * tokens，因此凡是在实时流里产生过带 usage 调用的角色（如 PM/Director）都有真实 token 归并。
+ * 据此该角色才以 token 归因展示；无 usage 的角色仍以事件数/时延诚实呈现，不伪造 per-role token。
  */
-export function telemetryRoleHasUsageChannel(_telemetry: ContextOSTelemetry, _roleId: string): boolean {
-  return false;
+export function telemetryRoleHasUsageChannel(telemetry: ContextOSTelemetry, roleId: string): boolean {
+  return telemetryRoleTokens(telemetry, roleId) > 0;
 }

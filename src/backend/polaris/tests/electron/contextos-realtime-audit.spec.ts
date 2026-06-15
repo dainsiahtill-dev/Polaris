@@ -104,12 +104,19 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
 });
 
 /**
- * 端到端证明「ContextOS 经 WebSocket 实时框架呈现真实数据，无轮询」：
- *   把真实 schema 的 runtime 事件写入后端 runtime_events 通道文件 → 重连让 WS 推送通道快照 →
- *   进入 ContextOS → 断言仪表盘把这些事件实时呈现（含经 WS meta 保真送达的 items_count / 快照）。
+ * 端到端证明「ContextOS 经 WebSocket 实时框架呈现**真实生产形态**的数据，无轮询」。
+ *
+ * 关键（修正上一版假绿）：真实运行时事件写入的是**按 run 隔离**的文件，而非工作区级文件：
+ *   - LLM 调用 → runs/<run_id>/logs/journal.norm.jsonl（CanonicalLogEventV2，channel=llm，
+ *     raw.stream_event=llm_completed，raw.data.{prompt,completion}_tokens + metadata.elapsed_ms）。
+ *   - 上下文装配 → runs/<run_id>/events/runtime.events.jsonl（prompt_context / context.build /
+ *     context.snapshot）。
+ * 故本测试按生产真实 schema 播种**per-run**文件，并写 latest_run.json 让 WS 的
+ * resolve_current_run_id 指向该 run；重连后 WS 把这两个通道作快照推送 → 仪表盘实时呈现
+ * 真实调用次数 / 真实 token / 真实时延 / 投影 / 在窗项数 / 快照回执。
  */
-test("ContextOS renders REAL telemetry pushed over the runtime WebSocket (no polling)", async ({ window }, testInfo) => {
-  // 1) 解析后端 runtime_events 通道文件（runtime.events.jsonl）的物理路径。
+test("ContextOS renders REAL production-shape telemetry over the runtime WebSocket (no polling)", async ({ window }, testInfo) => {
+  // 1) 解析工作区级 runtime.events.jsonl 物理路径，据此推导 cache_root（其父的父目录）。
   const resolved = await window.evaluate(async () => {
     const api = (window as unknown as { polaris?: { getBackendInfo: () => Promise<{ baseUrl: string; token: string }> } }).polaris;
     if (!api) return { ok: false, path: "", error: "polaris API missing" };
@@ -126,30 +133,63 @@ test("ContextOS renders REAL telemetry pushed over the runtime WebSocket (no pol
   expect(resolved.ok, `backend file resolution failed: ${resolved.error}`).toBeTruthy();
   expect(resolved.path, "backend must resolve a physical runtime-events path").toBeTruthy();
 
-  // 2) 追加真实 schema 的 runtime 事件（context.build 装配 + context.snapshot 落盘回执）。
-  //    这是 WS runtime_events 通道的来源文件；ContextOS 不读它——它只消费 WS 推送的流。
+  // <cache_root>/events/runtime.events.jsonl → cache_root = dirname(dirname(...)).
+  const cacheRoot = path.dirname(path.dirname(resolved.path));
+  const runId = "e2e-pm-1";
+  const runDir = path.join(cacheRoot, "runs", runId);
+  const journalPath = path.join(runDir, "logs", "journal.norm.jsonl");
+  const eventsPath = path.join(runDir, "events", "runtime.events.jsonl");
+
   const nowIso = new Date().toISOString();
   const nowEpoch = Date.now() / 1000;
-  const lines = [
+
+  // 2a) per-run journal：真实 llm_completed 行（携带真实 per-call usage 与时延）。
+  const journalLine = {
+    schema_version: 2, event_id: "e2e-llm-1", run_id: runId, seq: 1,
+    ts: nowIso, ts_epoch: nowEpoch, channel: "llm", domain: "llm", severity: "info",
+    kind: "state", actor: "pm", source: "application.roles.events",
+    message: "llm response completed | completion_tokens=1454",
+    tags: ["llm_realtime_bridge", "llm_event:llm_call_end", "projection_event:llm_completed"],
+    raw: {
+      stream_event: "llm_completed", event_type: "llm_call_end", role: "pm",
+      data: {
+        model: "MiniMax-M3", prompt_tokens: 1932, completion_tokens: 1454,
+        context_tokens_after: 1932, metadata: { elapsed_ms: 71431.06 },
+      },
+    },
+  };
+  fs.mkdirSync(path.dirname(journalPath), { recursive: true });
+  fs.writeFileSync(journalPath, `${JSON.stringify(journalLine)}\n`, { encoding: "utf8" });
+
+  // 2b) per-run runtime events：真实 prompt_context（PM 投影）+ context.build（在窗项数）+
+  //     context.snapshot（落盘回执）。全为生产真实 schema。
+  const eventLines = [
     {
-      schema_version: 1, ts: nowIso, ts_epoch: nowEpoch, seq: 1, event_id: "e2e-build",
-      kind: "observation", actor: "System", name: "context.build", refs: { run_id: "e2e", step: 1 },
-      summary: "E2E ContextPack built", ok: true,
-      // items_count / total_tokens 经 parseRuntimeEvent 的 meta(=output) 保真送达 WS。
-      output: { request_hash: "e2ehash", items_count: 5, total_tokens: 3200, snapshot_path: "runtime/snap/e2e.json" },
+      schema_version: 1, ts: nowIso, ts_epoch: nowEpoch, seq: 1, event_id: "e2e-pc",
+      kind: "observation", actor: "PM", name: "prompt_context", refs: { run_id: runId, step: 1 },
+      summary: "Prompt Context Injection", ok: true,
+      output: { run_id: runId, phase: "pm.planning", step: 1, persona_id: "pm.v1", strategy: "combined_ranking", token_usage_estimate: 0 },
     },
     {
-      schema_version: 1, ts: nowIso, ts_epoch: nowEpoch + 1, seq: 2, event_id: "e2e-snap",
-      kind: "observation", actor: "System", name: "context.snapshot", refs: { run_id: "e2e", step: 1 },
-      summary: "E2E snapshot stored", ok: true,
+      schema_version: 1, ts: nowIso, ts_epoch: nowEpoch + 1, seq: 2, event_id: "e2e-build",
+      kind: "observation", actor: "System", name: "context.build", refs: { run_id: runId, step: 1 },
+      summary: "ContextPack built", ok: true,
+      output: { request_hash: "e2ehash", items_count: 5, total_tokens: 3200, snapshot_path: "runtime/snap/e2e.json", snapshot_hash: "e2esnap" },
+    },
+    {
+      schema_version: 1, ts: nowIso, ts_epoch: nowEpoch + 2, seq: 3, event_id: "e2e-snap",
+      kind: "observation", actor: "System", name: "context.snapshot", refs: { run_id: runId, step: 1 },
+      summary: "Context snapshot stored", ok: true,
       output: { request_hash: "e2ehash", snapshot_path: "runtime/snap/e2e.json", snapshot_hash: "e2esnap" },
     },
   ];
-  const content = `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`;
-  fs.mkdirSync(path.dirname(resolved.path), { recursive: true });
-  fs.appendFileSync(resolved.path, content, { encoding: "utf8" });
+  fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
+  fs.writeFileSync(eventsPath, `${eventLines.map((l) => JSON.stringify(l)).join("\n")}\n`, { encoding: "utf8" });
 
-  // 3) 重连 WebSocket（reload），让 runtime_events 通道快照（tail）包含这两条事件。
+  // 2c) latest_run.json：让 WS resolve_current_run_id 指向该 run（per-run 通道解析的前提）。
+  fs.writeFileSync(path.join(cacheRoot, "latest_run.json"), JSON.stringify({ run_id: runId }), { encoding: "utf8" });
+
+  // 3) 重连 WebSocket（reload），让 llm + runtime_events 通道快照（per-run tail）包含这些事件。
   await window.reload();
   await expect(window.locator("[data-testid='project-progress-panel']")).toBeVisible({ timeout: 30000 });
 
@@ -157,18 +197,23 @@ test("ContextOS renders REAL telemetry pushed over the runtime WebSocket (no pol
   await enterContextOS(window);
   await expect(window.locator("[data-testid='contextos-workspace']")).toBeVisible();
 
-  // 5) 断言真实事件经 WS 实时呈现（无轮询）。
+  // 5) 断言真实生产形态事件经 WS 实时呈现（无轮询）。
   const source = window.locator("[data-testid='contextos-telemetry-source']");
   await expect(source).toBeVisible({ timeout: 20000 });
   await expect(source).toContainText("REAL");
-  await expect(source).toContainText("投影"); // context.build → projection
+  await expect(source).toContainText("调用"); // llm_completed → 1 次真实调用
+  await expect(source).toContainText("投影"); // prompt_context / context.build → projection
 
   // 新鲜度徽章翻转为「实时遥测」（事件时间戳为当下）。
   await expect(window.getByTestId("contextos-telemetry-freshness")).toContainText("实时遥测");
 
+  // 真实 per-call token（journal raw.data）实时呈现，标注「实时」，而非「需诊断端点」空态。
+  await expect(window.getByText(/tokens · 实时/)).toBeVisible({ timeout: 20000 });
+  await expect(window.getByTestId("contextos-tokens-unavailable")).toHaveCount(0);
+
   // 结构化信号经 WS meta 保真送达：WorkingMem 显示真实在窗项数（items_count=5）。
   await expect(window.locator("[data-testid='contextos-component-working_mem']")).toContainText("5 项在窗");
-  // 快照回执（snapshot_hash 签名）在 Receipt · Telemetry 卡呈现。
+  // 快照回执（context.snapshot 的 snapshot_hash 签名）在 Receipt · Telemetry 卡呈现。
   await expect(window.locator("[data-testid='contextos-component-telemetry']")).toContainText("快照");
 
   // 截图供人工视觉审计（真实 WS 数据态）。

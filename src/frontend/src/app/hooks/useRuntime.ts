@@ -368,13 +368,22 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const thinking = String(parsed.thinking || parsed.content || parsed.message || '').trim();
     const eventName = String(parsed.event || parsed.name || parsed.kind || '').trim();
     const eventToken = eventName.toLowerCase();
-    const modelName = String(parsed.model || parsed.model_name || '').trim();
+    let modelName = String(parsed.model || parsed.model_name || '').trim();
     const rawObj = parsed.raw && typeof parsed.raw === 'object' ? (parsed.raw as Record<string, unknown>) : null;
     const streamEvent = rawObj ? String(rawObj.stream_event || '').trim().toLowerCase() : '';
     const rawEvent = rawObj ? String(rawObj.event || rawObj.name || '').trim() : '';
     const rawSummary = rawObj ? String(rawObj.summary || rawObj.message || '').trim() : '';
     const rawContent = rawObj ? String(rawObj.content || '').trim() : '';
-    const eventData = parsed.data && typeof parsed.data === 'object' ? (parsed.data as Record<string, unknown>) : null;
+    // 规范 LLM 事件（journal `llm` 通道，CanonicalLogEventV2）把数据放在 raw.data；
+    // 旧版 *.llm.events.jsonl 放在顶层 data。两者都兼容（顶层优先）。
+    const eventData = parsed.data && typeof parsed.data === 'object'
+      ? (parsed.data as Record<string, unknown>)
+      : (rawObj && rawObj.data && typeof rawObj.data === 'object'
+          ? (rawObj.data as Record<string, unknown>)
+          : null);
+    if (!modelName && eventData) {
+      modelName = String(eventData.model || eventData.model_name || '').trim();
+    }
     const dataSummary = eventData ? String(eventData.summary || eventData.message || '').trim() : '';
     const dataPreview = eventData ? String(eventData.preview || '').trim() : '';
     const dataBackend = eventData ? String(eventData.backend || '').trim() : '';
@@ -383,6 +392,23 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const dataTaskCount = eventData ? String(eventData.task_count || '').trim() : '';
     const dataOutputChars = eventData ? Number(eventData.output_chars || 0) : 0;
     const dataStage = eventData ? String(eventData.stage || '').trim().toLowerCase() : '';
+
+    // 真实 per-call 用量与时延：journal `llm` 通道在 raw.data 携带 prompt/completion tokens、
+    // context_tokens_after，以及 raw.data.metadata.elapsed_ms（真实时延）。这些是实时遥测的核心信号。
+    const dataPromptTokens = eventData ? Number(eventData.prompt_tokens ?? 0) : 0;
+    const dataCompletionTokens = eventData ? Number(eventData.completion_tokens ?? 0) : 0;
+    const dataContextTokens = eventData ? Number(eventData.context_tokens_after ?? 0) : 0;
+    const dataMetadata = eventData && eventData.metadata && typeof eventData.metadata === 'object'
+      ? (eventData.metadata as Record<string, unknown>)
+      : null;
+    const dataElapsedMs = dataMetadata ? Number(dataMetadata.elapsed_ms ?? 0) : 0;
+    const dataDurationMs = dataDuration && Number.isFinite(Number(dataDuration)) && Number(dataDuration) > 0
+      ? Number(dataDuration)
+      : (Number.isFinite(dataElapsedMs) && dataElapsedMs > 0 ? dataElapsedMs : 0);
+    const safePromptTokens = Number.isFinite(dataPromptTokens) && dataPromptTokens > 0 ? dataPromptTokens : 0;
+    const safeCompletionTokens = Number.isFinite(dataCompletionTokens) && dataCompletionTokens > 0 ? dataCompletionTokens : 0;
+    const safeContextTokens = Number.isFinite(dataContextTokens) && dataContextTokens > 0 ? dataContextTokens : 0;
+    const usageTotalTokens = safePromptTokens + safeCompletionTokens;
 
     const normalizedEvent = streamEvent || eventToken;
 
@@ -408,6 +434,32 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       const resultObj = rawObj && typeof rawObj.result === 'object' ? (rawObj.result as Record<string, unknown>) : null;
       details = resultObj ? String(resultObj.error || resultObj.message || '') : '';
       level = status === 'failed' ? 'error' : 'success';
+    } else if (normalizedEvent === 'llm_waiting' || eventToken === 'llm_call_start') {
+      // 规范 LLM 生命周期（journal `llm` 通道）：等待响应 = 一次调用的开始。
+      message = `正在请求 ${modelName || dataBackend || 'LLM'} 响应…`;
+      details = modelName ? `model=${modelName}` : '';
+      level = 'thinking';
+    } else if (normalizedEvent === 'llm_completed' || eventToken === 'llm_call_end') {
+      // 规范 LLM 生命周期：调用成功完成，携带真实 prompt/completion tokens 与时延。
+      const baseMsg = String(parsed.message || '').trim();
+      message = baseMsg || dataSummary || (safeCompletionTokens > 0 ? 'LLM 响应已返回' : 'LLM 响应已完成');
+      const detailTokens = [
+        modelName ? `model=${modelName}` : '',
+        safePromptTokens > 0 ? `prompt=${safePromptTokens}` : '',
+        safeCompletionTokens > 0 ? `completion=${safeCompletionTokens}` : '',
+        dataDurationMs > 0 ? `${Math.round(dataDurationMs)}ms` : '',
+      ].filter((token) => token.length > 0);
+      details = detailTokens.join(' ');
+      level = 'success';
+    } else if (normalizedEvent === 'llm_failed' || eventToken === 'llm_call_error') {
+      // 规范 LLM 生命周期：调用失败。
+      const errMsg = (eventData ? String(eventData.error_message || eventData.error || '').trim() : '') || dataError;
+      message = errMsg ? `LLM 调用失败: ${errMsg}` : 'LLM 调用失败';
+      details = [
+        modelName ? `model=${modelName}` : '',
+        dataDurationMs > 0 ? `${Math.round(dataDurationMs)}ms` : '',
+      ].filter((token) => token.length > 0).join(' ');
+      level = 'error';
     } else if (eventToken === 'invoke_start') {
       message = `正在请求 ${dataBackend || 'LLM'}...`;
       details = dataBackend ? `backend=${dataBackend}` : '';
@@ -493,6 +545,12 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       role: actor || undefined,
       model: modelName || undefined,
       runId: runScope || undefined,
+      // 真实 per-call 用量 / 上下文规模 / 时延（来自 journal raw.data）——供 ContextOS 实时遥测消费。
+      promptTokens: safePromptTokens > 0 ? safePromptTokens : undefined,
+      completionTokens: safeCompletionTokens > 0 ? safeCompletionTokens : undefined,
+      totalTokens: usageTotalTokens > 0 ? usageTotalTokens : undefined,
+      contextTokens: safeContextTokens > 0 ? safeContextTokens : undefined,
+      durationMs: dataDurationMs > 0 ? Math.round(dataDurationMs) : undefined,
     };
 
     const compact = message.replace(/\s+/g, ' ').trim();

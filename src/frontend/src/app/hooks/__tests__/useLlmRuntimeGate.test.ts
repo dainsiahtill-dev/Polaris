@@ -64,6 +64,32 @@ describe('useLlmRuntimeGate', () => {
     expect(reason).toContain('2026-05-23T23:59:00Z');
   });
 
+  it('treats deprecated readiness_stale blocks as ready', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'blocked',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+      last_updated: '2026-06-15T00:00:00Z',
+      roles: {
+        pm: {
+          provider_id: 'minimax-1781012971065',
+          model: 'MiniMax-M3',
+          ready: false,
+          runtime_supported: true,
+          readiness_issue: 'readiness_stale',
+          tested_provider_id: 'minimax-1781012971065',
+          tested_model: 'MiniMax-M3',
+          tested_timestamp: '2026-06-12T00:37:38.823949+00:00',
+        },
+      },
+    });
+
+    expect(state.state).toBe('READY');
+    expect(state.blockedRoles).toEqual([]);
+    expect(isRoleLlmBlocked(state, 'pm')).toBe(false);
+    expect(getRoleLlmBlockedReason(state, 'pm', 'PM')).toBe('');
+  });
+
   it('applies incoming runtime llm status and exposes the Director blocked reason', () => {
     const refreshFetch = vi.fn().mockResolvedValue({
       state: 'BLOCKED',

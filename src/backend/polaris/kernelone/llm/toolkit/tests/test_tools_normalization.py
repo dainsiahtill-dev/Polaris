@@ -408,5 +408,51 @@ class TestTypeCoercion:
         assert normalized.get("max_entries") == 100
 
 
+class TestWriteContentSynonyms:
+    """Weak/diverse-LLM adaptation (2026-06-15): the file body arrives under a non-`content`
+    key. Normalization must land it under canonical `content` (resolved before the spec's
+    _drop_unknown_arguments pass), instead of silently dropping it -> no_materialized_changes.
+    """
+
+    @pytest.mark.parametrize(
+        "synonym",
+        ["text", "body", "code", "source", "file_content", "file_contents", "contents", "new_content"],
+    )
+    def test_write_file_content_synonym_maps_to_content(self, synonym: str) -> None:
+        normalized = normalize_tool_arguments("write_file", {"file": "app.js", synonym: "const X = 1;\n"})
+        assert normalized.get("content") == "const X = 1;\n", f"{synonym!r} did not map to content: {normalized}"
+        assert synonym not in normalized or synonym == "content"
+
+    def test_write_file_canonical_content_unchanged(self) -> None:
+        """Additive: a correct `content` call is byte-identical after normalization."""
+        normalized = normalize_tool_arguments("write_file", {"file": "a.py", "content": "x = 1\n"})
+        assert normalized.get("content") == "x = 1\n"
+
+    @pytest.mark.parametrize("synonym", ["text", "body", "append", "data", "new_content", "contents"])
+    def test_append_to_file_content_synonym_maps_to_content(self, synonym: str) -> None:
+        normalized = normalize_tool_arguments("append_to_file", {"file": "log.txt", synonym: "line\n"})
+        assert normalized.get("content") == "line\n", f"{synonym!r} did not map to content: {normalized}"
+
+    def test_path_synonyms_still_map_to_file(self) -> None:
+        """Pre-existing path aliases must keep working alongside the new content synonyms."""
+        normalized = normalize_tool_arguments("write_file", {"path": "x.py", "text": "y = 2\n"})
+        assert normalized.get("file") == "x.py"
+        assert normalized.get("content") == "y = 2\n"
+
+
+class TestExecuteCommandSynonyms:
+    """Weak-LLM adaptation (2026-06-15): the command body arrives under an invented key.
+    Unambiguous command-string synonyms must map to canonical `command`."""
+
+    @pytest.mark.parametrize("synonym", ["cmd", "command_line", "cmdline", "shell_command", "script", "commands"])
+    def test_command_synonym_maps_to_command(self, synonym: str) -> None:
+        normalized = normalize_tool_arguments("execute_command", {synonym: "npm install"})
+        assert normalized.get("command") == "npm install", f"{synonym!r} did not map to command: {normalized}"
+
+    def test_canonical_command_unchanged(self) -> None:
+        normalized = normalize_tool_arguments("execute_command", {"command": "node index.js"})
+        assert normalized.get("command") == "node index.js"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

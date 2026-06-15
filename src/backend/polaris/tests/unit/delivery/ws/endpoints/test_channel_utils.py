@@ -144,3 +144,50 @@ class TestResolveChannelPath:
         cache_root = str(tmp_path)
         result = resolve_channel_path("/workspace", cache_root, "unknown")
         assert result == ""
+
+    @patch("polaris.delivery.ws.endpoints.channel_utils.resolve_current_run_id")
+    def test_runtime_events_resolves_per_run_file_when_present(
+        self, mock_resolve_run, tmp_path
+    ) -> None:
+        """runtime_events must follow the active run's per-run events file.
+
+        The live emit path (orchestration_engine) writes context.build /
+        prompt_context / context.snapshot to runs/<run_id>/events/runtime.events.jsonl;
+        the WS stream must tail exactly that file so the ContextOS dashboard updates.
+        """
+        mock_resolve_run.return_value = "pm-00001"
+        cache_root = str(tmp_path)
+        per_run = tmp_path / "runs" / "pm-00001" / "events" / "runtime.events.jsonl"
+        per_run.parent.mkdir(parents=True, exist_ok=True)
+        per_run.write_text("{}\n", encoding="utf-8")
+
+        result = resolve_channel_path("/workspace", cache_root, "runtime_events")
+        assert result == str(per_run)
+
+    @patch("polaris.cells.runtime.projection.public.service.resolve_artifact_path")
+    @patch("polaris.delivery.ws.endpoints.channel_utils.resolve_current_run_id")
+    def test_runtime_events_falls_back_when_per_run_missing(
+        self, mock_resolve_run, mock_resolve_artifact, tmp_path
+    ) -> None:
+        """No per-run file yet → fall back to the workspace-level channel path."""
+        mock_resolve_run.return_value = "pm-00001"
+        workspace_level = str(tmp_path / "events" / "runtime.events.jsonl")
+        mock_resolve_artifact.return_value = workspace_level
+        cache_root = str(tmp_path)
+
+        result = resolve_channel_path("/workspace", cache_root, "runtime_events")
+        assert result == workspace_level
+
+    @patch("polaris.cells.runtime.projection.public.service.resolve_artifact_path")
+    @patch("polaris.delivery.ws.endpoints.channel_utils.resolve_current_run_id")
+    def test_runtime_events_falls_back_when_no_run_id(
+        self, mock_resolve_run, mock_resolve_artifact, tmp_path
+    ) -> None:
+        """No active run → fall back to the workspace-level channel path."""
+        mock_resolve_run.return_value = ""
+        workspace_level = str(tmp_path / "events" / "runtime.events.jsonl")
+        mock_resolve_artifact.return_value = workspace_level
+        cache_root = str(tmp_path)
+
+        result = resolve_channel_path("/workspace", cache_root, "runtime_events")
+        assert result == workspace_level

@@ -9,8 +9,8 @@
  * 数据源 = Polaris 既有实时框架（无轮询）：emit_event/emit_llm_event → MessageBus →
  * WebSocket /v2/ws/runtime → useRuntime → llmStreamEvents/executionLogs/processStreamEvents
  * 这些 props 经 buildTelemetryFromStream 派生为遥测（见 contextOSTelemetry.ts / contextOSData.ts）。
- * 组件随 WS 事件到达即重渲染。实时流是展示级事件，不含精确 per-call token，故 token 退回用量统计
- * 通道并明确标注「非实时」，绝不伪造精度。
+ * 组件随 WS 事件到达即重渲染。真实 per-call token / 时延来自 journal `llm` 通道（raw.data），
+ * 实时送达；仅当实时流无 token 时才退回用量统计通道并标注「非实时」，绝不伪造精度。
  */
 
 import { useMemo, useState, type ReactNode } from 'react';
@@ -496,15 +496,19 @@ export function ContextOSWorkspace({
               <span className="font-mono text-[10px] text-text-muted">· {model.realLatencyMs}ms</span>
             )}
           </div>
-          {/* token 不在实时流上（WS 是展示级事件）：仅当用量统计通道确有数值时呈现，标注「非实时」。 */}
+          {/* 真实 token：journal `llm` 通道 raw.data 携带，实时送达；无实时 token 时退回用量统计并标注。 */}
           {model.totalTokens > 0 && (
             <div
               className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1"
-              title="累计 token（来自用量统计通道，非实时 WS 流）"
+              title={model.tokensRealtime
+                ? '累计 token（来自 journal llm 通道的真实 usage，WebSocket 实时推送）'
+                : '累计 token（来自用量统计通道，非实时）'}
             >
               <Coins className="h-3.5 w-3.5 text-gold" />
               <span className="font-mono text-[11px] font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
-              <span className="text-[9px] font-bold uppercase tracking-wider text-gold/70">tok</span>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-gold/70">
+                {model.tokensRealtime ? 'tok · 实时' : 'tok'}
+              </span>
             </div>
           )}
           {/* 真实遥测实时性指示：以最近一条 WS 推送事件的时间为准。新鲜=实时(脉冲)，陈旧=不脉冲。 */}
@@ -676,7 +680,7 @@ export function ContextOSWorkspace({
                 ))}
               </div>
               <p className="mt-2.5 text-[9px] leading-relaxed text-text-dim">
-                角色卡按 WebSocket 实时事件量呈现活跃度；精确 per-role token 不在实时流上（需走 /v2 诊断端点）。
+                角色卡按 WebSocket 实时事件量呈现活跃度；产生过带 usage 调用的角色（journal llm 通道）以真实 token 归因，其余以事件数呈现。
               </p>
             </SectionCard>
 
@@ -719,7 +723,9 @@ export function ContextOSWorkspace({
                     {model.totalTokens > 0 ? (
                       <>
                         <span className="font-heading text-3xl font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
-                        <span className="text-[11px] text-text-dim">tokens · 用量统计</span>
+                        <span className="text-[11px] text-text-dim">
+                          {model.tokensRealtime ? 'tokens · 实时 (journal llm)' : 'tokens · 用量统计 (非实时)'}
+                        </span>
                         {model.estimatedCalls > 0 && (
                           <span
                             className="rounded bg-status-warning/10 px-1 py-0.5 text-[9px] text-status-warning"
@@ -732,7 +738,7 @@ export function ContextOSWorkspace({
                       </>
                     ) : (
                       <span className="text-[12px] leading-relaxed text-text-dim" data-testid="contextos-tokens-unavailable">
-                        精确 token 不在实时流上 · 需 /v2 诊断端点
+                        等待首次 LLM 调用 · 实时 token 随 journal 流到达
                       </span>
                     )}
                   </div>

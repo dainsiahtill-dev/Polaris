@@ -949,7 +949,19 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "exec",
         "description": "Execute a shell command in the workspace and return its output.",
         "aliases": ["run_command", "shell", "cmd"],
-        "arg_aliases": {"cmd": "command", "timeout": "timeout"},
+        # Command-string synonyms (weak-LLM adaptation, 2026-06-15): models invent a key for
+        # the command body; without the alias it is dropped -> "missing required: command".
+        # Conservative set = unambiguous command-string names only (list-shaped args/argv and
+        # ambiguous shell/input deferred to the coercer pass per the normalization blueprint).
+        "arg_aliases": {
+            "cmd": "command",
+            "timeout": "timeout",
+            "command_line": "command",
+            "cmdline": "command",
+            "shell_command": "command",
+            "script": "command",
+            "commands": "command",
+        },
         "arguments": [
             {"name": "command", "type": "string", "required": True},
             {"name": "timeout", "type": "integer", "required": False, "default": 30},
@@ -963,7 +975,25 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "Write content to a file, replacing the entire file. "
         "For partial modifications (changing specific lines), use edit_file or precision_edit instead.",
         "aliases": ["create_file", "new_file"],
-        "arg_aliases": {"path": "file", "filepath": "file", "file_path": "file", "content": "content"},
+        # Content-body synonyms (weak/diverse-LLM adaptation, 2026-06-15): weak Directors
+        # routinely emit the file body under a non-`content` key (text/body/code/...). These
+        # aliases resolve to `content` in normalize_tool_arguments BEFORE _drop_unknown_arguments
+        # runs, so the body lands instead of being silently dropped -> no_materialized_changes
+        # (the #1 weak-Director write-tool wall). Additive: `content` itself is unchanged.
+        "arg_aliases": {
+            "path": "file",
+            "filepath": "file",
+            "file_path": "file",
+            "content": "content",
+            "text": "content",
+            "body": "content",
+            "code": "content",
+            "source": "content",
+            "file_content": "content",
+            "file_contents": "content",
+            "contents": "content",
+            "new_content": "content",
+        },
         "arguments": [
             {"name": "file", "type": "string", "required": True},
             {"name": "content", "type": "string", "required": True},
@@ -977,7 +1007,24 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "write",
         "description": "Append content to the end of an existing file.",
         "aliases": ["add_content", "file_append"],
-        "arg_aliases": {"filepath": "file", "file_path": "file", "path": "file"},
+        # Content-body synonyms — same weak-LLM adaptation as write_file (2026-06-15):
+        # append_to_file declared content required with NO body aliases, so a body under
+        # text/body/data was dropped and the call rejected for "missing content".
+        "arg_aliases": {
+            "filepath": "file",
+            "file_path": "file",
+            "path": "file",
+            "text": "content",
+            "body": "content",
+            "code": "content",
+            "source": "content",
+            "file_content": "content",
+            "file_contents": "content",
+            "contents": "content",
+            "new_content": "content",
+            "append": "content",
+            "data": "content",
+        },
         "arguments": [
             {"name": "file", "type": "string", "required": True},
             {"name": "content", "type": "string", "required": True},

@@ -48,7 +48,7 @@ const READINESS_ISSUE_LABELS: Record<string, string> = {
   model_mismatch: '最近测试记录的模型不是当前绑定模型',
   provider_mismatch: '最近测试记录的 Provider 不是当前绑定 Provider',
   readiness_failed: '最近一次深度测试失败',
-  readiness_stale: '最近测试记录已过期',
+  readiness_stale: '历史测试状态待刷新',
   role_readiness_missing: '该角色还没有通过必需的深度测试',
   runtime_unsupported: '当前 Provider 类型不支持该角色运行时',
   timestamp_invalid: '测试记录时间无效',
@@ -106,6 +106,21 @@ function normalizeRoleDetails(value: unknown): Record<string, LlmRuntimeRoleDeta
   );
 }
 
+function roleDetailFor(
+  roleDetails: Record<string, LlmRuntimeRoleDetail>,
+  role: string,
+): LlmRuntimeRoleDetail | undefined {
+  return roleDetails[role] || (role === 'architect' ? roleDetails.docs : undefined);
+}
+
+function isDeprecatedReadinessStaleBlock(detail: LlmRuntimeRoleDetail | undefined): boolean {
+  return (
+    detail?.readinessIssue === 'readiness_stale'
+    && detail.runtimeSupported !== false
+    && !detail.runtimeIssue
+  );
+}
+
 function toEpoch(value: string | null): number {
   const parsed = Date.parse(String(value || '').trim());
   return Number.isFinite(parsed) ? parsed : 0;
@@ -155,12 +170,25 @@ function isCanonicalReadyForBlockedRoles(
 export function normalizeLlmRuntimeGatePayload(payload: unknown): LlmRuntimeGateState {
   const record = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
   const stateToken = String(record.state || '').trim().toUpperCase();
+  const roleDetails = normalizeRoleDetails(record.roles);
+  const rawBlockedRoles = normalizeRoleList(record.blocked_roles);
+  const blockedRoles = rawBlockedRoles
+    .filter((role) => !isDeprecatedReadinessStaleBlock(roleDetailFor(roleDetails, role)));
+  const requiredRoles = normalizeRoleList(record.required_ready_roles);
+  const staleOnlyBlock = rawBlockedRoles.length > 0 && blockedRoles.length === 0;
+  const state = stateToken === 'READY'
+    ? 'READY'
+    : stateToken === 'BLOCKED'
+      ? staleOnlyBlock
+        ? 'READY'
+        : 'BLOCKED'
+      : 'UNKNOWN';
   return {
-    state: stateToken === 'READY' ? 'READY' : stateToken === 'BLOCKED' ? 'BLOCKED' : 'UNKNOWN',
-    blockedRoles: normalizeRoleList(record.blocked_roles),
-    requiredRoles: normalizeRoleList(record.required_ready_roles),
+    state,
+    blockedRoles,
+    requiredRoles,
     lastUpdated: typeof record.last_updated === 'string' ? record.last_updated : null,
-    roleDetails: normalizeRoleDetails(record.roles),
+    roleDetails,
   };
 }
 
@@ -184,7 +212,7 @@ export function getRoleLlmBlockedReason(
   }
   const displayName = String(roleDisplayName || role || '当前角色').trim() || '当前角色';
   const roleId = String(role || '').trim().toLowerCase();
-  const detail = state.roleDetails?.[roleId] || (roleId === 'architect' ? state.roleDetails?.docs : undefined);
+  const detail = roleDetailFor(state.roleDetails || {}, roleId);
   if (!detail) {
     return `LLM 就绪检查未通过：${displayName} 角色当前绑定的 provider/model 没有通过真实测试，请先在 LLM 设置中重新测试并保存。`;
   }

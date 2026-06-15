@@ -163,9 +163,15 @@ describe('buildContextOSModel with real WS telemetry', () => {
   function wsLog(over: Partial<LogEntry> & { id: string; timestamp: string }): LogEntry {
     return { level: 'info', source: 'System', message: '', ...over };
   }
+  // 真实 journal `llm` 通道形态：llm_completed + meta 携带真实 per-call usage / 时延。
   const LLM_STREAM: LogEntry[] = [
-    wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'PM', message: 'LLM 响应已返回', details: 'chars=120 2400ms', meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'PM' }, tags: ['invoke_done'] }),
-    wsLog({ id: 'c2', timestamp: '2026-06-15T10:00:04Z', level: 'success', source: 'Director', message: 'LLM 响应已返回', details: 'chars=80 1800ms', meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'Director' }, tags: ['invoke_done'] }),
+    wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'PM', message: 'llm response completed', details: 'model=m prompt=1932 completion=1454 2400ms', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 1932, completionTokens: 1454, totalTokens: 3386, durationMs: 2400 }, tags: ['llm_completed'] }),
+    wsLog({ id: 'c2', timestamp: '2026-06-15T10:00:04Z', level: 'success', source: 'Director', message: 'llm response completed', details: 'model=m prompt=800 completion=200 1800ms', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'Director', promptTokens: 800, completionTokens: 200, totalTokens: 1000, durationMs: 1800 }, tags: ['llm_completed'] }),
+  ];
+  // 退化夹具：遥测有活动但无 token（如旧版 invoke_done 或仅 llm_waiting）→ 用于验证 token 退回用量统计。
+  const TOKENLESS_STREAM: LogEntry[] = [
+    wsLog({ id: 'l1', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'PM', message: 'LLM 响应已返回', details: 'chars=120 2400ms', meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'PM' }, tags: ['invoke_done'] }),
+    wsLog({ id: 'l2', timestamp: '2026-06-15T10:00:04Z', level: 'success', source: 'Director', message: 'LLM 响应已返回', details: 'chars=80 1800ms', meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'Director' }, tags: ['invoke_done'] }),
   ];
   const EXECUTION: LogEntry[] = [
     wsLog({ id: 'cb1', timestamp: '2026-06-15T10:00:00Z', source: 'System', message: 'context.build', meta: { channel: 'runtime_events' } }),
@@ -178,13 +184,14 @@ describe('buildContextOSModel with real WS telemetry', () => {
     const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
 
     expect(model.telemetryActive).toBe(true);
-    expect(model.calls).toBe(2); // two invoke_done
+    expect(model.calls).toBe(2); // two llm_completed
     expect(model.projectionCount).toBe(2); // context.build + prompt_context
-    expect(model.realLatencyMs).toBe(1800); // newest call's recovered latency
-    // tokens are NOT on the realtime stream → 0 unless usageStats provides them (honest).
-    expect(model.totalTokens).toBe(0);
-    expect(model.receiptCount).toBe(0);
-    expect(model.contextItemsCount).toBeNull();
+    expect(model.realLatencyMs).toBe(1800); // newest call's real latency (meta.durationMs)
+    // tokens ARE on the realtime stream (journal llm channel raw.data) → real aggregation.
+    expect(model.totalTokens).toBe(4386); // 3386 + 1000
+    expect(model.tokensRealtime).toBe(true);
+    expect(model.receiptCount).toBe(0); // no context.snapshot in this stream
+    expect(model.contextItemsCount).toBeNull(); // context.build fixture carries no items_count
 
     // Pipeline projection node shows the real (all-role) projection count.
     expect(model.pipeline.find((s) => s.id === 'projection')?.metric).toBe('2 投影');
@@ -197,16 +204,26 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(model.dataIdle).toBe(false);
   });
 
-  it('keeps token totals from the usage-stats channel while activity stays realtime (honest split)', () => {
+  it('sources real per-call tokens from the realtime journal llm channel', () => {
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
+    expect(model.totalTokens).toBe(4386);
+    expect(model.promptTokens).toBe(2732); // 1932 + 800
+    expect(model.completionTokens).toBe(1654); // 1454 + 200
+    expect(model.tokensRealtime).toBe(true);
+    expect(model.avgPerCall).toBe(Math.round(4386 / 2));
+  });
+
+  it('falls back to the usage-stats channel only when the realtime stream carries no tokens (honest)', () => {
     const usageStats: UsageStats = {
       totals: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 },
       calls: 7,
       estimated_calls: 1,
       by_mode: {},
     };
-    const model = buildContextOSModel(baseInput({ usageStats, telemetry: telemetryOf() }));
-    // tokens come from the usage-stats channel...
+    // telemetry active (invoke_done activity) but NO per-call usage → token degrades to usage-stats.
+    const model = buildContextOSModel(baseInput({ usageStats, telemetry: telemetryOf(TOKENLESS_STREAM) }));
     expect(model.totalTokens).toBe(1500);
+    expect(model.tokensRealtime).toBe(false); // not realtime — labelled accordingly in the UI
     expect(model.estimatedCalls).toBe(1);
     // ...but calls / projections stay realtime from the WS stream.
     expect(model.calls).toBe(2);
@@ -224,18 +241,20 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(ratioSum).toBeCloseTo(1, 5);
   });
 
-  it('shows per-role activity by event count; no role claims realtime tokens', () => {
+  it('attributes REAL per-role tokens for roles with usage; others show event counts', () => {
     const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
     const pm = model.roles.find((r) => r.id === 'pm');
     const director = model.roles.find((r) => r.id === 'director');
     const qa = model.roles.find((r) => r.id === 'qa');
-    expect(pm?.state).toBe('active'); // produced WS events (invoke_done + prompt_context)
-    expect(pm?.tokensReal).toBe(false); // WS stream carries no per-call usage
-    expect(pm?.detail).toBe('2 事件');
+    expect(pm?.state).toBe('active'); // produced WS events (llm_completed + prompt_context)
+    expect(pm?.tokensReal).toBe(true); // journal llm channel carries real usage
+    expect(pm?.tokens).toBe(3386);
+    expect(pm?.detail).toBe('3.4k tok');
     expect(director?.state).toBe('active');
-    expect(director?.tokensReal).toBe(false);
+    expect(director?.tokensReal).toBe(true);
+    expect(director?.tokens).toBe(1000);
     expect(qa?.state).toBe('idle');
-    expect(qa?.tokensReal).toBe(false);
+    expect(qa?.tokensReal).toBe(false); // no events, no usage
   });
 
   it('flags windowed when a WS stream reaches its ring-buffer cap', () => {

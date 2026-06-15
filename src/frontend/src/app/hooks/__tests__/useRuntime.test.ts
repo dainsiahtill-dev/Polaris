@@ -132,6 +132,87 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.llmStreamEvents[0]?.message).toBe('LLM response accepted');
   });
 
+  it('parses the canonical journal llm_completed line: real tokens + latency into meta', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    // 真实 journal.norm.jsonl 形态（CanonicalLogEventV2）：raw.stream_event=llm_completed，
+    // raw.data 携带真实 prompt/completion_tokens、context_tokens_after 与 metadata.elapsed_ms。
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'llm',
+      text: JSON.stringify({
+        schema_version: 2,
+        channel: 'llm',
+        domain: 'llm',
+        kind: 'state',
+        actor: 'pm',
+        message: 'llm response completed | completion_tokens=1454',
+        tags: ['llm_realtime_bridge', 'llm_event:llm_call_end', 'projection_event:llm_completed'],
+        raw: {
+          stream_event: 'llm_completed',
+          event_type: 'llm_call_end',
+          role: 'pm',
+          data: {
+            model: 'MiniMax-M3',
+            prompt_tokens: 1932,
+            completion_tokens: 1454,
+            context_tokens_after: 1932,
+            metadata: { elapsed_ms: 71431.06 },
+          },
+        },
+      }),
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    const entry = result.current.llmStreamEvents[0];
+    expect(entry?.level).toBe('success');
+    expect(entry?.meta?.streamEvent).toBe('llm_completed');
+    expect(entry?.meta?.model).toBe('MiniMax-M3');
+    // 真实 per-call 用量经 raw.data 注入 meta（不再丢失）。
+    expect(entry?.meta?.promptTokens).toBe(1932);
+    expect(entry?.meta?.completionTokens).toBe(1454);
+    expect(entry?.meta?.totalTokens).toBe(3386);
+    expect(entry?.meta?.contextTokens).toBe(1932);
+    // 真实时延来自 raw.data.metadata.elapsed_ms（四舍五入）。
+    expect(entry?.meta?.durationMs).toBe(71431);
+    expect(entry?.details).toContain('71431ms');
+    expect(entry?.details).toContain('completion=1454');
+  });
+
+  it('parses the canonical journal llm_failed line as an error call', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'llm',
+      text: JSON.stringify({
+        schema_version: 2,
+        channel: 'llm',
+        domain: 'llm',
+        kind: 'error',
+        actor: 'director',
+        message: 'llm call failed',
+        raw: {
+          stream_event: 'llm_failed',
+          event_type: 'llm_call_error',
+          role: 'director',
+          data: { model: 'local', error_message: 'provider 500', metadata: { elapsed_ms: 1200 } },
+        },
+      }),
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    const entry = result.current.llmStreamEvents[0];
+    expect(entry?.level).toBe('error');
+    expect(entry?.meta?.streamEvent).toBe('llm_failed');
+    expect(entry?.message).toContain('provider 500');
+    expect(entry?.meta?.durationMs).toBe(1200);
+  });
+
   it('processes EVENT query_result batches item-by-item and preserves v2 dedup', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })

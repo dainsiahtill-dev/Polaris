@@ -50,7 +50,7 @@ describe('apiClient', () => {
               missing_roles: ['director'],
               role_issues: {
                 director:
-                  'director LLM readiness for provider kimi-main model kimi-for-coding is stale (last tested at 2026-05-25T19:01:09+00:00); rerun LLM tests',
+                  'director LLM readiness was tested for model kimi-chat, not kimi-for-coding',
               },
             },
           },
@@ -59,7 +59,7 @@ describe('apiClient', () => {
       );
 
       await expect(extractErrorDetail(response, 'fallback')).resolves.toContain(
-        'director (director LLM readiness for provider kimi-main model kimi-for-coding is stale'
+        'director (director LLM readiness was tested for model kimi-chat, not kimi-for-coding'
       );
     });
 

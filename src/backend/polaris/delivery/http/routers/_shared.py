@@ -240,11 +240,6 @@ def _readiness_candidate_issue(
     if identity_issue:
         return identity_issue
     freshness_issue = readiness_freshness_issue(tested_timestamp)
-    if freshness_issue == "readiness_stale":
-        return (
-            f"LLM readiness for provider {provider_id} model {model} is stale"
-            f" (last tested at {tested_timestamp}); rerun LLM tests"
-        )
     if freshness_issue == "timestamp_invalid":
         return (
             f"LLM readiness for provider {provider_id} model {model} has an invalid"
@@ -302,7 +297,8 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
     config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
     index = load_llm_test_index(workspace)
     index_candidates = _dedupe_index_candidates([index, *load_llm_test_index_candidates(workspace)])
-    roles_cfg = config.get("roles") if isinstance(config.get("roles"), dict) else {}
+    roles_cfg_raw = config.get("roles")
+    roles_cfg: Mapping[str, Any] = roles_cfg_raw if isinstance(roles_cfg_raw, dict) else {}
     role_cfg = roles_cfg.get(role_key, {}) if isinstance(roles_cfg, dict) else {}
     if not isinstance(role_cfg, dict) or not role_cfg:
         for key, value in roles_cfg.items():
@@ -380,7 +376,8 @@ def _role_binding_for_live_check(state: AppState, role: str) -> tuple[str, str, 
     workspace = _workspace_value(state.settings)
     cache_root = build_cache_root(str(getattr(state.settings, "ramdisk_root", "") or ""), workspace)
     config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
-    roles_cfg = config.get("roles") if isinstance(config.get("roles"), dict) else {}
+    roles_cfg_raw = config.get("roles")
+    roles_cfg: Mapping[str, Any] = roles_cfg_raw if isinstance(roles_cfg_raw, dict) else {}
     role_cfg = roles_cfg.get(role_key, {}) if isinstance(roles_cfg, dict) else {}
     if not isinstance(role_cfg, dict) or not role_cfg:
         for key, value in roles_cfg.items():

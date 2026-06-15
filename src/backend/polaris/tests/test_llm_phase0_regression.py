@@ -441,7 +441,7 @@ class TestRoleRuntimeSupportConsistency:
         assert response["blocked_roles"] == ["pm"]
         assert response["state"] == "BLOCKED"
 
-    def test_llm_status_blocks_expired_readiness_timestamp(self):
+    def test_llm_status_allows_old_successful_readiness_timestamp(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 
         mock_settings = MagicMock()
@@ -494,13 +494,13 @@ class TestRoleRuntimeSupportConsistency:
         ):
             response = build_llm_status(mock_settings)
 
-        assert response["roles"]["pm"]["ready"] is False
-        assert response["roles"]["pm"]["readiness_issue"] == "readiness_stale"
+        assert response["roles"]["pm"]["ready"] is True
+        assert response["roles"]["pm"]["readiness_issue"] == ""
         assert response["roles"]["pm"]["tested_provider_id"] == "qwen-main"
         assert response["roles"]["pm"]["tested_model"] == "Qwen3-Max"
         assert response["roles"]["pm"]["tested_timestamp"] == "2000-01-01T00:00:00+00:00"
-        assert response["blocked_roles"] == ["pm"]
-        assert response["state"] == "BLOCKED"
+        assert response["blocked_roles"] == []
+        assert response["state"] == "READY"
 
     def test_llm_status_prefers_current_binding_candidate_over_workspace_mismatch(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
@@ -573,14 +573,14 @@ class TestRoleRuntimeSupportConsistency:
             response = build_llm_status(mock_settings)
 
         pm = response["roles"]["pm"]
-        assert pm["ready"] is False
-        assert pm["readiness_issue"] == "readiness_stale"
+        assert pm["ready"] is True
+        assert pm["readiness_issue"] == ""
         assert pm["tested_provider_id"] == "codex_cli"
         assert pm["tested_model"] == "gpt-5.3-codex"
         assert pm["tested_timestamp"] == "2000-01-01T00:00:00+00:00"
-        assert response["blocked_roles"] == ["pm"]
+        assert response["blocked_roles"] == []
 
-    def test_llm_status_preserves_role_specific_stale_issue_over_provider_role_mismatch(self):
+    def test_llm_status_prefers_old_role_specific_success_over_provider_role_mismatch(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 
         mock_settings = MagicMock()
@@ -643,14 +643,14 @@ class TestRoleRuntimeSupportConsistency:
             response = build_llm_status(mock_settings)
 
         architect = response["roles"]["architect"]
-        assert architect["ready"] is False
-        assert architect["readiness_issue"] == "readiness_stale"
+        assert architect["ready"] is True
+        assert architect["readiness_issue"] == ""
         assert architect["readiness_source"] == "role_index"
         assert architect["tested_provider_id"] == "deepseek-main"
         assert architect["tested_model"] == "deepseek-v4-pro"
         assert architect["tested_timestamp"] == "2000-01-01T00:00:00+00:00"
-        assert response["blocked_roles"] == ["architect"]
-        assert response["state"] == "BLOCKED"
+        assert response["blocked_roles"] == []
+        assert response["state"] == "READY"
 
     def test_llm_status_reports_failed_role_readiness_with_provider_model_and_timestamp(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
@@ -1348,7 +1348,7 @@ class TestRoleRuntimeSupportConsistency:
         ):
             _ensure_llm_ready(mock_state, "pm")
 
-    def test_pm_gate_blocks_expired_readiness_timestamp(self):
+    def test_pm_gate_allows_old_successful_readiness_timestamp(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
         from polaris.delivery.http.routers._shared import _ensure_llm_ready
 
@@ -1376,14 +1376,8 @@ class TestRoleRuntimeSupportConsistency:
             patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
             patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
             patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
-            pytest.raises(HTTPException) as exc,
         ):
             _ensure_llm_ready(mock_state, "pm")
-
-        assert exc.value.status_code == 409
-        assert "stale" in str(exc.value.detail)
-        assert "openai_compat" in str(exc.value.detail)
-        assert "Qwen3-Max" in str(exc.value.detail)
 
     def test_pm_gate_prefers_current_binding_candidate_over_workspace_mismatch(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
@@ -1430,15 +1424,8 @@ class TestRoleRuntimeSupportConsistency:
                 "polaris.delivery.http.routers._shared.load_llm_test_index_candidates",
                 return_value=[workspace_index, global_index],
             ),
-            pytest.raises(HTTPException) as exc,
         ):
             _ensure_llm_ready(mock_state, "pm")
-
-        assert exc.value.status_code == 409
-        assert "stale" in str(exc.value.detail)
-        assert "codex_cli" in str(exc.value.detail)
-        assert "gpt-5.3-codex" in str(exc.value.detail)
-        assert "deepseek-v4-pro" not in str(exc.value.detail)
 
     def test_role_gate_reports_failed_readiness_for_current_provider_model(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState
