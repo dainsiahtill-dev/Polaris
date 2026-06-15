@@ -165,5 +165,72 @@ class TestModuleHelpers:
         assert get_role_concurrency("director") == 1
 
 
+class TestResolveProviderModelHonorsOverride:
+    """The provider/model resolver must let a context-scoped role override win over a
+    provider_id baked into a cached role profile — otherwise pooled Director workers
+    all collapse onto the default backend and the extra endpoints stay idle.
+    """
+
+    def teardown_method(self) -> None:
+        clear_role_provider_override("director")
+        reset_runtime_config_manager()
+
+    @staticmethod
+    def _heterogeneous_manager(tmp_path: Path) -> RuntimeConfigManager:
+        """A pool whose endpoints serve DIFFERENTLY-NAMED models (like int4 vs gpu0)."""
+        config = {
+            "schema_version": 2,
+            "providers": {
+                "prov-local": {"type": "openai_compat", "base_url": "http://localhost:8189", "model": "m-int4"},
+                "prov-gpu0": {"type": "openai_compat", "base_url": "http://10.0.0.1:18110", "model": "m-gpu0"},
+            },
+            "roles": {
+                "director": {
+                    "provider_id": "prov-local",
+                    "model": "m-int4",
+                    "provider_pool": ["prov-gpu0"],
+                    "concurrency": 2,
+                }
+            },
+        }
+        path = tmp_path / "llm_config.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        return RuntimeConfigManager(config_path_resolver=lambda: str(path))
+
+    def test_override_wins_over_explicit_baked_provider(self, tmp_path: Path) -> None:
+        from polaris.kernelone.llm.engine._executor_base import resolve_provider_model
+
+        set_runtime_config_manager(self._heterogeneous_manager(tmp_path))
+
+        # No override: the explicit (profile-baked) pair is returned verbatim.
+        assert resolve_provider_model(provider_id="prov-local", model="m-int4", role="director") == (
+            "prov-local",
+            "m-int4",
+        )
+
+        # A worker pins itself to prov-gpu0; even though the request still carries the
+        # profile-baked prov-local/m-int4, resolution must route to prov-gpu0 AND switch
+        # the model name to that endpoint's own model (a mismatch is a hard 404).
+        set_role_provider_override("director", "prov-gpu0")
+        assert resolve_provider_model(provider_id="prov-local", model="m-int4", role="director") == (
+            "prov-gpu0",
+            "m-gpu0",
+        )
+
+        # Cleared override falls back to the explicit pair.
+        clear_role_provider_override("director")
+        assert resolve_provider_model(provider_id="prov-local", model="m-int4", role="director") == (
+            "prov-local",
+            "m-int4",
+        )
+
+    def test_no_override_no_role_returns_explicit(self, tmp_path: Path) -> None:
+        from polaris.kernelone.llm.engine._executor_base import resolve_provider_model
+
+        set_runtime_config_manager(_manager(tmp_path, {"provider_id": "prov-local", "model": "qwen"}))
+        # No role at all → explicit pair is returned unchanged.
+        assert resolve_provider_model(provider_id="prov-local", model="qwen", role=None) == ("prov-local", "qwen")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

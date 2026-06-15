@@ -9,6 +9,8 @@ provider override. The market's per-step leasing keeps the claims distinct.
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -49,18 +51,26 @@ def _install_config(tmp_path: Path, director: dict[str, object]) -> None:
 
 
 class _FakeConsumer:
-    """Records its worker_id and the provider its thread resolves at poll time."""
+    """Records its worker_id and the provider its thread resolves at poll time.
+
+    Serves exactly one step then drains to empty, mimicking a worker that claims
+    its single ready leaf step and then finds the market exhausted.
+    """
 
     instances: list[_FakeConsumer] = []
 
     def __init__(self, *, workspace: str, worker_id: str, visibility_timeout_seconds: int, **_kw: Any) -> None:
         self.worker_id = worker_id
         self.resolved_provider: str | None = None
+        self._served = False
         _FakeConsumer.instances.append(self)
 
     def poll_once(self) -> list[dict[str, Any]]:
         # Reads the thread-local override installed by the driver.
         self.resolved_provider, _model = get_role_model("director")
+        if self._served:
+            return []  # market drained for this worker
+        self._served = True
         return [{"task_id": f"step-{self.worker_id}", "ok": True}]
 
 
@@ -118,6 +128,50 @@ class TestDriveWorkers:
             "step-pm_inline_director_s_w1",
         }
 
+    def test_continuous_drain_empties_market_and_loads_fast_worker(self, tmp_path: Path) -> None:
+        """All ready steps drain in ONE drive call (not one-per-worker), and the
+        fast worker grabs more than the slow one — proving immediate re-poll / high load."""
+        _install_config(
+            tmp_path,
+            {"provider_id": "prov-local", "model": "qwen", "provider_pool": ["prov-lan"], "concurrency": 2},
+        )
+        queue: list[str] = [f"step-{i}" for i in range(10)]
+        qlock = threading.Lock()
+
+        class _SharedMarketConsumer:
+            """Workers pull from one shared queue (mimics the market); optional per-claim delay."""
+
+            def __init__(self, *, worker_id: str, delay: float) -> None:
+                self.worker_id = worker_id
+                self._delay = delay
+                self.claimed: list[str] = []
+
+            def poll_once(self) -> list[dict[str, Any]]:
+                with qlock:
+                    item = queue.pop(0) if queue else None
+                if item is None:
+                    return []
+                if self._delay:
+                    time.sleep(self._delay)
+                self.claimed.append(item)
+                return [{"task_id": item, "ok": True}]
+
+        fast = _SharedMarketConsumer(worker_id="w0", delay=0.0)
+        slow = _SharedMarketConsumer(worker_id="w1", delay=0.05)
+        workers: list[tuple[Any, str]] = [(fast, "prov-local"), (slow, "prov-lan")]
+
+        merged = _drive_director_workers(workers, poll_interval=0.005)
+
+        # The whole market (10 steps) is drained in a single drive call — the old
+        # one-poll-per-worker barrier would have returned only 2.
+        assert len(merged) == 10
+        assert {row["task_id"] for row in merged} == {f"step-{i}" for i in range(10)}
+        assert not queue  # nothing stranded
+        # High load: the always-free fast worker re-polled immediately and took the bulk.
+        assert len(fast.claimed) > len(slow.claimed)
+        # Every step is tagged with the backend that executed it (observability).
+        assert all(row.get("_director_backend") in {"prov-local", "prov-lan"} for row in merged)
+
     def test_worker_error_is_surfaced(self, tmp_path: Path) -> None:
         _install_config(
             tmp_path,
@@ -136,6 +190,210 @@ class TestDriveWorkers:
             raise AssertionError("expected worker error to surface")
         except RuntimeError as exc:
             assert "backend down" in str(exc)
+
+
+class TestF15MidRunResilience:
+    """A backend that dies MID-RUN must never freeze the pool: the dead worker
+    retires itself so its steps requeue to a live worker, and a stall watchdog
+    bounds the join so a worker stuck inside a hung poll_once can't freeze dispatch."""
+
+    def teardown_method(self) -> None:
+        _teardown()
+
+    def _config(self, tmp_path: Path) -> None:
+        _install_config(
+            tmp_path,
+            {"provider_id": "prov-local", "model": "qwen", "provider_pool": ["prov-lan"], "concurrency": 2},
+        )
+
+    def test_dead_backend_worker_retires_and_live_worker_drains(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The worker bound to the dead backend keeps getting empty-output
+        (``missing_execution_evidence``) claims; after the death threshold it
+        retires instead of poison-looping 256×, and the live worker drains the
+        whole market. The whole drive returns in bounded time (no 6h freeze)."""
+        self._config(tmp_path)
+        monkeypatch.setenv("KERNELONE_DIRECTOR_WORKER_DEATH_THRESHOLD", "2")
+
+        queue: list[str] = [f"step-{i}" for i in range(6)]
+        qlock = threading.Lock()
+
+        class _LiveConsumer:
+            def __init__(self) -> None:
+                self.claimed: list[str] = []
+
+            def poll_once(self) -> list[dict[str, Any]]:
+                with qlock:
+                    item = queue.pop(0) if queue else None
+                if item is None:
+                    return []
+                self.claimed.append(item)
+                return [{"task_id": item, "ok": True}]
+
+        class _DeadConsumer:
+            """Every claim returns empty-output evidence (dead-backend signature)."""
+
+            def __init__(self) -> None:
+                self.polls = 0
+
+            def poll_once(self) -> list[dict[str, Any]]:
+                self.polls += 1
+                return [{"task_id": "poison", "ok": False, "reason": "missing_execution_evidence"}]
+
+        live = _LiveConsumer()
+        dead = _DeadConsumer()
+        workers: list[tuple[Any, str]] = [(live, "prov-local"), (dead, "prov-lan")]
+
+        merged = _drive_director_workers(workers, poll_interval=0.005)
+
+        # Live worker drained every real step.
+        assert {row["task_id"] for row in merged if row.get("ok")} == {f"step-{i}" for i in range(6)}
+        assert not queue
+        # Dead worker retired at the threshold instead of looping to max_claims (256).
+        assert dead.polls == 2
+
+    def test_pool_rebuild_adapts_to_reachability_changes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Real-time load-balancing: rebuilding the pool each cycle reflects the
+        CURRENT reachable set — a backend that drops is routed around, and one that
+        recovers rejoins — instead of a frozen dispatch-start snapshot."""
+        _install_config(
+            tmp_path,
+            {"provider_id": "prov-local", "model": "qwen", "provider_pool": ["prov-lan"], "concurrency": 2},
+        )
+        # prov-lan starts offline → only prov-local in the pool.
+        reachable = {"prov-local": True, "prov-lan": False}
+        monkeypatch.setattr(
+            _REACHABLE,
+            lambda base_url, **_kw: (
+                reachable["prov-lan"] if "192.168.1.50" in (base_url or "") else reachable["prov-local"]
+            ),
+        )
+
+        def _build() -> list[str]:
+            workers = _build_director_worker_pool(
+                _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
+            )
+            return [pid for _c, pid in workers]
+
+        # Cycle 1: prov-lan down → all workers on prov-local.
+        assert set(_build()) == {"prov-local"}
+        # Cycle 2: prov-lan recovered → it rejoins the round-robin.
+        reachable["prov-lan"] = True
+        assert set(_build()) == {"prov-local", "prov-lan"}
+        # Cycle 3: prov-local drops → routed around, run continues on prov-lan.
+        reachable["prov-local"] = False
+        assert set(_build()) == {"prov-lan"}
+
+    def test_raising_worker_does_not_kill_pool_when_a_sibling_succeeds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A worker whose poll_once keeps raising (transport error) must not crash
+        the whole dispatch — it retires and the live sibling's results are returned."""
+        self._config(tmp_path)
+        monkeypatch.setenv("KERNELONE_DIRECTOR_WORKER_DEATH_THRESHOLD", "2")
+
+        queue: list[str] = [f"step-{i}" for i in range(4)]
+        qlock = threading.Lock()
+
+        class _LiveConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                with qlock:
+                    item = queue.pop(0) if queue else None
+                if item is None:
+                    return []
+                return [{"task_id": item, "ok": True}]
+
+        class _BoomConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                raise RuntimeError("backend down")
+
+        workers: list[tuple[Any, str]] = [(_LiveConsumer(), "prov-local"), (_BoomConsumer(), "prov-lan")]
+
+        merged = _drive_director_workers(workers, poll_interval=0.005)
+
+        # No raise: the live sibling carried the run.
+        assert {row["task_id"] for row in merged if row.get("ok")} == {f"step-{i}" for i in range(4)}
+        assert not queue
+
+    def test_stall_watchdog_bounds_a_hung_poll_once(self, tmp_path: Path) -> None:
+        """A worker stuck INSIDE poll_once (hung socket) never returns; the stall
+        watchdog must signal stop and return the live worker's results in bounded
+        time instead of joining the hung thread forever. ``stall_seconds`` is
+        injected directly to exercise the watchdog below its 30s production floor."""
+        self._config(tmp_path)
+
+        queue: list[str] = [f"step-{i}" for i in range(3)]
+        qlock = threading.Lock()
+        release = threading.Event()
+
+        class _LiveConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                with qlock:
+                    item = queue.pop(0) if queue else None
+                if item is None:
+                    return []
+                return [{"task_id": item, "ok": True}]
+
+        class _HungConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                release.wait(timeout=30)  # blocks until the test releases it
+                return []
+
+        workers: list[tuple[Any, str]] = [(_LiveConsumer(), "prov-local"), (_HungConsumer(), "prov-lan")]
+
+        start = time.monotonic()
+        try:
+            merged = _drive_director_workers(workers, poll_interval=0.005, stall_seconds=0.3)
+        finally:
+            release.set()  # let the abandoned daemon thread unwind
+        elapsed = time.monotonic() - start
+
+        assert {row["task_id"] for row in merged if row.get("ok")} == {f"step-{i}" for i in range(3)}
+        assert not queue
+        # Returned via the watchdog (~0.3s stall + bounded join), not after the 30s hung wait.
+        assert elapsed < 10.0
+
+    def test_non_resolving_claims_are_paced_to_yield_to_siblings(self, tmp_path: Path) -> None:
+        """Fairness: a churning step that requeues without resolving must NOT be
+        re-grabbed at full speed by the same worker (which starves idle siblings on
+        other backends). Each non-resolving claim yields ~poll_interval so a sibling
+        can claim the requeued step next — observable as a paced claim rate."""
+        self._config(tmp_path)
+        state = {"n": 0, "cap": 5}
+
+        class _ChurnConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                if state["n"] >= state["cap"]:
+                    return []
+                state["n"] += 1
+                # model ran (alive) but failed its target → requeues, never resolves.
+                return [{"task_id": "hard", "ok": False, "reason": "step_target_missing"}]
+
+        start = time.monotonic()
+        _drive_director_workers([(_ChurnConsumer(), "prov-local")], poll_interval=0.05)
+        elapsed = time.monotonic() - start
+        # 5 non-resolving claims each yield ~0.05s → paced to >= ~0.2s (4 inter-claim yields).
+        assert elapsed >= 0.05 * (state["cap"] - 1)
+
+    def test_resolving_claims_are_not_paced(self, tmp_path: Path) -> None:
+        """The fairness yield must NOT slow the happy path: claims that RESOLVE a step
+        keep the immediate-re-poll high-load behaviour (no inter-claim sleep)."""
+        self._config(tmp_path)
+        state = {"n": 0, "cap": 5}
+
+        class _ProgressConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                if state["n"] >= state["cap"]:
+                    return []
+                state["n"] += 1
+                return [{"task_id": f"step-{state['n']}", "ok": True}]
+
+        start = time.monotonic()
+        _drive_director_workers([(_ProgressConsumer(), "prov-local")], poll_interval=0.05)
+        elapsed = time.monotonic() - start
+        # Resolving claims are not paced → finishes well under the paced 0.2s lower bound.
+        assert elapsed < 0.05 * 2
 
 
 class TestResilientPool:

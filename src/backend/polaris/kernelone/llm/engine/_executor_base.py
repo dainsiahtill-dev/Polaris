@@ -15,7 +15,7 @@ from typing import Any
 
 from polaris.kernelone.errors import ErrorCategory, classify_error
 from polaris.kernelone.llm.runtime import normalize_provider_type, resolve_provider_api_key
-from polaris.kernelone.llm.runtime_config import get_role_model
+from polaris.kernelone.llm.runtime_config import get_role_model, get_role_provider_override
 
 logger = logging.getLogger(__name__)
 _SENSITIVE_OBSERVABILITY_KEYS = frozenset(
@@ -74,8 +74,29 @@ def resolve_provider_model(
 ) -> tuple[str | None, str | None]:
     """Resolve (provider_id, model) pair from explicit values or role binding.
 
+    Resolution order:
+    1. A context-scoped role override (e.g. a Director worker pinned to a specific
+       backend in a multi-backend pool) — this MUST win over any ``provider_id``
+       baked into a cached role profile, otherwise every pooled worker collapses
+       onto the default provider and the extra backends sit idle.
+    2. An explicit ``provider_id`` + ``model`` pair passed by the caller.
+    3. The role's configured binding (``get_role_model``).
+
     Returns the resolved pair.  Either or both values may be None on failure.
     """
+    if role:
+        try:
+            override_pid = get_role_provider_override(role)
+        except (RuntimeError, ValueError):
+            override_pid = None
+        if override_pid:
+            try:
+                ov_pid, ov_model = get_role_model(role)
+                if ov_pid:
+                    return ov_pid, ov_model or model
+            except (RuntimeError, ValueError) as exc:  # get_role_model may raise on config errors
+                logger.debug("%s failed to resolve overridden role model: %s", logger_prefix, exc)
+
     if provider_id and model:
         return provider_id, model
 

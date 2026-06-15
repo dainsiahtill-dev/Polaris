@@ -670,8 +670,15 @@ class AIExecutor:
         model_spec: ModelSpec,
         budget: dict[str, Any],
     ) -> dict[str, Any]:
-        safe_raw = safe_observability_payload(raw)
-        payload = dict(safe_raw) if isinstance(safe_raw, dict) else {}
+        # F14 (2026-06-15): response.raw is the EXECUTION payload — it is consumed
+        # downstream by extract_native_tool_calls() to recover the model's native
+        # tool calls. It MUST preserve the real provider payload. Running the
+        # observability/security redactor here (commit f1510690) flattened
+        # choices[].message.tool_calls (nested past max_depth=4) to
+        # {redacted, sha256, chars}, so the decoder saw a nameless placeholder and
+        # EVERY native tool call died (native_tool_call_decode_failed). Redaction
+        # belongs at telemetry/persistence emit sites, never on the live response.
+        payload = dict(raw) if isinstance(raw, dict) else {}
         if "model_spec" not in payload:
             payload["model_spec"] = model_spec.to_dict()
         payload["token_budget"] = budget

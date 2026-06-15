@@ -25,6 +25,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# F15: a failed Director claim whose reason is one of these proves the bound
+# backend actually RAN the model (the failure is content/contention/payload, not
+# a dead endpoint), so it must NOT count toward a worker's backend-death streak.
+# The dead-backend signatures are instead: a raised exception (timeout / connection
+# / circuit-open) or ``missing_execution_evidence`` (empty LLM output).
+_BACKEND_ALIVE_REASONS: frozenset[str] = frozenset(
+    {"step_target_missing", "repair_shrank_file", "scope_conflict", "missing_blueprint"}
+)
+
+
+def _pool_trace(msg: str) -> None:
+    """Emit a Director-pool trace to stderr (captured by run wrappers) when
+    ``KERNELONE_DIRECTOR_POOL_TRACE`` is set. INFO logs are suppressed by the
+    default WARNING root level in the bench runner, so this gives reliable
+    visibility into worker spawn / per-claim routing for multi-backend runs."""
+    if os.environ.get("KERNELONE_DIRECTOR_POOL_TRACE"):
+        import sys
+
+        print(f"[director-pool] {msg}", file=sys.stderr, flush=True)
+
 
 @dataclass(frozen=True)
 class DispatchCallbacks:
@@ -786,17 +806,37 @@ def _endpoint_reachable(base_url: str, *, timeout: float = 4.0) -> bool:
         return False
 
 
-def _reachable_provider_pool(pool: tuple[str, ...]) -> list[str]:
-    """Filter a provider pool to currently-reachable backends (skip offline endpoints)."""
+def _reachable_provider_pool(pool: tuple[str, ...], *, probe_timeout: float = 3.0) -> list[str]:
+    """Filter a provider pool to currently-reachable backends (skip offline endpoints).
+
+    Probes run concurrently so re-evaluating the pool every cycle (real-time
+    load-balancing over whatever LLMs are responding) costs ~one probe timeout,
+    not the serial sum — a single down backend can't slow the whole cycle.
+    Order of the input pool is preserved in the result.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     from polaris.kernelone.llm.runtime_config import get_provider_base_url
 
+    base_urls = {provider_id: get_provider_base_url(provider_id) for provider_id in pool}
+    if not pool:
+        return []
+    with ThreadPoolExecutor(max_workers=max(1, len(pool))) as executor:
+        reachable = dict(
+            zip(
+                pool,
+                executor.map(lambda pid: _endpoint_reachable(base_urls[pid], timeout=probe_timeout), pool),
+                strict=True,
+            )
+        )
     live: list[str] = []
     for provider_id in pool:
-        base_url = get_provider_base_url(provider_id)
-        if _endpoint_reachable(base_url):
+        if reachable.get(provider_id):
             live.append(provider_id)
         else:
-            logger.warning("director pool: skipping unreachable backend %s (%s)", provider_id, base_url or "?")
+            logger.warning(
+                "director pool: skipping unreachable backend %s (%s)", provider_id, base_urls[provider_id] or "?"
+            )
     return live
 
 
@@ -853,31 +893,165 @@ def _build_director_worker_pool(
         len(live_pool),
         live_pool,
     )
+    _pool_trace(
+        f"POOL BUILT: {len(workers)} worker(s) over {len(live_pool)} live backend(s); "
+        f"bindings={[(c.worker_id if hasattr(c, 'worker_id') else f'w{i}', pid) for i, (c, pid) in enumerate(workers)]}"
+    )
     return workers
 
 
-def _drive_director_workers(workers: list[tuple[Any, str]]) -> list[dict[str, Any]]:
-    """Run each Director worker's poll loop concurrently, bound to its endpoint.
+def _drive_director_workers(
+    workers: list[tuple[Any, str]],
+    *,
+    poll_interval: float = 0.05,
+    max_claims_per_worker: int = 256,
+    stall_seconds: float | None = None,
+) -> list[dict[str, Any]]:
+    """Continuously drain ready exec steps across the Director worker pool.
 
-    The market's per-step leasing guarantees workers claim DISTINCT leaf steps,
-    and ``_exec_claim_ready`` guarantees a step waits for its ``depends_on`` — so
-    parallelism is realised across INDEPENDENT steps while DAG order is kept. Each
-    worker sets a thread-local provider override so its LLM calls route to the
-    assigned backend.
+    Each worker runs its OWN poll loop and, the instant it finishes a step, it
+    immediately tries to claim the next ready leaf step — keeping every bound
+    backend at high load instead of idling at a per-cycle barrier. A worker only
+    stops when it claims nothing AND every sibling is simultaneously idle
+    (i.e. the market has no claimable exec step and none is mid-flight), at which
+    point control returns to the caller so CE/QA can advance the pipeline (fission
+    new parents, resolve steps) and unblock the next wave.
+
+    The market's per-step leasing guarantees workers claim DISTINCT leaf steps and
+    ``_exec_claim_ready`` keeps ``depends_on`` order, so parallelism is realised
+    across INDEPENDENT steps while the DAG is respected. Each worker sets a
+    thread-local provider override so its LLM calls route to the assigned backend;
+    every returned step is tagged with that backend for observability.
+
+    F15 resilience — a backend that dies MID-RUN must never freeze the pool: a
+    worker that keeps failing against a dead/hung endpoint RETIRES itself (Layer A)
+    so the steps it would otherwise monopolise requeue to a LIVE worker, and a
+    stall watchdog bounds the join (Layer B) so a worker stuck *inside* a hung
+    ``poll_once`` can never block the whole dispatch.
+
+    Args:
+        workers: ``(consumer, provider_id)`` pairs, one per bound backend.
+        poll_interval: idle back-off between empty polls while siblings still work.
+        max_claims_per_worker: defensive cap on claims per worker per drain so a
+            pathological always-ready market can never spin forever (the outer
+            cycle loop picks up any remainder).
+        stall_seconds: Layer-B watchdog deadline; when None (production), read from
+            ``KERNELONE_DIRECTOR_DRIVE_STALL_SECONDS`` (default 900s, floored at 30s
+            so a legitimately-slow all-workers-mid-turn window never false-fires).
+            Tests inject a small value directly to exercise the watchdog quickly.
     """
     import threading
+    import time
 
     from polaris.kernelone.llm.runtime_config import clear_role_provider_override, set_role_provider_override
 
+    death_threshold = _read_positive_int_env(
+        "KERNELONE_DIRECTOR_WORKER_DEATH_THRESHOLD", default=3, minimum=1, maximum=100
+    )
+    stall_timeout = (
+        float(stall_seconds)
+        if stall_seconds is not None
+        else float(
+            _read_positive_int_env("KERNELONE_DIRECTOR_DRIVE_STALL_SECONDS", default=900, minimum=30, maximum=86400)
+        )
+    )
+
     results: list[list[dict[str, Any]]] = [[] for _ in workers]
     errors: list[BaseException] = []
+    # Per-worker "my last poll returned nothing"; all-True under the lock means the
+    # whole pool is collectively idle and the drain is complete. Start False so a
+    # worker never declares the pool idle before any sibling has polled once.
+    # A retired (dead-backend) worker also sets its slot True so the pool can still
+    # reach the all-idle quorum and terminate without it. Retirement is per-cycle:
+    # the caller re-probes reachability and rebuilds the pool every cycle, so a
+    # backend that recovers rejoins next cycle and a still-dead one is health-checked
+    # out — no cross-cycle benching that would strand a recovered LLM.
+    idle = [False] * len(workers)
+    lock = threading.Lock()
+    stop = threading.Event()
+
+    _pool_trace(f"DRIVE: starting {len(workers)} worker thread(s)")
+
+    def _batch_shows_live_backend(batch: list[dict[str, Any]]) -> bool:
+        """True if the claim proves the bound backend ran (a resolved step or a
+        model-ran failure reason), as opposed to the empty-output dead signature."""
+        for row in batch:
+            if not isinstance(row, dict):
+                continue
+            if row.get("ok"):
+                return True
+            if row.get("reason") in _BACKEND_ALIVE_REASONS:
+                return True
+        return False
+
+    def _retire(index: int, provider_id: str, reason: str) -> None:
+        logger.warning("director worker w%d (%s) retired mid-cycle (F15): %s", index, provider_id, reason)
+        _pool_trace(f"w{index} ({provider_id}) RETIRED: {reason}")
+        with lock:
+            idle[index] = True  # count toward all-idle quorum so the pool can still terminate
+            if all(idle):
+                stop.set()
 
     def _run(index: int, consumer: Any, provider_id: str) -> None:
         set_role_provider_override("director", provider_id)
+        backend_failures = 0
         try:
-            results[index] = consumer.poll_once()
-        except Exception as exc:  # noqa: BLE001 — surfaced to the caller's loop guard (re-raised below)
-            errors.append(exc)
+            claims = 0
+            while not stop.is_set() and claims < max_claims_per_worker:
+                try:
+                    batch = consumer.poll_once()
+                except Exception as exc:  # noqa: BLE001 — a transport error must not kill the whole pool
+                    errors.append(exc)
+                    backend_failures += 1
+                    _pool_trace(f"w{index} ({provider_id}) poll raised ({backend_failures}/{death_threshold}): {exc}")
+                    if backend_failures >= death_threshold:
+                        _retire(index, provider_id, f"poll_exception:{exc}")
+                        return
+                    time.sleep(poll_interval)
+                    continue
+                if batch:
+                    ids = [r.get("task_id") for r in batch if isinstance(r, dict)]
+                    _pool_trace(f"w{index} ({provider_id}) claimed {ids}")
+                    for row in batch:
+                        if isinstance(row, dict):
+                            row.setdefault("_director_backend", provider_id)
+                    results[index].extend(batch)
+                    claims += len(batch)
+                    resolved = any(isinstance(r, dict) and r.get("ok") for r in batch)
+                    if _batch_shows_live_backend(batch):
+                        backend_failures = 0
+                    else:
+                        # Empty-output / no-evidence claim: the dead-backend signature.
+                        # Keep idle=False (we are NOT drained, the step just requeued) so a
+                        # transient all-idle race can't terminate the pool prematurely.
+                        backend_failures += 1
+                        _pool_trace(
+                            f"w{index} ({provider_id}) unproductive claim ({backend_failures}/{death_threshold}): {ids}"
+                        )
+                    with lock:
+                        idle[index] = False
+                    if backend_failures >= death_threshold:
+                        # Stop re-claiming so the requeued step(s) route to a LIVE worker.
+                        _retire(index, provider_id, "backend_unproductive_streak")
+                        return
+                    if resolved:
+                        continue  # real progress → immediately reach for the next step (high load)
+                    # Fairness: the claim requeued WITHOUT resolving (a failing/churning step).
+                    # An immediate re-poll here lets this worker monopolise that one requeued step
+                    # while idle siblings on OTHER backends starve (observed r43: gpu0 re-grabbed
+                    # js-skel 3× while LAN+gpu1 sat idle). Yield one poll_interval so an idle
+                    # sibling claims the requeued step next — spreading load across every backend
+                    # and retrying the step on a FRESH backend instead of re-failing it here.
+                    time.sleep(poll_interval)
+                    continue
+                # Nothing ready for me right now (a genuinely empty claim = market drained for me).
+                with lock:
+                    idle[index] = True
+                    pool_idle = all(idle)
+                if pool_idle:
+                    stop.set()  # market drained + no sibling mid-flight → yield to CE/QA
+                    return
+                time.sleep(poll_interval)  # a sibling is still executing; it may unblock a step
         finally:
             clear_role_provider_override("director")
 
@@ -887,14 +1061,71 @@ def _drive_director_workers(workers: list[tuple[Any, str]]) -> list[dict[str, An
     ]
     for thread in threads:
         thread.start()
+
+    # Layer B backstop: bound the wait. Layer A only fires once poll_once RETURNS;
+    # if a worker is stuck INSIDE a hung poll_once (a socket blocked below the HTTP
+    # timeout, or an un-cancellable call) it never returns and an unbounded join
+    # would freeze the whole dispatch. Watch global forward progress (claimed rows);
+    # if nothing advances for stall_timeout, signal stop and abandon the stuck
+    # daemon thread — its lease expires and the step requeues to a live worker.
+    last_progress = 0
+    last_progress_ts = time.monotonic()
+    while any(thread.is_alive() for thread in threads):
+        if stop.is_set():
+            break
+        with lock:
+            progressed = sum(len(batch) for batch in results)
+        now = time.monotonic()
+        if progressed != last_progress:
+            last_progress = progressed
+            last_progress_ts = now
+        elif now - last_progress_ts > stall_timeout:
+            logger.warning(
+                "director drive stalled %.0fs with no claim progress; retiring pool (F15 backstop)",
+                now - last_progress_ts,
+            )
+            _pool_trace(f"DRIVE STALL: no progress {now - last_progress_ts:.0f}s > {stall_timeout:.0f}s; stopping")
+            stop.set()
+            break
+        time.sleep(min(0.2, stall_timeout / 10.0))
+
+    join_timeout = max(2.0, poll_interval * 4)
     for thread in threads:
-        thread.join()
-    if errors:
-        raise errors[0]
+        thread.join(timeout=join_timeout)
+
     merged: list[dict[str, Any]] = []
     for batch in results:
         merged.extend(batch)
+    # Only surface an error to the caller's loop guard on TOTAL failure (every worker
+    # errored and nothing was accomplished); a single backend blip must not crash a
+    # dispatch that other backends carried.
+    any_success = any(isinstance(row, dict) and row.get("ok") for batch in results for row in batch)
+    if errors and not any_success:
+        raise errors[0]
+    _log_director_backend_distribution(workers, merged)
     return merged
+
+
+def _log_director_backend_distribution(workers: list[tuple[Any, str]], merged: list[dict[str, Any]]) -> None:
+    """Emit a one-line per-backend claim distribution so 4-Director load is visible."""
+    if not merged:
+        return
+    from polaris.kernelone.llm.runtime_config import get_provider_base_url
+
+    counts: dict[str, int] = {}
+    for row in merged:
+        if isinstance(row, dict):
+            pid = str(row.get("_director_backend") or "?")
+            counts[pid] = counts.get(pid, 0) + 1
+    bound = {pid for _c, pid in workers}
+    parts = []
+    for pid in sorted(bound | set(counts)):
+        try:
+            host = get_provider_base_url(pid) or pid
+        except (KeyError, RuntimeError, ValueError):
+            host = pid
+        parts.append(f"{host}={counts.get(pid, 0)}")
+    logger.info("director drain: %d step(s) across %d backend(s) | %s", len(merged), len(bound), " ".join(parts))
 
 
 def _run_inline_task_market_consumers(
@@ -977,13 +1208,6 @@ def _run_inline_task_market_consumers(
             visibility_timeout_seconds=qa_timeout,
             poll_interval=0.05,
         )
-        director_workers = _build_director_worker_pool(
-            director_consumer_type,
-            workspace_full=workspace_full,
-            worker_suffix=worker_suffix,
-            exec_timeout=exec_timeout,
-            enable_safe_parallel=enable_safe_parallel,
-        )
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         return {
             "enabled": True,
@@ -992,6 +1216,24 @@ def _run_inline_task_market_consumers(
             "reason": "consumer_init_failed",
             "error": str(exc),
         }
+
+    def _refresh_director_workers() -> list[tuple[Any, str]]:
+        """Re-evaluate backend reachability and (re)build the Director worker pool for
+        THIS cycle, so recovered backends rejoin and dead ones drop out — real-time
+        load-balancing over whatever LLMs are currently responding (per user directive
+        2026-06-15). Returns [] when concurrency<=1 or nothing is reachable, in which
+        case the cycle uses the single inline consumer."""
+        try:
+            return _build_director_worker_pool(
+                director_consumer_type,
+                workspace_full=workspace_full,
+                worker_suffix=worker_suffix,
+                exec_timeout=exec_timeout,
+                enable_safe_parallel=enable_safe_parallel,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("director pool refresh failed this cycle, using single consumer: %s", exc)
+            return []
 
     ce_results: list[dict[str, Any]] = []
     director_results: list[dict[str, Any]] = []
@@ -1004,6 +1246,9 @@ def _run_inline_task_market_consumers(
         cycles_ran = cycle_index + 1
         try:
             ce_cycle = ce_consumer.poll_once()
+            # Real-time pool: re-probe reachable backends every cycle so the run
+            # absorbs LLMs that come online mid-run and routes around ones that drop.
+            director_workers = _refresh_director_workers()
             director_cycle = (
                 _drive_director_workers(director_workers) if director_workers else director_consumer.poll_once()
             )

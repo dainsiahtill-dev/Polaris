@@ -102,6 +102,16 @@ def _get_role_provider_override(role_id: str) -> str | None:
     return overrides.get(_normalize_runtime_role_id(role_id))
 
 
+def get_role_provider_override(role_id: str) -> str | None:
+    """Public accessor for the current context's provider override for ``role_id``.
+
+    Returns the bound ``provider_id`` if a context-scoped override is active (e.g. a
+    Director worker pinned to a specific backend), else ``None``. Provider/model
+    resolution consults this so a worker's binding wins over any provider baked into
+    a cached role profile."""
+    return _get_role_provider_override(role_id)
+
+
 def _parse_provider_pool(raw: Any, primary_provider_id: str) -> tuple[str, ...]:
     """Coerce a role's ``provider_pool`` into a deduped ordered tuple.
 
@@ -258,6 +268,28 @@ class RuntimeConfigManager:
             concurrency=_parse_concurrency(role_cfg.get("concurrency")),
         )
 
+    def _provider_model(self, provider_id: str) -> str:
+        """Best-effort read of a provider's own configured model name.
+
+        Used when a worker binds a specific backend in a heterogeneous pool whose
+        endpoints serve distinctly-named models. Returns "" when absent.
+        """
+        try:
+            providers = self._load_config().get("providers")
+        except (RuntimeError, ValueError, OSError):
+            return ""
+        entry: Any = None
+        if isinstance(providers, dict):
+            entry = providers.get(provider_id)
+        elif isinstance(providers, list):
+            for item in providers:
+                if isinstance(item, dict) and str(item.get("id") or item.get("provider_id") or "") == provider_id:
+                    entry = item
+                    break
+        if isinstance(entry, dict):
+            return str(entry.get("model") or "").strip()
+        return ""
+
     def get_role_model(self, role_id: str) -> tuple[str, str]:
         normalized_role_id = _normalize_runtime_role_id(role_id)
         resolved = self.get_role_config(normalized_role_id)
@@ -268,13 +300,19 @@ class RuntimeConfigManager:
             # override can never route to an unconfigured endpoint.
             override_pid = _get_role_provider_override(normalized_role_id)
             if override_pid and override_pid in resolved.resolved_pool():
+                # Heterogeneous pools: each backend may serve a DIFFERENTLY-NAMED
+                # model (e.g. one endpoint serves 'qwen3.6-27b-gpu0', not the role's
+                # 'int4'). Prefer the bound provider's own configured model so the
+                # request's model name matches the endpoint (a mismatch is a hard
+                # 404); fall back to the role model for homogeneous pools.
+                override_model = self._provider_model(override_pid) or resolved.model
                 logger.debug(
                     "[RuntimeConfig] %s: thread override %s/%s",
                     normalized_role_id,
                     override_pid,
-                    resolved.model,
+                    override_model,
                 )
-                return override_pid, resolved.model
+                return override_pid, override_model
             logger.debug(
                 "[RuntimeConfig] %s: using %s/%s",
                 normalized_role_id,
@@ -380,6 +418,7 @@ __all__ = [
     "RuntimeConfigManager",
     "get_provider_base_url",
     "get_role_model",
+    "get_role_provider_override",
     "get_runtime_config_manager",
     "load_role_config",
     "reset_runtime_config_manager",

@@ -126,6 +126,47 @@ class TestAIExecutorBasic:
         assert "unexpected error" in response.error
 
 
+class TestBuildRawPayloadPreservesToolCalls:
+    """F14 regression: response.raw is the EXECUTION payload (drives
+    extract_native_tool_calls). The observability/security redactor must NOT run on
+    it — doing so flattened nested choices[].message.tool_calls to {redacted,...} and
+    broke every native tool call (native_tool_call_decode_failed)."""
+
+    class _Spec:
+        def to_dict(self) -> dict[str, object]:
+            return {"max_context_tokens": 16384}
+
+    def test_native_tool_calls_survive_raw_payload_build(self) -> None:
+        executor = AIExecutor()
+        raw = {
+            "model": "qwen3.6-27b-int4",
+            "choices": [
+                {
+                    "message": {
+                        "content": "Let me use write_file.",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "write_file", "arguments": '{"path":"index.html"}'},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+        out = executor._build_raw_payload(raw=raw, model_spec=self._Spec(), budget={"requested": 2500})
+        tool_call = out["choices"][0]["message"]["tool_calls"][0]
+        # The real function block must survive (NOT redacted to {redacted, sha256, chars}).
+        assert tool_call["function"]["name"] == "write_file"
+        assert tool_call["function"]["arguments"] == '{"path":"index.html"}'
+        assert "redacted" not in tool_call
+        # Added execution metadata is still attached.
+        assert out["token_budget"] == {"requested": 2500}
+        assert out["model_spec"] == {"max_context_tokens": 16384}
+
+
 class TestAIExecutorTimeout:
     """Tests for timeout handling in AIExecutor."""
 
