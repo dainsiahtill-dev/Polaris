@@ -635,3 +635,102 @@ class TestEmergencyTruncatePreservesInstruction:
         ]
         result = engine.emergency_truncate(messages, max_tokens=50)
         assert all(m["role"] != "user" for m in result)
+
+
+class TestEmergencyTruncateSystemPlanes:
+    """L2-10 budget-crash root cause: PM planning's oversized "Current goal"
+    system plane (5032 tok) was never compressed — the dialogue-only strategies
+    are a no-op on system planes, so enforcement always raised before any write.
+    emergency_truncate now trims the largest system planes as a last resort
+    (compress, don't crash), after dropping history but BEFORE clipping the user
+    instruction. The role_definition system prompt is injected post-enforcement,
+    so it is never among these messages and cannot be clipped."""
+
+    @staticmethod
+    def _engine() -> object:
+        from polaris.cells.roles.kernel.internal.context_gateway.compression_engine import (
+            CompressionEngine,
+        )
+        from polaris.cells.roles.kernel.internal.context_gateway.token_estimator import (
+            TokenEstimator,
+        )
+
+        return CompressionEngine(
+            max_context_tokens=128000,
+            compression_strategy="recent",
+            max_history_turns=20,
+            token_estimator=TokenEstimator(),
+            continuity_strategy=None,
+            profile=None,
+            workspace=None,
+            reasoning_stripper=None,
+        )
+
+    @staticmethod
+    def _estimate(messages: list) -> int:
+        from polaris.cells.roles.kernel.internal.context_gateway.token_estimator import (
+            TokenEstimator,
+        )
+
+        return TokenEstimator().estimate(messages)
+
+    def test_oversized_system_plane_truncated_to_fit(self):
+        engine = self._engine()
+        goal = "Current goal: " + ("需求条目 " * 4000)
+        messages = [
+            {"role": "system", "content": "pm_planning_pipeline backend_kind: generic"},
+            {"role": "system", "content": goal, "name": "current_goal"},
+            {"role": "system", "content": "Run Card: Goal short"},
+            {"role": "user", "content": "选择 1-3 个任务推进 GLOBAL REQUIREMENTS"},
+        ]
+        result = engine.emergency_truncate(messages, max_tokens=1500)
+
+        assert self._estimate(result) <= 1500, "assembled context must fit the budget, not raise"
+        goal_planes = [m for m in result if m["role"] == "system" and m["content"].startswith("Current goal:")]
+        assert len(goal_planes) == 1, "oversized goal plane is truncated, not dropped"
+        assert "SYSTEM_PLANE_TRUNCATED" in goal_planes[0]["content"]
+        assert goal_planes[0].get("name") == "current_goal", "plane name/metadata preserved"
+
+    def test_user_instruction_preserved_when_system_plane_makes_room(self):
+        engine = self._engine()
+        messages = [
+            {"role": "system", "content": "Current goal: " + ("x" * 40000)},
+            {"role": "user", "content": "实现 main.py 并落盘"},
+        ]
+        result = engine.emergency_truncate(messages, max_tokens=1200)
+
+        users = [m for m in result if m["role"] == "user"]
+        assert len(users) == 1
+        # system-plane trimming runs BEFORE user truncation, so the instruction survives intact
+        assert users[0]["content"] == "实现 main.py 并落盘"
+        assert "EMERGENCY_TRUNCATED" not in users[0]["content"]
+        assert self._estimate(result) <= 1200
+
+    def test_largest_system_plane_trimmed_first(self):
+        engine = self._engine()
+        big = {"role": "system", "content": "BIG " + ("a" * 30000)}
+        medium = {"role": "system", "content": "MED " + ("b" * 1200)}
+        messages = [medium, big, {"role": "user", "content": "go"}]
+        result = engine.emergency_truncate(messages, max_tokens=1200)
+
+        big_planes = [m for m in result if m["content"].startswith("BIG")]
+        med_planes = [m for m in result if m["content"].startswith("MED")]
+        assert big_planes and "SYSTEM_PLANE_TRUNCATED" in big_planes[0]["content"]
+        # the medium plane fits once the big one is trimmed, so it stays intact
+        assert med_planes and "SYSTEM_PLANE_TRUNCATED" not in med_planes[0]["content"]
+        assert self._estimate(result) <= 1200
+
+    def test_small_system_planes_left_untouched(self):
+        engine = self._engine()
+        messages = [
+            {"role": "system", "content": "tiny plane A"},
+            {"role": "system", "content": "Current goal: " + ("z" * 40000)},
+            {"role": "system", "content": "tiny plane B"},
+            {"role": "user", "content": "do it"},
+        ]
+        result = engine.emergency_truncate(messages, max_tokens=1500)
+
+        tinies = [m for m in result if m["content"].startswith("tiny plane")]
+        assert len(tinies) == 2, "sub-floor system planes are never truncated"
+        assert all("SYSTEM_PLANE_TRUNCATED" not in m["content"] for m in tinies)
+        assert self._estimate(result) <= 1500

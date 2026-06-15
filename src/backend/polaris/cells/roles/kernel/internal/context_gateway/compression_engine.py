@@ -464,23 +464,31 @@ class CompressionEngine:
         # role_definition system prompt is injected by the gateway AFTER enforcement,
         # so it is never among these messages and cannot be clipped here.
         if total > max_tokens and system_msgs:
-            for idx in sorted(
-                range(len(system_msgs)),
-                key=lambda i: self._token_estimator.estimate([system_msgs[i]]),
-                reverse=True,
-            ):
+            # Each pass trims the largest still-trimmable plane by at least half of
+            # its trimmable span, so it converges to fit (or to the floor) regardless
+            # of the estimator's char/token ratio; the 256 guard bounds pathological
+            # budgets that even floored planes cannot satisfy.
+            for _ in range(256):
                 if total <= max_tokens:
                     break
+                trimmable = [
+                    i
+                    for i in range(len(system_msgs))
+                    if len(str(system_msgs[i].get("content") or "")) > self._SYSTEM_PLANE_FLOOR_CHARS
+                ]
+                if not trimmable:
+                    break
+                idx = max(trimmable, key=lambda i: self._token_estimator.estimate([system_msgs[i]]))
                 content = str(system_msgs[idx].get("content") or "")
-                if len(content) <= self._SYSTEM_PLANE_FLOOR_CHARS:
-                    continue
+                span = len(content) - self._SYSTEM_PLANE_FLOOR_CHARS
                 overflow_tokens = total - max_tokens
                 chars_to_remove = min(
-                    len(content) - self._SYSTEM_PLANE_FLOOR_CHARS,
-                    overflow_tokens * self._SYSTEM_PLANE_TRIM_CHARS_PER_TOKEN + self._SYSTEM_PLANE_TRIM_PAD_CHARS,
+                    span,
+                    max(
+                        overflow_tokens * self._SYSTEM_PLANE_TRIM_CHARS_PER_TOKEN + self._SYSTEM_PLANE_TRIM_PAD_CHARS,
+                        (span + 1) // 2,
+                    ),
                 )
-                if chars_to_remove <= 0:
-                    continue
                 keep = len(content) - chars_to_remove
                 head_len = max(1, int(keep * 0.7))
                 tail_len = max(1, keep - head_len)

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.kernelone.llm.toolkit.parsers import NativeFunctionCallingParser, ParsedToolCall
+from polaris.kernelone.llm.toolkit.parsers import NativeFunctionCallingParser, ParsedToolCall, parse_tool_calls
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 
 _CORPUS_PATH = Path(__file__).with_name("golden_tool_call_inputs.json")
@@ -45,6 +45,11 @@ def _parse_case(case: dict[str, Any]) -> list[ParsedToolCall]:
     if provider == "bedrock":
         assert isinstance(payload, dict)
         return NativeFunctionCallingParser.parse_bedrock_claude(payload)
+    if provider == "text":
+        assert isinstance(payload, str)
+        allowed = case.get("allowed_tools")
+        assert allowed is None or isinstance(allowed, list)
+        return parse_tool_calls(text=payload, allowed_tool_names=allowed)
     raise AssertionError(f"Unsupported corpus provider: {provider}")
 
 

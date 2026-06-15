@@ -41,6 +41,9 @@ normalization could turn a benign-looking call into something the model did not 
   `patch`, `patch_text`, `unified_diff`, `diff_text` -> `diff`, and no longer emits a flat
   JSON-schema `required: ["diff"]` that contradicts `required_any`. Plain `file+content` remains
   intentionally non-normalized because it is not a diff.
+- [LANDED 2026-06-15] Toolkit `parse_tool_calls(text=...)` fail-open fallback parses bare JSON
+  tool calls and explicit `[TOOL_CALL]...[/TOOL_CALL]` JSON wrappers only when native/response calls
+  are absent; recovered calls flow through canonical tool-name and argument normalization.
 
 ---
 
@@ -272,7 +275,9 @@ Counts: 60 gaps total. Each maps to a P-item in §4. `(sev)` = auditor severity.
 
 ### 3.5 Parse layer (native + textual) — 11 gaps
 - **textual tool call in content** (`[TOOL_CALL]{...}` / bare JSON) silently dropped — the built
-  `CanonicalToolCallParser`/`JSONToolParser` are not wired for execution (`del text`, core.py:131). **(high)**
+  `CanonicalToolCallParser`/`JSONToolParser` are not wired for execution (`del text`, core.py:131).
+  **[LANDED 2026-06-15 for toolkit bare JSON + TOOL_CALL JSON wrapper fallback; XML remains gated
+  to future P7 work]**
 - **OpenAI/DeepSeek `function.arguments` as already-decoded dict** -> `_parse_json_arguments`
   stringifies then json.loads fails -> `{}` (native_function.py:68,258). **[LANDED 2026-06-15]**
 - Anthropic `input` as JSON string dropped to `{}` (line 109,115). **[LANDED 2026-06-15]**
@@ -282,7 +287,8 @@ Counts: 60 gaps total. Each maps to a P-item in §4. `(sev)` = auditor severity.
 - json_based: args spread as sibling top-level keys, or arguments string decoding to dict, ignored. **(med)**
 - cohere/gemini-string shapes unreachable under `provider='auto'` (partial auto chain). **(med)**
 - tool name uppercase/hyphen/dot (`Write-File`, `fs.write_file`) fails regex gate, dropped. **(med)**
-- text parsers (`json_based`, `core`) return raw args with NO `normalize_tool_arguments` pass. **(med)**
+- text parsers (`json_based`, `core`) return raw args with NO `normalize_tool_arguments` pass.
+  **[LANDED 2026-06-15 for `core.parse_tool_calls(text=...)`; `json_based` remains raw by design]**
 - XML-tag tool extraction binds prose `<note>` to phantom tools when no whitelist passed. **(low)**
 - smart/single-quote repair only fires when whole payload has zero double-quotes. **(low)**
 
@@ -378,9 +384,11 @@ Files: `parsers/native_function.py`, `parsers/json_based.py`, `parsers/core.py`,
 `roles/kernel/internal/output_parser.py`.
 
 ### P7 — Re-enable text-protocol execution as fail-open fallback  *(M)*
-- When native `tool_calls` empty but `clean_content` non-empty, run
-  `CanonicalToolCallParser.extract_text_calls_and_remainder` + `JSONToolParser` (already built and
-  tested) as a centralized fallback. Gate XML-tag extraction to known tool names when no whitelist.
+- [LANDED 2026-06-15] When native/response tool calls are empty and `text` is non-empty,
+  `parsers.core.parse_tool_calls` runs `JSONToolParser` as a fail-open fallback for bare JSON tool
+  calls and explicit `[TOOL_CALL]...[/TOOL_CALL]` JSON wrappers, then normalizes tool names and
+  arguments.
+- Remaining: XML/tag fallback should be whitelisted and false-positive tested before enabling.
 Files: `parsers/core.py`, `roles/kernel/internal/output_parser.py`, `tool_call_protocol.py`.
 
 ### P8 — Enum/value-synonym normalization + scout/command shape repair  *(S)*

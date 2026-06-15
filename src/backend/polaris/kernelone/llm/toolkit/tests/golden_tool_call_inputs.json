@@ -437,6 +437,30 @@
         "start_line": 15
       },
       "forbidden_keys": ["path"]
+    },
+    {
+      "id": "text_bare_json_read_file",
+      "provider": "text",
+      "payload": "{\"name\": \"readFile\", \"arguments\": {\"path\": \"/workspace/src/text_bare.py\", \"end_line\": \"16\"}}",
+      "allowed_tools": ["read_file"],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/text_bare.py",
+        "end_line": 16
+      },
+      "forbidden_keys": ["path"]
+    },
+    {
+      "id": "text_tool_call_wrapper_read_file",
+      "provider": "text",
+      "payload": "[TOOL_CALL]{\"tool\": \"readFile\", \"arguments\": {\"path\": \"/workspace/src/text_wrapper.py\", \"start_line\": \"17\"}}[/TOOL_CALL]",
+      "allowed_tools": ["read_file"],
+      "expected_name": "read_file",
+      "expected_arguments": {
+        "file": "src/text_wrapper.py",
+        "start_line": 17
+      },
+      "forbidden_keys": ["path"]
     }
   ]
 }
