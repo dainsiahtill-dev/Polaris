@@ -11,6 +11,7 @@ Key Design Principle:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -68,6 +69,10 @@ class ReasonCode(str, Enum):
     PHASE_DETECTED = "PHASE_DETECTED"
     PHASE_TRANSITION = "PHASE_TRANSITION"
     PHASE_HYSTERESIS = "PHASE_HYSTERESIS"
+
+    # Hardening / degradation reasons
+    INPUT_VALIDATION_FAILED = "INPUT_VALIDATION_FAILED"
+    PIPELINE_STAGE_FAILED = "PIPELINE_STAGE_FAILED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,9 +194,22 @@ class ProjectionReport:
     projection_duration_ms: float = 0.0
     stage_durations_ms: dict[str, float] = field(default_factory=dict)
 
+    # Unified audit/correlation chain
+    context_result_id: str = ""
+    final_request_receipt_id: str = ""
+    provider_request_id: str = ""
+    telemetry_trace_id: str = ""
+    receipt_refs: tuple[str, ...] = ()
+
+    # Degradation/error summary
+    errors: tuple[dict[str, Any], ...] = ()
+    stage_fallbacks: tuple[str, ...] = ()
+    fallback_count: int = 0
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "projection_id": self.projection_id,
+            "context_result_id": self.context_result_id,
             "run_id": self.run_id,
             "turn_id": self.turn_id,
             "timestamp": self.timestamp,
@@ -207,6 +225,13 @@ class ProjectionReport:
             "decisions": [d.to_dict() for d in self.decisions],
             "projection_duration_ms": self.projection_duration_ms,
             "stage_durations_ms": self.stage_durations_ms,
+            "final_request_receipt_id": self.final_request_receipt_id,
+            "provider_request_id": self.provider_request_id,
+            "telemetry_trace_id": self.telemetry_trace_id,
+            "receipt_refs": list(self.receipt_refs),
+            "errors": [dict(item) for item in self.errors],
+            "stage_fallbacks": list(self.stage_fallbacks),
+            "fallback_count": self.fallback_count,
         }
 
 
@@ -308,6 +333,13 @@ class ContextDecisionLog:
         phase: str | None = None,
         budget_plan: Any = None,
         stage_durations_ms: dict[str, float] | None = None,
+        context_result_id: str = "",
+        final_request_receipt_id: str = "",
+        provider_request_id: str = "",
+        telemetry_trace_id: str = "",
+        receipt_refs: tuple[str, ...] = (),
+        errors: tuple[dict[str, Any], ...] = (),
+        stage_fallbacks: tuple[str, ...] = (),
     ) -> ProjectionReport:
         """Build a ProjectionReport from accumulated decisions."""
         self._projection_count += 1
@@ -344,6 +376,7 @@ class ContextDecisionLog:
 
         return ProjectionReport(
             projection_id=projection_id,
+            context_result_id=context_result_id or build_context_result_id(projection_id),
             run_id=run_id,
             turn_id=turn_id,
             timestamp=timestamp,
@@ -358,6 +391,13 @@ class ContextDecisionLog:
             excluded_count=excluded,
             decisions=tuple(self._decisions),
             stage_durations_ms=stage_durations_ms or {},
+            final_request_receipt_id=final_request_receipt_id,
+            provider_request_id=provider_request_id,
+            telemetry_trace_id=telemetry_trace_id,
+            receipt_refs=tuple(receipt_refs),
+            errors=tuple(dict(item) for item in errors),
+            stage_fallbacks=tuple(stage_fallbacks),
+            fallback_count=len(stage_fallbacks),
         )
 
     def _archive_old_decisions(self) -> None:
@@ -392,3 +432,10 @@ def create_decision(
         reason_codes=reason_codes,
         **kwargs,
     )
+
+
+def build_context_result_id(projection_id: str) -> str:
+    """Derive a stable ContextOS result ID from a projection ID."""
+    projection_text = str(projection_id or "").strip() or "missing_projection"
+    digest = hashlib.sha256(projection_text.encode("utf-8")).hexdigest()[:12]
+    return f"ctxres_{digest}"

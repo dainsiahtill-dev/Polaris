@@ -1,0 +1,181 @@
+import { describe, it, expect } from 'vitest';
+
+import {
+  buildContextOSModel,
+  decisionMatchesRole,
+  contextOSFormat,
+  NOMINAL_CONTEXT_WINDOW,
+} from './contextOSData';
+import type { UsageStats } from '@/app/components/UsageHUD';
+import type { DialogueEvent } from '@/app/components/DialoguePanel';
+import type { LogEntry } from '@/types/log';
+import type { LlmRuntimeGateState } from '@/app/hooks/useLlmRuntimeGate';
+import type { SnapshotPayload } from '@/app/types/appContracts';
+
+const READY_LLM: LlmRuntimeGateState = {
+  state: 'READY',
+  blockedRoles: [],
+  requiredRoles: ['pm', 'director'],
+  lastUpdated: null,
+};
+
+function baseInput(overrides: Partial<Parameters<typeof buildContextOSModel>[0]> = {}) {
+  return {
+    usageStats: null,
+    dialogueEvents: [] as DialogueEvent[],
+    executionLogs: [] as LogEntry[],
+    snapshot: null,
+    llmRuntimeState: READY_LLM,
+    currentPhase: 'idle',
+    pmRunning: false,
+    directorRunning: false,
+    ...overrides,
+  };
+}
+
+describe('buildContextOSModel', () => {
+  it('produces a fully idle model from empty inputs without throwing', () => {
+    const model = buildContextOSModel(baseInput());
+    expect(model.running).toBe(false);
+    expect(model.dataIdle).toBe(true);
+    expect(model.totalTokens).toBe(0);
+    expect(model.pipeline).toHaveLength(8);
+    expect(model.components).toHaveLength(7);
+    expect(model.roles).toHaveLength(4);
+    expect(model.decisions).toHaveLength(0);
+    // Window occupancy must stay within [0,1].
+    expect(model.windowOccupancy).toBeGreaterThanOrEqual(0);
+    expect(model.windowOccupancy).toBeLessThanOrEqual(1);
+  });
+
+  it('derives real token totals and a prompt/completion budget split', () => {
+    const usageStats: UsageStats = {
+      totals: { prompt_tokens: 8000, completion_tokens: 2000, total_tokens: 10000 },
+      calls: 5,
+      estimated_calls: 0,
+      by_mode: {
+        pm: { total_tokens: 6000, calls: 3 },
+        director: { total_tokens: 4000, calls: 2 },
+      },
+    };
+    const model = buildContextOSModel(baseInput({ usageStats, pmRunning: true, currentPhase: 'planning' }));
+    expect(model.totalTokens).toBe(10000);
+    expect(model.avgPerCall).toBe(2000);
+    expect(model.running).toBe(true);
+    expect(model.dataIdle).toBe(false);
+
+    const prompt = model.budget.find((b) => b.key === 'prompt');
+    const completion = model.budget.find((b) => b.key === 'completion');
+    expect(prompt?.ratio).toBeCloseTo(0.8, 5);
+    expect(completion?.ratio).toBeCloseTo(0.2, 5);
+
+    // by_mode slices are real, sorted desc by tokens.
+    expect(model.byModeSlices[0].key).toBe('pm');
+    expect(model.byModeSlices[0].tokens).toBe(6000);
+
+    // Active stage during planning is ProjectionEngine.
+    const projection = model.pipeline.find((s) => s.id === 'projection');
+    expect(projection?.state).toBe('active');
+  });
+
+  it('maps by_mode tokens onto role cards via aliases', () => {
+    const usageStats: UsageStats = {
+      totals: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 },
+      calls: 2,
+      estimated_calls: 0,
+      by_mode: { director: { total_tokens: 200, calls: 2 } },
+    };
+    const model = buildContextOSModel(baseInput({ usageStats, directorRunning: true }));
+    const director = model.roles.find((r) => r.id === 'director');
+    expect(director?.tokens).toBe(200);
+    expect(director?.state).toBe('active');
+  });
+
+  it('flags blocked roles in both the role card and the role-signal stage', () => {
+    const blockedLlm: LlmRuntimeGateState = {
+      state: 'BLOCKED',
+      blockedRoles: ['director'],
+      requiredRoles: ['director'],
+      lastUpdated: null,
+    };
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: blockedLlm, directorRunning: true }));
+    const director = model.roles.find((r) => r.id === 'director');
+    expect(director?.state).toBe('blocked');
+    const roleSignal = model.pipeline.find((s) => s.id === 'role_signal');
+    expect(roleSignal?.state).toBe('blocked');
+    // LLM + Prompt stages go blocked when llmRuntimeState is BLOCKED.
+    expect(model.pipeline.find((s) => s.id === 'llm')?.state).toBe('blocked');
+  });
+
+  it('counts errors and parses last latency from execution logs', () => {
+    const logs: LogEntry[] = [
+      { id: 'l1', timestamp: '2026-06-15T10:00:00Z', level: 'info', source: 'director', message: 'invoke done in 1234 ms' },
+      { id: 'l2', timestamp: '2026-06-15T10:00:01Z', level: 'error', source: 'director', message: 'boom' },
+    ];
+    const model = buildContextOSModel(baseInput({ executionLogs: logs }));
+    expect(model.errorCount).toBe(1);
+    expect(model.lastLatencyMs).toBe(1234);
+    // Telemetry component reflects the error.
+    expect(model.components.find((c) => c.id === 'telemetry')?.state).toBe('blocked');
+  });
+
+  it('builds newest-first decision rows from dialogue + logs', () => {
+    const dialogue: DialogueEvent[] = [
+      { speaker: 'PM', content: 'plan ready', timestamp: '2026-06-15T10:00:00Z', type: 'message' },
+      { speaker: 'Director', content: 'executing task', timestamp: '2026-06-15T10:00:05Z', type: 'progress' },
+    ];
+    const model = buildContextOSModel(baseInput({ dialogueEvents: dialogue }));
+    expect(model.decisions.length).toBeGreaterThan(0);
+    // Newest first.
+    expect(model.decisions[0].actor).toBe('Director');
+  });
+
+  it('orders the decision log strictly newest-first when dialogue and logs interleave by time', () => {
+    // A log timestamped BETWEEN two dialogue events must sort between them,
+    // not above both (regression guard for the old `.reverse()` ordering bug).
+    const dialogueEvents: DialogueEvent[] = [
+      { speaker: 'PM', content: 'oldest dialogue', timestamp: '2026-06-15T10:00:00Z', type: 'message' },
+      { speaker: 'Director', content: 'newest dialogue', timestamp: '2026-06-15T10:00:30Z', type: 'message' },
+    ];
+    const executionLogs: LogEntry[] = [
+      { id: 'lg', timestamp: '2026-06-15T10:00:15Z', level: 'info', source: 'runtime', message: 'middle log' },
+    ];
+    const model = buildContextOSModel(baseInput({ dialogueEvents, executionLogs }));
+    expect(model.decisions.map((d) => d.summary)).toEqual(['newest dialogue', 'middle log', 'oldest dialogue']);
+  });
+
+  it('derives iteration and task count from the runtime snapshot', () => {
+    const snapshot = {
+      tasks: [{ id: 't1' }, { id: 't2' }, { id: 't3' }],
+      pm_state: { pm_iteration: 7 },
+    } as unknown as SnapshotPayload;
+    const model = buildContextOSModel(baseInput({ snapshot }));
+    expect(model.taskCount).toBe(3);
+    expect(model.iteration).toBe(7);
+    expect(model.pipeline.find((s) => s.id === 'request')?.metric).toContain('3 任务');
+  });
+});
+
+describe('decisionMatchesRole', () => {
+  it('returns true for null role (no filter)', () => {
+    expect(decisionMatchesRole('PM', null)).toBe(true);
+  });
+  it('matches QA against Reviewer alias', () => {
+    expect(decisionMatchesRole('Reviewer', 'qa')).toBe(true);
+    expect(decisionMatchesRole('QA', 'qa')).toBe(true);
+  });
+  it('does not match unrelated actor', () => {
+    expect(decisionMatchesRole('Director', 'pm')).toBe(false);
+  });
+});
+
+describe('contextOSFormat', () => {
+  it('formats token magnitudes compactly', () => {
+    expect(contextOSFormat.tokens(999)).toBe('999');
+    expect(contextOSFormat.tokens(1500)).toBe('1.5k');
+    expect(contextOSFormat.tokens(12000)).toBe('12k');
+  });
+  it('exposes a nominal context window constant', () => {
+    expect(NOMINAL_CONTEXT_WINDOW).toBe(128_000);
+  });
+});

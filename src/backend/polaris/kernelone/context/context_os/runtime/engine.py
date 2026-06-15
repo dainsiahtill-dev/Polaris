@@ -13,6 +13,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
@@ -25,6 +26,7 @@ from polaris.kernelone.errors import StateNotFoundError, ValidationError
 
 from ..bounded_cache import BoundedCache, LRUBoundedCache
 from ..classifier import DialogActClassifier
+from ..decision_log import build_context_result_id
 from ..diagnostics import record_contextos_projection_report
 from ..domain_adapters import (
     ContextDomainAdapter,
@@ -484,6 +486,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         recent_window_messages: int = 8,
         focus: str = "",
     ) -> ContextOSProjection:
+        self._validate_project_input(messages)
         # Phase 2 Fix: Snapshot -> Compute -> Validate/Commit paradigm
         # 1. Take snapshot under lock (minimal critical section)
         async with self._get_project_lock():
@@ -522,6 +525,118 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         from copy import deepcopy
 
         return deepcopy(self._last_projection_report)
+
+    def _validate_project_input(self, messages: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> None:
+        policy = self.policy.input_validation
+        if not isinstance(messages, (list, tuple)):
+            error = ValidationError(
+                "messages must be a list or tuple",
+                field="messages",
+                constraint="messages_type",
+            )
+            self._record_projection_error_receipt(error, input_stats={"message_count": 0})
+            raise error
+
+        message_count = len(messages)
+        if message_count > policy.max_messages:
+            error = ValidationError(
+                f"messages count {message_count} exceeds ContextOS limit {policy.max_messages}",
+                field="messages",
+                constraint="max_messages",
+            )
+            self._record_projection_error_receipt(
+                error,
+                input_stats={"message_count": message_count, "max_messages": policy.max_messages},
+            )
+            raise error
+
+        total_bytes = 0
+        largest_message_bytes = 0
+        largest_message_index = -1
+        for index, message in enumerate(messages):
+            message_bytes = self._project_input_message_bytes(message)
+            total_bytes += message_bytes
+            if message_bytes > largest_message_bytes:
+                largest_message_bytes = message_bytes
+                largest_message_index = index
+            if message_bytes > policy.max_message_size:
+                error = ValidationError(
+                    f"message {index} is {message_bytes} bytes; limit is {policy.max_message_size}",
+                    field="messages",
+                    constraint="max_message_size",
+                )
+                self._record_projection_error_receipt(
+                    error,
+                    input_stats={
+                        "message_count": message_count,
+                        "message_index": index,
+                        "message_bytes": message_bytes,
+                        "max_message_size": policy.max_message_size,
+                    },
+                )
+                raise error
+
+        if total_bytes > policy.max_total_input_size:
+            error = ValidationError(
+                f"ContextOS project input is {total_bytes} bytes; limit is {policy.max_total_input_size}",
+                field="messages",
+                constraint="max_total_input_size",
+            )
+            self._record_projection_error_receipt(
+                error,
+                input_stats={
+                    "message_count": message_count,
+                    "total_input_bytes": total_bytes,
+                    "max_total_input_size": policy.max_total_input_size,
+                    "largest_message_bytes": largest_message_bytes,
+                    "largest_message_index": largest_message_index,
+                },
+            )
+            raise error
+
+    @staticmethod
+    def _project_input_message_bytes(message: Any) -> int:
+        try:
+            payload = json.dumps(message, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+        except (TypeError, ValueError):
+            payload = str(message)
+        return len(payload.encode("utf-8"))
+
+    def _record_projection_error_receipt(
+        self,
+        error: ValidationError,
+        *,
+        input_stats: dict[str, Any],
+    ) -> None:
+        suffix = uuid.uuid4().hex[:12]
+        projection_id = f"ctxproj_error_{suffix}"
+        context_result_id = build_context_result_id(projection_id).replace("ctxres_", "ctxres_error_", 1)
+        receipt_id = f"contextos_project_error_{suffix}"
+        receipt_payload = {
+            "receipt_type": "contextos.projection_error",
+            "projection_id": projection_id,
+            "context_result_id": context_result_id,
+            "timestamp": _utc_now_iso(),
+            "error": {
+                "type": type(error).__name__,
+                "code": getattr(error, "code", "VALIDATION_ERROR"),
+                "message": str(error),
+                "field": error.field,
+                "constraint": error.constraint,
+            },
+            "input_stats": dict(input_stats),
+        }
+        self._receipt_store.put(receipt_id, json.dumps(receipt_payload, ensure_ascii=False, sort_keys=True))
+        self._last_projection_report = {
+            "projection_id": projection_id,
+            "context_result_id": context_result_id,
+            "status": "error",
+            "timestamp": receipt_payload["timestamp"],
+            "error": dict(receipt_payload["error"]),
+            "input_stats": dict(input_stats),
+            "receipt_refs": [f"contextos_error:{receipt_id}"],
+        }
+        record_contextos_projection_report(self._workspace, self._last_projection_report)
 
     def _take_snapshot(self) -> tuple[tuple[Any, ...], Any, dict[str, Any]]:
         """Capture minimal immutable snapshot of current state for thread-safe compute.
@@ -586,7 +701,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
             projection: The validated projection to commit.
         """
         # Authoritative service writeback from canonical projection snapshot.
-        self._truth_log.replace(projection.snapshot.transcript_log)
+        self._truth_log.replace_projection_view(projection.snapshot.transcript_log)
         self._working_state_manager.replace(projection.snapshot.working_state)
         self._working_state_manager.update(
             "transcript_log", [item.to_dict() for item in projection.snapshot.transcript_log]

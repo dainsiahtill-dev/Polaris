@@ -16,6 +16,7 @@ from polaris.kernelone.llm.engine.contracts import (
     Usage,
 )
 from polaris.kernelone.llm.engine.executor import AIExecutor
+from polaris.kernelone.llm.engine.telemetry import TelemetryCollector
 from polaris.kernelone.llm.types import InvokeResult
 
 
@@ -86,6 +87,7 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
 
     executor = AIExecutor(
         workspace=str(tmp_path),
+        telemetry=TelemetryCollector(),
         model_catalog=_ModelCatalog(),
         token_budget=_BudgetManager(),
         final_request_receipt_sink=receipts.append,
@@ -123,6 +125,7 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
                 "source": "roles.kernel.llm_caller.pre_projection",
             },
             "context_projection_id": "projection-1",
+            "context_result_id": "ctxres-1",
             "chat_messages": [
                 {"role": "system", "content": "SECRET SYSTEM TEXT"},
                 {"role": "user", "content": "SECRET PROMPT TEXT"},
@@ -147,7 +150,12 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
     assert payload["turn_id"] == "turn-1"
     assert payload["attempt"] == 2
     assert payload["fix_attempt_id"] == "fix-1"
+    assert payload["projection_id"] == "projection-1"
     assert payload["context_projection_id"] == "projection-1"
+    assert payload["context_result_id"] == "ctxres-1"
+    assert len(payload["final_request_receipt_id"]) == 64
+    assert len(payload["provider_request_id"]) == 64
+    assert payload["telemetry_trace_id"] == payload["trace_id"]
     assert payload["capability_profile_sha256"] == "a" * 64
     assert payload["capability_profile_source"] == "roles.kernel.llm_caller.pre_projection"
     assert len(payload["budget_admission_id"]) == 64
@@ -165,6 +173,12 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
     serialized_receipt = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
     assert "SECRET PROMPT TEXT" not in serialized_receipt
     assert "SECRET SYSTEM TEXT" not in serialized_receipt
+
+    telemetry_events = executor.telemetry.get_events()
+    invoke_end = [event for event in telemetry_events if event.event_type == "invoke_end"][-1]
+    assert invoke_end.metadata["context_result_id"] == "ctxres-1"
+    assert invoke_end.metadata["provider_request_id"] == payload["provider_request_id"]
+    assert invoke_end.metadata["final_request_receipt_id"] == payload["final_request_receipt_id"]
 
 
 @pytest.mark.asyncio
@@ -313,6 +327,65 @@ async def test_required_final_request_receipt_sink_failure_blocks_invoke(
 
     assert response.ok is False
     assert "receipt store unavailable" in str(response.error)
+
+
+@pytest.mark.asyncio
+async def test_traceability_ids_reach_telemetry_when_receipt_sink_is_optional(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _Provider:
+        def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
+            del prompt, model, config
+            return InvokeResult(
+                ok=True,
+                output="ok",
+                latency_ms=1,
+                usage=Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                raw={"provider": "fake"},
+            )
+
+    class _ProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _Provider | None:
+            assert provider_type == "fake"
+            return _Provider()
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.executor.get_provider_manager",
+        lambda: _ProviderManager(),
+    )
+
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        telemetry=TelemetryCollector(),
+        model_catalog=_ModelCatalog(),
+        token_budget=_BudgetManager(),
+    )
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+    response = await executor.invoke(
+        AIRequest(
+            task_type=TaskType.GENERATION,
+            role="director",
+            provider_id="fake-provider",
+            model="fake-model",
+            input="prompt",
+            options={"max_tokens": 128},
+            context={
+                "turn_id": "turn-optional",
+                "context_projection_id": "projection-optional",
+                "context_result_id": "ctxres-optional",
+            },
+        )
+    )
+
+    assert response.ok is True
+    invoke_end = [event for event in executor.telemetry.get_events() if event.event_type == "invoke_end"][-1]
+    assert invoke_end.metadata["projection_id"] == "projection-optional"
+    assert invoke_end.metadata["context_result_id"] == "ctxres-optional"
+    assert len(invoke_end.metadata["final_request_receipt_id"]) == 64
+    assert len(invoke_end.metadata["provider_request_id"]) == 64
+    assert invoke_end.metadata["telemetry_trace_id"] == invoke_end.trace_id
 
 
 @pytest.mark.asyncio

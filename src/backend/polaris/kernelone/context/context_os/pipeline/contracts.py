@@ -7,7 +7,9 @@ between pipeline stages.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+T = TypeVar("T")
 
 if TYPE_CHECKING:
     from polaris.kernelone.context.context_os.decision_log import ProjectionReport
@@ -21,6 +23,23 @@ if TYPE_CHECKING:
         TranscriptEventV2 as TranscriptEvent,
         WorkingStateV2 as WorkingState,
     )
+
+
+@dataclass(frozen=True)
+class StageResult(Generic[T]):
+    """Typed wrapper for one pipeline stage execution.
+
+    The value is always the concrete stage output type expected by downstream
+    stages.  When fallback_used=True, the value came from the stage-local
+    fallback factory after the real stage raised.
+    """
+
+    stage_name: str
+    value: T
+    ok: bool = True
+    fallback_used: bool = False
+    error_type: str = ""
+    error_message: str = ""
 
 
 @dataclass(frozen=True)

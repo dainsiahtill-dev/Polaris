@@ -15,10 +15,44 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime
 from typing import Any
+
+# Ranked root-cause tally (velocity harness, 2026-06-15): the per-batch report's
+# 4th field. Each known failure signature -> a one-line mechanism so a run log
+# becomes a ranked root-cause list without hand-grepping. Order is informational.
+_ROOT_CAUSE_SIGNATURES: tuple[tuple[str, str], ...] = (
+    ("BudgetExceededError", "context assembly over budget — crashes the turn before any write (order-4)"),
+    ("single_batch_contract_violation", "mutation phase emitted no write tool (write-tool wall, F16)"),
+    ("Empty write content", "write_file with blank content on a code/markup target (Wall 2)"),
+    ("director_no_materialized_changes", "turn produced no disk change (empty/no-tool/verify-miss)"),
+    ("tools_executed=0", "weak model emitted NO tool call at all — content stuck in reasoning (5th floor)"),
+    ("whole-file write, not an edit", "from-scratch create routed to edit_blocks and rejected"),
+    ("circuit_breaker", "step tripped the breaker after repeated failures -> dead-letter"),
+    ("missing_execution_evidence", "no changed_files / step target not covered"),
+    ("native_tool_call_decode_failed", "tool call could not be decoded (F14 decode wall)"),
+    ("scope_conflict", "transient same-scope claim conflict (requeued)"),
+    ("cognitive_runtime_blocked", "a HITL approval gate fired in headless mode"),
+)
+
+
+def root_cause_tally(log_path: str) -> list[tuple[int, str, str]]:
+    """Grep a run log for known failure signatures; return ranked (count, signature, mechanism)."""
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return []
+    tally: list[tuple[int, str, str]] = []
+    for signature, mechanism in _ROOT_CAUSE_SIGNATURES:
+        count = len(re.findall(re.escape(signature), text))
+        if count:
+            tally.append((count, signature, mechanism))
+    tally.sort(key=lambda row: row[0], reverse=True)
+    return tally
 
 
 def _parse_ts(value: str) -> datetime | None:
@@ -257,6 +291,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Task-market run forensics (I3)")
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--json", action="store_true", help="emit the full JSON report")
+    parser.add_argument(
+        "--log",
+        default="",
+        help="run log path; if given, append a ranked root-cause tally (the 4th per-batch field)",
+    )
     args = parser.parse_args()
 
     workspace_full = os.path.abspath(os.path.expanduser(args.workspace))
@@ -323,6 +362,14 @@ def main() -> int:
             f"  parent {parent['task_id']}: status={parent['status']} fanout={parent['fission_fanout']} "
             f"design_claims={parent['design_claims']} gate_requeues={parent['gate_requeues']}"
         )
+    if args.log:
+        tally = root_cause_tally(os.path.abspath(os.path.expanduser(args.log)))
+        if tally:
+            print("[forensics] 根因清单 (ranked root causes):")
+            for count, signature, mechanism in tally:
+                print(f"    {count:>4}  {signature} — {mechanism}")
+        else:
+            print("[forensics] 根因清单: (no known failure signatures in the log)")
     for step in report["steps"]:
         print(
             f"    step {step['step_id']}: status={step['status']} attempts={step['exec_attempts']} "

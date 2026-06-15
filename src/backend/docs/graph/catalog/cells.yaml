@@ -3327,6 +3327,7 @@ cells:
       - polaris.kernelone.context.context_os.snapshot
       - polaris.kernelone.context.context_os.budget_optimizer
       - polaris.kernelone.context.context_os.classifier
+      - polaris.kernelone.context.context_os.contracts
       - polaris.kernelone.context.context_os.policies
       - polaris.kernelone.context.context_os.ports
       - polaris.kernelone.workflow.engine
@@ -3336,11 +3337,17 @@ cells:
     public_contracts:
       modules:
         - polaris.kernelone.context.context_os
+        - polaris.kernelone.context.context_os.contracts
         - polaris.kernelone.workflow
       commands: []
-      queries: []
+      queries:
+        - ProjectionRequest
       events: []
-      results: []
+      results:
+        - ProjectionResult
+        - ProjectionReport
+        - ReceiptRef
+        - ContextWindowPolicy
       errors: []
     depends_on: []
     subgraphs: []
@@ -3355,7 +3362,6 @@ cells:
         - polaris/kernelone/workflow/tests/**
       gaps:
         - Cell newly created to consolidate kernelone paths
-        - Context OS contracts not yet fully defined
         - Workflow engine contracts not yet fully defined
 
   - id: kernelone.traceability

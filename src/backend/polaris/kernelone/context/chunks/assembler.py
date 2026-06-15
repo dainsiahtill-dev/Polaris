@@ -85,6 +85,12 @@ class AssemblyContext:
     continuity_summary_hash: str = ""
     continuity_source_messages: int = 0
 
+    # Unified ContextOS audit chain
+    projection_id: str = ""
+    context_result_id: str = ""
+    provider_request_id: str = ""
+    telemetry_trace_id: str = ""
+
     def to_strategy_metadata(self) -> StrategyMetadata | None:
         """Convert to StrategyMetadata if all fields are populated."""
         if not self.profile_id:
@@ -528,6 +534,10 @@ class PromptChunkAssembler:
             else "",
             assembly_duration_ms=assembly_duration_ms,
             cache_control_applied=cache_control_applied,
+            projection_id=context.projection_id,
+            context_result_id=context.context_result_id,
+            provider_request_id=context.provider_request_id,
+            telemetry_trace_id=context.telemetry_trace_id,
         )
 
         # Budget state

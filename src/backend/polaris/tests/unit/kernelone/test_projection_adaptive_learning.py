@@ -27,6 +27,18 @@ def _evt(seq: int, route: str, conf: float) -> SimpleNamespace:
     )
 
 
+def _evt_with_meta(seq: int, *, kind: str, route: str, metadata: tuple[tuple[str, str], ...]) -> SimpleNamespace:
+    return SimpleNamespace(
+        sequence=seq,
+        role="assistant",
+        content=f"{kind}:{seq}",
+        route=route,
+        event_id=f"e{seq}",
+        kind=kind,
+        metadata=metadata,
+    )
+
+
 def _high_route_window() -> list[SimpleNamespace]:
     return [_evt(1, "patch", 0.9), _evt(2, "patch", 0.95)]
 
@@ -125,3 +137,81 @@ def test_adaptive_ordering_env_switch_is_read_per_sort(monkeypatch: pytest.Monke
     monkeypatch.setenv("ENABLE_PROJECTION_ADAPTIVE_ORDERING", "1")
     adaptive = [event.sequence for event in engine.sort_events(events)]
     assert adaptive != chronological
+
+
+def test_adaptive_ordering_preserves_tool_call_result_causal_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_projection_adaptive_state()
+    monkeypatch.setenv("ENABLE_PROJECTION_ADAPTIVE_ORDERING", "1")
+    tool_call = _evt_with_meta(
+        1,
+        kind="tool_call",
+        route="clear",
+        metadata=(("tool_call_id", "call-1"), ("routing_confidence", "0.01")),
+    )
+    competing_patch = _evt_with_meta(
+        2,
+        kind="assistant",
+        route="patch",
+        metadata=(("routing_confidence", "0.99"),),
+    )
+    tool_result = _evt_with_meta(
+        3,
+        kind="tool_result",
+        route="patch",
+        metadata=(("tool_call_id", "call-1"), ("routing_confidence", "0.99")),
+    )
+
+    ordered = ProjectionEngine(learning_key="causal_tool").sort_events([tool_call, competing_patch, tool_result])
+    ordered_ids = [event.event_id for event in ordered]
+
+    call_index = ordered_ids.index("e1")
+    assert ordered_ids[call_index : call_index + 2] == ["e1", "e3"]
+
+
+def test_adaptive_ordering_preserves_handoff_and_transaction_causal_groups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_projection_adaptive_state()
+    monkeypatch.setenv("ENABLE_PROJECTION_ADAPTIVE_ORDERING", "1")
+    events = [
+        _evt_with_meta(
+            1,
+            kind="handoff_start",
+            route="clear",
+            metadata=(("handoff_id", "handoff-1"), ("routing_confidence", "0.01")),
+        ),
+        _evt_with_meta(
+            2,
+            kind="transaction_decision",
+            route="clear",
+            metadata=(("transaction_id", "tx-1"), ("routing_confidence", "0.01")),
+        ),
+        _evt_with_meta(
+            3,
+            kind="assistant",
+            route="patch",
+            metadata=(("routing_confidence", "0.99"),),
+        ),
+        _evt_with_meta(
+            4,
+            kind="handoff_result",
+            route="patch",
+            metadata=(("handoff_id", "handoff-1"), ("routing_confidence", "0.99")),
+        ),
+        _evt_with_meta(
+            5,
+            kind="transaction_commit",
+            route="patch",
+            metadata=(("transaction_id", "tx-1"), ("routing_confidence", "0.99")),
+        ),
+    ]
+
+    ordered = ProjectionEngine(learning_key="causal_handoff_tx").sort_events(events)
+    ordered_ids = [event.event_id for event in ordered]
+
+    handoff_index = ordered_ids.index("e1")
+    tx_index = ordered_ids.index("e2")
+    assert ordered_ids[handoff_index : handoff_index + 2] == ["e1", "e4"]
+    assert ordered_ids[tx_index : tx_index + 2] == ["e2", "e5"]

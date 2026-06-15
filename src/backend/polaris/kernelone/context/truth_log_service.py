@@ -376,7 +376,11 @@ class TruthLogService:
         session_id: str | None = None,
         max_pending_index_tasks: int | None = None,
     ) -> None:
+        # Mutable projection view consumed by ContextOS projection snapshots.
         self._entries: list[dict[str, Any]] = []
+        # Durable append journal: append() extends this list; projection restore
+        # operations must not rewrite it.
+        self._journal_entries: list[dict[str, Any]] = []
         self._entries_lock = threading.Lock()
         self._workspace = str(workspace or ".")
         self._session_id = session_id
@@ -459,8 +463,9 @@ class TruthLogService:
         """Append an entry to the truth log (sync)."""
         normalized = self._normalize_entry(entry)
         with self._entries_lock:
-            entry_id = f"tl_{len(self._entries)}"
-            self._entries.append(normalized)
+            entry_id = f"tl_{len(self._journal_entries)}"
+            self._journal_entries.append(self._normalize_entry(normalized))
+            self._entries.append(self._normalize_entry(normalized))
         # Index update: fire-and-forget in async context, sync fallback otherwise
         try:
             loop = asyncio.get_running_loop()
@@ -490,8 +495,9 @@ class TruthLogService:
         """Append an entry to the truth log (async version with proper indexing)."""
         with self._entries_lock:
             normalized = self._normalize_entry(entry)
-            entry_id = f"tl_{len(self._entries)}"
-            self._entries.append(normalized)
+            entry_id = f"tl_{len(self._journal_entries)}"
+            self._journal_entries.append(self._normalize_entry(normalized))
+            self._entries.append(self._normalize_entry(normalized))
         await self._index_entry_async(normalized, entry_id)
 
     def append_many(self, entries: Iterable[dict[str, Any] | Any]) -> None:
@@ -500,14 +506,15 @@ class TruthLogService:
             self.append(entry)
 
     def replace(self, entries: Iterable[dict[str, Any] | Any]) -> None:
-        """Replace the in-memory view with a canonical transcript snapshot.
+        """Compatibility wrapper for replacing the mutable projection view."""
+        self.replace_projection_view(entries)
 
-        WARNING: This method violates the append-only principle of TruthLog.
-        It should ONLY be used during trusted snapshot restore (e.g., after crash recovery
-        or when loading a checkpoint). Normal operation should use append() only.
+    def replace_projection_view(self, entries: Iterable[dict[str, Any] | Any]) -> None:
+        """Replace only the mutable projection view.
 
-        This method exists because snapshot restore needs to rebuild the in-memory state
-        from a canonical transcript, not append to existing entries.
+        The durable append journal remains append-only. Runtime projection commit
+        and trusted snapshot restore use this method to rebuild the active view
+        from canonical projection state without rewriting historical truth.
         """
         with self._entries_lock:
             self._entries = [self._normalize_entry(entry) for entry in entries]
@@ -524,6 +531,16 @@ class TruthLogService:
         """Return a deep-copied list suitable for replay."""
         with self._entries_lock:
             return [self._normalize_entry(e) for e in self._entries]
+
+    def get_journal_entries(self) -> tuple[dict[str, Any], ...]:
+        """Return durable append journal entries as isolated copies."""
+        with self._entries_lock:
+            return tuple(self._normalize_entry(e) for e in self._journal_entries)
+
+    def replay_journal(self) -> list[dict[str, Any]]:
+        """Return the durable append journal as a deep-copied replay list."""
+        with self._entries_lock:
+            return [self._normalize_entry(e) for e in self._journal_entries]
 
     # ── Semantic Search API ──────────────────────────────────────────────────
 

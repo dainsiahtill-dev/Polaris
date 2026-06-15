@@ -261,19 +261,31 @@ def build_final_request_observability_fields(
     context_projection_id = _non_empty_str(
         payload.get("context_projection_id") or turn_payload.get("projection_id") or audit_payload.get("prompt_digest")
     )
+    projection_id = _non_empty_str(payload.get("projection_id") or context_projection_id)
+    context_result_id = _non_empty_str(
+        payload.get("context_result_id")
+        or turn_payload.get("context_result_id")
+        or audit_payload.get("context_result_id")
+    )
+    if context_result_id is None and projection_id:
+        context_result_id = f"ctxres_{hashlib.sha256(projection_id.encode('utf-8')).hexdigest()[:12]}"
     fields = {
         "turn_id": turn_id,
         "attempt": _coerce_positive_int(payload.get("attempt") or payload.get("attempt_no")),
         "fix_attempt_id": _non_empty_str(payload.get("fix_attempt_id") or payload.get("repair_attempt_id")),
+        "projection_id": projection_id,
         "context_projection_id": context_projection_id,
+        "context_result_id": context_result_id,
         "capability_profile_sha256": capability_ref["sha256"],
         "capability_profile_source": capability_ref["source"],
+        "telemetry_trace_id": trace_id,
     }
     fields["budget_admission_id"] = _stable_sha256_json(
         {
             "trace_id": trace_id,
             "turn_id": fields["turn_id"],
             "context_projection_id": fields["context_projection_id"],
+            "context_result_id": fields["context_result_id"],
             "capability_profile_sha256": fields["capability_profile_sha256"],
             "provider_id": provider_id,
             "model": model,
@@ -281,6 +293,23 @@ def build_final_request_observability_fields(
             "token_budget": token_budget,
             "input_sha256": input_sha256,
             "effective_prompt_sha256": effective_prompt_sha256,
+        }
+    )
+    fields["final_request_receipt_id"] = _stable_sha256_json(
+        {
+            "kind": "contextos.final_request",
+            "trace_id": trace_id,
+            "budget_admission_id": fields["budget_admission_id"],
+            "context_result_id": fields["context_result_id"],
+        }
+    )
+    fields["provider_request_id"] = _stable_sha256_json(
+        {
+            "kind": "provider.request",
+            "trace_id": trace_id,
+            "final_request_receipt_id": fields["final_request_receipt_id"],
+            "provider_id": provider_id,
+            "model": model,
         }
     )
     return fields
@@ -295,6 +324,9 @@ def build_final_request_trace_refs(
         trace_id,
         observability_fields.get("turn_id"),
         observability_fields.get("context_projection_id"),
+        observability_fields.get("context_result_id"),
+        observability_fields.get("final_request_receipt_id"),
+        observability_fields.get("provider_request_id"),
         observability_fields.get("capability_profile_sha256"),
         observability_fields.get("budget_admission_id"),
     ]

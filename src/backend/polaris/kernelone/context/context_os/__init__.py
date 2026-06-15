@@ -20,6 +20,7 @@ from .attention.embeddings import EmbeddingProvider
 from .attention.graph import Edge, EdgeType, EventGraph
 from .attention.propagation import GraphPropagator, PropagationConfig, PropagationResult
 from .classifier import DialogActClassifier
+from .contracts import ProjectionRequest, ProjectionResult, ReceiptRef
 from .decision_log import (
     AttentionScore,
     ContextDecision,
@@ -102,7 +103,7 @@ from .phase_detection import (
 from .pipeline.attention_aware_stages import AttentionAwareWindowCollector
 from .pipeline.enhanced_runner import EnhancedPipelineRunner
 from .pipeline.phase_aware_stages import PhaseAwareBudgetPlannerStage
-from .policies import StateFirstContextOSPolicy
+from .policies import ContextWindowPolicy, StateFirstContextOSPolicy
 from .replay_suite_generator import (
     create_multi_turn_case,
     create_short_session_case,
@@ -185,6 +186,7 @@ __all__ = [
     "ContextOSSnapshot",
     "ContextSlicePlan",
     "ContextSliceSelection",
+    "ContextWindowPolicy",
     "DecisionEntry",
     "DialogAct",
     "DialogActClassifier",
@@ -218,10 +220,13 @@ __all__ = [
     "PredictionStrategy",
     "PredictiveCompressor",
     "ProjectionReport",
+    "ProjectionRequest",
+    "ProjectionResult",
     "PropagationConfig",
     "PropagationResult",
     "ReasonCode",
     "ReasonCodeGenerator",
+    "ReceiptRef",
     "ResolutionEntry",
     "ResolutionLevel",
     "RoutingClass",

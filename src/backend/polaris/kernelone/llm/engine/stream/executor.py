@@ -213,11 +213,6 @@ class StreamExecutor:
         receipt_required = coerce_required_flag(context.get("cognitive_runtime_required")) or coerce_required_flag(
             context.get("context_os_expected")
         )
-        sink = self.final_request_receipt_sink
-        if sink is None:
-            if receipt_required:
-                raise RuntimeError("final request receipt sink required but unavailable")
-            return
         tools = invoke_cfg.get("tools")
         tool_count = len(tools) if isinstance(tools, list) else 0
         chat_count_before = len(chat_messages_before) if isinstance(chat_messages_before, list) else 0
@@ -239,6 +234,28 @@ class StreamExecutor:
             input_sha256=input_sha256,
             effective_prompt_sha256=effective_prompt_sha256,
         )
+        if isinstance(request.context, dict):
+            request.context.update(
+                {
+                    key: value
+                    for key, value in observability_fields.items()
+                    if key
+                    in {
+                        "projection_id",
+                        "context_projection_id",
+                        "context_result_id",
+                        "final_request_receipt_id",
+                        "provider_request_id",
+                        "telemetry_trace_id",
+                        "budget_admission_id",
+                    }
+                }
+            )
+        sink = self.final_request_receipt_sink
+        if sink is None:
+            if receipt_required:
+                raise RuntimeError("final request receipt sink required but unavailable")
+            return
         receipt = {
             "receipt_type": "contextos.final_request",
             "payload": {
@@ -323,6 +340,21 @@ class StreamExecutor:
             return int(value or 0)
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _traceability_metadata(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        keys = (
+            "projection_id",
+            "context_projection_id",
+            "context_result_id",
+            "final_request_receipt_id",
+            "provider_request_id",
+            "telemetry_trace_id",
+            "budget_admission_id",
+        )
+        return {key: value.get(key) for key in keys if value.get(key)}
 
     def _create_stream_result_tracker(self, trace_id: str) -> _StreamResultTracker:
         return _StreamResultTracker(trace_id=trace_id)
@@ -836,6 +868,7 @@ class StreamExecutor:
             structured=structured,
             trace_id=trace_id,
             thinking=collected_reasoning if collected_reasoning else None,
+            metadata=self._traceability_metadata(request.context),
         )
 
         if self.telemetry:

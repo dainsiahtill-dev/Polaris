@@ -484,6 +484,7 @@ class AIExecutor:
                     model_spec=model_spec,
                     budget=safe_token_budget,
                 ),
+                metadata=self._traceability_metadata(request.context),
             )
         else:
             return AIResponse.failure(
@@ -495,6 +496,7 @@ class AIExecutor:
                 # recovery consumer can salvage an answer the model left in
                 # 'thinking' before exhausting the budget (I3-r17). None-safe.
                 thinking=result.thinking,
+                metadata=self._traceability_metadata(request.context),
             )
 
     def _resolve_provider_model(self, request: AIRequest) -> tuple[str | None, str | None]:
@@ -550,11 +552,6 @@ class AIExecutor:
         receipt_required = coerce_required_flag(context.get("cognitive_runtime_required")) or coerce_required_flag(
             context.get("context_os_expected")
         )
-        sink = self.final_request_receipt_sink
-        if sink is None:
-            if receipt_required:
-                raise RuntimeError("final request receipt sink required but unavailable")
-            return
         tools = invoke_cfg.get("tools")
         tool_count = len(tools) if isinstance(tools, list) else 0
         chat_count_before = len(chat_messages_before) if isinstance(chat_messages_before, list) else 0
@@ -576,6 +573,28 @@ class AIExecutor:
             input_sha256=input_sha256,
             effective_prompt_sha256=effective_prompt_sha256,
         )
+        if isinstance(request.context, dict):
+            request.context.update(
+                {
+                    key: value
+                    for key, value in observability_fields.items()
+                    if key
+                    in {
+                        "projection_id",
+                        "context_projection_id",
+                        "context_result_id",
+                        "final_request_receipt_id",
+                        "provider_request_id",
+                        "telemetry_trace_id",
+                        "budget_admission_id",
+                    }
+                }
+            )
+        sink = self.final_request_receipt_sink
+        if sink is None:
+            if receipt_required:
+                raise RuntimeError("final request receipt sink required but unavailable")
+            return
         receipt = {
             "receipt_type": "contextos.final_request",
             "payload": {
@@ -662,6 +681,21 @@ class AIExecutor:
         safe_text = safe_observability_payload(text)
         text = str(safe_text or "").strip()
         return text or None
+
+    @staticmethod
+    def _traceability_metadata(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        keys = (
+            "projection_id",
+            "context_projection_id",
+            "context_result_id",
+            "final_request_receipt_id",
+            "provider_request_id",
+            "telemetry_trace_id",
+            "budget_admission_id",
+        )
+        return {key: value.get(key) for key in keys if value.get(key)}
 
     def _build_raw_payload(
         self,

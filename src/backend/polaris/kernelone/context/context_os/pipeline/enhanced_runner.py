@@ -47,6 +47,7 @@ from .attention_aware_stages import AttentionAwareWindowCollector
 from .contracts import (
     PipelineInput,
     PipelineOutput,
+    StageResult,
 )
 from .phase_aware_stages import PhaseAwareBudgetPlannerStage
 from .runner import PipelineRunner
@@ -174,55 +175,130 @@ class EnhancedPipelineRunner(PipelineRunner):
 
         projection_id = f"ctxproj_{uuid.uuid4().hex[:12]}"
         stage_durations: dict[str, float] = {}
+        stage_results: list[StageResult[Any]] = []
 
         # Stage 1: TranscriptMerger
         t0 = time.monotonic()
-        merger_out = self._run_stage("TranscriptMerger", self._merger.process, inp)
+        merger_stage = self._run_stage(
+            "TranscriptMerger",
+            self._merger.process,
+            inp,
+            fallback_factory=lambda _exc: self._fallback_merger(inp),
+            decision_log=decision_log,
+        )
+        stage_results.append(merger_stage)
+        merger_out = merger_stage.value
         stage_durations["TranscriptMerger"] = (time.monotonic() - t0) * 1000
 
         # Stage 2: Canonicalizer
         t0 = time.monotonic()
-        canon_out = self._run_stage("Canonicalizer", self._canonicalizer.process, inp, merger_out)
+        canon_stage = self._run_stage(
+            "Canonicalizer",
+            self._canonicalizer.process,
+            inp,
+            merger_out,
+            fallback_factory=lambda _exc: self._fallback_canonicalizer(inp, merger_out),
+            decision_log=decision_log,
+        )
+        stage_results.append(canon_stage)
+        canon_out = canon_stage.value
         stage_durations["Canonicalizer"] = (time.monotonic() - t0) * 1000
 
         # Stage 3: StatePatcher
         t0 = time.monotonic()
-        patcher_out = self._run_stage("StatePatcher", self._patcher.process, canon_out)
+        patcher_stage = self._run_stage(
+            "StatePatcher",
+            self._patcher.process,
+            canon_out,
+            fallback_factory=lambda _exc: self._fallback_state_patcher(),
+            decision_log=decision_log,
+        )
+        stage_results.append(patcher_stage)
+        patcher_out = patcher_stage.value
         stage_durations["StatePatcher"] = (time.monotonic() - t0) * 1000
 
         # Stage 4: BudgetPlanner (Phase-Aware or Standard)
         t0 = time.monotonic()
         if self._enable_phase_aware_budgeting:
-            budget_out, phase_result = self._phase_aware_planner.process(patcher_out, canon_out)
+            budget_stage = self._run_stage(
+                "BudgetPlanner",
+                self._phase_aware_planner.process,
+                patcher_out,
+                canon_out,
+                fallback_factory=lambda _exc: (self._fallback_budget_planner(), None),
+                decision_log=decision_log,
+            )
+            stage_results.append(budget_stage)
+            budget_out, phase_result = budget_stage.value
             if phase_result and hasattr(self, "_attention_collector"):
                 # Update attention collector with detected phase
                 self._attention_collector.current_phase = phase_result.phase
             if self._metrics_collector and phase_result:
                 self._metrics_collector.record_phase_transition("unknown", phase_result.phase.value)
         else:
-            budget_out = self._run_stage("BudgetPlanner", self._budget_planner.process, patcher_out, canon_out)
+            budget_stage = self._run_stage(
+                "BudgetPlanner",
+                self._budget_planner.process,
+                patcher_out,
+                canon_out,
+                fallback_factory=lambda _exc: self._fallback_budget_planner(),
+                decision_log=decision_log,
+            )
+            stage_results.append(budget_stage)
+            budget_out = budget_stage.value
         stage_durations["BudgetPlanner"] = (time.monotonic() - t0) * 1000
 
         # Stage 5: WindowCollector (Attention-Aware or Standard)
         t0 = time.monotonic()
         if self._enable_attention_scoring:
-            window_out = self._attention_collector.process(budget_out, patcher_out, canon_out, inp, decision_log)
-        else:
-            window_out = self._run_stage(
-                "WindowCollector", self._window_collector.process, budget_out, patcher_out, canon_out, inp, decision_log
+            window_stage = self._run_stage(
+                "WindowCollector",
+                self._attention_collector.process,
+                budget_out,
+                patcher_out,
+                canon_out,
+                inp,
+                decision_log,
+                fallback_factory=lambda _exc: self._fallback_window_collector(inp, canon_out),
+                decision_log=decision_log,
             )
+            stage_results.append(window_stage)
+            window_out = window_stage.value
+        else:
+            window_stage = self._run_stage(
+                "WindowCollector",
+                self._window_collector.process,
+                budget_out,
+                patcher_out,
+                canon_out,
+                inp,
+                decision_log,
+                fallback_factory=lambda _exc: self._fallback_window_collector(inp, canon_out),
+                decision_log=decision_log,
+            )
+            stage_results.append(window_stage)
+            window_out = window_stage.value
         stage_durations["WindowCollector"] = (time.monotonic() - t0) * 1000
 
         # Stage 6: EpisodeSealer
         t0 = time.monotonic()
-        episode_out = self._run_stage(
-            "EpisodeSealer", self._episode_sealer.process, window_out, patcher_out, canon_out, inp
+        episode_stage = self._run_stage(
+            "EpisodeSealer",
+            self._episode_sealer.process,
+            window_out,
+            patcher_out,
+            canon_out,
+            inp,
+            fallback_factory=lambda _exc: self._fallback_episode_sealer(inp),
+            decision_log=decision_log,
         )
+        stage_results.append(episode_stage)
+        episode_out = episode_stage.value
         stage_durations["EpisodeSealer"] = (time.monotonic() - t0) * 1000
 
         # Stage 7: ArtifactSelector
         t0 = time.monotonic()
-        selector_out = self._run_stage(
+        selector_stage = self._run_stage(
             "ArtifactSelector",
             self._artifact_selector.process,
             episode_out,
@@ -231,8 +307,22 @@ class EnhancedPipelineRunner(PipelineRunner):
             budget_out,
             canon_out,
             inp,
+            fallback_factory=lambda _exc: self._fallback_artifact_selector(episode_out),
+            decision_log=decision_log,
         )
+        stage_results.append(selector_stage)
+        selector_out = selector_stage.value
         stage_durations["ArtifactSelector"] = (time.monotonic() - t0) * 1000
+        stage_fallbacks = tuple(result.stage_name for result in stage_results if result.fallback_used)
+        errors = tuple(
+            {
+                "stage": result.stage_name,
+                "error_type": result.error_type,
+                "error_message": result.error_message,
+            }
+            for result in stage_results
+            if result.fallback_used
+        )
 
         # Build projection report
         report = decision_log.build_projection_report(
@@ -240,6 +330,8 @@ class EnhancedPipelineRunner(PipelineRunner):
             run_id=adapter_id,
             budget_plan=budget_out.budget_plan,
             stage_durations_ms=stage_durations,
+            errors=errors,
+            stage_fallbacks=stage_fallbacks,
         )
 
         # Record metrics

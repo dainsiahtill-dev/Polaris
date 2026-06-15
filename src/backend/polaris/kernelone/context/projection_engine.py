@@ -327,7 +327,83 @@ class ProjectionEngine:
             )
             return (-priority_score, sequence)
 
-        return sorted(events, key=event_priority_key)
+        return self._preserve_causal_groups(sorted(events, key=event_priority_key), events)
+
+    def _preserve_causal_groups(self, ordered_events: list[Any], original_events: list[Any]) -> list[Any]:
+        groups: dict[str, list[Any]] = {}
+        for event in original_events:
+            group_key = self._causal_group_key(event)
+            if group_key:
+                groups.setdefault(group_key, []).append(event)
+
+        if not groups:
+            return ordered_events
+
+        ordered: list[Any] = []
+        emitted_ids: set[int] = set()
+        emitted_groups: set[str] = set()
+        for event in ordered_events:
+            event_id = id(event)
+            if event_id in emitted_ids:
+                continue
+            group_key = self._causal_group_key(event)
+            if group_key and group_key not in emitted_groups:
+                group_events = sorted(
+                    groups.get(group_key, [event]), key=lambda item: int(getattr(item, "sequence", 0))
+                )
+                for grouped_event in group_events:
+                    grouped_id = id(grouped_event)
+                    if grouped_id not in emitted_ids:
+                        ordered.append(grouped_event)
+                        emitted_ids.add(grouped_id)
+                emitted_groups.add(group_key)
+                continue
+            if group_key and group_key in emitted_groups:
+                emitted_ids.add(event_id)
+                continue
+            ordered.append(event)
+            emitted_ids.add(event_id)
+        return ordered
+
+    def _causal_group_key(self, event: Any) -> str:
+        kind = str(getattr(event, "kind", "") or "").strip().lower()
+        metadata = getattr(event, "metadata", ())
+
+        explicit_group = str(get_metadata_value(metadata, "causal_group_id", "") or "").strip()
+        if explicit_group:
+            return f"explicit:{explicit_group}"
+
+        if "tool_call" in kind or "tool_result" in kind:
+            tool_call_id = str(
+                get_metadata_value(metadata, "tool_call_id")
+                or get_metadata_value(metadata, "call_id")
+                or get_metadata_value(metadata, "tool_id")
+                or ""
+            ).strip()
+            if tool_call_id:
+                return f"tool:{tool_call_id}"
+
+        if "handoff" in kind:
+            handoff_id = str(
+                get_metadata_value(metadata, "handoff_id")
+                or get_metadata_value(metadata, "handoff_ref")
+                or get_metadata_value(metadata, "session_handoff_id")
+                or ""
+            ).strip()
+            if handoff_id:
+                return f"handoff:{handoff_id}"
+
+        if "transaction" in kind:
+            transaction_id = str(
+                get_metadata_value(metadata, "transaction_id")
+                or get_metadata_value(metadata, "tx_id")
+                or get_metadata_value(metadata, "decision_id")
+                or ""
+            ).strip()
+            if transaction_id:
+                return f"transaction:{transaction_id}"
+
+        return ""
 
     def _compute_projection_quality(
         self,

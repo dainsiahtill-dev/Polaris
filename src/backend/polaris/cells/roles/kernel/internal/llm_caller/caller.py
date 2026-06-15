@@ -498,6 +498,7 @@ class LLMCaller:
         context_projection_id = str(
             context_metadata.get("projection_id") or context_os_audit.get("prompt_digest") or ""
         ).strip()
+        context_result_id = str(context_metadata.get("context_result_id") or "").strip()
         ai_request = AIRequest(
             task_type=TaskType.DIALOGUE,
             role=profile.role_id,
@@ -513,6 +514,7 @@ class LLMCaller:
                 "capability_profile": capability_profile,
                 "capability_profile_ref": capability_profile_ref if isinstance(capability_profile_ref, dict) else {},
                 "context_projection_id": context_projection_id,
+                "context_result_id": context_result_id,
                 # ADR-0090 W1.5: carry the STRUCTURED message array alongside the
                 # flattened input so OpenAI-compatible providers can preserve real
                 # chat-template role anchoring (weak local models lose system/user

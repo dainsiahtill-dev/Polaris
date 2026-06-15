@@ -1,0 +1,132 @@
+card_id: "vc-20260615-contextos-core-contract-hardening"
+bug_summary: >
+  ContextOS core has several structural hardening gaps: StateFirstContextOS.project()
+  accepts unbounded input before projection, PipelineRunner stage failures abort
+  the turn instead of producing typed degraded output, audit identifiers are not
+  a single causal chain across projection/final-request/provider/telemetry, and
+  TruthLogService exposes an append-only name while runtime commits still call a
+  replace-style mutable view operation.
+
+classification: structural
+
+bug_path:
+  file: "src/backend/polaris/kernelone/context/context_os/runtime/engine.py"
+  method: "StateFirstContextOS.project"
+  symptom: "Oversized projection input can enter the pipeline without a fail-closed receipt."
+
+assumptions:
+  - id: "A1"
+    statement: >
+      InputValidationPolicy already defines the authoritative message count,
+      per-message byte, and total-input byte limits; the bug is that project()
+      does not enforce it.
+    status: verified
+    evidence: >
+      policies.py defines InputValidationPolicy; runtime/engine.py project()
+      currently snapshots and calls the pipeline without preflight validation.
+  - id: "A2"
+    statement: >
+      Pipeline fallback must be typed and stage-local so a failed stage can be
+      audited while later stages receive a valid output object.
+    status: verified
+    evidence: >
+      pipeline/runner.py has a TODO in _run_stage noting missing per-stage
+      fallback factories; pipeline/contracts.py has concrete stage output types.
+  - id: "A3"
+    statement: >
+      ProjectionReport and final request receipts are the right surfaces for the
+      projection_id -> context_result_id -> final_request_receipt_id ->
+      provider_request_id -> telemetry chain.
+    status: verified
+    evidence: >
+      decision_log.py owns ProjectionReport; chunks/receipt.py owns
+      FinalRequestReceipt; llm/engine/_executor_base.py already creates
+      provider-bound final request observability fields.
+  - id: "A4"
+    statement: >
+      TruthLogService can be split compatibly by adding explicit durable journal
+      and mutable projection view APIs while keeping append()/get_entries()
+      behavior stable.
+    status: verified
+    evidence: >
+      truth_log_service.py stores entries in one list and runtime/engine.py
+      calls replace() during projection commit.
+  - id: "A5"
+    statement: >
+      Adaptive ordering must remain enabled but causal groups must be preserved
+      for tool calls/results, handoffs, and transaction decision messages.
+    status: verified
+    evidence: >
+      ProjectionEngine.sort_events() currently sorts each event independently by
+      adaptive priority and sequence tie-breaker.
+
+pre_mortem:
+  failure_point: >
+    The likely wrong fix is either to swallow pipeline exceptions without typed
+    output, losing auditability, or to over-fit causal ordering by disabling
+    adaptive ordering completely. The second risk is adding receipt fields in
+    one layer but not carrying them into telemetry metadata.
+  risk_zone:
+    - "src/backend/polaris/kernelone/context/context_os/runtime/engine.py"
+    - "src/backend/polaris/kernelone/context/context_os/pipeline/runner.py"
+    - "src/backend/polaris/kernelone/context/context_os/decision_log.py"
+    - "src/backend/polaris/kernelone/context/truth_log_service.py"
+    - "src/backend/polaris/kernelone/context/projection_engine.py"
+    - "src/backend/polaris/kernelone/llm/engine/_executor_base.py"
+    - "src/backend/polaris/kernelone/llm/engine/executor.py"
+
+verification_plan:
+  unit_tests:
+    - file: "src/backend/polaris/kernelone/context/context_os/tests/test_contextos_core_contract_hardening.py"
+      description: "Input hard gates reject max_messages, max_message_size, and max_total_input_size with error receipts."
+      expected: "ValidationError raised, no pipeline execution, latest ProjectionReport is an error report with receipt_refs."
+      status: passed
+    - file: "src/backend/polaris/kernelone/context/context_os/tests/test_contextos_core_contract_hardening.py"
+      description: "Pipeline stage exception returns a minimal projection and records a fallback decision/report."
+      expected: "PipelineRunner.project() does not raise and report records fallback stage metadata."
+      status: passed
+    - file: "src/backend/polaris/tests/unit/kernelone/test_projection_adaptive_learning.py"
+      description: "Adaptive ordering preserves causal groups for tool_call/tool_result and transaction messages."
+      expected: "Grouped events remain adjacent and chronological inside each group after adaptive sort."
+      status: passed
+    - file: "src/backend/polaris/kernelone/context/tests/test_context_os_four_layer_split.py"
+      description: "TruthLog exposes durable journal plus mutable projection view without mutating journal on view replace."
+      expected: "append() extends journal; replace_projection_view() changes view only; replay_journal() keeps append-only truth."
+      status: passed
+    - file: "src/backend/polaris/kernelone/context/tests/test_final_request_receipt.py"
+      description: "FinalRequestReceipt serializes projection/result/provider/telemetry chain fields."
+      expected: "to_dict() contains traceability chain fields without changing existing receipt construction."
+      status: passed
+    - file: "src/backend/polaris/kernelone/llm/engine/tests/test_final_request_receipt.py"
+      description: "Provider-bound receipt and telemetry metadata carry unified audit IDs."
+      expected: "payload has context_result_id, final_request_receipt_id, provider_request_id, telemetry_trace_id."
+      status: passed
+  integration_tests:
+    - description: "Focused ContextOS hardening regression"
+      command: >
+        PYTHONUTF8=1 LC_ALL=C.UTF-8 PYTHONPATH=src/backend python -m pytest -q
+        src/backend/polaris/kernelone/context/context_os/tests/test_contextos_core_contract_hardening.py
+        src/backend/polaris/kernelone/context/tests/test_context_os_four_layer_split.py
+        src/backend/polaris/tests/unit/kernelone/test_projection_adaptive_learning.py
+        src/backend/polaris/kernelone/context/tests/test_final_request_receipt.py
+        src/backend/polaris/kernelone/llm/engine/tests/test_final_request_receipt.py
+      status: passed
+      result: "236 passed in 1.58s"
+    - description: "KernelOne release gate"
+      command: >
+        PYTHONUTF8=1 LC_ALL=C.UTF-8 PYTHONPATH=src/backend python
+        src/backend/docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+      status: passed
+      result: "exit 0"
+  manual_check:
+    - "Inspect src/backend/polaris/cells/kernelone/core/cell.yaml for public ContextOS contract entries."
+
+related_adrs:
+  - "ADR-0071"
+  - "ADR-0090"
+
+sign_off:
+  completed_by: "codex"
+  completed_at: "2026-06-15T16:11:26+08:00"
+  verified_by: "codex"
+  verified_at: "2026-06-15T16:11:26+08:00"

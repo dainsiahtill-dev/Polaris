@@ -186,6 +186,13 @@ class FinalRequestReceipt:
     # Cache control applied (T6-5 fix)
     cache_control_applied: tuple[str, ...] = ()
 
+    # Unified ContextOS audit chain
+    projection_id: str = ""
+    context_result_id: str = ""
+    final_request_receipt_id: str = ""
+    provider_request_id: str = ""
+    telemetry_trace_id: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for JSON output."""
         return {
@@ -216,6 +223,13 @@ class FinalRequestReceipt:
                 "role_id": self.role_id,
                 "session_id": self.session_id,
                 "turn_index": self.turn_index,
+            },
+            "traceability": {
+                "projection_id": self.projection_id,
+                "context_result_id": self.context_result_id,
+                "final_request_receipt_id": self.final_request_receipt_id or self.receipt_id,
+                "provider_request_id": self.provider_request_id,
+                "telemetry_trace_id": self.telemetry_trace_id,
             },
         }
 
@@ -338,6 +352,10 @@ class FinalRequestReceipt:
         assembly_start: str | None = None,
         assembly_duration_ms: int = 0,
         cache_control_applied: list[str] | None = None,
+        projection_id: str = "",
+        context_result_id: str = "",
+        provider_request_id: str = "",
+        telemetry_trace_id: str = "",
     ) -> FinalRequestReceipt:
         """Build a receipt from assembled chunks.
 
@@ -419,6 +437,11 @@ class FinalRequestReceipt:
             role_id=role_id,
             session_id=session_id,
             turn_index=turn_index,
+            projection_id=projection_id,
+            context_result_id=context_result_id,
+            final_request_receipt_id=receipt_id,
+            provider_request_id=provider_request_id,
+            telemetry_trace_id=telemetry_trace_id,
         )
 
 

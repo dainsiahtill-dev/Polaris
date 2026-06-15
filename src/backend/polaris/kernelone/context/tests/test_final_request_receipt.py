@@ -347,6 +347,42 @@ class TestFinalRequestReceipt:
         assert receipt.total_chars == 240  # 200 + 40
         assert receipt.chunk_count == 2
 
+    def test_build_serializes_unified_audit_chain(self) -> None:
+        """FinalRequestReceipt should carry the projection/result/provider/telemetry chain."""
+        from polaris.kernelone.context.chunks.taxonomy import ChunkMetadata, ChunkType, PromptChunk
+
+        chunks = [
+            PromptChunk(
+                chunk_type=ChunkType.SYSTEM,
+                content="System prompt",
+                metadata=ChunkMetadata(
+                    chunk_type=ChunkType.SYSTEM,
+                    source="role_profile",
+                    estimated_tokens=10,
+                    char_count=40,
+                ),
+            ),
+        ]
+
+        receipt = FinalRequestReceipt.build(
+            chunks=chunks,
+            model="fake-model",
+            provider="fake-provider",
+            model_window=4096,
+            safety_margin=0.9,
+            projection_id="ctxproj_abc",
+            context_result_id="ctxres_abc",
+            provider_request_id="provider_req_abc",
+            telemetry_trace_id="trace-abc",
+        )
+
+        payload = receipt.to_dict()
+        assert payload["traceability"]["projection_id"] == "ctxproj_abc"
+        assert payload["traceability"]["context_result_id"] == "ctxres_abc"
+        assert payload["traceability"]["final_request_receipt_id"] == receipt.receipt_id
+        assert payload["traceability"]["provider_request_id"] == "provider_req_abc"
+        assert payload["traceability"]["telemetry_trace_id"] == "trace-abc"
+
     def test_build_with_breakdown(self) -> None:
         """FinalRequestReceipt.build should create token breakdown."""
         from polaris.kernelone.context.chunks.taxonomy import ChunkMetadata, ChunkType, PromptChunk

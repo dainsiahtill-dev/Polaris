@@ -31,6 +31,19 @@ class TestTruthLogService:
         original["turn_id"] = "t2"
         assert log.get_entries()[0]["turn_id"] == "t1"
 
+    def test_projection_view_replace_does_not_rewrite_durable_journal(self) -> None:
+        log = TruthLogService()
+        log.append({"turn_id": "journal-1", "content": "original truth"})
+
+        log.replace_projection_view([{"turn_id": "view-1", "content": "mutable projection"}])
+
+        assert log.get_entries()[0]["turn_id"] == "view-1"
+        assert log.replay_journal()[0]["turn_id"] == "journal-1"
+
+        log.append({"turn_id": "journal-2", "content": "new truth"})
+        journal = log.replay_journal()
+        assert [entry["turn_id"] for entry in journal] == ["journal-1", "journal-2"]
+
 
 class TestWorkingStateManager:
     def test_update_and_get(self) -> None:
@@ -83,7 +96,8 @@ class TestProjectionEngine:
         )
         assert messages[0] == {"role": "system", "content": "You are a coding assistant."}
         assert messages[1]["role"] == "user"
-        assert "receipt content" in messages[1]["content"]
+        assert "[receipt_ref:ref_1]" in messages[1]["content"]
+        assert "receipt content" not in messages[1]["content"]
 
     def test_project_excludes_control_plane_noise(self) -> None:
         engine = ProjectionEngine()

@@ -518,6 +518,9 @@ class RoleContextGateway:
             )
 
         projection_dict, receipt_store, extra_sources = self._build_projection_dict(_projection, request)
+        projection_report = self._context_os.get_last_projection_report() or {}
+        projection_id = str(projection_report.get("projection_id") or "").strip()
+        context_result_id = str(projection_report.get("context_result_id") or "").strip()
         messages = list(self._projection_engine.project(projection_dict, receipt_store))
         sources.extend(extra_sources)
         if messages:
@@ -670,6 +673,8 @@ class RoleContextGateway:
             "role": str(getattr(self.profile, "role_id", "") or ""),
             "recent_window_messages": int(recent_window_messages),
             "strategy_override_applied": bool(strategy_override_applied),
+            "projection_id": projection_id,
+            "context_result_id": context_result_id,
         }
         if capability_profile_ref is not None:
             projection_event_metadata["capability_profile_sha256"] = capability_profile_ref["sha256"]
@@ -717,6 +722,8 @@ class RoleContextGateway:
                 "context_decision_hints": context_decision_hints,
                 "projection_adaptive_weights": self._projection_engine.get_adaptive_weights(),
                 "capability_profile_ref": capability_profile_ref,
+                "projection_id": projection_id,
+                "context_result_id": context_result_id,
             },
         )
 

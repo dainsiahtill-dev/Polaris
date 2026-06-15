@@ -145,18 +145,35 @@ def capture_steps(workspace_full: str, out_path: str) -> int:
     return 0
 
 
-def seed_steps(workspace_full: str, steps: list[dict[str, Any]]) -> tuple[str, ...]:
-    """Re-publish the captured leaf steps at pending_exec; return seeded leaf task ids."""
+def seed_steps(
+    workspace_full: str,
+    steps: list[dict[str, Any]],
+    *,
+    only: set[str] | None = None,
+) -> tuple[str, ...]:
+    """Re-publish the captured leaf steps at pending_exec; return seeded leaf task ids.
+
+    ``only`` restricts seeding to a subset of task_ids — the key velocity lever:
+    Director (not CE) is the wall-clock floor, so iterating a fix on ONE
+    representative step (e.g. a from-scratch create leaf with no deps) costs
+    ~minutes instead of re-running all N steps. A step whose ``depends_on`` is not
+    in the seeded set is warned about (its chain prerequisite is absent).
+    """
     from polaris.cells.runtime.task_market.internal.service import get_task_market_service
     from polaris.cells.runtime.task_market.public.contracts import PublishTaskWorkItemCommandV1
 
     service = get_task_market_service()
     seeded: list[str] = []
-    for step in steps:
-        # Only leaf construction steps are Director-executable work; non-leaf
-        # parents are provenance in the fixture and are not re-seeded here.
-        if not step.get("is_leaf"):
-            continue
+    selected = [step for step in steps if step.get("is_leaf") and (only is None or step["task_id"] in only)]
+    selected_ids = {step["task_id"] for step in selected}
+    for step in selected:
+        missing_deps = [dep for dep in step["depends_on"] if dep not in selected_ids]
+        if missing_deps:
+            print(
+                f"[replay] WARNING: seeding {step['task_id']} but its depends_on {missing_deps} "
+                "are not in the seeded set — it will not be claimable until they exist.",
+                flush=True,
+            )
         command = PublishTaskWorkItemCommandV1(
             workspace=workspace_full,
             trace_id=step["trace_id"],
@@ -183,7 +200,13 @@ def seed_steps(workspace_full: str, steps: list[dict[str, Any]]) -> tuple[str, .
     return tuple(seeded)
 
 
-def replay(workspace_full: str, cache_root_full: str, fixture_path: str) -> int:
+def replay(
+    workspace_full: str,
+    cache_root_full: str,
+    fixture_path: str,
+    *,
+    only: set[str] | None = None,
+) -> int:
     """Fresh workspace + market, seed frozen steps, drive Director+QA only."""
     os.environ.setdefault("KERNELONE_TASK_MARKET_MODE", "mainline-full")
     os.environ.setdefault("KERNELONE_CE_STEP_FISSION", "1")
@@ -210,10 +233,11 @@ def replay(workspace_full: str, cache_root_full: str, fixture_path: str) -> int:
     market_dir = resolve_artifact_path(workspace_full, cache_root_full, "runtime/task_market")
     shutil.rmtree(market_dir, ignore_errors=True)
 
-    seeded = seed_steps(workspace_full, steps)
+    seeded = seed_steps(workspace_full, steps, only=only)
     print(
-        f"[replay] project={fixture.get('project')} seeded {len(seeded)} leaf steps at pending_exec "
-        f"(fixture has {fixture.get('step_count')} rows) — RE-CAPTURE after any CE/step_splitter change.",
+        f"[replay] project={fixture.get('project')} seeded {len(seeded)}/{fixture.get('leaf_count')} leaf steps "
+        f"at pending_exec{' (subset: ' + ','.join(sorted(only)) + ')' if only else ''} — "
+        "RE-CAPTURE after any CE/step_splitter change.",
         flush=True,
     )
     if not seeded:
@@ -247,6 +271,12 @@ def main() -> int:
     rep = sub.add_parser("replay", help="seed frozen steps and run Director+QA only")
     rep.add_argument("--workspace", required=True)
     rep.add_argument("--from", dest="fixture", required=True)
+    rep.add_argument(
+        "--steps",
+        default="",
+        help="comma-separated leaf task_ids to seed (default: all). Director is the wall-clock "
+        "floor, so iterating a fix on ONE create leaf (e.g. a dep-free step) is the real speedup.",
+    )
 
     args = parser.parse_args()
     workspace_full, cache_root_full = _bootstrap_env(args.workspace)
@@ -255,7 +285,8 @@ def main() -> int:
     if args.cmd == "capture":
         return capture_steps(workspace_full, args.out)
     if args.cmd == "replay":
-        return replay(workspace_full, cache_root_full, args.fixture)
+        only = {s.strip() for s in str(args.steps).split(",") if s.strip()} or None
+        return replay(workspace_full, cache_root_full, args.fixture, only=only)
     return 2
 
 

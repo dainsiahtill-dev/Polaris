@@ -27,6 +27,7 @@ current_modules:
 - polaris.kernelone.context.context_os.snapshot
 - polaris.kernelone.context.context_os.budget_optimizer
 - polaris.kernelone.context.context_os.classifier
+- polaris.kernelone.context.context_os.contracts
 - polaris.kernelone.context.context_os.policies
 - polaris.kernelone.context.context_os.ports
 - polaris.kernelone.workflow.engine
@@ -37,11 +38,17 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.kernelone.context.context_os
+  - polaris.kernelone.context.context_os.contracts
   - polaris.kernelone.workflow
   commands: []
-  queries: []
+  queries:
+  - ProjectionRequest
   events: []
-  results: []
+  results:
+  - ProjectionResult
+  - ProjectionReport
+  - ReceiptRef
+  - ContextWindowPolicy
   errors: []
 depends_on: []
 subgraphs: []
@@ -56,7 +63,6 @@ verification:
   - polaris/kernelone/context/context_os/tests/**
   - polaris/kernelone/workflow/tests/**
   gaps:
-  - Context OS contracts not yet fully defined.
   - Workflow engine contracts not yet fully defined.
   smoke_commands: []
 generated_artifacts:

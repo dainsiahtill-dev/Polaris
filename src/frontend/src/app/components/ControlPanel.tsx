@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot, ClipboardList, Gauge, ShieldAlert } from 'lucide-react';
+import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot, ClipboardList, Gauge, ShieldAlert, Network } from 'lucide-react';
 import { WindowControls } from './WindowControls';
 import { UsageHUD, type UsageStats } from './UsageHUD';
 import { UI_TERMS } from '@/app/constants/uiTerminology';
@@ -51,6 +51,7 @@ interface ControlPanelProps {
   onEnterFactoryMode?: () => void;
   onEnterAGIWorkspace?: () => void;
   onEnterRuntimeDiagnostics?: () => void;
+  onEnterContextOS?: () => void;
   onOpenIntervention?: () => void;
   workspaceError?: string | null;
   isStartingPM?: boolean;
@@ -149,6 +150,7 @@ export function ControlPanel({
   onEnterFactoryMode,
   onEnterAGIWorkspace,
   onEnterRuntimeDiagnostics,
+  onEnterContextOS,
   onOpenIntervention,
   workspaceError,
   isStartingPM,
@@ -600,6 +602,19 @@ export function ControlPanel({
           </button>
         )}
 
+        {/* ContextOS 实时视图入口 */}
+        {onEnterContextOS && (
+          <button
+            onClick={onEnterContextOS}
+            data-testid="control-panel-enter-contextos"
+            className="no-drag flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all bg-accent-secondary/15 text-accent-secondary border border-accent-secondary/30 hover:bg-accent-secondary/25 hover:shadow-[0_0_15px_rgba(74,158,158,0.35)]"
+            title="ContextOS 实时视图 - 上下文操作系统数据流监控"
+          >
+            <Network className="size-3.5" />
+            <span className="text-[10px] font-bold uppercase tracking-wider">ContextOS</span>
+          </button>
+        )}
+
         {/* Vital Signs (Ping/Health) */}
         <div className="no-drag flex items-center gap-2 px-2.5 py-1 bg-[rgba(35,25,14,0.55)] rounded-lg border border-white/5 backdrop-blur-md">
           {/* 当前任务显示 */}
@@ -748,6 +763,12 @@ export function ControlPanel({
               <DropdownMenuItem data-testid="enter-runtime-diagnostics" onClick={() => runMoreMenuAction(onEnterRuntimeDiagnostics)}>
                 <Gauge className="size-4 mr-2" />
                 运行诊断
+              </DropdownMenuItem>
+            )}
+            {onEnterContextOS && (
+              <DropdownMenuItem data-testid="enter-contextos-menu-item" onClick={() => runMoreMenuAction(onEnterContextOS)}>
+                <Network className="size-4 mr-2" />
+                ContextOS 实时视图
               </DropdownMenuItem>
             )}
             {showAgents && (

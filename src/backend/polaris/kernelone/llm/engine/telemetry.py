@@ -161,6 +161,7 @@ class TelemetryCollector:
             metadata={
                 "input_length": len(request.input),
                 "options": {k: v for k, v in request.options.items() if k not in ("api_key", "password")},
+                **self._context_traceability_metadata(request.context),
             },
         )
         self.emit(event)
@@ -199,6 +200,8 @@ class TelemetryCollector:
                 "ok": response.ok,
                 "output_length": len(response.output),
                 "has_structured": response.structured is not None,
+                **self._context_traceability_metadata(request.context),
+                **self._context_traceability_metadata(response.metadata),
             },
         )
         self.emit(event)
@@ -326,6 +329,21 @@ class TelemetryCollector:
         if trace_id is None:
             return list(self._buffer)
         return [e for e in self._buffer if e.trace_id == trace_id]
+
+    @staticmethod
+    def _context_traceability_metadata(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        keys = (
+            "projection_id",
+            "context_projection_id",
+            "context_result_id",
+            "final_request_receipt_id",
+            "provider_request_id",
+            "telemetry_trace_id",
+            "budget_admission_id",
+        )
+        return {key: value.get(key) for key in keys if value.get(key)}
 
     def flush(self) -> None:
         """刷新缓冲区"""

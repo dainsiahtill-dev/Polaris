@@ -32,6 +32,7 @@ from polaris.kernelone.llm.engine.stream import (
     stream_to_response,
 )
 from polaris.kernelone.llm.engine.stream.config import StreamConfig as DirectStreamConfig
+from polaris.kernelone.llm.engine.telemetry import TelemetryCollector
 
 
 def test_stream_clamp_fails_closed_when_prompt_exceeds_window() -> None:
@@ -290,6 +291,62 @@ class TestStreamExecutorInvokeStreamErrors:
         serialized_receipt = json.dumps(receipts[0], ensure_ascii=False, sort_keys=True)
         assert "SECRET STREAM PROMPT" not in serialized_receipt
         assert "SECRET STREAM SYSTEM" not in serialized_receipt
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_traceability_ids_reach_telemetry_without_optional_sink(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _Provider:
+            async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]):
+                del prompt, model, config
+                yield "ok"
+
+        class _ProviderManager:
+            def get_provider_instance(self, provider_type: str) -> _Provider | None:
+                assert provider_type == "fake"
+                return _Provider()
+
+        monkeypatch.setattr(
+            "polaris.kernelone.llm.engine.stream.executor._providers_module.get_provider_manager",
+            lambda: _ProviderManager(),
+        )
+
+        executor = StreamExecutor(
+            workspace=str(tmp_path),
+            telemetry=TelemetryCollector(),
+            model_catalog=_ModelCatalog(),
+            token_budget=_BudgetManager(),
+        )
+        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: {"type": "fake", "timeout": 1})
+
+        events = [
+            event
+            async for event in executor.invoke_stream(
+                AIRequest(
+                    task_type=TaskType.GENERATION,
+                    role="director",
+                    provider_id="fake-provider",
+                    model="fake-model",
+                    input="prompt",
+                    options={"max_tokens": 128},
+                    context={
+                        "turn_id": "turn-stream-optional",
+                        "context_projection_id": "projection-stream-optional",
+                        "context_result_id": "ctxres-stream-optional",
+                    },
+                )
+            )
+        ]
+
+        assert any(event.type.value == "complete" for event in events)
+        invoke_end = [event for event in executor.telemetry.get_events() if event.event_type == "invoke_end"][-1]
+        assert invoke_end.metadata["projection_id"] == "projection-stream-optional"
+        assert invoke_end.metadata["context_result_id"] == "ctxres-stream-optional"
+        assert len(invoke_end.metadata["final_request_receipt_id"]) == 64
+        assert len(invoke_end.metadata["provider_request_id"]) == 64
+        assert invoke_end.metadata["telemetry_trace_id"] == invoke_end.trace_id
 
     @pytest.mark.asyncio
     async def test_invoke_stream_final_request_receipt_redacts_compression_payload(
